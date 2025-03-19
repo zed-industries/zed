@@ -40,10 +40,11 @@
 
 #[cfg(doc)]
 use super::WORD_REGEX;
-use crate::{terminal_settings::PathHyperlinkNavigation, HoveredWord, ZedListener};
+use crate::{HoveredWord, ZedListener};
 use alacritty_terminal::{index::Boundary, term::search::Match, Term};
+use fancy_regex::{Captures, Regex};
+use itertools::Itertools;
 use log::{debug, info, trace};
-use regex::Regex;
 use std::{
     borrow::Borrow,
     fmt::Display,
@@ -64,6 +65,15 @@ pub const MAIN_SEPARATORS: [char; 2] = ['\\', '/'];
 /// Common symbols which often surround a path, e.g., `"` `'` `[` `]` `(` `)`
 pub const COMMON_PATH_SURROUNDING_SYMBOLS: &[(char, char)] =
     &[('"', '"'), ('\'', '\''), ('[', ']'), ('(', ')')];
+
+pub fn has_common_surrounding_symbols(maybe_path: &str) -> bool {
+    for (start, end) in COMMON_PATH_SURROUNDING_SYMBOLS {
+        if maybe_path.starts_with(*start) && maybe_path.ends_with(*end) {
+            return true;
+        }
+    }
+    false
+}
 
 /// Returns the longest range of matching surrounding symbols on `line` which contains `word_range`
 pub fn longest_surrounding_symbols_match(
@@ -97,58 +107,50 @@ pub fn longest_surrounding_symbols_match(
 }
 
 #[cfg(target_os = "windows")]
-macro_rules! default_path_chars {
+macro_rules! path_char {
     () => {
-        r#"[^\s<>"|?*]+?"#
+        r#"[^<>"|?*:]"#
     };
 }
 
 #[cfg(target_os = "windows")]
-macro_rules! default_path_chars_msvc {
+macro_rules! path_char_msbuild {
     () => {
-        r#"[^\s<>"|?*\(]+"#
+        r#"[^<>"|?*\(]"#
     };
 }
 
 #[cfg(not(target_os = "windows"))]
-macro_rules! default_path_chars {
+macro_rules! path_char {
     () => {
-        r#"[^\s]+?"#
+        r#"[^:]"#
     };
 }
 
 #[cfg(not(target_os = "windows"))]
-macro_rules! default_path_chars_msvc {
+macro_rules! path_char_msbuild {
     () => {
-        r#"[^\s\(]+"#
+        r#"[^\(]"#
     };
 }
 
-#[cfg(target_os = "windows")]
-macro_rules! advanced_path_chars {
-    () => {
-        r#"[^<>"|?*]+?"#
+macro_rules! row_column_desc_regex {
+    ($path_char_regex:ident) => {
+        concat!(
+            r#"(?<path>"#,
+            $path_char_regex!(),
+            r#"+)((?<suffix>(:(?<line>[0-9]+))(:(?<column>[0-9]+))?)(:(?=[^0-9])(?<desc>.*)$|$))?"#
+        )
     };
 }
 
-#[cfg(target_os = "windows")]
-macro_rules! advanced_path_chars_msvc {
-    () => {
-        r#"[^<>"|?*\(]+"#
-    };
-}
-
-#[cfg(not(target_os = "windows"))]
-macro_rules! advanced_path_chars {
-    () => {
-        r#".+?"#
-    };
-}
-
-#[cfg(not(target_os = "windows"))]
-macro_rules! advanced_path_chars_msvc {
-    () => {
-        r#"[^\(]+"#
+macro_rules! row_column_desc_regex_msbuild {
+    ($path_char_regex:ident) => {
+        concat!(
+            r#"(?<path>"#,
+            $path_char_regex!(),
+           r#"+)((?<suffix>(\((?<line>[0-9]+))([,:](?<column>[0-9]+))?\))(:(?=[^0-9])(?<desc>.*)$|$))?"#
+        )
     };
 }
 
@@ -158,57 +160,15 @@ macro_rules! advanced_path_chars_msvc {
 //
 // Note that unlike the original fix for that issue, we don't check the characters before
 // and after the colon for digit-ness so that in case the line and column suffix is in
-// MSVC-style (<line>,<column>):message or some other style. Line and column suffixes are
+// MSBuild-style (<line>,<column>):message or some other style. Line and column suffixes are
 // processed later in termainl_view.
-const DEFAULT_PATH_ROW_COLUMN_DESC_REGEX: &str = concat!(
-    r#"(?x)
-    (?<path>
-    (?:"#,
-    default_path_chars_msvc!(),
-    r#")(?:
-        \((?:\d+)[,:](?:\d+)\) # path(row,column), path(row:column)
-        |
-        \((?:\d+)\)            # path(row)
-    )
-    |
-    (?:"#,
-    default_path_chars!(),
-    r#")(?:
-        \:+(?:\d+)\:(?:\d+)    # path:row:column
-        |
-        \:+(?:\d+)             # path:row
-    ))
-    :(?<desc>[^\d].+)$         # desc
-    "#
-);
+const PATH_ROW_COLUMN_DESC_REGEX: &str = row_column_desc_regex!(path_char);
+const PATH_ROW_COLUMN_DESC_REGEX_MSBUILD: &str = row_column_desc_regex_msbuild!(path_char_msbuild);
 
-/// Like, DEFAULT_PATH_ROW_COLUMN_DESC_REGEX, but allows spaces in the path
-const ADVANCED_PATH_ROW_COLUMN_DESC_REGEX: &str = concat!(
-    r#"(?x)
-    (?<path>
-    (?:"#,
-    advanced_path_chars_msvc!(),
-    r#")(?:
-        \((?:\d+)[,:](?:\d+)\) # path(row,column), path(row:column)
-        |
-        \((?:\d+)\)            # path(row)
-    )
-    |
-    (?:"#,
-    advanced_path_chars!(),
-    r#")(?:
-        \:+(?:\d+)\:(?:\d+)    # path:row:column
-        |
-        \:+(?:\d+)             # path:row
-    ))
-    :(?<desc>[^\d].+)$         # desc
-    "#
-);
-
-const DEFAULT_PREAPPROVED_PATH_HYPERLINK_REGEXES: [&str; 1] = [DEFAULT_PATH_ROW_COLUMN_DESC_REGEX];
-
-const ADVANCED_PREAPPROVED_PATH_HYPERLINK_REGEXES: [&str; 1] =
-    [ADVANCED_PATH_ROW_COLUMN_DESC_REGEX];
+const PREAPPROVED_PATH_HYPERLINK_REGEXES: [&str; 2] = [
+    PATH_ROW_COLUMN_DESC_REGEX,
+    PATH_ROW_COLUMN_DESC_REGEX_MSBUILD,
+];
 
 /// Used on user settings provided regexes
 pub fn load_path_hyperlink_regexes<'a, T>(regexes: &'a T) -> Vec<Regex>
@@ -258,55 +218,78 @@ where
 }
 
 /// Returns a list of the preapproved path hyperlink regexes
-pub fn preapproved_path_hyperlink_regexes(
-    path_hyperlink_navigation: PathHyperlinkNavigation,
-) -> &'static Vec<Regex> {
-    static DEFAULT_PREAPPROVED_MAYBE_PATH_REGEXES: LazyLock<Vec<Regex>> =
-        LazyLock::new(|| load_path_hyperlink_regexes(&DEFAULT_PREAPPROVED_PATH_HYPERLINK_REGEXES));
-    static ADVANCED_PREAPPROVED_MAYBE_PATH_REGEXES: LazyLock<Vec<Regex>> =
-        LazyLock::new(|| load_path_hyperlink_regexes(&ADVANCED_PREAPPROVED_PATH_HYPERLINK_REGEXES));
+pub fn preapproved_path_hyperlink_regexes() -> &'static Vec<Regex> {
+    static PREAPPROVED_MAYBE_PATH_REGEXES: LazyLock<Vec<Regex>> =
+        LazyLock::new(|| load_path_hyperlink_regexes(&PREAPPROVED_PATH_HYPERLINK_REGEXES));
 
-    if path_hyperlink_navigation == PathHyperlinkNavigation::Default {
-        &DEFAULT_PREAPPROVED_MAYBE_PATH_REGEXES
-    } else {
-        &ADVANCED_PREAPPROVED_MAYBE_PATH_REGEXES
-    }
+    &PREAPPROVED_MAYBE_PATH_REGEXES
 }
 
-#[derive(Eq, PartialEq)]
-pub enum PathRegexSearchMode {
-    StopOnFirstMatch,
-    ReturnAllMatches,
+/// Line and column suffix information
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
+pub struct RowColumn {
+    pub row: u32,
+    pub column: Option<u32>,
+    /// Storing the length of the suffix here allows us to linkify it correctly.
+    pub suffix_length: usize,
 }
 
-pub fn path_regex_match<'a>(
+/// Returns the first match with a valid line number, if any.
+pub fn path_with_position_regex_match<'a>(
     maybe_path: &'a str,
-    path_regex_search_mode: PathRegexSearchMode,
-    path_regexes: &'a Vec<Regex>,
-) -> impl Iterator<Item = Range<usize>> + 'a {
-    path_regexes
-        .iter()
-        .filter_map(move |regex| {
-            let Some(captures) = regex.captures(&maybe_path) else {
-                return None;
-            };
-            // Note: Do NOT use captures["path"] here because it can panic. This is extra
-            // paranoid because we don't load path regexes that do not contain a path
-            // named capture group in the first place (see [init_path_hyperlink_regexes]).
-            let Some(path_capture) = captures.name("path") else {
-                debug!("'path' capture not matched in regex: {:#?}", regex.as_str());
-                return None;
-            };
+    path_regexes: &Vec<&'a Regex>,
+) -> Option<(Range<usize>, RowColumn)> {
+    fn position_from_captures<'t>(captures: &Captures<'t>) -> Option<RowColumn> {
+        let Some(row) = captures
+            .name("line")
+            .filter(|row| row.range().len() > 0)
+            .map(|row| row.as_str().parse::<u32>().ok())
+            .flatten()
+        else {
+            return None;
+        };
 
-            return Some(path_capture.range());
+        let Some(suffix) = captures.name("suffix") else {
+            return None;
+        };
+
+        let suffix_length = suffix.range().len();
+
+        let column = captures
+            .name("column")
+            .filter(|column| column.range().len() > 0)
+            .map(|column| column.as_str().parse::<u32>().ok())
+            .flatten();
+
+        Some(RowColumn {
+            row,
+            column,
+            suffix_length,
         })
-        .take(
-            if path_regex_search_mode == PathRegexSearchMode::StopOnFirstMatch {
-                1
-            } else {
-                usize::MAX
-            },
-        )
+    }
+
+    for path_regex in path_regexes {
+        let Ok(Some(captures)) = path_regex.captures(&maybe_path) else {
+            return None;
+        };
+
+        // Note: Do NOT use captures["path"] here because it can panic. This is extra
+        // paranoid because we don't load path regexes that do not contain a path
+        // named capture group in the first place (see [init_path_hyperlink_regexes]).
+        let Some(path_match) = captures.name("path") else {
+            debug!(
+                "'path' capture not matched in regex: {:#?}",
+                path_regex.as_str()
+            );
+            return None;
+        };
+
+        if let Some(position) = position_from_captures(&captures) {
+            return Some((path_match.range(), position));
+        }
+    }
+
+    None
 }
 
 /// The hovered or Cmd-clicked word in the terminal
@@ -383,6 +366,25 @@ impl MaybePathLike {
         &self.line[range.clone()]
     }
 
+    pub fn hyperlink_range<'a>(
+        &self,
+        position: &Option<RowColumn>,
+        range: &Range<usize>,
+    ) -> Range<usize> {
+        match position.as_ref() {
+            Some(RowColumn { suffix_length, .. })
+                if range.start > 0 && range.end < self.line.len() =>
+            {
+                if has_common_surrounding_symbols(&self.line[range.start - 1..range.end + 1]) {
+                    range.start - 1..range.end + 1 + suffix_length
+                } else {
+                    range.start..range.end + suffix_length
+                }
+            }
+            Some(_) | None => range.clone(),
+        }
+    }
+
     /// Computes the best heuristic match for link highlighting in the terminal. This
     /// will be linkified immediately even though we don't yet know if it is a real path.
     /// Once we've determined (in the background) is it is a real path, the hyperlink
@@ -412,20 +414,19 @@ impl MaybePathLike {
                 word: self.line[self.word_range.clone()].to_string(),
                 word_match: self.word_match.clone(),
             })
-        } else if let Some(path_range) = path_regex_match(
+        } else if let Some((range, position)) = path_with_position_regex_match(
             &self.line[self.word_range.clone()],
-            PathRegexSearchMode::StopOnFirstMatch,
-            &preapproved_path_hyperlink_regexes(PathHyperlinkNavigation::Default),
-        )
-        .nth(0)
-        {
+            &preapproved_path_hyperlink_regexes().iter().collect_vec(),
+        ) {
+            let word_range = self.word_range.start + range.start
+                ..self.word_range.start + range.end + position.suffix_length;
+            let word = self.text_at(&word_range).to_string();
             trace!(
-                "Maybe path heuristic 'path regex' match: {:?}",
-                self.text_at(&path_range)
+                "Maybe path heuristic 'path regex' match: path = {word:?}, position = {position:?}",
             );
             Some(HoveredWord {
-                word: self.text_at(&path_range).to_string(),
-                word_match: self.match_from_text_range(term, &path_range),
+                word,
+                word_match: self.match_from_text_range(term, &word_range),
             })
         } else {
             None
@@ -448,7 +449,9 @@ impl MaybePathLike {
             .unwrap()
         });
 
-        LOOKS_LIKE_A_PATH_REGEX.is_match(&self.line[self.word_range.clone()])
+        LOOKS_LIKE_A_PATH_REGEX
+            .is_match(&self.line[self.word_range.clone()])
+            .unwrap_or(false)
     }
 
     pub(super) fn match_from_text_range(
@@ -498,49 +501,155 @@ mod tests {
 
     use super::*;
 
-    fn re_test_row_col_desc(hay: &str, expected: Option<(&str, &str)>) {
-        let regex = regex::Regex::new(DEFAULT_PATH_ROW_COLUMN_DESC_REGEX).unwrap();
-        if let Some((_, [path, desc])) = regex.captures_iter(hay).map(|c| c.extract()).next() {
-            let Some((expected_path, expected_desc)) = expected else {
+    fn re_test_row_col_desc(
+        regex: &Regex,
+        hay: &str,
+        expected_path: Option<&str>,
+        expected_suffix: Option<&str>,
+        expected_line: Option<&str>,
+        expected_column: Option<&str>,
+        expected_desc: Option<&str>,
+    ) {
+        let Some(Ok(captures)) = regex.captures_iter(hay).next() else {
+            if let Some(expected_path) = expected_path {
                 assert!(
                     false,
-                    "Expected no path = \"{}\" and desc = \"{}\" for: \"{}\"",
-                    path, desc, hay
+                    "Expected path = {:?}, line = {:?}, column = {:?}, desc = {:?} for: {:?}",
+                    expected_path, expected_line, expected_column, expected_desc, hay,
                 );
-                return;
-            };
-            assert_eq!(path, expected_path);
-            assert_eq!(desc, expected_desc);
-        } else if let Some((expected_path, expected_desc)) = expected {
-            assert!(
-                false,
-                "Expected path = \"{}\" and desc = \"{}\" for: \"{}\"",
-                hay, expected_path, expected_desc
-            );
+            }
+            return;
         };
+        if let Some(path) = captures.name("path") {
+            assert_eq!(Some(path.as_str()), expected_path, "{}", hay);
+        } else {
+            assert!(expected_path.is_none(), "{}", hay);
+        }
+        if let Some(suffix) = captures.name("suffix") {
+            assert_eq!(Some(suffix.as_str()), expected_suffix, "{}", hay);
+        } else {
+            assert!(expected_suffix.is_none(), "{}", hay);
+        }
+        if let Some(line) = captures.name("line") {
+            assert_eq!(Some(line.as_str()), expected_line, "{}", hay);
+        } else {
+            assert!(expected_line.is_none(), "{}", hay);
+        }
+        if let Some(column) = captures.name("column") {
+            assert_eq!(Some(column.as_str()), expected_column, "{}", hay);
+        } else {
+            assert!(expected_column.is_none(), "{}", hay);
+        }
+        if let Some(desc) = captures.name("desc") {
+            assert_eq!(Some(desc.as_str()), expected_desc, "{}", hay);
+        } else {
+            assert!(expected_desc.is_none(), "{}", hay);
+        }
     }
 
     // Ruby (see https://github.com/zed-industries/zed/issues/25086)
     #[test]
     fn test_row_column_description_regex_25086() {
-        re_test_row_col_desc(
-            "# Main.cs:20:5:Error desc",
-            Some(("Main.cs:20:5", "Error desc")),
+        let regex = Regex::new(PATH_ROW_COLUMN_DESC_REGEX).unwrap();
+        let re_test = |hay, path, suffix, line, column, desc| {
+            re_test_row_col_desc(&regex, hay, path, suffix, line, column, desc)
+        };
+        re_test(
+            "Main.cs:20:5:Error",
+            Some("Main.cs"),
+            Some(":20:5"),
+            Some("20"),
+            Some("5"),
+            Some("Error"),
         );
-        re_test_row_col_desc(
-            "# Main.cs(20,5):Error desc",
-            Some(("Main.cs(20,5)", "Error desc")),
+        re_test(
+            "Main.cs:20:5 Error",
+            Some("Main.cs"),
+            None,
+            None,
+            None,
+            None,
         );
-        re_test_row_col_desc(
-            "# Ma:n.cs:20:5:Error desc",
-            Some(("Ma:n.cs:20:5", "Error desc")),
+        re_test(
+            "Main.cs:20:Error",
+            Some("Main.cs"),
+            Some(":20"),
+            Some("20"),
+            None,
+            Some("Error"),
         );
-        re_test_row_col_desc(
-            "# Ma(n.cs(20,5):Error desc",
-            Some(("n.cs(20,5)", "Error desc")),
+        re_test("Main.cs:Error", Some("Main.cs"), None, None, None, None);
+        re_test(
+            "Main.cs:20:5",
+            Some("Main.cs"),
+            Some(":20:5"),
+            Some("20"),
+            Some("5"),
+            None,
         );
-        re_test_row_col_desc("# Main.cs:20:5 Error desc", None);
-        re_test_row_col_desc("# Main.cs(20,5) Error desc", None);
+        re_test(
+            "Main.cs:20",
+            Some("Main.cs"),
+            Some(":20"),
+            Some("20"),
+            None,
+            None,
+        );
+        re_test("Main.cs", Some("Main.cs"), None, None, None, None);
+
+        let regex = Regex::new(PATH_ROW_COLUMN_DESC_REGEX_MSBUILD).unwrap();
+        let re_test = |hay, path, suffix, line, column, desc| {
+            re_test_row_col_desc(&regex, hay, path, suffix, line, column, desc)
+        };
+        re_test(
+            "Main.cs(20:5):Error",
+            Some("Main.cs"),
+            Some("(20:5)"),
+            Some("20"),
+            Some("5"),
+            Some("Error"),
+        );
+        re_test(
+            "Main.cs(20,5) Error",
+            Some("Main.cs"),
+            None,
+            None,
+            None,
+            None,
+        );
+        re_test(
+            "Main.cs(20):Error",
+            Some("Main.cs"),
+            Some("(20)"),
+            Some("20"),
+            None,
+            Some("Error"),
+        );
+        re_test(
+            "Main.cs:Error",
+            Some("Main.cs:Error"),
+            None,
+            None,
+            None,
+            None,
+        );
+        re_test(
+            "Main.cs(20:5)",
+            Some("Main.cs"),
+            Some("(20:5)"),
+            Some("20"),
+            Some("5"),
+            None,
+        );
+        re_test(
+            "Main.cs(20)",
+            Some("Main.cs"),
+            Some("(20)"),
+            Some("20"),
+            None,
+            None,
+        );
+        re_test("Main.cs", Some("Main.cs"), None, None, None, None);
     }
 
     #[test]

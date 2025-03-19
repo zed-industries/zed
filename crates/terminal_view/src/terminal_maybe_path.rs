@@ -23,8 +23,8 @@
 //! - [ ] After Cmd-click navigating, when the mouse in the terminal, but not over any word (over empty space), pressing
 //! Cmd causes the previously linkified path to linkify again.
 
+use fancy_regex::Regex;
 use itertools::Itertools;
-use regex::Regex;
 use std::{
     borrow::Cow,
     fmt::Display,
@@ -35,11 +35,13 @@ use std::{
 };
 use terminal::{
     terminal_maybe_path_like::{
-        longest_surrounding_symbols_match, path_regex_match, preapproved_path_hyperlink_regexes,
-        MaybePathLike, PathRegexSearchMode, COMMON_PATH_SURROUNDING_SYMBOLS, MAIN_SEPARATORS,
+        has_common_surrounding_symbols, longest_surrounding_symbols_match,
+        path_with_position_regex_match, preapproved_path_hyperlink_regexes, MaybePathLike,
+        RowColumn, MAIN_SEPARATORS,
     },
     terminal_settings::PathHyperlinkNavigation,
 };
+#[cfg(doc)]
 use util::paths::PathWithPosition;
 
 fn word_regex() -> &'static Regex {
@@ -98,54 +100,63 @@ impl MaybePath {
     const MAX_MAIN_THREAD_PREFIX_WORDS: usize = 2;
     const MAX_BACKGROUND_THREAD_PREFIX_WORDS: usize = usize::MAX;
 
-    /// All [PathHyperlinkNavigation::Default] maybe path variants. These
-    /// need to be kept to a small well-defined set of variants.
+    /// Simple maybe path variants. These need to be kept to a small well-defined set of variants.
     ///
-    /// On the main thread, these will be checked against worktrees only.
+    /// On the main thread, these will be checked against worktrees only, using
+    /// [PathHyperlinkNavigation::Default].
     ///
     /// *Local Only*--If no worktree match is found they will also be checked
-    /// for existence in the workspace's real file system on the background thread.
-    pub fn default_variants(&self) -> impl VariantIterator<'_> {
-        [MaybePathVariant::new(&self.line, self.word_range.clone())]
-            .into_iter()
-            .chain(iter::once_with(|| self.longest_surrounding_symbols_variant()).flatten())
-            .chain(
-                iter::once_with(|| {
-                    self.path_regex_variants(
-                        PathHyperlinkNavigation::Default,
-                        self.word_range.clone(),
-                        preapproved_path_hyperlink_regexes(PathHyperlinkNavigation::Default),
+    /// for existence in the workspace's real file system on the background thread,
+    /// using [PathHyperlinkNavigation::Advanced]
+    pub fn simple_variants(
+        &self,
+        path_hyperlink_navigation: PathHyperlinkNavigation,
+    ) -> impl VariantIterator<'_> {
+        [MaybePathVariant::new(
+            &self.line,
+            self.word_range.clone(),
+            // TODO(davewa): We (currently) don't include self.path_hyperlink_regexes
+            // here because we don't want to let user settings tank perforamce on the
+            // main thread. But, the experience will be worse, (no hyperlink on remote
+            // workspaces, delayed hyperlink on local workspaces. Also it is a pathological
+            // case--in practice it would be unlikely that a user would add so many regexes
+            // that it adversly affects performance. We perhaps could include them add a separate
+            // `terminal.path_hyperlink_main_thread_timout` that defaults to a much smaller
+            // number than ``terminal.path_hyperlink_main_thread_timout`?
+            &preapproved_path_hyperlink_regexes().iter().collect_vec(),
+            None,
+        )]
+        .into_iter()
+        .chain(
+            iter::once_with(move || {
+                self.longest_surrounding_symbols_variant(path_hyperlink_navigation)
+            })
+            .flatten(),
+        )
+        .chain(
+            iter::once_with(move || {
+                // One prefix stripped is the most likely path, start there
+                itertools::rev(
+                    self.line_ends_in_a_path_maybe_path_variants(
+                        path_hyperlink_navigation,
+                        0,
+                        Self::MAX_MAIN_THREAD_PREFIX_WORDS,
                     )
-                })
-                .flatten(),
-            )
-            .chain(
-                iter::once_with(|| {
-                    // One prefix stripped is the most likely path, start there
-                    itertools::rev(
-                        self.line_ends_in_a_path_maybe_path_variants(
-                            0,
-                            Self::MAX_MAIN_THREAD_PREFIX_WORDS,
-                        )
-                        .collect_vec(),
-                    )
-                })
-                .flatten(),
-            )
+                    .collect_vec(),
+                )
+            })
+            .flatten(),
+        )
     }
 
     /// All [PathHyperlinkNavigation::Advanced] maybe path variants.
     pub fn advanced_variants(&self) -> impl VariantIterator<'_> {
         // TODO(davewa): Some way to assert we are not called on the main thread...
-        self.path_regex_variants(
+        self.line_ends_in_a_path_maybe_path_variants(
             PathHyperlinkNavigation::Advanced,
-            0..self.line.len(),
-            &self.path_hyperlink_regexes,
-        )
-        .chain(self.line_ends_in_a_path_maybe_path_variants(
             Self::MAX_MAIN_THREAD_PREFIX_WORDS,
             Self::MAX_BACKGROUND_THREAD_PREFIX_WORDS,
-        ))
+        )
     }
 
     /// All [PathHyperlinkNavigation::Exhaustive] maybe path variants that start on the hovered word or a
@@ -154,35 +165,49 @@ impl MaybePath {
         // TODO(davewa): Some way to assert we are not called on the main thread...
         let starts = word_regex()
             .find_iter(&self.line[..self.word_range.end])
+            .map(|match_| match_.ok())
+            .flatten()
             .map(|match_| match_.start());
 
-        starts
-            .flat_map(move |start| {
-                itertools::rev(
-                    word_regex()
-                        .find_iter(&self.line[self.word_range.start..])
-                        .collect_vec(),
-                )
-                .map(move |match_| {
-                    let range = start..self.word_range.start + match_.end();
-                    iter::once(MaybePathVariant::new(&self.line, range.clone()))
-                        .chain(self.path_regex_variants(
-                            PathHyperlinkNavigation::Exhaustive,
-                            range.clone(),
-                            preapproved_path_hyperlink_regexes(PathHyperlinkNavigation::Exhaustive),
-                        ))
-                        .chain(self.path_regex_variants(
-                            PathHyperlinkNavigation::Exhaustive,
-                            range,
-                            &self.path_hyperlink_regexes,
-                        ))
-                })
-            })
+        starts.flat_map(move |start| {
+            itertools::rev(
+                word_regex()
+                    .find_iter(&self.line[self.word_range.start..])
+                    .collect_vec(),
+            )
+            .map(|match_| match_.ok())
             .flatten()
+            .map(move |match_| {
+                let range = start..self.word_range.start + match_.end();
+                MaybePathVariant::new(
+                    &self.line,
+                    range.clone(),
+                    &self.path_hyperlink_regexes(PathHyperlinkNavigation::Exhaustive),
+                    None,
+                )
+            })
+        })
+    }
+
+    fn path_hyperlink_regexes(
+        &self,
+        path_hyperlink_navigation: PathHyperlinkNavigation,
+    ) -> Vec<&'_ Regex> {
+        if path_hyperlink_navigation > PathHyperlinkNavigation::Default {
+            self.path_hyperlink_regexes
+                .iter()
+                .chain(preapproved_path_hyperlink_regexes().iter())
+                .collect_vec()
+        } else {
+            preapproved_path_hyperlink_regexes().iter().collect_vec()
+        }
     }
 
     /// [PathHyperlinkNavigation::Default] variant for the longest surrounding symbols match, if any
-    fn longest_surrounding_symbols_variant(&self) -> Option<MaybePathVariant<'_>> {
+    fn longest_surrounding_symbols_variant(
+        &self,
+        path_hyperlink_navigation: PathHyperlinkNavigation,
+    ) -> Option<MaybePathVariant<'_>> {
         if let Some(surrounding_range) =
             longest_surrounding_symbols_match(&self.line, &self.word_range)
         {
@@ -190,6 +215,8 @@ impl MaybePath {
                 return Some(MaybePathVariant::new(
                     &self.line,
                     surrounding_range.start + 1..surrounding_range.end - 1,
+                    &self.path_hyperlink_regexes(path_hyperlink_navigation),
+                    Some(surrounding_range.start..self.line.len()),
                 ));
             }
         }
@@ -197,33 +224,11 @@ impl MaybePath {
         None
     }
 
-    fn path_regex_variants<'a>(
-        &'a self,
-        path_hyperlink_navigation: PathHyperlinkNavigation,
-        regex_range: Range<usize>,
-        path_regexes: &'a Vec<Regex>,
-    ) -> impl VariantIterator<'a> {
-        path_regex_match(
-            &self.line[regex_range.clone()],
-            if path_hyperlink_navigation == PathHyperlinkNavigation::Default {
-                PathRegexSearchMode::StopOnFirstMatch
-            } else {
-                PathRegexSearchMode::ReturnAllMatches
-            },
-            path_regexes,
-        )
-        .map(move |range| {
-            MaybePathVariant::new(
-                &self.line,
-                regex_range.start + range.start..regex_range.start + range.end,
-            )
-        })
-    }
-
     /// [PathHyperlinkNavigation::Advanced] maybe path variants that start on the hovered word or a
     /// word before it and end at the end of the line.
     fn line_ends_in_a_path_maybe_path_variants(
         &self,
+        path_hyperlink_navigation: PathHyperlinkNavigation,
         start_prefix_words: usize,
         max_prefix_words: usize,
     ) -> impl VariantIterator<'_> {
@@ -231,19 +236,17 @@ impl MaybePath {
             .find_iter(&self.line[..self.word_range.end])
             .skip(start_prefix_words)
             .take(max_prefix_words)
-            .map(|match_| MaybePathVariant::new(&self.line, match_.start()..self.line.len()))
+            .map(|match_| match_.ok())
+            .flatten()
+            .map(move |match_| {
+                MaybePathVariant::new(
+                    &self.line,
+                    match_.range().start..self.line.len(),
+                    &self.path_hyperlink_regexes(path_hyperlink_navigation),
+                    None,
+                )
+            })
     }
-}
-
-/// Line and column suffix information
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
-pub struct RowColumn {
-    pub row: u32,
-    pub column: Option<u32>,
-    /// [MaybePathWithPosition::range] stores the range of the path after any line and column
-    /// suffix has been stripped. Storing the length of the suffix here allows us to linkify it
-    /// correctly.
-    suffix_length: usize,
 }
 
 /// Like [PathWithPosition], with enhancements for [MaybePath] processing
@@ -256,7 +259,7 @@ pub struct RowColumn {
 pub struct MaybePathWithPosition<'a> {
     pub path: Cow<'a, Path>,
     pub position: Option<RowColumn>,
-    range: Range<usize>,
+    pub range: Range<usize>,
 }
 
 impl<'a> MaybePathWithPosition<'a> {
@@ -278,37 +281,28 @@ impl<'a> MaybePathWithPosition<'a> {
             ..self
         }
     }
-
-    pub fn hyperlink_range(&self) -> Range<usize> {
-        match self.position {
-            Some(position) => self.range.start..self.range.end + position.suffix_length,
-            None => self.range.clone(),
-        }
-    }
 }
 
 /// A contiguous sequence of words which includes the hovered word of a [MaybePath]
 ///
-/// - The original maybe path is always the first variation
-/// - Surrounding symbols (if any) are stripped before processing the other variations
+/// - Variations are ordered from most common to least common
+/// - Surrounding symbols (if any) are stripped after processing the other variations
 /// - Git diff prefixes are only processed if surrounding symbols are not present
 /// - Row and column are never processed on a git diff variation
 ///
 /// # Examples
 ///
-/// | **original**         | **stripped**       | **git diff**     | **row column**                            |
-/// |----------------------|--------------------|------------------|-------------------------------------------|
-/// | [a/some/path.rs]:4:2 |                    |                  | [a/some/path.rs]<br>*row = 4, column = 2* |
-/// | [a/some/path.rs:4:2] | a/some/path.rs:4:2 |                  | a/some/path.rs<br>*row = 4, column = 2*   |
-/// | a/some/path.rs:4:2   |                    | some/path.rs:4:2 | a/some/path.rs<br>*row = 4, column = 2*   |
+/// | **original**         | **stripped**                              | **git diff**     | **row column**                            |
+/// |----------------------|-------------------------------------------|------------------|-------------------------------------------|
+/// | [a/some/path.rs]:4:2 | a/some/path.rs<br>*row = 4, column = 2*   |                  | [a/some/path.rs]<br>*row = 4, column = 2* |
+/// | [a/some/path.rs:4:2] | a/some/path.rs:4:2                        |                  |                                           |
+/// | a/some/path.rs:4:2   |                                           | some/path.rs:4:2 | a/some/path.rs<br>*row = 4, column = 2*   |
 ///
 // Note: The above table renders perfectly in docs, but currenlty does not render correctly in the tooltip in Zed.
 #[derive(Debug)]
 pub struct MaybePathVariant<'a> {
     line: &'a str,
-    variations: Vec<Range<usize>>,
-    /// Always exactly 0 or 1 positioned variation
-    positioned_variation: Option<(Range<usize>, RowColumn)>,
+    variations: Vec<(Range<usize>, Option<RowColumn>)>,
     /// `a/~/foo.rs` is a valid path on it's own. If we parsed a git diff path like `+++ a/~/foo.rs` into a
     /// `~/foo.rs` variation, never absolutize it.
     #[cfg_attr(target_os = "windows", allow(dead_code))]
@@ -316,74 +310,69 @@ pub struct MaybePathVariant<'a> {
 }
 
 impl<'a> MaybePathVariant<'a> {
-    pub fn new(line: &'a str, mut path: Range<usize>) -> Self {
+    pub fn new(
+        line: &'a str,
+        mut path: Range<usize>,
+        path_regexes: &Vec<&'a Regex>,
+        stripped_common_symbols_regex_range: Option<Range<usize>>,
+    ) -> Self {
         // We add variations from most common to least common
         let mut maybe_path = &line[path.clone()];
-        let mut positioned_variation = None::<(Range<usize>, RowColumn)>;
-        let mut common_symbols_stripped = false;
         let mut absolutize_home_dir = true;
 
         // Start with full range
-        let mut variations = vec![path.clone()];
+        let mut variations = vec![(path.clone(), None)];
 
         // For all of these, path must be at least 2 characters
         if maybe_path.len() > 2 {
-            let has_common_symbols = || {
-                for (start, end) in COMMON_PATH_SURROUNDING_SYMBOLS {
-                    if maybe_path.starts_with(*start) && maybe_path.ends_with(*end) {
-                        return true;
-                    }
-                }
-                false
-            };
-
-            // Strip common surrounding symbols, if any
-            if has_common_symbols() {
-                common_symbols_stripped = true;
-                path = path.start + 1..path.end - 1;
-                // Insert at the front, since stripped varation is more likely to be path
-                variations.insert(0, path.clone());
-                maybe_path = &line[path.clone()];
-            }
-
             // Git diff parsing--only if we did not strip common symbols
-            if !common_symbols_stripped
-                && (maybe_path.starts_with('a') || maybe_path.starts_with('b'))
+            if (maybe_path.starts_with('a') || maybe_path.starts_with('b'))
                 && maybe_path[1..].starts_with(MAIN_SEPARATORS)
             {
                 absolutize_home_dir = false;
-                variations.push(path.start + 2..path.end);
+                variations.push((path.start + 2..path.end, None));
                 // Note: we do not update maybe_path here because row and column
                 // should be processed with the git diff prefixes included, e.g.
                 // `a/some/path:4:2` is never interpreted as `some/path`, row = 4, column = 2
                 // because git diff never adds a position suffix
             }
 
-            // Row and column parsing
-            if let (suffix_start, Some(row), column) =
-                PathWithPosition::parse_row_column(maybe_path)
+            if let Some((range, position)) =
+                path_with_position_regex_match(&maybe_path, path_regexes)
             {
-                // TODO(davewa): `PathWithPosition::parse_row_column` just uses a regex search
-                // from the start of the path. Since we are only interested in two simple-to-parse
-                // suffixes, it seems like a custom parser for those would be better. Or, at least
-                // use regex-automata directly to do a reverse match from the end of the path, the
-                // custom parsers would be simple and efficient here.
-                let suffix_length = maybe_path.len() - suffix_start;
-                positioned_variation = Some((
-                    path.start..path.end - suffix_length,
-                    RowColumn {
-                        row,
-                        column,
-                        suffix_length,
-                    },
-                ));
+                path = path.start + range.start..path.start + range.end;
+                maybe_path = &line[path.clone()];
+                if has_common_surrounding_symbols(&maybe_path) {
+                    variations.insert(0, (path.start + 1..path.end - 1, Some(position)));
+                };
+                variations.insert(0, (path, Some(position)));
+            } else if stripped_common_symbols_regex_range.is_none() {
+                if has_common_surrounding_symbols(&maybe_path) {
+                    variations.insert(0, (path.start + 1..path.end - 1, None));
+                }
+            }
+
+            if let Some(stripped_common_symbols_regex_range) = stripped_common_symbols_regex_range {
+                // In this case, surrounding symbols were stripped already by the caller.
+                if let Some((range, position)) = path_with_position_regex_match(
+                    &line[stripped_common_symbols_regex_range.clone()],
+                    path_regexes,
+                ) {
+                    variations.insert(
+                        0,
+                        (
+                            stripped_common_symbols_regex_range.start + range.start
+                                ..stripped_common_symbols_regex_range.start + range.end,
+                            Some(position),
+                        ),
+                    );
+                }
             }
         }
 
         Self {
             line,
             variations,
-            positioned_variation,
             absolutize_home_dir,
         }
     }
@@ -399,33 +388,25 @@ impl<'a> MaybePathVariant<'a> {
         &self,
         prefix_to_strip: Option<&Path>,
     ) -> Vec<MaybePathWithPosition<'a>> {
-        let mut variations = Vec::new();
-
-        let mut push_relative = |range: &Range<usize>, position: Option<RowColumn>| {
-            let maybe_path = Path::new(&self.line[range.clone()]);
-            if maybe_path.is_relative() {
-                variations.push(MaybePathWithPosition::new(
-                    range,
-                    Cow::Borrowed(prefix_to_strip.map_or(maybe_path, |prefix_to_strip| {
-                        maybe_path
-                            .strip_prefix(prefix_to_strip)
-                            .unwrap_or(maybe_path)
-                    })),
-                    position,
-                ))
-            }
-        };
-
-        // The positioned variation, if any, is the most likely path
-        if let Some((range, position)) = &self.positioned_variation {
-            push_relative(range, Some(position.clone()));
-        }
-
-        for range in &self.variations {
-            push_relative(range, None);
-        }
-
-        variations
+        self.variations
+            .iter()
+            .filter_map(|(range, position)| {
+                let maybe_path = Path::new(&self.line[range.clone()]);
+                if maybe_path.is_relative() {
+                    Some(MaybePathWithPosition::new(
+                        range,
+                        Cow::Borrowed(prefix_to_strip.map_or(maybe_path, |prefix_to_strip| {
+                            maybe_path
+                                .strip_prefix(prefix_to_strip)
+                                .unwrap_or(maybe_path)
+                        })),
+                        position.clone(),
+                    ))
+                } else {
+                    None
+                }
+            })
+            .collect_vec()
     }
 
     fn absolutize<P: Deref<Target = Path>>(
@@ -497,22 +478,11 @@ impl<'a> MaybePathVariant<'a> {
         roots: &Vec<P>,
         home_dir: &PathBuf,
     ) -> Vec<MaybePathWithPosition<'a>> {
-        let mut variations = Vec::new();
-
-        let mut push_absolute = |range: &Range<usize>, position: Option<RowColumn>| {
-            variations.append(&mut self.absolutize(roots, home_dir, range, position));
-        };
-
-        // The positioned variation, if any, is the most likely path
-        if let Some((range, position)) = &self.positioned_variation {
-            push_absolute(range, Some(*position));
-        }
-
-        for range in &self.variations {
-            push_absolute(range, None);
-        }
-
-        variations
+        self.variations
+            .iter()
+            .map(|(range, position)| self.absolutize(roots, home_dir, range, position.clone()))
+            .flatten()
+            .collect_vec()
     }
 }
 
@@ -534,7 +504,14 @@ mod tests {
         open_target: Option<MaybePathWithPosition<'static>>,
     }
 
-    type ExpectedMap<'a> = HashMap<PathHyperlinkNavigation, Vec<ExpectedMaybePathVariations<'a>>>;
+    #[derive(Debug, Clone, Copy, Eq, Hash, PartialEq)]
+    enum Thread {
+        Main,
+        Background,
+    }
+
+    type ExpectedMap<'a> =
+        HashMap<(PathHyperlinkNavigation, Thread), Vec<ExpectedMaybePathVariations<'a>>>;
 
     async fn test_maybe_paths<'a>(
         fs: Arc<FakeFs>,
@@ -545,24 +522,44 @@ mod tests {
         expected: &ExpectedMap<'a>,
     ) {
         let maybe_paths = if let Some(word_index) = word_index {
-            vec![word_regex().find_iter(&line).nth(word_index).unwrap()]
+            vec![word_regex()
+                .find_iter(&line)
+                .map(Result::<_, _>::ok)
+                .flatten()
+                .map(|match_| match_.range())
+                .nth(word_index)
+                .unwrap()]
         } else {
-            word_regex().find_iter(&line).collect_vec()
+            word_regex()
+                .find_iter(&line)
+                .map(Result::<_, _>::ok)
+                .flatten()
+                .map(|match_| match_.range())
+                .collect_vec()
         };
 
-        let test_maybe_path = async |path_hyperlink_navigation| {
-            let word_expected = expected.get(&path_hyperlink_navigation).unwrap();
+        let test_maybe_path = async |path_hyperlink_navigation, thread| {
+            if !expected.contains_key(&(path_hyperlink_navigation, thread)) {
+                return;
+            }
+
+            let word_expected = expected.get(&(path_hyperlink_navigation, thread)).unwrap();
             for (matched, expected) in maybe_paths.iter().zip(word_expected) {
                 let maybe_path =
-                    MaybePath::new(line, matched.range(), Arc::clone(&custom_path_regexes));
+                    MaybePath::new(line, matched.clone(), Arc::clone(&custom_path_regexes));
                 println!("\n\nTesting {path_hyperlink_navigation:?}: {maybe_path}");
 
-                let variants = match path_hyperlink_navigation {
-                    PathHyperlinkNavigation::Default => maybe_path.default_variants().collect_vec(),
-                    PathHyperlinkNavigation::Advanced => {
+                let variants = match (path_hyperlink_navigation, thread) {
+                    (PathHyperlinkNavigation::Default, Thread::Main) => maybe_path
+                        .simple_variants(PathHyperlinkNavigation::Default)
+                        .collect_vec(),
+                    (PathHyperlinkNavigation::Default, Thread::Background) => maybe_path
+                        .simple_variants(PathHyperlinkNavigation::Advanced)
+                        .collect_vec(),
+                    (PathHyperlinkNavigation::Advanced, _) => {
                         maybe_path.advanced_variants().collect_vec()
                     }
-                    PathHyperlinkNavigation::Exhaustive => {
+                    (PathHyperlinkNavigation::Exhaustive, _) => {
                         maybe_path.exhaustive_variants().collect_vec()
                     }
                     _ => {
@@ -575,10 +572,44 @@ mod tests {
             }
         };
 
-        test_maybe_path(PathHyperlinkNavigation::Default).await;
-        test_maybe_path(PathHyperlinkNavigation::Advanced).await;
-        if expected.contains_key(&PathHyperlinkNavigation::Exhaustive) {
-            test_maybe_path(PathHyperlinkNavigation::Exhaustive).await;
+        test_maybe_path(PathHyperlinkNavigation::Default, Thread::Main).await;
+        test_maybe_path(PathHyperlinkNavigation::Default, Thread::Background).await;
+        test_maybe_path(PathHyperlinkNavigation::Advanced, Thread::Background).await;
+        test_maybe_path(PathHyperlinkNavigation::Exhaustive, Thread::Background).await;
+    }
+
+    fn format_maybe_path_with_position(
+        maybe_path_with_position: &MaybePathWithPosition,
+        rel_or_abs: Option<&str>,
+    ) -> String {
+        let MaybePathWithPosition {
+            ref path, position, ..
+        } = maybe_path_with_position;
+
+        let path = if rel_or_abs.is_some() {
+            format!("{:?}", path.to_string_lossy(),)
+        } else {
+            format!("{}", path.to_string_lossy(),)
+        };
+        let position = format!(
+            "{}",
+            position
+                .map(|position| format!(
+                    ", {}, {}{}",
+                    position.suffix_length,
+                    position.row,
+                    position
+                        .column
+                        .map(|column| format!(", {column}"))
+                        .unwrap_or_default()
+                ))
+                .unwrap_or_default()
+        );
+
+        if let Some(rel_or_abs) = rel_or_abs {
+            format!("   [ {rel_or_abs}!({path}) ]{position};")
+        } else {
+            format!("{path}{position}")
         }
     }
 
@@ -609,17 +640,19 @@ mod tests {
 
         if actual.len() != expected.len() || !errors.is_empty() {
             println!("\nActual:");
-            actual
-                .iter()
-                .for_each(|MaybePathWithPosition { path, .. }| {
-                    println!("    [ {rel_or_abs}!(\"{}\") ];", path.to_string_lossy())
-                });
+            actual.iter().for_each(|actual| {
+                println!(
+                    "{}",
+                    format_maybe_path_with_position(actual, Some(rel_or_abs))
+                )
+            });
             println!("\nExpected:");
-            expected
-                .iter()
-                .for_each(|MaybePathWithPosition { path, .. }| {
-                    println!("    [ {rel_or_abs}!(\"{}\") ];", path.to_string_lossy())
-                });
+            expected.iter().for_each(|expected| {
+                println!(
+                    "{}",
+                    format_maybe_path_with_position(expected, Some(rel_or_abs))
+                )
+            });
             assert!(false);
         }
     }
@@ -632,23 +665,24 @@ mod tests {
     ) {
         //assert_eq!(variants().len(), 3);
 
-        println!(
-            "\nVariants: {:#?}",
-            variants
-                .iter()
-                .map(|maybe_path_variant| maybe_path_variant
-                    .relative_variations(None)
-                    .into_iter()
-                    .map(|maybe_path_with_position| format!(
-                        "{}{}",
-                        maybe_path_with_position.path.to_string_lossy(),
-                        maybe_path_with_position
-                            .position
-                            .map_or("".to_string(), |position| format!("{:?}", position))
-                    ))
-                    .collect_vec())
-                .collect_vec()
-        );
+        println!("\n\nVariants:");
+        for variant in &variants {
+            println!("[");
+            for (range, position) in variant.variations.iter().cloned() {
+                println!(
+                    "\t{}",
+                    format_maybe_path_with_position(
+                        &MaybePathWithPosition {
+                            path: Cow::Borrowed(Path::new(&variant.line[range.clone()])),
+                            position,
+                            range
+                        },
+                        None
+                    )
+                );
+            }
+            println!("],");
+        }
 
         println!("\nTesting Relative: strip_prefix = {worktree_root:?}");
 
@@ -741,20 +775,20 @@ mod tests {
     }
 
     macro_rules! maybe_path_with_positions {
-        ($variations:ident, [ $($path:expr),+ ], $row:literal, $column:literal; $($tail:tt)*) => {
+        ($variations:ident, [ $($path:expr),+ ], $suffix_length:literal, $row:literal, $column:literal; $($tail:tt)*) => {
             $variations.push(MaybePathWithPosition::new(
                 &(0..0),
                 Cow::Borrowed(Path::new(concat!($($path),+))),
-                Some(RowColumn{ row: $row, column: Some($column), suffix_length: 4 })
+                Some(RowColumn{ row: $row, column: Some($column), suffix_length: $suffix_length })
             ));
             maybe_path_with_positions!($variations, $($tail)*);
         };
 
-        ($variations:ident, [ $($path:expr),+ ], $row:literal; $($tail:tt)*) => {
+        ($variations:ident, [ $($path:expr),+ ], $suffix_length:literal, $row:literal; $($tail:tt)*) => {
             $variations.push(MaybePathWithPosition::new(
                 &(0..0),
                 Cow::Borrowed(Path::new(concat!($($path),+))),
-                Some(RowColumn{ row: $row, column: None, suffix_length: 2 })
+                Some(RowColumn{ row: $row, column: None, suffix_length: $suffix_length })
             ));
             maybe_path_with_positions!($variations, $($tail)*);
         };
@@ -792,26 +826,26 @@ mod tests {
         ($($tail:tt)*) => { maybe_path_with_positions![ $($tail)* ] }
     }
 
-    macro_rules! open_target {
-        ($path:literal, $row:literal, $column:literal) => {
+    macro_rules! expected_open_target {
+        ($path:literal, $suffix_length:literal, $row:literal, $column:literal) => {
             Some(MaybePathWithPosition::new(
                 &(0..0),
                 Cow::Borrowed(Path::new(path!($path))),
                 Some(RowColumn {
                     row: $row,
                     column: Some($column),
-                    suffix_length: 4,
+                    suffix_length: $suffix_length,
                 }),
             ))
         };
-        ($path:literal, $row:literal) => {
+        ($path:literal, $suffix_length:literal, $row:literal) => {
             Some(MaybePathWithPosition::new(
                 &(0..0),
                 Cow::Borrowed(Path::new(path!($path))),
                 Some(RowColumn {
                     row: $row,
                     column: None,
-                    suffix_length: 2,
+                    suffix_length: $suffix_length,
                 }),
             ))
         };
@@ -854,7 +888,283 @@ mod tests {
         };
     }
 
-    // <https://github.com/zed-industries/zed/issues/25086>
+    // <https://github.com/zed-industries/zed/issues/16004>
+    #[gpui::test]
+    async fn issue_16004(cx: &mut TestAppContext) {
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/w"),
+            json!({
+                "src": {
+                    "3rdparty": {
+                        "zed": {
+                            "bad_py.py": "",
+                            "bad py.py": ""
+                        },
+                    },
+                }
+            }),
+        )
+        .await;
+
+        let mut expected = ExpectedMap::from_iter([]);
+
+        expected.insert(
+            (PathHyperlinkNavigation::Default, Thread::Main),
+            Vec::from_iter([
+                expected!{
+                    relative![
+                        [ rel!("\"/w/src/3rdparty/zed/bad_py.py\",") ];
+                        [ rel!("\"/w/src/3rdparty/zed/bad_py.py\", line 8, in <module>") ];
+                        [ rel!("File \"/w/src/3rdparty/zed/bad_py.py\", line 8, in <module>") ];
+                    ],
+                    absolutized![
+                        [ abs!("/w/\"/w/src/3rdparty/zed/bad_py.py\",") ];
+                        [ abs!("/Some/cool/place/\"/w/src/3rdparty/zed/bad_py.py\",") ];
+                        [ abs!("/w/\"/w/src/3rdparty/zed/bad_py.py\", line 8, in <module>") ];
+                        [ abs!("/Some/cool/place/\"/w/src/3rdparty/zed/bad_py.py\", line 8, in <module>") ];
+                        [ abs!("/w/File \"/w/src/3rdparty/zed/bad_py.py\", line 8, in <module>") ];
+                        [ abs!("/Some/cool/place/File \"/w/src/3rdparty/zed/bad_py.py\", line 8, in <module>") ];
+                    ]
+                }
+            ].into_iter()),
+        );
+
+        expected.insert(
+            (PathHyperlinkNavigation::Default, Thread::Background),
+            Vec::from_iter([
+                expected!{
+                    relative![
+                        [ rel!("\"/w/src/3rdparty/zed/bad_py.py\",") ];
+                        [ rel!("\"/w/src/3rdparty/zed/bad_py.py\", line 8, in <module>") ];
+                        [ rel!("File \"/w/src/3rdparty/zed/bad_py.py\", line 8, in <module>") ];
+                    ],
+                    absolutized![
+                        [ abs!("/w/\"/w/src/3rdparty/zed/bad_py.py\",") ];
+                        [ abs!("/Some/cool/place/\"/w/src/3rdparty/zed/bad_py.py\",") ];
+                        [ abs!("/w/src/3rdparty/zed/bad_py.py") ], 8, 8;
+                        [ abs!("/w/\"/w/src/3rdparty/zed/bad_py.py\", line 8, in <module>") ];
+                        [ abs!("/Some/cool/place/\"/w/src/3rdparty/zed/bad_py.py\", line 8, in <module>") ];
+                        [ abs!("/w/src/3rdparty/zed/bad_py.py") ], 8, 8;
+                        [ abs!("/w/File \"/w/src/3rdparty/zed/bad_py.py\", line 8, in <module>") ];
+                        [ abs!("/Some/cool/place/File \"/w/src/3rdparty/zed/bad_py.py\", line 8, in <module>") ];
+                    ],
+                    expected_open_target!("/w/src/3rdparty/zed/bad_py.py", 8, 8)
+                }
+            ].into_iter()),
+        );
+
+        expected.insert(
+            (PathHyperlinkNavigation::Advanced, Thread::Background),
+            Vec::from_iter(
+                [expected! {
+                    relative![
+                    ],
+                    absolutized![
+                    ]
+                }]
+                .into_iter(),
+            ),
+        );
+
+        expected.insert(
+            (PathHyperlinkNavigation::Exhaustive, Thread::Background),
+            Vec::from_iter(
+                [expected! {
+                    relative![
+                        [ rel!("File \"/w/src/3rdparty/zed/bad_py.py\", line 8, in <module>") ];
+                        [ rel!("File \"/w/src/3rdparty/zed/bad_py.py\", line 8, in") ];
+                        [ rel!("File \"/w/src/3rdparty/zed/bad_py.py\", line 8,") ];
+                        [ rel!("File \"/w/src/3rdparty/zed/bad_py.py\", line") ];
+                        [ rel!("File \"/w/src/3rdparty/zed/bad_py.py\",") ];
+                        [ rel!("\"/w/src/3rdparty/zed/bad_py.py\", line 8, in <module>") ];
+                        [ rel!("\"/w/src/3rdparty/zed/bad_py.py\", line 8, in") ];
+                        [ rel!("\"/w/src/3rdparty/zed/bad_py.py\", line 8,") ];
+                        [ rel!("\"/w/src/3rdparty/zed/bad_py.py\", line") ];
+                        [ rel!("\"/w/src/3rdparty/zed/bad_py.py\",") ];
+                    ],
+                    absolutized![
+                        [ abs!("/w/src/3rdparty/zed/bad_py.py") ], 8, 8;
+                        [ abs!("/w/File \"/w/src/3rdparty/zed/bad_py.py\", line 8, in <module>") ];
+                        [ abs!("/Some/cool/place/File \"/w/src/3rdparty/zed/bad_py.py\", line 8, in <module>") ];
+                        [ abs!("/w/src/3rdparty/zed/bad_py.py") ], 8, 8;
+                        [ abs!("/w/File \"/w/src/3rdparty/zed/bad_py.py\", line 8, in") ];
+                        [ abs!("/Some/cool/place/File \"/w/src/3rdparty/zed/bad_py.py\", line 8, in") ];
+                        [ abs!("/w/src/3rdparty/zed/bad_py.py") ], 8, 8;
+                        [ abs!("/w/File \"/w/src/3rdparty/zed/bad_py.py\", line 8,") ];
+                        [ abs!("/Some/cool/place/File \"/w/src/3rdparty/zed/bad_py.py\", line 8,") ];
+                        [ abs!("/w/File \"/w/src/3rdparty/zed/bad_py.py\", line") ];
+                        [ abs!("/Some/cool/place/File \"/w/src/3rdparty/zed/bad_py.py\", line") ];
+                        [ abs!("/w/File \"/w/src/3rdparty/zed/bad_py.py\",") ];
+                        [ abs!("/Some/cool/place/File \"/w/src/3rdparty/zed/bad_py.py\",") ];
+                        [ abs!("/w/src/3rdparty/zed/bad_py.py") ], 8, 8;
+                        [ abs!("/w/\"/w/src/3rdparty/zed/bad_py.py\", line 8, in <module>") ];
+                        [ abs!("/Some/cool/place/\"/w/src/3rdparty/zed/bad_py.py\", line 8, in <module>") ];
+                        [ abs!("/w/src/3rdparty/zed/bad_py.py") ], 8, 8;
+                        [ abs!("/w/\"/w/src/3rdparty/zed/bad_py.py\", line 8, in") ];
+                        [ abs!("/Some/cool/place/\"/w/src/3rdparty/zed/bad_py.py\", line 8, in") ];
+                        [ abs!("/w/src/3rdparty/zed/bad_py.py") ], 8, 8;
+                        [ abs!("/w/\"/w/src/3rdparty/zed/bad_py.py\", line 8,") ];
+                        [ abs!("/Some/cool/place/\"/w/src/3rdparty/zed/bad_py.py\", line 8,") ];
+                        [ abs!("/w/\"/w/src/3rdparty/zed/bad_py.py\", line") ];
+                        [ abs!("/Some/cool/place/\"/w/src/3rdparty/zed/bad_py.py\", line") ];
+                        [ abs!("/w/\"/w/src/3rdparty/zed/bad_py.py\",") ];
+                        [ abs!("/Some/cool/place/\"/w/src/3rdparty/zed/bad_py.py\",") ];
+                    ],
+                    expected_open_target!("/w/src/3rdparty/zed/bad_py.py", 8, 8)
+                }]
+                .into_iter(),
+            ),
+        );
+
+        const PATH_LINE_COLUMN_REGEX_PYTHON: &str =
+            "\"(?<path>[^,]+)\"((?<suffix>(, line (?<line>[0-9]+))))?";
+
+        let path_regexes = Arc::new(Vec::from_iter([
+            Regex::new(PATH_LINE_COLUMN_REGEX_PYTHON).unwrap()
+        ]));
+
+        test_maybe_paths(
+            Arc::clone(&fs),
+            Arc::clone(&path_regexes),
+            &Path::new(abs!("/w")),
+            "  File \"/w/src/3rdparty/zed/bad_py.py\", line 8, in <module>",
+            Some(1),
+            &expected,
+        )
+        .await;
+
+        let mut expected = ExpectedMap::from_iter([]);
+
+        expected.insert(
+            (PathHyperlinkNavigation::Default, Thread::Main),
+            Vec::from_iter([
+                expected!{
+                    relative![
+                        [ rel!("\"/w/src/3rdparty/zed/bad") ];
+                        [ rel!("\"/w/src/3rdparty/zed/bad py.py\", line 8, in <module>") ];
+                        [ rel!("File \"/w/src/3rdparty/zed/bad py.py\", line 8, in <module>") ];
+                    ],
+                    absolutized![
+                        [ abs!("/w/\"/w/src/3rdparty/zed/bad") ];
+                        [ abs!("/Some/cool/place/\"/w/src/3rdparty/zed/bad") ];
+                        [ abs!("/w/src/3rdparty/zed/bad py.py") ];
+                        [ abs!("/w/\"/w/src/3rdparty/zed/bad py.py\", line 8, in <module>") ];
+                        [ abs!("/Some/cool/place/\"/w/src/3rdparty/zed/bad py.py\", line 8, in <module>") ];
+                        [ abs!("/w/File \"/w/src/3rdparty/zed/bad py.py\", line 8, in <module>") ];
+                        [ abs!("/Some/cool/place/File \"/w/src/3rdparty/zed/bad py.py\", line 8, in <module>") ];
+                    ],
+                    expected_open_target!("/w/src/3rdparty/zed/bad py.py")
+                }
+            ].into_iter()),
+        );
+
+        expected.insert(
+            (PathHyperlinkNavigation::Default, Thread::Background),
+            Vec::from_iter([
+                expected!{
+                    relative![
+                        [ rel!("\"/w/src/3rdparty/zed/bad") ];
+                        [ rel!("\"/w/src/3rdparty/zed/bad py.py\", line 8, in <module>") ];
+                        [ rel!("File \"/w/src/3rdparty/zed/bad py.py\", line 8, in <module>") ];
+                    ],
+                    absolutized![
+                        [ abs!("/w/\"/w/src/3rdparty/zed/bad") ];
+                        [ abs!("/Some/cool/place/\"/w/src/3rdparty/zed/bad") ];
+                        [ abs!("/w/src/3rdparty/zed/bad py.py") ], 8, 8;
+                        [ abs!("/w/src/3rdparty/zed/bad py.py") ];
+                        [ abs!("/w/src/3rdparty/zed/bad py.py") ], 8, 8;
+                        [ abs!("/w/\"/w/src/3rdparty/zed/bad py.py\", line 8, in <module>") ];
+                        [ abs!("/Some/cool/place/\"/w/src/3rdparty/zed/bad py.py\", line 8, in <module>") ];
+                        [ abs!("/w/src/3rdparty/zed/bad py.py") ], 8, 8;
+                        [ abs!("/w/File \"/w/src/3rdparty/zed/bad py.py\", line 8, in <module>") ];
+                        [ abs!("/Some/cool/place/File \"/w/src/3rdparty/zed/bad py.py\", line 8, in <module>") ];
+                    ],
+                    expected_open_target!("/w/src/3rdparty/zed/bad py.py", 8, 8)
+                }
+            ].into_iter()),
+        );
+
+        expected.insert(
+            (PathHyperlinkNavigation::Advanced, Thread::Background),
+            Vec::from_iter(
+                [expected! {
+                    relative![
+                    ],
+                    absolutized![
+                    ]
+                }]
+                .into_iter(),
+            ),
+        );
+
+        expected.insert(
+            (PathHyperlinkNavigation::Exhaustive, Thread::Background),
+            Vec::from_iter(
+                [expected! {
+                    relative![
+                        [ rel!("File \"/w/src/3rdparty/zed/bad py.py\", line 8, in <module>") ];
+                        [ rel!("File \"/w/src/3rdparty/zed/bad py.py\", line 8, in") ];
+                        [ rel!("File \"/w/src/3rdparty/zed/bad py.py\", line 8,") ];
+                        [ rel!("File \"/w/src/3rdparty/zed/bad py.py\", line") ];
+                        [ rel!("File \"/w/src/3rdparty/zed/bad py.py\",") ];
+                        [ rel!("File \"/w/src/3rdparty/zed/bad") ];
+                        [ rel!("\"/w/src/3rdparty/zed/bad py.py\", line 8, in <module>") ];
+                        [ rel!("\"/w/src/3rdparty/zed/bad py.py\", line 8, in") ];
+                        [ rel!("\"/w/src/3rdparty/zed/bad py.py\", line 8,") ];
+                        [ rel!("\"/w/src/3rdparty/zed/bad py.py\", line") ];
+                        [ rel!("\"/w/src/3rdparty/zed/bad py.py\",") ];
+                        [ rel!("\"/w/src/3rdparty/zed/bad") ];
+                    ],
+                    absolutized![
+                        [ abs!("/w/src/3rdparty/zed/bad py.py") ], 8, 8;
+                        [ abs!("/w/File \"/w/src/3rdparty/zed/bad py.py\", line 8, in <module>") ];
+                        [ abs!("/Some/cool/place/File \"/w/src/3rdparty/zed/bad py.py\", line 8, in <module>") ];
+                        [ abs!("/w/src/3rdparty/zed/bad py.py") ], 8, 8;
+                        [ abs!("/w/File \"/w/src/3rdparty/zed/bad py.py\", line 8, in") ];
+                        [ abs!("/Some/cool/place/File \"/w/src/3rdparty/zed/bad py.py\", line 8, in") ];
+                        [ abs!("/w/src/3rdparty/zed/bad py.py") ], 8, 8;
+                        [ abs!("/w/File \"/w/src/3rdparty/zed/bad py.py\", line 8,") ];
+                        [ abs!("/Some/cool/place/File \"/w/src/3rdparty/zed/bad py.py\", line 8,") ];
+                        [ abs!("/w/File \"/w/src/3rdparty/zed/bad py.py\", line") ];
+                        [ abs!("/Some/cool/place/File \"/w/src/3rdparty/zed/bad py.py\", line") ];
+                        [ abs!("/w/File \"/w/src/3rdparty/zed/bad py.py\",") ];
+                        [ abs!("/Some/cool/place/File \"/w/src/3rdparty/zed/bad py.py\",") ];
+                        [ abs!("/w/File \"/w/src/3rdparty/zed/bad") ];
+                        [ abs!("/Some/cool/place/File \"/w/src/3rdparty/zed/bad") ];
+                        [ abs!("/w/src/3rdparty/zed/bad py.py") ], 8, 8;
+                        [ abs!("/w/\"/w/src/3rdparty/zed/bad py.py\", line 8, in <module>") ];
+                        [ abs!("/Some/cool/place/\"/w/src/3rdparty/zed/bad py.py\", line 8, in <module>") ];
+                        [ abs!("/w/src/3rdparty/zed/bad py.py") ], 8, 8;
+                        [ abs!("/w/\"/w/src/3rdparty/zed/bad py.py\", line 8, in") ];
+                        [ abs!("/Some/cool/place/\"/w/src/3rdparty/zed/bad py.py\", line 8, in") ];
+                        [ abs!("/w/src/3rdparty/zed/bad py.py") ], 8, 8;
+                        [ abs!("/w/\"/w/src/3rdparty/zed/bad py.py\", line 8,") ];
+                        [ abs!("/Some/cool/place/\"/w/src/3rdparty/zed/bad py.py\", line 8,") ];
+                        [ abs!("/w/\"/w/src/3rdparty/zed/bad py.py\", line") ];
+                        [ abs!("/Some/cool/place/\"/w/src/3rdparty/zed/bad py.py\", line") ];
+                        [ abs!("/w/\"/w/src/3rdparty/zed/bad py.py\",") ];
+                        [ abs!("/Some/cool/place/\"/w/src/3rdparty/zed/bad py.py\",") ];
+                        [ abs!("/w/\"/w/src/3rdparty/zed/bad") ];
+                        [ abs!("/Some/cool/place/\"/w/src/3rdparty/zed/bad") ];
+                    ],
+                    expected_open_target!("/w/src/3rdparty/zed/bad py.py", 8, 8)
+                }]
+                .into_iter(),
+            ),
+        );
+
+        test_maybe_paths(
+            Arc::clone(&fs),
+            Arc::clone(&path_regexes),
+            &Path::new(abs!("/w")),
+            "  File \"/w/src/3rdparty/zed/bad py.py\", line 8, in <module>",
+            Some(1),
+            &expected,
+        )
+        .await;
+    }
+
     #[gpui::test]
     async fn issue_25086(cx: &mut TestAppContext) {
         let fs = FakeFs::new(cx.executor());
@@ -882,35 +1192,38 @@ mod tests {
         let mut expected = ExpectedMap::from_iter([]);
 
         expected.insert(
-            PathHyperlinkNavigation::Default,
+            (PathHyperlinkNavigation::Default, Thread::Main),
             Vec::from_iter([
                 expected!{
                     relative![
+                        [ rel!("./app/services/opensearch/contacts/create_service.rb") ], 2, 9;
                         [ rel!("./app/services/opensearch/contacts/create_service.rb:9:in") ];
-                        [ rel!("./app/services/opensearch/contacts/create_service.rb") ], 9;
-                        [ rel!("./app/services/opensearch/contacts/create_service.rb:9") ];
+                        [ rel!("./app/services/opensearch/contacts/create_service.rb") ], 2, 9;
                         [ rel!("./app/services/opensearch/contacts/create_service.rb:9:in 'Opensearch::Contacts::CreateService#validate_field_keys'") ];
+                        [ rel!("# ./app/services/opensearch/contacts/create_service.rb") ], 2, 9;
                         [ rel!("# ./app/services/opensearch/contacts/create_service.rb:9:in 'Opensearch::Contacts::CreateService#validate_field_keys'") ];
                     ],
                     absolutized![
+                        [ abs!("/root/./app/services/opensearch/contacts/create_service.rb") ], 2, 9;
+                        [ abs!("/Some/cool/place/./app/services/opensearch/contacts/create_service.rb") ], 2, 9;
                         [ abs!("/root/./app/services/opensearch/contacts/create_service.rb:9:in") ];
                         [ abs!("/Some/cool/place/./app/services/opensearch/contacts/create_service.rb:9:in") ];
-                        [ abs!("/root/./app/services/opensearch/contacts/create_service.rb") ], 9;
-                        [ abs!("/Some/cool/place/./app/services/opensearch/contacts/create_service.rb") ], 9;
-                        [ abs!("/root/./app/services/opensearch/contacts/create_service.rb:9") ];
-                        [ abs!("/Some/cool/place/./app/services/opensearch/contacts/create_service.rb:9") ];
+                        [ abs!("/root/./app/services/opensearch/contacts/create_service.rb") ], 2, 9;
+                        [ abs!("/Some/cool/place/./app/services/opensearch/contacts/create_service.rb") ], 2, 9;
                         [ abs!("/root/./app/services/opensearch/contacts/create_service.rb:9:in 'Opensearch::Contacts::CreateService#validate_field_keys'") ];
                         [ abs!("/Some/cool/place/./app/services/opensearch/contacts/create_service.rb:9:in 'Opensearch::Contacts::CreateService#validate_field_keys'") ];
+                        [ abs!("/root/# ./app/services/opensearch/contacts/create_service.rb") ], 2, 9;
+                        [ abs!("/Some/cool/place/# ./app/services/opensearch/contacts/create_service.rb") ], 2, 9;
                         [ abs!("/root/# ./app/services/opensearch/contacts/create_service.rb:9:in 'Opensearch::Contacts::CreateService#validate_field_keys'") ];
                         [ abs!("/Some/cool/place/# ./app/services/opensearch/contacts/create_service.rb:9:in 'Opensearch::Contacts::CreateService#validate_field_keys'") ];
                     ],
-                    open_target!("/root/./app/services/opensearch/contacts/create_service.rb", 9)
+                    expected_open_target!("/root/./app/services/opensearch/contacts/create_service.rb", 2, 9)
                 }
             ].into_iter()),
         );
 
         expected.insert(
-            PathHyperlinkNavigation::Advanced,
+            (PathHyperlinkNavigation::Advanced, Thread::Background),
             Vec::from_iter(
                 [expected! {
                     relative![
@@ -923,49 +1236,38 @@ mod tests {
         );
 
         expected.insert(
-            PathHyperlinkNavigation::Exhaustive,
+            (PathHyperlinkNavigation::Exhaustive, Thread::Background),
             Vec::from_iter(
                 [expected! {
                     relative![
+                        [ rel!("# ./app/services/opensearch/contacts/create_service.rb") ], 2, 9;
                         [ rel!("# ./app/services/opensearch/contacts/create_service.rb:9:in 'Opensearch::Contacts::CreateService#validate_field_keys'") ];
-                        [ rel!("# ./app/services/opensearch/contacts/create_service.rb") ], 9;
-                        [ rel!("# ./app/services/opensearch/contacts/create_service.rb:9") ];
+                        [ rel!("# ./app/services/opensearch/contacts/create_service.rb") ], 2, 9;
                         [ rel!("# ./app/services/opensearch/contacts/create_service.rb:9:in") ];
-                        [ rel!("# ./app/services/opensearch/contacts/create_service.rb") ], 9;
-                        [ rel!("# ./app/services/opensearch/contacts/create_service.rb:9") ];
+                        [ rel!("./app/services/opensearch/contacts/create_service.rb") ], 2, 9;
                         [ rel!("./app/services/opensearch/contacts/create_service.rb:9:in 'Opensearch::Contacts::CreateService#validate_field_keys'") ];
-                        [ rel!("./app/services/opensearch/contacts/create_service.rb") ], 9;
-                        [ rel!("./app/services/opensearch/contacts/create_service.rb:9") ];
+                        [ rel!("./app/services/opensearch/contacts/create_service.rb") ], 2, 9;
                         [ rel!("./app/services/opensearch/contacts/create_service.rb:9:in") ];
-                        [ rel!("./app/services/opensearch/contacts/create_service.rb") ], 9;
-                        [ rel!("./app/services/opensearch/contacts/create_service.rb:9") ];
                     ],
                     absolutized![
+                        [ abs!("/root/# ./app/services/opensearch/contacts/create_service.rb") ], 2, 9;
+                        [ abs!("/Some/cool/place/# ./app/services/opensearch/contacts/create_service.rb") ], 2, 9;
                         [ abs!("/root/# ./app/services/opensearch/contacts/create_service.rb:9:in 'Opensearch::Contacts::CreateService#validate_field_keys'") ];
                         [ abs!("/Some/cool/place/# ./app/services/opensearch/contacts/create_service.rb:9:in 'Opensearch::Contacts::CreateService#validate_field_keys'") ];
-                        [ abs!("/root/# ./app/services/opensearch/contacts/create_service.rb") ], 9;
-                        [ abs!("/Some/cool/place/# ./app/services/opensearch/contacts/create_service.rb") ], 9;
-                        [ abs!("/root/# ./app/services/opensearch/contacts/create_service.rb:9") ];
-                        [ abs!("/Some/cool/place/# ./app/services/opensearch/contacts/create_service.rb:9") ];
+                        [ abs!("/root/# ./app/services/opensearch/contacts/create_service.rb") ], 2, 9;
+                        [ abs!("/Some/cool/place/# ./app/services/opensearch/contacts/create_service.rb") ], 2, 9;
                         [ abs!("/root/# ./app/services/opensearch/contacts/create_service.rb:9:in") ];
                         [ abs!("/Some/cool/place/# ./app/services/opensearch/contacts/create_service.rb:9:in") ];
-                        [ abs!("/root/# ./app/services/opensearch/contacts/create_service.rb") ], 9;
-                        [ abs!("/Some/cool/place/# ./app/services/opensearch/contacts/create_service.rb") ], 9;
-                        [ abs!("/root/# ./app/services/opensearch/contacts/create_service.rb:9") ];
-                        [ abs!("/Some/cool/place/# ./app/services/opensearch/contacts/create_service.rb:9") ];
+                        [ abs!("/root/./app/services/opensearch/contacts/create_service.rb") ], 2, 9;
+                        [ abs!("/Some/cool/place/./app/services/opensearch/contacts/create_service.rb") ], 2, 9;
                         [ abs!("/root/./app/services/opensearch/contacts/create_service.rb:9:in 'Opensearch::Contacts::CreateService#validate_field_keys'") ];
                         [ abs!("/Some/cool/place/./app/services/opensearch/contacts/create_service.rb:9:in 'Opensearch::Contacts::CreateService#validate_field_keys'") ];
-                        [ abs!("/root/./app/services/opensearch/contacts/create_service.rb") ], 9;
-                        [ abs!("/Some/cool/place/./app/services/opensearch/contacts/create_service.rb") ], 9;
-                        [ abs!("/root/./app/services/opensearch/contacts/create_service.rb:9") ];
-                        [ abs!("/Some/cool/place/./app/services/opensearch/contacts/create_service.rb:9") ];
+                        [ abs!("/root/./app/services/opensearch/contacts/create_service.rb") ], 2, 9;
+                        [ abs!("/Some/cool/place/./app/services/opensearch/contacts/create_service.rb") ], 2, 9;
                         [ abs!("/root/./app/services/opensearch/contacts/create_service.rb:9:in") ];
                         [ abs!("/Some/cool/place/./app/services/opensearch/contacts/create_service.rb:9:in") ];
-                        [ abs!("/root/./app/services/opensearch/contacts/create_service.rb") ], 9;
-                        [ abs!("/Some/cool/place/./app/services/opensearch/contacts/create_service.rb") ], 9;
-                        [ abs!("/root/./app/services/opensearch/contacts/create_service.rb:9") ];
-                        [ abs!("/Some/cool/place/./app/services/opensearch/contacts/create_service.rb:9") ];                    ],
-                    open_target!("/root/./app/services/opensearch/contacts/create_service.rb", 9)
+                    ],
+                    expected_open_target!("/root/./app/services/opensearch/contacts/create_service.rb", 2, 9)
                 }]
                 .into_iter(),
             ),
@@ -984,34 +1286,45 @@ mod tests {
         let mut expected = ExpectedMap::from_iter([]);
 
         expected.insert(
-            PathHyperlinkNavigation::Default,
+            (PathHyperlinkNavigation::Default, Thread::Main),
             Vec::from_iter([
                 expected!{
                     relative![
                         [ rel!("search/contacts/create") ];
+                        [ rel!("./app/services/open search/contacts/create service.rb") ], 2, 9;
                         [ rel!("./app/services/open search/contacts/create service.rb:9:in 'Opensearch::Contacts::CreateService#validate_field_keys'") ];
+                        [ rel!("# ./app/services/open search/contacts/create service.rb") ], 2, 9;
                         [ rel!("# ./app/services/open search/contacts/create service.rb:9:in 'Opensearch::Contacts::CreateService#validate_field_keys'") ];
                     ],
                     absolutized![
                         [ abs!("/root/search/contacts/create") ];
                         [ abs!("/Some/cool/place/search/contacts/create") ];
+                        [ abs!("/root/./app/services/open search/contacts/create service.rb") ], 2, 9;
+                        [ abs!("/Some/cool/place/./app/services/open search/contacts/create service.rb") ], 2, 9;
                         [ abs!("/root/./app/services/open search/contacts/create service.rb:9:in 'Opensearch::Contacts::CreateService#validate_field_keys'") ];
                         [ abs!("/Some/cool/place/./app/services/open search/contacts/create service.rb:9:in 'Opensearch::Contacts::CreateService#validate_field_keys'") ];
+                        [ abs!("/root/# ./app/services/open search/contacts/create service.rb") ], 2, 9;
+                        [ abs!("/Some/cool/place/# ./app/services/open search/contacts/create service.rb") ], 2, 9;
                         [ abs!("/root/# ./app/services/open search/contacts/create service.rb:9:in 'Opensearch::Contacts::CreateService#validate_field_keys'") ];
                         [ abs!("/Some/cool/place/# ./app/services/open search/contacts/create service.rb:9:in 'Opensearch::Contacts::CreateService#validate_field_keys'") ];
-                    ]
+                    ],
+                    expected_open_target!("/root/./app/services/open search/contacts/create service.rb", 2, 9)
+
                 }
             ].into_iter()),
         );
 
         expected.insert(
-            PathHyperlinkNavigation::Advanced,
+            (PathHyperlinkNavigation::Advanced, Thread::Background),
             Vec::from_iter(
                 [expected! {
                     relative![
+                        [ rel!("search/contacts/create service.rb") ], 2, 9;
                         [ rel!("search/contacts/create service.rb:9:in 'Opensearch::Contacts::CreateService#validate_field_keys'") ];
                     ],
                     absolutized![
+                        [ abs!("/root/search/contacts/create service.rb") ], 2, 9;
+                        [ abs!("/Some/cool/place/search/contacts/create service.rb") ], 2, 9;
                         [ abs!("/root/search/contacts/create service.rb:9:in 'Opensearch::Contacts::CreateService#validate_field_keys'") ];
                         [ abs!("/Some/cool/place/search/contacts/create service.rb:9:in 'Opensearch::Contacts::CreateService#validate_field_keys'") ];
                     ]
@@ -1021,76 +1334,59 @@ mod tests {
         );
 
         expected.insert(
-            PathHyperlinkNavigation::Exhaustive,
+            (PathHyperlinkNavigation::Exhaustive, Thread::Background),
             Vec::from_iter(
                 [expected! {
                     relative![
+                        [ rel!("# ./app/services/open search/contacts/create service.rb") ], 2, 9;
                         [ rel!("# ./app/services/open search/contacts/create service.rb:9:in 'Opensearch::Contacts::CreateService#validate_field_keys'") ];
-                        [ rel!("# ./app/services/open search/contacts/create service.rb") ], 9;
-                        [ rel!("# ./app/services/open search/contacts/create service.rb:9") ];
+                        [ rel!("# ./app/services/open search/contacts/create service.rb") ], 2, 9;
                         [ rel!("# ./app/services/open search/contacts/create service.rb:9:in") ];
-                        [ rel!("# ./app/services/open search/contacts/create service.rb") ], 9;
-                        [ rel!("# ./app/services/open search/contacts/create service.rb:9") ];
                         [ rel!("# ./app/services/open search/contacts/create") ];
+                        [ rel!("./app/services/open search/contacts/create service.rb") ], 2, 9;
                         [ rel!("./app/services/open search/contacts/create service.rb:9:in 'Opensearch::Contacts::CreateService#validate_field_keys'") ];
-                        [ rel!("./app/services/open search/contacts/create service.rb") ], 9;
-                        [ rel!("./app/services/open search/contacts/create service.rb:9") ];
+                        [ rel!("./app/services/open search/contacts/create service.rb") ], 2, 9;
                         [ rel!("./app/services/open search/contacts/create service.rb:9:in") ];
-                        [ rel!("./app/services/open search/contacts/create service.rb") ], 9;
-                        [ rel!("./app/services/open search/contacts/create service.rb:9") ];
                         [ rel!("./app/services/open search/contacts/create") ];
+                        [ rel!("search/contacts/create service.rb") ], 2, 9;
                         [ rel!("search/contacts/create service.rb:9:in 'Opensearch::Contacts::CreateService#validate_field_keys'") ];
-                        [ rel!("search/contacts/create service.rb") ], 9;
-                        [ rel!("search/contacts/create service.rb:9") ];
+                        [ rel!("search/contacts/create service.rb") ], 2, 9;
                         [ rel!("search/contacts/create service.rb:9:in") ];
-                        [ rel!("search/contacts/create service.rb") ], 9;
-                        [ rel!("search/contacts/create service.rb:9") ];
                         [ rel!("search/contacts/create") ];
                     ],
                     absolutized![
+                        [ abs!("/root/# ./app/services/open search/contacts/create service.rb") ], 2, 9;
+                        [ abs!("/Some/cool/place/# ./app/services/open search/contacts/create service.rb") ], 2, 9;
                         [ abs!("/root/# ./app/services/open search/contacts/create service.rb:9:in 'Opensearch::Contacts::CreateService#validate_field_keys'") ];
                         [ abs!("/Some/cool/place/# ./app/services/open search/contacts/create service.rb:9:in 'Opensearch::Contacts::CreateService#validate_field_keys'") ];
-                        [ abs!("/root/# ./app/services/open search/contacts/create service.rb") ], 9;
-                        [ abs!("/Some/cool/place/# ./app/services/open search/contacts/create service.rb") ], 9;
-                        [ abs!("/root/# ./app/services/open search/contacts/create service.rb:9") ];
-                        [ abs!("/Some/cool/place/# ./app/services/open search/contacts/create service.rb:9") ];
+                        [ abs!("/root/# ./app/services/open search/contacts/create service.rb") ], 2, 9;
+                        [ abs!("/Some/cool/place/# ./app/services/open search/contacts/create service.rb") ], 2, 9;
                         [ abs!("/root/# ./app/services/open search/contacts/create service.rb:9:in") ];
                         [ abs!("/Some/cool/place/# ./app/services/open search/contacts/create service.rb:9:in") ];
-                        [ abs!("/root/# ./app/services/open search/contacts/create service.rb") ], 9;
-                        [ abs!("/Some/cool/place/# ./app/services/open search/contacts/create service.rb") ], 9;
-                        [ abs!("/root/# ./app/services/open search/contacts/create service.rb:9") ];
-                        [ abs!("/Some/cool/place/# ./app/services/open search/contacts/create service.rb:9") ];
                         [ abs!("/root/# ./app/services/open search/contacts/create") ];
                         [ abs!("/Some/cool/place/# ./app/services/open search/contacts/create") ];
+                        [ abs!("/root/./app/services/open search/contacts/create service.rb") ], 2, 9;
+                        [ abs!("/Some/cool/place/./app/services/open search/contacts/create service.rb") ], 2, 9;
                         [ abs!("/root/./app/services/open search/contacts/create service.rb:9:in 'Opensearch::Contacts::CreateService#validate_field_keys'") ];
                         [ abs!("/Some/cool/place/./app/services/open search/contacts/create service.rb:9:in 'Opensearch::Contacts::CreateService#validate_field_keys'") ];
-                        [ abs!("/root/./app/services/open search/contacts/create service.rb") ], 9;
-                        [ abs!("/Some/cool/place/./app/services/open search/contacts/create service.rb") ], 9;
-                        [ abs!("/root/./app/services/open search/contacts/create service.rb:9") ];
-                        [ abs!("/Some/cool/place/./app/services/open search/contacts/create service.rb:9") ];
+                        [ abs!("/root/./app/services/open search/contacts/create service.rb") ], 2, 9;
+                        [ abs!("/Some/cool/place/./app/services/open search/contacts/create service.rb") ], 2, 9;
                         [ abs!("/root/./app/services/open search/contacts/create service.rb:9:in") ];
                         [ abs!("/Some/cool/place/./app/services/open search/contacts/create service.rb:9:in") ];
-                        [ abs!("/root/./app/services/open search/contacts/create service.rb") ], 9;
-                        [ abs!("/Some/cool/place/./app/services/open search/contacts/create service.rb") ], 9;
-                        [ abs!("/root/./app/services/open search/contacts/create service.rb:9") ];
-                        [ abs!("/Some/cool/place/./app/services/open search/contacts/create service.rb:9") ];
                         [ abs!("/root/./app/services/open search/contacts/create") ];
                         [ abs!("/Some/cool/place/./app/services/open search/contacts/create") ];
+                        [ abs!("/root/search/contacts/create service.rb") ], 2, 9;
+                        [ abs!("/Some/cool/place/search/contacts/create service.rb") ], 2, 9;
                         [ abs!("/root/search/contacts/create service.rb:9:in 'Opensearch::Contacts::CreateService#validate_field_keys'") ];
                         [ abs!("/Some/cool/place/search/contacts/create service.rb:9:in 'Opensearch::Contacts::CreateService#validate_field_keys'") ];
-                        [ abs!("/root/search/contacts/create service.rb") ], 9;
-                        [ abs!("/Some/cool/place/search/contacts/create service.rb") ], 9;
-                        [ abs!("/root/search/contacts/create service.rb:9") ];
-                        [ abs!("/Some/cool/place/search/contacts/create service.rb:9") ];
+                        [ abs!("/root/search/contacts/create service.rb") ], 2, 9;
+                        [ abs!("/Some/cool/place/search/contacts/create service.rb") ], 2, 9;
                         [ abs!("/root/search/contacts/create service.rb:9:in") ];
                         [ abs!("/Some/cool/place/search/contacts/create service.rb:9:in") ];
-                        [ abs!("/root/search/contacts/create service.rb") ], 9;
-                        [ abs!("/Some/cool/place/search/contacts/create service.rb") ], 9;
-                        [ abs!("/root/search/contacts/create service.rb:9") ];
-                        [ abs!("/Some/cool/place/search/contacts/create service.rb:9") ];
                         [ abs!("/root/search/contacts/create") ];
-                        [ abs!("/Some/cool/place/search/contacts/create") ];                    ],
-                    open_target!("/root/./app/services/open search/contacts/create service.rb", 9)
+                        [ abs!("/Some/cool/place/search/contacts/create") ];
+                    ],
+                    expected_open_target!("/root/./app/services/open search/contacts/create service.rb", 2, 9)
 
                 }]
                 .into_iter(),
@@ -1125,7 +1421,7 @@ mod tests {
         let mut expected = ExpectedMap::from_iter([]);
 
         expected.insert(
-            PathHyperlinkNavigation::Default,
+            (PathHyperlinkNavigation::Default, Thread::Main),
             Vec::from_iter([
                 expected!{
                     relative![
@@ -1149,7 +1445,7 @@ mod tests {
         );
 
         expected.insert(
-            PathHyperlinkNavigation::Advanced,
+            (PathHyperlinkNavigation::Advanced, Thread::Background),
             Vec::from_iter(
                 [expected! {
                     relative![
@@ -1171,14 +1467,14 @@ mod tests {
                         [ abs!("/root/'test file 1.txt'") ];
                         [ abs!("/Some/cool/place/'test file 1.txt'") ];
                     ],
-                    open_target!("/root/'test file 1.txt'")
+                    expected_open_target!("/root/'test file 1.txt'")
                 }]
                 .into_iter(),
             ),
         );
 
         expected.insert(
-            PathHyperlinkNavigation::Exhaustive,
+            (PathHyperlinkNavigation::Exhaustive, Thread::Background),
             Vec::from_iter(
                 [expected! {
                     relative![
@@ -1242,7 +1538,7 @@ mod tests {
                         [ abs!("/root/'test") ];
                         [ abs!("/Some/cool/place/'test") ];
                     ],
-                    open_target!("/root/'test file 1.txt'")
+                    expected_open_target!("/root/'test file 1.txt'")
                 }]
                 .into_iter(),
             ),
@@ -1261,7 +1557,7 @@ mod tests {
         let mut expected = ExpectedMap::from_iter([]);
 
         expected.insert(
-            PathHyperlinkNavigation::Default,
+            (PathHyperlinkNavigation::Default, Thread::Main),
             Vec::from_iter([
                 expected!{
                     relative![
@@ -1277,13 +1573,13 @@ mod tests {
                         [ abs!("/root/.rw-r--r--     0     staff 05-27 14:03 test、2.txt") ];
                         [ abs!("/Some/cool/place/.rw-r--r--     0     staff 05-27 14:03 test、2.txt") ];
                     ],
-                    open_target!("/root/test、2.txt")
+                    expected_open_target!("/root/test、2.txt")
                 }
             ].into_iter()),
         );
 
         expected.insert(
-            PathHyperlinkNavigation::Advanced,
+            (PathHyperlinkNavigation::Advanced, Thread::Background),
             Vec::from_iter(
                 [expected! {
                     relative![
@@ -1302,14 +1598,14 @@ mod tests {
                         [ abs!("/root/test、2.txt") ];
                         [ abs!("/Some/cool/place/test、2.txt") ];
                     ],
-                    open_target!("/root/test、2.txt")
+                    expected_open_target!("/root/test、2.txt")
                 }]
                 .into_iter(),
             ),
         );
 
         expected.insert(
-            PathHyperlinkNavigation::Exhaustive,
+            (PathHyperlinkNavigation::Exhaustive, Thread::Background),
             Vec::from_iter(
                 [expected! {
                     relative![
@@ -1334,7 +1630,7 @@ mod tests {
                         [ abs!("/root/test、2.txt") ];
                         [ abs!("/Some/cool/place/test、2.txt") ];
                     ],
-                    open_target!("/root/test、2.txt")
+                    expected_open_target!("/root/test、2.txt")
                 }]
                 .into_iter(),
             ),
@@ -1354,7 +1650,7 @@ mod tests {
         let mut expected = ExpectedMap::from_iter([]);
 
         expected.insert(
-            PathHyperlinkNavigation::Default,
+            (PathHyperlinkNavigation::Default, Thread::Main),
             Vec::from_iter([
                 expected!{
                     relative![
@@ -1370,13 +1666,13 @@ mod tests {
                         [ abs!("/root/.rw-r--r--     0     staff 05-27 14:03 test。3.txt") ];
                         [ abs!("/Some/cool/place/.rw-r--r--     0     staff 05-27 14:03 test。3.txt") ];
                     ],
-                    open_target!("/root/test。3.txt")
+                    expected_open_target!("/root/test。3.txt")
                 }
             ].into_iter()),
         );
 
         expected.insert(
-            PathHyperlinkNavigation::Advanced,
+            (PathHyperlinkNavigation::Advanced, Thread::Background),
             Vec::from_iter(
                 [expected! {
                     relative![
@@ -1395,14 +1691,14 @@ mod tests {
                         [ abs!("/root/test。3.txt") ];
                         [ abs!("/Some/cool/place/test。3.txt") ];
                     ],
-                    open_target!("/root/test。3.txt")
+                    expected_open_target!("/root/test。3.txt")
                 }]
                 .into_iter(),
             ),
         );
 
         expected.insert(
-            PathHyperlinkNavigation::Exhaustive,
+            (PathHyperlinkNavigation::Exhaustive, Thread::Background),
             Vec::from_iter(
                 [expected! {
                     relative![
@@ -1427,7 +1723,7 @@ mod tests {
                         [ abs!("/root/test。3.txt") ];
                         [ abs!("/Some/cool/place/test。3.txt") ];
                     ],
-                    open_target!("/root/test。3.txt")
+                    expected_open_target!("/root/test。3.txt")
                 }]
                 .into_iter(),
             ),
@@ -1466,7 +1762,7 @@ mod tests {
         let mut expected = ExpectedMap::from_iter([]);
 
         expected.insert(
-            PathHyperlinkNavigation::Default,
+            (PathHyperlinkNavigation::Default, Thread::Main),
             Vec::from_iter([
                 expected!{
                     relative![
@@ -1522,7 +1818,7 @@ mod tests {
                 },
                 expected!{
                     relative![
-                        [ rel!("b/path") ], 4, 2;
+                        [ rel!("b/path") ], 4, 4, 2;
                         [ rel!("b/path:4:2") ];
                         [ rel!("path:4:2") ];
                         [ rel!("a/~/협동조합   ~/super/cool b/path:4:2 ("), abs!("/root 2/שיתופית.rs"), ")" ];
@@ -1530,8 +1826,8 @@ mod tests {
                         [ rel!("+++ a/~/협동조합   ~/super/cool b/path:4:2 ("), abs!("/root 2/שיתופית.rs"), ")" ];
                         ],
                     absolutized![
-                        [ abs!("/root 2/b/path") ], 4, 2;
-                        [ abs!("/Some/cool/place/b/path") ], 4, 2;
+                        [ abs!("/root 2/b/path") ], 4, 4, 2;
+                        [ abs!("/Some/cool/place/b/path") ], 4, 4, 2;
                         [ abs!("/root 2/b/path:4:2") ];
                         [ abs!("/Some/cool/place/b/path:4:2") ];
                         [ abs!("/root 2/path:4:2") ];
@@ -1562,7 +1858,7 @@ mod tests {
                         [ abs!("/root 2/+++ a/~/협동조합   ~/super/cool b/path:4:2 ("), abs!("/root 2/שיתופית.rs"), ")" ];
                         [ abs!("/Some/cool/place/+++ a/~/협동조합   ~/super/cool b/path:4:2 ("), abs!("/root 2/שיתופית.rs"), ")" ];
                     ],
-                    open_target!("/root 2/שיתופית.rs")
+                    expected_open_target!("/root 2/שיתופית.rs")
                 },
                 expected!{
                     relative![
@@ -1582,13 +1878,13 @@ mod tests {
                         [ abs!("/root 2/+++ a/~/협동조합   ~/super/cool b/path:4:2 ("), abs!("/root 2/שיתופית.rs"), ")" ];
                         [ abs!("/Some/cool/place/+++ a/~/협동조합   ~/super/cool b/path:4:2 ("), abs!("/root 2/שיתופית.rs"), ")" ];
                     ],
-                    open_target!("/root 2/שיתופית.rs")
+                    expected_open_target!("/root 2/שיתופית.rs")
                 }
             ].into_iter()),
         );
 
         expected.insert(
-            PathHyperlinkNavigation::Advanced,
+            (PathHyperlinkNavigation::Advanced, Thread::Background),
             Vec::from_iter(
                 [
                     expected! {
@@ -1648,7 +1944,7 @@ mod tests {
                             [ abs!("/root 2/("), abs!("/root 2/שיתופית.rs"), ")" ];
                             [ abs!("/Some/cool/place/("), abs!("/root 2/שיתופית.rs"), ")" ];
                         ],
-                        open_target!("/root 2/שיתופית.rs")
+                        expected_open_target!("/root 2/שיתופית.rs")
                     },
                     expected! {
                         relative![
@@ -1672,7 +1968,7 @@ mod tests {
                             [ abs!("/root 2/2/שיתופית.rs)") ];
                             [ abs!("/Some/cool/place/2/שיתופית.rs)") ];
                         ],
-                        open_target!("/root 2/שיתופית.rs")
+                        expected_open_target!("/root 2/שיתופית.rs")
                     },
                 ]
                 .into_iter(),

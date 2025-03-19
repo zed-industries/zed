@@ -52,11 +52,12 @@ pub enum PathHyperlinkNavigation {
     /// - Paths with spaces surrounded in common symbols are supported
     /// - Paths with spaces which are preceeded by up to 2 tokens, and take up the rest of
     /// the line are supported
+    /// - `terminal.path_hyperlink_regexes` are supported.
     #[default]
     Default,
     /// Enables advanced path hyperlink support. All of [Default](PathHyperlinkNavigation::Default),
     /// plus:
-    /// - Path with spaces at the end of a line
+    /// - Path with spaces at the end of a line with more than 2 prefix tokens
     Advanced,
     /// Enables exhaustive path hyperlink support. All of [Advanced](PathHyperlinkNavigation::Advanced),
     /// plus less common paths with spaces scenarios

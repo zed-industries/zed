@@ -1056,9 +1056,21 @@
     /// 5. Enable navigation for rare paths with spaces cases:
     ///         "exhaustive"
     "path_hyperlink_navigation": "default",
-    /// Regexes with 'path' named capture group for path hyperlink navigation.
-    /// The captured 'path' should include any optional line and column suffix.
-    /// Only processed if `path_hyperlink_navigation is "advanced" or higher.
+    /// Regexes for path hyperlink navigation. 'path', 'suffix', and 'line' capture groups must be present,
+    /// with 'line' a subgroup of 'suffix'. A 'column' subgroup of 'suffix' may also be present.
+    /// The captured 'path' will only be used if it has a suffix with a valid line. Two built-in regexes
+    /// are enabled by default which support rustc and MSBuild style line and column suffixes, with an
+    /// optional description following a final colon:
+    /// [
+    ///     "(?<path>[^:]+)((?<suffix>(:(?<line>[0-9]+))(:(?<column>[0-9]+))?)(:(?=[^0-9])(?<desc>.*)$|$))?",
+    ///     "(?<path>[^\(]+)((?<suffix>(\((?<line>[0-9]+))([,:](?<column>[0-9]+))?\))(:(?=[^0-9])(?<desc>.*)$|$))?"
+    /// ]
+    /// For other formats, the regexes provided here will be use, e.g., for Python:
+    /// [
+    ///     "\"(?<path>[^,]+)\"((?<suffix>(, line (?<line>[0-9]+))))?"
+    /// ]
+    /// Regexes provided here take precedence over the built-in ones. Currently they are only enabled for
+    /// local workspaces. Regex implementation used is from the fancy-regex crate.
     "path_hyperlink_regexes": [],
     /// Timeout for hover and Cmd-click path hyperlink discovery in milliseconds.
     "path_hyperlink_timeout": 100

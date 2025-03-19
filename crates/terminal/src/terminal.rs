@@ -37,6 +37,7 @@ use mappings::mouse::{
     alt_scroll, grid_point, grid_point_and_side, mouse_button_report, mouse_moved_report,
     scroll_report,
 };
+pub use terminal_maybe_path_like::RowColumn;
 
 use collections::{HashMap, VecDeque};
 use futures::StreamExt;

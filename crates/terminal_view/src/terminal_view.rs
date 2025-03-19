@@ -6,6 +6,7 @@ pub mod terminal_scrollbar;
 pub mod terminal_tab_tooltip;
 
 use editor::{actions::SelectAll, scroll::ScrollbarAutoHide, Editor, EditorSettings};
+use fancy_regex::Regex;
 use gpui::{
     anchored, deferred, div, impl_actions, AnyElement, App, DismissEvent, Entity, EventEmitter,
     FocusHandle, Focusable, KeyContext, KeyDownEvent, Keystroke, MouseButton, MouseDownEvent,
@@ -16,7 +17,6 @@ use log::{debug, info, trace};
 use persistence::TERMINAL_DB;
 use project::Entry;
 use project::{search::SearchQuery, terminals::TerminalKind, Fs, Metadata, Project};
-use regex::Regex;
 use schemars::JsonSchema;
 use terminal::terminal_maybe_path_like::load_path_hyperlink_regexes;
 use terminal::terminal_settings::PathHyperlinkNavigation;
@@ -26,12 +26,12 @@ use terminal::{
         term::{search::RegexSearch, TermMode},
     },
     terminal_settings::{self, CursorShape, TerminalBlink, TerminalSettings, WorkingDirectory},
-    Clear, Copy, Event, MaybeNavigationTarget, Paste, PathLikeTarget, ScrollLineDown, ScrollLineUp,
-    ScrollPageDown, ScrollPageUp, ScrollToBottom, ScrollToTop, ShowCharacterPalette, TaskState,
-    TaskStatus, Terminal, TerminalBounds, ToggleViMode,
+    Clear, Copy, Event, MaybeNavigationTarget, Paste, PathLikeTarget, RowColumn, ScrollLineDown,
+    ScrollLineUp, ScrollPageDown, ScrollPageUp, ScrollToBottom, ScrollToTop, ShowCharacterPalette,
+    TaskState, TaskStatus, Terminal, TerminalBounds, ToggleViMode,
 };
 use terminal_element::{is_blank, TerminalElement};
-use terminal_maybe_path::{MaybePath, MaybePathVariant, MaybePathWithPosition, RowColumn};
+use terminal_maybe_path::{MaybePath, MaybePathVariant, MaybePathWithPosition};
 use terminal_panel::TerminalPanel;
 use terminal_scrollbar::TerminalScrollHandle;
 use terminal_tab_tooltip::TerminalTooltip;
@@ -55,6 +55,7 @@ use settings::{Settings, SettingsStore};
 use smol::Timer;
 use zed_actions::assistant::InlineAssist;
 
+use std::ops::Range;
 use std::time::Instant;
 use std::{
     borrow::Cow,
@@ -859,7 +860,7 @@ impl TerminalView {
     fn update_maybe_path_open_target(
         &mut self,
         path_like_target: &PathLikeTarget,
-        open_target: Option<OpenTarget>,
+        open_target: Option<(OpenTarget, Range<usize>)>,
         cx: &mut Context<Self>,
     ) {
         self.terminal.update(cx, |term, cx| {
@@ -867,12 +868,12 @@ impl TerminalView {
                 path_like_target,
                 open_target
                     .as_ref()
-                    .map(|open_target| open_target.path().hyperlink_range()),
+                    .map(|(_, hyperlink_range)| hyperlink_range.clone()),
                 cx,
             )
         });
 
-        self.maybe_path_open_target = open_target.map(|open_target| MaybePathOpenTarget {
+        self.maybe_path_open_target = open_target.map(|(open_target, _)| MaybePathOpenTarget {
             path_like_target: path_like_target.clone(),
             open_target,
         });
@@ -929,10 +930,15 @@ fn subscribe_for_terminal_events(
                                         &MaybePath::from_maybe_path_like(&path_like_target.maybe_path_like, Arc::clone(&this.path_hyperlink_regexes)),
                                         this.path_hyperlink_navigation, this.path_hyperlink_timeout, cx
                                     );
-                                let open_target = smol::block_on(open_target_task);
-                                let hover_tooltip = open_target.as_ref().map(|open_target| path_like_target.maybe_path_like.text_at(&open_target.path().hyperlink_range()).to_string());
-                                this.update_maybe_path_open_target(path_like_target, open_target, cx);
-                                hover_tooltip
+                                if let Some(open_target) = smol::block_on(open_target_task) {
+                                    let hyperlink_range = path_like_target.maybe_path_like.hyperlink_range(&open_target.path().position, &open_target.path().range);
+                                    let hover_tooltip = path_like_target.maybe_path_like.text_at(&hyperlink_range).to_string();
+                                    this.update_maybe_path_open_target(path_like_target, Some((open_target, hyperlink_range)), cx);
+                                    Some(hover_tooltip)
+                                } else {
+                                    this.update_maybe_path_open_target(path_like_target, None, cx);
+                                    None
+                                }
                             }
                         });
                 cx.notify()
@@ -1033,8 +1039,10 @@ fn subscribe_for_terminal_events(
 
                         if newly_confirmed_maybe_path {
                             terminal_view.update(&mut cx, |this, cx| {
-                                this.hover_target_tooltip = Some(path_like_target.maybe_path_like.text_at(&open_target.path().hyperlink_range()).to_string());
-                                this.update_maybe_path_open_target(&path_like_target, Some(open_target), cx);
+                                let hyperlink_range = path_like_target.maybe_path_like.hyperlink_range(&open_target.path().position, &open_target.path().range);
+                                let hover_tooltip = path_like_target.maybe_path_like.text_at(&hyperlink_range).to_string();
+                                this.update_maybe_path_open_target(&path_like_target, Some((open_target, hyperlink_range)), cx);
+                                this.hover_target_tooltip = Some(hover_tooltip);
                             })?;
                         }
 
@@ -1113,7 +1121,7 @@ fn possible_open_target(
 
     // Outer loops should be maybe path variants and variations so that we stop as soon as
     // a match is found. Variants and variations are ordered by most common to least common.
-    for maybe_path_variant in maybe_path.default_variants() {
+    for maybe_path_variant in maybe_path.simple_variants(PathHyperlinkNavigation::Default) {
         for worktree in &worktree_candidates {
             // The only work we can not do in the background is read the worktrees, if any.
             // When we get a hit here, just return it and skip any further processing.
@@ -1247,9 +1255,12 @@ fn possible_open_target_from_fs(
 
         // TODO(davewa): Maybe keep a HashSet of variations checked so far to avoid repeating?
         // But, it might acutally be slower than checking a few repeats.
-        let open_target = if let Some(default) =
-            count(search_absolutized(Box::new(maybe_path.default_variants())).await)
-        {
+        let open_target = if let Some(default) = count(
+            search_absolutized(Box::new(
+                maybe_path.simple_variants(PathHyperlinkNavigation::Advanced),
+            ))
+            .await,
+        ) {
             Some(default)
         } else if !timed_out() && path_hyperlink_navigation > PathHyperlinkNavigation::Default {
             if let Some(advanced) =
