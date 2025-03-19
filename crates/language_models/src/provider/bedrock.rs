@@ -51,7 +51,6 @@ const PROVIDER_NAME: &str = "Amazon Bedrock";
 
 #[derive(Default, Clone, Deserialize, Serialize, PartialEq, Debug)]
 pub struct BedrockCredentials {
-    pub region: String,
     pub access_key_id: String,
     pub secret_access_key: String,
     pub session_token: Option<String>,
@@ -60,6 +59,7 @@ pub struct BedrockCredentials {
 #[derive(Default, Clone, Debug, PartialEq)]
 pub struct AmazonBedrockSettings {
     pub available_models: Vec<AvailableModel>,
+    pub region: Option<String>,
     pub endpoint: Option<String>,
     pub profile_name: Option<String>,
     pub role_arn: Option<String>,
@@ -121,6 +121,7 @@ impl State {
             this.update(&mut cx, |this, cx| {
                 this.credentials = None;
                 this.credentials_from_env = false;
+                this.settings = None;
                 cx.notify();
             })
         })
@@ -129,6 +130,7 @@ impl State {
     fn set_credentials(
         &mut self,
         credentials: BedrockCredentials,
+        settings: AmazonBedrockSettings,
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
         let credentials_provider = <dyn CredentialsProvider>::global(cx);
@@ -143,6 +145,7 @@ impl State {
                 .await?;
             this.update(&mut cx, |this, cx| {
                 this.credentials = Some(credentials);
+                this.settings = Some(settings);
                 cx.notify();
             })
         })
@@ -346,8 +349,8 @@ impl BedrockModel {
     fn get_or_init_client(&self, cx: &AsyncApp) -> Result<&BedrockClient, anyhow::Error> {
         self.client
             .get_or_try_init_blocking(|| {
-                let Ok(Ok((auth_method, credentials, endpoint, region, settings))) = cx
-                    .read_entity(&self.state, |state, _cx| {
+                let Ok((auth_method, credentials, endpoint, region, settings)) =
+                    cx.read_entity(&self.state, |state, _cx| {
                         // Get the authentication method and credentials
                         let auth_method = state
                             .settings
@@ -359,19 +362,19 @@ impl BedrockModel {
                         let endpoint = state.settings.as_ref().and_then(|s| s.endpoint.clone());
 
                         // Get region - from credentials or directly from settings
-                        let region = if let Some(creds) = &state.credentials {
-                            creds.region.clone()
-                        } else {
-                            return Err(anyhow!("Failed to load credentials"));
-                        };
+                        let region = state
+                            .settings
+                            .as_ref()
+                            .and_then(|s| s.region.clone())
+                            .unwrap_or(String::from("us-east-1"));
 
-                        Ok((
+                        (
                             auth_method,
                             state.credentials.clone(),
                             endpoint,
                             region,
                             state.settings.clone(),
-                        ))
+                        )
                     })
                 else {
                     return Err(anyhow!("App state dropped"));
@@ -1013,6 +1016,42 @@ impl ConfigurationView {
             .to_string()
             .trim()
             .to_string();
+        let endpoint = self
+            .endpoint_editor
+            .read(cx)
+            .text(cx)
+            .to_string()
+            .trim()
+            .to_string();
+        let endpoint = if endpoint.is_empty() {
+            None
+        } else {
+            Some(endpoint)
+        };
+        let profile_name = self
+            .profile_name_editor
+            .read(cx)
+            .text(cx)
+            .to_string()
+            .trim()
+            .to_string();
+        let profile_name = if profile_name.is_empty() {
+            None
+        } else {
+            Some(profile_name)
+        };
+        let role_arn = self
+            .role_arn_editor
+            .read(cx)
+            .text(cx)
+            .to_string()
+            .trim()
+            .to_string();
+        let role_arn = if role_arn.is_empty() {
+            None
+        } else {
+            Some(role_arn)
+        };
 
         let state = self.state.clone();
         cx.spawn(|_, mut cx| async move {
@@ -1022,10 +1061,21 @@ impl ConfigurationView {
                         access_key_id: access_key_id.clone(),
                         secret_access_key: secret_access_key.clone(),
                         session_token: session_token.clone(),
-                        region: region.clone(),
                     };
 
-                    state.set_credentials(credentials, cx)
+                    let settings: AmazonBedrockSettings = AmazonBedrockSettings {
+                        available_models: vec![],
+                        region: Some(region),
+                        endpoint,
+                        profile_name,
+                        role_arn,
+                        authentication_method: state
+                            .settings
+                            .as_ref()
+                            .and_then(|s| s.authentication_method.clone()),
+                    };
+
+                    state.set_credentials(credentials, settings, cx)
                 })?
                 .await
         })
@@ -1040,6 +1090,8 @@ impl ConfigurationView {
         self.session_token_editor
             .update(cx, |editor, cx| editor.set_text("", window, cx));
         self.region_editor
+            .update(cx, |editor, cx| editor.set_text("", window, cx));
+        self.endpoint_editor
             .update(cx, |editor, cx| editor.set_text("", window, cx));
 
         let state = self.state.clone();
