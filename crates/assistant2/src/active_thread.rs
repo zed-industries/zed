@@ -583,7 +583,7 @@ impl ActiveThread {
                         .p_2p5()
                         .child(edit_message_editor)
                 } else {
-                    div().p_2p5().text_ui(cx).child(markdown.clone())
+                    div().text_ui(cx).child(markdown.clone())
                 },
             )
             .when_some(context, |parent, context| {
@@ -603,15 +603,16 @@ impl ActiveThread {
         let styled_message = match message.role {
             Role::User => v_flex()
                 .id(("message-container", ix))
-                .pt_2p5()
-                .px_2p5()
+                .pt_2()
+                .pl_2()
+                .pr_2p5()
                 .child(
                     v_flex()
                         .bg(colors.editor_background)
                         .rounded_lg()
                         .border_1()
                         .border_color(colors.border)
-                        .shadow_sm()
+                        .shadow_md()
                         .child(
                             h_flex()
                                 .py_1()
@@ -702,12 +703,12 @@ impl ActiveThread {
                                     },
                                 ),
                         )
-                        .child(message_content),
+                        .child(div().p_2().child(message_content)),
                 ),
             Role::Assistant => {
                 v_flex()
                     .id(("message-container", ix))
-                    .child(message_content)
+                    .child(div().py_3().px_4().child(message_content))
                     .when(
                         !tool_uses.is_empty() || !scripting_tool_uses.is_empty(),
                         |parent| {
@@ -729,7 +730,7 @@ impl ActiveThread {
                 v_flex()
                     .bg(colors.editor_background)
                     .rounded_sm()
-                    .child(message_content),
+                    .child(div().p_4().child(message_content)),
             ),
         };
 
@@ -745,7 +746,7 @@ impl ActiveThread {
 
         let lighter_border = cx.theme().colors().border.opacity(0.5);
 
-        div().px_2p5().child(
+        div().px_4().child(
             v_flex()
                 .rounded_lg()
                 .border_1()
