@@ -111,16 +111,15 @@ impl Editor {
             {
                 Ok(result) => state.active_indent_range = result,
                 Err(future) => {
-                    state.pending_refresh =
-                        Some(cx.spawn_in(window, |editor, mut cx| async move {
-                            let result = cx.background_spawn(future).await;
-                            editor
-                                .update(&mut cx, |editor, _| {
-                                    editor.active_indent_guides_state.active_indent_range = result;
-                                    editor.active_indent_guides_state.pending_refresh = None;
-                                })
-                                .log_err();
-                        }));
+                    state.pending_refresh = Some(cx.spawn_in(window, async move |editor, cx| {
+                        let result = cx.background_spawn(future).await;
+                        editor
+                            .update(cx, |editor, _| {
+                                editor.active_indent_guides_state.active_indent_range = result;
+                                editor.active_indent_guides_state.pending_refresh = None;
+                            })
+                            .log_err();
+                    }));
                     return None;
                 }
             }

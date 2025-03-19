@@ -63,9 +63,9 @@ impl ActivityIndicator {
         let auto_updater = AutoUpdater::get(cx);
         let this = cx.new(|cx| {
             let mut status_events = languages.language_server_binary_statuses();
-            cx.spawn(|this, mut cx| async move {
+            cx.spawn(async move |this, cx| {
                 while let Some((name, status)) = status_events.next().await {
-                    this.update(&mut cx, |this: &mut ActivityIndicator, cx| {
+                    this.update(cx, |this: &mut ActivityIndicator, cx| {
                         this.statuses.retain(|s| s.name != name);
                         this.statuses.push(ServerStatus { name, status });
                         cx.notify();
@@ -76,9 +76,9 @@ impl ActivityIndicator {
             .detach();
 
             let mut status_events = languages.dap_server_binary_statuses();
-            cx.spawn(|this, mut cx| async move {
+            cx.spawn(async move |this, cx| {
                 while let Some((name, status)) = status_events.next().await {
-                    this.update(&mut cx, |this, cx| {
+                    this.update(cx, |this, cx| {
                         this.statuses.retain(|s| s.name != name);
                         this.statuses.push(ServerStatus { name, status });
                         cx.notify();
@@ -123,9 +123,9 @@ impl ActivityIndicator {
                 let project = project.clone();
                 let error = error.clone();
                 let server_name = server_name.clone();
-                cx.spawn_in(window, |workspace, mut cx| async move {
+                cx.spawn_in(window, async move |workspace, cx| {
                     let buffer = create_buffer.await?;
-                    buffer.update(&mut cx, |buffer, cx| {
+                    buffer.update(cx, |buffer, cx| {
                         buffer.edit(
                             [(
                                 0..0,
@@ -136,7 +136,7 @@ impl ActivityIndicator {
                         );
                         buffer.set_capability(language::Capability::ReadOnly, cx);
                     })?;
-                    workspace.update_in(&mut cx, |workspace, window, cx| {
+                    workspace.update_in(cx, |workspace, window, cx| {
                         workspace.add_item_to_active_pane(
                             Box::new(cx.new(|cx| {
                                 Editor::for_buffer(buffer, Some(project.clone()), window, cx)

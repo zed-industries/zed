@@ -141,10 +141,10 @@ impl ProjectPicker {
         let _path_task = cx
             .spawn_in(window, {
                 let workspace = workspace.clone();
-                move |this, mut cx| async move {
+                async move |this, cx| {
                     let Ok(Some(paths)) = rx.await else {
                         workspace
-                            .update_in(&mut cx, |workspace, window, cx| {
+                            .update_in(cx, |workspace, window, cx| {
                                 let weak = cx.entity().downgrade();
                                 workspace.toggle_modal(window, cx, |window, cx| {
                                     RemoteServerProjects::new(window, cx, weak)
@@ -155,7 +155,7 @@ impl ProjectPicker {
                     };
 
                     let app_state = workspace
-                        .update(&mut cx, |workspace, _| workspace.app_state().clone())
+                        .update(cx, |workspace, _| workspace.app_state().clone())
                         .ok()?;
                     let options = cx
                         .update(|_, cx| (app_state.build_window_options)(None, cx))
@@ -190,7 +190,7 @@ impl ProjectPicker {
                             })
                             .collect::<Vec<_>>();
                         window
-                            .spawn(cx, |_| async move {
+                            .spawn(cx, async move |_| {
                                 for task in tasks {
                                     task.await?;
                                 }
@@ -206,7 +206,7 @@ impl ProjectPicker {
                         })
                     })
                     .log_err();
-                    this.update(&mut cx, |_, cx| {
+                    this.update(cx, |_, cx| {
                         cx.emit(DismissEvent);
                     })
                     .ok();
@@ -404,10 +404,10 @@ impl RemoteServerProjects {
         .prompt_err("Failed to connect", window, cx, |_, _, _| None);
 
         let address_editor = editor.clone();
-        let creating = cx.spawn(move |this, mut cx| async move {
+        let creating = cx.spawn(async move |this, cx| {
             match connection.await {
                 Some(Some(client)) => this
-                    .update(&mut cx, |this, cx| {
+                    .update(cx, |this, cx| {
                         telemetry::event!("SSH Server Created");
                         this.retained_connections.push(client);
                         this.add_ssh_server(connection_options, cx);
@@ -416,7 +416,7 @@ impl RemoteServerProjects {
                     })
                     .log_err(),
                 _ => this
-                    .update(&mut cx, |this, cx| {
+                    .update(cx, |this, cx| {
                         address_editor.update(cx, |this, _| {
                             this.set_read_only(false);
                         });
@@ -492,11 +492,11 @@ impl RemoteServerProjects {
                 )
                 .prompt_err("Failed to connect", window, cx, |_, _, _| None);
 
-                cx.spawn_in(window, move |workspace, mut cx| async move {
+                cx.spawn_in(window, async move |workspace, cx| {
                     let session = connect.await;
 
                     workspace
-                        .update(&mut cx, |workspace, cx| {
+                        .update(cx, |workspace, cx| {
                             if let Some(prompt) = workspace.active_modal::<SshConnectionModal>(cx) {
                                 prompt.update(cx, |prompt, cx| prompt.finished(cx))
                             }
@@ -505,7 +505,7 @@ impl RemoteServerProjects {
 
                     let Some(Some(session)) = session else {
                         workspace
-                            .update_in(&mut cx, |workspace, window, cx| {
+                            .update_in(cx, |workspace, window, cx| {
                                 let weak = cx.entity().downgrade();
                                 workspace.toggle_modal(window, cx, |window, cx| {
                                     RemoteServerProjects::new(window, cx, weak)
@@ -516,7 +516,7 @@ impl RemoteServerProjects {
                     };
 
                     workspace
-                        .update_in(&mut cx, |workspace, window, cx| {
+                        .update_in(cx, |workspace, window, cx| {
                             let app_state = workspace.app_state().clone();
                             let weak = cx.entity().downgrade();
                             let project = project::Project::ssh(
@@ -758,13 +758,13 @@ impl RemoteServerProjects {
                 let project = project.clone();
                 let server = server.connection.clone();
                 cx.emit(DismissEvent);
-                cx.spawn_in(window, |_, mut cx| async move {
+                cx.spawn_in(window, async move |_, cx| {
                     let result = open_ssh_project(
                         server.into(),
                         project.paths.into_iter().map(PathBuf::from).collect(),
                         app_state,
                         OpenOptions::default(),
-                        &mut cx,
+                        cx,
                     )
                     .await;
                     if let Err(e) = result {
@@ -1111,15 +1111,15 @@ impl RemoteServerProjects {
                                     cx,
                                 );
 
-                                cx.spawn(|mut cx| async move {
+                                cx.spawn(async move |cx| {
                                     if confirmation.await.ok() == Some(0) {
                                         remote_servers
-                                            .update(&mut cx, |this, cx| {
+                                            .update(cx, |this, cx| {
                                                 this.delete_ssh_server(index, cx);
                                             })
                                             .ok();
                                         remote_servers
-                                            .update(&mut cx, |this, cx| {
+                                            .update(cx, |this, cx| {
                                                 this.mode = Mode::default_mode(cx);
                                                 cx.notify();
                                             })

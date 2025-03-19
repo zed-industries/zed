@@ -48,7 +48,7 @@ pub fn init(cx: &mut App) {
             .register_action(|_, _: &CopySystemSpecsIntoClipboard, window, cx| {
                 let specs = SystemSpecs::new(window, cx);
 
-                cx.spawn_in(window, |_, mut cx| async move {
+                cx.spawn_in(window, async move |_, cx| {
                     let specs = specs.await.to_string();
 
                     cx.update(|_, cx| {
@@ -67,7 +67,7 @@ pub fn init(cx: &mut App) {
                 .detach();
             })
             .register_action(|_, _: &RequestFeature, window, cx| {
-                cx.spawn_in(window, |_, mut cx| async move {
+                cx.spawn_in(window, async move |_, cx| {
                     cx.update(|_, cx| {
                         cx.open_url(&request_feature_url());
                     })
@@ -77,7 +77,7 @@ pub fn init(cx: &mut App) {
             })
             .register_action(move |_, _: &FileBugReport, window, cx| {
                 let specs = SystemSpecs::new(window, cx);
-                cx.spawn_in(window, |_, mut cx| async move {
+                cx.spawn_in(window, async move |_, cx| {
                     let specs = specs.await;
                     cx.update(|_, cx| {
                         cx.open_url(&file_bug_report_url(&specs));

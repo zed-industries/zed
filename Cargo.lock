@@ -467,6 +467,7 @@ dependencies = [
  "futures 0.3.31",
  "fuzzy",
  "git",
+ "git_ui",
  "gpui",
  "heed",
  "html_to_markdown",
@@ -728,6 +729,7 @@ dependencies = [
  "settings",
  "theme",
  "ui",
+ "unindent",
  "util",
  "workspace",
  "worktree",
@@ -5237,8 +5239,8 @@ dependencies = [
  "fsevent",
  "futures 0.3.31",
  "git",
- "git2",
  "gpui",
+ "ignore",
  "libc",
  "log",
  "notify 6.1.1",
@@ -5600,11 +5602,13 @@ dependencies = [
  "serde_json",
  "smol",
  "sum_tree",
+ "tempfile",
  "text",
  "time",
  "unindent",
  "url",
  "util",
+ "uuid",
 ]
 
 [[package]]
@@ -5680,7 +5684,6 @@ dependencies = [
  "serde_derive",
  "serde_json",
  "settings",
- "smallvec",
  "strum",
  "telemetry",
  "theme",
@@ -15025,6 +15028,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "ui_prompt"
+version = "0.1.0"
+dependencies = [
+ "gpui",
+ "markdown",
+ "menu",
+ "settings",
+ "theme",
+ "ui",
+ "workspace",
+]
+
+[[package]]
 name = "unicase"
 version = "2.8.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -17320,7 +17336,7 @@ dependencies = [
 
 [[package]]
 name = "zed"
-version = "0.179.0"
+version = "0.180.0"
 dependencies = [
  "activity_indicator",
  "anyhow",
@@ -17383,7 +17399,6 @@ dependencies = [
  "languages",
  "libc",
  "log",
- "markdown",
  "markdown_preview",
  "menu",
  "migrator",
@@ -17435,6 +17450,7 @@ dependencies = [
  "tree-sitter-md",
  "tree-sitter-rust",
  "ui",
+ "ui_prompt",
  "url",
  "urlencoding",
  "util",

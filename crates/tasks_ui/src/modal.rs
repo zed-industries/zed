@@ -217,40 +217,36 @@ impl PickerDelegate for TasksModalDelegate {
         cx: &mut Context<picker::Picker<Self>>,
     ) -> Task<()> {
         let task_type = self.task_modal_type.clone();
-        cx.spawn_in(window, move |picker, mut cx| async move {
+        cx.spawn_in(window, async move |picker, cx| {
             let Some(candidates) = picker
-                .update(&mut cx, |picker, cx| {
-                    match &mut picker.delegate.candidates {
-                        Some(candidates) => string_match_candidates(candidates.iter(), task_type),
-                        None => {
-                            let Some(task_inventory) = picker
-                                .delegate
-                                .task_store
-                                .read(cx)
-                                .task_inventory()
-                                .cloned()
-                            else {
-                                return Vec::new();
-                            };
+                .update(cx, |picker, cx| match &mut picker.delegate.candidates {
+                    Some(candidates) => string_match_candidates(candidates.iter(), task_type),
+                    None => {
+                        let Some(task_inventory) = picker
+                            .delegate
+                            .task_store
+                            .read(cx)
+                            .task_inventory()
+                            .cloned()
+                        else {
+                            return Vec::new();
+                        };
 
-                            let (used, current) =
-                                task_inventory.read(cx).used_and_current_resolved_tasks(
-                                    &picker.delegate.task_contexts,
-                                    cx,
-                                );
-                            picker.delegate.last_used_candidate_index = if used.is_empty() {
-                                None
-                            } else {
-                                Some(used.len() - 1)
-                            };
+                        let (used, current) = task_inventory
+                            .read(cx)
+                            .used_and_current_resolved_tasks(&picker.delegate.task_contexts, cx);
+                        picker.delegate.last_used_candidate_index = if used.is_empty() {
+                            None
+                        } else {
+                            Some(used.len() - 1)
+                        };
 
-                            let mut new_candidates = used;
-                            new_candidates.extend(current);
-                            let match_candidates =
-                                string_match_candidates(new_candidates.iter(), task_type);
-                            let _ = picker.delegate.candidates.insert(new_candidates);
-                            match_candidates
-                        }
+                        let mut new_candidates = used;
+                        new_candidates.extend(current);
+                        let match_candidates =
+                            string_match_candidates(new_candidates.iter(), task_type);
+                        let _ = picker.delegate.candidates.insert(new_candidates);
+                        match_candidates
                     }
                 })
                 .ok()
@@ -267,7 +263,7 @@ impl PickerDelegate for TasksModalDelegate {
             )
             .await;
             picker
-                .update(&mut cx, |picker, _| {
+                .update(cx, |picker, _| {
                     let delegate = &mut picker.delegate;
                     delegate.matches = matches;
                     if let Some(index) = delegate.last_used_candidate_index {

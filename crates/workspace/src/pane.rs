@@ -1582,8 +1582,8 @@ impl Pane {
         let Some(project) = self.project.upgrade() else {
             return Task::ready(Ok(()));
         };
-        cx.spawn_in(window, |pane, mut cx| async move {
-            let dirty_items = workspace.update(&mut cx, |workspace, cx| {
+        cx.spawn_in(window, async move |pane, cx| {
+            let dirty_items = workspace.update(cx, |workspace, cx| {
                 items_to_close
                     .iter()
                     .filter(|item| {
@@ -1595,7 +1595,7 @@ impl Pane {
             })?;
 
             if save_intent == SaveIntent::Close && dirty_items.len() > 1 {
-                let answer = pane.update_in(&mut cx, |_, window, cx| {
+                let answer = pane.update_in(cx, |_, window, cx| {
                     let detail = Self::file_names_for_prompt(&mut dirty_items.iter(), cx);
                     window.prompt(
                         PromptLevel::Warning,
@@ -1616,7 +1616,7 @@ impl Pane {
             for item_to_close in items_to_close {
                 let mut should_save = true;
                 if save_intent == SaveIntent::Close {
-                    workspace.update(&mut cx, |workspace, cx| {
+                    workspace.update(cx, |workspace, cx| {
                         if Self::skip_save_on_close(item_to_close.as_ref(), &workspace, cx) {
                             should_save = false;
                         }
@@ -1624,21 +1624,15 @@ impl Pane {
                 }
 
                 if should_save {
-                    if !Self::save_item(
-                        project.clone(),
-                        &pane,
-                        &*item_to_close,
-                        save_intent,
-                        &mut cx,
-                    )
-                    .await?
+                    if !Self::save_item(project.clone(), &pane, &*item_to_close, save_intent, cx)
+                        .await?
                     {
                         break;
                     }
                 }
 
                 // Remove the item from the pane.
-                pane.update_in(&mut cx, |pane, window, cx| {
+                pane.update_in(cx, |pane, window, cx| {
                     pane.remove_item(
                         item_to_close.item_id(),
                         false,
@@ -1651,7 +1645,7 @@ impl Pane {
                 .ok();
             }
 
-            pane.update(&mut cx, |_, cx| cx.notify()).ok();
+            pane.update(cx, |_, cx| cx.notify()).ok();
             Ok(())
         })
     }
@@ -2980,12 +2974,12 @@ impl Pane {
                         .path_for_entry(project_entry_id, cx)
                     {
                         let load_path_task = workspace.load_path(path, window, cx);
-                        cx.spawn_in(window, |workspace, mut cx| async move {
+                        cx.spawn_in(window, async move |workspace, cx| {
                             if let Some((project_entry_id, build_item)) =
-                                load_path_task.await.notify_async_err(&mut cx)
+                                load_path_task.await.notify_async_err(cx)
                             {
                                 let (to_pane, new_item_handle) = workspace
-                                    .update_in(&mut cx, |workspace, window, cx| {
+                                    .update_in(cx, |workspace, window, cx| {
                                         if let Some(split_direction) = split_direction {
                                             to_pane = workspace.split_pane(
                                                 to_pane,
@@ -3010,7 +3004,7 @@ impl Pane {
                                     })
                                     .log_err()?;
                                 to_pane
-                                    .update_in(&mut cx, |this, window, cx| {
+                                    .update_in(cx, |this, window, cx| {
                                         let Some(index) = this.index_for_item(&*new_item_handle)
                                         else {
                                             return;
@@ -3067,7 +3061,7 @@ impl Pane {
         self.workspace
             .update(cx, |workspace, cx| {
                 let fs = Arc::clone(workspace.project().read(cx).fs());
-                cx.spawn_in(window, |workspace, mut cx| async move {
+                cx.spawn_in(window, async move |workspace, cx| {
                     let mut is_file_checks = FuturesUnordered::new();
                     for path in &paths {
                         is_file_checks.push(fs.is_file(path))
@@ -3084,7 +3078,7 @@ impl Pane {
                         split_direction = None;
                     }
 
-                    if let Ok(open_task) = workspace.update_in(&mut cx, |workspace, window, cx| {
+                    if let Ok(open_task) = workspace.update_in(cx, |workspace, window, cx| {
                         if let Some(split_direction) = split_direction {
                             to_pane = workspace.split_pane(to_pane, split_direction, window, cx);
                         }
@@ -3100,7 +3094,7 @@ impl Pane {
                         )
                     }) {
                         let opened_items: Vec<_> = open_task.await;
-                        _ = workspace.update(&mut cx, |workspace, cx| {
+                        _ = workspace.update(cx, |workspace, cx| {
                             for item in opened_items.into_iter().flatten() {
                                 if let Err(e) = item {
                                     workspace.show_error(&e, cx);

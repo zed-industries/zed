@@ -642,11 +642,11 @@ impl TitleBar {
             .on_click(move |_, window, cx| {
                 let client = client.clone();
                 window
-                    .spawn(cx, move |mut cx| async move {
+                    .spawn(cx, async move |cx| {
                         client
                             .authenticate_and_connect(true, &cx)
                             .await
-                            .notify_async_err(&mut cx);
+                            .notify_async_err(cx);
                     })
                     .detach();
             })
@@ -683,7 +683,10 @@ impl TitleBar {
                             "Icon Themes…",
                             zed_actions::icon_theme_selector::Toggle::default().boxed_clone(),
                         )
-                        .action("Extensions", zed_actions::Extensions.boxed_clone())
+                        .action(
+                            "Extensions",
+                            zed_actions::Extensions::default().boxed_clone(),
+                        )
                         .separator()
                         .link(
                             "Book Onboarding",
@@ -730,7 +733,10 @@ impl TitleBar {
                                 "Icon Themes…",
                                 zed_actions::icon_theme_selector::Toggle::default().boxed_clone(),
                             )
-                            .action("Extensions", zed_actions::Extensions.boxed_clone())
+                            .action(
+                                "Extensions",
+                                zed_actions::Extensions::default().boxed_clone(),
+                            )
                             .separator()
                             .link(
                                 "Book Onboarding",

@@ -212,7 +212,7 @@ pub fn authenticate_model_provider(
 pub async fn send_language_model_request(
     model: Arc<dyn LanguageModel>,
     request: LanguageModelRequest,
-    cx: AsyncApp,
+    cx: &mut AsyncApp,
 ) -> anyhow::Result<String> {
     match model.stream_completion_text(request, &cx).await {
         Ok(mut stream) => {

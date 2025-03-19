@@ -213,8 +213,8 @@ impl Render for Console {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let session = self.session.clone();
         let token = self.last_token;
-        self.update_output_task = cx.spawn_in(window, move |this, mut cx| async move {
-            _ = session.update_in(&mut cx, move |session, window, cx| {
+        self.update_output_task = cx.spawn_in(window, async move |this, cx| {
+            _ = session.update_in(cx, move |session, window, cx| {
                 let (output, last_processed_token) = session.output(token);
 
                 _ = this.update(cx, |this, cx| {
@@ -342,7 +342,7 @@ impl ConsoleQueryBarCompletionProvider {
 
         let query = buffer.read(cx).text();
 
-        cx.spawn(|_, cx| async move {
+        cx.spawn(async move |_, cx| {
             let matches = fuzzy::match_strings(
                 &string_matches,
                 &query,

@@ -434,7 +434,7 @@ pub(crate) fn handle_from(
         let (buffer_version_initial, mut buffer_parse_status_rx) =
             buffer.read_with(cx, |buffer, _| (buffer.version(), buffer.parse_status()));
 
-        cx.spawn_in(window, |this, mut cx| async move {
+        cx.spawn_in(window, async move |this, cx| {
             let Some(buffer_parse_status) = buffer_parse_status_rx.recv().await.ok() else {
                 return Some(());
             };
@@ -445,7 +445,7 @@ pub(crate) fn handle_from(
                 };
             }
 
-            let buffer_snapshot = buffer.read_with(&cx, |buf, _| buf.snapshot()).ok()?;
+            let buffer_snapshot = buffer.read_with(cx, |buf, _| buf.snapshot()).ok()?;
 
             let Some(edit_behavior_state) =
                 should_auto_close(&buffer_snapshot, &edited_ranges, &jsx_tag_auto_close_config)
@@ -456,7 +456,7 @@ pub(crate) fn handle_from(
             let ensure_no_edits_since_start = || -> Option<()> {
                 // <div>wef,wefwef
                 let has_edits_since_start = this
-                    .read_with(&cx, |this, cx| {
+                    .read_with(cx, |this, cx| {
                         this.buffer.read_with(cx, |buffer, cx| {
                             buffer.buffer(buffer_id).map_or(true, |buffer| {
                                 buffer.read_with(cx, |buffer, _| {
@@ -506,7 +506,7 @@ pub(crate) fn handle_from(
             ensure_no_edits_since_start()?;
 
             let multi_buffer_snapshot = this
-                .read_with(&cx, |this, cx| {
+                .read_with(cx, |this, cx| {
                     this.buffer.read_with(cx, |buffer, cx| buffer.snapshot(cx))
                 })
                 .ok()?;
@@ -516,7 +516,7 @@ pub(crate) fn handle_from(
 
             {
                 let selections = this
-                    .read_with(&cx, |this, _| this.selections.disjoint_anchors().clone())
+                    .read_with(cx, |this, _| this.selections.disjoint_anchors().clone())
                     .ok()?;
                 for selection in selections.iter() {
                     let Some(selection_buffer_offset_head) =
@@ -576,14 +576,14 @@ pub(crate) fn handle_from(
             }
 
             buffer
-                .update(&mut cx, |buffer, cx| {
+                .update(cx, |buffer, cx| {
                     buffer.edit(edits, None, cx);
                 })
                 .ok()?;
 
             if any_selections_need_update {
                 let multi_buffer_snapshot = this
-                    .read_with(&cx, |this, cx| {
+                    .read_with(cx, |this, cx| {
                         this.buffer.read_with(cx, |buffer, cx| buffer.snapshot(cx))
                     })
                     .ok()?;
@@ -601,7 +601,7 @@ pub(crate) fn handle_from(
                         selection.map(|anchor| anchor.to_offset(&multi_buffer_snapshot))
                     })
                     .collect::<Vec<_>>();
-                this.update_in(&mut cx, |this, window, cx| {
+                this.update_in(cx, |this, window, cx| {
                     this.change_selections_inner(None, false, window, cx, |s| {
                         s.select(base_selections);
                     });

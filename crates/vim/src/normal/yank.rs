@@ -228,11 +228,11 @@ impl Vim {
             |colors| colors.editor_document_highlight_read_background,
             cx,
         );
-        cx.spawn(|this, mut cx| async move {
+        cx.spawn(async move |this, cx| {
             cx.background_executor()
                 .timer(Duration::from_millis(highlight_duration))
                 .await;
-            this.update(&mut cx, |editor, cx| {
+            this.update(cx, |editor, cx| {
                 editor.clear_background_highlights::<HighlightOnYank>(cx)
             })
             .ok();

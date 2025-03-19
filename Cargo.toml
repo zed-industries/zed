@@ -160,6 +160,7 @@ members = [
     "crates/ui",
     "crates/ui_input",
     "crates/ui_macros",
+    "crates/ui_prompt",
     "crates/util",
     "crates/util_macros",
     "crates/vim",
@@ -362,6 +363,7 @@ toolchain_selector = { path = "crates/toolchain_selector" }
 ui = { path = "crates/ui" }
 ui_input = { path = "crates/ui_input" }
 ui_macros = { path = "crates/ui_macros" }
+ui_prompt = { path = "crates/ui_prompt" }
 util = { path = "crates/util" }
 util_macros = { path = "crates/util_macros" }
 vim = { path = "crates/vim" }

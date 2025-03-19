@@ -583,7 +583,7 @@ impl TcpTransport {
             _ = cx.background_executor().timer(Duration::from_millis(timeout)).fuse() => {
                 return Err(anyhow!(format!("Connection to TCP DAP timeout {}:{}", host, port)))
             },
-            result = cx.spawn(|cx| async move {
+            result = cx.spawn(async move |cx| {
                 loop {
                     match TcpStream::connect(address).await {
                         Ok(stream) => return stream.split(),

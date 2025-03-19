@@ -150,8 +150,8 @@ impl DebugPanel {
         workspace: WeakEntity<Workspace>,
         cx: AsyncWindowContext,
     ) -> Task<Result<Entity<Self>>> {
-        cx.spawn(|mut cx| async move {
-            workspace.update_in(&mut cx, |workspace, window, cx| {
+        cx.spawn(async move |cx| {
+            workspace.update_in(cx, |workspace, window, cx| {
                 let debug_panel = DebugPanel::new(workspace, window, cx);
 
                 cx.observe(&debug_panel, |_, debug_panel, cx| {
@@ -349,11 +349,11 @@ impl DebugPanel {
                     cx,
                 );
 
-                cx.spawn(|_, mut cx| async move {
+                cx.spawn(async move |_, cx| {
                     let pid_task = async move {
                         let terminal = terminal_task.await?;
 
-                        terminal.read_with(&mut cx, |terminal, _| terminal.pty_info.pid())
+                        terminal.read_with(cx, |terminal, _| terminal.pty_info.pid())
                     };
 
                     pid_task.await

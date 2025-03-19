@@ -406,8 +406,8 @@ impl HeadlessProject {
         // and immediately dropping the reference of the new client, causing it
         // to be dropped on the headless project, and the client only then
         // receiving a response to AddWorktree.
-        cx.spawn(|mut cx| async move {
-            this.update(&mut cx, |this, cx| {
+        cx.spawn(async move |cx| {
+            this.update(cx, |this, cx| {
                 this.worktree_store.update(cx, |worktree_store, cx| {
                     worktree_store.add(&worktree, cx);
                 });
@@ -636,7 +636,7 @@ impl HeadlessProject {
         _envelope: TypedEnvelope<proto::ShutdownRemoteServer>,
         cx: AsyncApp,
     ) -> Result<proto::Ack> {
-        cx.spawn(|cx| async move {
+        cx.spawn(async move |cx| {
             cx.update(|cx| {
                 // TODO: This is a hack, because in a headless project, shutdown isn't executed
                 // when calling quit, but it should be.

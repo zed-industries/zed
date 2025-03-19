@@ -890,15 +890,24 @@ impl EditorElement {
         let modifiers = event.modifiers;
         let gutter_hovered = gutter_hitbox.is_hovered(window);
         editor.set_gutter_hovered(gutter_hovered, cx);
+        editor.gutter_breakpoint_indicator = None;
 
         if gutter_hovered {
-            editor.gutter_breakpoint_indicator = Some(
-                position_map
-                    .point_for_position(event.position)
-                    .previous_valid,
-            );
-        } else {
-            editor.gutter_breakpoint_indicator = None;
+            let new_point = position_map
+                .point_for_position(event.position)
+                .previous_valid;
+            let buffer_anchor = position_map
+                .snapshot
+                .display_point_to_anchor(new_point, Bias::Left);
+
+            if position_map
+                .snapshot
+                .buffer_snapshot
+                .buffer_for_excerpt(buffer_anchor.excerpt_id)
+                .is_some_and(|buffer| buffer.file().is_some())
+            {
+                editor.gutter_breakpoint_indicator = Some(new_point);
+            }
         }
 
         cx.notify();
@@ -973,10 +982,10 @@ impl EditorElement {
         };
         editor.hovered_cursors.insert(
             key.clone(),
-            cx.spawn_in(window, |editor, mut cx| async move {
+            cx.spawn_in(window, async move |editor, cx| {
                 cx.background_executor().timer(CURSORS_VISIBLE_FOR).await;
                 editor
-                    .update(&mut cx, |editor, cx| {
+                    .update(cx, |editor, cx| {
                         editor.hovered_cursors.remove(&key);
                         cx.notify();
                     })
@@ -2048,7 +2057,6 @@ impl EditorElement {
         (offset_y, length)
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn layout_breakpoints(
         &self,
         line_height: Pixels,
@@ -2059,16 +2067,24 @@ impl EditorElement {
         display_hunks: &[(DisplayDiffHunk, Option<Hitbox>)],
         snapshot: &EditorSnapshot,
         breakpoints: HashMap<DisplayRow, (Anchor, Breakpoint)>,
+        row_infos: &[RowInfo],
         window: &mut Window,
         cx: &mut App,
     ) -> Vec<AnyElement> {
         self.editor.update(cx, |editor, cx| {
             breakpoints
                 .into_iter()
-                .filter_map(|(point, (text_anchor, bp))| {
-                    let row = MultiBufferRow { 0: point.0 };
+                .filter_map(|(display_row, (text_anchor, bp))| {
+                    let row = MultiBufferRow { 0: display_row.0 };
 
-                    if range.start > point || range.end < point {
+                    if row_infos
+                        .get((display_row.0.saturating_sub(range.start.0)) as usize)
+                        .is_some_and(|row_info| row_info.expand_info.is_some())
+                    {
+                        return None;
+                    }
+
+                    if range.start > display_row || range.end < display_row {
                         return None;
                     }
 
@@ -2076,11 +2092,11 @@ impl EditorElement {
                         return None;
                     }
 
-                    let button = editor.render_breakpoint(text_anchor, point, &bp.kind, cx);
+                    let button = editor.render_breakpoint(text_anchor, display_row, &bp.kind, cx);
 
                     let button = prepaint_gutter_button(
                         button,
-                        point,
+                        display_row,
                         line_height,
                         gutter_dimensions,
                         scroll_pixel_position,
@@ -2260,9 +2276,9 @@ impl EditorElement {
                     .selected_icon_color(Color::Custom(cx.theme().colors().editor_foreground))
                     .icon_size(IconSize::Custom(rems(editor_font_size / window.rem_size())))
                     .width(width.into())
-                    .on_click(move |_, _, cx| {
+                    .on_click(move |_, window, cx| {
                         editor.update(cx, |editor, cx| {
-                            editor.expand_excerpt(excerpt_id, direction, cx);
+                            editor.expand_excerpt(excerpt_id, direction, window, cx);
                         });
                     })
                     .tooltip(Tooltip::for_action_title(
@@ -5199,7 +5215,7 @@ impl EditorElement {
 
             editor.scrollbar_marker_state.dirty = false;
             editor.scrollbar_marker_state.pending_refresh =
-                Some(cx.spawn_in(window, |editor, mut cx| async move {
+                Some(cx.spawn_in(window, async move |editor, cx| {
                     let scrollbar_size = scrollbar_layout.hitbox.size;
                     let scrollbar_markers = cx
                         .background_spawn(async move {
@@ -5346,7 +5362,7 @@ impl EditorElement {
                         })
                         .await;
 
-                    editor.update(&mut cx, |editor, cx| {
+                    editor.update(cx, |editor, cx| {
                         editor.scrollbar_marker_state.markers = scrollbar_markers;
                         editor.scrollbar_marker_state.scrollbar_size = scrollbar_size;
                         editor.scrollbar_marker_state.pending_refresh = None;
@@ -7526,6 +7542,7 @@ impl Element for EditorElement {
                             &display_hunks,
                             &snapshot,
                             breakpoint_rows,
+                            &row_infos,
                             window,
                             cx,
                         )
