@@ -52,7 +52,7 @@ impl Tool for ListDirectoryTool {
 
     fn ui_text(&self, input: &serde_json::Value) -> String {
         match serde_json::from_value::<ListDirectoryToolInput>(input.clone()) {
-            Ok(input) => format!("`$ ls {}`", input.path.display()),
+            Ok(input) => format!("List the `{}` directory's contents", input.path.display()),
             Err(_) => "List directory".to_string(),
         }
     }
