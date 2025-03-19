@@ -51,7 +51,7 @@ jobs:
         id: check-promotion-from-preview
         run: |
           VERSION="${{ github.event.release.tag_name }}"
-          VERSION="0.178.4"
+          VERSION="v0.178.4"
           PREVIEW_TAG="${VERSION}-pre"
           git rev-parse "$PREVIEW_TAG"
           if git rev-parse "$PREVIEW_TAG" > /dev/null 2>&1; then
