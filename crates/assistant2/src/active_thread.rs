@@ -736,7 +736,7 @@ impl ActiveThread {
         };
 
         v_flex()
-            .when(ix == 0, |parent| parent.child(self.render_rules_item(cx))
+            .when(ix == 0, |parent| parent.child(self.render_rules_item(cx)))
             .when_some(checkpoint, |parent, checkpoint| {
                 parent.child(
                     h_flex().pl_2().child(

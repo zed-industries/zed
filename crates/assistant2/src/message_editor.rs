@@ -216,7 +216,7 @@ impl MessageEditor {
             refresh_task.await;
             let system_prompt_context = system_prompt_context_task.await;
             thread
-                .update(&mut cx, |thread, cx| match system_prompt_context {
+                .update(cx, |thread, cx| match system_prompt_context {
                     Err(err) => {
                         // todo! Seems wrong to do this here.
                         cx.emit(ThreadEvent::ShowError(ThreadError::Message(

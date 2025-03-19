@@ -508,7 +508,7 @@ impl Thread {
             })
             .collect::<Vec<_>>();
 
-        cx.spawn(|_cx| async move {
+        cx.spawn(async |_cx| {
             let worktrees = futures::future::join_all(tasks)
                 .await
                 .into_iter()
@@ -545,7 +545,7 @@ impl Thread {
             })
             .next()
         {
-            cx.spawn(|_| async move {
+            cx.spawn(async move |_| {
                 let abs_rules_path = abs_rules_path?;
                 let text = fs.load(&abs_rules_path).await.with_context(|| {
                     format!("failed to load assistant rules file {:?}", abs_rules_path)
