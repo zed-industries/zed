@@ -397,7 +397,6 @@ impl LanguageModel for AnthropicModel {
         request: LanguageModelRequest,
         cx: &AsyncApp,
     ) -> BoxFuture<'static, Result<BoxStream<'static, Result<LanguageModelCompletionEvent>>>> {
-        dbg!("Streaming completion");
         let request = into_anthropic(
             request,
             self.model.request_id().into(),
@@ -559,9 +558,9 @@ pub fn into_anthropic(
         messages: new_messages,
         max_tokens: max_output_tokens,
         system: Some(system_message),
-        thinking: dbg!(enable_thinking.then(|| anthropic::Thinking::Enabled {
+        thinking: enable_thinking.then(|| anthropic::Thinking::Enabled {
             budget_tokens: budget_tokens.unwrap_or(1024),
-        })),
+        }),
         tools: request
             .tools
             .into_iter()

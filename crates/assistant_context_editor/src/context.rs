@@ -418,6 +418,8 @@ pub enum ContextEvent {
     MessagesEdited,
     SummaryChanged,
     StreamedCompletion,
+    StartedThoughtProcess(language::Anchor),
+    EndedThoughtProcess(language::Anchor),
     PatchesUpdated {
         removed: Vec<Range<language::Anchor>>,
         updated: Vec<Range<language::Anchor>>,
@@ -495,6 +497,24 @@ impl MessageMetadata {
             _ => false,
         };
         result
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ThoughtProcessOutputSection<T> {
+    pub range: Range<T>,
+    pub status: ThoughtProcessStatus,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ThoughtProcessStatus {
+    Pending,
+    Completed,
+}
+
+impl ThoughtProcessOutputSection<language::Anchor> {
+    pub fn is_valid(&self, buffer: &language::TextBuffer) -> bool {
+        self.range.start.is_valid(buffer) && !self.range.to_offset(buffer).is_empty()
     }
 }
 
@@ -580,6 +600,7 @@ pub struct AssistantContext {
     edits_since_last_parse: language::Subscription,
     slash_commands: Arc<SlashCommandWorkingSet>,
     slash_command_output_sections: Vec<SlashCommandOutputSection<language::Anchor>>,
+    thought_process_output_sections: Vec<ThoughtProcessOutputSection<language::Anchor>>,
     message_anchors: Vec<MessageAnchor>,
     contents: Vec<Content>,
     messages_metadata: HashMap<MessageId, MessageMetadata>,
@@ -682,6 +703,7 @@ impl AssistantContext {
             parsed_slash_commands: Vec::new(),
             invoked_slash_commands: HashMap::default(),
             slash_command_output_sections: Vec::new(),
+            thought_process_output_sections: Vec::new(),
             edits_since_last_parse: edits_since_last_slash_command_parse,
             summary: None,
             pending_summary: Task::ready(None),
@@ -729,6 +751,7 @@ impl AssistantContext {
 
     pub(crate) fn serialize(&self, cx: &App) -> SavedContext {
         let buffer = self.buffer.read(cx);
+        dbg!(self.thought_process_output_sections.len());
         SavedContext {
             id: Some(self.id.clone()),
             zed: "context".into(),
@@ -758,6 +781,22 @@ impl AssistantContext {
                             icon: section.icon,
                             label: section.label.clone(),
                             metadata: section.metadata.clone(),
+                        })
+                    } else {
+                        None
+                    }
+                })
+                .collect(),
+            thought_process_sections: self
+                .thought_process_output_sections
+                .iter()
+                .filter_map(|section| {
+                    if section.is_valid(buffer) {
+                        dbg!("Serializing output");
+                        let range = section.range.to_offset(buffer);
+                        Some(ThoughtProcessOutputSection {
+                            range,
+                            status: section.status.clone(),
                         })
                     } else {
                         None
@@ -1126,6 +1165,10 @@ impl AssistantContext {
 
     pub fn slash_command_output_sections(&self) -> &[SlashCommandOutputSection<language::Anchor>] {
         &self.slash_command_output_sections
+    }
+
+    pub fn thought_process_sections(&self) -> &[ThoughtProcessOutputSection<language::Anchor>] {
+        &self.thought_process_output_sections
     }
 
     pub fn contains_files(&self, cx: &App) -> bool {
@@ -2166,6 +2209,35 @@ impl AssistantContext {
         );
     }
 
+    fn insert_thought_process_output_section(
+        &mut self,
+        section: ThoughtProcessOutputSection<language::Anchor>,
+        cx: &mut Context<Self>,
+    ) {
+        let buffer = self.buffer.read(cx);
+        let insertion_ix = match self
+            .thought_process_output_sections
+            .binary_search_by(|probe| probe.range.cmp(&section.range, buffer))
+        {
+            Ok(ix) | Err(ix) => ix,
+        };
+        self.thought_process_output_sections
+            .insert(insertion_ix, section.clone());
+        // cx.emit(ContextEvent::ThoughtProcessOutputSectionAdded {
+        //     section: section.clone(),
+        // });
+        let version = self.version.clone();
+        let timestamp = self.next_timestamp();
+        // self.push_op(
+        //     ContextOperation::ThoughtProcessOutputSectionAdded {
+        //         timestamp,
+        //         section,
+        //         version,
+        //     },
+        //     cx,
+        // ); //TODO
+    }
+
     pub fn completion_provider_changed(&mut self, cx: &mut Context<Self>) {
         self.count_remaining_tokens(cx);
     }
@@ -2218,6 +2290,7 @@ impl AssistantContext {
                     let request_start = Instant::now();
                     let mut events = stream.await?;
                     let mut stop_reason = StopReason::EndTurn;
+                    let mut thought_process_stack = Vec::new();
 
                     while let Some(event) = events.next().await {
                         if response_latency.is_none() {
@@ -2225,6 +2298,8 @@ impl AssistantContext {
                         }
                         let event = event?;
 
+                        let mut context_event = None;
+                        // let mut thought_process_output_section = None;
                         this.update(&mut cx, |this, cx| {
                             let message_ix = this
                                 .message_anchors
@@ -2243,7 +2318,14 @@ impl AssistantContext {
                                     LanguageModelCompletionEvent::Stop(reason) => {
                                         stop_reason = reason;
                                     }
-                                    LanguageModelCompletionEvent::Text(chunk) => {
+                                    LanguageModelCompletionEvent::Thinking(chunk) => {
+                                        if thought_process_stack.is_empty() {
+                                            let start =
+                                                buffer.anchor_before(message_old_end_offset);
+                                            thought_process_stack.push(start.clone());
+                                            context_event =
+                                                Some(ContextEvent::StartedThoughtProcess(start));
+                                        }
                                         buffer.edit(
                                             [(
                                                 message_old_end_offset..message_old_end_offset,
@@ -2253,7 +2335,19 @@ impl AssistantContext {
                                             cx,
                                         );
                                     }
-                                    LanguageModelCompletionEvent::Thinking(chunk) => {
+                                    LanguageModelCompletionEvent::Text(mut chunk) => {
+                                        if let Some(_) = thought_process_stack.pop() {
+                                            let end = buffer.anchor_before(message_old_end_offset);
+                                            context_event =
+                                                Some(ContextEvent::EndedThoughtProcess(end));
+                                            // thought_process_output_section =
+                                            //     Some(ThoughtProcessOutputSection {
+                                            //         status: ThoughtProcessStatus::Completed,
+                                            //         range: start..end.clone(),
+                                            //     });
+                                            chunk.insert_str(0, "\n\n");
+                                        }
+
                                         buffer.edit(
                                             [(
                                                 message_old_end_offset..message_old_end_offset,
@@ -2267,6 +2361,13 @@ impl AssistantContext {
                                     LanguageModelCompletionEvent::UsageUpdate(_) => {}
                                 }
                             });
+
+                            if let Some(context_event) = context_event.take() {
+                                cx.emit(context_event);
+                            }
+                            // if let Some(section) = thought_process_output_section.take() {
+                            //     this.insert_thought_process_output_section(section, cx);
+                            // }
 
                             cx.emit(ContextEvent::StreamedCompletion);
 
@@ -3134,6 +3235,8 @@ pub struct SavedContext {
     pub summary: String,
     pub slash_command_output_sections:
         Vec<assistant_slash_command::SlashCommandOutputSection<usize>>,
+    #[serde(default)]
+    pub thought_process_sections: Vec<ThoughtProcessOutputSection<usize>>,
 }
 
 impl SavedContext {
@@ -3309,6 +3412,7 @@ impl SavedContextV0_3_0 {
                 .collect(),
             summary: self.summary,
             slash_command_output_sections: self.slash_command_output_sections,
+            thought_process_sections: Vec::new(),
         }
     }
 }

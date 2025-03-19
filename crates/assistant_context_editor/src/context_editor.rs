@@ -64,7 +64,10 @@ use workspace::{
     Workspace,
 };
 
-use crate::{slash_command::SlashCommandCompletionProvider, slash_command_picker};
+use crate::{
+    slash_command::SlashCommandCompletionProvider, slash_command_picker,
+    ThoughtProcessOutputSection, ThoughtProcessStatus,
+};
 use crate::{
     AssistantContext, AssistantPatch, AssistantPatchStatus, CacheStatus, Content, ContextEvent,
     ContextId, InvokedSlashCommandId, InvokedSlashCommandStatus, Message, MessageId,
@@ -178,6 +181,7 @@ pub struct ContextEditor {
     project: Entity<Project>,
     lsp_adapter_delegate: Option<Arc<dyn LspAdapterDelegate>>,
     editor: Entity<Editor>,
+    pending_thought_process: Option<(CreaseId, language::Anchor)>,
     blocks: HashMap<MessageId, (MessageHeader, CustomBlockId)>,
     image_blocks: HashSet<CustomBlockId>,
     scroll_position: Option<ScrollPosition>,
@@ -252,7 +256,8 @@ impl ContextEditor {
             cx.observe_global_in::<SettingsStore>(window, Self::settings_changed),
         ];
 
-        let sections = context.read(cx).slash_command_output_sections().to_vec();
+        let slash_command_sections = context.read(cx).slash_command_output_sections().to_vec();
+        let thought_process_sections = context.read(cx).thought_process_sections().to_vec();
         let patch_ranges = context.read(cx).patch_ranges().collect::<Vec<_>>();
         let slash_commands = context.read(cx).slash_commands().clone();
         let mut this = Self {
@@ -264,6 +269,7 @@ impl ContextEditor {
             image_blocks: Default::default(),
             scroll_position: None,
             remote_id: None,
+            pending_thought_process: None,
             fs: fs.clone(),
             workspace,
             project,
@@ -293,7 +299,8 @@ impl ContextEditor {
         };
         this.update_message_headers(cx);
         this.update_image_blocks(cx);
-        this.insert_slash_command_output_sections(sections, false, window, cx);
+        this.insert_slash_command_output_sections(slash_command_sections, false, window, cx);
+        this.insert_thought_process_sections(thought_process_sections, window, cx);
         this.patches_updated(&Vec::new(), &patch_ranges, window, cx);
         this
     }
@@ -598,6 +605,105 @@ impl ContextEditor {
                     context.save(Some(Duration::from_millis(500)), self.fs.clone(), cx);
                 });
             }
+            ContextEvent::StartedThoughtProcess(start) => {
+                let multi_buffer_snapshot = self.editor.read(cx).buffer().read(cx).snapshot(cx);
+                let (excerpt_id, _, snapshot) = multi_buffer_snapshot.as_singleton().unwrap();
+
+                let range = start.clone()..start.bias_right(&snapshot);
+
+                let crease_id = self.editor.update(cx, |editor, cx| {
+                    let start = multi_buffer_snapshot
+                        .anchor_in_excerpt(*excerpt_id, range.start)
+                        .unwrap();
+                    let end = multi_buffer_snapshot
+                        .anchor_in_excerpt(*excerpt_id, range.end)
+                        .unwrap();
+                    let buffer_row = MultiBufferRow(start.to_point(&multi_buffer_snapshot).row);
+                    let crease = Crease::inline(
+                        start..end,
+                        FoldPlaceholder {
+                            render: render_fold_icon_button(
+                                cx.entity().downgrade(),
+                                IconName::Ai,
+                                "Thinking...".into(),
+                            ),
+                            merge_adjacent: false,
+                            ..Default::default()
+                        },
+                        render_slash_command_output_toggle,
+                        |_, _, _, _| Empty.into_any_element(),
+                    )
+                    .with_metadata(CreaseMetadata {
+                        icon: IconName::Ai,
+                        label: "Thinking Process".into(),
+                    });
+
+                    let creases = editor.insert_creases(vec![crease], cx);
+
+                    editor.fold_at(&FoldAt { buffer_row }, window, cx);
+
+                    creases[0]
+                });
+
+                // let creases = self.insert_thought_process_sections(
+                //     [ThoughtProcessOutputSection {
+                //         range: range.clone(),
+                //         status: ThoughtProcessStatus::Pending,
+                //     }],
+                //     window,
+                //     cx,
+                // );
+                self.pending_thought_process = Some((crease_id, start.clone()));
+            }
+            ContextEvent::EndedThoughtProcess(end) => {
+                if let Some((crease_id, start)) = self.pending_thought_process.take() {
+                    let multi_buffer_snapshot = self.editor.read(cx).buffer().read(cx).snapshot(cx);
+                    let (excerpt_id, _, _) = multi_buffer_snapshot.as_singleton().unwrap();
+
+                    let range = start.clone()..end.clone();
+
+                    self.editor.update(cx, |editor, cx| {
+                        editor.remove_creases(vec![crease_id], cx);
+
+                        let start = multi_buffer_snapshot
+                            .anchor_in_excerpt(*excerpt_id, range.start)
+                            .unwrap();
+                        let end = multi_buffer_snapshot
+                            .anchor_in_excerpt(*excerpt_id, range.end)
+                            .unwrap();
+                        let buffer_row = MultiBufferRow(start.to_point(&multi_buffer_snapshot).row);
+                        let crease = Crease::inline(
+                            start..end,
+                            FoldPlaceholder {
+                                render: render_fold_icon_button(
+                                    cx.entity().downgrade(),
+                                    IconName::Ai,
+                                    "Thinking Done".into(),
+                                ),
+                                merge_adjacent: false,
+                                ..Default::default()
+                            },
+                            render_slash_command_output_toggle,
+                            |_, _, _, _| Empty.into_any_element(),
+                        );
+
+                        editor.insert_creases(vec![crease], cx);
+                        editor.fold_at(&FoldAt { buffer_row }, window, cx);
+                    });
+
+                    //     self.editor.update(cx, |editor, cx| {
+                    //         editor.remove_creases(vec![crease_id], cx);
+                    //     });
+                    // self.insert_thought_process_sections(
+                    //     [ThoughtProcessOutputSection {
+                    //         range: start..end.clone(),
+                    //         status: ThoughtProcessStatus::Completed,
+                    //     }],
+                    //     window,
+                    //     cx,
+                    // );
+                }
+            }
             ContextEvent::StreamedCompletion => {
                 self.editor.update(cx, |editor, cx| {
                     if let Some(scroll_position) = self.scroll_position {
@@ -708,7 +814,21 @@ impl ContextEditor {
             ContextEvent::SlashCommandOutputSectionAdded { section } => {
                 self.insert_slash_command_output_sections([section.clone()], false, window, cx);
             }
-            ContextEvent::Operation(_) => {}
+            ContextEvent::Operation(_) => {
+                // if let Some((_, range)) = self.pending_thought_process.as_ref() {
+                //     self.editor.update(cx, |editor, cx| {
+                //         let snapshot = editor.snapshot(window, cx);
+                //         let buffer_row =
+                //             MultiBufferRow(range.start.to_point(&snapshot.buffer_snapshot).row);
+                //         let crease = snapshot.crease_for_buffer_row(buffer_row);
+                //         dbg!(crease.map(|s| s.range().clone()));
+
+                //         dbg!(snapshot.display_snapshot.intersects_fold(range.start));
+                //         editor.fold_at(&editor::actions::FoldAt { buffer_row }, window, cx);
+                //         dbg!(snapshot.display_snapshot.intersects_fold(range.start));
+                //     });
+                // }
+            }
             ContextEvent::ShowAssistError(error_message) => {
                 self.last_error = Some(AssistError::Message(error_message.clone()));
             }
@@ -943,6 +1063,61 @@ impl ContextEditor {
         }
 
         self.update_active_patch(window, cx);
+    }
+
+    fn insert_thought_process_sections(
+        &mut self,
+        sections: impl IntoIterator<Item = ThoughtProcessOutputSection<language::Anchor>>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Vec<CreaseId> {
+        self.editor.update(cx, |editor, cx| {
+            let buffer = editor.buffer().read(cx).snapshot(cx);
+            let excerpt_id = *buffer.as_singleton().unwrap().0;
+            let mut buffer_rows_to_fold = BTreeSet::new();
+            let mut creases = Vec::new();
+            for section in sections {
+                let start = buffer
+                    .anchor_in_excerpt(excerpt_id, section.range.start)
+                    .unwrap();
+                let end = buffer
+                    .anchor_in_excerpt(excerpt_id, section.range.end)
+                    .unwrap();
+                let buffer_row = MultiBufferRow(start.to_point(&buffer).row);
+                buffer_rows_to_fold.insert(buffer_row);
+                creases.push(
+                    Crease::inline(
+                        start..end,
+                        FoldPlaceholder {
+                            render: render_fold_icon_button(
+                                cx.entity().downgrade(),
+                                IconName::Ai,
+                                match section.status {
+                                    ThoughtProcessStatus::Pending => "Thinking...".into(),
+                                    ThoughtProcessStatus::Completed => "Thinking done".into(),
+                                },
+                            ),
+                            merge_adjacent: false,
+                            ..Default::default()
+                        },
+                        render_slash_command_output_toggle,
+                        |_, _, _, _| Empty.into_any_element(),
+                    )
+                    .with_metadata(CreaseMetadata {
+                        icon: IconName::Ai,
+                        label: "Thinking Process".into(),
+                    }),
+                );
+            }
+
+            let creases = editor.insert_creases(creases, cx);
+
+            for buffer_row in buffer_rows_to_fold.into_iter().rev() {
+                editor.fold_at(&FoldAt { buffer_row }, window, cx);
+            }
+
+            creases
+        })
     }
 
     fn insert_slash_command_output_sections(
