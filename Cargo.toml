@@ -395,7 +395,7 @@ blade-util = { git = "https://github.com/kvark/blade", rev = "b16f5c7bd873c7126f
 naga = { version = "23.1.0", features = ["wgsl-in"] }
 blake3 = "1.5.3"
 bytes = "1.0"
-cargo_metadata = { path = "../../rust/cargo_metadata" }
+cargo_metadata = { git = "https://github.com/zed-industries/cargo_metadta", rev = "ce8171bad673923d61a77b6761d0dc4aff63398a"}
 cargo_toml = "0.21"
 chrono = { version = "0.4", features = ["serde"] }
 clap = { version = "4.4", features = ["derive"] }
@@ -441,7 +441,7 @@ libc = "0.2"
 libsqlite3-sys = { version = "0.30.1", features = ["bundled"] }
 linkify = "0.10.0"
 linkme = "0.3.31"
-livekit = { path = "../../rust/livekit-rust-sdks/livekit", features = ["__rustls-tls"]}
+livekit = { rev = "d08d560209a863a1ed24d9c18cf277c8317114b6", git = "https://github.com/zed-industries/livekit-rust-sdks", features = ["__rustls-tls"]}
 log = { version = "0.4.16", features = ["kv_unstable_serde", "serde"] }
 markup5ever_rcdom = "0.3.0"
 mlua = { version = "0.10", features = ["lua54", "vendored", "async", "send"] }

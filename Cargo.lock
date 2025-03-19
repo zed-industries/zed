@@ -7503,6 +7503,7 @@ dependencies = [
 [[package]]
 name = "libwebrtc"
 version = "0.3.10"
+source = "git+https://github.com/zed-industries/livekit-rust-sdks?rev=d08d560209a863a1ed24d9c18cf277c8317114b6#d08d560209a863a1ed24d9c18cf277c8317114b6"
 dependencies = [
  "cxx",
  "jni",
@@ -7587,6 +7588,7 @@ checksum = "4ee93343901ab17bd981295f2cf0026d4ad018c7c31ba84549a4ddbb47a45104"
 [[package]]
 name = "livekit"
 version = "0.7.6"
+source = "git+https://github.com/zed-industries/livekit-rust-sdks?rev=d08d560209a863a1ed24d9c18cf277c8317114b6#d08d560209a863a1ed24d9c18cf277c8317114b6"
 dependencies = [
  "chrono",
  "futures-util",
@@ -7609,6 +7611,7 @@ dependencies = [
 [[package]]
 name = "livekit-api"
 version = "0.4.2"
+source = "git+https://github.com/zed-industries/livekit-rust-sdks?rev=d08d560209a863a1ed24d9c18cf277c8317114b6#d08d560209a863a1ed24d9c18cf277c8317114b6"
 dependencies = [
  "base64 0.21.7",
  "futures-util",
@@ -7635,6 +7638,7 @@ dependencies = [
 [[package]]
 name = "livekit-protocol"
 version = "0.3.9"
+source = "git+https://github.com/zed-industries/livekit-rust-sdks?rev=d08d560209a863a1ed24d9c18cf277c8317114b6#d08d560209a863a1ed24d9c18cf277c8317114b6"
 dependencies = [
  "futures-util",
  "livekit-runtime",
@@ -7651,6 +7655,7 @@ dependencies = [
 [[package]]
 name = "livekit-runtime"
 version = "0.4.0"
+source = "git+https://github.com/zed-industries/livekit-rust-sdks?rev=d08d560209a863a1ed24d9c18cf277c8317114b6#d08d560209a863a1ed24d9c18cf277c8317114b6"
 dependencies = [
  "tokio",
  "tokio-stream",
@@ -15981,6 +15986,7 @@ dependencies = [
 [[package]]
 name = "webrtc-sys"
 version = "0.3.7"
+source = "git+https://github.com/zed-industries/livekit-rust-sdks?rev=d08d560209a863a1ed24d9c18cf277c8317114b6#d08d560209a863a1ed24d9c18cf277c8317114b6"
 dependencies = [
  "cc",
  "cxx",
@@ -15993,6 +15999,7 @@ dependencies = [
 [[package]]
 name = "webrtc-sys-build"
 version = "0.3.6"
+source = "git+https://github.com/zed-industries/livekit-rust-sdks?rev=d08d560209a863a1ed24d9c18cf277c8317114b6#d08d560209a863a1ed24d9c18cf277c8317114b6"
 dependencies = [
  "fs2",
  "regex",
