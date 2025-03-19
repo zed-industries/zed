@@ -16,7 +16,7 @@ use std::{
     ops::Range,
     sync::Arc,
 };
-use ui::{prelude::*, IconButtonShape, Tooltip};
+use ui::{prelude::*, IconButtonShape};
 use util::TryFutureExt;
 use workspace::{
     item::{BreadcrumbText, ItemEvent, TabContentParams},
@@ -134,7 +134,7 @@ impl AssistantDiff {
             paths_to_delete.remove(&path_key);
 
             let snapshot = buffer.read(cx).snapshot();
-            let diff = tracked.diff.read(cx);
+            let diff = tracked.diff().read(cx);
             let diff_hunk_ranges = diff
                 .hunks_intersecting_range(
                     language::Anchor::MIN..language::Anchor::MAX,
@@ -154,7 +154,7 @@ impl AssistantDiff {
                     editor::DEFAULT_MULTIBUFFER_CONTEXT,
                     cx,
                 );
-                multibuffer.add_diff(tracked.diff.clone(), cx);
+                multibuffer.add_diff(tracked.diff().clone(), cx);
                 was_empty
             });
 
@@ -465,6 +465,7 @@ fn render_diff_hunk_controls(
             vec![
                 Button::new(("stage", row as u64), "Accept")
                     .alpha(if status.is_pending() { 0.66 } else { 1.0 })
+                    // TODO: add tooltip
                     // .tooltip({
                     //     let focus_handle = editor.focus_handle(cx);
                     //     move |window, cx| {
@@ -491,6 +492,7 @@ fn render_diff_hunk_controls(
                         }
                     }),
                 Button::new("undo", "Undo")
+                    // TODO: add tooltip
                     // .tooltip({
                     //     let focus_handle = editor.focus_handle(cx);
                     //     move |window, cx| {
@@ -512,6 +514,7 @@ fn render_diff_hunk_controls(
         } else {
             vec![Button::new(("review", row as u64), "Review")
                 .alpha(if status.is_pending() { 0.66 } else { 1.0 })
+                // TODO: add tooltip
                 // .tooltip({
                 //     let focus_handle = editor.focus_handle(cx);
                 //     move |window, cx| {
@@ -546,6 +549,7 @@ fn render_diff_hunk_controls(
                         .shape(IconButtonShape::Square)
                         .icon_size(IconSize::Small)
                         // .disabled(!has_multiple_hunks)
+                        // TODO: add tooltip
                         // .tooltip({
                         //     let focus_handle = editor.focus_handle(cx);
                         //     move |window, cx| {
@@ -561,6 +565,7 @@ fn render_diff_hunk_controls(
                         .on_click({
                             let _editor = editor.clone();
                             move |_event, _window, _cx| {
+                                // TODO: wire this up
                                 // editor.update(cx, |editor, cx| {
                                 //     let snapshot = editor.snapshot(window, cx);
                                 //     let position =
@@ -582,6 +587,7 @@ fn render_diff_hunk_controls(
                         .shape(IconButtonShape::Square)
                         .icon_size(IconSize::Small)
                         // .disabled(!has_multiple_hunks)
+                        // TODO: add tooltip
                         // .tooltip({
                         //     let focus_handle = editor.focus_handle(cx);
                         //     move |window, cx| {
@@ -597,6 +603,7 @@ fn render_diff_hunk_controls(
                         .on_click({
                             let _editor = editor.clone();
                             move |_event, _window, _cx| {
+                                // TODO: wire this up
                                 // editor.update(cx, |editor, cx| {
                                 //     let snapshot = editor.snapshot(window, cx);
                                 //     let point =

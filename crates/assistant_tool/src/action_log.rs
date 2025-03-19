@@ -21,11 +21,19 @@ pub struct TrackedBuffer {
     unreviewed_edit_ids: Vec<clock::Lamport>,
     accepted_edit_ids: Vec<clock::Lamport>,
     version: clock::Global,
-    pub diff: Entity<BufferDiff>,
+    diff: Entity<BufferDiff>,
     secondary_diff: Entity<BufferDiff>,
 }
 
 impl TrackedBuffer {
+    pub fn needs_review(&self) -> bool {
+        !self.unreviewed_edit_ids.is_empty()
+    }
+
+    pub fn diff(&self) -> &Entity<BufferDiff> {
+        &self.diff
+    }
+
     fn update_diff(&mut self, cx: &mut App) -> impl 'static + Future<Output = ()> {
         let edits_to_undo = self
             .unreviewed_edit_ids
@@ -181,7 +189,6 @@ impl ActionLog {
     pub fn unreviewed_buffers(&self) -> BTreeMap<Entity<Buffer>, TrackedBuffer> {
         self.tracked_buffers
             .iter()
-            .filter(|(_, tracked)| !tracked.unreviewed_edit_ids.is_empty())
             .map(|(buffer, tracked)| (buffer.clone(), tracked.clone()))
             .collect()
     }
@@ -306,6 +313,36 @@ mod tests {
                     HunkStatus {
                         range: Point::new(4, 0)..Point::new(4, 3),
                         review_status: ReviewStatus::Unreviewed,
+                        diff_status: DiffHunkStatusKind::Modified,
+                    }
+                ],
+            )]
+        );
+
+        action_log
+            .update(cx, |log, cx| {
+                log.review_edits_in_range(
+                    buffer.clone(),
+                    Point::new(0, 0)..Point::new(4, 3),
+                    false,
+                    cx,
+                )
+            })
+            .await
+            .unwrap();
+        assert_eq!(
+            unreviewed_hunks(&action_log, cx),
+            vec![(
+                buffer.clone(),
+                vec![
+                    HunkStatus {
+                        range: Point::new(1, 0)..Point::new(2, 0),
+                        review_status: ReviewStatus::Reviewed,
+                        diff_status: DiffHunkStatusKind::Modified,
+                    },
+                    HunkStatus {
+                        range: Point::new(4, 0)..Point::new(4, 3),
+                        review_status: ReviewStatus::Reviewed,
                         diff_status: DiffHunkStatusKind::Modified,
                     }
                 ],
