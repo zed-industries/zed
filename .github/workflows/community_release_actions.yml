@@ -62,14 +62,23 @@ jobs:
 
       - name: Send release notes email
         if: steps.check-promotion-from-preview.outputs.was_promoted_from_preview == 'true'
+        env:
+          RELEASE_BODY: "${{ toJSON(github.event.release.body) }}"
         run: |
-          echo '${{ toJSON(github.event.release.body) }}'
+          REPO="zed-industries/zed"
+          TAG="${{ github.event.release.tag_name || 'v0.178.4'}}"
+          RELEASE_BODY="$(curl -s \"https://api.github.com/repos/$REPO/releases\" \
+            | jq -r --arg tag \"$TAG\" \
+              '.[] | select(.tag_name == $tag and .prerelease == false) | .body'
+          )"
+          echo "$TAG"
+          echo "$RELEASE_BODY"
           curl -X POST "https://zed.dev/api/send_release_notes_email" \
               -H "Authorization: Bearer ${{ secrets.RELEASE_NOTES_API_TOKEN }}" \
               -H "Content-Type: application/json" \
               -d @- <<-JSONHERE
                   {
-                      "version": "${{ github.event.release.tag_name }}",
-                      "markdown_body": ${{ toJSON(github.event.release.body) }}
+                      "version": "${TAG}",
+                      "markdown_body": ${RELEASE_BODY}
                   }
               JSONHERE
