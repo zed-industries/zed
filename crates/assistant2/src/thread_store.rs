@@ -65,6 +65,14 @@ impl ThreadStore {
         Ok(this)
     }
 
+    pub fn context_server_manager(&self) -> Entity<ContextServerManager> {
+        self.context_server_manager.clone()
+    }
+
+    pub fn tools(&self) -> Arc<ToolWorkingSet> {
+        self.tools.clone()
+    }
+
     /// Returns the number of threads.
     pub fn thread_count(&self) -> usize {
         self.threads.len()
