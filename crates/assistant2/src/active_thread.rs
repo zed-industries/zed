@@ -372,10 +372,10 @@ impl ActiveThread {
                             cx,
                         );
 
-                        cx.spawn(|this, mut cx| async move {
+                        cx.spawn(async move |this, cx| {
                             let updated_context_ids = refresh_task.await;
 
-                            this.update(&mut cx, |this, cx| {
+                            this.update(cx, |this, cx| {
                                 this.context_store.read_with(cx, |context_store, cx| {
                                     context_store
                                         .context()
@@ -394,10 +394,10 @@ impl ActiveThread {
 
                     let model_registry = LanguageModelRegistry::read_global(cx);
                     if let Some(model) = model_registry.active_model() {
-                        cx.spawn(|this, mut cx| async move {
+                        cx.spawn(async move |this, cx| {
                             let updated_context = context_update_task.await?;
 
-                            this.update(&mut cx, |this, cx| {
+                            this.update(cx, |this, cx| {
                                 this.thread.update(cx, |thread, cx| {
                                     thread.attach_tool_results(updated_context, cx);
                                     if !canceled {
@@ -418,9 +418,9 @@ impl ActiveThread {
     /// Only one task to save the thread will be in flight at a time.
     fn save_thread(&mut self, cx: &mut Context<Self>) {
         let thread = self.thread.clone();
-        self.save_thread_task = Some(cx.spawn(|this, mut cx| async move {
+        self.save_thread_task = Some(cx.spawn(async move |this, cx| {
             let task = this
-                .update(&mut cx, |this, cx| {
+                .update(cx, |this, cx| {
                     this.thread_store
                         .update(cx, |thread_store, cx| thread_store.save_thread(&thread, cx))
                 })

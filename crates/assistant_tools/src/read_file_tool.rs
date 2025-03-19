@@ -4,6 +4,7 @@ use std::sync::Arc;
 use anyhow::{anyhow, Result};
 use assistant_tool::{ActionLog, Tool};
 use gpui::{App, Entity, Task};
+use itertools::Itertools;
 use language_model::LanguageModelRequestMessage;
 use project::Project;
 use schemars::JsonSchema;
@@ -26,6 +27,14 @@ pub struct ReadFileToolInput {
     /// If you wanna access `file.txt` in `directory2`, you should use the path `directory2/file.txt`.
     /// </example>
     pub path: Arc<Path>,
+
+    /// Optional line number to start reading on (1-based index)
+    #[serde(default)]
+    pub start_line: Option<usize>,
+
+    /// Optional line number to end reading on (1-based index)
+    #[serde(default)]
+    pub end_line: Option<usize>,
 }
 
 pub struct ReadFileTool;
@@ -61,25 +70,39 @@ impl Tool for ReadFileTool {
             return Task::ready(Err(anyhow!("Path not found in project")));
         };
 
-        cx.spawn(|mut cx| async move {
+        cx.spawn(async move |cx| {
             let buffer = cx
                 .update(|cx| {
                     project.update(cx, |project, cx| project.open_buffer(project_path, cx))
                 })?
                 .await?;
 
-            let result = buffer.read_with(&cx, |buffer, _cx| {
+            let result = buffer.read_with(cx, |buffer, _cx| {
                 if buffer
                     .file()
                     .map_or(false, |file| file.disk_state().exists())
                 {
-                    Ok(buffer.text())
+                    let text = buffer.text();
+                    let string = if input.start_line.is_some() || input.end_line.is_some() {
+                        let start = input.start_line.unwrap_or(1);
+                        let lines = text.split('\n').skip(start - 1);
+                        if let Some(end) = input.end_line {
+                            let count = end.saturating_sub(start);
+                            Itertools::intersperse(lines.take(count), "\n").collect()
+                        } else {
+                            Itertools::intersperse(lines, "\n").collect()
+                        }
+                    } else {
+                        text
+                    };
+
+                    Ok(string)
                 } else {
                     Err(anyhow!("File does not exist"))
                 }
             })??;
 
-            action_log.update(&mut cx, |log, cx| {
+            action_log.update(cx, |log, cx| {
                 log.buffer_read(buffer, cx);
             })?;
 

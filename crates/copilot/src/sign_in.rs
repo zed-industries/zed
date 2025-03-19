@@ -37,11 +37,11 @@ pub fn initiate_sign_in(window: &mut Window, cx: &mut App) {
             });
 
             let workspace = workspace.downgrade();
-            cx.spawn(|mut cx| async move {
+            cx.spawn(async move |cx| {
                 task.await;
                 if let Some(copilot) = cx.update(|cx| Copilot::global(cx)).ok().flatten() {
                     workspace
-                        .update(&mut cx, |workspace, cx| match copilot.read(cx).status() {
+                        .update(cx, |workspace, cx| match copilot.read(cx).status() {
                             Status::Authorized => workspace.show_toast(
                                 Toast::new(
                                     NotificationId::unique::<CopilotStartingToast>(),

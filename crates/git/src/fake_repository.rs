@@ -58,16 +58,26 @@ impl FakeGitRepositoryState {
 impl GitRepository for FakeGitRepository {
     fn reload_index(&self) {}
 
-    fn load_index_text(&self, path: RepoPath, _: AsyncApp) -> BoxFuture<Option<String>> {
+    fn load_index_text(&self, path: RepoPath, cx: AsyncApp) -> BoxFuture<Option<String>> {
         let state = self.state.lock();
         let content = state.index_contents.get(path.as_ref()).cloned();
-        async { content }.boxed()
+        let executor = cx.background_executor().clone();
+        async move {
+            executor.simulate_random_delay().await;
+            content
+        }
+        .boxed()
     }
 
-    fn load_committed_text(&self, path: RepoPath, _: AsyncApp) -> BoxFuture<Option<String>> {
+    fn load_committed_text(&self, path: RepoPath, cx: AsyncApp) -> BoxFuture<Option<String>> {
         let state = self.state.lock();
         let content = state.head_contents.get(path.as_ref()).cloned();
-        async { content }.boxed()
+        let executor = cx.background_executor().clone();
+        async move {
+            executor.simulate_random_delay().await;
+            content
+        }
+        .boxed()
     }
 
     fn set_index_text(
@@ -205,7 +215,7 @@ impl GitRepository for FakeGitRepository {
         &self,
         path: RepoPath,
         _content: Rope,
-        _cx: AsyncApp,
+        _cx: &mut AsyncApp,
     ) -> BoxFuture<Result<crate::blame::Blame>> {
         let state = self.state.lock();
         let result = state

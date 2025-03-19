@@ -145,7 +145,7 @@ let
         ZED_UPDATE_EXPLANATION = "Zed has been installed using Nix. Auto-updates have thus been disabled.";
         RELEASE_VERSION = version;
         RUSTFLAGS = if withGLES then "--cfg gles" else "";
-        # TODO: why are these not handled by the linker given that they're in buildInputs?
+        # these libraries are used with dlopen so putting them in buildInputs isn't enough
         NIX_LDFLAGS = "-rpath ${
           lib.makeLibraryPath [
             gpu-lib
@@ -154,6 +154,9 @@ let
         }";
         LK_CUSTOM_WEBRTC = livekit-libwebrtc;
       };
+
+      # prevent nix from removing the "unused" wayland/gpu-lib rpaths
+      dontPatchELF = true;
 
       cargoVendorDir = craneLib.vendorCargoDeps {
         inherit src cargoLock;

@@ -335,12 +335,12 @@ impl ContextStrip {
             context_store.accept_suggested_context(&suggested, cx)
         });
 
-        cx.spawn_in(window, |this, mut cx| async move {
-            match task.await.notify_async_err(&mut cx) {
+        cx.spawn_in(window, async move |this, cx| {
+            match task.await.notify_async_err(cx) {
                 None => {}
                 Some(()) => {
                     if let Some(this) = this.upgrade() {
-                        this.update(&mut cx, |_, cx| cx.notify())?;
+                        this.update(cx, |_, cx| cx.notify())?;
                     }
                 }
             }

@@ -148,7 +148,7 @@ impl RemoteRunningKernel {
 
         let http_client = cx.http_client();
 
-        window.spawn(cx, |cx| async move {
+        window.spawn(cx, async move |cx| {
             let kernel_id = launch_remote_kernel(
                 &remote_server,
                 http_client.clone(),
@@ -201,12 +201,12 @@ impl RemoteRunningKernel {
             let receiving_task = cx.spawn({
                 let session = session.clone();
 
-                |mut cx| async move {
+                async move |cx| {
                     while let Some(message) = r.next().await {
                         match message {
                             Ok(message) => {
                                 session
-                                    .update_in(&mut cx, |session, window, cx| {
+                                    .update_in(cx, |session, window, cx| {
                                         session.route(&message, window, cx);
                                     })
                                     .ok();
@@ -281,7 +281,7 @@ impl RunningKernel for RemoteRunningKernel {
         let token = self.remote_server.token.clone();
         let http_client = self.http_client.clone();
 
-        window.spawn(cx, |_| async move {
+        window.spawn(cx, async move |_| {
             let request = Request::builder()
                 .method("DELETE")
                 .uri(&url)

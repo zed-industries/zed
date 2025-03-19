@@ -252,11 +252,9 @@ impl AutoUpdater {
     }
 
     pub fn start_polling(&self, cx: &mut Context<Self>) -> Task<Result<()>> {
-        cx.spawn(|this, mut cx| async move {
-            loop {
-                this.update(&mut cx, |this, cx| this.poll(cx))?;
-                cx.background_executor().timer(POLL_INTERVAL).await;
-            }
+        cx.spawn(async move |this, cx| loop {
+            this.update(cx, |this, cx| this.poll(cx))?;
+            cx.background_executor().timer(POLL_INTERVAL).await;
         })
     }
 
@@ -267,9 +265,9 @@ impl AutoUpdater {
 
         cx.notify();
 
-        self.pending_poll = Some(cx.spawn(|this, mut cx| async move {
+        self.pending_poll = Some(cx.spawn(async move |this, cx| {
             let result = Self::update(this.upgrade()?, cx.clone()).await;
-            this.update(&mut cx, |this, cx| {
+            this.update(cx, |this, cx| {
                 this.pending_poll = None;
                 if let Err(error) = result {
                     log::error!("auto-update failed: error:{:?}", error);
