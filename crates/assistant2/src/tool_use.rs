@@ -265,7 +265,7 @@ impl ToolUseState {
         task: Task<()>,
     ) {
         if let Some(tool_use) = self.pending_tool_uses_by_id.get_mut(&tool_use_id) {
-            tool_use.ui_text = ui_text.to_string().into();
+            tool_use.ui_text = ui_text.into();
             tool_use.status = PendingToolUseStatus::Running {
                 _task: task.shared(),
             };
