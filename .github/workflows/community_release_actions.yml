@@ -63,6 +63,7 @@ jobs:
       - name: Send release notes email
         if: steps.check-promotion-from-preview.outputs.was_promoted_from_preview == 'true'
         run: |
+          echo '${{ toJSON(github.event.release.body) }}'
           curl -X POST "https://zed.dev/api/send_release_notes_email" \
               -H "Authorization: Bearer ${{ secrets.RELEASE_NOTES_API_TOKEN }}" \
               -H "Content-Type: application/json" \
