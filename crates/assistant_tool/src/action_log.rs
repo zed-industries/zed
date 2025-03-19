@@ -1,6 +1,7 @@
+use anyhow::Result;
 use buffer_diff::BufferDiff;
 use collections::{BTreeMap, HashMap, HashSet};
-use gpui::{App, AppContext, Context, Entity};
+use gpui::{App, AppContext, Context, Entity, Task};
 use language::Buffer;
 
 /// Tracks actions performed by tools in a thread
@@ -16,8 +17,10 @@ pub struct ActionLog {
 #[derive(Debug, Clone)]
 pub struct TrackedBuffer {
     unreviewed_edit_ids: Vec<clock::Lamport>,
+    reviewed_edit_ids: Vec<clock::Lamport>,
     version: clock::Global,
     pub diff: Entity<BufferDiff>,
+    secondary_diff: Entity<BufferDiff>,
 }
 
 impl ActionLog {
@@ -39,10 +42,18 @@ impl ActionLog {
             .entry(buffer.clone())
             .or_insert_with(|| {
                 let text_snapshot = buffer.read(cx).text_snapshot();
+                let unreviewed_diff = cx.new(|cx| BufferDiff::new(&text_snapshot, cx));
+                let diff = cx.new(|cx| {
+                    let mut diff = BufferDiff::new(&text_snapshot, cx);
+                    diff.set_secondary_diff(unreviewed_diff.clone());
+                    diff
+                });
                 TrackedBuffer {
                     unreviewed_edit_ids: Vec::new(),
+                    reviewed_edit_ids: Vec::new(),
                     version: buffer.read(cx).version(),
-                    diff: cx.new(|cx| BufferDiff::new(&text_snapshot, cx)),
+                    diff,
+                    secondary_diff: unreviewed_diff,
                 }
             });
         tracked_buffer.version = buffer.read(cx).version();
@@ -60,7 +71,7 @@ impl ActionLog {
         buffer: Entity<Buffer>,
         edit_ids: Vec<clock::Lamport>,
         cx: &mut Context<Self>,
-    ) {
+    ) -> Task<Result<()>> {
         self.stale_buffers_in_context.insert(buffer.clone());
 
         let tracked_buffer = self.track_buffer(buffer.clone(), cx);
@@ -68,20 +79,43 @@ impl ActionLog {
             .unreviewed_edit_ids
             .extend(edit_ids.iter().copied());
 
-        let operations_to_undo = tracked_buffer
+        let unreviewed_edits_to_undo = tracked_buffer
             .unreviewed_edit_ids
             .iter()
             .map(|edit_id| (*edit_id, u32::MAX))
             .collect::<HashMap<_, _>>();
-        let buffer_without_changes = buffer.update(cx, |buffer, cx| buffer.branch(cx));
-        buffer_without_changes.update(cx, |buffer, cx| {
-            buffer.undo_operations(operations_to_undo, cx);
+        let buffer_without_unreviewed_edits = buffer.update(cx, |buffer, cx| buffer.branch(cx));
+        buffer_without_unreviewed_edits.update(cx, |buffer, cx| {
+            buffer.undo_operations(unreviewed_edits_to_undo, cx);
         });
-        let _ = tracked_buffer.diff.update(cx, |diff, cx| {
-            diff.set_base_text(buffer_without_changes, buffer.read(cx).text_snapshot(), cx)
+        let primary_diff_update = tracked_buffer.diff.update(cx, |diff, cx| {
+            diff.set_base_text(
+                buffer_without_unreviewed_edits,
+                buffer.read(cx).text_snapshot(),
+                cx,
+            )
         });
 
-        cx.notify();
+        let edits_to_undo = tracked_buffer
+            .unreviewed_edit_ids
+            .iter()
+            .chain(&tracked_buffer.reviewed_edit_ids)
+            .map(|edit_id| (*edit_id, u32::MAX))
+            .collect::<HashMap<_, _>>();
+        let buffer_without_edits = buffer.update(cx, |buffer, cx| buffer.branch(cx));
+        buffer_without_edits.update(cx, |buffer, cx| {
+            buffer.undo_operations(edits_to_undo, cx);
+        });
+        let secondary_diff_update = tracked_buffer.secondary_diff.update(cx, |diff, cx| {
+            diff.set_base_text(buffer_without_edits, buffer.read(cx).text_snapshot(), cx)
+        });
+
+        cx.spawn(async move |this, cx| {
+            _ = primary_diff_update.await;
+            _ = secondary_diff_update.await;
+            this.update(cx, |_this, cx| cx.notify())?;
+            Ok(())
+        })
     }
 
     /// Returns the set of buffers that contain changes that haven't been reviewed by the user.

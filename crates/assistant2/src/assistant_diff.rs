@@ -139,19 +139,18 @@ impl AssistantDiff {
                 .map(|diff_hunk| diff_hunk.buffer_range.to_point(&snapshot))
                 .collect::<Vec<_>>();
 
-            let (was_empty, is_excerpt_newly_added) =
-                self.multibuffer.update(cx, |multibuffer, cx| {
-                    let was_empty = multibuffer.is_empty();
-                    let is_newly_added = multibuffer.set_excerpts_for_path(
-                        path_key.clone(),
-                        buffer,
-                        diff_hunk_ranges,
-                        editor::DEFAULT_MULTIBUFFER_CONTEXT,
-                        cx,
-                    );
-                    multibuffer.add_diff(tracked.diff.clone(), cx);
-                    (was_empty, is_newly_added)
-                });
+            let was_empty = self.multibuffer.update(cx, |multibuffer, cx| {
+                let was_empty = multibuffer.is_empty();
+                multibuffer.set_excerpts_for_path(
+                    path_key.clone(),
+                    buffer,
+                    diff_hunk_ranges,
+                    editor::DEFAULT_MULTIBUFFER_CONTEXT,
+                    cx,
+                );
+                multibuffer.add_diff(tracked.diff.clone(), cx);
+                was_empty
+            });
 
             self.editor.update(cx, |editor, cx| {
                 if was_empty {
@@ -159,9 +158,6 @@ impl AssistantDiff {
                         // TODO select the very beginning (possibly inside a deletion)
                         selections.select_ranges([0..0])
                     });
-                }
-                if is_excerpt_newly_added && !file.disk_state().exists() {
-                    editor.fold_buffer(snapshot.text.remote_id(), cx)
                 }
             });
         }

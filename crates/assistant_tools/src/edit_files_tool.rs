@@ -279,9 +279,11 @@ impl EditToolRequest {
                     let transaction = buffer.finalize_last_transaction();
                     transaction.map_or(Vec::new(), |transaction| transaction.edit_ids.clone())
                 })?;
-                self.action_log.update(cx, |log, cx| {
-                    log.buffer_edited(buffer.clone(), edit_ids, cx)
-                })?;
+                self.action_log
+                    .update(cx, |log, cx| {
+                        log.buffer_edited(buffer.clone(), edit_ids, cx)
+                    })?
+                    .await?;
 
                 write!(&mut self.output, "\n\n{}", source)?;
                 self.changed_buffers.insert(buffer);
