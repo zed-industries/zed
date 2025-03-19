@@ -38,14 +38,11 @@ impl Tool for ThinkingTool {
         _project: Entity<Project>,
         _action_log: Entity<ActionLog>,
         _cx: &mut App,
-    ) -> (SharedString, Task<Result<String>>) {
+    ) -> Task<Result<String>> {
         // This tool just "thinks out loud" and doesn't perform any actions.
-        (
-            SharedString::from("Thinking…"),
-            Task::ready(match serde_json::from_value::<ThinkingToolInput>(input) {
-                Ok(_input) => Ok("Finished thinking.".to_string()),
-                Err(err) => Err(anyhow!(err)),
-            }),
-        )
+        Task::ready(match serde_json::from_value::<ThinkingToolInput>(input) {
+            Ok(_input) => Ok("Finished thinking.".to_string()),
+            Err(err) => Err(anyhow!(err)),
+        })
     }
 }

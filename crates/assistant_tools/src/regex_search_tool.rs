@@ -1,7 +1,7 @@
 use anyhow::{anyhow, Result};
 use assistant_tool::{ActionLog, Tool};
 use futures::StreamExt;
-use gpui::{App, Entity, SharedString, Task};
+use gpui::{App, Entity, Task};
 use language::OffsetRangeExt;
 use language_model::LanguageModelRequestMessage;
 use project::{
@@ -50,20 +50,13 @@ impl Tool for RegexSearchTool {
         project: Entity<Project>,
         _action_log: Entity<ActionLog>,
         cx: &mut App,
-    ) -> (SharedString, Task<Result<String>>) {
+    ) -> Task<Result<String>> {
         const CONTEXT_LINES: u32 = 2;
 
         let (offset, regex) = match serde_json::from_value::<RegexSearchToolInput>(input) {
             Ok(input) => (input.offset.unwrap_or(0), input.regex),
-            Err(err) => {
-                return (
-                    SharedString::from("regex-search"),
-                    Task::ready(Err(anyhow!(err))),
-                )
-            }
+            Err(err) => return Task::ready(Err(anyhow!(err))),
         };
-
-        let display_text = SharedString::from(format!("Search files for `{regex}`"));
 
         let query = match SearchQuery::regex(
             &regex,
@@ -75,7 +68,7 @@ impl Tool for RegexSearchTool {
             None,
         ) {
             Ok(query) => query,
-            Err(error) => return (display_text, Task::ready(Err(error))),
+            Err(error) => return Task::ready(Err(error)),
         };
 
         let results = project.update(cx, |project, cx| project.search(query, cx));
@@ -161,11 +154,9 @@ impl Tool for RegexSearchTool {
                     offset + matches_found,
                     offset + RESULTS_PER_PAGE,
                 ))
-          } else {
+            } else {
                 Ok(format!("Found {matches_found} matches:\n{output}"))
             }
-        });
-
-        (display_text, task)
+        })
     }
 }

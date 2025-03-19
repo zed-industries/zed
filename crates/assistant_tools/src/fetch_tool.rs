@@ -129,15 +129,10 @@ impl Tool for FetchTool {
         _project: Entity<Project>,
         _action_log: Entity<ActionLog>,
         cx: &mut App,
-    ) -> (SharedString, Task<Result<String>>) {
-        let display_text = match serde_json::from_value::<FetchToolInput>(input.clone()) {
-            Ok(input) => format!("Fetch `{}`", input.url),
-            Err(_) => self.name(),
-        };
-
+    ) -> Task<Result<String>> {
         let input = match serde_json::from_value::<FetchToolInput>(input) {
             Ok(input) => input,
-            Err(err) => return (display_text.into(), Task::ready(Err(anyhow!(err)))),
+            Err(err) => return Task::ready(Err(anyhow!(err))),
         };
 
         let text = cx.background_spawn({
@@ -146,15 +141,13 @@ impl Tool for FetchTool {
             async move { Self::build_message(http_client, &url).await }
         });
 
-        let task = cx.foreground_executor().spawn(async move {
+        cx.foreground_executor().spawn(async move {
             let text = text.await?;
             if text.trim().is_empty() {
                 bail!("no textual content found");
             }
 
             Ok(text)
-        });
-
-        (display_text.into(), task)
+        })
     }
 }

@@ -60,29 +60,22 @@ impl Tool for ReadFileTool {
         project: Entity<Project>,
         action_log: Entity<ActionLog>,
         cx: &mut App,
-    ) -> (SharedString, Task<Result<String>>) {
+    ) -> Task<Result<String>> {
         let input = match serde_json::from_value::<ReadFileToolInput>(input) {
             Ok(input) => input,
             Err(err) => {
-                return (
-                    SharedString::from("Read file"),
-                    Task::ready(Err(anyhow!(err))),
-                )
+                return Task::ready(Err(anyhow!(err)))
             }
         };
 
-        let display_text = format!("Read `{}`", &input.path.display());
         let Some(project_path) = project.read(cx).find_project_path(&input.path, cx) else {
-            return (
-                display_text.into(),
-                Task::ready(Err(anyhow!(
-                    "Path {} not found in project",
-                    &input.path.display()
-                ))),
-            );
+            return Task::ready(Err(anyhow!(
+                "Path {} not found in project",
+                &input.path.display()
+            )));
         };
 
-        let task = cx.spawn(async move |cx| {
+        cx.spawn(async move |cx| {
             let buffer = cx
                 .update(|cx| {
                     project.update(cx, |project, cx| project.open_buffer(project_path, cx))
@@ -110,8 +103,6 @@ impl Tool for ReadFileTool {
             })?;
 
             anyhow::Ok(result)
-        });
-
-        (display_text.into(), task)
+        })
     }
 }

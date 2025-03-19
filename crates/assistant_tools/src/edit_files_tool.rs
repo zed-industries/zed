@@ -95,20 +95,13 @@ impl Tool for EditFilesTool {
         project: Entity<Project>,
         action_log: Entity<ActionLog>,
         cx: &mut App,
-    ) -> (SharedString, Task<Result<String>>) {
+    ) -> Task<Result<String>> {
         let input = match serde_json::from_value::<EditFilesToolInput>(input) {
             Ok(input) => input,
-            Err(err) => {
-                return (
-                    "Failed to call edit tool".into(),
-                    Task::ready(Err(anyhow!(err))),
-                )
-            }
+            Err(err) => return Task::ready(Err(anyhow!(err))),
         };
 
-        let display_description: SharedString = input.display_description.clone().into();
-
-        let task = match EditToolLog::try_global(cx) {
+        match EditToolLog::try_global(cx) {
             Some(log) => {
                 let req_id = log.update(cx, |log, cx| {
                     log.new_request(input.edit_instructions.clone(), cx)
@@ -139,9 +132,7 @@ impl Tool for EditFilesTool {
             }
 
             None => EditToolRequest::new(input, messages, project, action_log, None, cx),
-        };
-
-        (display_description, task)
+        }
     }
 }
 

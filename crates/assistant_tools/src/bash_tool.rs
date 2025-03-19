@@ -39,27 +39,18 @@ impl Tool for BashTool {
         project: Entity<Project>,
         _action_log: Entity<ActionLog>,
         cx: &mut App,
-    ) -> (SharedString, Task<Result<String>>) {
-        // Extract the command from input for display
-        let display_command = match serde_json::from_value::<BashToolInput>(input.clone()) {
-            Ok(input) => format!("`$ {}`", input.command),
-            Err(_) => self.name(),
-        };
-
+    ) -> Task<Result<String>> {
         let input: BashToolInput = match serde_json::from_value(input) {
             Ok(input) => input,
-            Err(err) => return (display_command.into(), Task::ready(Err(anyhow!(err)))),
+            Err(err) => return Task::ready(Err(anyhow!(err))),
         };
 
         let Some(worktree) = project.read(cx).worktree_for_root_name(&input.cd, cx) else {
-            return (
-                display_command.into(),
-                Task::ready(Err(anyhow!("Working directory not found in the project"))),
-            );
+            return Task::ready(Err(anyhow!("Working directory not found in the project")));
         };
         let working_directory = worktree.read(cx).abs_path();
 
-        let task = cx.spawn(async move |_| {
+        cx.spawn(async move |_| {
             // Add 2>&1 to merge stderr into stdout for proper interleaving.
             let command = format!("({}) 2>&1", input.command);
 
@@ -86,8 +77,6 @@ impl Tool for BashTool {
                     &output_string
                 ))
             }
-        });
-
-        (display_command.into(), task)
+        })
     }
 }

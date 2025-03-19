@@ -51,7 +51,7 @@ pub trait Tool: 'static + Send + Sync {
         project: Entity<Project>,
         action_log: Entity<ActionLog>,
         cx: &mut App,
-    ) -> (SharedString, Task<Result<String>>);
+    ) -> Task<Result<String>>;
 }
 
 /// Tracks actions performed by tools in a thread

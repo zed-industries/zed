@@ -63,14 +63,13 @@ impl Tool for ContextServerTool {
         _project: Entity<Project>,
         _action_log: Entity<ActionLog>,
         cx: &mut App,
-    ) -> (SharedString, Task<Result<String>>) {
-        let tool_name = SharedString::from(self.tool.name.clone());
+    ) -> Task<Result<String>> {
         if let Some(server) = self.server_manager.read(cx).get_server(&self.server_id) {
-            let tool_name_clone = self.tool.name.clone();
+            let tool_name = self.tool.name.clone();
             let server_clone = server.clone();
             let input_clone = input.clone();
 
-            let task = cx.spawn(async move |_cx| {
+            cx.spawn(async move |_cx| {
                 let Some(protocol) = server_clone.client() else {
                     bail!("Context server not initialized");
                 };
@@ -103,13 +102,9 @@ impl Tool for ContextServerTool {
                     }
                 }
                 Ok(result)
-            });
-            (tool_name, task)
+            })
         } else {
-            (
-                tool_name,
-                Task::ready(Err(anyhow!("Context server not found"))),
-            )
+            Task::ready(Err(anyhow!("Context server not found")))
         }
     }
 }

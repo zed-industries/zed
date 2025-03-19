@@ -814,7 +814,7 @@ impl Thread {
 
         for tool_use in pending_tool_uses.iter() {
             if let Some(tool) = self.tools.tool(&tool_use.name, cx) {
-                let (ui_text, task) = tool.run(
+                let task = tool.run(
                     tool_use.input.clone(),
                     &request.messages,
                     self.project.clone(),
@@ -822,7 +822,7 @@ impl Thread {
                     cx,
                 );
 
-                self.insert_tool_output(tool_use.id.clone(), dbg!(ui_text), task, cx);
+                self.insert_tool_output(tool_use.id.clone(), tool_use.ui_text.clone(), task, cx);
             }
         }
 

@@ -47,11 +47,10 @@ impl Tool for NowTool {
         _project: Entity<Project>,
         _action_log: Entity<ActionLog>,
         _cx: &mut App,
-    ) -> (SharedString, Task<Result<String>>) {
-        let display_text = SharedString::from("Get current date and time".to_string());
+    ) -> Task<Result<String>> {
         let input: NowToolInput = match serde_json::from_value(input) {
             Ok(input) => input,
-            Err(err) => return (display_text, Task::ready(Err(anyhow!(err)))),
+            Err(err) => return Task::ready(Err(anyhow!(err))),
         };
 
         let now = match input.timezone {
@@ -60,6 +59,6 @@ impl Tool for NowTool {
         };
         let text = format!("The current datetime is {now}.");
 
-        (display_text, Task::ready(Ok(text)))
+        Task::ready(Ok(text))
     }
 }

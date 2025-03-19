@@ -55,25 +55,14 @@ impl Tool for PathSearchTool {
         project: Entity<Project>,
         _action_log: Entity<ActionLog>,
         cx: &mut App,
-    ) -> (SharedString, Task<Result<String>>) {
-        let input_parsed = serde_json::from_value::<PathSearchToolInput>(input.clone());
-        let glob = match &input_parsed {
-            Ok(input) => &input.glob,
-            Err(_) => "unknown pattern",
-        };
-        let display_text = format!("Find paths matching `{}`", glob);
+    ) -> Task<Result<String>> {
         let (offset, glob) = match serde_json::from_value::<PathSearchToolInput>(input) {
             Ok(input) => (input.offset.unwrap_or(0), input.glob),
-            Err(err) => return (display_text.into(), Task::ready(Err(anyhow!(err)))),
+            Err(err) => return Task::ready(Err(anyhow!(err))),
         };
         let path_matcher = match PathMatcher::new(&[glob.clone()]) {
             Ok(matcher) => matcher,
-            Err(err) => {
-                return (
-                    display_text.into(),
-                    Task::ready(Err(anyhow!("Invalid glob: {err}"))),
-                )
-            }
+            Err(err) => return Task::ready(Err(anyhow!("Invalid glob: {err}"))),
         };
         let snapshots: Vec<Snapshot> = project
             .read(cx)
@@ -127,8 +116,6 @@ impl Tool for PathSearchTool {
 
                 Ok(response)
             }
-        });
-
-        (display_text.into(), task)
+        })
     }
 }
