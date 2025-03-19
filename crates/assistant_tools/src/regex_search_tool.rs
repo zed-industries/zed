@@ -22,10 +22,17 @@ pub struct RegexSearchToolInput {
     /// Optional starting position for paginated results (0-based).
     /// When not provided, starts from the beginning.
     #[serde(default)]
-    pub offset: Option<usize>,
+    pub offset: Option<u32>,
 }
 
-const RESULTS_PER_PAGE: usize = 20;
+impl RegexSearchToolInput {
+    /// Which page of search results this is.
+    pub fn page(&self) -> u32 {
+        1 + (self.offset.unwrap_or(0) / RESULTS_PER_PAGE)
+    }
+}
+
+const RESULTS_PER_PAGE: u32 = 20;
 
 pub struct RegexSearchTool;
 
@@ -45,7 +52,18 @@ impl Tool for RegexSearchTool {
 
     fn ui_text(&self, input: &serde_json::Value) -> String {
         match serde_json::from_value::<RegexSearchToolInput>(input.clone()) {
-            Ok(input) => format!("Search files for regex “`{}`”", input.regex),
+            Ok(input) => {
+                let page = input.page();
+
+                if page > 1 {
+                    format!(
+                        "Get page {page} of search results for regex “`{}`”",
+                        input.regex
+                    )
+                } else {
+                    format!("Search files for regex “`{}`”", input.regex)
+                }
+            }
             Err(_) => "Search with regex".to_string(),
         }
     }

@@ -50,7 +50,7 @@ impl Tool for PathSearchTool {
 
     fn ui_text(&self, input: &serde_json::Value) -> String {
         match serde_json::from_value::<PathSearchToolInput>(input.clone()) {
-            Ok(input) => format!("Find paths matching `{}`", input.glob),
+            Ok(input) => format!("Find paths matching “`{}`”", input.glob),
             Err(_) => "Search paths".to_string(),
         }
     }
