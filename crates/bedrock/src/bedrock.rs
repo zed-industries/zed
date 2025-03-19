@@ -65,13 +65,7 @@ pub async fn stream_completion(
                         >,
                     > = Box::pin(stream::unfold(output.stream, |mut stream| async move {
                         match stream.recv().await {
-                            Ok(Some(output)) => Some((
-                                {
-                                    dbg!(&output);
-                                    Ok(output)
-                                },
-                                stream,
-                            )),
+                            Ok(Some(output)) => Some(({ Ok(output) }, stream)),
                             Ok(None) => None,
                             Err(err) => {
                                 Some((
