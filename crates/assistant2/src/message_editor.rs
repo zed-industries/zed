@@ -226,9 +226,7 @@ impl MessageEditor {
                                 format!("{err:?}").into(),
                             )));
                         }
-                        Ok(system_prompt) => {
-                            thread.insert_message(language_model::Role::System, system_prompt, cx);
-                        }
+                        Ok(system_prompt) => thread.set_system_prompt(system_prompt),
                     })
                     .ok();
             }
