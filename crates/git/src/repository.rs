@@ -1056,6 +1056,10 @@ impl GitRepository for RealGitRepository {
                 let output = new_smol_command(&git_binary_path)
                     .current_dir(&working_directory)
                     .env("GIT_INDEX_FILE", &index_file_path)
+                    .env("GIT_AUTHOR_NAME", "Zed")
+                    .env("GIT_AUTHOR_EMAIL", "hi@zed.dev")
+                    .env("GIT_COMMITTER_NAME", "Zed")
+                    .env("GIT_COMMITTER_EMAIL", "hi@zed.dev")
                     .args(args)
                     .output()
                     .await?;
