@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use anyhow::Result;
+use assistant_tool::ToolWorkingSet;
 use collections::HashMap;
 use futures::future::Shared;
 use futures::FutureExt as _;
@@ -31,6 +32,7 @@ pub enum ToolUseStatus {
 }
 
 pub struct ToolUseState {
+    tools: Arc<ToolWorkingSet>,
     tool_uses_by_assistant_message: HashMap<MessageId, Vec<LanguageModelToolUse>>,
     tool_uses_by_user_message: HashMap<MessageId, Vec<LanguageModelToolUseId>>,
     tool_results: HashMap<LanguageModelToolUseId, LanguageModelToolResult>,
@@ -38,8 +40,9 @@ pub struct ToolUseState {
 }
 
 impl ToolUseState {
-    pub fn new() -> Self {
+    pub fn new(tools: Arc<ToolWorkingSet>) -> Self {
         Self {
+            tools,
             tool_uses_by_assistant_message: HashMap::default(),
             tool_uses_by_user_message: HashMap::default(),
             tool_results: HashMap::default(),
@@ -51,10 +54,11 @@ impl ToolUseState {
     ///
     /// Accepts a function to filter the tools that should be used to populate the state.
     pub fn from_serialized_messages(
+        tools: Arc<ToolWorkingSet>,
         messages: &[SerializedMessage],
         mut filter_by_tool_name: impl FnMut(&str) -> bool,
     ) -> Self {
-        let mut this = Self::new();
+        let mut this = Self::new(tools);
         let mut tool_names_by_id = HashMap::default();
 
         for message in messages {
@@ -140,7 +144,7 @@ impl ToolUseState {
         self.pending_tool_uses_by_id.values().collect()
     }
 
-    pub fn tool_uses_for_message(&self, id: MessageId) -> Vec<ToolUse> {
+    pub fn tool_uses_for_message(&self, id: MessageId, cx: &App) -> Vec<ToolUse> {
         let Some(tool_uses_for_message) = &self.tool_uses_by_assistant_message.get(&id) else {
             return Vec::new();
         };
@@ -172,10 +176,16 @@ impl ToolUseState {
                 ToolUseStatus::Pending
             })();
 
+            let ui_text = if let Some(tool) = self.tools.tool(&tool_use.name, cx) {
+                tool.ui_text(tool_use.input.clone())
+            } else {
+                "Unknown tool".into()
+            };
+
             tool_uses.push(ToolUse {
                 id: tool_use.id.clone(),
                 name: tool_use.name.clone().into(),
-                ui_text: tool_use.ui_text.clone().into(),
+                ui_text,
                 input: tool_use.input.clone(),
                 status,
             })

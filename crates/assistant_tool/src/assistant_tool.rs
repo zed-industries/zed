@@ -43,6 +43,9 @@ pub trait Tool: 'static + Send + Sync {
         serde_json::Value::Object(serde_json::Map::default())
     }
 
+    /// Returns markdown to be displayed in the UI for this tool.
+    fn ui_text(&self, input: &serde_json::Value) -> String;
+
     /// Runs the tool with the provided input.
     fn run(
         self: Arc<Self>,

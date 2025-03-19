@@ -134,7 +134,6 @@ where
 pub struct LanguageModelToolUse {
     pub id: LanguageModelToolUseId,
     pub name: Arc<str>,
-    pub ui_text: Arc<str>,
     pub input: serde_json::Value,
 }
 

@@ -132,10 +132,10 @@ impl Thread {
             pending_completions: Vec::new(),
             project: project.clone(),
             prompt_builder,
-            tools,
-            tool_use: ToolUseState::new(),
+            tools: tools.clone(),
+            tool_use: ToolUseState::new(tools.clone()),
             scripting_session: cx.new(|cx| ScriptingSession::new(project.clone(), cx)),
-            scripting_tool_use: ToolUseState::new(),
+            scripting_tool_use: ToolUseState::new(tools),
             action_log: cx.new(|_| ActionLog::new()),
             initial_project_snapshot: {
                 let project_snapshot = Self::project_snapshot(project, cx);
@@ -162,11 +162,12 @@ impl Thread {
                 .map(|message| message.id.0 + 1)
                 .unwrap_or(0),
         );
-        let tool_use = ToolUseState::from_serialized_messages(&serialized.messages, |name| {
-            name != ScriptingTool::NAME
-        });
+        let tool_use =
+            ToolUseState::from_serialized_messages(tools.clone(), &serialized.messages, |name| {
+                name != ScriptingTool::NAME
+            });
         let scripting_tool_use =
-            ToolUseState::from_serialized_messages(&serialized.messages, |name| {
+            ToolUseState::from_serialized_messages(tools.clone(), &serialized.messages, |name| {
                 name == ScriptingTool::NAME
             });
         let scripting_session = cx.new(|cx| ScriptingSession::new(project.clone(), cx));
