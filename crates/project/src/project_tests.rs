@@ -1,3 +1,5 @@
+#![allow(clippy::format_collect)]
+
 use crate::{task_inventory::TaskContexts, Event, *};
 use buffer_diff::{
     assert_hunks, BufferDiffEvent, DiffHunkSecondaryStatus, DiffHunkStatus, DiffHunkStatusKind,
@@ -6551,7 +6553,6 @@ async fn test_staging_hunks_with_delayed_fs_event(cx: &mut gpui::TestAppContext)
     });
 }
 
-#[allow(clippy::format_collect)]
 #[gpui::test]
 async fn test_staging_lots_of_hunks_fast(cx: &mut gpui::TestAppContext) {
     use DiffHunkSecondaryStatus::*;
