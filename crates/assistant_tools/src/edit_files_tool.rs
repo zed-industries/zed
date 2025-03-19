@@ -86,15 +86,17 @@ impl Tool for EditFilesTool {
         action_log: Entity<ActionLog>,
         cx: &mut App,
     ) -> (SharedString, Task<Result<String>>) {
-        let display_text = match serde_json::from_value::<EditFilesToolInput>(input.clone()) {
-            Ok(input) => input.display_description,
-            Err(_) => self.name(),
-        };
-
         let input = match serde_json::from_value::<EditFilesToolInput>(input) {
             Ok(input) => input,
-            Err(err) => return (display_text.into(), Task::ready(Err(anyhow!(err)))),
+            Err(err) => {
+                return (
+                    "Failed to call edit tool".into(),
+                    Task::ready(Err(anyhow!(err))),
+                )
+            }
         };
+
+        let display_description: SharedString = input.display_description.clone().into();
 
         let task = match EditToolLog::try_global(cx) {
             Some(log) => {
@@ -103,7 +105,7 @@ impl Tool for EditFilesTool {
                 });
 
                 let task = EditToolRequest::new(
-                    input.clone(),
+                    input,
                     messages,
                     project,
                     action_log,
@@ -129,14 +131,13 @@ impl Tool for EditFilesTool {
             None => EditToolRequest::new(input, messages, project, action_log, None, cx),
         };
 
-        (display_text.into(), task)
+        (display_description, task)
     }
 }
 
 struct EditToolRequest {
     parser: EditActionParser,
     output: String,
-    display_description: Option<String>,
     changed_buffers: HashSet<Entity<language::Buffer>>,
     bad_searches: Vec<BadSearch>,
     project: Entity<Project>,
@@ -228,13 +229,6 @@ impl EditToolRequest {
     }
 
     async fn process_response_chunk(&mut self, chunk: &str, cx: &mut AsyncApp) -> Result<()> {
-        // Check for description in the response
-        if self.display_description.is_none() && chunk.starts_with("Description: ") {
-            let desc_end = chunk.find('\n').unwrap_or(chunk.len());
-            self.display_description = Some(chunk[12..desc_end].trim().to_string());
-            return Ok(());
-        }
-
         let new_actions = self.parser.parse_chunk(chunk);
 
         if let Some((ref log, req_id)) = self.tool_log {

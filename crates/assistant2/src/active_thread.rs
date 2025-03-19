@@ -411,9 +411,6 @@ impl ActiveThread {
                     }
                 }
             }
-            ThreadEvent::ToolUiTextChanged { .. } => {
-                cx.notify();
-            }
         }
     }
 
