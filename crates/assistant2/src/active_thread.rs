@@ -18,8 +18,7 @@ use settings::Settings as _;
 use std::sync::Arc;
 use std::time::Duration;
 use theme::ThemeSettings;
-use ui::Color;
-use ui::{prelude::*, Disclosure, Divider, DividerColor, KeyBinding};
+use ui::{prelude::*, Disclosure, KeyBinding};
 use util::ResultExt as _;
 
 use crate::context_store::{refresh_context_store_text, ContextStore};
@@ -1049,11 +1048,13 @@ impl ActiveThread {
         else {
             return div().into_any();
         };
+
         let rules_files = system_prompt_context
             .worktrees
             .iter()
             .filter_map(|worktree| worktree.rules_file.as_ref())
             .collect::<Vec<_>>();
+
         let label_text = match rules_files.as_slice() {
             &[] => return div().into_any(),
             &[rules_file] => {
@@ -1067,25 +1068,29 @@ impl ActiveThread {
         // TODO: token estimate
 
         div()
+            .pt_1()
             .px_2p5()
             .child(
                 h_flex()
                     .group("rules-item")
                     .w_full()
-                    .py_1()
-                    .gap_1()
+                    .gap_2()
+                    .justify_between()
                     .child(
-                        Icon::new(IconName::File)
-                            .size(IconSize::XSmall)
-                            .color(Color::Disabled),
+                        h_flex()
+                            .gap_1p5()
+                            .child(
+                                Icon::new(IconName::File)
+                                    .size(IconSize::XSmall)
+                                    .color(Color::Disabled),
+                            )
+                            .child(
+                                Label::new(label_text)
+                                    .size(LabelSize::XSmall)
+                                    .color(Color::Muted)
+                                    .buffer_font(cx),
+                            ),
                     )
-                    .child(
-                        Label::new(label_text)
-                            .size(LabelSize::XSmall)
-                            .color(Color::Muted)
-                            .buffer_font(cx),
-                    )
-                    .child(Divider::horizontal().color(DividerColor::BorderVariant))
                     .child(div().visible_on_hover("rules-item").child(
                         Button::new("open-rules", "Open Rules").label_size(LabelSize::XSmall),
                     )),
