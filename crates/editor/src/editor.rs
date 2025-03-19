@@ -6052,6 +6052,9 @@ impl Editor {
                 continue;
             };
 
+            if buffer.read(cx).file().is_none() {
+                continue;
+            }
             let breakpoints = breakpoint_store.read(cx).breakpoints(
                 &buffer,
                 Some(info.range.context.start..info.range.context.end),
