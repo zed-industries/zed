@@ -3532,14 +3532,14 @@ impl GitPanel {
 
         let label_color = if status_style == StatusStyle::LabelColor {
             if has_conflict {
-                Color::Conflict
+                Color::VersionControlConflict
             } else if is_modified {
-                Color::Modified
+                Color::VersionControlModified
             } else if is_deleted {
                 // We don't want a bunch of red labels in the list
                 Color::Disabled
             } else {
-                Color::Created
+                Color::VersionControlAdded
             }
         } else {
             Color::Default
@@ -3808,7 +3808,7 @@ impl Render for GitPanel {
             }))
             .size_full()
             .overflow_hidden()
-            .bg(ElevationIndex::Surface.bg(cx))
+            .bg(cx.theme().colors().panel_background)
             .child(
                 v_flex()
                     .size_full()
