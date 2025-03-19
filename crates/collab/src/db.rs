@@ -9,6 +9,7 @@ use anyhow::anyhow;
 use collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use dashmap::DashMap;
 use futures::StreamExt;
+use project_repository_statuses::StatusKind;
 use rand::{prelude::StdRng, Rng, SeedableRng};
 use rpc::ExtensionProvides;
 use rpc::{
@@ -36,7 +37,6 @@ use std::{
 };
 use time::PrimitiveDateTime;
 use tokio::sync::{Mutex, OwnedMutexGuard};
-use worktree_repository_statuses::StatusKind;
 use worktree_settings_file::LocalSettingsKind;
 
 #[cfg(test)]
@@ -658,6 +658,8 @@ pub struct RejoinedProject {
     pub old_connection_id: ConnectionId,
     pub collaborators: Vec<ProjectCollaborator>,
     pub worktrees: Vec<RejoinedWorktree>,
+    pub updated_repositories: Vec<proto::UpdateRepository>,
+    pub removed_repositories: Vec<u64>,
     pub language_servers: Vec<proto::LanguageServer>,
 }
 
@@ -693,7 +695,7 @@ pub struct RejoinedWorktree {
     pub visible: bool,
     pub updated_entries: Vec<proto::Entry>,
     pub removed_entries: Vec<u64>,
-    pub updated_repositories: Vec<proto::RepositoryEntry>,
+    pub updated_repositories: Vec<proto::UpdateRepository>,
     pub removed_repositories: Vec<u64>,
     pub diagnostic_summaries: Vec<proto::DiagnosticSummary>,
     pub settings_files: Vec<WorktreeSettingsFile>,
@@ -726,6 +728,7 @@ pub struct Project {
     pub role: ChannelRole,
     pub collaborators: Vec<ProjectCollaborator>,
     pub worktrees: BTreeMap<u64, Worktree>,
+    pub repositories: Vec<proto::UpdateRepository>,
     pub language_servers: Vec<proto::LanguageServer>,
 }
 

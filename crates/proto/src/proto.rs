@@ -809,44 +809,44 @@ pub fn split_worktree_update(mut message: UpdateWorktree) -> impl Iterator<Item 
             .drain(..removed_entries_chunk_size)
             .collect();
 
-        let mut updated_repositories = Vec::new();
-        let mut limit = MAX_WORKTREE_UPDATE_MAX_CHUNK_SIZE;
-        while let Some(repo) = message.updated_repositories.first_mut() {
-            let updated_statuses_limit = cmp::min(repo.updated_statuses.len(), limit);
-            let removed_statuses_limit = cmp::min(repo.removed_statuses.len(), limit);
+        //let mut updated_repositories = Vec::new();
+        //let mut limit = MAX_WORKTREE_UPDATE_MAX_CHUNK_SIZE;
+        //while let Some(repo) = message.updated_repositories.first_mut() {
+        //    let updated_statuses_limit = cmp::min(repo.updated_statuses.len(), limit);
+        //    let removed_statuses_limit = cmp::min(repo.removed_statuses.len(), limit);
 
-            updated_repositories.push(RepositoryEntry {
-                work_directory_id: repo.work_directory_id,
-                branch: repo.branch.clone(),
-                branch_summary: repo.branch_summary.clone(),
-                updated_statuses: repo
-                    .updated_statuses
-                    .drain(..updated_statuses_limit)
-                    .collect(),
-                removed_statuses: repo
-                    .removed_statuses
-                    .drain(..removed_statuses_limit)
-                    .collect(),
-                current_merge_conflicts: repo.current_merge_conflicts.clone(),
-            });
-            if repo.removed_statuses.is_empty() && repo.updated_statuses.is_empty() {
-                message.updated_repositories.remove(0);
-            }
-            limit = limit.saturating_sub(removed_statuses_limit + updated_statuses_limit);
-            if limit == 0 {
-                break;
-            }
-        }
+        //    updated_repositories.push(RepositoryEntry {
+        //        work_directory_id: repo.work_directory_id,
+        //        branch: repo.branch.clone(),
+        //        branch_summary: repo.branch_summary.clone(),
+        //        updated_statuses: repo
+        //            .updated_statuses
+        //            .drain(..updated_statuses_limit)
+        //            .collect(),
+        //        removed_statuses: repo
+        //            .removed_statuses
+        //            .drain(..removed_statuses_limit)
+        //            .collect(),
+        //        current_merge_conflicts: repo.current_merge_conflicts.clone(),
+        //    });
+        //    if repo.removed_statuses.is_empty() && repo.updated_statuses.is_empty() {
+        //        message.updated_repositories.remove(0);
+        //    }
+        //    limit = limit.saturating_sub(removed_statuses_limit + updated_statuses_limit);
+        //    if limit == 0 {
+        //        break;
+        //    }
+        //}
 
         done = message.updated_entries.is_empty()
             && message.removed_entries.is_empty()
-            && message.updated_repositories.is_empty();
+            /* && message.updated_repositories.is_empty() */;
 
-        let removed_repositories = if done {
-            mem::take(&mut message.removed_repositories)
-        } else {
-            Default::default()
-        };
+        //let removed_repositories = if done {
+        //    mem::take(&mut message.removed_repositories)
+        //} else {
+        //    Default::default()
+        //};
 
         Some(UpdateWorktree {
             project_id: message.project_id,
@@ -857,10 +857,6 @@ pub fn split_worktree_update(mut message: UpdateWorktree) -> impl Iterator<Item 
             removed_entries,
             scan_id: message.scan_id,
             is_last_update: done && message.is_last_update,
-            updated_repositories,
-            removed_repositories,
-            // FIXME
-            updated_repository_work_directory_entries: Vec::new(),
         })
     })
 }

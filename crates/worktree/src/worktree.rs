@@ -145,7 +145,13 @@ pub struct RemoteWorktree {
     client: AnyProtoClient,
     file_scan_inclusions: PathMatcher,
     updates_tx: Option<UnboundedSender<proto::UpdateWorktree>>,
-    update_observer: Option<mpsc::UnboundedSender<proto::UpdateWorktree>>,
+    update_observer: Option<
+        mpsc::UnboundedSender<(
+            proto::UpdateWorktree,
+            Vec<proto::UpdateRepository>,
+            Vec<proto::RemoveRepository>,
+        )>,
+    >,
     snapshot_subscriptions: VecDeque<(usize, oneshot::Sender<()>)>,
     replica_id: ReplicaId,
     visible: bool,
@@ -200,8 +206,15 @@ pub struct RepositoryEntry {
     pub(crate) statuses_by_path: SumTree<StatusEntry>,
     work_directory_id: ProjectEntryId,
     pub work_directory: WorkDirectory,
+    work_directory_abs_path: PathBuf,
     pub(crate) current_branch: Option<Branch>,
     pub current_merge_conflicts: TreeSet<RepoPath>,
+}
+
+pub enum WorktreeRelatedMessage {
+    UpdateWorktree(proto::UpdateWorktree),
+    UpdateRepository(proto::UpdateRepository),
+    RemoveRepository(proto::RemoveRepository),
 }
 
 impl RepositoryEntry {
@@ -247,13 +260,12 @@ impl RepositoryEntry {
             .cloned()
     }
 
-    pub fn initial_update(&self) -> proto::RepositoryEntry {
-        proto::RepositoryEntry {
-            work_directory_id: self.work_directory_id.to_proto(),
-            branch: self
-                .current_branch
-                .as_ref()
-                .map(|branch| branch.name.to_string()),
+    pub fn initial_update(
+        &self,
+        project_id: u64,
+        worktree_scan_id: usize,
+    ) -> proto::UpdateRepository {
+        proto::UpdateRepository {
             branch_summary: self.current_branch.as_ref().map(branch_to_proto),
             updated_statuses: self
                 .statuses_by_path
@@ -266,10 +278,26 @@ impl RepositoryEntry {
                 .iter()
                 .map(|repo_path| repo_path.to_proto())
                 .collect(),
+            project_id,
+            // This is semantically wrong---we want to move to having separate IDs for repositories.
+            // But for the moment, RepositoryEntry isn't set up to provide that at this level, so we
+            // shim it using the work directory's project entry ID. The pair of this + project ID will
+            // be globally unique.
+            id: self.work_directory_id().to_proto(),
+            abs_path: self.work_directory_abs_path.as_path().to_proto(),
+            entry_ids: vec![self.work_directory_id().to_proto()],
+            // This is also semantically wrong, and should be replaced once we separate git repo updates
+            // from worktree scans.
+            scan_id: worktree_scan_id as u64,
         }
     }
 
-    pub fn build_update(&self, old: &Self) -> proto::RepositoryEntry {
+    pub fn build_update(
+        &self,
+        old: &Self,
+        project_id: u64,
+        scan_id: usize,
+    ) -> proto::UpdateRepository {
         let mut updated_statuses: Vec<proto::StatusEntry> = Vec::new();
         let mut removed_statuses: Vec<String> = Vec::new();
 
@@ -311,12 +339,7 @@ impl RepositoryEntry {
             }
         }
 
-        proto::RepositoryEntry {
-            work_directory_id: self.work_directory_id.to_proto(),
-            branch: self
-                .current_branch
-                .as_ref()
-                .map(|branch| branch.name.to_string()),
+        proto::UpdateRepository {
             branch_summary: self.current_branch.as_ref().map(branch_to_proto),
             updated_statuses,
             removed_statuses,
@@ -325,6 +348,11 @@ impl RepositoryEntry {
                 .iter()
                 .map(|path| path.as_ref().to_proto())
                 .collect(),
+            project_id,
+            id: self.work_directory_id.to_proto(),
+            abs_path: self.work_directory_abs_path.as_path().to_proto(),
+            entry_ids: vec![self.work_directory_id.to_proto()],
+            scan_id: scan_id as u64,
         }
     }
 }
@@ -875,7 +903,8 @@ impl Worktree {
                                     git_repos_changed = true;
                                 }
                                 if let Some(tx) = &this.update_observer {
-                                    tx.unbounded_send(update).ok();
+                                    // FIXME
+                                    tx.unbounded_send((update, Vec::new(), Vec::new())).ok();
                                 }
                             }
                         };
@@ -1008,11 +1037,12 @@ impl Worktree {
         Some(File::for_entry(entry.clone(), cx.entity()))
     }
 
-    pub fn observe_updates<F, Fut>(&mut self, project_id: u64, cx: &Context<Worktree>, callback: F)
-    where
-        F: 'static + Send + Fn(proto::UpdateWorktree) -> Fut,
-        Fut: 'static + Send + Future<Output = bool>,
-    {
+    pub fn observe_updates<F, Fut>(
+        &mut self,
+        project_id: u64,
+        cx: &Context<Worktree>,
+        callback: impl 'static + Send + AsyncFn(WorktreeRelatedMessage) -> bool,
+    ) {
         match self {
             Worktree::Local(this) => this.observe_updates(project_id, cx, callback),
             Worktree::Remote(this) => this.observe_updates(project_id, cx, callback),
@@ -2287,11 +2317,12 @@ impl LocalWorktree {
         })
     }
 
-    fn observe_updates<F, Fut>(&mut self, project_id: u64, cx: &Context<Worktree>, callback: F)
-    where
-        F: 'static + Send + Fn(proto::UpdateWorktree) -> Fut,
-        Fut: Send + Future<Output = bool>,
-    {
+    fn observe_updates<F, Fut>(
+        &mut self,
+        project_id: u64,
+        cx: &Context<Worktree>,
+        callback: impl 'static + Send + AsyncFn(WorktreeRelatedMessage) -> bool,
+    ) {
         if let Some(observer) = self.update_observer.as_mut() {
             *observer.resume_updates.borrow_mut() = ();
             return;
@@ -2308,9 +2339,11 @@ impl LocalWorktree {
         let _maintain_remote_snapshot = cx.background_spawn(async move {
             let mut is_first = true;
             while let Some((snapshot, entry_changes, repo_changes)) = snapshots_rx.next().await {
-                let update = if is_first {
+                let (worktree_update, repo_updates, repo_removals) = if is_first {
                     is_first = false;
-                    snapshot.build_initial_update(project_id, worktree_id)
+                    let (worktree_update, repo_updates) =
+                        snapshot.build_initial_update(project_id, worktree_id);
+                    (worktree_update, repo_updates, Vec::new())
                 } else {
                     snapshot.build_update(project_id, worktree_id, entry_changes, repo_changes)
                 };
@@ -2386,25 +2419,43 @@ impl RemoteWorktree {
         }
     }
 
-    fn observe_updates<F, Fut>(&mut self, project_id: u64, cx: &Context<Worktree>, callback: F)
-    where
-        F: 'static + Send + Fn(proto::UpdateWorktree) -> Fut,
-        Fut: 'static + Send + Future<Output = bool>,
-    {
+    fn observe_updates(
+        &mut self,
+        project_id: u64,
+        cx: &Context<Worktree>,
+        callback: impl 'static + Send + AsyncFn(WorktreeRelatedMessage) -> bool,
+    ) {
         let (tx, mut rx) = mpsc::unbounded();
         let initial_update = self
             .snapshot
             .build_initial_update(project_id, self.id().to_proto());
         self.update_observer = Some(tx);
         cx.spawn(async move |this, cx| {
-            let mut update = initial_update;
+            let mut update = (initial_update.0, initial_update.1, Vec::new());
             'outer: loop {
+                let (worktree_update, repo_updates, repo_removals) = update;
                 // SSH projects use a special project ID of 0, and we need to
                 // remap it to the correct one here.
-                update.project_id = project_id;
+                worktree_update.project_id = project_id;
+                repo_updates
+                    .iter_mut()
+                    .for_each(|repo| repo.project_id = project_id);
+                repo_removals
+                    .iter_mut()
+                    .for_each(|repo: &mut proto::RemoveRepository| repo.project_id = project_id);
 
-                for chunk in split_worktree_update(update) {
-                    if !callback(chunk).await {
+                for chunk in split_worktree_update(worktree_update) {
+                    if !callback(WorktreeRelatedMessage::UpdateWorktree(chunk)).await {
+                        break 'outer;
+                    }
+                }
+                for chunk in split_repository_updates(repo_updates) {
+                    if !callback(WorktreeRelatedMessage::UpdateRepository(chunk)).await {
+                        break 'outer;
+                    }
+                }
+                for chunk in repo_removals {
+                    if !callback(WorktreeRelatedMessage::RemoveRepository(chunk)).await {
                         break 'outer;
                     }
                 }
@@ -2570,7 +2621,11 @@ impl Snapshot {
         self.abs_path.as_path()
     }
 
-    fn build_initial_update(&self, project_id: u64, worktree_id: u64) -> proto::UpdateWorktree {
+    fn build_initial_update(
+        &self,
+        project_id: u64,
+        worktree_id: u64,
+    ) -> (proto::UpdateWorktree, Vec<proto::UpdateRepository>) {
         let mut updated_entries = self
             .entries_by_path
             .iter()
@@ -2578,14 +2633,14 @@ impl Snapshot {
             .collect::<Vec<_>>();
         updated_entries.sort_unstable_by_key(|e| e.id);
 
-        let mut updated_repositories = self
+        let updated_repositories = Vec::new();
+        let updated_repository_work_directory_entries = self
             .repositories
             .iter()
-            .map(|repository| repository.initial_update())
+            .map(|repository| repository.work_directory_id().to_proto())
             .collect::<Vec<_>>();
-        updated_repositories.sort_unstable_by_key(|e| e.work_directory_id);
 
-        proto::UpdateWorktree {
+        let update_worktree = proto::UpdateWorktree {
             project_id,
             worktree_id,
             abs_path: self.abs_path().to_proto(),
@@ -2596,9 +2651,15 @@ impl Snapshot {
             is_last_update: self.completed_scan_id == self.scan_id,
             updated_repositories,
             removed_repositories: Vec::new(),
-            // FIXME
-            updated_repository_work_directory_entries: Vec::new(),
-        }
+            updated_repositories: updated_repository_work_directory_entries,
+        };
+        let update_repositories = self
+            .repositories
+            .iter()
+            .map(|repository| repository.initial_update(project_id, self.scan_id))
+            .collect::<Vec<_>>();
+
+        (update_worktree, update_repositories)
     }
 
     pub fn absolutize(&self, path: &Path) -> Result<PathBuf> {
@@ -2789,6 +2850,9 @@ impl Snapshot {
                             current_branch: repository.branch_summary.as_ref().map(proto_to_branch),
                             statuses_by_path: statuses,
                             current_merge_conflicts: conflicted_paths,
+                            work_directory_abs_path: todo!(
+                                "this will all go away when we handle UpdateRepository"
+                            ),
                         },
                         &(),
                     );
@@ -3048,7 +3112,11 @@ impl LocalSnapshot {
         worktree_id: u64,
         entry_changes: UpdatedEntriesSet,
         repo_changes: UpdatedGitRepositoriesSet,
-    ) -> proto::UpdateWorktree {
+    ) -> (
+        proto::UpdateWorktree,
+        Vec<proto::UpdateRepository>,
+        Vec<proto::RemoveRepository>,
+    ) {
         let mut updated_entries = Vec::new();
         let mut removed_entries = Vec::new();
         let mut updated_repositories = Vec::new();
@@ -3066,13 +3134,20 @@ impl LocalSnapshot {
             let new_repo = self.repositories.get(&PathKey(entry.path.clone()), &());
             match (&change.old_repository, new_repo) {
                 (Some(old_repo), Some(new_repo)) => {
-                    updated_repositories.push(new_repo.build_update(old_repo));
+                    updated_repositories.push(new_repo.build_update(
+                        old_repo,
+                        project_id,
+                        self.scan_id,
+                    ));
                 }
                 (None, Some(new_repo)) => {
-                    updated_repositories.push(new_repo.initial_update());
+                    updated_repositories.push(new_repo.initial_update(project_id, self.scan_id));
                 }
                 (Some(old_repo), None) => {
-                    removed_repositories.push(old_repo.work_directory_id.to_proto());
+                    removed_repositories.push(proto::RemoveRepository {
+                        project_id,
+                        id: old_repo.work_directory_id.to_proto(),
+                    });
                 }
                 _ => {}
             }
@@ -3080,13 +3155,13 @@ impl LocalSnapshot {
 
         removed_entries.sort_unstable();
         updated_entries.sort_unstable_by_key(|e| e.id);
-        removed_repositories.sort_unstable();
-        updated_repositories.sort_unstable_by_key(|e| e.work_directory_id);
+        removed_repositories.sort_unstable_by_key(|e| e.id);
+        updated_repositories.sort_unstable_by_key(|e| e.id);
 
         // TODO - optimize, knowing that removed_entries are sorted.
         removed_entries.retain(|id| updated_entries.binary_search_by_key(id, |e| e.id).is_err());
 
-        proto::UpdateWorktree {
+        let update_worktree = proto::UpdateWorktree {
             project_id,
             worktree_id,
             abs_path: self.abs_path().to_proto(),
@@ -3095,11 +3170,11 @@ impl LocalSnapshot {
             removed_entries,
             scan_id: self.scan_id as u64,
             is_last_update: self.completed_scan_id == self.scan_id,
-            updated_repositories,
-            removed_repositories,
-            // FIXME
-            updated_repository_work_directory_entries: Vec::new(),
-        }
+            updated_repositories: Vec::new(),
+            removed_repositories: removed_repositories.iter().map(|repo| repo.id).collect(),
+            updated_repositories: updated_repositories.iter().map(|repo| repo.id).collect(),
+        };
+        (update_worktree, updated_repositories, removed_repositories)
     }
 
     fn insert_entry(&mut self, mut entry: Entry, fs: &dyn Fs) -> Entry {
@@ -3551,12 +3626,15 @@ impl BackgroundScannerState {
         watcher: &dyn Watcher,
     ) -> Option<LocalRepositoryEntry> {
         log::info!("insert git repository for {dot_git_path:?}");
-        let work_dir_id = self
-            .snapshot
-            .entry_for_path(work_directory.path_key().0)
-            .map(|entry| entry.id)?;
+        let work_dir_entry = self.snapshot.entry_for_path(work_directory.path_key().0)?;
+        let work_directory_abs_path = self.snapshot.absolutize(&work_dir_entry.path).log_err()?;
 
-        if self.snapshot.git_repositories.get(&work_dir_id).is_some() {
+        if self
+            .snapshot
+            .git_repositories
+            .get(&work_dir_entry.id)
+            .is_some()
+        {
             log::info!("existing git repository for {work_directory:?}");
             return None;
         }
@@ -3597,10 +3675,12 @@ impl BackgroundScannerState {
             );
         }
 
+        let work_directory_id = work_dir_entry.id;
         self.snapshot.repositories.insert_or_replace(
             RepositoryEntry {
-                work_directory_id: work_dir_id,
+                work_directory_id,
                 work_directory: work_directory.clone(),
+                work_directory_abs_path,
                 current_branch: None,
                 statuses_by_path: Default::default(),
                 current_merge_conflicts: Default::default(),
@@ -3609,7 +3689,7 @@ impl BackgroundScannerState {
         );
 
         let local_repository = LocalRepositoryEntry {
-            work_directory_id: work_dir_id,
+            work_directory_id,
             work_directory: work_directory.clone(),
             git_dir_scan_id: 0,
             status_scan_id: 0,
@@ -3622,7 +3702,7 @@ impl BackgroundScannerState {
 
         self.snapshot
             .git_repositories
-            .insert(work_dir_id, local_repository.clone());
+            .insert(work_directory_id, local_repository.clone());
 
         log::info!("inserting new local git repository");
         Some(local_repository)

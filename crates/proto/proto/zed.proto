@@ -456,9 +456,15 @@ message RejoinRemoteProjectsResponse {
 message RejoinProject {
     uint64 id = 1;
     repeated RejoinWorktree worktrees = 2;
+    repeated RejoinRepository repositories = 3;
 }
 
 message RejoinWorktree {
+    uint64 id = 1;
+    uint64 scan_id = 2;
+}
+
+message RejoinRepository {
     uint64 id = 1;
     uint64 scan_id = 2;
 }
@@ -638,12 +644,9 @@ message UpdateWorktree {
     string root_name = 3;
     repeated Entry updated_entries = 4;
     repeated uint64 removed_entries = 5;
-    repeated RepositoryEntry updated_repositories = 6; // deprecated
-    repeated uint64 removed_repositories = 7;
     uint64 scan_id = 8;
     bool is_last_update = 9;
     string abs_path = 10;
-    repeated uint64 updated_repository_work_directory_entries = 11;
 }
 
 message UpdateWorktreeSettings {
@@ -1898,15 +1901,6 @@ message Entry {
     bool is_fifo = 10;
     optional uint64 size = 11;
     optional string canonical_path = 12;
-}
-
-message RepositoryEntry {
-    uint64 work_directory_id = 1;
-    optional string branch = 2; // deprecated
-    optional Branch branch_summary = 6;
-    repeated StatusEntry updated_statuses = 3;
-    repeated string removed_statuses = 4;
-    repeated string current_merge_conflicts = 5;
 }
 
 message UpdateRepository {

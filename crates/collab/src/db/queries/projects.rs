@@ -325,139 +325,119 @@ impl Database {
             }
 
             if !update.updated_repositories.is_empty() {
-                worktree_repository::Entity::insert_many(update.updated_repositories.iter().map(
-                    |repository| {
-                        worktree_repository::ActiveModel {
+                //
+            }
+
+            if !update.removed_repositories.is_empty() {}
+
+            let connection_ids = self.project_guest_connection_ids(project_id, &tx).await?;
+            Ok(connection_ids)
+        })
+        .await
+    }
+
+    pub async fn update_repository(
+        &self,
+        update: &proto::UpdateRepository,
+        connection: ConnectionId,
+    ) -> Result<TransactionGuard<Vec<ConnectionId>>> {
+        let project_id = ProjectId::from_proto(update.project_id);
+        let repository_id = update.id as i64;
+        self.project_transaction(project_id, |tx| async move {
+            project_repository::Entity::insert(project_repository::ActiveModel {
+                project_id: ActiveValue::set(project_id),
+                id: ActiveValue::set(repository_id),
+                abs_path: ActiveValue::set(update.abs_path),
+                entry_ids: ActiveValue::set(
+                    update
+                        .entry_ids
+                        .into_iter()
+                        .map(|id| id as i64)
+                        .collect::<Vec<_>>(),
+                ),
+                scan_id: ActiveValue::set(update.scan_id as i64),
+                is_deleted: ActiveValue::set(false),
+                branch_summary: ActiveValue::Set(
+                    update
+                        .branch_summary
+                        .as_ref()
+                        .map(|summary| serde_json::to_string(summary).unwrap()),
+                ),
+                current_merge_conflicts: ActiveValue::Set(Some(
+                    serde_json::to_string(&update.current_merge_conflicts).unwrap(),
+                )),
+            })
+            .on_conflict(
+                OnConflict::columns([
+                    project_repository::Column::ProjectId,
+                    project_repository::Column::Id,
+                ])
+                .update_columns([
+                    project_repository::Column::ScanId,
+                    project_repository::Column::BranchSummary,
+                    project_repository::Column::EntryIds,
+                    project_repository::Column::AbsPath,
+                    project_repository::Column::CurrentMergeConflicts,
+                ])
+                .to_owned(),
+            )
+            .exec(&*tx)
+            .await?;
+
+            let has_any_statuses = !update.updated_statuses.is_empty();
+
+            if has_any_statuses {
+                project_repository_statuses::Entity::insert_many(
+                    update.updated_statuses.iter().map(|status_entry| {
+                        let (repo_path, status_kind, first_status, second_status) =
+                            proto_status_to_db(status_entry.clone());
+                        project_repository_statuses::ActiveModel {
                             project_id: ActiveValue::set(project_id),
-                            worktree_id: ActiveValue::set(worktree_id),
-                            work_directory_id: ActiveValue::set(
-                                repository.work_directory_id as i64,
-                            ),
+                            repository_id: ActiveValue::set(repository_id),
                             scan_id: ActiveValue::set(update.scan_id as i64),
-                            branch: ActiveValue::set(repository.branch.clone()),
                             is_deleted: ActiveValue::set(false),
-                            branch_summary: ActiveValue::Set(
-                                repository
-                                    .branch_summary
-                                    .as_ref()
-                                    .map(|summary| serde_json::to_string(summary).unwrap()),
-                            ),
-                            current_merge_conflicts: ActiveValue::Set(Some(
-                                serde_json::to_string(&repository.current_merge_conflicts).unwrap(),
-                            )),
+                            repo_path: ActiveValue::set(repo_path),
+                            status: ActiveValue::set(0),
+                            status_kind: ActiveValue::set(status_kind),
+                            first_status: ActiveValue::set(first_status),
+                            second_status: ActiveValue::set(second_status),
                         }
-                    },
-                ))
+                    }),
+                )
                 .on_conflict(
                     OnConflict::columns([
-                        worktree_repository::Column::ProjectId,
-                        worktree_repository::Column::WorktreeId,
-                        worktree_repository::Column::WorkDirectoryId,
+                        project_repository_statuses::Column::ProjectId,
+                        project_repository_statuses::Column::RepositoryId,
+                        project_repository_statuses::Column::RepoPath,
                     ])
                     .update_columns([
-                        worktree_repository::Column::ScanId,
-                        worktree_repository::Column::Branch,
-                        worktree_repository::Column::BranchSummary,
-                        worktree_repository::Column::CurrentMergeConflicts,
+                        project_repository_statuses::Column::ScanId,
+                        project_repository_statuses::Column::StatusKind,
+                        project_repository_statuses::Column::FirstStatus,
+                        project_repository_statuses::Column::SecondStatus,
                     ])
                     .to_owned(),
                 )
                 .exec(&*tx)
                 .await?;
-
-                let has_any_statuses = update
-                    .updated_repositories
-                    .iter()
-                    .any(|repository| !repository.updated_statuses.is_empty());
-
-                if has_any_statuses {
-                    worktree_repository_statuses::Entity::insert_many(
-                        update.updated_repositories.iter().flat_map(
-                            |repository: &proto::RepositoryEntry| {
-                                repository.updated_statuses.iter().map(|status_entry| {
-                                    let (repo_path, status_kind, first_status, second_status) =
-                                        proto_status_to_db(status_entry.clone());
-                                    worktree_repository_statuses::ActiveModel {
-                                        project_id: ActiveValue::set(project_id),
-                                        worktree_id: ActiveValue::set(worktree_id),
-                                        work_directory_id: ActiveValue::set(
-                                            repository.work_directory_id as i64,
-                                        ),
-                                        scan_id: ActiveValue::set(update.scan_id as i64),
-                                        is_deleted: ActiveValue::set(false),
-                                        repo_path: ActiveValue::set(repo_path),
-                                        status: ActiveValue::set(0),
-                                        status_kind: ActiveValue::set(status_kind),
-                                        first_status: ActiveValue::set(first_status),
-                                        second_status: ActiveValue::set(second_status),
-                                    }
-                                })
-                            },
-                        ),
-                    )
-                    .on_conflict(
-                        OnConflict::columns([
-                            worktree_repository_statuses::Column::ProjectId,
-                            worktree_repository_statuses::Column::WorktreeId,
-                            worktree_repository_statuses::Column::WorkDirectoryId,
-                            worktree_repository_statuses::Column::RepoPath,
-                        ])
-                        .update_columns([
-                            worktree_repository_statuses::Column::ScanId,
-                            worktree_repository_statuses::Column::StatusKind,
-                            worktree_repository_statuses::Column::FirstStatus,
-                            worktree_repository_statuses::Column::SecondStatus,
-                        ])
-                        .to_owned(),
-                    )
-                    .exec(&*tx)
-                    .await?;
-                }
-
-                let has_any_removed_statuses = update
-                    .updated_repositories
-                    .iter()
-                    .any(|repository| !repository.removed_statuses.is_empty());
-
-                if has_any_removed_statuses {
-                    worktree_repository_statuses::Entity::update_many()
-                        .filter(
-                            worktree_repository_statuses::Column::ProjectId
-                                .eq(project_id)
-                                .and(
-                                    worktree_repository_statuses::Column::WorktreeId
-                                        .eq(worktree_id),
-                                )
-                                .and(
-                                    worktree_repository_statuses::Column::RepoPath.is_in(
-                                        update.updated_repositories.iter().flat_map(|repository| {
-                                            repository.removed_statuses.iter()
-                                        }),
-                                    ),
-                                ),
-                        )
-                        .set(worktree_repository_statuses::ActiveModel {
-                            is_deleted: ActiveValue::Set(true),
-                            scan_id: ActiveValue::Set(update.scan_id as i64),
-                            ..Default::default()
-                        })
-                        .exec(&*tx)
-                        .await?;
-                }
             }
 
-            if !update.removed_repositories.is_empty() {
-                worktree_repository::Entity::update_many()
+            let has_any_removed_statuses = !update.removed_statuses.is_empty();
+
+            if has_any_removed_statuses {
+                project_repository_statuses::Entity::update_many()
                     .filter(
-                        worktree_repository::Column::ProjectId
+                        project_repository_statuses::Column::ProjectId
                             .eq(project_id)
-                            .and(worktree_repository::Column::WorktreeId.eq(worktree_id))
                             .and(
-                                worktree_repository::Column::WorkDirectoryId
-                                    .is_in(update.removed_repositories.iter().map(|id| *id as i64)),
+                                project_repository_statuses::Column::RepositoryId.eq(repository_id),
+                            )
+                            .and(
+                                project_repository_statuses::Column::RepoPath
+                                    .is_in(update.removed_statuses.iter()),
                             ),
                     )
-                    .set(worktree_repository::ActiveModel {
+                    .set(project_repository_statuses::ActiveModel {
                         is_deleted: ActiveValue::Set(true),
                         scan_id: ActiveValue::Set(update.scan_id as i64),
                         ..Default::default()
@@ -470,6 +450,34 @@ impl Database {
             Ok(connection_ids)
         })
         .await
+    }
+
+    pub async fn remove_repository(
+        &self,
+        remove: &proto::RemoveRepository,
+        connection: ConnectionId,
+    ) -> Result<TransactionGuard<Vec<ConnectionId>>> {
+        let project_id = ProjectId::from_proto(remove.project_id);
+        let repository_id = remove.id as i64;
+        self.project_transaction(project_id, |tx| async move {
+            project_repository::Entity::update_many()
+                .filter(
+                    project_repository::Column::ProjectId.eq(project_id).and(
+                        project_repository::Column::Id
+                            .is_in(update.removed_repositories.iter().map(|id| *id as i64)),
+                    ),
+                )
+                .set(project_repository::ActiveModel {
+                    is_deleted: ActiveValue::Set(true),
+                    // scan_id: ActiveValue::Set(update.scan_id as i64),
+                    ..Default::default()
+                })
+                .exec(&*tx)
+                .await?;
+
+            let connection_ids = self.project_guest_connection_ids(project_id, &tx).await?;
+            Ok(connection_ids)
+        })
     }
 
     /// Updates the diagnostic summary for the given connection.
@@ -750,66 +758,64 @@ impl Database {
         }
 
         // Populate repository entries.
+        let mut repositories = Vec::new();
         {
-            let db_repository_entries = worktree_repository::Entity::find()
+            let db_repository_entries = project_repository::Entity::find()
                 .filter(
                     Condition::all()
-                        .add(worktree_repository::Column::ProjectId.eq(project.id))
-                        .add(worktree_repository::Column::IsDeleted.eq(false)),
+                        .add(project_repository::Column::ProjectId.eq(project.id))
+                        .add(project_repository::Column::IsDeleted.eq(false)),
                 )
                 .all(tx)
                 .await?;
             for db_repository_entry in db_repository_entries {
-                if let Some(worktree) = worktrees.get_mut(&(db_repository_entry.worktree_id as u64))
-                {
-                    let mut repository_statuses = worktree_repository_statuses::Entity::find()
-                        .filter(
-                            Condition::all()
-                                .add(worktree_repository_statuses::Column::ProjectId.eq(project.id))
-                                .add(
-                                    worktree_repository_statuses::Column::WorktreeId
-                                        .eq(worktree.id),
-                                )
-                                .add(
-                                    worktree_repository_statuses::Column::WorkDirectoryId
-                                        .eq(db_repository_entry.work_directory_id),
-                                )
-                                .add(worktree_repository_statuses::Column::IsDeleted.eq(false)),
-                        )
-                        .stream(tx)
-                        .await?;
-                    let mut updated_statuses = Vec::new();
-                    while let Some(status_entry) = repository_statuses.next().await {
-                        let status_entry: worktree_repository_statuses::Model = status_entry?;
-                        updated_statuses.push(db_status_to_proto(status_entry)?);
-                    }
-
-                    let current_merge_conflicts = db_repository_entry
-                        .current_merge_conflicts
-                        .as_ref()
-                        .map(|conflicts| serde_json::from_str(&conflicts))
-                        .transpose()?
-                        .unwrap_or_default();
-
-                    let branch_summary = db_repository_entry
-                        .branch_summary
-                        .as_ref()
-                        .map(|branch_summary| serde_json::from_str(&branch_summary))
-                        .transpose()?
-                        .unwrap_or_default();
-
-                    worktree.repository_entries.insert(
-                        db_repository_entry.work_directory_id as u64,
-                        proto::RepositoryEntry {
-                            work_directory_id: db_repository_entry.work_directory_id as u64,
-                            branch: db_repository_entry.branch,
-                            updated_statuses,
-                            removed_statuses: Vec::new(),
-                            current_merge_conflicts,
-                            branch_summary,
-                        },
-                    );
+                let mut repository_statuses = project_repository_statuses::Entity::find()
+                    .filter(
+                        Condition::all()
+                            .add(project_repository_statuses::Column::ProjectId.eq(project.id))
+                            .add(
+                                project_repository_statuses::Column::RepositoryId
+                                    .eq(db_repository_entry.id),
+                            )
+                            .add(project_repository_statuses::Column::IsDeleted.eq(false)),
+                    )
+                    .stream(tx)
+                    .await?;
+                let mut updated_statuses = Vec::new();
+                while let Some(status_entry) = repository_statuses.next().await {
+                    let status_entry = status_entry?;
+                    updated_statuses.push(db_status_to_proto(status_entry)?);
                 }
+
+                let current_merge_conflicts = db_repository_entry
+                    .current_merge_conflicts
+                    .as_ref()
+                    .map(|conflicts| serde_json::from_str(&conflicts))
+                    .transpose()?
+                    .unwrap_or_default();
+
+                let branch_summary = db_repository_entry
+                    .branch_summary
+                    .as_ref()
+                    .map(|branch_summary| serde_json::from_str(&branch_summary))
+                    .transpose()?
+                    .unwrap_or_default();
+
+                repositories.push(proto::UpdateRepository {
+                    project_id: db_repository_entry.project_id,
+                    id: db_repository_entry.id,
+                    abs_path: db_repository_entry.abs_path,
+                    entry_ids: db_repository_entry
+                        .entry_ids
+                        .iter()
+                        .map(|id| *id as u64)
+                        .collect(),
+                    updated_statuses,
+                    removed_statuses: Vec::new(),
+                    current_merge_conflicts,
+                    branch_summary,
+                    scan_id: db_repository_entry.scan_id,
+                });
             }
         }
 
@@ -871,6 +877,7 @@ impl Database {
                 })
                 .collect(),
             worktrees,
+            repositories,
             language_servers: language_servers
                 .into_iter()
                 .map(|language_server| proto::LanguageServer {
