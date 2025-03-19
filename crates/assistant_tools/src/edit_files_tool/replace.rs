@@ -45,7 +45,6 @@ pub async fn replace_exact(old: &str, new: &str, snapshot: &BufferSnapshot) -> O
 /// Replace even if the old/new is missing some leading whitespace, but matches otherwise
 /// The indentation in the `new` string is extended to match the replaced location
 pub fn replace_with_missing_indent(old: &str, new: &str, buffer: &BufferSnapshot) -> Option<Diff> {
-    let line_ending = buffer.line_ending().as_str();
     let (old_lines, old_min_indent) = lines_with_min_indent(old);
     let (new_lines, new_min_indent) = lines_with_min_indent(new);
     let min_indent = old_min_indent.min(new_min_indent);
@@ -69,9 +68,7 @@ pub fn replace_with_missing_indent(old: &str, new: &str, buffer: &BufferSnapshot
         let end_point = Point::new(end_row, buffer.line_len(end_row));
         let range = start_point.to_offset(buffer)..end_point.to_offset(buffer);
 
-        let window_text =
-            buffer.text_for_range(start_point..Point::new(max_row, buffer.line_len(max_row)));
-
+        let window_text = buffer.text_for_range(range.clone());
         let mut window_lines = window_text.lines();
         let mut old_lines_iter = old_lines.iter();
 
@@ -99,6 +96,7 @@ pub fn replace_with_missing_indent(old: &str, new: &str, buffer: &BufferSnapshot
         }
 
         if let Some(common_leading) = common_leading {
+            let line_ending = buffer.line_ending();
             let replacement = new_lines
                 .iter()
                 .map(|new_line| {
@@ -109,11 +107,11 @@ pub fn replace_with_missing_indent(old: &str, new: &str, buffer: &BufferSnapshot
                     }
                 })
                 .collect::<Vec<_>>()
-                .join(line_ending);
+                .join(line_ending.as_str());
 
             let diff = Diff {
                 base_version: buffer.version().clone(),
-                line_ending: buffer.line_ending(),
+                line_ending,
                 edits: vec![(range, replacement.into())],
             };
 
