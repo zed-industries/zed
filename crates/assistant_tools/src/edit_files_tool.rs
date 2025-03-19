@@ -1,5 +1,6 @@
 mod edit_action;
 pub mod log;
+mod replace;
 
 use anyhow::{anyhow, Context, Result};
 use assistant_tool::{ActionLog, Tool};
@@ -11,12 +12,12 @@ use language_model::{
     LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage, MessageContent, Role,
 };
 use log::{EditToolLog, EditToolRequestId};
-use project::{search::SearchQuery, Project};
+use project::Project;
+use replace::{replace_exact, replace_with_flexible_indent};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::fmt::Write;
 use std::sync::Arc;
-use util::paths::PathMatcher;
 use util::ResultExt;
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
@@ -289,41 +290,18 @@ impl EditToolRequest {
         file_path: std::path::PathBuf,
         snapshot: language::BufferSnapshot,
     ) -> Result<DiffResult> {
-        let query = SearchQuery::text(
-            old.clone(),
-            false,
-            true,
-            true,
-            PathMatcher::new(&[])?,
-            PathMatcher::new(&[])?,
-            None,
-        )?;
+        let result =
+            // Try to match exactly
+            replace_exact(&old, &new, &snapshot)
+            .await
+            // If that fails, try being flexible about indentation
+            .or_else(|| replace_with_flexible_indent(&old, &new, &snapshot));
 
-        let matches = query.search(&snapshot, None).await;
-
-        if matches.is_empty() {
-            return Ok(DiffResult::BadSearch(BadSearch {
-                search: old.clone(),
+        let Some(diff) = result else {
+            return anyhow::Ok(DiffResult::BadSearch(BadSearch {
+                search: old,
                 file_path: file_path.display().to_string(),
             }));
-        }
-
-        let edit_range = matches[0].clone();
-        let diff = language::text_diff(&old, &new);
-
-        let edits = diff
-            .into_iter()
-            .map(|(old_range, text)| {
-                let start = edit_range.start + old_range.start;
-                let end = edit_range.start + old_range.end;
-                (start..end, text)
-            })
-            .collect::<Vec<_>>();
-
-        let diff = language::Diff {
-            base_version: snapshot.version().clone(),
-            line_ending: snapshot.line_ending(),
-            edits,
         };
 
         anyhow::Ok(DiffResult::Diff(diff))
