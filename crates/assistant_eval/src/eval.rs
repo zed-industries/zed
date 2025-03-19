@@ -86,7 +86,7 @@ impl Eval {
             assistant.update(&mut cx, |assistant, cx| {
                 assistant.thread.update(cx, |thread, cx| {
                     let context = vec![];
-                    thread.set_system_prompt(system_prompt);
+                    thread.insert_message(language_model::Role::System, system_prompt, cx);
                     thread.insert_user_message(self.user_prompt.clone(), context, cx);
                     thread.send_to_model(model, RequestKind::Chat, cx);
                 });

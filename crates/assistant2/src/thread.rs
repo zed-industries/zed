@@ -96,7 +96,6 @@ pub struct Thread {
     updated_at: DateTime<Utc>,
     summary: Option<SharedString>,
     pending_summary: Task<Option<()>>,
-    system_prompt: Option<String>,
     messages: Vec<Message>,
     next_message_id: MessageId,
     context: BTreeMap<ContextId, ContextSnapshot>,
@@ -126,7 +125,6 @@ impl Thread {
             updated_at: Utc::now(),
             summary: None,
             pending_summary: Task::ready(None),
-            system_prompt: None,
             messages: Vec::new(),
             next_message_id: MessageId(0),
             context: BTreeMap::default(),
@@ -179,8 +177,6 @@ impl Thread {
             updated_at: serialized.updated_at,
             summary: Some(serialized.summary),
             pending_summary: Task::ready(None),
-            // todo! Persist system prompt
-            system_prompt: None,
             messages: serialized
                 .messages
                 .into_iter()
@@ -512,10 +508,6 @@ impl Thread {
         }
     }
 
-    pub fn set_system_prompt(&mut self, system_prompt: String) {
-        self.system_prompt = Some(system_prompt);
-    }
-
     pub fn send_to_model(
         &mut self,
         model: Arc<dyn LanguageModel>,
@@ -560,14 +552,6 @@ impl Thread {
             temperature: None,
         };
 
-        if let Some(system_prompt) = self.system_prompt.as_ref() {
-            request.messages.push(LanguageModelRequestMessage {
-                role: Role::System,
-                content: vec![MessageContent::Text(system_prompt.clone())],
-                cache: true,
-            });
-        }
-
         let mut referenced_context_ids = HashSet::default();
 
         for message in &self.messages {
@@ -578,7 +562,7 @@ impl Thread {
             let mut request_message = LanguageModelRequestMessage {
                 role: message.role,
                 content: Vec::new(),
-                cache: false,
+                cache: request.messages.is_empty() && message.role == Role::System,
             };
 
             match request_kind {

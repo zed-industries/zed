@@ -36,6 +36,7 @@ pub struct ActiveThread {
     rendered_scripting_tool_uses: HashMap<LanguageModelToolUseId, Entity<Markdown>>,
     editing_message: Option<(MessageId, EditMessageState)>,
     expanded_tool_uses: HashMap<LanguageModelToolUseId, bool>,
+    expanded_system_prompt: bool,
     last_error: Option<ThreadError>,
     _subscriptions: Vec<Subscription>,
 }
@@ -68,6 +69,8 @@ impl ActiveThread {
             rendered_messages_by_id: HashMap::default(),
             rendered_scripting_tool_uses: HashMap::default(),
             expanded_tool_uses: HashMap::default(),
+            // todo! if there are ever multiple System messages, this will fold / open all of them.
+            expanded_system_prompt: false,
             list_state: ListState::new(0, ListAlignment::Bottom, px(1024.), {
                 let this = cx.entity().downgrade();
                 move |ix, window: &mut Window, cx: &mut App| {
@@ -725,12 +728,58 @@ impl ActiveThread {
                         },
                     )
             }
-            Role::System => div().id(("message-container", ix)).py_1().px_2().child(
-                v_flex()
-                    .bg(colors.editor_background)
-                    .rounded_sm()
-                    .child(message_content),
-            ),
+            Role::System => {
+                let lighter_border = cx.theme().colors().border.opacity(0.5);
+                // todo! Share code with tool use? Committing the duplication for now as it's just a prototype
+                v_flex().id(("message-container", ix)).pt_2p5().child(
+                    div().px_2p5().child(
+                        v_flex()
+                            .rounded_lg()
+                            .border_1()
+                            .border_color(lighter_border)
+                            .child(
+                                h_flex()
+                                    .justify_between()
+                                    .py_1()
+                                    .pl_1()
+                                    .pr_2()
+                                    .bg(cx.theme().colors().editor_foreground.opacity(0.025))
+                                    .map(|element| {
+                                        if self.expanded_system_prompt {
+                                            element.border_b_1().rounded_t_md()
+                                        } else {
+                                            element.rounded_md()
+                                        }
+                                    })
+                                    .border_color(lighter_border)
+                                    .child(
+                                        h_flex()
+                                            .gap_1()
+                                            .child(
+                                                Disclosure::new(
+                                                    "system-prompt-disclosure",
+                                                    self.expanded_system_prompt,
+                                                )
+                                                .on_click(cx.listener({
+                                                    move |this, _event, _window, _cx| {
+                                                        this.expanded_system_prompt =
+                                                            !this.expanded_system_prompt;
+                                                    }
+                                                })),
+                                            )
+                                            .child(
+                                                Label::new("system")
+                                                    .size(LabelSize::Small)
+                                                    .buffer_font(cx),
+                                            ),
+                                    ),
+                            )
+                            .when(self.expanded_system_prompt, |parent| {
+                                parent.child(message_content)
+                            }),
+                    ),
+                )
+            }
         };
 
         styled_message.into_any()
