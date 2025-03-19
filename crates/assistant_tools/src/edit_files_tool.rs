@@ -7,7 +7,7 @@ use assistant_tool::{ActionLog, Tool};
 use collections::HashSet;
 use edit_action::{EditAction, EditActionParser};
 use futures::StreamExt;
-use gpui::{App, AsyncApp, Entity, SharedString, Task};
+use gpui::{App, AsyncApp, Entity, Task};
 use language_model::{
     LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage, MessageContent, Role,
 };

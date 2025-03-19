@@ -1,6 +1,6 @@
 use anyhow::{anyhow, Result};
 use assistant_tool::{ActionLog, Tool};
-use gpui::{App, AppContext, Entity, SharedString, Task};
+use gpui::{App, AppContext, Entity, Task};
 use language_model::LanguageModelRequestMessage;
 use project::Project;
 use schemars::JsonSchema;

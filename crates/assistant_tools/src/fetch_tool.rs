@@ -5,7 +5,7 @@ use std::sync::Arc;
 use anyhow::{anyhow, bail, Context as _, Result};
 use assistant_tool::{ActionLog, Tool};
 use futures::AsyncReadExt as _;
-use gpui::{App, AppContext as _, Entity, SharedString, Task};
+use gpui::{App, AppContext as _, Entity, Task};
 use html_to_markdown::{convert_html_to_markdown, markdown, TagHandler};
 use http_client::{AsyncBody, HttpClientWithUrl};
 use language_model::LanguageModelRequestMessage;

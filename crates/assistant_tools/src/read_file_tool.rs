@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use anyhow::{anyhow, Result};
 use assistant_tool::{ActionLog, Tool};
-use gpui::{App, Entity, SharedString, Task};
+use gpui::{App, Entity, Task};
 use itertools::Itertools;
 use language_model::LanguageModelRequestMessage;
 use project::Project;
@@ -63,9 +63,7 @@ impl Tool for ReadFileTool {
     ) -> Task<Result<String>> {
         let input = match serde_json::from_value::<ReadFileToolInput>(input) {
             Ok(input) => input,
-            Err(err) => {
-                return Task::ready(Err(anyhow!(err)))
-            }
+            Err(err) => return Task::ready(Err(anyhow!(err))),
         };
 
         let Some(project_path) = project.read(cx).find_project_path(&input.path, cx) else {

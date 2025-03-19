@@ -73,7 +73,7 @@ impl Tool for RegexSearchTool {
 
         let results = project.update(cx, |project, cx| project.search(query, cx));
 
-        let task = cx.spawn(async move|cx|  {
+        cx.spawn(async move|cx|  {
             futures::pin_mut!(results);
 
             let mut output = String::new();

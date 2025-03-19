@@ -1,6 +1,6 @@
 use anyhow::{anyhow, Result};
 use assistant_tool::{ActionLog, Tool};
-use gpui::{App, AppContext, Entity, SharedString, Task};
+use gpui::{App, AppContext, Entity, Task};
 use language_model::LanguageModelRequestMessage;
 use project::Project;
 use schemars::JsonSchema;
@@ -46,22 +46,10 @@ impl Tool for DeletePathTool {
         project: Entity<Project>,
         _action_log: Entity<ActionLog>,
         cx: &mut App,
-    ) -> (SharedString, Task<Result<String>>) {
-        let path_str = match serde_json::from_value::<DeletePathToolInput>(input.clone()) {
-            Ok(input) => input.path.clone(),
-            Err(_) => {
-                return (
-                    self.name().into(),
-                    Task::ready(Err(anyhow!("Invalid input"))),
-                )
-            }
-        };
-
-        let display_text = format!("Delete {path_str}");
-
+    ) -> Task<Result<String>> {
         let path_str = match serde_json::from_value::<DeletePathToolInput>(input) {
             Ok(input) => input.path,
-            Err(err) => return (display_text.into(), Task::ready(Err(anyhow!(err)))),
+            Err(err) => return Task::ready(Err(anyhow!(err))),
         };
 
         match project
@@ -69,21 +57,15 @@ impl Tool for DeletePathTool {
             .find_project_path(&path_str, cx)
             .and_then(|path| project.update(cx, |project, cx| project.delete_file(path, false, cx)))
         {
-            Some(deletion_task) => {
-                let task = cx.background_spawn(async move {
-                    match deletion_task.await {
-                        Ok(()) => Ok(format!("Deleted {path_str}")),
-                        Err(err) => Err(anyhow!("Failed to delete {path_str}: {err}")),
-                    }
-                });
-                (display_text.into(), task)
-            }
-            None => (
-                display_text.into(),
-                Task::ready(Err(anyhow!(
-                    "Couldn't delete {path_str} because that path isn't in this project."
-                ))),
-            ),
+            Some(deletion_task) => cx.background_spawn(async move {
+                match deletion_task.await {
+                    Ok(()) => Ok(format!("Deleted {path_str}")),
+                    Err(err) => Err(anyhow!("Failed to delete {path_str}: {err}")),
+                }
+            }),
+            None => Task::ready(Err(anyhow!(
+                "Couldn't delete {path_str} because that path isn't in this project."
+            ))),
         }
     }
 }

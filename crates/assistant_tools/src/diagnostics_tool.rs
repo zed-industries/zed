@@ -1,6 +1,6 @@
 use anyhow::{anyhow, Result};
 use assistant_tool::{ActionLog, Tool};
-use gpui::{App, Entity, SharedString, Task};
+use gpui::{App, Entity, Task};
 use language::{DiagnosticSeverity, OffsetRangeExt};
 use language_model::LanguageModelRequestMessage;
 use project::Project;
@@ -53,26 +53,20 @@ impl Tool for DiagnosticsTool {
         project: Entity<Project>,
         _action_log: Entity<ActionLog>,
         cx: &mut App,
-    ) -> (SharedString, Task<Result<String>>) {
+    ) -> Task<Result<String>> {
         if let Some(path) = serde_json::from_value::<DiagnosticsToolInput>(input)
             .ok()
             .and_then(|input| input.path)
         {
-            let display_text =
-                SharedString::from(format!("Check diagnostics for {}", path.display()));
-
             let Some(project_path) = project.read(cx).find_project_path(&path, cx) else {
-                return (
-                    display_text,
-                    Task::ready(Err(anyhow!(
-                        "Could not find path {} in project",
-                        path.display()
-                    ))),
-                );
+                return Task::ready(Err(anyhow!(
+                    "Could not find path {} in project",
+                    path.display()
+                )));
             };
             let buffer = project.update(cx, |project, cx| project.open_buffer(project_path, cx));
 
-            let task = cx.spawn(async move |cx| {
+            cx.spawn(async move |cx| {
                 let mut output = String::new();
                 let buffer = buffer.await?;
                 let snapshot = buffer.read_with(cx, |buffer, _cx| buffer.snapshot())?;
@@ -100,11 +94,8 @@ impl Tool for DiagnosticsTool {
                 } else {
                     Ok(output)
                 }
-            });
-
-            (display_text, task)
+            })
         } else {
-            let display_text = SharedString::from("Check project diagnostics");
             let project = project.read(cx);
             let mut output = String::new();
             let mut has_diagnostics = false;
@@ -129,12 +120,9 @@ impl Tool for DiagnosticsTool {
             }
 
             if has_diagnostics {
-                (display_text, Task::ready(Ok(output)))
+                Task::ready(Ok(output))
             } else {
-                (
-                    display_text,
-                    Task::ready(Ok("No errors or warnings found in the project.".to_string())),
-                )
+                Task::ready(Ok("No errors or warnings found in the project.".to_string()))
             }
         }
     }
