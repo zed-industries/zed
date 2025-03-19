@@ -1140,37 +1140,44 @@ impl LocalLspStore {
     ) -> anyhow::Result<ProjectTransaction> {
         // Do not allow multiple concurrent formatting requests for the
         // same buffer.
-        let _cleanup = {
-            lsp_store.update(&mut cx, |this, cx| {
-                let this = this.as_local_mut().unwrap();
-                buffers.retain(|buffer| {
-                    this.buffers_being_formatted
-                        .insert(buffer.handle.read(cx).remote_id())
-                });
-            })?;
+        lsp_store.update(&mut cx, |this, cx| {
+            let this = this.as_local_mut().unwrap();
+            buffers.retain(|buffer| {
+                this.buffers_being_formatted
+                    .insert(buffer.handle.read(cx).remote_id())
+            });
+        })?;
 
-            defer({
-                let this = lsp_store.clone();
-                let mut cx = cx.clone();
-                let buffers = &buffers;
-                move || {
-                    this.update(&mut cx, |this, cx| {
-                        let this = this.as_local_mut().unwrap();
-                        for buffer in buffers {
-                            this.buffers_being_formatted
-                                .remove(&buffer.handle.read(cx).remote_id());
-                        }
-                    })
-                    .ok();
-                }
-            })
-        };
+        let _cleanup = defer({
+            let this = lsp_store.clone();
+            let mut cx = cx.clone();
+            let buffers = &buffers;
+            move || {
+                this.update(&mut cx, |this, cx| {
+                    let this = this.as_local_mut().unwrap();
+                    for buffer in buffers {
+                        this.buffers_being_formatted
+                            .remove(&buffer.handle.read(cx).remote_id());
+                    }
+                })
+                .ok();
+            }
+        });
 
         let mut project_transaction = ProjectTransaction::default();
 
         for buffer in &buffers {
             // todo! consider lazily initializing
-            let adapters_and_servers = std::cell::OnceCell::new();
+            let adapters_and_servers = lsp_store.update(&mut cx, |lsp_store, cx| {
+                buffer.handle.update(cx, |buffer, cx| {
+                    lsp_store
+                        .as_local()
+                        .unwrap()
+                        .language_servers_for_buffer(buffer, cx)
+                        .map(|(adapter, lsp)| (adapter.clone(), lsp.clone()))
+                        .collect::<Vec<_>>()
+                })
+            })?;
 
             let settings = buffer.handle.read_with(&cx, |buffer, cx| {
                 language_settings(buffer.language().map(|l| l.name()), buffer.file(), cx)
@@ -1184,6 +1191,7 @@ impl LocalLspStore {
                     // (text.history.transaction_depth was 0)
                     return transaction_id;
                 }
+                eprintln!("Closing open transaction");
                 let transaction_id_prev = buffer.peek_undo_stack().unwrap().transaction_id();
                 // todo! this might cause panics if other places where format is called expect to be
                 // able to call end_transaction at the end
@@ -1354,25 +1362,11 @@ impl LocalLspStore {
                             // todo! log
                             continue 'formatters;
                         };
-                        let adapters_and_servers = adapters_and_servers.get_or_init(|| {
-                            lsp_store
-                                .update(&mut cx, |lsp_store, cx| {
-                                    buffer.handle.update(cx, |buffer, cx| {
-                                        lsp_store
-                                            .as_local()
-                                            .unwrap()
-                                            .language_servers_for_buffer(buffer, cx)
-                                            .map(|(adapter, lsp)| (adapter.clone(), lsp.clone()))
-                                            .collect::<Vec<_>>()
-                                    })
-                                })
-                                .unwrap_or_default()
-                        });
 
                         let language_server = 'language_server: {
                             // if a name was provided, try to find the server with that name
                             if let Some(name) = name.as_deref() {
-                                for (adapter, server) in adapters_and_servers {
+                                for (adapter, server) in &adapters_and_servers {
                                     if adapter.name.0.as_ref() == name {
                                         break 'language_server server.clone();
                                     }
@@ -1441,7 +1435,204 @@ impl LocalLspStore {
                             buffer.group_until_transaction(transaction_id_format);
                         })?;
                     }
-                    Formatter::CodeActions(hash_map) => {}
+                    Formatter::CodeActions(code_actions) => {
+                        let Some(buffer_path_abs) = buffer.abs_path.as_ref() else {
+                            // todo! log
+                            continue 'formatters;
+                        };
+                        let code_action_kinds = code_actions
+                            .iter()
+                            .filter_map(|(action_kind, enabled)| {
+                                enabled.then_some(action_kind.clone().into())
+                            })
+                            .collect::<Vec<_>>();
+                        if code_action_kinds.is_empty() {
+                            // todo! log
+                            continue 'formatters;
+                        }
+
+                        // todo! return Vec<Option<CodeAction>> instead and do adapters_and_servers.zip(actions)?
+                        let actions_result = Self::format_via_code_action_kinds_on_servers(
+                            &lsp_store,
+                            &adapters_and_servers,
+                            code_action_kinds,
+                            &buffer.handle,
+                            &mut cx,
+                        )
+                        .await;
+
+                        let Ok(actions) = actions_result else {
+                            result = Err(actions_result.err().unwrap());
+                            break 'formatters;
+                        };
+
+                        if actions.is_empty() {
+                            // todo! log
+                            continue 'formatters;
+                        }
+
+                        // todo! make sure functions I made for splitting up code action handling
+                        // are all still needed
+
+                        for (server_id, actions) in actions {
+                            let server = adapters_and_servers
+                                .iter()
+                                .find_map(|(_, server)| {
+                                    (server.server_id() == server_id).then_some(server)
+                                })
+                                .unwrap();
+                            'actions: for mut action in actions {
+                                if let Err(err) =
+                                    Self::try_resolve_code_action(server, &mut action).await
+                                {
+                                    result = Err(err);
+                                    break 'formatters;
+                                }
+                                if let Some(_) = action.lsp_action.command() {
+                                    log::warn!("Code actions with commands are not supported while formatting. Skipping action '{:?}' with title \"{:?}\"",
+                                        action.lsp_action.action_kind().unwrap_or("unknown".into()).as_str(),
+                                        action.lsp_action.title(),
+                                    );
+                                    continue 'actions;
+                                }
+                                let Some(edit) = action.lsp_action.edit().cloned() else {
+                                    // todo! log
+                                    continue 'actions;
+                                };
+
+                                if edit.changes.is_none() && edit.document_changes.is_none() {
+                                    continue 'actions;
+                                }
+                                // NOTE: code below duplicated from `Self::deserialize_workspace_edit`
+                                // but filters out and logs warnings for code actions that cause unreasonably
+                                // difficult handling on our part, such as:
+                                // - applying edits that call commands
+                                //   which can result in arbitrary workspace edits being sent from the server that
+                                //   have no way of being tied back to the command that initiated them (i.e. we
+                                //   can't know which edits are part of the format request, or if the server is done sending
+                                //   actions in response to the command)
+                                // - actions that create/delete/modify/rename files other than the one we are formatting
+                                //   as we then would need to handle such changes correctly in the local history as well
+                                //   as the remote history through the ProjectTransaction
+                                // - actions with snippet edits, as these simply don't make sense in the context of a format request
+                                // Supporting these actions is not impossible, but not supported as of yet.
+
+                                let mut operations = Vec::new();
+                                if let Some(document_changes) = edit.document_changes {
+                                    match document_changes {
+                                        lsp::DocumentChanges::Edits(edits) => operations.extend(
+                                            edits
+                                                .into_iter()
+                                                .map(lsp::DocumentChangeOperation::Edit),
+                                        ),
+                                        lsp::DocumentChanges::Operations(ops) => operations = ops,
+                                    }
+                                } else if let Some(changes) = edit.changes {
+                                    operations.extend(changes.into_iter().map(|(uri, edits)| {
+                                        lsp::DocumentChangeOperation::Edit(lsp::TextDocumentEdit {
+                                            text_document:
+                                                lsp::OptionalVersionedTextDocumentIdentifier {
+                                                    uri,
+                                                    version: None,
+                                                },
+                                            edits: edits.into_iter().map(Edit::Plain).collect(),
+                                        })
+                                    }));
+                                }
+
+                                let mut edits = Vec::with_capacity(operations.len());
+
+                                for operation in operations {
+                                    let op = match operation {
+                                        lsp::DocumentChangeOperation::Edit(op) => op,
+                                        lsp::DocumentChangeOperation::Op(_) => {
+                                            log::warn!("Code actions which create, delete, or rename files are not supported on format. Skipping action '{:?}' with title \"{:?}\"",
+                                                    action.lsp_action.action_kind().unwrap_or("unknown".into()).as_str(),
+                                                    action.lsp_action.title(),
+                                                );
+                                            continue 'actions;
+                                        }
+                                    };
+                                    let Ok(file_path) = op.text_document.uri.to_file_path() else {
+                                        log::warn!(
+                                        "Failed to convert URI '{:?}' to file path. Skipping code action '{:?}' with title \"{:?}\"",
+                                            &op.text_document.uri,
+                                            action.lsp_action.action_kind().unwrap_or("unknown".into()).as_str(),
+                                            action.lsp_action.title(),
+                                        );
+                                        continue 'actions;
+                                    };
+                                    if &file_path != buffer_path_abs {
+                                        log::warn!(
+                                            "File path '{:?}' does not match buffer path '{:?}'. Skipping code action '{:?}' with title \"{:?}\"",
+                                                file_path,
+                                                buffer_path_abs,
+                                                action.lsp_action.action_kind().unwrap_or("unknown".into()).as_str(),
+                                                action.lsp_action.title(),
+                                        );
+                                        continue 'actions;
+                                    }
+
+                                    let mut lsp_edits = Vec::new();
+                                    for edit in op.edits {
+                                        match edit {
+                                            Edit::Plain(edit) => {
+                                                if !lsp_edits.contains(&edit) {
+                                                    lsp_edits.push(edit);
+                                                }
+                                            }
+                                            Edit::Annotated(edit) => {
+                                                if !lsp_edits.contains(&edit.text_edit) {
+                                                    lsp_edits.push(edit.text_edit);
+                                                }
+                                            }
+                                            Edit::Snippet(_) => {
+                                                log::warn!(
+                                                    "Code actions which produce snippet edits are not supported during formatting. Skipping code action '{:?}' with title \"{}\"",
+                                                    action.lsp_action.action_kind().unwrap_or("unknown".into()).as_str(),
+                                                    action.lsp_action.title(),
+                                                );
+                                                continue 'actions;
+                                            }
+                                        }
+                                    }
+                                    let edits_result = lsp_store
+                                        .update(&mut cx, |lsp_store, cx| {
+                                            lsp_store.as_local_mut().unwrap().edits_from_lsp(
+                                                &buffer.handle,
+                                                lsp_edits,
+                                                server_id,
+                                                op.text_document.version,
+                                                cx,
+                                            )
+                                        })?
+                                        .await
+                                        .with_context(||
+                                        format!(
+                                            "Failed to resolve edits from LSP for buffer {:?} while handling code action '{:?}' with title \"{}\"",
+                                            buffer_path_abs.as_path(),
+                                            action.lsp_action.action_kind().unwrap_or("unknown".into()).as_str(),
+                                            action.lsp_action.title(),
+                                        )
+                                    ).log_err();
+                                    let Some(resolved_edits) = edits_result else {
+                                        continue 'actions;
+                                    };
+                                    edits.extend(resolved_edits);
+                                }
+
+                                if !should_continue_formatting(buffer, &cx) {
+                                    result =
+                                        Err(anyhow!("Formatting aborted due to buffer changes"));
+                                    break 'formatters;
+                                }
+                                buffer.handle.update(&mut cx, |buffer, cx| {
+                                    buffer.edit(edits, None, cx);
+                                    buffer.group_until_transaction(transaction_id_format);
+                                })?;
+                            }
+                        }
+                    }
                 }
             }
 
