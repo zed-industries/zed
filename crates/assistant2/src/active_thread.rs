@@ -384,8 +384,6 @@ impl ActiveThread {
                         cx,
                     );
                 }
-
-                cx.notify();
             }
             ThreadEvent::ToolFinished {
                 pending_tool_use,

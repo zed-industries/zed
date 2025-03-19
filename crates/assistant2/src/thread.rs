@@ -877,8 +877,6 @@ impl Thread {
             self.insert_scripting_tool_output(scripting_tool_use.id.clone(), ui_text, task, cx);
         }
 
-        cx.notify();
-
         pending_tool_uses
             .into_iter()
             .chain(pending_scripting_tool_uses.into_iter())
