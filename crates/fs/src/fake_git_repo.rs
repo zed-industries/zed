@@ -315,7 +315,7 @@ impl GitRepository for FakeGitRepository {
         &self,
         path: RepoPath,
         _content: Rope,
-        _cx: AsyncApp,
+        _cx: &mut AsyncApp,
     ) -> BoxFuture<Result<git::blame::Blame>> {
         self.with_state_async(false, move |state| {
             state
