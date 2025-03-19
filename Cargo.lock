@@ -5602,11 +5602,13 @@ dependencies = [
  "serde_json",
  "smol",
  "sum_tree",
+ "tempfile",
  "text",
  "time",
  "unindent",
  "url",
  "util",
+ "uuid",
 ]
 
 [[package]]

@@ -301,4 +301,12 @@ impl GitRepository for FakeGitRepository {
     fn diff(&self, _diff: DiffType, _cx: AsyncApp) -> BoxFuture<Result<String>> {
         unimplemented!()
     }
+
+    fn checkpoint(&self, _cx: AsyncApp) -> BoxFuture<Result<crate::Oid>> {
+        unimplemented!()
+    }
+
+    fn restore_checkpoint(&self, _oid: crate::Oid, _cx: AsyncApp) -> BoxFuture<Result<()>> {
+        unimplemented!()
+    }
 }
