@@ -450,42 +450,14 @@ impl LocalLspStore {
                     if let Some(this) = this.upgrade() {
                         this.update(cx, |this, cx| {
                             {
-                                let diags = if let Ok(file_path) = params.uri.to_file_path() {
-                                    if let Some(buffer) = this.get_buffer(&file_path, cx) {
-                                        let snapshot = buffer.snapshot();
-                                        let diag = buffer
-                                            .get_diagnostics(server_id)
-                                            .into_iter()
-                                            .flat_map(|v| v.iter())
-                                            .map(move |diag| {
-                                                let range = language::range_to_lsp(
-                                                    diag.range.to_point_utf16(&snapshot),
-                                                )
-                                                .unwrap();
-                                                let mut tags = vec![];
-                                                if diag.diagnostic.is_unnecessary {
-                                                    tags.push(DiagnosticTag::UNNECESSARY);
-                                                }
-                                                lsp::Diagnostic {
-                                                    range,
-                                                    severity: Some(diag.diagnostic.severity),
-                                                    source: diag.diagnostic.source.clone(),
-                                                    tags: Some(tags),
-                                                    message: diag.diagnostic.message.clone(),
-                                                    code: diag.diagnostic.code.clone(),
-                                                    ..Default::default()
-                                                }
-                                            });
-                                        Some(diag)
-                                    } else {
-                                        None
-                                    }
-                                } else {
-                                    None
-                                };
-                                if let Some(mut d) = diags {
-                                    adapter.process_diagnostics(&mut params, Some(&mut d));
-                                }
+                                let buffer = params
+                                    .uri
+                                    .to_file_path()
+                                    .map(|file_path| this.get_buffer(&file_path, cx))
+                                    .ok()
+                                    .flatten()
+                                    .map(|v| (server_id, v));
+                                adapter.process_diagnostics(&mut params, buffer);
                             }
 
                             this.update_diagnostics(

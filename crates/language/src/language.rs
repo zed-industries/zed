@@ -228,7 +228,7 @@ impl CachedLspAdapter {
     pub fn process_diagnostics(
         &self,
         params: &mut lsp::PublishDiagnosticsParams,
-        existing_diagnostics: Option<&'_ mut dyn Iterator<Item = lsp::Diagnostic>>,
+        existing_diagnostics: Option<(LanguageServerId, &'_ Buffer)>,
     ) {
         self.adapter
             .process_diagnostics(params, existing_diagnostics)
@@ -450,7 +450,7 @@ pub trait LspAdapter: 'static + Send + Sync {
     fn process_diagnostics(
         &self,
         _: &mut lsp::PublishDiagnosticsParams,
-        _: Option<&'_ mut dyn Iterator<Item = lsp::Diagnostic>>,
+        _: Option<(LanguageServerId, &'_ Buffer)>,
     ) {
     }
 
@@ -2030,7 +2030,7 @@ impl LspAdapter for FakeLspAdapter {
     fn process_diagnostics(
         &self,
         _: &mut lsp::PublishDiagnosticsParams,
-        _: Option<&'_ mut dyn Iterator<Item = lsp::Diagnostic>>,
+        _: Option<(LanguageServerId, &'_ Buffer)>,
     ) {
     }
 

@@ -5,6 +5,7 @@ use gpui::AsyncApp;
 use http_client::github::{latest_github_release, GitHubLspBinaryVersion};
 pub use language::*;
 use lsp::{DiagnosticTag, InitializeParams, LanguageServerBinary, LanguageServerName};
+use project::lsp_store::clangd_ext;
 use serde_json::json;
 use smol::fs::{self, File};
 use std::{any::Any, env::consts, path::PathBuf, sync::Arc};
@@ -295,20 +296,35 @@ impl super::LspAdapter for CLspAdapter {
     fn process_diagnostics(
         &self,
         params: &mut lsp::PublishDiagnosticsParams,
-        diagnostics: Option<&'_ mut dyn Iterator<Item = lsp::Diagnostic>>,
+        buffer_access: Option<(LanguageServerId, &'_ Buffer)>,
     ) {
-        let inactive_regions = diagnostics.into_iter().flatten().filter(|v| {
-            v.severity
-                .is_some_and(|v| v == DiagnosticSeverity::INFORMATION)
-                && v.tags
-                    .as_ref()
-                    .is_some_and(|v| v.contains(&DiagnosticTag::UNNECESSARY))
-                && v.source
-                    .as_ref()
-                    .is_some_and(|v| v == Self::SERVER_NAME.0.as_ref())
-                && v.message == "inactive region"
-        });
-        params.diagnostics.extend(inactive_regions);
+        if let Some((server_id, buffer)) = buffer_access {
+            let snapshot = buffer.snapshot();
+            let inactive_regions = buffer
+                .get_diagnostics(server_id)
+                .into_iter()
+                .flat_map(|v| v.iter())
+                .filter(|diag| clangd_ext::is_inactive_region(&diag.diagnostic))
+                .map(move |diag| {
+                    // try to reconstruct inactiveRegion diagnostic messages...
+                    let range =
+                        language::range_to_lsp(diag.range.to_point_utf16(&snapshot)).unwrap();
+                    let mut tags = vec![];
+                    if diag.diagnostic.is_unnecessary {
+                        tags.push(DiagnosticTag::UNNECESSARY);
+                    }
+                    lsp::Diagnostic {
+                        range,
+                        severity: Some(diag.diagnostic.severity),
+                        source: diag.diagnostic.source.clone(),
+                        tags: Some(tags),
+                        message: diag.diagnostic.message.clone(),
+                        code: diag.diagnostic.code.clone(),
+                        ..Default::default()
+                    }
+                });
+            params.diagnostics.extend(inactive_regions);
+        }
     }
 }
 

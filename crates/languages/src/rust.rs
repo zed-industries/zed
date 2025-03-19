@@ -244,7 +244,7 @@ impl LspAdapter for RustLspAdapter {
     fn process_diagnostics(
         &self,
         params: &mut lsp::PublishDiagnosticsParams,
-        _: Option<&'_ mut dyn Iterator<Item = lsp::Diagnostic>>,
+        _: Option<(LanguageServerId, &'_ Buffer)>,
     ) {
         static REGEX: LazyLock<Regex> =
             LazyLock::new(|| Regex::new(r"(?m)`([^`]+)\n`$").expect("Failed to create REGEX"));
