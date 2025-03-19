@@ -460,7 +460,7 @@ pub enum ContextEvent {
     MessagesEdited,
     SummaryChanged,
     StreamedCompletion,
-    StartedThoughtProcess(language::Anchor),
+    StartedThoughtProcess(Range<language::Anchor>),
     EndedThoughtProcess(language::Anchor),
     PatchesUpdated {
         removed: Vec<Range<language::Anchor>>,
@@ -2337,6 +2337,9 @@ impl AssistantContext {
                     let mut stop_reason = StopReason::EndTurn;
                     let mut thought_process_stack = Vec::new();
 
+                    const THINKING_START: &str = "<thinking>";
+                    const THINKING_END: &str = "</thinking>";
+
                     while let Some(event) = events.next().await {
                         if response_latency.is_none() {
                             response_latency = Some(request_start.elapsed());
@@ -2369,17 +2372,34 @@ impl AssistantContext {
                                             let start =
                                                 buffer.anchor_before(message_old_end_offset);
                                             thought_process_stack.push(start.clone());
-                                            context_event =
-                                                Some(ContextEvent::StartedThoughtProcess(start));
+                                            let chunk =
+                                                format!("{THINKING_START}{chunk}{THINKING_END}");
+                                            let chunk_len = chunk.len();
+                                            buffer.edit(
+                                                [(
+                                                    message_old_end_offset..message_old_end_offset,
+                                                    chunk,
+                                                )],
+                                                None,
+                                                cx,
+                                            );
+                                            let end = buffer
+                                                .anchor_before(message_old_end_offset + chunk_len);
+                                            context_event = Some(
+                                                ContextEvent::StartedThoughtProcess(start..end),
+                                            );
+                                        } else {
+                                            buffer.edit(
+                                                [(
+                                                    message_old_end_offset - THINKING_END.len()
+                                                        ..message_old_end_offset
+                                                            - THINKING_END.len(),
+                                                    chunk,
+                                                )],
+                                                None,
+                                                cx,
+                                            );
                                         }
-                                        buffer.edit(
-                                            [(
-                                                message_old_end_offset..message_old_end_offset,
-                                                chunk,
-                                            )],
-                                            None,
-                                            cx,
-                                        );
                                     }
                                     LanguageModelCompletionEvent::Text(mut chunk) => {
                                         if let Some(start) = thought_process_stack.pop() {

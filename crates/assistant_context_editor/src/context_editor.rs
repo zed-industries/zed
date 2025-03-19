@@ -616,11 +616,7 @@ impl ContextEditor {
                     context.save(Some(Duration::from_millis(500)), self.fs.clone(), cx);
                 });
             }
-            ContextEvent::StartedThoughtProcess(start) => {
-                let snapshot = self.editor.read(cx).buffer().read(cx).snapshot(cx);
-                let (_, _, snapshot) = snapshot.as_singleton().unwrap();
-                let range = start.clone()..start.bias_right(&snapshot);
-
+            ContextEvent::StartedThoughtProcess(range) => {
                 let creases = self.insert_thought_process_output_sections(
                     [(
                         ThoughtProcessOutputSection {
@@ -631,7 +627,7 @@ impl ContextEditor {
                     window,
                     cx,
                 );
-                self.pending_thought_process = Some((creases[0], start.clone()));
+                self.pending_thought_process = Some((creases[0], range.start.clone()));
             }
             ContextEvent::EndedThoughtProcess(end) => {
                 if let Some((crease_id, start)) = self.pending_thought_process.take() {
