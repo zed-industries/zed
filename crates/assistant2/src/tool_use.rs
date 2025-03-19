@@ -72,7 +72,6 @@ impl ToolUseState {
                             .map(|tool_use| LanguageModelToolUse {
                                 id: tool_use.id.clone(),
                                 name: tool_use.name.clone().into(),
-                                ui_text: format!("Using tool: {}", tool_use.name).into(),
                                 input: tool_use.input.clone(),
                             })
                             .collect::<Vec<_>>();

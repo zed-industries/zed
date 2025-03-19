@@ -274,12 +274,12 @@ impl Thread {
         all_pending_tool_uses.all(|tool_use| tool_use.status.is_error())
     }
 
-    pub fn tool_uses_for_message(&self, id: MessageId) -> Vec<ToolUse> {
-        self.tool_use.tool_uses_for_message(id)
+    pub fn tool_uses_for_message(&self, id: MessageId, cx: &App) -> Vec<ToolUse> {
+        self.tool_use.tool_uses_for_message(id, cx)
     }
 
-    pub fn scripting_tool_uses_for_message(&self, id: MessageId) -> Vec<ToolUse> {
-        self.scripting_tool_use.tool_uses_for_message(id)
+    pub fn scripting_tool_uses_for_message(&self, id: MessageId, cx: &App) -> Vec<ToolUse> {
+        self.scripting_tool_use.tool_uses_for_message(id, cx)
     }
 
     pub fn tool_results_for_message(&self, id: MessageId) -> Vec<&LanguageModelToolResult> {
@@ -409,7 +409,7 @@ impl Thread {
                         tool_uses: this
                             .tool_uses_for_message(message.id)
                             .into_iter()
-                            .chain(this.scripting_tool_uses_for_message(message.id))
+                            .chain(this.scripting_tool_uses_for_message(message.id, cx))
                             .map(|tool_use| SerializedToolUse {
                                 id: tool_use.id,
                                 name: tool_use.name,
@@ -1130,7 +1130,7 @@ impl Thread {
             )?;
             writeln!(markdown, "{}\n", message.text)?;
 
-            for tool_use in self.tool_uses_for_message(message.id) {
+            for tool_use in self.tool_uses_for_message(message.id, cx) {
                 writeln!(
                     markdown,
                     "**Use Tool: {} ({})**",
