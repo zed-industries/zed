@@ -1040,7 +1040,7 @@ impl ContextEditor {
                                 IconName::Ai,
                                 match status {
                                     ThoughtProcessStatus::Pending => "Thinking...".into(),
-                                    ThoughtProcessStatus::Completed => "Thinking done".into(),
+                                    ThoughtProcessStatus::Completed => "Thought Process".into(),
                                 },
                             ),
                             merge_adjacent: false,
