@@ -1693,6 +1693,7 @@ impl Session {
             },
             |this, response, cx| {
                 let response = response.log_err()?;
+                this.output_token.0 += 1;
                 this.output.push_back(dap::OutputEvent {
                     category: None,
                     output: response.result.clone(),
