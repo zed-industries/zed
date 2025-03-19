@@ -1011,6 +1011,7 @@ fn random_diagnostic(
             source: None, // (optional) service that created the diagnostic
             code: None,   // (optional) machine-readable code that identifies the diagnostic
             severity,
+            group_severity: severity,
             message,
             group_id,
             is_primary,

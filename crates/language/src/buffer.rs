@@ -212,6 +212,7 @@ pub struct Diagnostic {
     /// one or more associated diagnostics, those diagnostics are all
     /// assigned a single group ID.
     pub group_id: usize,
+    pub group_severity: DiagnosticSeverity,
     /// Whether this diagnostic is the primary diagnostic for its group.
     ///
     /// In a given group, the primary diagnostic is the top-level diagnostic
@@ -4522,6 +4523,7 @@ impl Default for Diagnostic {
             source: Default::default(),
             code: None,
             severity: DiagnosticSeverity::ERROR,
+            group_severity: DiagnosticSeverity::ERROR,
             message: Default::default(),
             group_id: 0,
             is_primary: false,
