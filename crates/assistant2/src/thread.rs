@@ -472,8 +472,13 @@ impl Thread {
 
         // Note that Cline supports `.clinerules` being a directory, but that is not currently
         // supported. This doesn't seem to occur often in GitHub repositories.
-        const RULES_FILE_NAMES: [&'static str; 4] =
-            [".cursorrules", ".windsurfrules", ".clinerules", "claude.md"];
+        const RULES_FILE_NAMES: [&'static str; 5] = [
+            ".rules",
+            ".cursorrules",
+            ".windsurfrules",
+            ".clinerules",
+            "claude.md",
+        ];
         if let Some((rel_rules_path, abs_rules_path)) = RULES_FILE_NAMES
             .into_iter()
             .filter_map(|name| {
