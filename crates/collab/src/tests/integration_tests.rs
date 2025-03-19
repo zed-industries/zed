@@ -14,8 +14,6 @@ use client::{User, RECEIVE_TIMEOUT};
 use collections::{HashMap, HashSet};
 use fs::{FakeFs, Fs as _, RemoveOptions};
 use futures::{channel::mpsc, StreamExt as _};
-use prompt_store::PromptBuilder;
-
 use git::status::{FileStatus, StatusCode, TrackedStatus, UnmergedStatus, UnmergedStatusCode};
 use gpui::{
     px, size, App, BackgroundExecutor, Entity, Modifiers, MouseButton, MouseDownEvent,
@@ -30,11 +28,13 @@ use language::{
 };
 use lsp::LanguageServerId;
 use parking_lot::Mutex;
+use pretty_assertions::assert_eq;
 use project::{
     lsp_store::{FormatTrigger, LspFormatTarget},
     search::{SearchQuery, SearchResult},
     DiagnosticSummary, HoverBlockKind, Project, ProjectPath,
 };
+use prompt_store::PromptBuilder;
 use rand::prelude::*;
 use serde_json::json;
 use settings::SettingsStore;
@@ -2623,13 +2623,13 @@ async fn test_git_diff_base_change(
     });
 
     // Create remote buffer
-    let buffer_remote_a = project_remote
+    let remote_buffer_a = project_remote
         .update(cx_b, |p, cx| p.open_buffer((worktree_id, "a.txt"), cx))
         .await
         .unwrap();
     let remote_unstaged_diff_a = project_remote
         .update(cx_b, |p, cx| {
-            p.open_unstaged_diff(buffer_remote_a.clone(), cx)
+            p.open_unstaged_diff(remote_buffer_a.clone(), cx)
         })
         .await
         .unwrap();
@@ -2637,7 +2637,7 @@ async fn test_git_diff_base_change(
     // Wait remote buffer to catch up to the new diff
     executor.run_until_parked();
     remote_unstaged_diff_a.read_with(cx_b, |diff, cx| {
-        let buffer = buffer_remote_a.read(cx);
+        let buffer = remote_buffer_a.read(cx);
         assert_eq!(
             diff.base_text_string().as_deref(),
             Some(staged_text.as_str())
@@ -2653,13 +2653,13 @@ async fn test_git_diff_base_change(
     // Open uncommitted changes on the guest, without opening them on the host first
     let remote_uncommitted_diff_a = project_remote
         .update(cx_b, |p, cx| {
-            p.open_uncommitted_diff(buffer_remote_a.clone(), cx)
+            p.open_uncommitted_diff(remote_buffer_a.clone(), cx)
         })
         .await
         .unwrap();
     executor.run_until_parked();
     remote_uncommitted_diff_a.read_with(cx_b, |diff, cx| {
-        let buffer = buffer_remote_a.read(cx);
+        let buffer = remote_buffer_a.read(cx);
         assert_eq!(
             diff.base_text_string().as_deref(),
             Some(committed_text.as_str())
@@ -2703,8 +2703,9 @@ async fn test_git_diff_base_change(
         );
     });
 
+    // Guest receives index text update
     remote_unstaged_diff_a.read_with(cx_b, |diff, cx| {
-        let buffer = buffer_remote_a.read(cx);
+        let buffer = remote_buffer_a.read(cx);
         assert_eq!(
             diff.base_text_string().as_deref(),
             Some(new_staged_text.as_str())
@@ -2718,7 +2719,7 @@ async fn test_git_diff_base_change(
     });
 
     remote_uncommitted_diff_a.read_with(cx_b, |diff, cx| {
-        let buffer = buffer_remote_a.read(cx);
+        let buffer = remote_buffer_a.read(cx);
         assert_eq!(
             diff.base_text_string().as_deref(),
             Some(new_committed_text.as_str())
@@ -2783,20 +2784,20 @@ async fn test_git_diff_base_change(
     });
 
     // Create remote buffer
-    let buffer_remote_b = project_remote
+    let remote_buffer_b = project_remote
         .update(cx_b, |p, cx| p.open_buffer((worktree_id, "sub/b.txt"), cx))
         .await
         .unwrap();
     let remote_unstaged_diff_b = project_remote
         .update(cx_b, |p, cx| {
-            p.open_unstaged_diff(buffer_remote_b.clone(), cx)
+            p.open_unstaged_diff(remote_buffer_b.clone(), cx)
         })
         .await
         .unwrap();
 
     executor.run_until_parked();
     remote_unstaged_diff_b.read_with(cx_b, |diff, cx| {
-        let buffer = buffer_remote_b.read(cx);
+        let buffer = remote_buffer_b.read(cx);
         assert_eq!(
             diff.base_text_string().as_deref(),
             Some(staged_text.as_str())
@@ -2832,7 +2833,7 @@ async fn test_git_diff_base_change(
     });
 
     remote_unstaged_diff_b.read_with(cx_b, |diff, cx| {
-        let buffer = buffer_remote_b.read(cx);
+        let buffer = remote_buffer_b.read(cx);
         assert_eq!(
             diff.base_text_string().as_deref(),
             Some(new_staged_text.as_str())

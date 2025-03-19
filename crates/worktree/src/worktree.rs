@@ -1626,7 +1626,7 @@ impl LocalWorktree {
                         Ordering::Less => {
                             if let Some(entry) = new_snapshot.entry_for_id(new_entry_id) {
                                 changes.push((
-                                    entry.path.clone(),
+                                    entry.clone(),
                                     GitRepositoryChange {
                                         old_repository: None,
                                     },
@@ -1644,7 +1644,7 @@ impl LocalWorktree {
                                         .get(&PathKey(entry.path.clone()), &())
                                         .cloned();
                                     changes.push((
-                                        entry.path.clone(),
+                                        entry.clone(),
                                         GitRepositoryChange {
                                             old_repository: old_repo,
                                         },
@@ -1661,7 +1661,7 @@ impl LocalWorktree {
                                     .get(&PathKey(entry.path.clone()), &())
                                     .cloned();
                                 changes.push((
-                                    entry.path.clone(),
+                                    entry.clone(),
                                     GitRepositoryChange {
                                         old_repository: old_repo,
                                     },
@@ -1674,7 +1674,7 @@ impl LocalWorktree {
                 (Some((entry_id, _)), None) => {
                     if let Some(entry) = new_snapshot.entry_for_id(entry_id) {
                         changes.push((
-                            entry.path.clone(),
+                            entry.clone(),
                             GitRepositoryChange {
                                 old_repository: None,
                             },
@@ -1689,7 +1689,7 @@ impl LocalWorktree {
                             .get(&PathKey(entry.path.clone()), &())
                             .cloned();
                         changes.push((
-                            entry.path.clone(),
+                            entry.clone(),
                             GitRepositoryChange {
                                 old_repository: old_repo,
                             },
@@ -3060,8 +3060,8 @@ impl LocalSnapshot {
             }
         }
 
-        for (work_dir_path, change) in repo_changes.iter() {
-            let new_repo = self.repositories.get(&PathKey(work_dir_path.clone()), &());
+        for (entry, change) in repo_changes.iter() {
+            let new_repo = self.repositories.get(&PathKey(entry.path.clone()), &());
             match (&change.old_repository, new_repo) {
                 (Some(old_repo), Some(new_repo)) => {
                     updated_repositories.push(new_repo.build_update(old_repo));
@@ -3546,7 +3546,7 @@ impl BackgroundScannerState {
         fs: &dyn Fs,
         watcher: &dyn Watcher,
     ) -> Option<LocalRepositoryEntry> {
-        log::info!("insert git reposiutory for {dot_git_path:?}");
+        log::info!("insert git repository for {dot_git_path:?}");
         let work_dir_id = self
             .snapshot
             .entry_for_path(work_directory.path_key().0)
@@ -3894,7 +3894,7 @@ pub struct Entry {
     pub inode: u64,
     pub mtime: Option<MTime>,
 
-    pub canonical_path: Option<Box<Path>>,
+    pub canonical_path: Option<Arc<Path>>,
     /// Whether this entry is ignored by Git.
     ///
     /// We only scan ignored entries once the directory is expanded and
@@ -3955,7 +3955,7 @@ pub struct GitRepositoryChange {
 }
 
 pub type UpdatedEntriesSet = Arc<[(Arc<Path>, ProjectEntryId, PathChange)]>;
-pub type UpdatedGitRepositoriesSet = Arc<[(Arc<Path>, GitRepositoryChange)]>;
+pub type UpdatedGitRepositoriesSet = Arc<[(Entry, GitRepositoryChange)]>;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct StatusEntry {
@@ -4113,7 +4113,7 @@ impl Entry {
         metadata: &fs::Metadata,
         next_entry_id: &AtomicUsize,
         root_char_bag: CharBag,
-        canonical_path: Option<Box<Path>>,
+        canonical_path: Option<Arc<Path>>,
     ) -> Self {
         let char_bag = char_bag_for_path(root_char_bag, &path);
         Self {
@@ -6513,7 +6513,7 @@ impl<'a> TryFrom<(&'a CharBag, &PathMatcher, proto::Entry)> for Entry {
             size: entry.size.unwrap_or(0),
             canonical_path: entry
                 .canonical_path
-                .map(|path_string| Box::from(PathBuf::from_proto(path_string))),
+                .map(|path_string| Arc::from(PathBuf::from_proto(path_string))),
             is_ignored: entry.is_ignored,
             is_always_included,
             is_external: entry.is_external,

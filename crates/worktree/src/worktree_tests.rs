@@ -2409,7 +2409,7 @@ async fn test_git_repository_for_path(cx: &mut TestAppContext) {
     assert_eq!(
         repo_update_events.lock()[0]
             .iter()
-            .map(|e| e.0.clone())
+            .map(|(entry, _)| entry.path.clone())
             .collect::<Vec<Arc<Path>>>(),
         vec![Path::new("dir1").into()]
     );
