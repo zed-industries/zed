@@ -654,13 +654,17 @@ impl Thread {
                                     .rfind(|message| message.role == Role::Assistant)
                                 {
                                     if tool_use.name.as_ref() == ScriptingTool::NAME {
-                                        thread
-                                            .scripting_tool_use
-                                            .request_tool_use(last_assistant_message.id, tool_use);
+                                        thread.scripting_tool_use.request_tool_use(
+                                            last_assistant_message.id,
+                                            tool_use,
+                                            cx,
+                                        );
                                     } else {
-                                        thread
-                                            .tool_use
-                                            .request_tool_use(last_assistant_message.id, tool_use);
+                                        thread.tool_use.request_tool_use(
+                                            last_assistant_message.id,
+                                            tool_use,
+                                            cx,
+                                        );
                                     }
                                 }
                             }

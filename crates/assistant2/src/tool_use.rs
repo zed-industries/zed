@@ -175,22 +175,29 @@ impl ToolUseState {
                 ToolUseStatus::Pending
             })();
 
-            let ui_text = if let Some(tool) = self.tools.tool(&tool_use.name, cx) {
-                tool.ui_text(&tool_use.input).into()
-            } else {
-                "Unknown tool".into()
-            };
-
             tool_uses.push(ToolUse {
                 id: tool_use.id.clone(),
                 name: tool_use.name.clone().into(),
-                ui_text,
+                ui_text: self.tool_ui_label(&tool_use.name, &tool_use.input, cx),
                 input: tool_use.input.clone(),
                 status,
             })
         }
 
         tool_uses
+    }
+
+    pub fn tool_ui_label(
+        &self,
+        tool_name: &str,
+        input: &serde_json::Value,
+        cx: &App,
+    ) -> SharedString {
+        if let Some(tool) = self.tools.tool(tool_name, cx) {
+            tool.ui_text(input).into()
+        } else {
+            "Unknown tool".into()
+        }
     }
 
     pub fn tool_results_for_message(&self, message_id: MessageId) -> Vec<&LanguageModelToolResult> {
@@ -221,6 +228,7 @@ impl ToolUseState {
         &mut self,
         assistant_message_id: MessageId,
         tool_use: LanguageModelToolUse,
+        cx: &App,
     ) {
         self.tool_uses_by_assistant_message
             .entry(assistant_message_id)
@@ -241,7 +249,9 @@ impl ToolUseState {
                 assistant_message_id,
                 id: tool_use.id,
                 name: tool_use.name.clone(),
-                ui_text: tool_use.name,
+                ui_text: self
+                    .tool_ui_label(&tool_use.name, &tool_use.input, cx)
+                    .into(),
                 input: tool_use.input,
                 status: PendingToolUseStatus::Idle,
             },
