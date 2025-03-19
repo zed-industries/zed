@@ -11,7 +11,7 @@ use theme::{Appearance, IconTheme, ThemeMeta, ThemeRegistry, ThemeSettings};
 use ui::{prelude::*, v_flex, ListItem, ListItemSpacing};
 use util::ResultExt;
 use workspace::{ui::HighlightedLabel, ModalView};
-use zed_actions::Extensions;
+use zed_actions::{ExtensionCategoryFilter, Extensions};
 
 pub(crate) struct IconThemeSelector {
     picker: Entity<Picker<IconThemeSelectorDelegate>>,
@@ -301,7 +301,12 @@ impl PickerDelegate for IconThemeSelectorDelegate {
                 .child(
                     Button::new("more-icon-themes", "Install Icon Themes").on_click(
                         move |_event, window, cx| {
-                            window.dispatch_action(Box::new(Extensions), cx);
+                            window.dispatch_action(
+                                Box::new(Extensions {
+                                    category_filter: Some(ExtensionCategoryFilter::IconThemes),
+                                }),
+                                cx,
+                            );
                         },
                     ),
                 )

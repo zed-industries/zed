@@ -28,6 +28,7 @@ use workspace::{
     item::{Item, ItemEvent},
     Workspace, WorkspaceId,
 };
+use zed_actions::ExtensionCategoryFilter;
 
 use crate::components::{ExtensionCard, FeatureUpsell};
 use crate::extension_version_selector::{
@@ -42,26 +43,53 @@ pub fn init(cx: &mut App) {
             return;
         };
         workspace
-            .register_action(move |workspace, _: &zed_actions::Extensions, window, cx| {
-                let existing = workspace
-                    .active_pane()
-                    .read(cx)
-                    .items()
-                    .find_map(|item| item.downcast::<ExtensionsPage>());
+            .register_action(
+                move |workspace, action: &zed_actions::Extensions, window, cx| {
+                    let provides_filter = action.category_filter.map(|category| match category {
+                        ExtensionCategoryFilter::Themes => ExtensionProvides::Themes,
+                        ExtensionCategoryFilter::IconThemes => ExtensionProvides::IconThemes,
+                        ExtensionCategoryFilter::Languages => ExtensionProvides::Languages,
+                        ExtensionCategoryFilter::Grammars => ExtensionProvides::Grammars,
+                        ExtensionCategoryFilter::LanguageServers => {
+                            ExtensionProvides::LanguageServers
+                        }
+                        ExtensionCategoryFilter::ContextServers => {
+                            ExtensionProvides::ContextServers
+                        }
+                        ExtensionCategoryFilter::SlashCommands => ExtensionProvides::SlashCommands,
+                        ExtensionCategoryFilter::IndexedDocsProviders => {
+                            ExtensionProvides::IndexedDocsProviders
+                        }
+                        ExtensionCategoryFilter::Snippets => ExtensionProvides::Snippets,
+                    });
 
-                if let Some(existing) = existing {
-                    workspace.activate_item(&existing, true, true, window, cx);
-                } else {
-                    let extensions_page = ExtensionsPage::new(workspace, window, cx);
-                    workspace.add_item_to_active_pane(
-                        Box::new(extensions_page),
-                        None,
-                        true,
-                        window,
-                        cx,
-                    )
-                }
-            })
+                    let existing = workspace
+                        .active_pane()
+                        .read(cx)
+                        .items()
+                        .find_map(|item| item.downcast::<ExtensionsPage>());
+
+                    if let Some(existing) = existing {
+                        if provides_filter.is_some() {
+                            existing.update(cx, |extensions_page, cx| {
+                                extensions_page.change_provides_filter(provides_filter, cx);
+                            });
+                        }
+
+                        workspace.activate_item(&existing, true, true, window, cx);
+                    } else {
+                        let extensions_page =
+                            ExtensionsPage::new(workspace, provides_filter, window, cx);
+                        workspace.add_item_to_active_pane(
+                            Box::new(extensions_page),
+                            None,
+                            true,
+                            window,
+                            cx,
+                        )
+                    }
+                },
+            )
             .register_action(move |workspace, _: &InstallDevExtension, window, cx| {
                 let store = ExtensionStore::global(cx);
                 let prompt = workspace.prompt_for_open_path(
@@ -234,6 +262,7 @@ pub struct ExtensionsPage {
 impl ExtensionsPage {
     pub fn new(
         workspace: &Workspace,
+        provides_filter: Option<ExtensionProvides>,
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) -> Entity<Self> {
@@ -277,13 +306,13 @@ impl ExtensionsPage {
                 filtered_remote_extension_indices: Vec::new(),
                 remote_extension_entries: Vec::new(),
                 query_contains_error: false,
-                provides_filter: None,
+                provides_filter,
                 extension_fetch_task: None,
                 _subscriptions: subscriptions,
                 query_editor,
                 upsells: BTreeSet::default(),
             };
-            this.fetch_extensions(None, None, cx);
+            this.fetch_extensions(None, Some(BTreeSet::from_iter(this.provides_filter)), cx);
             this
         })
     }
@@ -968,6 +997,15 @@ impl ExtensionsPage {
         self.refresh_feature_upsells(cx);
     }
 
+    pub fn change_provides_filter(
+        &mut self,
+        provides_filter: Option<ExtensionProvides>,
+        cx: &mut Context<Self>,
+    ) {
+        self.provides_filter = provides_filter;
+        self.refresh_search(cx);
+    }
+
     fn fetch_extensions_debounced(&mut self, cx: &mut Context<ExtensionsPage>) {
         self.extension_fetch_task = Some(cx.spawn(async move |this, cx| {
             let search = this
@@ -1155,8 +1193,7 @@ impl ExtensionsPage {
                     let this = this.clone();
                     move |_window, cx| {
                         this.update(cx, |this, cx| {
-                            this.provides_filter = None;
-                            this.refresh_search(cx);
+                            this.change_provides_filter(None, cx);
                         });
                     }
                 },
@@ -1174,8 +1211,8 @@ impl ExtensionsPage {
                         let this = this.clone();
                         move |_window, cx| {
                             this.update(cx, |this, cx| {
+                                this.change_provides_filter(Some(provides), cx);
                                 this.provides_filter = Some(provides);
-                                this.refresh_search(cx);
                             });
                         }
                     },
