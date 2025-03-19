@@ -4,7 +4,8 @@ use crate::branch_picker::{self, BranchList};
 use crate::git_panel::{commit_message_editor, GitPanel};
 use git::{Commit, GenerateCommitMessage};
 use panel::{panel_button, panel_editor_style, panel_filled_button};
-use ui::{prelude::*, KeybindingHint, PopoverMenu, PopoverMenuHandle, Tooltip};
+use ui::ElevationIndex;
+use ui::{prelude::*, Checkbox, KeybindingHint, PopoverMenu, PopoverMenuHandle, Tooltip};
 
 use editor::{Editor, EditorElement};
 use gpui::*;
@@ -294,6 +295,24 @@ impl CommitModal {
                 cx.emit(DismissEvent);
             }));
 
+        let amend_checkbox = Checkbox::new(
+            ElementId::Name("git_amend_checkbox".into()),
+            if self.git_panel.read(cx).amend_commit {
+                ToggleState::Selected
+            } else {
+                ToggleState::Unselected
+            },
+        )
+        .elevation(ElevationIndex::ModalSurface)
+        .fill()
+        .disabled(false)
+        .label("Amend")
+        .on_click(cx.listener(move |this, _, _window, cx| {
+            this.git_panel.update(cx, |git_panel, _cx| {
+                git_panel.amend_commit = !git_panel.amend_commit
+            });
+        }));
+
         h_flex()
             .group("commit_editor_footer")
             .flex_none()
@@ -326,6 +345,7 @@ impl CommitModal {
                     .px_1()
                     .gap_4()
                     .children(close_kb_hint)
+                    .child(amend_checkbox)
                     .child(commit_button),
             )
     }

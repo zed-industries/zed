@@ -324,6 +324,7 @@ pub struct GitPanel {
     context_menu: Option<(Entity<ContextMenu>, Point<Pixels>, Subscription)>,
     modal_open: bool,
     _settings_subscription: Subscription,
+    pub(crate) amend_commit: bool,
 }
 
 struct RemoteOperationGuard {
@@ -481,6 +482,7 @@ impl GitPanel {
             workspace,
             modal_open: false,
             entry_count: 0,
+            amend_commit: false,
             horizontal_scrollbar,
             vertical_scrollbar,
             _settings_subscription,
@@ -2885,6 +2887,22 @@ impl GitPanel {
             editor.max_point(cx).row().0 >= MAX_PANEL_EDITOR_LINES as u32
         });
 
+        let amend_checkbox = Checkbox::new(
+            ElementId::Name("git_amend_checkbox".into()),
+            if self.amend_commit {
+                ToggleState::Selected
+            } else {
+                ToggleState::Unselected
+            },
+        )
+        .elevation(ElevationIndex::ModalSurface)
+        .fill()
+        .disabled(false)
+        .label("Amend")
+        .on_click(cx.listener(|this, _, _, _| {
+            this.amend_commit = !this.amend_commit;
+        }));
+
         let footer = v_flex()
             .child(PanelRepoFooter::new(display_name, branch, Some(git_panel)))
             .child(
@@ -2919,32 +2937,38 @@ impl GitPanel {
                                     .unwrap_or_else(|| div().into_any_element()),
                             )
                             .child(
-                                h_flex().gap_0p5().children(enable_coauthors).child(
-                                    panel_filled_button(title)
-                                        .tooltip(move |window, cx| {
-                                            if can_commit {
-                                                Tooltip::for_action_in(
-                                                    tooltip,
-                                                    &Commit,
-                                                    &commit_tooltip_focus_handle,
-                                                    window,
-                                                    cx,
-                                                )
-                                            } else {
-                                                Tooltip::simple(tooltip, cx)
-                                            }
-                                        })
-                                        .disabled(!can_commit || self.modal_open)
-                                        .on_click({
-                                            cx.listener(move |this, _: &ClickEvent, window, cx| {
-                                                telemetry::event!(
-                                                    "Git Committed",
-                                                    source = "Git Panel"
-                                                );
-                                                this.commit_changes(window, cx)
+                                h_flex()
+                                    .gap_0p5()
+                                    .children(enable_coauthors)
+                                    .child(amend_checkbox)
+                                    .child(
+                                        panel_filled_button(title)
+                                            .tooltip(move |window, cx| {
+                                                if can_commit {
+                                                    Tooltip::for_action_in(
+                                                        tooltip,
+                                                        &Commit,
+                                                        &commit_tooltip_focus_handle,
+                                                        window,
+                                                        cx,
+                                                    )
+                                                } else {
+                                                    Tooltip::simple(tooltip, cx)
+                                                }
                                             })
-                                        }),
-                                ),
+                                            .disabled(!can_commit || self.modal_open)
+                                            .on_click({
+                                                cx.listener(
+                                                    move |this, _: &ClickEvent, window, cx| {
+                                                        telemetry::event!(
+                                                            "Git Committed",
+                                                            source = "Git Panel"
+                                                        );
+                                                        this.commit_changes(window, cx)
+                                                    },
+                                                )
+                                            }),
+                                    ),
                             ),
                     )
                     .child(
