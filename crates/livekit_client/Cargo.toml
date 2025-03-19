@@ -30,15 +30,12 @@ core-video.workspace = true
 cpal = "0.15"
 futures.workspace = true
 gpui.workspace = true
-http_2 = { package = "http", version = "0.2.1" }
 livekit_api.workspace = true
 log.workspace = true
-media.workspace = true
 nanoid = { workspace = true, optional = true }
 parking_lot.workspace = true
 postage.workspace = true
 util.workspace = true
-http_client.workspace = true
 smallvec.workspace = true
 image.workspace = true
 
@@ -49,8 +46,6 @@ livekit.workspace = true
 core-foundation.workspace = true
 coreaudio-rs = "0.12.1"
 objc = "0.2"
-# objc2 = { version = "0.5", optional = true }
-
 
 [dev-dependencies]
 collections = { workspace = true, features = ["test-support"] }
