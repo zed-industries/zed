@@ -4734,12 +4734,18 @@ impl CharClassifier {
         }
 
         if let Some(scope) = &self.scope {
-            if let Some(characters) = scope.word_characters() {
+            let characters = if self.for_completion {
+                scope.completion_query_characters()
+            } else {
+                scope.word_characters()
+            };
+            if let Some(characters) = characters {
                 if characters.contains(&c) {
-                    if c == '-' && !self.for_completion && !ignore_punctuation {
+                    if ignore_punctuation {
+                        return CharKind::Word;
+                    } else {
                         return CharKind::Punctuation;
                     }
-                    return CharKind::Word;
                 }
             }
         }
