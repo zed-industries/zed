@@ -61,9 +61,9 @@ impl CompletionProvider for MessageEditorCompletionProvider {
         _: editor::CompletionContext,
         _window: &mut Window,
         cx: &mut Context<Editor>,
-    ) -> Task<anyhow::Result<Vec<Completion>>> {
+    ) -> Task<Result<Option<Vec<Completion>>>> {
         let Some(handle) = self.0.upgrade() else {
-            return Task::ready(Ok(Vec::new()));
+            return Task::ready(Ok(None));
         };
         handle.update(cx, |message_editor, cx| {
             message_editor.completions(buffer, buffer_position, cx)
@@ -244,20 +244,22 @@ impl MessageEditor {
         buffer: &Entity<Buffer>,
         end_anchor: Anchor,
         cx: &mut Context<Self>,
-    ) -> Task<Result<Vec<Completion>>> {
+    ) -> Task<Result<Option<Vec<Completion>>>> {
         if let Some((start_anchor, query, candidates)) =
             self.collect_mention_candidates(buffer, end_anchor, cx)
         {
             if !candidates.is_empty() {
-                return cx.spawn(async move |_, cx| {
-                    Ok(Self::resolve_completions_for_candidates(
-                        &cx,
-                        query.as_str(),
-                        &candidates,
-                        start_anchor..end_anchor,
-                        Self::completion_for_mention,
-                    )
-                    .await)
+                return cx.spawn(|_, cx| async move {
+                    Ok(Some(
+                        Self::resolve_completions_for_candidates(
+                            &cx,
+                            query.as_str(),
+                            &candidates,
+                            start_anchor..end_anchor,
+                            Self::completion_for_mention,
+                        )
+                        .await,
+                    ))
                 });
             }
         }
@@ -266,20 +268,22 @@ impl MessageEditor {
             self.collect_emoji_candidates(buffer, end_anchor, cx)
         {
             if !candidates.is_empty() {
-                return cx.spawn(async move |_, cx| {
-                    Ok(Self::resolve_completions_for_candidates(
-                        &cx,
-                        query.as_str(),
-                        candidates,
-                        start_anchor..end_anchor,
-                        Self::completion_for_emoji,
-                    )
-                    .await)
+                return cx.spawn(|_, cx| async move {
+                    Ok(Some(
+                        Self::resolve_completions_for_candidates(
+                            &cx,
+                            query.as_str(),
+                            candidates,
+                            start_anchor..end_anchor,
+                            Self::completion_for_emoji,
+                        )
+                        .await,
+                    ))
                 });
             }
         }
 
-        Task::ready(Ok(vec![]))
+        Task::ready(Ok(Some(Vec::new())))
     }
 
     async fn resolve_completions_for_candidates(

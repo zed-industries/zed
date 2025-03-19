@@ -2,7 +2,14 @@
   {
     "bindings": {
       "cmd-{": "pane::ActivatePreviousItem",
-      "cmd-}": "pane::ActivateNextItem"
+      "cmd-}": "pane::ActivateNextItem",
+      "ctrl-f2": "debugger::Stop",
+      "f6": "debugger::Pause",
+      "f7": "debugger::StepInto",
+      "f8": "debugger::StepOver",
+      "shift-f8": "debugger::StepOut",
+      "f9": "debugger::Continue",
+      "alt-shift-f9": "debugger::Start"
     }
   },
   {
@@ -29,6 +36,7 @@
       "shift-alt-up": "editor::MoveLineUp",
       "shift-alt-down": "editor::MoveLineDown",
       "cmd-alt-l": "editor::Format",
+      "ctrl-alt-o": "editor::OrganizeImports",
       "shift-f6": "editor::Rename",
       "cmd-[": "pane::GoBack",
       "cmd-]": "pane::GoForward",
@@ -45,7 +53,9 @@
       "cmd-home": "editor::MoveToBeginning",
       "cmd-end": "editor::MoveToEnd",
       "cmd-shift-home": "editor::SelectToBeginning",
-      "cmd-shift-end": "editor::SelectToEnd"
+      "cmd-shift-end": "editor::SelectToEnd",
+      "ctrl-f8": "editor::ToggleBreakpoint",
+      "ctrl-shift-f8": "editor::EditLogBreakpoint"
     }
   },
   {

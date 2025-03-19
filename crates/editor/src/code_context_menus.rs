@@ -180,6 +180,7 @@ pub struct CompletionsMenu {
     scroll_handle: UniformListScrollHandle,
     resolve_completions: bool,
     show_completion_documentation: bool,
+    pub(super) ignore_completion_provider: bool,
     last_rendered_range: Rc<RefCell<Option<Range<usize>>>>,
     markdown_element: Option<Entity<Markdown>>,
 }
@@ -189,6 +190,7 @@ impl CompletionsMenu {
         id: CompletionId,
         sort_completions: bool,
         show_completion_documentation: bool,
+        ignore_completion_provider: bool,
         initial_position: Anchor,
         buffer: Entity<Buffer>,
         completions: Box<[Completion]>,
@@ -205,6 +207,7 @@ impl CompletionsMenu {
             initial_position,
             buffer,
             show_completion_documentation,
+            ignore_completion_provider,
             completions: RefCell::new(completions).into(),
             match_candidates,
             entries: RefCell::new(Vec::new()).into(),
@@ -266,6 +269,7 @@ impl CompletionsMenu {
             scroll_handle: UniformListScrollHandle::new(),
             resolve_completions: false,
             show_completion_documentation: false,
+            ignore_completion_provider: false,
             last_rendered_range: RefCell::new(None).into(),
             markdown_element: None,
         }

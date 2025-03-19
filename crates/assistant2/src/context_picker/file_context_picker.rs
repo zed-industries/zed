@@ -99,7 +99,6 @@ impl FileContextPickerDelegate {
         query: String,
         cancellation_flag: Arc<AtomicBool>,
         workspace: &Entity<Workspace>,
-
         cx: &mut Context<Picker<Self>>,
     ) -> Task<Vec<PathMatch>> {
         if query.is_empty() {
@@ -124,14 +123,14 @@ impl FileContextPickerDelegate {
             let file_matches = project.worktrees(cx).flat_map(|worktree| {
                 let worktree = worktree.read(cx);
                 let path_prefix: Arc<str> = worktree.root_name().into();
-                worktree.files(false, 0).map(move |entry| PathMatch {
+                worktree.entries(false, 0).map(move |entry| PathMatch {
                     score: 0.,
                     positions: Vec::new(),
                     worktree_id: worktree.id().to_usize(),
                     path: entry.path.clone(),
                     path_prefix: path_prefix.clone(),
                     distance_to_relative_ancestor: 0,
-                    is_dir: false,
+                    is_dir: entry.is_dir(),
                 })
             });
 
@@ -149,7 +148,7 @@ impl FileContextPickerDelegate {
                             .root_entry()
                             .map_or(false, |entry| entry.is_ignored),
                         include_root_name: true,
-                        candidates: project::Candidates::Files,
+                        candidates: project::Candidates::Entries,
                     }
                 })
                 .collect::<Vec<_>>();
@@ -192,7 +191,7 @@ impl PickerDelegate for FileContextPickerDelegate {
     }
 
     fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
-        "Search files…".into()
+        "Search files & directories…".into()
     }
 
     fn update_matches(
@@ -223,13 +222,11 @@ impl PickerDelegate for FileContextPickerDelegate {
             return;
         };
 
-        let Some(file_name) = mat
+        let file_name = mat
             .path
             .file_name()
             .map(|os_str| os_str.to_string_lossy().into_owned())
-        else {
-            return;
-        };
+            .unwrap_or(mat.path_prefix.to_string());
 
         let full_path = mat.path.display().to_string();
 
@@ -237,6 +234,8 @@ impl PickerDelegate for FileContextPickerDelegate {
             worktree_id: WorktreeId::from_usize(mat.worktree_id),
             path: mat.path.clone(),
         };
+
+        let is_directory = mat.is_dir;
 
         let Some(editor_entity) = self.editor.upgrade() else {
             return;
@@ -288,8 +287,12 @@ impl PickerDelegate for FileContextPickerDelegate {
 
                 editor.insert("\n", window, cx); // Needed to end the fold
 
-                let file_icon = FileIcons::get_icon(&Path::new(&full_path), cx)
-                    .unwrap_or_else(|| SharedString::new(""));
+                let file_icon = if is_directory {
+                    FileIcons::get_folder_icon(false, cx)
+                } else {
+                    FileIcons::get_icon(&Path::new(&full_path), cx)
+                }
+                .unwrap_or_else(|| SharedString::new(""));
 
                 let placeholder = FoldPlaceholder {
                     render: render_fold_icon_button(
@@ -330,7 +333,11 @@ impl PickerDelegate for FileContextPickerDelegate {
         let Some(task) = self
             .context_store
             .update(cx, |context_store, cx| {
-                context_store.add_file_from_path(project_path, cx)
+                if is_directory {
+                    context_store.add_directory(project_path, cx)
+                } else {
+                    context_store.add_file_from_path(project_path, cx)
+                }
             })
             .ok()
         else {
@@ -375,6 +382,7 @@ impl PickerDelegate for FileContextPickerDelegate {
                     ElementId::NamedInteger("file-ctx-picker".into(), ix),
                     &path_match.path,
                     &path_match.path_prefix,
+                    path_match.is_dir,
                     self.context_store.clone(),
                     cx,
                 )),
@@ -386,6 +394,7 @@ pub fn render_file_context_entry(
     id: ElementId,
     path: &Path,
     path_prefix: &Arc<str>,
+    is_directory: bool,
     context_store: WeakEntity<ContextStore>,
     cx: &App,
 ) -> Stateful<Div> {
@@ -409,13 +418,24 @@ pub fn render_file_context_entry(
         (file_name, Some(directory))
     };
 
-    let added = context_store
-        .upgrade()
-        .and_then(|context_store| context_store.read(cx).will_include_file_path(path, cx));
+    let added = context_store.upgrade().and_then(|context_store| {
+        if is_directory {
+            context_store
+                .read(cx)
+                .includes_directory(path)
+                .map(FileInclusion::Direct)
+        } else {
+            context_store.read(cx).will_include_file_path(path, cx)
+        }
+    });
 
-    let file_icon = FileIcons::get_icon(&path, cx)
-        .map(Icon::from_path)
-        .unwrap_or_else(|| Icon::new(IconName::File));
+    let file_icon = if is_directory {
+        FileIcons::get_folder_icon(false, cx)
+    } else {
+        FileIcons::get_icon(&path, cx)
+    }
+    .map(Icon::from_path)
+    .unwrap_or_else(|| Icon::new(IconName::File));
 
     h_flex()
         .id(id)

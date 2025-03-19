@@ -3,7 +3,14 @@
     "bindings": {
       "ctrl-alt-s": "zed::OpenSettings",
       "ctrl-{": "pane::ActivatePreviousItem",
-      "ctrl-}": "pane::ActivateNextItem"
+      "ctrl-}": "pane::ActivateNextItem",
+      "ctrl-f2": "debugger::Stop",
+      "f6": "debugger::Pause",
+      "f7": "debugger::StepInto",
+      "f8": "debugger::StepOver",
+      "shift-f8": "debugger::StepOut",
+      "f9": "debugger::Continue",
+      "alt-shift-f9": "debugger::Start"
     }
   },
   {
@@ -31,6 +38,7 @@
       "shift-alt-up": "editor::MoveLineUp",
       "shift-alt-down": "editor::MoveLineDown",
       "ctrl-alt-l": "editor::Format",
+      "ctrl-alt-o": "editor::OrganizeImports",
       "shift-f6": "editor::Rename",
       "ctrl-alt-left": "pane::GoBack",
       "ctrl-alt-right": "pane::GoForward",
@@ -48,7 +56,9 @@
       "ctrl-home": "editor::MoveToBeginning",
       "ctrl-end": "editor::MoveToEnd",
       "ctrl-shift-home": "editor::SelectToBeginning",
-      "ctrl-shift-end": "editor::SelectToEnd"
+      "ctrl-shift-end": "editor::SelectToEnd",
+      "ctrl-f8": "editor::ToggleBreakpoint",
+      "ctrl-shift-f8": "editor::EditLogBreakpoint"
     }
   },
   {

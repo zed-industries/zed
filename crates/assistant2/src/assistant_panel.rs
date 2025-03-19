@@ -112,15 +112,12 @@ impl AssistantPanel {
     ) -> Task<Result<Entity<Self>>> {
         cx.spawn(async move |cx| {
             let tools = Arc::new(ToolWorkingSet::default());
-            log::info!("[assistant2-debug] initializing ThreadStore");
-            let thread_store = workspace.update(cx, |workspace, cx| {
+            let thread_store = workspace.update(&mut cx, |workspace, cx| {
                 let project = workspace.project().clone();
                 ThreadStore::new(project, tools.clone(), prompt_builder.clone(), cx)
             })??;
-            log::info!("[assistant2-debug] finished initializing ThreadStore");
 
             let slash_commands = Arc::new(SlashCommandWorkingSet::default());
-            log::info!("[assistant2-debug] initializing ContextStore");
             let context_store = workspace
                 .update(cx, |workspace, cx| {
                     let project = workspace.project().clone();
@@ -132,7 +129,6 @@ impl AssistantPanel {
                     )
                 })?
                 .await?;
-            log::info!("[assistant2-debug] finished initializing ContextStore");
 
             workspace.update_in(cx, |workspace, window, cx| {
                 cx.new(|cx| Self::new(workspace, thread_store, context_store, window, cx))
@@ -147,7 +143,6 @@ impl AssistantPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        log::info!("[assistant2-debug] AssistantPanel::new");
         let thread = thread_store.update(cx, |this, cx| this.create_thread(cx));
         let fs = workspace.app_state().fs.clone();
         let project = workspace.project().clone();
@@ -155,10 +150,14 @@ impl AssistantPanel {
         let workspace = workspace.weak_handle();
         let weak_self = cx.entity().downgrade();
 
+        let message_editor_context_store =
+            cx.new(|_cx| crate::context_store::ContextStore::new(workspace.clone()));
+
         let message_editor = cx.new(|cx| {
             MessageEditor::new(
                 fs.clone(),
                 workspace.clone(),
+                message_editor_context_store.clone(),
                 thread_store.downgrade(),
                 thread.clone(),
                 window,
@@ -174,6 +173,7 @@ impl AssistantPanel {
                 thread.clone(),
                 thread_store.clone(),
                 language_registry.clone(),
+                message_editor_context_store.clone(),
                 window,
                 cx,
             )
@@ -242,11 +242,16 @@ impl AssistantPanel {
             .update(cx, |this, cx| this.create_thread(cx));
 
         self.active_view = ActiveView::Thread;
+
+        let message_editor_context_store =
+            cx.new(|_cx| crate::context_store::ContextStore::new(self.workspace.clone()));
+
         self.thread = cx.new(|cx| {
             ActiveThread::new(
                 thread.clone(),
                 self.thread_store.clone(),
                 self.language_registry.clone(),
+                message_editor_context_store.clone(),
                 window,
                 cx,
             )
@@ -255,6 +260,7 @@ impl AssistantPanel {
             MessageEditor::new(
                 self.fs.clone(),
                 self.workspace.clone(),
+                message_editor_context_store,
                 self.thread_store.downgrade(),
                 thread,
                 window,
@@ -375,11 +381,14 @@ impl AssistantPanel {
             let thread = open_thread_task.await?;
             this.update_in(cx, |this, window, cx| {
                 this.active_view = ActiveView::Thread;
+                let message_editor_context_store =
+                    cx.new(|_cx| crate::context_store::ContextStore::new(this.workspace.clone()));
                 this.thread = cx.new(|cx| {
                     ActiveThread::new(
                         thread.clone(),
                         this.thread_store.clone(),
                         this.language_registry.clone(),
+                        message_editor_context_store.clone(),
                         window,
                         cx,
                     )
@@ -388,6 +397,7 @@ impl AssistantPanel {
                     MessageEditor::new(
                         this.fs.clone(),
                         this.workspace.clone(),
+                        message_editor_context_store,
                         this.thread_store.downgrade(),
                         thread,
                         window,
@@ -400,8 +410,13 @@ impl AssistantPanel {
     }
 
     pub(crate) fn open_configuration(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let context_server_manager = self.thread_store.read(cx).context_server_manager();
+        let tools = self.thread_store.read(cx).tools();
+
         self.active_view = ActiveView::Configuration;
-        self.configuration = Some(cx.new(|cx| AssistantConfiguration::new(window, cx)));
+        self.configuration = Some(
+            cx.new(|cx| AssistantConfiguration::new(context_server_manager, tools, window, cx)),
+        );
 
         if let Some(configuration) = self.configuration.as_ref() {
             self.configuration_subscription = Some(cx.subscribe_in(

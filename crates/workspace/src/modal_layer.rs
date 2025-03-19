@@ -193,7 +193,7 @@ impl Render for ModalLayer {
                     .child(
                         h_flex()
                             .occlude()
-                            .child(div().child(active_modal.modal.view()))
+                            .child(active_modal.modal.view())
                             .on_mouse_down(MouseButton::Left, |_, _, cx| {
                                 cx.stop_propagation();
                             }),

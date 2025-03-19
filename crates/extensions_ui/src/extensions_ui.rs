@@ -10,7 +10,6 @@ use client::{ExtensionMetadata, ExtensionProvides};
 use collections::{BTreeMap, BTreeSet};
 use editor::{Editor, EditorElement, EditorStyle};
 use extension_host::{ExtensionManifest, ExtensionOperation, ExtensionStore};
-use feature_flags::FeatureFlagAppExt as _;
 use fuzzy::{match_strings, StringMatchCandidate};
 use gpui::{
     actions, uniform_list, Action, App, ClipboardItem, Context, Entity, EventEmitter, Flatten,
@@ -21,6 +20,7 @@ use num_format::{Locale, ToFormattedString};
 use project::DirectoryLister;
 use release_channel::ReleaseChannel;
 use settings::Settings;
+use strum::IntoEnumIterator as _;
 use theme::ThemeSettings;
 use ui::{prelude::*, CheckboxWithLabel, ContextMenu, PopoverMenu, ToggleButton, Tooltip};
 use vim_mode_setting::VimModeSetting;
@@ -125,6 +125,20 @@ pub fn init(cx: &mut App) {
         .detach();
     })
     .detach();
+}
+
+fn extension_provides_label(provides: ExtensionProvides) -> &'static str {
+    match provides {
+        ExtensionProvides::Themes => "Themes",
+        ExtensionProvides::IconThemes => "Icon Themes",
+        ExtensionProvides::Languages => "Languages",
+        ExtensionProvides::Grammars => "Grammars",
+        ExtensionProvides::LanguageServers => "Language Servers",
+        ExtensionProvides::ContextServers => "Context Servers",
+        ExtensionProvides::SlashCommands => "Slash Commands",
+        ExtensionProvides::IndexedDocsProviders => "Indexed Docs Providers",
+        ExtensionProvides::Snippets => "Snippets",
+    }
 }
 
 #[derive(Clone)]
@@ -608,25 +622,6 @@ impl ExtensionsPage {
                                             .provides
                                             .iter()
                                             .map(|provides| {
-                                                let label = match provides {
-                                                    ExtensionProvides::Themes => "Themes",
-                                                    ExtensionProvides::IconThemes => "Icon Themes",
-                                                    ExtensionProvides::Languages => "Languages",
-                                                    ExtensionProvides::Grammars => "Grammars",
-                                                    ExtensionProvides::LanguageServers => {
-                                                        "Language Servers"
-                                                    }
-                                                    ExtensionProvides::ContextServers => {
-                                                        "Context Servers"
-                                                    }
-                                                    ExtensionProvides::SlashCommands => {
-                                                        "Slash Commands"
-                                                    }
-                                                    ExtensionProvides::IndexedDocsProviders => {
-                                                        "Indexed Docs Providers"
-                                                    }
-                                                    ExtensionProvides::Snippets => "Snippets",
-                                                };
                                                 div()
                                                     .bg(cx.theme().colors().element_background)
                                                     .px_0p5()
@@ -634,7 +629,10 @@ impl ExtensionsPage {
                                                     .border_color(cx.theme().colors().border)
                                                     .rounded_sm()
                                                     .child(
-                                                        Label::new(label).size(LabelSize::XSmall),
+                                                        Label::new(extension_provides_label(
+                                                            *provides,
+                                                        ))
+                                                        .size(LabelSize::XSmall),
                                                     )
                                             })
                                             .collect::<Vec<_>>(),
@@ -1140,6 +1138,53 @@ impl ExtensionsPage {
             upsell.when(ix < upsells_count, |upsell| upsell.border_b_1())
         }))
     }
+
+    fn build_extension_provides_filter_menu(
+        &self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Entity<ContextMenu> {
+        let this = cx.entity();
+        ContextMenu::build(window, cx, |mut menu, _window, _cx| {
+            menu = menu.header("Extension Category").toggleable_entry(
+                "All",
+                self.provides_filter.is_none(),
+                IconPosition::End,
+                None,
+                {
+                    let this = this.clone();
+                    move |_window, cx| {
+                        this.update(cx, |this, cx| {
+                            this.provides_filter = None;
+                            this.refresh_search(cx);
+                        });
+                    }
+                },
+            );
+
+            for provides in ExtensionProvides::iter() {
+                let label = extension_provides_label(provides);
+
+                menu = menu.toggleable_entry(
+                    label,
+                    self.provides_filter == Some(provides),
+                    IconPosition::End,
+                    None,
+                    {
+                        let this = this.clone();
+                        move |_window, cx| {
+                            this.update(cx, |this, cx| {
+                                this.provides_filter = Some(provides);
+                                this.refresh_search(cx);
+                            });
+                        }
+                    },
+                )
+            }
+
+            menu
+        })
+    }
 }
 
 impl Render for ExtensionsPage {
@@ -1174,41 +1219,27 @@ impl Render for ExtensionsPage {
                             .w_full()
                             .gap_2()
                             .justify_between()
-                            .child(
-                                h_flex()
-                                    .gap_2()
-                                    .child(self.render_search(cx))
-                                    .map(|parent| {
-                                        // Note: Staff-only until this gets design input.
-                                        if !cx.is_staff() {
-                                            return parent;
-                                        }
-
-                                        parent.child(CheckboxWithLabel::new(
-                                            "icon-themes-filter",
-                                            Label::new("Icon themes"),
-                                            match self.provides_filter {
-                                                Some(ExtensionProvides::IconThemes) => {
-                                                    ToggleState::Selected
-                                                }
-                                                _ => ToggleState::Unselected,
-                                            },
-                                            cx.listener(|this, checked, _window, cx| {
-                                                match checked {
-                                                    ToggleState::Unselected
-                                                    | ToggleState::Indeterminate => {
-                                                        this.provides_filter = None
-                                                    }
-                                                    ToggleState::Selected => {
-                                                        this.provides_filter =
-                                                            Some(ExtensionProvides::IconThemes)
-                                                    }
-                                                };
-                                                this.refresh_search(cx);
-                                            }),
-                                        ))
-                                    }),
-                            )
+                            .child(h_flex().gap_2().child(self.render_search(cx)).child({
+                                let this = cx.entity().clone();
+                                PopoverMenu::new("extension-provides-filter")
+                                    .menu(move |window, cx| {
+                                        Some(this.update(cx, |this, cx| {
+                                            this.build_extension_provides_filter_menu(window, cx)
+                                        }))
+                                    })
+                                    .trigger_with_tooltip(
+                                        Button::new(
+                                            "extension-provides-filter-button",
+                                            self.provides_filter
+                                                .map(extension_provides_label)
+                                                .unwrap_or("All"),
+                                        )
+                                        .icon(IconName::Filter)
+                                        .icon_position(IconPosition::Start),
+                                        Tooltip::text("Filter extensions by category"),
+                                    )
+                                    .anchor(gpui::Corner::TopLeft)
+                            }))
                             .child(
                                 h_flex()
                                     .child(

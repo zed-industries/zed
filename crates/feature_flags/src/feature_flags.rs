@@ -115,6 +115,11 @@ impl FeatureFlag for AutoCommand {
     }
 }
 
+pub struct Debugger {}
+impl FeatureFlag for Debugger {
+    const NAME: &'static str = "debugger";
+}
+
 pub trait FeatureFlagViewExt<V: 'static> {
     fn observe_flag<T: FeatureFlag, F>(&mut self, window: &Window, callback: F) -> Subscription
     where
@@ -202,7 +207,7 @@ impl FeatureFlagAppExt for App {
     fn has_flag<T: FeatureFlag>(&self) -> bool {
         self.try_global::<FeatureFlags>()
             .map(|flags| flags.has_flag::<T>())
-            .unwrap_or(false)
+            .unwrap_or_else(|| T::enabled_in_development())
     }
 
     fn is_staff(&self) -> bool {

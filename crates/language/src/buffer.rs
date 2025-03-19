@@ -4146,12 +4146,9 @@ impl BufferSnapshot {
         }
     }
 
-    pub fn words_in_range(
-        &self,
-        query: Option<&str>,
-        range: Range<usize>,
-    ) -> HashMap<String, Range<Anchor>> {
-        if query.map_or(false, |query| query.is_empty()) {
+    pub fn words_in_range(&self, query: WordsQuery) -> HashMap<String, Range<Anchor>> {
+        let query_str = query.fuzzy_contents;
+        if query_str.map_or(false, |query| query.is_empty()) {
             return HashMap::default();
         }
 
@@ -4161,13 +4158,13 @@ impl BufferSnapshot {
         }));
 
         let mut query_ix = 0;
-        let query = query.map(|query| query.chars().collect::<Vec<_>>());
-        let query_len = query.as_ref().map_or(0, |query| query.len());
+        let query_chars = query_str.map(|query| query.chars().collect::<Vec<_>>());
+        let query_len = query_chars.as_ref().map_or(0, |query| query.len());
 
         let mut words = HashMap::default();
         let mut current_word_start_ix = None;
-        let mut chunk_ix = range.start;
-        for chunk in self.chunks(range, false) {
+        let mut chunk_ix = query.range.start;
+        for chunk in self.chunks(query.range, false) {
             for (i, c) in chunk.text.char_indices() {
                 let ix = chunk_ix + i;
                 if classifier.is_word(c) {
@@ -4175,12 +4172,9 @@ impl BufferSnapshot {
                         current_word_start_ix = Some(ix);
                     }
 
-                    if let Some(query) = &query {
+                    if let Some(query_chars) = &query_chars {
                         if query_ix < query_len {
-                            let query_c = query.get(query_ix).expect(
-                                "query_ix is a vec of chars, which we access only if before the end",
-                            );
-                            if c.to_lowercase().eq(query_c.to_lowercase()) {
+                            if c.to_lowercase().eq(query_chars[query_ix].to_lowercase()) {
                                 query_ix += 1;
                             }
                         }
@@ -4189,10 +4183,16 @@ impl BufferSnapshot {
                 } else if let Some(word_start) = current_word_start_ix.take() {
                     if query_ix == query_len {
                         let word_range = self.anchor_before(word_start)..self.anchor_after(ix);
-                        words.insert(
-                            self.text_for_range(word_start..ix).collect::<String>(),
-                            word_range,
-                        );
+                        let mut word_text = self.text_for_range(word_start..ix).peekable();
+                        let first_char = word_text
+                            .peek()
+                            .and_then(|first_chunk| first_chunk.chars().next());
+                        // Skip empty and "words" starting with digits as a heuristic to reduce useless completions
+                        if !query.skip_digits
+                            || first_char.map_or(true, |first_char| !first_char.is_digit(10))
+                        {
+                            words.insert(word_text.collect(), word_range);
+                        }
                     }
                 }
                 query_ix = 0;
@@ -4202,6 +4202,15 @@ impl BufferSnapshot {
 
         words
     }
+}
+
+pub struct WordsQuery<'a> {
+    /// Only returns words with all chars from the fuzzy string in them.
+    pub fuzzy_contents: Option<&'a str>,
+    /// Skips words that start with a digit.
+    pub skip_digits: bool,
+    /// Buffer offset range, to look for words.
+    pub range: Range<usize>,
 }
 
 fn indent_size_for_line(text: &text::BufferSnapshot, row: u32) -> IndentSize {

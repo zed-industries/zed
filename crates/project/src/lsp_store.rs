@@ -40,10 +40,10 @@ use language::{
     },
     point_to_lsp,
     proto::{deserialize_anchor, deserialize_version, serialize_anchor, serialize_version},
-    range_from_lsp, range_to_lsp, Bias, Buffer, BufferSnapshot, CachedLspAdapter, CodeLabel,
-    Diagnostic, DiagnosticEntry, DiagnosticSet, Diff, File as _, Language, LanguageRegistry,
-    LanguageServerBinaryStatus, LanguageToolchainStore, LocalFile, LspAdapter, LspAdapterDelegate,
-    Patch, PointUtf16, TextBufferSnapshot, ToOffset, ToPointUtf16, Transaction, Unclipped,
+    range_from_lsp, range_to_lsp, Bias, BinaryStatus, Buffer, BufferSnapshot, CachedLspAdapter,
+    CodeLabel, Diagnostic, DiagnosticEntry, DiagnosticSet, Diff, File as _, Language,
+    LanguageRegistry, LanguageToolchainStore, LocalFile, LspAdapter, LspAdapterDelegate, Patch,
+    PointUtf16, TextBufferSnapshot, ToOffset, ToPointUtf16, Transaction, Unclipped,
 };
 use lsp::{
     notification::DidRenameFiles, CodeActionKind, CompletionContext, DiagnosticSeverity,
@@ -348,7 +348,7 @@ impl LocalLspStore {
                         let log = stderr_capture.lock().take().unwrap_or_default();
                         delegate.update_status(
                             adapter.name(),
-                            LanguageServerBinaryStatus::Failed {
+                            BinaryStatus::Failed {
                                 error: format!("{err}\n-- stderr--\n{}", log),
                             },
                         );
@@ -419,7 +419,7 @@ impl LocalLspStore {
                 .get_language_server_command(delegate.clone(), toolchains, lsp_binary_options, cx)
                 .await;
 
-            delegate.update_status(adapter.name.clone(), LanguageServerBinaryStatus::None);
+            delegate.update_status(adapter.name.clone(), BinaryStatus::None);
 
             let mut binary = binary_result?;
             if let Some(arguments) = settings.and_then(|b| b.arguments) {
@@ -790,6 +790,27 @@ impl LocalLspStore {
                             cx.emit(LspStoreEvent::RefreshInlayHints);
                             this.downstream_client.as_ref().map(|(client, project_id)| {
                                 client.send(proto::RefreshInlayHints {
+                                    project_id: *project_id,
+                                })
+                            })
+                        })?
+                        .transpose()?;
+                        Ok(())
+                    }
+                }
+            })
+            .detach();
+
+        language_server
+            .on_request::<lsp::request::CodeLensRefresh, _, _>({
+                let this = this.clone();
+                move |(), mut cx| {
+                    let this = this.clone();
+                    async move {
+                        this.update(&mut cx, |this, cx| {
+                            cx.emit(LspStoreEvent::RefreshCodeLens);
+                            this.downstream_client.as_ref().map(|(client, project_id)| {
+                                client.send(proto::RefreshCodeLens {
                                     project_id: *project_id,
                                 })
                             })
@@ -1625,7 +1646,8 @@ impl LocalLspStore {
     ) -> anyhow::Result<()> {
         match &mut action.lsp_action {
             LspAction::Action(lsp_action) => {
-                if GetCodeActions::can_resolve_actions(&lang_server.capabilities())
+                if !action.resolved
+                    && GetCodeActions::can_resolve_actions(&lang_server.capabilities())
                     && lsp_action.data.is_some()
                     && (lsp_action.command.is_none() || lsp_action.edit.is_none())
                 {
@@ -1636,8 +1658,17 @@ impl LocalLspStore {
                     );
                 }
             }
+            LspAction::CodeLens(lens) => {
+                if !action.resolved && GetCodeLens::can_resolve_lens(&lang_server.capabilities()) {
+                    *lens = lang_server
+                        .request::<lsp::request::CodeLensResolve>(lens.clone())
+                        .await?;
+                }
+            }
             LspAction::Command(_) => {}
         }
+
+        action.resolved = true;
         anyhow::Ok(())
     }
 
@@ -2884,6 +2915,7 @@ pub enum LspStoreEvent {
     },
     Notification(String),
     RefreshInlayHints,
+    RefreshCodeLens,
     DiagnosticsUpdated {
         language_server_id: LanguageServerId,
         path: ProjectPath,
@@ -2939,6 +2971,7 @@ impl LspStore {
         client.add_entity_request_handler(Self::handle_resolve_inlay_hint);
         client.add_entity_request_handler(Self::handle_open_buffer_for_symbol);
         client.add_entity_request_handler(Self::handle_refresh_inlay_hints);
+        client.add_entity_request_handler(Self::handle_refresh_code_lens);
         client.add_entity_request_handler(Self::handle_on_type_formatting);
         client.add_entity_request_handler(Self::handle_apply_additional_edits_for_completion);
         client.add_entity_request_handler(Self::handle_register_buffer_with_language_servers);
@@ -4312,6 +4345,7 @@ impl LspStore {
             cx,
         )
     }
+
     pub fn code_actions(
         &mut self,
         buffer_handle: &Entity<Buffer>,
@@ -4389,6 +4423,66 @@ impl LspStore {
         }
     }
 
+    pub fn code_lens(
+        &mut self,
+        buffer_handle: &Entity<Buffer>,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<Vec<CodeAction>>> {
+        if let Some((upstream_client, project_id)) = self.upstream_client() {
+            let request_task = upstream_client.request(proto::MultiLspQuery {
+                buffer_id: buffer_handle.read(cx).remote_id().into(),
+                version: serialize_version(&buffer_handle.read(cx).version()),
+                project_id,
+                strategy: Some(proto::multi_lsp_query::Strategy::All(
+                    proto::AllLanguageServers {},
+                )),
+                request: Some(proto::multi_lsp_query::Request::GetCodeLens(
+                    GetCodeLens.to_proto(project_id, buffer_handle.read(cx)),
+                )),
+            });
+            let buffer = buffer_handle.clone();
+            cx.spawn(|weak_project, cx| async move {
+                let Some(project) = weak_project.upgrade() else {
+                    return Ok(Vec::new());
+                };
+                let responses = request_task.await?.responses;
+                let code_lens = join_all(
+                    responses
+                        .into_iter()
+                        .filter_map(|lsp_response| match lsp_response.response? {
+                            proto::lsp_response::Response::GetCodeLensResponse(response) => {
+                                Some(response)
+                            }
+                            unexpected => {
+                                debug_panic!("Unexpected response: {unexpected:?}");
+                                None
+                            }
+                        })
+                        .map(|code_lens_response| {
+                            GetCodeLens.response_from_proto(
+                                code_lens_response,
+                                project.clone(),
+                                buffer.clone(),
+                                cx.clone(),
+                            )
+                        }),
+                )
+                .await;
+
+                Ok(code_lens
+                    .into_iter()
+                    .collect::<Result<Vec<Vec<_>>>>()?
+                    .into_iter()
+                    .flatten()
+                    .collect())
+            })
+        } else {
+            let code_lens_task =
+                self.request_multiple_lsp_locally(buffer_handle, None::<usize>, GetCodeLens, cx);
+            cx.spawn(|_, _| async move { Ok(code_lens_task.await.into_iter().flatten().collect()) })
+        }
+    }
+
     #[inline(never)]
     pub fn completions(
         &self,
@@ -4396,7 +4490,7 @@ impl LspStore {
         position: PointUtf16,
         context: CompletionContext,
         cx: &mut Context<Self>,
-    ) -> Task<Result<Vec<Completion>>> {
+    ) -> Task<Result<Option<Vec<Completion>>>> {
         let language_registry = self.languages.clone();
 
         if let Some((upstream_client, project_id)) = self.upstream_client() {
@@ -4424,7 +4518,7 @@ impl LspStore {
                 let mut result = Vec::new();
                 populate_labels_for_completions(completions, language, lsp_adapter, &mut result)
                     .await;
-                Ok(result)
+                Ok(Some(result))
             })
         } else if let Some(local) = self.as_local() {
             let snapshot = buffer.read(cx).snapshot();
@@ -4438,7 +4532,7 @@ impl LspStore {
             )
             .completions;
             if !completion_settings.lsp {
-                return Task::ready(Ok(Vec::new()));
+                return Task::ready(Ok(None));
             }
 
             let server_ids: Vec<_> = buffer.update(cx, |buffer, cx| {
@@ -4489,13 +4583,14 @@ impl LspStore {
                         ).fuse();
                         let new_task = cx.background_spawn(async move {
                             select_biased! {
-                                response = lsp_request => response,
+                                response = lsp_request => anyhow::Ok(Some(response?)),
                                 timeout_happened = timeout => {
                                     if timeout_happened {
                                         log::warn!("Fetching completions from server {server_id} timed out, timeout ms: {}", completion_settings.lsp_fetch_timeout_ms);
-                                        return anyhow::Ok(Vec::new())
+                                        Ok(None)
                                     } else {
-                                        lsp_request.await
+                                        let completions = lsp_request.await?;
+                                        Ok(Some(completions))
                                     }
                                 },
                             }
@@ -4504,9 +4599,11 @@ impl LspStore {
                     }
                 })?;
 
+                let mut has_completions_returned = false;
                 let mut completions = Vec::new();
                 for (lsp_adapter, task) in tasks {
-                    if let Ok(new_completions) = task.await {
+                    if let Ok(Some(new_completions)) = task.await {
+                        has_completions_returned = true;
                         populate_labels_for_completions(
                             new_completions,
                             language.clone(),
@@ -4516,8 +4613,11 @@ impl LspStore {
                         .await;
                     }
                 }
-
-                Ok(completions)
+                if has_completions_returned {
+                    Ok(Some(completions))
+                } else {
+                    Ok(None)
+                }
             })
         } else {
             Task::ready(Err(anyhow!("No upstream client or local language server")))
@@ -6285,6 +6385,43 @@ impl LspStore {
                         .collect(),
                 })
             }
+            Some(proto::multi_lsp_query::Request::GetCodeLens(get_code_lens)) => {
+                let get_code_lens = GetCodeLens::from_proto(
+                    get_code_lens,
+                    this.clone(),
+                    buffer.clone(),
+                    cx.clone(),
+                )
+                .await?;
+
+                let code_lens_actions = this
+                    .update(&mut cx, |project, cx| {
+                        project.request_multiple_lsp_locally(
+                            &buffer,
+                            None::<usize>,
+                            get_code_lens,
+                            cx,
+                        )
+                    })?
+                    .await
+                    .into_iter();
+
+                this.update(&mut cx, |project, cx| proto::MultiLspQueryResponse {
+                    responses: code_lens_actions
+                        .map(|actions| proto::LspResponse {
+                            response: Some(proto::lsp_response::Response::GetCodeLensResponse(
+                                GetCodeLens::response_to_proto(
+                                    actions,
+                                    project,
+                                    sender_id,
+                                    &buffer_version,
+                                    cx,
+                                ),
+                            )),
+                        })
+                        .collect(),
+                })
+            }
             None => anyhow::bail!("empty multi lsp query request"),
         }
     }
@@ -7185,6 +7322,17 @@ impl LspStore {
         Ok(proto::ResolveInlayHintResponse {
             hint: Some(InlayHints::project_to_proto_hint(response_hint)),
         })
+    }
+
+    async fn handle_refresh_code_lens(
+        this: Entity<Self>,
+        _: TypedEnvelope<proto::RefreshCodeLens>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::Ack> {
+        this.update(&mut cx, |_, cx| {
+            cx.emit(LspStoreEvent::RefreshCodeLens);
+        })?;
+        Ok(proto::Ack {})
     }
 
     async fn handle_open_buffer_for_symbol(
@@ -8408,6 +8556,10 @@ impl LspStore {
                 proto::code_action::Kind::Command as i32,
                 serde_json::to_vec(command).unwrap(),
             ),
+            LspAction::CodeLens(code_lens) => (
+                proto::code_action::Kind::CodeLens as i32,
+                serde_json::to_vec(code_lens).unwrap(),
+            ),
         };
 
         proto::CodeAction {
@@ -8416,6 +8568,7 @@ impl LspStore {
             end: Some(serialize_anchor(&action.range.end)),
             lsp_action,
             kind,
+            resolved: action.resolved,
         }
     }
 
@@ -8423,11 +8576,11 @@ impl LspStore {
         let start = action
             .start
             .and_then(deserialize_anchor)
-            .ok_or_else(|| anyhow!("invalid start"))?;
+            .context("invalid start")?;
         let end = action
             .end
             .and_then(deserialize_anchor)
-            .ok_or_else(|| anyhow!("invalid end"))?;
+            .context("invalid end")?;
         let lsp_action = match proto::code_action::Kind::from_i32(action.kind) {
             Some(proto::code_action::Kind::Action) => {
                 LspAction::Action(serde_json::from_slice(&action.lsp_action)?)
@@ -8435,11 +8588,15 @@ impl LspStore {
             Some(proto::code_action::Kind::Command) => {
                 LspAction::Command(serde_json::from_slice(&action.lsp_action)?)
             }
+            Some(proto::code_action::Kind::CodeLens) => {
+                LspAction::CodeLens(serde_json::from_slice(&action.lsp_action)?)
+            }
             None => anyhow::bail!("Unknown action kind {}", action.kind),
         };
         Ok(CodeAction {
             server_id: LanguageServerId(action.server_id as usize),
             range: start..end,
+            resolved: action.resolved,
             lsp_action,
         })
     }
@@ -9257,11 +9414,7 @@ impl LspAdapterDelegate for LocalLspAdapterDelegate {
         ))
     }
 
-    fn update_status(
-        &self,
-        server_name: LanguageServerName,
-        status: language::LanguageServerBinaryStatus,
-    ) {
+    fn update_status(&self, server_name: LanguageServerName, status: language::BinaryStatus) {
         self.language_registry
             .update_lsp_status(server_name, status);
     }

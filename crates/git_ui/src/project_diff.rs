@@ -66,16 +66,11 @@ const TRACKED_NAMESPACE: &'static str = "1";
 const NEW_NAMESPACE: &'static str = "2";
 
 impl ProjectDiff {
-    pub(crate) fn register(
-        workspace: &mut Workspace,
-        _window: Option<&mut Window>,
-        cx: &mut Context<Workspace>,
-    ) {
+    pub(crate) fn register(workspace: &mut Workspace, cx: &mut Context<Workspace>) {
         workspace.register_action(Self::deploy);
         workspace.register_action(|workspace, _: &Add, window, cx| {
             Self::deploy(workspace, &Diff, window, cx);
         });
-
         workspace::register_serializable_item::<ProjectDiff>(cx);
     }
 
@@ -673,8 +668,6 @@ impl Render for ProjectDiff {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let is_empty = self.multibuffer.read(cx).is_empty();
 
-        let can_push_and_pull = crate::can_push_and_pull(&self.project, cx);
-
         div()
             .track_focus(&self.focus_handle)
             .key_context(if is_empty { "EmptyPane" } else { "GitDiff" })
@@ -684,6 +677,16 @@ impl Render for ProjectDiff {
             .justify_center()
             .size_full()
             .when(is_empty, |el| {
+                let remote_button = if let Some(panel) = self
+                    .workspace
+                    .upgrade()
+                    .and_then(|workspace| workspace.read(cx).panel::<GitPanel>(cx))
+                {
+                    panel.update(cx, |panel, cx| panel.render_remote_button(cx))
+                } else {
+                    None
+                };
+                let keybinding_focus_handle = self.focus_handle(cx).clone();
                 el.child(
                     v_flex()
                         .gap_1()
@@ -692,52 +695,33 @@ impl Render for ProjectDiff {
                                 .justify_around()
                                 .child(Label::new("No uncommitted changes")),
                         )
-                        .when(can_push_and_pull, |this_div| {
-                            let keybinding_focus_handle = self.focus_handle(cx);
-
-                            this_div.when_some(self.current_branch.as_ref(), |this_div, branch| {
-                                let remote_button = crate::render_remote_button(
-                                    "project-diff-remote-button",
-                                    branch,
-                                    Some(keybinding_focus_handle.clone()),
-                                    false,
-                                );
-
-                                match remote_button {
-                                    Some(button) => {
-                                        this_div.child(h_flex().justify_around().child(button))
-                                    }
-                                    None => this_div.child(
-                                        h_flex()
-                                            .justify_around()
-                                            .child(Label::new("Remote up to date")),
-                                    ),
-                                }
-                            })
+                        .map(|el| match remote_button {
+                            Some(button) => el.child(h_flex().justify_around().child(button)),
+                            None => el.child(
+                                h_flex()
+                                    .justify_around()
+                                    .child(Label::new("Remote up to date")),
+                            ),
                         })
-                        .map(|this| {
-                            let keybinding_focus_handle = self.focus_handle(cx).clone();
-
-                            this.child(
-                                h_flex().justify_around().mt_1().child(
-                                    Button::new("project-diff-close-button", "Close")
-                                        // .style(ButtonStyle::Transparent)
-                                        .key_binding(KeyBinding::for_action_in(
-                                            &CloseActiveItem::default(),
-                                            &keybinding_focus_handle,
-                                            window,
+                        .child(
+                            h_flex().justify_around().mt_1().child(
+                                Button::new("project-diff-close-button", "Close")
+                                    // .style(ButtonStyle::Transparent)
+                                    .key_binding(KeyBinding::for_action_in(
+                                        &CloseActiveItem::default(),
+                                        &keybinding_focus_handle,
+                                        window,
+                                        cx,
+                                    ))
+                                    .on_click(move |_, window, cx| {
+                                        window.focus(&keybinding_focus_handle);
+                                        window.dispatch_action(
+                                            Box::new(CloseActiveItem::default()),
                                             cx,
-                                        ))
-                                        .on_click(move |_, window, cx| {
-                                            window.focus(&keybinding_focus_handle);
-                                            window.dispatch_action(
-                                                Box::new(CloseActiveItem::default()),
-                                                cx,
-                                            );
-                                        }),
-                                ),
-                            )
-                        }),
+                                        );
+                                    }),
+                            ),
+                        ),
                 )
             })
             .when(!is_empty, |el| el.child(self.editor.clone()))
@@ -806,6 +790,7 @@ impl ProjectDiffToolbar {
     fn project_diff(&self, _: &App) -> Option<Entity<ProjectDiff>> {
         self.project_diff.as_ref()?.upgrade()
     }
+
     fn dispatch_action(&self, action: &dyn Action, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(project_diff) = self.project_diff(cx) {
             project_diff.focus_handle(cx).focus(window);
@@ -919,12 +904,6 @@ impl Render for ProjectDiffToolbar {
                                     &StageAndNext,
                                     &focus_handle,
                                 ))
-                                // don't actually disable the button so it's mashable
-                                .color(if button_states.stage {
-                                    Color::Default
-                                } else {
-                                    Color::Disabled
-                                })
                                 .on_click(cx.listener(|this, _, window, cx| {
                                     this.dispatch_action(&StageAndNext, window, cx)
                                 })),
@@ -936,11 +915,6 @@ impl Render for ProjectDiffToolbar {
                                     &UnstageAndNext,
                                     &focus_handle,
                                 ))
-                                .color(if button_states.unstage {
-                                    Color::Default
-                                } else {
-                                    Color::Disabled
-                                })
                                 .on_click(cx.listener(|this, _, window, cx| {
                                     this.dispatch_action(&UnstageAndNext, window, cx)
                                 })),

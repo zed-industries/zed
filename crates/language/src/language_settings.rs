@@ -326,8 +326,8 @@ pub struct CompletionSettings {
     /// When fetching LSP completions, determines how long to wait for a response of a particular server.
     /// When set to 0, waits indefinitely.
     ///
-    /// Default: 500
-    #[serde(default = "lsp_fetch_timeout_ms")]
+    /// Default: 0
+    #[serde(default = "default_lsp_fetch_timeout_ms")]
     pub lsp_fetch_timeout_ms: u64,
 }
 
@@ -335,12 +335,13 @@ pub struct CompletionSettings {
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum WordsCompletionMode {
-    /// Always fetch document's words for completions.
+    /// Always fetch document's words for completions along with LSP completions.
     Enabled,
-    /// Only if LSP response errors/times out/is empty,
+    /// Only if LSP response errors or times out,
     /// use document's words to show completions.
     Fallback,
     /// Never fetch or complete document's words for completions.
+    /// (Word-based completions can still be queried via a separate action)
     Disabled,
 }
 
@@ -348,8 +349,8 @@ fn default_words_completion_mode() -> WordsCompletionMode {
     WordsCompletionMode::Fallback
 }
 
-fn lsp_fetch_timeout_ms() -> u64 {
-    500
+fn default_lsp_fetch_timeout_ms() -> u64 {
+    0
 }
 
 /// The settings for a particular language.
@@ -580,8 +581,6 @@ pub struct CopilotSettingsContent {
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub struct FeaturesContent {
-    /// Whether the GitHub Copilot feature is enabled.
-    pub copilot: Option<bool>,
     /// Determines which edit prediction provider to use.
     pub edit_prediction_provider: Option<EditPredictionProvider>,
 }
@@ -1158,7 +1157,6 @@ impl settings::Settings for AllLanguageSettings {
             languages.insert(language_name.clone(), language_settings);
         }
 
-        let mut copilot_enabled = default_value.features.as_ref().and_then(|f| f.copilot);
         let mut edit_prediction_provider = default_value
             .features
             .as_ref()
@@ -1205,9 +1203,6 @@ impl settings::Settings for AllLanguageSettings {
         }
 
         for user_settings in sources.customizations() {
-            if let Some(copilot) = user_settings.features.as_ref().and_then(|f| f.copilot) {
-                copilot_enabled = Some(copilot);
-            }
             if let Some(provider) = user_settings
                 .features
                 .as_ref()
@@ -1282,8 +1277,6 @@ impl settings::Settings for AllLanguageSettings {
             edit_predictions: EditPredictionSettings {
                 provider: if let Some(provider) = edit_prediction_provider {
                     provider
-                } else if copilot_enabled.unwrap_or(true) {
-                    EditPredictionProvider::Copilot
                 } else {
                     EditPredictionProvider::None
                 },
