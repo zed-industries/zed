@@ -75,7 +75,6 @@ pub async fn capture_local_video_track(
     cx: &mut gpui::AsyncApp,
 ) -> Result<(track::LocalVideoTrack, Box<dyn ScreenCaptureStream>)> {
     let resolution = capture_source.resolution()?;
-    dbg!(&resolution);
     let track_source = gpui_tokio::Tokio::spawn(cx, async move {
         NativeVideoSource::new(VideoResolution {
             width: resolution.width.0 as u32,
