@@ -1,6 +1,50 @@
 use language::{BufferSnapshot, Diff, Point, ToOffset};
+use project::search::SearchQuery;
+use util::{paths::PathMatcher, ResultExt as _};
 
-pub fn replace_flexible(buffer: &BufferSnapshot, old: &str, new: &str) -> Option<Diff> {
+/// Replace an exact match or return None
+pub async fn replace_exact(old: &str, new: &str, snapshot: &BufferSnapshot) -> Option<Diff> {
+    let query = SearchQuery::text(
+        old,
+        false,
+        true,
+        true,
+        PathMatcher::new(&[]).ok()?,
+        PathMatcher::new(&[]).ok()?,
+        None,
+    )
+    .log_err()?;
+
+    let matches = query.search(&snapshot, None).await;
+
+    if matches.is_empty() {
+        return None;
+    }
+
+    let edit_range = matches[0].clone();
+    let diff = language::text_diff(&old, &new);
+
+    let edits = diff
+        .into_iter()
+        .map(|(old_range, text)| {
+            let start = edit_range.start + old_range.start;
+            let end = edit_range.start + old_range.end;
+            (start..end, text)
+        })
+        .collect::<Vec<_>>();
+
+    let diff = language::Diff {
+        base_version: snapshot.version().clone(),
+        line_ending: snapshot.line_ending(),
+        edits,
+    };
+
+    Some(diff)
+}
+
+/// Replace even if the old/new is missing some leading whitespace, but matches otherwise
+/// The indentation in the `new` string is extended to match the replaced location
+pub fn replace_with_missing_indent(old: &str, new: &str, buffer: &BufferSnapshot) -> Option<Diff> {
     let line_ending = buffer.line_ending().as_str();
     let (old_lines, old_min_indent) = lines_with_min_indent(old);
     let (new_lines, new_min_indent) = lines_with_min_indent(new);
@@ -14,7 +58,7 @@ pub fn replace_flexible(buffer: &BufferSnapshot, old: &str, new: &str) -> Option
     'windows: for start_row in 0..max_row.saturating_sub(old_lines.len() as u32 - 1) {
         let mut common_leading = None;
 
-        let end_row = start_row + old_lines.len() as u32;
+        let end_row = start_row + old_lines.len() as u32 - 1;
 
         if end_row > max_row {
             // The buffer ends before fully matching the pattern
@@ -27,6 +71,7 @@ pub fn replace_flexible(buffer: &BufferSnapshot, old: &str, new: &str) -> Option
 
         let window_text =
             buffer.text_for_range(start_point..Point::new(max_row, buffer.line_len(max_row)));
+
         let mut window_lines = window_text.lines();
         let mut old_lines_iter = old_lines.iter();
 
@@ -42,7 +87,7 @@ pub fn replace_flexible(buffer: &BufferSnapshot, old: &str, new: &str) -> Option
                 continue;
             }
 
-            let line_leading = &window_line[..window_line.len() - line_trimmed.len()];
+            let line_leading = &window_line[..window_line.len() - old_line.len()];
 
             match &common_leading {
                 Some(common_leading) if common_leading != line_leading => {
@@ -140,7 +185,7 @@ mod tests {
         .unindent();
 
         assert_eq!(
-            test_replace_flexible(cx, &whole, &old, &new),
+            test_replace_with_missing_indent(cx, &whole, &old, &new),
             Some(expected.to_string())
         );
     }
@@ -168,7 +213,10 @@ mod tests {
         "#
         .unindent();
 
-        assert_eq!(test_replace_flexible(cx, &whole, &old, &new), None);
+        assert_eq!(
+            test_replace_with_missing_indent(cx, &whole, &old, &new),
+            None
+        );
     }
 
     #[gpui::test]
@@ -200,7 +248,7 @@ mod tests {
         let expected = "fn test() {\n    let x = 10;\n\n    println!(\"New x: {}\", x);\n";
 
         assert_eq!(
-            test_replace_flexible(cx, &whole, &old, &new),
+            test_replace_with_missing_indent(cx, &whole, &old, &new),
             Some(expected.to_string())
         );
     }
@@ -225,7 +273,10 @@ mod tests {
         "#
         .unindent();
 
-        assert_eq!(test_replace_flexible(cx, &whole, &old, &new), None);
+        assert_eq!(
+            test_replace_with_missing_indent(cx, &whole, &old, &new),
+            None
+        );
     }
 
     #[gpui::test]
@@ -249,7 +300,10 @@ mod tests {
         .unindent();
 
         // Should return None because whole doesn't fully contain the old text
-        assert_eq!(test_replace_flexible(cx, &whole, &old, &new), None);
+        assert_eq!(
+            test_replace_with_missing_indent(cx, &whole, &old, &new),
+            None
+        );
     }
 
     #[test]
@@ -285,6 +339,130 @@ mod tests {
         );
     }
 
+    #[gpui::test]
+    fn test_replace_with_missing_indent_uneven_match(cx: &mut TestAppContext) {
+        let whole = r#"
+            fn test() {
+                if true {
+                        let x = 5;
+                        println!("x = {}", x);
+                }
+            }
+        "#
+        .unindent();
+
+        let old = r#"
+            let x = 5;
+            println!("x = {}", x);
+        "#
+        .unindent();
+
+        let new = r#"
+            let x = 42;
+            println!("x = {}", x);
+        "#
+        .unindent();
+
+        let expected = r#"
+            fn test() {
+                if true {
+                        let x = 42;
+                        println!("x = {}", x);
+                }
+            }
+        "#
+        .unindent();
+
+        assert_eq!(
+            test_replace_with_missing_indent(cx, &whole, &old, &new),
+            Some(expected.to_string())
+        );
+    }
+
+    #[gpui::test]
+    fn test_replace_big_example(cx: &mut TestAppContext) {
+        let whole = r#"
+            #[cfg(test)]
+            mod tests {
+                use super::*;
+
+                #[test]
+                fn test_is_valid_age() {
+                    assert!(is_valid_age(0));
+                    assert!(!is_valid_age(151));
+                }
+            }
+        "#
+        .unindent();
+
+        let old = r#"
+            #[test]
+            fn test_is_valid_age() {
+                assert!(is_valid_age(0));
+                assert!(!is_valid_age(151));
+            }
+        "#
+        .unindent();
+
+        let new = r#"
+            #[test]
+            fn test_is_valid_age() {
+                assert!(is_valid_age(0));
+                assert!(!is_valid_age(151));
+            }
+
+            #[test]
+            fn test_group_people_by_age() {
+                let people = vec![
+                    Person::new("Young One", 5, "young@example.com").unwrap(),
+                    Person::new("Teen One", 15, "teen@example.com").unwrap(),
+                    Person::new("Teen Two", 18, "teen2@example.com").unwrap(),
+                    Person::new("Adult One", 25, "adult@example.com").unwrap(),
+                ];
+
+                let groups = group_people_by_age(&people);
+
+                assert_eq!(groups.get(&0).unwrap().len(), 1);  // One person in 0-9
+                assert_eq!(groups.get(&10).unwrap().len(), 2); // Two people in 10-19
+                assert_eq!(groups.get(&20).unwrap().len(), 1); // One person in 20-29
+            }
+        "#
+        .unindent();
+        let expected = r#"
+            #[cfg(test)]
+            mod tests {
+                use super::*;
+
+                #[test]
+                fn test_is_valid_age() {
+                    assert!(is_valid_age(0));
+                    assert!(!is_valid_age(151));
+                }
+
+                #[test]
+                fn test_group_people_by_age() {
+                    let people = vec![
+                        Person::new("Young One", 5, "young@example.com").unwrap(),
+                        Person::new("Teen One", 15, "teen@example.com").unwrap(),
+                        Person::new("Teen Two", 18, "teen2@example.com").unwrap(),
+                        Person::new("Adult One", 25, "adult@example.com").unwrap(),
+                    ];
+
+                    let groups = group_people_by_age(&people);
+
+                    assert_eq!(groups.get(&0).unwrap().len(), 1);  // One person in 0-9
+                    assert_eq!(groups.get(&10).unwrap().len(), 2); // Two people in 10-19
+                    assert_eq!(groups.get(&20).unwrap().len(), 1); // One person in 20-29
+                }
+            }
+        "#
+        .unindent();
+        assert_eq!(
+            test_replace_with_missing_indent(cx, &whole, &old, &new),
+            Some(expected.to_string())
+        );
+    }
+
     #[test]
     fn test_drop_lines_prefix() {
         // Empty array
@@ -315,7 +493,7 @@ mod tests {
         );
     }
 
-    fn test_replace_flexible(
+    fn test_replace_with_missing_indent(
         cx: &mut TestAppContext,
         whole: &str,
         old: &str,
@@ -328,7 +506,7 @@ mod tests {
         let buffer_snapshot = buffer.read_with(cx, |buffer, _cx| buffer.snapshot());
 
         // Call replace_flexible and transform the result
-        replace_flexible(&buffer_snapshot, old, new).map(|diff| {
+        replace_with_missing_indent(old, new, &buffer_snapshot).map(|diff| {
             buffer.update(cx, |buffer, cx| {
                 let _ = buffer.apply_diff(diff, cx);
                 buffer.text()
