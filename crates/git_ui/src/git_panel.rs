@@ -4474,7 +4474,7 @@ mod tests {
         )
         .await;
 
-        fs.set_status_for_repo_via_git_operation(
+        fs.set_status_for_repo(
             Path::new(path!("/root/zed/.git")),
             &[
                 (

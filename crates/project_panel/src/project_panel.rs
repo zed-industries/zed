@@ -6756,74 +6756,60 @@ mod tests {
 
     #[gpui::test]
     async fn test_select_git_entry(cx: &mut gpui::TestAppContext) {
-        use git::status::{FileStatus, StatusCode, TrackedStatus};
-        use std::path::Path;
-
         init_test_with_editor(cx);
 
         let fs = FakeFs::new(cx.executor().clone());
         fs.insert_tree(
-            "/root",
+            path!("/root"),
             json!({
                 "tree1": {
                     ".git": {},
                     "dir1": {
-                        "modified1.txt": "",
-                        "unmodified1.txt": "",
-                        "modified2.txt": "",
+                        "modified1.txt": "1",
+                        "unmodified1.txt": "1",
+                        "modified2.txt": "1",
                     },
                     "dir2": {
-                        "modified3.txt": "",
-                        "unmodified2.txt": "",
+                        "modified3.txt": "1",
+                        "unmodified2.txt": "1",
                     },
-                    "modified4.txt": "",
-                    "unmodified3.txt": "",
+                    "modified4.txt": "1",
+                    "unmodified3.txt": "1",
                 },
                 "tree2": {
                     ".git": {},
                     "dir3": {
-                        "modified5.txt": "",
-                        "unmodified4.txt": "",
+                        "modified5.txt": "1",
+                        "unmodified4.txt": "1",
                     },
-                    "modified6.txt": "",
-                    "unmodified5.txt": "",
+                    "modified6.txt": "1",
+                    "unmodified5.txt": "1",
                 }
             }),
         )
         .await;
 
         // Mark files as git modified
-        let tree1_modified_files = [
-            "dir1/modified1.txt",
-            "dir1/modified2.txt",
-            "modified4.txt",
-            "dir2/modified3.txt",
-        ];
-
-        let tree2_modified_files = ["dir3/modified5.txt", "modified6.txt"];
-
-        let root1_dot_git = Path::new("/root/tree1/.git");
-        let root2_dot_git = Path::new("/root/tree2/.git");
-        let set_value = FileStatus::Tracked(TrackedStatus {
-            index_status: StatusCode::Modified,
-            worktree_status: StatusCode::Modified,
-        });
-
-        fs.with_git_state(&root1_dot_git, true, |git_repo_state| {
-            for file_path in tree1_modified_files {
-                git_repo_state.statuses.insert(file_path.into(), set_value);
-            }
-        });
-
-        fs.with_git_state(&root2_dot_git, true, |git_repo_state| {
-            for file_path in tree2_modified_files {
-                git_repo_state.statuses.insert(file_path.into(), set_value);
-            }
-        });
+        fs.set_git_content_for_repo(
+            path!("/root/tree1/.git").as_ref(),
+            &[
+                ("dir1/modified1.txt".into(), "modified".into(), None),
+                ("dir1/modified2.txt".into(), "modified".into(), None),
+                ("modified4.txt".into(), "modified".into(), None),
+                ("dir2/modified3.txt".into(), "modified".into(), None),
+            ],
+        );
+        fs.set_git_content_for_repo(
+            path!("/root/tree2/.git").as_ref(),
+            &[
+                ("dir3/modified5.txt".into(), "modified".into(), None),
+                ("modified6.txt".into(), "modified".into(), None),
+            ],
+        );
 
         let project = Project::test(
             fs.clone(),
-            ["/root/tree1".as_ref(), "/root/tree2".as_ref()],
+            [path!("/root/tree1").as_ref(), path!("/root/tree2").as_ref()],
             cx,
         )
         .await;
