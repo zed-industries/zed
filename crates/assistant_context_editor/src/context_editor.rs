@@ -606,102 +606,33 @@ impl ContextEditor {
                 });
             }
             ContextEvent::StartedThoughtProcess(start) => {
-                let multi_buffer_snapshot = self.editor.read(cx).buffer().read(cx).snapshot(cx);
-                let (excerpt_id, _, snapshot) = multi_buffer_snapshot.as_singleton().unwrap();
-
+                let snapshot = self.editor.read(cx).buffer().read(cx).snapshot(cx);
+                let (_, _, snapshot) = snapshot.as_singleton().unwrap();
                 let range = start.clone()..start.bias_right(&snapshot);
 
-                let crease_id = self.editor.update(cx, |editor, cx| {
-                    let start = multi_buffer_snapshot
-                        .anchor_in_excerpt(*excerpt_id, range.start)
-                        .unwrap();
-                    let end = multi_buffer_snapshot
-                        .anchor_in_excerpt(*excerpt_id, range.end)
-                        .unwrap();
-                    let buffer_row = MultiBufferRow(start.to_point(&multi_buffer_snapshot).row);
-                    let crease = Crease::inline(
-                        start..end,
-                        FoldPlaceholder {
-                            render: render_fold_icon_button(
-                                cx.entity().downgrade(),
-                                IconName::Ai,
-                                "Thinking...".into(),
-                            ),
-                            merge_adjacent: false,
-                            ..Default::default()
-                        },
-                        render_slash_command_output_toggle,
-                        |_, _, _, _| Empty.into_any_element(),
-                    )
-                    .with_metadata(CreaseMetadata {
-                        icon: IconName::Ai,
-                        label: "Thinking Process".into(),
-                    });
-
-                    let creases = editor.insert_creases(vec![crease], cx);
-
-                    editor.fold_at(&FoldAt { buffer_row }, window, cx);
-
-                    creases[0]
-                });
-
-                // let creases = self.insert_thought_process_sections(
-                //     [ThoughtProcessOutputSection {
-                //         range: range.clone(),
-                //         status: ThoughtProcessStatus::Pending,
-                //     }],
-                //     window,
-                //     cx,
-                // );
-                self.pending_thought_process = Some((crease_id, start.clone()));
+                let creases = self.insert_thought_process_sections(
+                    [ThoughtProcessOutputSection {
+                        range: range.clone(),
+                        status: ThoughtProcessStatus::Pending,
+                    }],
+                    window,
+                    cx,
+                );
+                self.pending_thought_process = Some((creases[0], start.clone()));
             }
             ContextEvent::EndedThoughtProcess(end) => {
                 if let Some((crease_id, start)) = self.pending_thought_process.take() {
-                    let multi_buffer_snapshot = self.editor.read(cx).buffer().read(cx).snapshot(cx);
-                    let (excerpt_id, _, _) = multi_buffer_snapshot.as_singleton().unwrap();
-
-                    let range = start.clone()..end.clone();
-
                     self.editor.update(cx, |editor, cx| {
                         editor.remove_creases(vec![crease_id], cx);
-
-                        let start = multi_buffer_snapshot
-                            .anchor_in_excerpt(*excerpt_id, range.start)
-                            .unwrap();
-                        let end = multi_buffer_snapshot
-                            .anchor_in_excerpt(*excerpt_id, range.end)
-                            .unwrap();
-                        let buffer_row = MultiBufferRow(start.to_point(&multi_buffer_snapshot).row);
-                        let crease = Crease::inline(
-                            start..end,
-                            FoldPlaceholder {
-                                render: render_fold_icon_button(
-                                    cx.entity().downgrade(),
-                                    IconName::Ai,
-                                    "Thinking Done".into(),
-                                ),
-                                merge_adjacent: false,
-                                ..Default::default()
-                            },
-                            render_slash_command_output_toggle,
-                            |_, _, _, _| Empty.into_any_element(),
-                        );
-
-                        editor.insert_creases(vec![crease], cx);
-                        editor.fold_at(&FoldAt { buffer_row }, window, cx);
                     });
-
-                    //     self.editor.update(cx, |editor, cx| {
-                    //         editor.remove_creases(vec![crease_id], cx);
-                    //     });
-                    // self.insert_thought_process_sections(
-                    //     [ThoughtProcessOutputSection {
-                    //         range: start..end.clone(),
-                    //         status: ThoughtProcessStatus::Completed,
-                    //     }],
-                    //     window,
-                    //     cx,
-                    // );
+                    self.insert_thought_process_sections(
+                        [ThoughtProcessOutputSection {
+                            range: start..end.clone(),
+                            status: ThoughtProcessStatus::Completed,
+                        }],
+                        window,
+                        cx,
+                    );
                 }
             }
             ContextEvent::StreamedCompletion => {
