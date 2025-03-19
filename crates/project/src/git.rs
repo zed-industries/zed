@@ -117,10 +117,12 @@ enum GitStoreState {
     },
 }
 
+#[derive(Clone)]
 pub struct GitStoreCheckpoint {
     checkpoints_by_dot_git_abs_path: HashMap<PathBuf, RepositoryCheckpoint>,
 }
 
+#[derive(Copy, Clone)]
 pub struct RepositoryCheckpoint {
     sha: Oid,
 }

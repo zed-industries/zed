@@ -16,6 +16,7 @@ use language_model::{
     LanguageModelToolUseId, MaxMonthlySpendReachedError, MessageContent, PaymentRequiredError,
     Role, StopReason, TokenUsage,
 };
+use project::git::GitStoreCheckpoint;
 use project::Project;
 use prompt_store::{AssistantSystemPromptWorktree, PromptBuilder};
 use scripting_tool::{ScriptingSession, ScriptingTool};
@@ -89,6 +90,12 @@ pub struct GitState {
     pub diff: Option<String>,
 }
 
+#[derive(Clone)]
+pub struct ThreadCheckpoint {
+    message_id: MessageId,
+    git_checkpoint: GitStoreCheckpoint,
+}
+
 /// A thread of conversation with the LLM.
 pub struct Thread {
     id: ThreadId,
@@ -99,6 +106,7 @@ pub struct Thread {
     next_message_id: MessageId,
     context: BTreeMap<ContextId, ContextSnapshot>,
     context_by_message: HashMap<MessageId, Vec<ContextId>>,
+    checkpoints_by_message: HashMap<MessageId, GitStoreCheckpoint>,
     completion_count: usize,
     pending_completions: Vec<PendingCompletion>,
     project: Entity<Project>,
@@ -128,6 +136,7 @@ impl Thread {
             next_message_id: MessageId(0),
             context: BTreeMap::default(),
             context_by_message: HashMap::default(),
+            checkpoints_by_message: HashMap::default(),
             completion_count: 0,
             pending_completions: Vec::new(),
             project: project.clone(),
@@ -188,6 +197,7 @@ impl Thread {
             next_message_id,
             context: BTreeMap::default(),
             context_by_message: HashMap::default(),
+            checkpoints_by_message: HashMap::default(),
             completion_count: 0,
             pending_completions: Vec::new(),
             project,
@@ -249,6 +259,47 @@ impl Thread {
         &self.tools
     }
 
+    pub fn checkpoint_for_message(&self, id: MessageId) -> Option<ThreadCheckpoint> {
+        let checkpoint = self.checkpoints_by_message.get(&id).cloned()?;
+        Some(ThreadCheckpoint {
+            message_id: id,
+            git_checkpoint: checkpoint,
+        })
+    }
+
+    pub fn restore_checkpoint(
+        &mut self,
+        checkpoint: ThreadCheckpoint,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<()>> {
+        let project = self.project.read(cx);
+        let restore = project
+            .git_store()
+            .read(cx)
+            .restore_checkpoint(checkpoint.git_checkpoint, cx);
+        // todo!("show spinner")
+        cx.spawn(async move |this, cx| {
+            // todo!("show this error in the UI")
+            restore.await?;
+            this.update(cx, |this, cx| this.truncate(checkpoint.message_id, cx))
+        })
+    }
+
+    pub fn truncate(&mut self, message_id: MessageId, cx: &mut Context<Self>) {
+        let Some(message_ix) = self
+            .messages
+            .iter()
+            .rposition(|message| message.id == message_id)
+        else {
+            return;
+        };
+        for deleted_message in self.messages.drain(message_ix..) {
+            self.context_by_message.remove(&deleted_message.id);
+            self.checkpoints_by_message.remove(&deleted_message.id);
+        }
+        cx.notify();
+    }
+
     pub fn context_for_message(&self, id: MessageId) -> Option<Vec<ContextSnapshot>> {
         let context = self.context_by_message.get(&id)?;
         Some(
@@ -308,6 +359,7 @@ impl Thread {
         &mut self,
         text: impl Into<String>,
         context: Vec<ContextSnapshot>,
+        checkpoint: Option<GitStoreCheckpoint>,
         cx: &mut Context<Self>,
     ) -> MessageId {
         let message_id = self.insert_message(Role::User, text, cx);
@@ -315,6 +367,9 @@ impl Thread {
         self.context
             .extend(context.into_iter().map(|context| (context.id, context)));
         self.context_by_message.insert(message_id, context_ids);
+        if let Some(checkpoint) = checkpoint {
+            self.checkpoints_by_message.insert(message_id, checkpoint);
+        }
         message_id
     }
 
@@ -917,6 +972,7 @@ impl Thread {
             // so for now we provide some text to keep the model on track.
             "Here are the tool results.",
             Vec::new(),
+            None,
             cx,
         );
     }

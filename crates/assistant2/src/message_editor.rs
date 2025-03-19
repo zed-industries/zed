@@ -12,6 +12,7 @@ use gpui::{
 };
 use language_model::LanguageModelRegistry;
 use language_model_selector::ToggleModelSelector;
+use project::Project;
 use rope::Point;
 use settings::Settings;
 use std::time::Duration;
@@ -20,6 +21,7 @@ use theme::ThemeSettings;
 use ui::{
     prelude::*, ButtonLike, KeyBinding, PlatformStyle, PopoverMenu, PopoverMenuHandle, Tooltip,
 };
+use util::ResultExt;
 use vim_mode_setting::VimModeSetting;
 use workspace::notifications::{NotificationId, NotifyTaskExt};
 use workspace::{Toast, Workspace};
@@ -37,6 +39,7 @@ pub struct MessageEditor {
     thread: Entity<Thread>,
     editor: Entity<Editor>,
     workspace: WeakEntity<Workspace>,
+    project: Entity<Project>,
     context_store: Entity<ContextStore>,
     context_strip: Entity<ContextStrip>,
     context_picker_menu_handle: PopoverMenuHandle<ContextPicker>,
@@ -106,8 +109,9 @@ impl MessageEditor {
         ];
 
         Self {
-            thread,
             editor: editor.clone(),
+            project: thread.read(cx).project().clone(),
+            thread,
             workspace,
             context_store,
             context_strip,
@@ -204,12 +208,15 @@ impl MessageEditor {
 
         let thread = self.thread.clone();
         let context_store = self.context_store.clone();
+        let git_store = self.project.read(cx).git_store();
+        let checkpoint = git_store.read(cx).checkpoint(cx);
         cx.spawn(async move |_, cx| {
             refresh_task.await;
+            let checkpoint = checkpoint.await.log_err();
             thread
                 .update(cx, |thread, cx| {
                     let context = context_store.read(cx).snapshot(cx).collect::<Vec<_>>();
-                    thread.insert_user_message(user_message, context, cx);
+                    thread.insert_user_message(user_message, context, checkpoint, cx);
                     thread.send_to_model(model, request_kind, cx);
                 })
                 .ok();
