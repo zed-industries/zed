@@ -1,5 +1,6 @@
 mod edit_action;
 pub mod log;
+mod replace;
 
 use anyhow::{anyhow, Context, Result};
 use assistant_tool::{ActionLog, Tool};
@@ -11,12 +12,12 @@ use language_model::{
     LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage, MessageContent, Role,
 };
 use log::{EditToolLog, EditToolRequestId};
-use project::{search::SearchQuery, Project};
+use project::Project;
+use replace::{replace_exact, replace_with_flexible_indent};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::fmt::Write;
 use std::sync::Arc;
-use util::paths::PathMatcher;
 use util::ResultExt;
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
@@ -103,7 +104,7 @@ impl Tool for EditFilesTool {
                     cx,
                 );
 
-                cx.spawn(|mut cx| async move {
+                cx.spawn(async move |cx| {
                     let result = task.await;
 
                     let str_result = match &result {
@@ -111,10 +112,8 @@ impl Tool for EditFilesTool {
                         Err(err) => Err(err.to_string()),
                     };
 
-                    log.update(&mut cx, |log, cx| {
-                        log.set_tool_output(req_id, str_result, cx)
-                    })
-                    .log_err();
+                    log.update(cx, |log, cx| log.set_tool_output(req_id, str_result, cx))
+                        .log_err();
 
                     result
                 })
@@ -188,7 +187,7 @@ impl EditToolRequest {
             cache: false,
         });
 
-        cx.spawn(|mut cx| async move {
+        cx.spawn(async move |cx| {
             let llm_request = LanguageModelRequest {
                 messages,
                 tools: vec![],
@@ -211,10 +210,10 @@ impl EditToolRequest {
             };
 
             while let Some(chunk) = chunks.stream.next().await {
-                request.process_response_chunk(&chunk?, &mut cx).await?;
+                request.process_response_chunk(&chunk?, cx).await?;
             }
 
-            request.finalize(&mut cx).await
+            request.finalize(cx).await
         })
     }
 
@@ -291,41 +290,18 @@ impl EditToolRequest {
         file_path: std::path::PathBuf,
         snapshot: language::BufferSnapshot,
     ) -> Result<DiffResult> {
-        let query = SearchQuery::text(
-            old.clone(),
-            false,
-            true,
-            true,
-            PathMatcher::new(&[])?,
-            PathMatcher::new(&[])?,
-            None,
-        )?;
+        let result =
+            // Try to match exactly
+            replace_exact(&old, &new, &snapshot)
+            .await
+            // If that fails, try being flexible about indentation
+            .or_else(|| replace_with_flexible_indent(&old, &new, &snapshot));
 
-        let matches = query.search(&snapshot, None).await;
-
-        if matches.is_empty() {
-            return Ok(DiffResult::BadSearch(BadSearch {
-                search: new.clone(),
+        let Some(diff) = result else {
+            return anyhow::Ok(DiffResult::BadSearch(BadSearch {
+                search: old,
                 file_path: file_path.display().to_string(),
             }));
-        }
-
-        let edit_range = matches[0].clone();
-        let diff = language::text_diff(&old, &new);
-
-        let edits = diff
-            .into_iter()
-            .map(|(old_range, text)| {
-                let start = edit_range.start + old_range.start;
-                let end = edit_range.start + old_range.end;
-                (start..end, text)
-            })
-            .collect::<Vec<_>>();
-
-        let diff = language::Diff {
-            base_version: snapshot.version().clone(),
-            line_ending: snapshot.line_ending(),
-            edits,
         };
 
         anyhow::Ok(DiffResult::Diff(diff))
@@ -347,9 +323,7 @@ impl EditToolRequest {
         }
 
         self.action_log
-            .update(cx, |log, cx| {
-                log.notify_buffers_changed(self.changed_buffers, cx)
-            })
+            .update(cx, |log, cx| log.buffer_edited(self.changed_buffers, cx))
             .log_err();
 
         let errors = self.parser.errors();
@@ -380,25 +354,29 @@ impl EditToolRequest {
             if !self.bad_searches.is_empty() {
                 writeln!(
                     &mut output,
-                    "\n\nThese searches failed because they didn't match any strings:"
+                    "\n\n# {} SEARCH/REPLACE block(s) failed to match:\n",
+                    self.bad_searches.len()
                 )?;
 
                 for replace in self.bad_searches {
                     writeln!(
                         &mut output,
-                        "- '{}' does not appear in `{}`",
-                        replace.search.replace("\r", "\\r").replace("\n", "\\n"),
-                        replace.file_path
+                        "## No exact match in: {}\n```\n{}\n```\n",
+                        replace.file_path, replace.search,
                     )?;
                 }
 
-                write!(&mut output, "Make sure to use exact searches.")?;
+                write!(&mut output,
+                    "The SEARCH section must exactly match an existing block of lines including all white \
+                    space, comments, indentation, docstrings, etc."
+                )?;
             }
 
             if !errors.is_empty() {
                 writeln!(
                     &mut output,
-                    "\n\nThese SEARCH/REPLACE blocks failed to parse:"
+                    "\n\n# {} SEARCH/REPLACE blocks failed to parse:",
+                    errors.len()
                 )?;
 
                 for error in errors {
@@ -406,10 +384,22 @@ impl EditToolRequest {
                 }
             }
 
+            if changed_buffer_count > 0 {
+                writeln!(
+                    &mut output,
+                    "\n\nThe other SEARCH/REPLACE blocks were applied successfully. Do not re-send them!",
+                )?;
+            }
+
             writeln!(
                 &mut output,
-                "\nYou can fix errors by running the tool again. You can include instructions, \
-                but errors are part of the conversation so you don't need to repeat them."
+                "{}You can fix errors by running the tool again. You can include instructions, \
+                but errors are part of the conversation so you don't need to repeat them.",
+                if changed_buffer_count == 0 {
+                    "\n\n"
+                } else {
+                    ""
+                }
             )?;
 
             Err(anyhow!(output))

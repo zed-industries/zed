@@ -164,9 +164,9 @@ impl PickerDelegate for SavedContextPickerDelegate {
         cx: &mut Context<Picker<Self>>,
     ) -> Task<()> {
         let search = self.store.read(cx).search(query, cx);
-        cx.spawn(|this, mut cx| async move {
+        cx.spawn(async move |this, cx| {
             let matches = search.await;
-            this.update(&mut cx, |this, cx| {
+            this.update(cx, |this, cx| {
                 let host_contexts = this.delegate.store.read(cx).host_contexts();
                 this.delegate.matches = host_contexts
                     .iter()

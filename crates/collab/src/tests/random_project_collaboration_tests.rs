@@ -128,7 +128,6 @@ enum GitOperation {
     WriteGitStatuses {
         repo_path: PathBuf,
         statuses: Vec<(PathBuf, FileStatus)>,
-        git_operation: bool,
     },
 }
 
@@ -987,7 +986,6 @@ impl RandomizedTest for ProjectCollaborationTest {
                 GitOperation::WriteGitStatuses {
                     repo_path,
                     statuses,
-                    git_operation,
                 } => {
                     if !client.fs().directories(false).contains(&repo_path) {
                         return Err(TestError::Inapplicable);
@@ -1016,17 +1014,9 @@ impl RandomizedTest for ProjectCollaborationTest {
                         client.fs().create_dir(&dot_git_dir).await?;
                     }
 
-                    if git_operation {
-                        client.fs().set_status_for_repo_via_git_operation(
-                            &dot_git_dir,
-                            statuses.as_slice(),
-                        );
-                    } else {
-                        client.fs().set_status_for_repo_via_working_copy_change(
-                            &dot_git_dir,
-                            statuses.as_slice(),
-                        );
-                    }
+                    client
+                        .fs()
+                        .set_status_for_repo(&dot_git_dir, statuses.as_slice());
                 }
             },
         }
@@ -1455,18 +1445,13 @@ fn generate_git_operation(rng: &mut StdRng, client: &TestClient) -> GitOperation
         }
         64..=100 => {
             let file_paths = generate_file_paths(&repo_path, rng, client);
-
             let statuses = file_paths
                 .into_iter()
                 .map(|path| (path, gen_status(rng)))
                 .collect::<Vec<_>>();
-
-            let git_operation = rng.gen::<bool>();
-
             GitOperation::WriteGitStatuses {
                 repo_path,
                 statuses,
-                git_operation,
             }
         }
         _ => unreachable!(),
@@ -1605,15 +1590,24 @@ fn gen_file_name(rng: &mut StdRng) -> String {
 }
 
 fn gen_status(rng: &mut StdRng) -> FileStatus {
-    fn gen_status_code(rng: &mut StdRng) -> StatusCode {
-        match rng.gen_range(0..7) {
-            0 => StatusCode::Modified,
-            1 => StatusCode::TypeChanged,
-            2 => StatusCode::Added,
-            3 => StatusCode::Deleted,
-            4 => StatusCode::Renamed,
-            5 => StatusCode::Copied,
-            6 => StatusCode::Unmodified,
+    fn gen_tracked_status(rng: &mut StdRng) -> TrackedStatus {
+        match rng.gen_range(0..3) {
+            0 => TrackedStatus {
+                index_status: StatusCode::Unmodified,
+                worktree_status: StatusCode::Unmodified,
+            },
+            1 => TrackedStatus {
+                index_status: StatusCode::Modified,
+                worktree_status: StatusCode::Modified,
+            },
+            2 => TrackedStatus {
+                index_status: StatusCode::Added,
+                worktree_status: StatusCode::Modified,
+            },
+            3 => TrackedStatus {
+                index_status: StatusCode::Added,
+                worktree_status: StatusCode::Unmodified,
+            },
             _ => unreachable!(),
         }
     }
@@ -1627,17 +1621,12 @@ fn gen_status(rng: &mut StdRng) -> FileStatus {
         }
     }
 
-    match rng.gen_range(0..4) {
-        0 => FileStatus::Untracked,
-        1 => FileStatus::Ignored,
-        2 => FileStatus::Unmerged(UnmergedStatus {
+    match rng.gen_range(0..2) {
+        0 => FileStatus::Unmerged(UnmergedStatus {
             first_head: gen_unmerged_status_code(rng),
             second_head: gen_unmerged_status_code(rng),
         }),
-        3 => FileStatus::Tracked(TrackedStatus {
-            index_status: gen_status_code(rng),
-            worktree_status: gen_status_code(rng),
-        }),
+        1 => FileStatus::Tracked(gen_tracked_status(rng)),
         _ => unreachable!(),
     }
 }

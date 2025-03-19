@@ -229,7 +229,7 @@ impl EmbeddingIndex {
         let language_registry = self.language_registry.clone();
         let fs = self.fs.clone();
         let (chunked_files_tx, chunked_files_rx) = channel::bounded(2048);
-        let task = cx.spawn(|cx| async move {
+        let task = cx.spawn(async move |cx| {
             cx.background_executor()
                 .scoped(|cx| {
                     for _ in 0..cx.num_cpus() {

@@ -286,9 +286,17 @@ impl ToolUseState {
     ) {
         if let Some(tool_uses) = self.tool_uses_by_assistant_message.get(&message_id) {
             for tool_use in tool_uses {
-                request_message
-                    .content
-                    .push(MessageContent::ToolUse(tool_use.clone()));
+                if self.tool_results.contains_key(&tool_use.id) {
+                    // Do not send tool uses until they are completed
+                    request_message
+                        .content
+                        .push(MessageContent::ToolUse(tool_use.clone()));
+                } else {
+                    log::debug!(
+                        "skipped tool use {:?} because it is still pending",
+                        tool_use
+                    );
+                }
             }
         }
     }

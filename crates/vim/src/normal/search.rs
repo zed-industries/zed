@@ -341,9 +341,9 @@ impl Vim {
             let Some(search) = search else { return false };
 
             let search_bar = search_bar.downgrade();
-            cx.spawn_in(window, |_, mut cx| async move {
+            cx.spawn_in(window, async move |_, cx| {
                 search.await?;
-                search_bar.update_in(&mut cx, |search_bar, window, cx| {
+                search_bar.update_in(cx, |search_bar, window, cx| {
                     search_bar.select_match(direction, count, window, cx);
 
                     vim.update(cx, |vim, cx| {
@@ -404,9 +404,9 @@ impl Vim {
                 } else {
                     Direction::Next
                 };
-                cx.spawn_in(window, |_, mut cx| async move {
+                cx.spawn_in(window, async move |_, cx| {
                     search.await?;
-                    search_bar.update_in(&mut cx, |search_bar, window, cx| {
+                    search_bar.update_in(cx, |search_bar, window, cx| {
                         search_bar.select_match(direction, 1, window, cx)
                     })?;
                     anyhow::Ok(())
@@ -473,18 +473,18 @@ impl Vim {
             });
             let Some(search) = search else { return };
             let search_bar = search_bar.downgrade();
-            cx.spawn_in(window, |_, mut cx| async move {
+            cx.spawn_in(window, async move |_, cx| {
                 search.await?;
-                search_bar.update_in(&mut cx, |search_bar, window, cx| {
+                search_bar.update_in(cx, |search_bar, window, cx| {
                     if replacement.should_replace_all {
                         search_bar.select_last_match(window, cx);
                         search_bar.replace_all(&Default::default(), window, cx);
-                        cx.spawn(|_, mut cx| async move {
+                        cx.spawn(async move |_, cx| {
                             cx.background_executor()
                                 .timer(Duration::from_millis(200))
                                 .await;
                             editor
-                                .update(&mut cx, |editor, cx| editor.clear_search_within_ranges(cx))
+                                .update(cx, |editor, cx| editor.clear_search_within_ranges(cx))
                                 .ok();
                         })
                         .detach();
