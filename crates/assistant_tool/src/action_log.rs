@@ -2,7 +2,7 @@ use anyhow::{anyhow, Result};
 use buffer_diff::BufferDiff;
 use collections::{BTreeMap, HashMap, HashSet};
 use gpui::{App, AppContext, Context, Entity, Task};
-use language::{Anchor, Buffer, OffsetRangeExt};
+use language::{Buffer, OffsetRangeExt, ToOffset};
 use std::{future::Future, ops::Range};
 
 /// Tracks actions performed by tools in a thread
@@ -27,24 +27,6 @@ pub struct TrackedBuffer {
 
 impl TrackedBuffer {
     fn update_diff(&mut self, cx: &mut App) -> impl 'static + Future<Output = ()> {
-        let unreviewed_edits_to_undo = self
-            .unreviewed_edit_ids
-            .iter()
-            .map(|edit_id| (*edit_id, u32::MAX))
-            .collect::<HashMap<_, _>>();
-        let buffer_without_unreviewed_edits =
-            self.buffer.update(cx, |buffer, cx| buffer.branch(cx));
-        buffer_without_unreviewed_edits.update(cx, |buffer, cx| {
-            buffer.undo_operations(unreviewed_edits_to_undo, cx);
-        });
-        let primary_diff_update = self.diff.update(cx, |diff, cx| {
-            diff.set_base_text(
-                buffer_without_unreviewed_edits.clone(),
-                self.buffer.read(cx).text_snapshot(),
-                cx,
-            )
-        });
-
         let edits_to_undo = self
             .unreviewed_edit_ids
             .iter()
@@ -55,10 +37,28 @@ impl TrackedBuffer {
         buffer_without_edits.update(cx, |buffer, cx| {
             buffer.undo_operations(edits_to_undo, cx);
         });
-        let secondary_diff_update = self.secondary_diff.update(cx, |diff, cx| {
+        let primary_diff_update = self.diff.update(cx, |diff, cx| {
             diff.set_base_text(
                 buffer_without_edits,
-                buffer_without_unreviewed_edits.read(cx).text_snapshot(),
+                self.buffer.read(cx).text_snapshot(),
+                cx,
+            )
+        });
+
+        let unreviewed_edits_to_undo = self
+            .unreviewed_edit_ids
+            .iter()
+            .map(|edit_id| (*edit_id, u32::MAX))
+            .collect::<HashMap<_, _>>();
+        let buffer_without_unreviewed_edits =
+            self.buffer.update(cx, |buffer, cx| buffer.branch(cx));
+        buffer_without_unreviewed_edits.update(cx, |buffer, cx| {
+            buffer.undo_operations(unreviewed_edits_to_undo, cx);
+        });
+        let secondary_diff_update = self.secondary_diff.update(cx, |diff, cx| {
+            diff.set_base_text(
+                buffer_without_unreviewed_edits.clone(),
+                self.buffer.read(cx).text_snapshot(),
                 cx,
             )
         });
@@ -135,10 +135,11 @@ impl ActionLog {
     }
 
     /// Accepts edits in a given range within a buffer.
-    pub fn accept_edits_in_range(
+    pub fn review_edits_in_range<T: ToOffset>(
         &mut self,
         buffer: Entity<Buffer>,
-        buffer_range: Range<Anchor>,
+        buffer_range: Range<T>,
+        accept: bool,
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
         let Some(tracked_buffer) = self.tracked_buffers.get_mut(&buffer) else {
@@ -147,10 +148,21 @@ impl ActionLog {
 
         let buffer = buffer.read(cx);
         let buffer_range = buffer_range.to_offset(buffer);
-        tracked_buffer.unreviewed_edit_ids.retain(|edit_id| {
+
+        let source;
+        let destination;
+        if accept {
+            source = &mut tracked_buffer.unreviewed_edit_ids;
+            destination = &mut tracked_buffer.accepted_edit_ids;
+        } else {
+            source = &mut tracked_buffer.accepted_edit_ids;
+            destination = &mut tracked_buffer.unreviewed_edit_ids;
+        }
+
+        source.retain(|edit_id| {
             for range in buffer.edited_ranges_for_edit_ids::<usize>([edit_id]) {
                 if buffer_range.end >= range.start && buffer_range.start <= range.end {
-                    tracked_buffer.accepted_edit_ids.push(*edit_id);
+                    destination.push(*edit_id);
                     return false;
                 }
             }
@@ -238,7 +250,67 @@ mod tests {
                     }
                 ],
             )]
-        )
+        );
+
+        action_log
+            .update(cx, |log, cx| {
+                log.review_edits_in_range(
+                    buffer.clone(),
+                    Point::new(3, 0)..Point::new(4, 3),
+                    true,
+                    cx,
+                )
+            })
+            .await
+            .unwrap();
+        assert_eq!(
+            unreviewed_hunks(&action_log, cx),
+            vec![(
+                buffer.clone(),
+                vec![
+                    HunkStatus {
+                        range: Point::new(1, 0)..Point::new(2, 0),
+                        review_status: ReviewStatus::Unreviewed,
+                        diff_status: DiffHunkStatusKind::Modified,
+                    },
+                    HunkStatus {
+                        range: Point::new(4, 0)..Point::new(4, 3),
+                        review_status: ReviewStatus::Reviewed,
+                        diff_status: DiffHunkStatusKind::Modified,
+                    }
+                ],
+            )]
+        );
+
+        action_log
+            .update(cx, |log, cx| {
+                log.review_edits_in_range(
+                    buffer.clone(),
+                    Point::new(3, 0)..Point::new(4, 3),
+                    false,
+                    cx,
+                )
+            })
+            .await
+            .unwrap();
+        assert_eq!(
+            unreviewed_hunks(&action_log, cx),
+            vec![(
+                buffer.clone(),
+                vec![
+                    HunkStatus {
+                        range: Point::new(1, 0)..Point::new(2, 0),
+                        review_status: ReviewStatus::Unreviewed,
+                        diff_status: DiffHunkStatusKind::Modified,
+                    },
+                    HunkStatus {
+                        range: Point::new(4, 0)..Point::new(4, 3),
+                        review_status: ReviewStatus::Unreviewed,
+                        diff_status: DiffHunkStatusKind::Modified,
+                    }
+                ],
+            )]
+        );
     }
 
     #[derive(Debug, Clone, PartialEq, Eq)]
