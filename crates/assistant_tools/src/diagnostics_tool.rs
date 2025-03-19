@@ -51,7 +51,7 @@ impl Tool for DiagnosticsTool {
             .ok()
             .and_then(|input| input.path)
         {
-            format!("Check diagnostics for `{}`", path.display())
+            format!("Check diagnostics for “`{}`”", path.display())
         } else {
             "Check project diagnostics".to_string()
         }
