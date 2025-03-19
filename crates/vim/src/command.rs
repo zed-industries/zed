@@ -1192,7 +1192,7 @@ impl OnMatchingLines {
                 ..snapshot
                     .buffer_snapshot
                     .clip_point(Point::new(range.end.0 + 1, 0), Bias::Left);
-            cx.spawn_in(window, |editor, mut cx| async move {
+            cx.spawn_in(window, async move |editor, cx| {
                 let new_selections = cx
                     .background_spawn(async move {
                         let mut line = String::new();
@@ -1226,7 +1226,7 @@ impl OnMatchingLines {
                     return;
                 }
                 editor
-                    .update_in(&mut cx, |editor, window, cx| {
+                    .update_in(cx, |editor, window, cx| {
                         editor.start_transaction_at(Instant::now(), window, cx);
                         editor.change_selections(None, window, cx, |s| {
                             s.replace_cursors_with(|_| new_selections);
@@ -1511,9 +1511,9 @@ impl ShellExec {
         };
         let is_read = self.is_read;
 
-        let task = cx.spawn_in(window, |vim, mut cx| async move {
+        let task = cx.spawn_in(window, async move |vim, cx| {
             let Some(mut running) = process.spawn().log_err() else {
-                vim.update_in(&mut cx, |vim, window, cx| {
+                vim.update_in(cx, |vim, window, cx| {
                     vim.cancel_running_command(window, cx);
                 })
                 .log_err();
@@ -1540,7 +1540,7 @@ impl ShellExec {
                 .await;
 
             let Some(output) = output.log_err() else {
-                vim.update_in(&mut cx, |vim, window, cx| {
+                vim.update_in(cx, |vim, window, cx| {
                     vim.cancel_running_command(window, cx);
                 })
                 .log_err();
@@ -1556,7 +1556,7 @@ impl ShellExec {
                 text.push('\n');
             }
 
-            vim.update_in(&mut cx, |vim, window, cx| {
+            vim.update_in(cx, |vim, window, cx| {
                 vim.update_editor(window, cx, |_, editor, window, cx| {
                     editor.transact(window, cx, |editor, window, cx| {
                         editor.edit([(range.clone(), text)], cx);

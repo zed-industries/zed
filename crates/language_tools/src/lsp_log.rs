@@ -245,9 +245,9 @@ impl LogStore {
                         let weak_this = cx.weak_entity();
                         this.copilot_log_subscription =
                             Some(server.on_notification::<copilot::request::LogMessage, _>(
-                                move |params, mut cx| {
+                                move |params, cx| {
                                     weak_this
-                                        .update(&mut cx, |this, cx| {
+                                        .update(cx, |this, cx| {
                                             this.add_language_server_log(
                                                 server_id,
                                                 MessageType::LOG,
@@ -280,10 +280,10 @@ impl LogStore {
             io_tx,
         };
 
-        cx.spawn(|this, mut cx| async move {
+        cx.spawn(async move |this, cx| {
             while let Some((server_id, io_kind, message)) = io_rx.next().await {
                 if let Some(this) = this.upgrade() {
-                    this.update(&mut cx, |this, cx| {
+                    this.update(cx, |this, cx| {
                         this.on_io(server_id, io_kind, &message, cx);
                     })?;
                 }
@@ -936,9 +936,9 @@ impl LspLogView {
                 .update(cx, |_, cx| {
                     cx.spawn({
                         let buffer = cx.entity();
-                        |_, mut cx| async move {
+                        async move |_, cx| {
                             let language = language.await.ok();
-                            buffer.update(&mut cx, |buffer, cx| {
+                            buffer.update(cx, |buffer, cx| {
                                 buffer.set_language(language, cx);
                             })
                         }

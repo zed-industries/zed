@@ -215,7 +215,7 @@ impl GitRepository for FakeGitRepository {
         &self,
         path: RepoPath,
         _content: Rope,
-        _cx: AsyncApp,
+        _cx: &mut AsyncApp,
     ) -> BoxFuture<Result<crate::blame::Blame>> {
         let state = self.state.lock();
         let result = state

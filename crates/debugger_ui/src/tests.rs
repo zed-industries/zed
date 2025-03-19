@@ -40,13 +40,21 @@ pub async fn init_test_workspace(
         cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
 
     let debugger_panel = workspace_handle
-        .update(cx, |_, window, cx| cx.spawn_in(window, DebugPanel::load))
+        .update(cx, |_, window, cx| {
+            cx.spawn_in(window, async move |this, cx| {
+                DebugPanel::load(this, cx.clone()).await
+            })
+        })
         .unwrap()
         .await
         .expect("Failed to load debug panel");
 
     let terminal_panel = workspace_handle
-        .update(cx, |_, window, cx| cx.spawn_in(window, TerminalPanel::load))
+        .update(cx, |_, window, cx| {
+            cx.spawn_in(window, async |this, cx| {
+                TerminalPanel::load(this, cx.clone()).await
+            })
+        })
         .unwrap()
         .await
         .expect("Failed to load terminal panel");

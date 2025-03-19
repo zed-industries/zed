@@ -167,7 +167,7 @@ impl PickerDelegate for RepositorySelectorDelegate {
     ) -> Task<()> {
         let all_repositories = self.repository_entries.clone();
 
-        cx.spawn_in(window, |this, mut cx| async move {
+        cx.spawn_in(window, async move |this, cx| {
             let filtered_repositories = cx
                 .background_spawn(async move {
                     if query.is_empty() {
@@ -184,7 +184,7 @@ impl PickerDelegate for RepositorySelectorDelegate {
                 })
                 .await;
 
-            this.update_in(&mut cx, |this, window, cx| {
+            this.update_in(cx, |this, window, cx| {
                 this.delegate.filtered_repositories = filtered_repositories;
                 this.delegate.set_selected_index(0, window, cx);
                 cx.notify();

@@ -448,7 +448,7 @@ impl BreakpointStore {
     ) -> Task<Result<()>> {
         if let BreakpointStoreMode::Local(mode) = &self.mode {
             let mode = mode.clone();
-            cx.spawn(move |this, mut cx| async move {
+            cx.spawn(async move |this, cx| {
                 let mut new_breakpoints = BTreeMap::default();
                 for (path, bps) in breakpoints {
                     if bps.is_empty() {
@@ -456,13 +456,13 @@ impl BreakpointStore {
                     }
                     let (worktree, relative_path) = mode
                         .worktree_store
-                        .update(&mut cx, |this, cx| {
+                        .update(cx, |this, cx| {
                             this.find_or_create_worktree(&path, false, cx)
                         })?
                         .await?;
                     let buffer = mode
                         .buffer_store
-                        .update(&mut cx, |this, cx| {
+                        .update(cx, |this, cx| {
                             let path = ProjectPath {
                                 worktree_id: worktree.read(cx).id(),
                                 path: relative_path.into(),
@@ -474,10 +474,10 @@ impl BreakpointStore {
                         log::error!("Todo: Serialized breakpoints which do not have buffer (yet)");
                         continue;
                     };
-                    let snapshot = buffer.update(&mut cx, |buffer, _| buffer.snapshot())?;
+                    let snapshot = buffer.update(cx, |buffer, _| buffer.snapshot())?;
 
                     let mut breakpoints_for_file =
-                        this.update(&mut cx, |_, cx| BreakpointsInFile::new(buffer, cx))?;
+                        this.update(cx, |_, cx| BreakpointsInFile::new(buffer, cx))?;
 
                     for bp in bps {
                         let position = snapshot.anchor_before(PointUtf16::new(bp.position, 0));
@@ -487,7 +487,7 @@ impl BreakpointStore {
                     }
                     new_breakpoints.insert(path, breakpoints_for_file);
                 }
-                this.update(&mut cx, |this, cx| {
+                this.update(cx, |this, cx| {
                     this.breakpoints = new_breakpoints;
                     cx.notify();
                 })?;

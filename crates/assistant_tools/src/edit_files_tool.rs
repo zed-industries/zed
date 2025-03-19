@@ -103,7 +103,7 @@ impl Tool for EditFilesTool {
                     cx,
                 );
 
-                cx.spawn(|mut cx| async move {
+                cx.spawn(async move |cx| {
                     let result = task.await;
 
                     let str_result = match &result {
@@ -111,10 +111,8 @@ impl Tool for EditFilesTool {
                         Err(err) => Err(err.to_string()),
                     };
 
-                    log.update(&mut cx, |log, cx| {
-                        log.set_tool_output(req_id, str_result, cx)
-                    })
-                    .log_err();
+                    log.update(cx, |log, cx| log.set_tool_output(req_id, str_result, cx))
+                        .log_err();
 
                     result
                 })
@@ -188,7 +186,7 @@ impl EditToolRequest {
             cache: false,
         });
 
-        cx.spawn(|mut cx| async move {
+        cx.spawn(async move |cx| {
             let llm_request = LanguageModelRequest {
                 messages,
                 tools: vec![],
@@ -211,10 +209,10 @@ impl EditToolRequest {
             };
 
             while let Some(chunk) = chunks.stream.next().await {
-                request.process_response_chunk(&chunk?, &mut cx).await?;
+                request.process_response_chunk(&chunk?, cx).await?;
             }
 
-            request.finalize(&mut cx).await
+            request.finalize(cx).await
         })
     }
 

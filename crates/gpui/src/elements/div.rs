@@ -2485,7 +2485,7 @@ fn handle_tooltip_mouse_move(
                 let active_tooltip = active_tooltip.clone();
                 let build_tooltip = build_tooltip.clone();
                 let check_is_hovered_during_prepaint = check_is_hovered_during_prepaint.clone();
-                move |mut cx| async move {
+                async move |cx| {
                     cx.background_executor().timer(TOOLTIP_SHOW_DELAY).await;
                     cx.update(|window, cx| {
                         let new_tooltip =
@@ -2576,7 +2576,7 @@ fn handle_tooltip_check_visible_and_update(
         Action::ScheduleHide(tooltip) => {
             let delayed_hide_task = window.spawn(cx, {
                 let active_tooltip = active_tooltip.clone();
-                move |mut cx| async move {
+                async move |cx| {
                     cx.background_executor()
                         .timer(HOVERABLE_TOOLTIP_HIDE_DELAY)
                         .await;

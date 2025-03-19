@@ -70,14 +70,14 @@ impl Tool for ReadFileTool {
             return Task::ready(Err(anyhow!("Path not found in project")));
         };
 
-        cx.spawn(|mut cx| async move {
+        cx.spawn(async move |cx| {
             let buffer = cx
                 .update(|cx| {
                     project.update(cx, |project, cx| project.open_buffer(project_path, cx))
                 })?
                 .await?;
 
-            let result = buffer.read_with(&cx, |buffer, _cx| {
+            let result = buffer.read_with(cx, |buffer, _cx| {
                 if buffer
                     .file()
                     .map_or(false, |file| file.disk_state().exists())
@@ -102,7 +102,7 @@ impl Tool for ReadFileTool {
                 }
             })??;
 
-            action_log.update(&mut cx, |log, cx| {
+            action_log.update(cx, |log, cx| {
                 log.buffer_read(buffer, cx);
             })?;
 

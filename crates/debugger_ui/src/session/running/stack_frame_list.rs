@@ -235,9 +235,9 @@ impl StackFrameList {
             return Task::ready(Err(anyhow!("Project path not found")));
         };
 
-        cx.spawn_in(window, move |this, mut cx| async move {
+        cx.spawn_in(window, async move |this, cx| {
             let (worktree, relative_path) = this
-                .update(&mut cx, |this, cx| {
+                .update(cx, |this, cx| {
                     this.workspace.update(cx, |workspace, cx| {
                         workspace.project().update(cx, |this, cx| {
                             this.find_or_create_worktree(&abs_path, false, cx)
@@ -246,7 +246,7 @@ impl StackFrameList {
                 })??
                 .await?;
             let buffer = this
-                .update(&mut cx, |this, cx| {
+                .update(cx, |this, cx| {
                     this.workspace.update(cx, |this, cx| {
                         this.project().update(cx, |this, cx| {
                             let worktree_id = worktree.read(cx).id();
@@ -261,10 +261,10 @@ impl StackFrameList {
                     })
                 })??
                 .await?;
-            let position = buffer.update(&mut cx, |this, _| {
+            let position = buffer.update(cx, |this, _| {
                 this.snapshot().anchor_after(PointUtf16::new(row, 0))
             })?;
-            this.update_in(&mut cx, |this, window, cx| {
+            this.update_in(cx, |this, window, cx| {
                 this.workspace.update(cx, |workspace, cx| {
                     let project_path = buffer.read(cx).project_path(cx).ok_or_else(|| {
                         anyhow!("Could not select a stack frame for unnamed buffer")
@@ -282,7 +282,7 @@ impl StackFrameList {
             })???
             .await?;
 
-            this.update(&mut cx, |this, cx| {
+            this.update(cx, |this, cx| {
                 this.workspace.update(cx, |workspace, cx| {
                     let breakpoint_store = workspace.project().read(cx).breakpoint_store();
 

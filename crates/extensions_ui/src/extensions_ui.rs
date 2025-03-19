@@ -77,14 +77,14 @@ pub fn init(cx: &mut App) {
 
                 let workspace_handle = cx.entity().downgrade();
                 window
-                    .spawn(cx, |mut cx| async move {
+                    .spawn(cx, async move |cx| {
                         let extension_path =
                             match Flatten::flatten(prompt.await.map_err(|e| e.into())) {
                                 Ok(Some(mut paths)) => paths.pop()?,
                                 Ok(None) => return None,
                                 Err(err) => {
                                     workspace_handle
-                                        .update(&mut cx, |workspace, cx| {
+                                        .update(cx, |workspace, cx| {
                                             workspace.show_portal_error(err.to_string(), cx);
                                         })
                                         .ok();
@@ -93,7 +93,7 @@ pub fn init(cx: &mut App) {
                             };
 
                         let install_task = store
-                            .update(&mut cx, |store, cx| {
+                            .update(cx, |store, cx| {
                                 store.install_dev_extension(extension_path, cx)
                             })
                             .ok()?;
@@ -102,7 +102,7 @@ pub fn init(cx: &mut App) {
                             Ok(_) => {}
                             Err(err) => {
                                 workspace_handle
-                                    .update(&mut cx, |workspace, cx| {
+                                    .update(cx, |workspace, cx| {
                                         workspace.show_error(
                                             &err.context("failed to install dev extension"),
                                             cx,
@@ -399,7 +399,7 @@ impl ExtensionsPage {
             store.fetch_extensions(search.as_deref(), provides_filter.as_ref(), cx)
         });
 
-        cx.spawn(move |this, mut cx| async move {
+        cx.spawn(async move |this, cx| {
             let dev_extensions = if let Some(search) = search {
                 let match_candidates = dev_extensions
                     .iter()
@@ -425,7 +425,7 @@ impl ExtensionsPage {
             };
 
             let fetch_result = remote_extensions.await;
-            this.update(&mut cx, |this, cx| {
+            this.update(cx, |this, cx| {
                 cx.notify();
                 this.dev_extension_entries = dev_extensions;
                 this.is_fetching_extensions = false;
@@ -768,8 +768,8 @@ impl ExtensionsPage {
             return;
         };
 
-        cx.spawn_in(window, move |this, mut cx| async move {
-            let extension_versions_task = this.update(&mut cx, |_, cx| {
+        cx.spawn_in(window, async move |this, cx| {
+            let extension_versions_task = this.update(cx, |_, cx| {
                 let extension_store = ExtensionStore::global(cx);
 
                 extension_store.update(cx, |store, cx| {
@@ -779,7 +779,7 @@ impl ExtensionsPage {
 
             let extension_versions = extension_versions_task.await?;
 
-            workspace.update_in(&mut cx, |workspace, window, cx| {
+            workspace.update_in(cx, |workspace, window, cx| {
                 let fs = workspace.project().read(cx).fs().clone();
                 workspace.toggle_modal(window, cx, |window, cx| {
                     let delegate = ExtensionVersionSelectorDelegate::new(
@@ -969,9 +969,9 @@ impl ExtensionsPage {
     }
 
     fn fetch_extensions_debounced(&mut self, cx: &mut Context<ExtensionsPage>) {
-        self.extension_fetch_task = Some(cx.spawn(|this, mut cx| async move {
+        self.extension_fetch_task = Some(cx.spawn(async move |this, cx| {
             let search = this
-                .update(&mut cx, |this, cx| this.search_query(cx))
+                .update(cx, |this, cx| this.search_query(cx))
                 .ok()
                 .flatten();
 
@@ -987,7 +987,7 @@ impl ExtensionsPage {
                     .await;
             };
 
-            this.update(&mut cx, |this, cx| {
+            this.update(cx, |this, cx| {
                 this.fetch_extensions(search, Some(BTreeSet::from_iter(this.provides_filter)), cx);
             })
             .ok();

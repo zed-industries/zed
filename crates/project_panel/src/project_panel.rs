@@ -1162,23 +1162,23 @@ impl ProjectPanel {
         edit_state.processing_filename = Some(filename);
         cx.notify();
 
-        Some(cx.spawn_in(window, |project_panel, mut cx| async move {
+        Some(cx.spawn_in(window, async move |project_panel, cx| {
             let new_entry = edit_task.await;
-            project_panel.update(&mut cx, |project_panel, cx| {
+            project_panel.update(cx, |project_panel, cx| {
                 project_panel.edit_state = None;
                 cx.notify();
             })?;
 
             match new_entry {
                 Err(e) => {
-                    project_panel.update(&mut cx, |project_panel, cx| {
+                    project_panel.update( cx, |project_panel, cx| {
                         project_panel.marked_entries.clear();
                         project_panel.update_visible_entries(None,  cx);
                     }).ok();
                     Err(e)?;
                 }
                 Ok(CreatedEntry::Included(new_entry)) => {
-                    project_panel.update(&mut cx, |project_panel, cx| {
+                    project_panel.update( cx, |project_panel, cx| {
                         if let Some(selection) = &mut project_panel.selection {
                             if selection.entry_id == edited_entry_id {
                                 selection.worktree_id = worktree_id;
@@ -1196,7 +1196,7 @@ impl ProjectPanel {
                 }
                 Ok(CreatedEntry::Excluded { abs_path }) => {
                     if let Some(open_task) = project_panel
-                        .update_in(&mut cx, |project_panel, window, cx| {
+                        .update_in( cx, |project_panel, window, cx| {
                             project_panel.marked_entries.clear();
                             project_panel.update_visible_entries(None,  cx);
 
@@ -1494,7 +1494,7 @@ impl ProjectPanel {
                 None
             };
             let next_selection = self.find_next_selection_after_deletion(items_to_delete, cx);
-            cx.spawn_in(window, |panel, mut cx| async move {
+            cx.spawn_in(window, async move |panel, cx| {
                 if let Some(answer) = answer {
                     if answer.await != Ok(0) {
                         return anyhow::Ok(());
@@ -1502,7 +1502,7 @@ impl ProjectPanel {
                 }
                 for (entry_id, _) in file_paths {
                     panel
-                        .update(&mut cx, |panel, cx| {
+                        .update(cx, |panel, cx| {
                             panel
                                 .project
                                 .update(cx, |project, cx| project.delete_entry(entry_id, trash, cx))
@@ -1510,7 +1510,7 @@ impl ProjectPanel {
                         })??
                         .await?;
                 }
-                panel.update_in(&mut cx, |panel, window, cx| {
+                panel.update_in(cx, |panel, window, cx| {
                     if let Some(next_selection) = next_selection {
                         panel.selection = Some(next_selection);
                         panel.autoscroll(cx);
@@ -2105,7 +2105,7 @@ impl ProjectPanel {
 
             let item_count = paste_entry_tasks.len();
 
-            cx.spawn_in(window, |project_panel, mut cx| async move {
+            cx.spawn_in(window, async move |project_panel, cx| {
                 let mut last_succeed = None;
                 let mut need_delete_ids = Vec::new();
                 for ((entry_id, need_delete), task) in paste_entry_tasks.into_iter() {
@@ -2128,7 +2128,7 @@ impl ProjectPanel {
                 // remove entry for cut in difference worktree
                 for entry_id in need_delete_ids {
                     project_panel
-                        .update(&mut cx, |project_panel, cx| {
+                        .update(cx, |project_panel, cx| {
                             project_panel
                                 .project
                                 .update(cx, |project, cx| project.delete_entry(entry_id, true, cx))
@@ -2139,7 +2139,7 @@ impl ProjectPanel {
                 // update selection
                 if let Some(entry) = last_succeed {
                     project_panel
-                        .update_in(&mut cx, |project_panel, window, cx| {
+                        .update_in(cx, |project_panel, window, cx| {
                             project_panel.selection = Some(SelectedEntry {
                                 worktree_id,
                                 entry_id: entry.id,
@@ -2884,7 +2884,7 @@ impl ProjectPanel {
             }
         }
 
-        cx.spawn_in(window, |this, mut cx| {
+        cx.spawn_in(window, async move |this, cx| {
             async move {
                 for (filename, original_path) in &paths_to_replace {
                     let answer = cx.update(|window, cx| {
@@ -2909,18 +2909,18 @@ impl ProjectPanel {
                     return Ok(());
                 }
 
-                let task = worktree.update(&mut cx, |worktree, cx| {
+                let task = worktree.update( cx, |worktree, cx| {
                     worktree.copy_external_entries(target_directory, paths, true, cx)
                 })?;
 
                 let opened_entries = task.await?;
-                this.update(&mut cx, |this, cx| {
+                this.update(cx, |this, cx| {
                     if open_file_after_drop && !opened_entries.is_empty() {
                         this.open_entry(opened_entries[0], true, false, cx);
                     }
                 })
             }
-            .log_err()
+            .log_err().await
         })
         .detach();
     }
@@ -2962,7 +2962,7 @@ impl ProjectPanel {
 
                 let item_count = copy_tasks.len();
 
-                cx.spawn_in(window, |project_panel, mut cx| async move {
+                cx.spawn_in(window, async move |project_panel, cx| {
                     let mut last_succeed = None;
                     for task in copy_tasks.into_iter() {
                         if let Some(Some(entry)) = task.await.log_err() {
@@ -2972,7 +2972,7 @@ impl ProjectPanel {
                     // update selection
                     if let Some(entry_id) = last_succeed {
                         project_panel
-                            .update_in(&mut cx, |project_panel, window, cx| {
+                            .update_in(cx, |project_panel, window, cx| {
                                 project_panel.selection = Some(SelectedEntry {
                                     worktree_id,
                                     entry_id,
@@ -3679,11 +3679,11 @@ impl ProjectPanel {
 
                         let bounds = event.bounds;
                         this.hover_expand_task =
-                            Some(cx.spawn_in(window, |this, mut cx| async move {
+                            Some(cx.spawn_in(window, async move |this, cx| {
                                 cx.background_executor()
                                     .timer(Duration::from_millis(500))
                                     .await;
-                                this.update_in(&mut cx, |this, window, cx| {
+                                this.update_in(cx, |this, window, cx| {
                                     this.hover_expand_task.take();
                                     if this.last_selection_drag_over_entry == Some(entry_id)
                                         && bounds.contains(&window.mouse_position())
@@ -4221,12 +4221,12 @@ impl ProjectPanel {
         if !Self::should_autohide_scrollbar(cx) {
             return;
         }
-        self.hide_scrollbar_task = Some(cx.spawn_in(window, |panel, mut cx| async move {
+        self.hide_scrollbar_task = Some(cx.spawn_in(window, async move |panel, cx| {
             cx.background_executor()
                 .timer(SCROLLBAR_SHOW_INTERVAL)
                 .await;
             panel
-                .update(&mut cx, |panel, cx| {
+                .update(cx, |panel, cx| {
                     panel.show_scrollbar = false;
                     cx.notify();
                 })
@@ -4387,30 +4387,27 @@ impl Render for ProjectPanel {
                     return;
                 };
                 let adjustment = point(px(0.), px(vertical_scroll_offset));
-                this.hover_scroll_task =
-                    Some(cx.spawn_in(window, move |this, mut cx| async move {
-                        loop {
-                            let should_stop_scrolling = this
-                                .update(&mut cx, |this, cx| {
-                                    this.hover_scroll_task.as_ref()?;
-                                    let handle = this.scroll_handle.0.borrow_mut();
-                                    let offset = handle.base_handle.offset();
+                this.hover_scroll_task = Some(cx.spawn_in(window, async move |this, cx| loop {
+                    let should_stop_scrolling = this
+                        .update(cx, |this, cx| {
+                            this.hover_scroll_task.as_ref()?;
+                            let handle = this.scroll_handle.0.borrow_mut();
+                            let offset = handle.base_handle.offset();
 
-                                    handle.base_handle.set_offset(offset + adjustment);
-                                    cx.notify();
-                                    Some(())
-                                })
-                                .ok()
-                                .flatten()
-                                .is_some();
-                            if should_stop_scrolling {
-                                return;
-                            }
-                            cx.background_executor()
-                                .timer(Duration::from_millis(16))
-                                .await;
-                        }
-                    }));
+                            handle.base_handle.set_offset(offset + adjustment);
+                            cx.notify();
+                            Some(())
+                        })
+                        .ok()
+                        .flatten()
+                        .is_some();
+                    if should_stop_scrolling {
+                        return;
+                    }
+                    cx.background_executor()
+                        .timer(Duration::from_millis(16))
+                        .await;
+                }));
             }
             h_flex()
                 .id("project-panel")
@@ -9820,7 +9817,7 @@ mod tests {
             cx: &mut App,
         ) -> Option<Task<gpui::Result<Entity<Self>>>> {
             let path = path.clone();
-            Some(cx.spawn(|mut cx| async move { cx.new(|_| Self { path }) }))
+            Some(cx.spawn(async move |cx| cx.new(|_| Self { path })))
         }
 
         fn entry_id(&self, _: &App) -> Option<ProjectEntryId> {

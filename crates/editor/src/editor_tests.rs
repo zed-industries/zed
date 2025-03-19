@@ -9312,6 +9312,7 @@ async fn test_word_completion(cx: &mut TestAppContext) {
             .server
             .on_request::<lsp::request::Completion, _, _>(move |_, cx| {
                 let lsp_throttle_completions = lsp_throttle_completions.clone();
+                let cx = cx.clone();
                 async move {
                     if lsp_throttle_completions.load(atomic::Ordering::Acquire) {
                         cx.background_executor()

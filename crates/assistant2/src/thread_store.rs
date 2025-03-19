@@ -106,14 +106,14 @@ impl ThreadStore {
     ) -> Task<Result<Entity<Thread>>> {
         let id = id.clone();
         let database_future = ThreadsDatabase::global_future(cx);
-        cx.spawn(|this, mut cx| async move {
+        cx.spawn(async move |this, cx| {
             let database = database_future.await.map_err(|err| anyhow!(err))?;
             let thread = database
                 .try_find_thread(id.clone())
                 .await?
                 .ok_or_else(|| anyhow!("no thread found with ID: {id:?}"))?;
 
-            this.update(&mut cx, |this, cx| {
+            this.update(cx, |this, cx| {
                 cx.new(|cx| {
                     Thread::deserialize(
                         id.clone(),
@@ -133,23 +133,23 @@ impl ThreadStore {
             thread.update(cx, |thread, cx| (thread.id().clone(), thread.serialize(cx)));
 
         let database_future = ThreadsDatabase::global_future(cx);
-        cx.spawn(|this, mut cx| async move {
+        cx.spawn(async move |this, cx| {
             let serialized_thread = serialized_thread.await?;
             let database = database_future.await.map_err(|err| anyhow!(err))?;
             database.save_thread(metadata, serialized_thread).await?;
 
-            this.update(&mut cx, |this, cx| this.reload(cx))?.await
+            this.update(cx, |this, cx| this.reload(cx))?.await
         })
     }
 
     pub fn delete_thread(&mut self, id: &ThreadId, cx: &mut Context<Self>) -> Task<Result<()>> {
         let id = id.clone();
         let database_future = ThreadsDatabase::global_future(cx);
-        cx.spawn(|this, mut cx| async move {
+        cx.spawn(async move |this, cx| {
             let database = database_future.await.map_err(|err| anyhow!(err))?;
             database.delete_thread(id.clone()).await?;
 
-            this.update(&mut cx, |this, _cx| {
+            this.update(cx, |this, _cx| {
                 this.threads.retain(|thread| thread.id != id)
             })
         })
@@ -157,14 +157,14 @@ impl ThreadStore {
 
     pub fn reload(&self, cx: &mut Context<Self>) -> Task<Result<()>> {
         let database_future = ThreadsDatabase::global_future(cx);
-        cx.spawn(|this, mut cx| async move {
+        cx.spawn(async move |this, cx| {
             let threads = database_future
                 .await
                 .map_err(|err| anyhow!(err))?
                 .list_threads()
                 .await?;
 
-            this.update(&mut cx, |this, cx| {
+            this.update(cx, |this, cx| {
                 this.threads = threads;
                 cx.notify();
             })
@@ -193,7 +193,7 @@ impl ThreadStore {
                     cx.spawn({
                         let server = server.clone();
                         let server_id = server_id.clone();
-                        |this, mut cx| async move {
+                        async move |this, cx| {
                             let Some(protocol) = server.client() else {
                                 return;
                             };
@@ -218,7 +218,7 @@ impl ThreadStore {
                                         })
                                         .collect::<Vec<_>>();
 
-                                    this.update(&mut cx, |this, _cx| {
+                                    this.update(cx, |this, _cx| {
                                         this.context_server_tool_ids.insert(server_id, tool_ids);
                                     })
                                     .log_err();

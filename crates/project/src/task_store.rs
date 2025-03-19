@@ -312,9 +312,9 @@ impl TaskStore {
     ) -> Task<()> {
         let mut user_tasks_file_rx = watch_config_file(&cx.background_executor(), fs, file_path);
         let user_tasks_content = cx.background_executor().block(user_tasks_file_rx.next());
-        cx.spawn(move |task_store, mut cx| async move {
+        cx.spawn(async move |task_store, cx| {
             if let Some(user_tasks_content) = user_tasks_content {
-                let Ok(_) = task_store.update(&mut cx, |task_store, cx| {
+                let Ok(_) = task_store.update(cx, |task_store, cx| {
                     task_store
                         .update_user_tasks(None, Some(&user_tasks_content), task_kind, cx)
                         .log_err();
@@ -323,7 +323,7 @@ impl TaskStore {
                 };
             }
             while let Some(user_tasks_content) = user_tasks_file_rx.next().await {
-                let Ok(()) = task_store.update(&mut cx, |task_store, cx| {
+                let Ok(()) = task_store.update(cx, |task_store, cx| {
                     let result = task_store.update_user_tasks(
                         None,
                         Some(&user_tasks_content),
@@ -359,10 +359,10 @@ fn local_task_context_for_location(
         .and_then(|worktree_id| worktree_store.read(cx).worktree_for_id(worktree_id, cx))
         .and_then(|worktree| worktree.read(cx).root_dir());
 
-    cx.spawn(|mut cx| async move {
+    cx.spawn(async move |cx| {
         let worktree_abs_path = worktree_abs_path.clone();
         let project_env = environment
-            .update(&mut cx, |environment, cx| {
+            .update(cx, |environment, cx| {
                 environment.get_environment(worktree_id, worktree_abs_path.clone(), cx)
             })
             .ok()?
@@ -402,7 +402,7 @@ fn remote_task_context_for_location(
     toolchain_store: Arc<dyn LanguageToolchainStore>,
     cx: &mut App,
 ) -> Task<Option<TaskContext>> {
-    cx.spawn(|cx| async move {
+    cx.spawn(async move |cx| {
         // We need to gather a client context, as the headless one may lack certain information (e.g. tree-sitter parsing is disabled there, so symbols are not available).
         let mut remote_context = cx
             .update(|cx| {
@@ -469,7 +469,7 @@ fn combine_task_variables(
         .read(cx)
         .language()
         .and_then(|language| language.context_provider());
-    cx.spawn(move |cx| async move {
+    cx.spawn(async move |cx| {
         let baseline = cx
             .update(|cx| {
                 baseline.build_context(

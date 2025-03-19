@@ -973,10 +973,10 @@ impl EditorElement {
         };
         editor.hovered_cursors.insert(
             key.clone(),
-            cx.spawn_in(window, |editor, mut cx| async move {
+            cx.spawn_in(window, async move |editor, cx| {
                 cx.background_executor().timer(CURSORS_VISIBLE_FOR).await;
                 editor
-                    .update(&mut cx, |editor, cx| {
+                    .update(cx, |editor, cx| {
                         editor.hovered_cursors.remove(&key);
                         cx.notify();
                     })
@@ -5199,7 +5199,7 @@ impl EditorElement {
 
             editor.scrollbar_marker_state.dirty = false;
             editor.scrollbar_marker_state.pending_refresh =
-                Some(cx.spawn_in(window, |editor, mut cx| async move {
+                Some(cx.spawn_in(window, async move |editor, cx| {
                     let scrollbar_size = scrollbar_layout.hitbox.size;
                     let scrollbar_markers = cx
                         .background_spawn(async move {
@@ -5346,7 +5346,7 @@ impl EditorElement {
                         })
                         .await;
 
-                    editor.update(&mut cx, |editor, cx| {
+                    editor.update(cx, |editor, cx| {
                         editor.scrollbar_marker_state.markers = scrollbar_markers;
                         editor.scrollbar_marker_state.scrollbar_size = scrollbar_size;
                         editor.scrollbar_marker_state.pending_refresh = None;

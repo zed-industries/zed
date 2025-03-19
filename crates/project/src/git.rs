@@ -351,7 +351,7 @@ impl GitStore {
                 let staged_text = self.state.load_staged_text(&buffer, &self.buffer_store, cx);
                 entry
                     .insert(
-                        cx.spawn(move |this, cx| async move {
+                        cx.spawn(async move |this, cx| {
                             Self::open_diff_internal(
                                 this,
                                 DiffKind::Unstaged,
@@ -406,7 +406,7 @@ impl GitStore {
 
                 entry
                     .insert(
-                        cx.spawn(move |this, cx| async move {
+                        cx.spawn(async move |this, cx| {
                             Self::open_diff_internal(
                                 this,
                                 DiffKind::Uncommitted,
@@ -431,11 +431,11 @@ impl GitStore {
         kind: DiffKind,
         texts: Result<DiffBasesChange>,
         buffer_entity: Entity<Buffer>,
-        mut cx: AsyncApp,
+        cx: &mut AsyncApp,
     ) -> Result<Entity<BufferDiff>> {
         let diff_bases_change = match texts {
             Err(e) => {
-                this.update(&mut cx, |this, cx| {
+                this.update(cx, |this, cx| {
                     let buffer = buffer_entity.read(cx);
                     let buffer_id = buffer.remote_id();
                     this.loading_diffs.remove(&(buffer_id, kind));
@@ -445,7 +445,7 @@ impl GitStore {
             Ok(change) => change,
         };
 
-        this.update(&mut cx, |this, cx| {
+        this.update(cx, |this, cx| {
             let buffer = buffer_entity.read(cx);
             let buffer_id = buffer.remote_id();
             let language = buffer.language().cloned();
@@ -736,13 +736,13 @@ impl GitStore {
                     )
                 });
                 let diff = diff.downgrade();
-                cx.spawn(|this, mut cx| async move {
+                cx.spawn(async move |this, cx| {
                     if let Ok(Err(error)) = cx.background_spawn(recv).await {
-                        diff.update(&mut cx, |diff, cx| {
+                        diff.update(cx, |diff, cx| {
                             diff.clear_pending_hunks(cx);
                         })
                         .ok();
-                        this.update(&mut cx, |_, cx| cx.emit(GitEvent::IndexWriteError(error)))
+                        this.update(cx, |_, cx| cx.emit(GitEvent::IndexWriteError(error)))
                             .ok();
                     }
                 })
@@ -973,7 +973,7 @@ impl GitStore {
     fn spawn_git_worker(cx: &mut Context<GitStore>) -> mpsc::UnboundedSender<GitJob> {
         let (job_tx, mut job_rx) = mpsc::unbounded::<GitJob>();
 
-        cx.spawn(|_, mut cx| async move {
+        cx.spawn(async move |_, cx| {
             let mut jobs = VecDeque::new();
             loop {
                 while let Ok(Some(next_job)) = job_rx.try_next() {
@@ -989,7 +989,7 @@ impl GitStore {
                             continue;
                         }
                     }
-                    (job.job)(&mut cx).await;
+                    (job.job)(cx).await;
                 } else if let Some(job) = job_rx.next().await {
                     jobs.push_back(job);
                 } else {
@@ -1772,7 +1772,7 @@ impl BufferDiffState {
             (None, None) => true,
             _ => false,
         };
-        self.recalculate_diff_task = Some(cx.spawn(|this, mut cx| async move {
+        self.recalculate_diff_task = Some(cx.spawn(async move |this, cx| {
             let mut new_unstaged_diff = None;
             if let Some(unstaged_diff) = &unstaged_diff {
                 new_unstaged_diff = Some(
@@ -1784,7 +1784,7 @@ impl BufferDiffState {
                         language_changed,
                         language.clone(),
                         language_registry.clone(),
-                        &mut cx,
+                        cx,
                     )
                     .await?,
                 );
@@ -1804,7 +1804,7 @@ impl BufferDiffState {
                             language_changed,
                             language.clone(),
                             language_registry.clone(),
-                            &mut cx,
+                            cx,
                         )
                         .await?,
                     )
@@ -1814,7 +1814,7 @@ impl BufferDiffState {
             let unstaged_changed_range = if let Some((unstaged_diff, new_unstaged_diff)) =
                 unstaged_diff.as_ref().zip(new_unstaged_diff.clone())
             {
-                unstaged_diff.update(&mut cx, |diff, cx| {
+                unstaged_diff.update(cx, |diff, cx| {
                     diff.set_snapshot(&buffer, new_unstaged_diff, language_changed, None, cx)
                 })?
             } else {
@@ -1824,7 +1824,7 @@ impl BufferDiffState {
             if let Some((uncommitted_diff, new_uncommitted_diff)) =
                 uncommitted_diff.as_ref().zip(new_uncommitted_diff.clone())
             {
-                uncommitted_diff.update(&mut cx, |uncommitted_diff, cx| {
+                uncommitted_diff.update(cx, |uncommitted_diff, cx| {
                     uncommitted_diff.set_snapshot(
                         &buffer,
                         new_uncommitted_diff,
@@ -1836,7 +1836,7 @@ impl BufferDiffState {
             }
 
             if let Some(this) = this.upgrade() {
-                this.update(&mut cx, |this, _| {
+                this.update(cx, |this, _| {
                     this.index_changed = false;
                     this.head_changed = false;
                     this.language_changed = false;
@@ -1873,7 +1873,7 @@ fn make_remote_delegate(
                 askpass_id,
                 prompt,
             });
-            cx.spawn(|_, _| async move {
+            cx.spawn(async move |_, _| {
                 tx.send(response.await?.response).ok();
                 anyhow::Ok(())
             })
@@ -2028,7 +2028,7 @@ impl Repository {
                 key,
                 job: Box::new(|cx: &mut AsyncApp| {
                     let job = job(git_repo, cx.clone());
-                    cx.spawn(|_| async move {
+                    cx.spawn(async move |_| {
                         let result = job.await;
                         result_tx.send(result).ok();
                     })
@@ -2150,7 +2150,7 @@ impl Repository {
         } = self.git_repo.clone()
         {
             let client = client.clone();
-            cx.spawn(|repository, mut cx| async move {
+            cx.spawn(async move |repository, cx| {
                 let request = client.request(proto::OpenCommitMessageBuffer {
                     project_id: project_id.0,
                     worktree_id: worktree_id.to_proto(),
@@ -2159,18 +2159,18 @@ impl Repository {
                 let response = request.await.context("requesting to open commit buffer")?;
                 let buffer_id = BufferId::new(response.buffer_id)?;
                 let buffer = buffer_store
-                    .update(&mut cx, |buffer_store, cx| {
+                    .update(cx, |buffer_store, cx| {
                         buffer_store.wait_for_remote_buffer(buffer_id, cx)
                     })?
                     .await?;
                 if let Some(language_registry) = languages {
                     let git_commit_language =
                         language_registry.language_for_name("Git Commit").await?;
-                    buffer.update(&mut cx, |buffer, cx| {
+                    buffer.update(cx, |buffer, cx| {
                         buffer.set_language(Some(git_commit_language), cx);
                     })?;
                 }
-                repository.update(&mut cx, |repository, _| {
+                repository.update(cx, |repository, _| {
                     repository.commit_message_buffer = Some(buffer.clone());
                 })?;
                 Ok(buffer)
@@ -2186,19 +2186,19 @@ impl Repository {
         buffer_store: Entity<BufferStore>,
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<Buffer>>> {
-        cx.spawn(|repository, mut cx| async move {
+        cx.spawn(async move |repository, cx| {
             let buffer = buffer_store
-                .update(&mut cx, |buffer_store, cx| buffer_store.create_buffer(cx))?
+                .update(cx, |buffer_store, cx| buffer_store.create_buffer(cx))?
                 .await?;
 
             if let Some(language_registry) = language_registry {
                 let git_commit_language = language_registry.language_for_name("Git Commit").await?;
-                buffer.update(&mut cx, |buffer, cx| {
+                buffer.update(cx, |buffer, cx| {
                     buffer.set_language(Some(git_commit_language), cx);
                 })?;
             }
 
-            repository.update(&mut cx, |repository, _| {
+            repository.update(cx, |repository, _| {
                 repository.commit_message_buffer = Some(buffer.clone());
             })?;
             Ok(buffer)
@@ -2347,13 +2347,13 @@ impl Repository {
             })
         }
 
-        cx.spawn(|this, mut cx| async move {
+        cx.spawn(async move |this, cx| {
             for save_future in save_futures {
                 save_future.await?;
             }
             let env = env.await;
 
-            this.update(&mut cx, |this, _| {
+            this.update(cx, |this, _| {
                 this.send_job(|git_repo, cx| async move {
                     match git_repo {
                         GitRepo::Local(repo) => repo.stage_paths(entries, env, cx).await,
@@ -2418,13 +2418,13 @@ impl Repository {
             })
         }
 
-        cx.spawn(move |this, mut cx| async move {
+        cx.spawn(async move |this, cx| {
             for save_future in save_futures {
                 save_future.await?;
             }
             let env = env.await;
 
-            this.update(&mut cx, |this, _| {
+            this.update(cx, |this, _| {
                 this.send_job(|git_repo, cx| async move {
                     match git_repo {
                         GitRepo::Local(repo) => repo.unstage_paths(entries, env, cx).await,
