@@ -161,6 +161,7 @@ impl TestServer {
         let fs = FakeFs::new(cx.executor());
 
         cx.update(|cx| {
+            gpui_tokio::init(cx);
             if cx.has_global::<SettingsStore>() {
                 panic!("Same cx used to create two test clients")
             }

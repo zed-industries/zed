@@ -2929,6 +2929,7 @@ dependencies = [
  "git_ui",
  "google_ai",
  "gpui",
+ "gpui_tokio",
  "hex",
  "http_client",
  "hyper 0.14.32",
