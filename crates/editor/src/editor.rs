@@ -6317,11 +6317,7 @@ impl Editor {
         breakpoint: Option<(Anchor, Breakpoint)>,
         cx: &mut Context<Self>,
     ) -> IconButton {
-        let color = if breakpoint.is_some() {
-            Color::Debugger
-        } else {
-            Color::Muted
-        };
+        let color = Color::Muted;
 
         let position = breakpoint.as_ref().map(|(anchor, _)| *anchor);
         let bp_kind = Arc::new(
