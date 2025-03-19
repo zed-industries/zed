@@ -4,6 +4,10 @@ on:
   release:
     types: [published]
 
+  pull_request:
+    branches:
+      - "**"
+
 jobs:
   discord_release:
     if: github.repository_owner == 'zed-industries'
@@ -29,11 +33,11 @@ jobs:
             ${{ github.event.release.body }}
           maxLength: 2000
           truncationSymbol: "..."
-      - name: Discord Webhook Action
-        uses: tsickert/discord-webhook@c840d45a03a323fbc3f7507ac7769dbd91bfb164 # v5.3.0
-        with:
-          webhook-url: ${{ secrets.DISCORD_WEBHOOK_URL }}
-          content: ${{ steps.get-content.outputs.string }}
+      # - name: Discord Webhook Action
+      #   uses: tsickert/discord-webhook@c840d45a03a323fbc3f7507ac7769dbd91bfb164 # v5.3.0
+      #   with:
+      #     webhook-url: ${{ secrets.DISCORD_WEBHOOK_URL }}
+      #     content: ${{ steps.get-content.outputs.string }}
 
   send_release_notes_email:
     if: github.repository_owner == 'zed-industries' && !github.event.release.prerelease
@@ -47,6 +51,7 @@ jobs:
         id: check-promotion-from-preview
         run: |
           VERSION="${{ github.event.release.tag_name }}"
+          VERSION="0.178.4"
           PREVIEW_TAG="${VERSION}-pre"
 
           if git rev-parse "$PREVIEW_TAG" > /dev/null 2>&1; then
@@ -61,9 +66,9 @@ jobs:
           curl -X POST "https://zed.dev/api/send_release_notes_email" \
               -H "Authorization: Bearer ${{ secrets.RELEASE_NOTES_API_TOKEN }}" \
               -H "Content-Type: application/json" \
-              -d @- <<-JSON
+              -d @- <<-JSONHERE
                   {
                       "version": "${{ github.event.release.tag_name }}",
                       "markdown_body": ${{ toJSON(github.event.release.body) }}
                   }
-              JSON
+              JSONHERE
