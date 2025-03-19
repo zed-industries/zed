@@ -2048,7 +2048,6 @@ impl EditorElement {
         (offset_y, length)
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn layout_breakpoints(
         &self,
         line_height: Pixels,
@@ -2059,16 +2058,24 @@ impl EditorElement {
         display_hunks: &[(DisplayDiffHunk, Option<Hitbox>)],
         snapshot: &EditorSnapshot,
         breakpoints: HashMap<DisplayRow, (Anchor, Breakpoint)>,
+        row_infos: &[RowInfo],
         window: &mut Window,
         cx: &mut App,
     ) -> Vec<AnyElement> {
         self.editor.update(cx, |editor, cx| {
             breakpoints
                 .into_iter()
-                .filter_map(|(point, (text_anchor, bp))| {
-                    let row = MultiBufferRow { 0: point.0 };
+                .filter_map(|(display_row, (text_anchor, bp))| {
+                    let row = MultiBufferRow { 0: display_row.0 };
 
-                    if range.start > point || range.end < point {
+                    if row_infos
+                        .get((display_row.0.saturating_sub(range.start.0)) as usize)
+                        .is_some_and(|row_info| row_info.expand_info.is_some())
+                    {
+                        return None;
+                    }
+
+                    if range.start > display_row || range.end < display_row {
                         return None;
                     }
 
@@ -2076,11 +2083,11 @@ impl EditorElement {
                         return None;
                     }
 
-                    let button = editor.render_breakpoint(text_anchor, point, &bp.kind, cx);
+                    let button = editor.render_breakpoint(text_anchor, display_row, &bp.kind, cx);
 
                     let button = prepaint_gutter_button(
                         button,
-                        point,
+                        display_row,
                         line_height,
                         gutter_dimensions,
                         scroll_pixel_position,
@@ -7526,6 +7533,7 @@ impl Element for EditorElement {
                             &display_hunks,
                             &snapshot,
                             breakpoint_rows,
+                            &row_infos,
                             window,
                             cx,
                         )
