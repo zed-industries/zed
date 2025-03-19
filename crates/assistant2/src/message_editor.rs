@@ -479,8 +479,8 @@ impl Render for MessageEditor {
                         .when(self.edits_expanded, |parent| {
                             parent.child(
                                 v_flex().bg(cx.theme().colors().editor_background).children(
-                                    unreviewed_buffers.into_keys().enumerate().flat_map(
-                                        |(index, buffer)| {
+                                    unreviewed_buffers.into_iter().enumerate().flat_map(
+                                        |(index, (buffer, tracked))| {
                                             let file = buffer.read(cx).file()?;
                                             let path = file.path();
 
@@ -539,7 +539,13 @@ impl Render for MessageEditor {
                                                         )
                                                         .child(
                                                             Label::new("-").color(Color::Deleted),
-                                                        ),
+                                                        )
+                                                        .when(!tracked.needs_review(), |parent| {
+                                                            parent.child(
+                                                                Icon::new(IconName::Check)
+                                                                    .color(Color::Success),
+                                                            )
+                                                        }),
                                                 );
 
                                             Some(element)
