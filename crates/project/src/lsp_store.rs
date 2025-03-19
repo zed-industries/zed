@@ -1790,6 +1790,7 @@ impl LocalLspStore {
         });
 
         let snapshot = self.buffer_snapshot_for_lsp_version(buffer, server_id, version, cx)?;
+
         let edits_since_save = std::cell::LazyCell::new(|| {
             let saved_version = buffer.read(cx).saved_version();
             Patch::new(snapshot.edits_since::<PointUtf16>(saved_version).collect())

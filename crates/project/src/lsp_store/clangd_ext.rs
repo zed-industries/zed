@@ -9,6 +9,7 @@ use util::ResultExt as _;
 use crate::LspStore;
 
 pub const CLANGD_SERVER_NAME: &str = "clangd";
+const INACTIVE_REGION_MESSAGE: &str = "inactive region";
 
 #[derive(Debug, Eq, PartialEq, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -26,8 +27,9 @@ impl lsp::notification::Notification for InactiveRegions {
 }
 
 pub fn is_inactive_region(diag: &Diagnostic) -> bool {
-    diag.severity == lsp::DiagnosticSeverity::INFORMATION
-        && diag.is_unnecessary
+    diag.is_unnecessary
+        && diag.severity == lsp::DiagnosticSeverity::INFORMATION
+        && diag.message == INACTIVE_REGION_MESSAGE
         && diag
             .source
             .as_ref()
@@ -59,7 +61,7 @@ pub fn register_notifications(
                             range,
                             severity: Some(lsp::DiagnosticSeverity::INFORMATION),
                             source: Some(CLANGD_SERVER_NAME.to_string()),
-                            message: "inactive region".to_string(),
+                            message: INACTIVE_REGION_MESSAGE.to_string(),
                             tags: Some(vec![lsp::DiagnosticTag::UNNECESSARY]),
                             ..Default::default()
                         })
