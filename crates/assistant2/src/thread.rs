@@ -1,6 +1,5 @@
 use std::fmt::Write as _;
 use std::io::Write;
-use std::ops::Range;
 use std::sync::Arc;
 
 use anyhow::{Context as _, Result};
@@ -605,6 +604,8 @@ impl Thread {
 
         let task = cx.spawn(async move |thread, cx| {
             let stream = model.stream_completion(request, &cx);
+            let initial_token_usage =
+                thread.read_with(cx, |thread, _cx| thread.cumulative_token_usage.clone());
             let stream_completion = async {
                 let mut events = stream.await?;
                 let mut stop_reason = StopReason::EndTurn;
@@ -719,6 +720,21 @@ impl Thread {
                         }
                     }
                     cx.emit(ThreadEvent::DoneStreaming);
+
+                    if let Ok(initial_usage) = initial_token_usage {
+                        let usage = thread.cumulative_token_usage.clone() - initial_usage;
+
+                        telemetry::event!(
+                            "Assistant Thread Completion",
+                            thread_id = thread.id().to_string(),
+                            model = model.telemetry_id(),
+                            model_provider = model.provider_id().to_string(),
+                            input_tokens = usage.input_tokens,
+                            output_tokens = usage.output_tokens,
+                            cache_creation_input_tokens = usage.cache_creation_input_tokens,
+                            cache_read_input_tokens = usage.cache_read_input_tokens,
+                        );
+                    }
                 })
                 .ok();
         });
@@ -976,10 +992,6 @@ impl Thread {
         })
     }
 
-    pub fn project(&self) -> &Entity<Project> {
-        &self.project
-    }
-
     /// Create a snapshot of the current project state including git information and unsaved buffers.
     fn project_snapshot(
         project: Entity<Project>,
@@ -1126,18 +1138,6 @@ impl Thread {
         }
 
         Ok(String::from_utf8_lossy(&markdown).to_string())
-    }
-
-    pub fn review_edits_in_range(
-        &mut self,
-        buffer: Entity<language::Buffer>,
-        buffer_range: Range<language::Anchor>,
-        accept: bool,
-        cx: &mut Context<Self>,
-    ) -> Task<Result<()>> {
-        self.action_log.update(cx, |action_log, cx| {
-            action_log.review_edits_in_range(buffer, buffer_range, accept, cx)
-        })
     }
 
     pub fn action_log(&self) -> &Entity<ActionLog> {

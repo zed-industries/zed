@@ -20,7 +20,6 @@ use ui::{
     prelude::*, ButtonLike, Disclosure, KeyBinding, PlatformStyle, PopoverMenu, PopoverMenuHandle,
     Tooltip,
 };
-use util::ResultExt;
 use vim_mode_setting::VimModeSetting;
 use workspace::notifications::{NotificationId, NotifyTaskExt};
 use workspace::{Toast, Workspace};
@@ -32,7 +31,7 @@ use crate::context_strip::{ContextStrip, ContextStripEvent, SuggestContextKind};
 use crate::thread::{RequestKind, Thread};
 use crate::thread_store::ThreadStore;
 use crate::tool_selector::ToolSelector;
-use crate::{AssistantDiff, Chat, ChatMode, RemoveAllContext, ToggleContextPicker};
+use crate::{Chat, ChatMode, RemoveAllContext, ToggleContextPicker};
 
 pub struct MessageEditor {
     thread: Entity<Thread>,
@@ -314,10 +313,6 @@ impl MessageEditor {
         })
         .detach_and_notify_err(window, cx);
     }
-
-    fn handle_review_click(&self, window: &mut Window, cx: &mut Context<Self>) {
-        AssistantDiff::deploy(self.thread.clone(), self.workspace.clone(), window, cx).log_err();
-    }
 }
 
 impl Focusable for MessageEditor {
@@ -352,9 +347,8 @@ impl Render for MessageEditor {
             px(64.)
         };
 
-        let action_log = self.thread.read(cx).action_log();
-        let unreviewed_buffers = action_log.read(cx).unreviewed_buffers();
-        let unreviewed_buffers_count = unreviewed_buffers.len();
+        let changed_buffers = self.thread.read(cx).scripting_changed_buffers(cx);
+        let changed_buffers_count = changed_buffers.len();
 
         v_flex()
             .size_full()
@@ -416,7 +410,7 @@ impl Render for MessageEditor {
                     ),
                 )
             })
-            .when(unreviewed_buffers_count > 0, |parent| {
+            .when(changed_buffers_count > 0, |parent| {
                 parent.child(
                     v_flex()
                         .mx_2()
@@ -427,130 +421,93 @@ impl Render for MessageEditor {
                         .rounded_t_md()
                         .child(
                             h_flex()
+                                .gap_2()
                                 .p_2()
-                                .justify_between()
                                 .child(
-                                    h_flex()
-                                        .gap_2()
-                                        .child(
-                                            Disclosure::new(
-                                                "edits-disclosure",
-                                                self.edits_expanded,
-                                            )
-                                            .on_click(
-                                                cx.listener(|this, _ev, _window, cx| {
-                                                    this.edits_expanded = !this.edits_expanded;
-                                                    cx.notify();
-                                                }),
-                                            ),
-                                        )
-                                        .child(
-                                            Label::new("Edits")
-                                                .size(LabelSize::XSmall)
-                                                .color(Color::Muted),
-                                        )
-                                        .child(
-                                            Label::new("•")
-                                                .size(LabelSize::XSmall)
-                                                .color(Color::Muted),
-                                        )
-                                        .child(
-                                            Label::new(format!(
-                                                "{} {}",
-                                                unreviewed_buffers_count,
-                                                if unreviewed_buffers_count == 1 {
-                                                    "file"
-                                                } else {
-                                                    "files"
-                                                }
-                                            ))
-                                            .size(LabelSize::XSmall)
-                                            .color(Color::Muted),
-                                        ),
+                                    Disclosure::new("edits-disclosure", self.edits_expanded)
+                                        .on_click(cx.listener(|this, _ev, _window, cx| {
+                                            this.edits_expanded = !this.edits_expanded;
+                                            cx.notify();
+                                        })),
                                 )
                                 .child(
-                                    Button::new("review", "Review")
-                                        .label_size(LabelSize::XSmall)
-                                        .on_click(cx.listener(|this, _, window, cx| {
-                                            this.handle_review_click(window, cx)
-                                        })),
+                                    Label::new("Edits")
+                                        .size(LabelSize::XSmall)
+                                        .color(Color::Muted),
+                                )
+                                .child(Label::new("•").size(LabelSize::XSmall).color(Color::Muted))
+                                .child(
+                                    Label::new(format!(
+                                        "{} {}",
+                                        changed_buffers_count,
+                                        if changed_buffers_count == 1 {
+                                            "file"
+                                        } else {
+                                            "files"
+                                        }
+                                    ))
+                                    .size(LabelSize::XSmall)
+                                    .color(Color::Muted),
                                 ),
                         )
                         .when(self.edits_expanded, |parent| {
                             parent.child(
                                 v_flex().bg(cx.theme().colors().editor_background).children(
-                                    unreviewed_buffers.into_iter().enumerate().flat_map(
-                                        |(index, (buffer, tracked))| {
-                                            let file = buffer.read(cx).file()?;
-                                            let path = file.path();
+                                    changed_buffers.enumerate().flat_map(|(index, buffer)| {
+                                        let file = buffer.read(cx).file()?;
+                                        let path = file.path();
 
-                                            let parent_label = path.parent().and_then(|parent| {
-                                                let parent_str = parent.to_string_lossy();
+                                        let parent_label = path.parent().and_then(|parent| {
+                                            let parent_str = parent.to_string_lossy();
 
-                                                if parent_str.is_empty() {
-                                                    None
-                                                } else {
-                                                    Some(
-                                                        Label::new(format!(
-                                                            "{}{}",
-                                                            parent_str,
-                                                            std::path::MAIN_SEPARATOR_STR
-                                                        ))
-                                                        .color(Color::Muted)
-                                                        .size(LabelSize::Small),
-                                                    )
-                                                }
-                                            });
-
-                                            let name_label = path.file_name().map(|name| {
-                                                Label::new(name.to_string_lossy().to_string())
-                                                    .size(LabelSize::Small)
-                                            });
-
-                                            let file_icon = FileIcons::get_icon(&path, cx)
-                                                .map(Icon::from_path)
-                                                .unwrap_or_else(|| Icon::new(IconName::File));
-
-                                            let element = div()
-                                                .p_2()
-                                                .when(
-                                                    index + 1 < unreviewed_buffers_count,
-                                                    |parent| {
-                                                        parent
-                                                            .border_color(
-                                                                cx.theme().colors().border,
-                                                            )
-                                                            .border_b_1()
-                                                    },
+                                            if parent_str.is_empty() {
+                                                None
+                                            } else {
+                                                Some(
+                                                    Label::new(format!(
+                                                        "{}{}",
+                                                        parent_str,
+                                                        std::path::MAIN_SEPARATOR_STR
+                                                    ))
+                                                    .color(Color::Muted)
+                                                    .size(LabelSize::Small),
                                                 )
-                                                .child(
-                                                    h_flex()
-                                                        .gap_2()
-                                                        .child(file_icon)
-                                                        .child(
-                                                            // TODO: handle overflow
-                                                            h_flex()
-                                                                .children(parent_label)
-                                                                .children(name_label),
-                                                        )
-                                                        // TODO: show lines changed
-                                                        .child(
-                                                            Label::new("+").color(Color::Created),
-                                                        )
-                                                        .child(
-                                                            Label::new("-").color(Color::Deleted),
-                                                        )
-                                                        .when(!tracked.needs_review(), |parent| {
-                                                            parent.child(
-                                                                Icon::new(IconName::Check)
-                                                                    .color(Color::Success),
-                                                            )
-                                                        }),
-                                                );
+                                            }
+                                        });
 
-                                            Some(element)
-                                        },
-                                    ),
+                                        let name_label = path.file_name().map(|name| {
+                                            Label::new(name.to_string_lossy().to_string())
+                                                .size(LabelSize::Small)
+                                        });
+
+                                        let file_icon = FileIcons::get_icon(&path, cx)
+                                            .map(Icon::from_path)
+                                            .unwrap_or_else(|| Icon::new(IconName::File));
+
+                                        let element = div()
+                                            .p_2()
+                                            .when(index + 1 < changed_buffers_count, |parent| {
+                                                parent
+                                                    .border_color(cx.theme().colors().border)
+                                                    .border_b_1()
+                                            })
+                                            .child(
+                                                h_flex()
+                                                    .gap_2()
+                                                    .child(file_icon)
+                                                    .child(
+                                                        // TODO: handle overflow
+                                                        h_flex()
+                                                            .children(parent_label)
+                                                            .children(name_label),
+                                                    )
+                                                    // TODO: show lines changed
+                                                    .child(Label::new("+").color(Color::Created))
+                                                    .child(Label::new("-").color(Color::Deleted)),
+                                            );
+
+                                        Some(element)
+                                    }),
                                 ),
                             )
                         }),
