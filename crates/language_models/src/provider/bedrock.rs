@@ -8,11 +8,11 @@ use aws_config::stalled_stream_protection::StalledStreamProtectionConfig;
 use aws_config::{BehaviorVersion, Region};
 use aws_credential_types::Credentials;
 use aws_http_client::AwsHttpClient;
-use bedrock::bedrock_client;
 use bedrock::bedrock_client::config::timeout::TimeoutConfig;
 use bedrock::bedrock_client::types::{
     ContentBlockDelta, ContentBlockStart, ContentBlockStartEvent, ConverseStreamOutput,
 };
+use bedrock::bedrock_client::Client as BedrockClient;
 use bedrock::{
     value_to_aws_document, BedrockError, BedrockInnerContent, BedrockMessage, BedrockSpecificTool,
     BedrockStreamingResponse, BedrockTool, BedrockToolChoice, BedrockToolInputSchema, Model,
@@ -37,6 +37,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use settings::{Settings, SettingsStore};
+use smol::lock::OnceCell;
 use strum::{EnumIter, IntoEnumIterator, IntoStaticStr};
 use theme::ThemeSettings;
 use tokio::runtime::Handle;
@@ -216,7 +217,7 @@ impl BedrockLanguageModelProvider {
     pub fn new(http_client: Arc<dyn HttpClient>, cx: &mut App) -> Self {
         let state = cx.new(|cx| State {
             credentials: None,
-            settings: None,
+            settings: Some(AllLanguageModelSettings::get_global(cx).bedrock.clone()),
             credentials_from_env: false,
             _subscription: cx.observe_global::<SettingsStore>(|_, cx| {
                 cx.notify();
@@ -256,6 +257,7 @@ impl LanguageModelProvider for BedrockLanguageModelProvider {
             http_client: self.http_client.clone(),
             handler: self.handler.clone(),
             state: self.state.clone(),
+            client: OnceCell::new(),
             request_limiter: RateLimiter::new(4),
         }))
     }
@@ -296,6 +298,7 @@ impl LanguageModelProvider for BedrockLanguageModelProvider {
                     http_client: self.http_client.clone(),
                     handler: self.handler.clone(),
                     state: self.state.clone(),
+                    client: OnceCell::new(),
                     request_limiter: RateLimiter::new(4),
                 }) as Arc<dyn LanguageModel>
             })
@@ -334,11 +337,100 @@ struct BedrockModel {
     model: Model,
     http_client: AwsHttpClient,
     handler: tokio::runtime::Handle,
+    client: OnceCell<BedrockClient>,
     state: gpui::Entity<State>,
     request_limiter: RateLimiter,
 }
 
 impl BedrockModel {
+    fn get_or_init_client(&self, cx: &AsyncApp) -> Result<&BedrockClient, anyhow::Error> {
+        self.client
+            .get_or_try_init_blocking(|| {
+                let Ok(Ok((auth_method, credentials, endpoint, region, settings))) = cx
+                    .read_entity(&self.state, |state, _cx| {
+                        // Get the authentication method and credentials
+                        let auth_method = state
+                            .settings
+                            .as_ref()
+                            .and_then(|s| s.authentication_method.clone())
+                            .unwrap_or(BedrockAuthMethod::Automatic);
+
+                        // Get endpoint if configured
+                        let endpoint = state.settings.as_ref().and_then(|s| s.endpoint.clone());
+
+                        // Get region - from credentials or directly from settings
+                        let region = if let Some(creds) = &state.credentials {
+                            creds.region.clone()
+                        } else {
+                            return Err(anyhow!("Failed to load credentials"));
+                        };
+
+                        Ok((
+                            auth_method,
+                            state.credentials.clone(),
+                            endpoint,
+                            region,
+                            state.settings.clone(),
+                        ))
+                    })
+                else {
+                    return Err(anyhow!("App state dropped"));
+                };
+
+                let mut config_builder = aws_config::defaults(BehaviorVersion::latest())
+                    .stalled_stream_protection(StalledStreamProtectionConfig::disabled())
+                    .http_client(self.http_client.clone())
+                    .region(Region::new(region))
+                    .timeout_config(TimeoutConfig::disabled());
+
+                // Apply endpoint configuration if specified
+                if let Some(endpoint_url) = endpoint {
+                    if !endpoint_url.is_empty() {
+                        config_builder = config_builder.endpoint_url(endpoint_url);
+                    }
+                }
+
+                // Configure authentication based on method
+                match auth_method {
+                    BedrockAuthMethod::StaticCredentials => {
+                        if let Some(creds) = credentials {
+                            let aws_creds = Credentials::new(
+                                creds.access_key_id,
+                                creds.secret_access_key,
+                                creds.session_token,
+                                None,
+                                "zed-bedrock-provider",
+                            );
+                            config_builder = config_builder.credentials_provider(aws_creds);
+                        }
+                    }
+                    BedrockAuthMethod::NamedProfile | BedrockAuthMethod::SingleSignOn => {
+                        // Currently NamedProfile and SSO behave the same way but only the instructions change
+                        // Until we support BearerAuth through SSO, this will not change.
+
+                        // Use profile from settings or environment
+                        let profile_name = settings
+                            .and_then(|s| s.profile_name)
+                            .unwrap_or_else(|| "default".to_string());
+
+                        if !profile_name.is_empty() {
+                            config_builder = config_builder.profile_name(profile_name);
+                        }
+                    }
+                    BedrockAuthMethod::Automatic => {
+                        // Use default credential provider chain
+                    }
+                }
+
+                let config = self.handler.block_on(config_builder.load());
+                Ok(BedrockClient::new(&config))
+            })
+            .map_err(|e| anyhow!("Failed to initialize Bedrock client: {}", e))?;
+
+        // safe unwrap since we know it was initialized
+        Ok(self.client.get().unwrap())
+    }
+
     fn stream_completion(
         &self,
         request: bedrock::Request,
@@ -346,92 +438,14 @@ impl BedrockModel {
     ) -> Result<
         BoxFuture<'static, BoxStream<'static, Result<BedrockStreamingResponse, BedrockError>>>,
     > {
-        // Read state to get authentication method and other settings
-        let Ok(Ok((auth_method, credentials, endpoint, region, settings))) =
-            cx.read_entity(&self.state, |state, _cx| {
-                // Get the authentication method and credentials
-                let auth_method = state
-                    .settings
-                    .as_ref()
-                    .and_then(|s| s.authentication_method.clone())
-                    .unwrap_or(BedrockAuthMethod::Automatic);
-
-                // Get endpoint if configured
-                let endpoint = state.settings.as_ref().and_then(|s| s.endpoint.clone());
-
-                // Get region - from credentials or directly from settings
-                let region = if let Some(creds) = &state.credentials {
-                    creds.region.clone()
-                } else {
-                    return Err(anyhow!("Failed to load credentials"));
-                };
-
-                Ok((
-                    auth_method,
-                    state.credentials.clone(),
-                    endpoint,
-                    region,
-                    state.settings.clone(),
-                ))
-            })
-        else {
-            return Err(anyhow!("App state dropped"));
-        };
-
+        let runtime_client = self
+            .get_or_init_client(cx)
+            .expect("Failed to initialize Bedrock Client")
+            .clone();
         let owned_handle = self.handler.clone();
-        let http_client = self.http_client.clone();
 
         // Configure AWS based on the authentication method
         Ok(async move {
-            let mut config_builder = aws_config::defaults(BehaviorVersion::latest())
-                .stalled_stream_protection(StalledStreamProtectionConfig::disabled())
-                .http_client(http_client)
-                .region(Region::new(region))
-                .timeout_config(TimeoutConfig::disabled());
-
-            // Apply endpoint configuration if specified
-            if let Some(endpoint_url) = endpoint {
-                if !endpoint_url.is_empty() {
-                    config_builder = config_builder.endpoint_url(endpoint_url);
-                }
-            }
-
-            // Configure authentication based on method
-            match auth_method {
-                BedrockAuthMethod::StaticCredentials => {
-                    if let Some(creds) = credentials {
-                        let aws_creds = Credentials::new(
-                            creds.access_key_id,
-                            creds.secret_access_key,
-                            creds.session_token,
-                            None,
-                            "zed-bedrock-provider",
-                        );
-                        config_builder = config_builder.credentials_provider(aws_creds);
-                    }
-                }
-                BedrockAuthMethod::NamedProfile | BedrockAuthMethod::SingleSignOn => {
-                    // Currently NamedProfile and SSO behave the same way but only the instructions change
-                    // Until we support BearerAuth through SSO, this will not change.
-
-                    // Use profile from settings or environment
-                    let profile_name = settings
-                        .and_then(|s| s.profile_name)
-                        .unwrap_or_else(|| "default".to_string());
-
-                    if !profile_name.is_empty() {
-                        config_builder = config_builder.profile_name(profile_name);
-                    }
-                }
-                BedrockAuthMethod::Automatic => {
-                    // Use default credential provider chain
-                }
-            }
-
-            // Load the AWS configuration
-            let config = owned_handle.block_on(config_builder.load());
-            let runtime_client = bedrock_client::Client::new(&config);
-
             // Stream completion with the configured client
             let request = bedrock::stream_completion(runtime_client, request, owned_handle);
             request.await.unwrap_or_else(|e| {
