@@ -879,7 +879,7 @@ impl Thread {
 
         pending_tool_uses
             .into_iter()
-            .chain(pending_scripting_tool_uses.into_iter())
+            .chain(pending_scripting_tool_uses)
     }
 
     pub fn insert_tool_output(
