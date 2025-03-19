@@ -4575,7 +4575,7 @@ mod tests {
             ]
         );
 
-        let repo_from_single_file_worktree = project.update(cx, |project, cx| {
+        project.update(cx, |project, cx| {
             let git_store = project.git_store().read(cx);
             // The repo that comes from the single-file worktree can't be selected through the UI.
             let filtered_entries = filtered_repository_entries(git_store, cx)
@@ -4587,18 +4587,20 @@ mod tests {
                 [Path::new(path!("/root/zed/crates/gpui")).into()]
             );
             // But we can select it artificially here.
-            git_store
-                .all_repositories()
-                .into_iter()
+            let repo_from_single_file_worktree = git_store
+                .repositories()
+                .values()
                 .find(|repo| {
-                    &*repo.read(cx).worktree_abs_path
+                    repo.read(cx).worktree_abs_path.as_ref()
                         == Path::new(path!("/root/zed/crates/util/util.rs"))
                 })
                 .unwrap()
+                .clone();
+
+            // Paths still make sense when we somehow activate a repo that comes from a single-file worktree.
+            repo_from_single_file_worktree.update(cx, |repo, cx| repo.set_as_active_repository(cx));
         });
 
-        // Paths still make sense when we somehow activate a repo that comes from a single-file worktree.
-        repo_from_single_file_worktree.update(cx, |repo, cx| repo.activate(cx));
         let handle = cx.update_window_entity(&panel, |panel, _, _| {
             std::mem::replace(&mut panel.update_visible_entries_task, Task::ready(()))
         });

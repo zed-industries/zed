@@ -159,7 +159,7 @@ struct EntryDetails {
     git_status: GitSummary,
     is_private: bool,
     worktree_id: WorktreeId,
-    canonical_path: Option<Box<Path>>,
+    canonical_path: Option<Arc<Path>>,
 }
 
 #[derive(PartialEq, Clone, Default, Debug, Deserialize, JsonSchema)]

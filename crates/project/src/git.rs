@@ -39,7 +39,6 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
-
 use text::BufferId;
 use util::{debug_panic, maybe, ResultExt};
 use worktree::{
@@ -50,12 +49,12 @@ use worktree::{
 pub struct GitStore {
     state: GitStoreState,
     buffer_store: Entity<BufferStore>,
-    repositories: Vec<Entity<Repository>>,
+    repositories: HashMap<ProjectEntryId, Entity<Repository>>,
+    active_repo_id: Option<ProjectEntryId>,
     #[allow(clippy::type_complexity)]
     loading_diffs:
         HashMap<(BufferId, DiffKind), Shared<Task<Result<Entity<BufferDiff>, Arc<anyhow::Error>>>>>,
     diffs: HashMap<BufferId, Entity<BufferDiffState>>,
-    active_index: Option<usize>,
     update_sender: mpsc::UnboundedSender<GitJob>,
     shared_diffs: HashMap<proto::PeerId, HashMap<BufferId, SharedDiffs>>,
     _subscriptions: [Subscription; 2],
@@ -161,6 +160,7 @@ struct GitJob {
 #[derive(PartialEq, Eq)]
 enum GitJobKey {
     WriteIndex(RepoPath),
+    BatchReadIndex(ProjectEntryId),
 }
 
 impl EventEmitter<GitEvent> for GitStore {}
@@ -238,8 +238,8 @@ impl GitStore {
         GitStore {
             state,
             buffer_store,
-            repositories: Vec::new(),
-            active_index: None,
+            repositories: HashMap::default(),
+            active_repo_id: None,
             update_sender,
             _subscriptions,
             loading_diffs: HashMap::default(),
@@ -315,8 +315,9 @@ impl GitStore {
     }
 
     pub fn active_repository(&self) -> Option<Entity<Repository>> {
-        self.active_index
-            .map(|index| self.repositories[index].clone())
+        self.active_repo_id
+            .as_ref()
+            .map(|id| self.repositories[&id].clone())
     }
 
     pub fn open_unstaged_diff(
@@ -551,20 +552,17 @@ impl GitStore {
         event: &WorktreeStoreEvent,
         cx: &mut Context<Self>,
     ) {
-        let mut new_repositories = Vec::new();
-        let mut new_active_index = None;
-        let this = cx.weak_entity();
-        let upstream_client = self.upstream_client();
-        let project_id = self.project_id();
+        let mut new_repositories = HashMap::default();
+        let git_store = cx.weak_entity();
 
         worktree_store.update(cx, |worktree_store, cx| {
             for worktree in worktree_store.worktrees() {
                 worktree.update(cx, |worktree, cx| {
                     let snapshot = worktree.snapshot();
-                    for repo in snapshot.repositories().iter() {
-                        let git_data = worktree
+                    for repo_entry in snapshot.repositories().iter() {
+                        let git_repo_and_merge_message = worktree
                             .as_local()
-                            .and_then(|local_worktree| local_worktree.get_local_repo(repo))
+                            .and_then(|local_worktree| local_worktree.get_local_repo(repo_entry))
                             .map(|local_repo| {
                                 (
                                     GitRepo::Local(local_repo.repo().clone()),
@@ -572,58 +570,50 @@ impl GitStore {
                                 )
                             })
                             .or_else(|| {
-                                let client = upstream_client
-                                    .clone()
-                                    .context("no upstream client")
-                                    .log_err()?;
-                                let project_id = project_id?;
-                                Some((
-                                    GitRepo::Remote {
-                                        project_id,
-                                        client,
-                                        worktree_id: worktree.id(),
-                                        work_directory_id: repo.work_directory_id(),
-                                    },
-                                    None,
-                                ))
+                                let git_repo = GitRepo::Remote {
+                                    project_id: self.project_id()?,
+                                    client: self
+                                        .upstream_client()
+                                        .context("no upstream client")
+                                        .log_err()?
+                                        .clone(),
+                                    worktree_id: worktree.id(),
+                                    work_directory_id: repo_entry.work_directory_id(),
+                                };
+                                Some((git_repo, None))
                             });
-                        let Some((git_repo, merge_message)) = git_data else {
+
+                        let Some((git_repo, merge_message)) = git_repo_and_merge_message else {
                             continue;
                         };
-                        let worktree_id = worktree.id();
-                        let existing =
-                            self.repositories
-                                .iter()
-                                .enumerate()
-                                .find(|(_, existing_handle)| {
-                                    existing_handle.read(cx).id()
-                                        == (worktree_id, repo.work_directory_id())
-                                });
-                        let handle = if let Some((index, handle)) = existing {
-                            if self.active_index == Some(index) {
-                                new_active_index = Some(new_repositories.len());
-                            }
+
+                        let existing_repo = self.repositories.values().find(|repo| {
+                            repo.read(cx).id() == (worktree.id(), repo_entry.work_directory_id())
+                        });
+
+                        let repo = if let Some(existing_repo) = existing_repo {
                             // Update the statuses and merge message but keep everything else.
-                            let existing_handle = handle.clone();
-                            existing_handle.update(cx, |existing_handle, _| {
-                                existing_handle.repository_entry = repo.clone();
+                            let existing_repo = existing_repo.clone();
+                            existing_repo.update(cx, |existing_repo, _| {
+                                existing_repo.repository_entry = repo_entry.clone();
                                 if matches!(git_repo, GitRepo::Local { .. }) {
-                                    existing_handle.merge_message = merge_message;
+                                    existing_repo.merge_message = merge_message;
                                 }
                             });
-                            existing_handle
+                            existing_repo
                         } else {
-                            let environment = self.project_environment();
                             cx.new(|_| Repository {
-                                project_environment: environment
+                                project_environment: self
+                                    .project_environment()
                                     .as_ref()
                                     .map(|env| env.downgrade()),
-                                git_store: this.clone(),
-                                worktree_id,
+                                git_store: git_store.clone(),
+                                worktree_id: worktree.id(),
                                 askpass_delegates: Default::default(),
                                 latest_askpass_id: 0,
-                                repository_entry: repo.clone(),
-                                dot_git_abs_path: worktree.dot_git_abs_path(&repo.work_directory),
+                                repository_entry: repo_entry.clone(),
+                                dot_git_abs_path: worktree
+                                    .dot_git_abs_path(&repo_entry.work_directory),
                                 worktree_abs_path: worktree.abs_path(),
                                 is_from_single_file_worktree: worktree.is_single_file(),
                                 git_repo,
@@ -632,18 +622,20 @@ impl GitStore {
                                 commit_message_buffer: None,
                             })
                         };
-                        new_repositories.push(handle);
+                        new_repositories.insert(repo_entry.work_directory_id(), repo);
                     }
                 })
             }
         });
 
-        if new_active_index == None && new_repositories.len() > 0 {
-            new_active_index = Some(0);
-        }
-
         self.repositories = new_repositories;
-        self.active_index = new_active_index;
+        if let Some(id) = self.active_repo_id.as_ref() {
+            if !self.repositories.contains_key(id) {
+                self.active_repo_id = None;
+            }
+        } else if let Some(&first_id) = self.repositories.keys().next() {
+            self.active_repo_id = Some(first_id);
+        }
 
         match event {
             WorktreeStoreEvent::WorktreeUpdatedGitRepositories(_) => {
@@ -737,7 +729,7 @@ impl GitStore {
             if let Some((repo, path)) = self.repository_and_path_for_buffer_id(buffer_id, cx) {
                 let recv = repo.update(cx, |repo, cx| {
                     log::debug!("updating index text for buffer {}", path.display());
-                    repo.set_index_text(
+                    repo.spawn_set_index_text_job(
                         path,
                         new_index_text.as_ref().map(|rope| rope.to_string()),
                         cx,
@@ -745,16 +737,13 @@ impl GitStore {
                 });
                 let diff = diff.downgrade();
                 cx.spawn(|this, mut cx| async move {
-                    if let Some(result) = cx.background_spawn(async move { recv.await.ok() }).await
-                    {
-                        if let Err(error) = result {
-                            diff.update(&mut cx, |diff, cx| {
-                                diff.clear_pending_hunks(cx);
-                            })
+                    if let Ok(Err(error)) = cx.background_spawn(recv).await {
+                        diff.update(&mut cx, |diff, cx| {
+                            diff.clear_pending_hunks(cx);
+                        })
+                        .ok();
+                        this.update(&mut cx, |_, cx| cx.emit(GitEvent::IndexWriteError(error)))
                             .ok();
-                            this.update(&mut cx, |_, cx| cx.emit(GitEvent::IndexWriteError(error)))
-                                .ok();
-                        }
                     }
                 })
                 .detach();
@@ -770,7 +759,12 @@ impl GitStore {
     ) {
         debug_assert!(worktree.read(cx).is_local());
 
-        let mut diff_state_updates = Vec::new();
+        let Some(active_repo) = self.active_repository() else {
+            log::error!("local worktree changed but we have no active repository");
+            return;
+        };
+
+        let mut diff_state_updates = HashMap::<ProjectEntryId, Vec<_>>::default();
         for (buffer_id, diff_state) in &self.diffs {
             let Some(buffer) = self.buffer_store.read(cx).get(*buffer_id) else {
                 continue;
@@ -778,13 +772,16 @@ impl GitStore {
             let Some(file) = File::from_dyn(buffer.read(cx).file()) else {
                 continue;
             };
-            if file.worktree != worktree
-                || !changed_repos
-                    .iter()
-                    .any(|(work_dir, _)| file.path.starts_with(work_dir))
-            {
+            if file.worktree != worktree {
                 continue;
             }
+            let Some(repo_id) = changed_repos
+                .iter()
+                .map(|(entry, _)| entry.id)
+                .find(|repo_id| self.repositories().contains_key(&repo_id))
+            else {
+                continue;
+            };
 
             let diff_state = diff_state.read(cx);
             let has_unstaged_diff = diff_state
@@ -795,129 +792,152 @@ impl GitStore {
                 .uncommitted_diff
                 .as_ref()
                 .is_some_and(|set| set.is_upgradable());
-            diff_state_updates.push((
+
+            let update = (
                 buffer,
                 file.path.clone(),
                 has_unstaged_diff.then(|| diff_state.index_text.clone()),
                 has_uncommitted_diff.then(|| diff_state.head_text.clone()),
-            ));
+            );
+            diff_state_updates.entry(repo_id).or_default().push(update);
         }
 
         if diff_state_updates.is_empty() {
             return;
         }
 
-        cx.spawn(move |this, mut cx| async move {
-            let snapshot =
-                worktree.update(&mut cx, |tree, _| tree.as_local().unwrap().snapshot())?;
+        for (repo_id, repo_diff_state_updates) in diff_state_updates.into_iter() {
+            let worktree = worktree.downgrade();
+            let git_store = cx.weak_entity();
 
-            let mut diff_bases_changes_by_buffer = Vec::new();
-            for (buffer, path, current_index_text, current_head_text) in diff_state_updates {
-                log::debug!("reloading git state for buffer {}", path.display());
-                let Some(local_repo) = snapshot.local_repo_for_path(&path) else {
-                    continue;
-                };
-                let Some(relative_path) = local_repo.relativize(&path).ok() else {
-                    continue;
-                };
-                let index_text = if current_index_text.is_some() {
-                    local_repo
-                        .repo()
-                        .load_index_text(relative_path.clone(), cx.clone())
-                        .await
-                } else {
-                    None
-                };
-                let head_text = if current_head_text.is_some() {
-                    local_repo
-                        .repo()
-                        .load_committed_text(relative_path, cx.clone())
-                        .await
-                } else {
-                    None
-                };
+            let _ = active_repo.read(cx).send_keyed_job(
+                Some(GitJobKey::BatchReadIndex(repo_id)),
+                |_, mut cx| async move {
+                    let snapshot = worktree.update(&mut cx, |tree, _| {
+                        tree.as_local().map(|local_tree| local_tree.snapshot())
+                    });
+                    let Ok(Some(snapshot)) = snapshot else {
+                        return;
+                    };
 
-                // Avoid triggering a diff update if the base text has not changed.
-                if let Some((current_index, current_head)) =
-                    current_index_text.as_ref().zip(current_head_text.as_ref())
-                {
-                    if current_index.as_deref() == index_text.as_ref()
-                        && current_head.as_deref() == head_text.as_ref()
+                    let mut diff_bases_changes_by_buffer = Vec::new();
+                    for (buffer, path, current_index_text, current_head_text) in
+                        &repo_diff_state_updates
                     {
-                        continue;
-                    }
-                }
+                        let Some(local_repo) = snapshot.local_repo_for_path(&path) else {
+                            continue;
+                        };
+                        let Some(relative_path) = local_repo.relativize(&path).ok() else {
+                            continue;
+                        };
 
-                let diff_bases_change =
-                    match (current_index_text.is_some(), current_head_text.is_some()) {
-                        (true, true) => Some(if index_text == head_text {
-                            DiffBasesChange::SetBoth(head_text)
+                        log::debug!("reloading git state for buffer {}", path.display());
+                        let index_text = if current_index_text.is_some() {
+                            local_repo
+                                .repo()
+                                .load_index_text(relative_path.clone(), cx.clone())
+                                .await
                         } else {
-                            DiffBasesChange::SetEach {
-                                index: index_text,
-                                head: head_text,
-                            }
-                        }),
-                        (true, false) => Some(DiffBasesChange::SetIndex(index_text)),
-                        (false, true) => Some(DiffBasesChange::SetHead(head_text)),
-                        (false, false) => None,
-                    };
+                            None
+                        };
+                        let head_text = if current_head_text.is_some() {
+                            local_repo
+                                .repo()
+                                .load_committed_text(relative_path, cx.clone())
+                                .await
+                        } else {
+                            None
+                        };
 
-                diff_bases_changes_by_buffer.push((buffer, diff_bases_change))
-            }
-
-            this.update(&mut cx, |this, cx| {
-                for (buffer, diff_bases_change) in diff_bases_changes_by_buffer {
-                    let Some(diff_state) = this.diffs.get(&buffer.read(cx).remote_id()) else {
-                        continue;
-                    };
-                    let Some(diff_bases_change) = diff_bases_change else {
-                        continue;
-                    };
-
-                    let downstream_client = this.downstream_client();
-                    diff_state.update(cx, |diff_state, cx| {
-                        use proto::update_diff_bases::Mode;
-
-                        let buffer = buffer.read(cx);
-                        if let Some((client, project_id)) = downstream_client {
-                            let (staged_text, committed_text, mode) = match diff_bases_change
-                                .clone()
+                        // Avoid triggering a diff update if the base text has not changed.
+                        if let Some((current_index, current_head)) =
+                            current_index_text.as_ref().zip(current_head_text.as_ref())
+                        {
+                            if current_index.as_deref() == index_text.as_ref()
+                                && current_head.as_deref() == head_text.as_ref()
                             {
-                                DiffBasesChange::SetIndex(index) => (index, None, Mode::IndexOnly),
-                                DiffBasesChange::SetHead(head) => (None, head, Mode::HeadOnly),
-                                DiffBasesChange::SetEach { index, head } => {
-                                    (index, head, Mode::IndexAndHead)
-                                }
-                                DiffBasesChange::SetBoth(text) => {
-                                    (None, text, Mode::IndexMatchesHead)
-                                }
-                            };
-                            let message = proto::UpdateDiffBases {
-                                project_id: project_id.to_proto(),
-                                buffer_id: buffer.remote_id().to_proto(),
-                                staged_text,
-                                committed_text,
-                                mode: mode as i32,
-                            };
-
-                            client.send(message).log_err();
+                                continue;
+                            }
                         }
 
-                        let _ = diff_state.diff_bases_changed(
-                            buffer.text_snapshot(),
-                            diff_bases_change,
-                            cx,
-                        );
-                    });
-                }
-            })
-        })
-        .detach_and_log_err(cx);
+                        let diff_bases_change =
+                            match (current_index_text.is_some(), current_head_text.is_some()) {
+                                (true, true) => Some(if index_text == head_text {
+                                    DiffBasesChange::SetBoth(head_text)
+                                } else {
+                                    DiffBasesChange::SetEach {
+                                        index: index_text,
+                                        head: head_text,
+                                    }
+                                }),
+                                (true, false) => Some(DiffBasesChange::SetIndex(index_text)),
+                                (false, true) => Some(DiffBasesChange::SetHead(head_text)),
+                                (false, false) => None,
+                            };
+
+                        diff_bases_changes_by_buffer.push((buffer, diff_bases_change))
+                    }
+
+                    git_store
+                        .update(&mut cx, |git_store, cx| {
+                            for (buffer, diff_bases_change) in diff_bases_changes_by_buffer {
+                                let Some(diff_state) =
+                                    git_store.diffs.get(&buffer.read(cx).remote_id())
+                                else {
+                                    continue;
+                                };
+                                let Some(diff_bases_change) = diff_bases_change else {
+                                    continue;
+                                };
+
+                                let downstream_client = git_store.downstream_client();
+                                diff_state.update(cx, |diff_state, cx| {
+                                    use proto::update_diff_bases::Mode;
+
+                                    let buffer = buffer.read(cx);
+                                    if let Some((client, project_id)) = downstream_client {
+                                        let (staged_text, committed_text, mode) =
+                                            match diff_bases_change.clone() {
+                                                DiffBasesChange::SetIndex(index) => {
+                                                    (index, None, Mode::IndexOnly)
+                                                }
+                                                DiffBasesChange::SetHead(head) => {
+                                                    (None, head, Mode::HeadOnly)
+                                                }
+                                                DiffBasesChange::SetEach { index, head } => {
+                                                    (index, head, Mode::IndexAndHead)
+                                                }
+                                                DiffBasesChange::SetBoth(text) => {
+                                                    (None, text, Mode::IndexMatchesHead)
+                                                }
+                                            };
+                                        let message = proto::UpdateDiffBases {
+                                            project_id: project_id.to_proto(),
+                                            buffer_id: buffer.remote_id().to_proto(),
+                                            staged_text,
+                                            committed_text,
+                                            mode: mode as i32,
+                                        };
+
+                                        client.send(message).log_err();
+                                    }
+
+                                    let _ = diff_state.diff_bases_changed(
+                                        buffer.text_snapshot(),
+                                        diff_bases_change,
+                                        cx,
+                                    );
+                                });
+                            }
+                        })
+                        .ok();
+                },
+            );
+        }
     }
 
-    pub fn all_repositories(&self) -> Vec<Entity<Repository>> {
-        self.repositories.clone()
+    pub fn repositories(&self) -> &HashMap<ProjectEntryId, Entity<Repository>> {
+        &self.repositories
     }
 
     pub fn status_for_buffer_id(&self, buffer_id: BufferId, cx: &App) -> Option<FileStatus> {
@@ -934,7 +954,7 @@ impl GitStore {
         let buffer = self.buffer_store.read(cx).get(buffer_id)?;
         let path = buffer.read(cx).project_path(cx)?;
         let mut result: Option<(Entity<Repository>, RepoPath)> = None;
-        for repo_handle in &self.repositories {
+        for repo_handle in self.repositories.values() {
             let repo = repo_handle.read(cx);
             if repo.worktree_id == path.worktree_id {
                 if let Ok(relative_path) = repo.repository_entry.relativize(&path.path) {
@@ -1206,7 +1226,7 @@ impl GitStore {
 
         repository_handle
             .update(&mut cx, |repository_handle, cx| {
-                repository_handle.set_index_text(
+                repository_handle.spawn_set_index_text_job(
                     RepoPath::from_str(&envelope.payload.path),
                     envelope.payload.text,
                     cx,
@@ -1617,7 +1637,7 @@ impl GitStore {
     ) -> Result<Entity<Repository>> {
         this.update(cx, |this, cx| {
             this.repositories
-                .iter()
+                .values()
                 .find(|repository_handle| {
                     repository_handle.read(cx).worktree_id == worktree_id
                         && repository_handle
@@ -2037,20 +2057,20 @@ impl Repository {
         .into()
     }
 
-    pub fn activate(&self, cx: &mut Context<Self>) {
+    pub fn set_as_active_repository(&self, cx: &mut Context<Self>) {
         let Some(git_store) = self.git_store.upgrade() else {
             return;
         };
         let entity = cx.entity();
         git_store.update(cx, |git_store, cx| {
-            let Some(index) = git_store
+            let Some((&id, _)) = git_store
                 .repositories
                 .iter()
-                .position(|handle| *handle == entity)
+                .find(|(_, handle)| *handle == &entity)
             else {
                 return;
             };
-            git_store.active_index = Some(index);
+            git_store.active_repo_id = Some(id);
             cx.emit(GitEvent::ActiveRepositoryChanged);
         });
     }
@@ -2685,7 +2705,7 @@ impl Repository {
         })
     }
 
-    fn set_index_text(
+    fn spawn_set_index_text_job(
         &self,
         path: RepoPath,
         content: Option<String>,
@@ -2695,7 +2715,7 @@ impl Repository {
 
         self.send_keyed_job(
             Some(GitJobKey::WriteIndex(path.clone())),
-            |git_repo, cx| async move {
+            |git_repo, cx| async {
                 match git_repo {
                     GitRepo::Local(repo) => repo.set_index_text(path, content, env.await, cx).await,
                     GitRepo::Remote {
