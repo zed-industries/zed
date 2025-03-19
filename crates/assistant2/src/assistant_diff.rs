@@ -143,7 +143,6 @@ impl AssistantDiff {
                 )
                 .map(|diff_hunk| diff_hunk.buffer_range.to_point(&snapshot))
                 .collect::<Vec<_>>();
-            dbg!(&diff_hunk_ranges);
 
             let was_empty = self.multibuffer.update(cx, |multibuffer, cx| {
                 let was_empty = multibuffer.is_empty();
