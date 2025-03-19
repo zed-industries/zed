@@ -18,13 +18,15 @@ The user has opened a project that contains the following root directories/files
 {{/each}}
 {{#if has_rules}}
 
-The project has file(s) providing rules you must follow when editing files:
+There are rules that apply to these root directories:
 {{#each worktrees}}
+{{#if rules_file}}
 
-Rules for root directory `{{root_name}}`:
+`{{root_name}}/{{rules_file.rel_path}}`:
 
 ``````
-{{{rules}}}
+{{{rules_file.text}}}
 ``````
+{{/if}}
 {{/each}}
 {{/if}}

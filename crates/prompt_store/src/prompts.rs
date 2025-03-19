@@ -24,7 +24,9 @@ pub struct AssistantSystemPromptContext {
 
 impl AssistantSystemPromptContext {
     pub fn new(worktrees: Vec<WorktreeInfoForSystemPrompt>) -> Self {
-        let has_rules = worktrees.iter().any(|worktree| worktree.rules.is_some());
+        let has_rules = worktrees
+            .iter()
+            .any(|worktree| worktree.rules_file.is_some());
         Self {
             worktrees,
             has_rules,
@@ -36,7 +38,13 @@ impl AssistantSystemPromptContext {
 pub struct WorktreeInfoForSystemPrompt {
     pub root_name: String,
     pub abs_path: Arc<Path>,
-    pub rules: Option<String>,
+    pub rules_file: Option<RulesFile>,
+}
+
+#[derive(Serialize)]
+pub struct RulesFile {
+    pub rel_path: Arc<Path>,
+    pub text: String,
 }
 
 #[derive(Serialize)]

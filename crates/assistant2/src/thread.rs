@@ -18,7 +18,7 @@ use language_model::{
     Role, StopReason, TokenUsage,
 };
 use project::{Project, Worktree};
-use prompt_store::{PromptBuilder, WorktreeInfoForSystemPrompt};
+use prompt_store::{PromptBuilder, RulesFile, WorktreeInfoForSystemPrompt};
 use scripting_tool::{ScriptingSession, ScriptingTool};
 use serde::{Deserialize, Serialize};
 use util::{post_inc, TryFutureExt as _};
@@ -472,34 +472,37 @@ impl Thread {
 
         // Note that Cline supports `.clinerules` being a directory, but that is not currently
         // supported. This doesn't seem to occur often in GitHub repositories.
-        const RULES_PATHS: [&'static str; 4] =
+        const RULES_FILE_NAMES: [&'static str; 4] =
             [".cursorrules", ".windsurfrules", ".clinerules", "claude.md"];
-        if let Some(rules_path) = RULES_PATHS
+        if let Some((rel_rules_path, abs_rules_path)) = RULES_FILE_NAMES
             .into_iter()
-            .filter_map(|rules_path| {
+            .filter_map(|name| {
                 worktree
-                    .entry_for_path(rules_path)
+                    .entry_for_path(name)
                     .filter(|entry| entry.is_file())
-                    .map(|entry| worktree.absolutize(&entry.path))
+                    .map(|entry| (entry.path.clone(), worktree.absolutize(&entry.path)))
             })
             .next()
         {
             cx.spawn(|_| async move {
-                let rules_path = rules_path?;
-                let rules = fs.load(&rules_path).await.with_context(|| {
-                    format!("failed to load assistant rules file {:?}", rules_path)
+                let abs_rules_path = abs_rules_path?;
+                let text = fs.load(&abs_rules_path).await.with_context(|| {
+                    format!("failed to load assistant rules file {:?}", abs_rules_path)
                 })?;
                 Ok(WorktreeInfoForSystemPrompt {
                     root_name,
                     abs_path,
-                    rules: Some(rules),
+                    rules_file: Some(RulesFile {
+                        rel_path: rel_rules_path,
+                        text,
+                    }),
                 })
             })
         } else {
             Task::ready(Ok(WorktreeInfoForSystemPrompt {
                 root_name,
                 abs_path,
-                rules: None,
+                rules_file: None,
             }))
         }
     }
