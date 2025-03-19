@@ -2,7 +2,9 @@ use language::{BufferSnapshot, Diff, Point, ToOffset};
 use project::search::SearchQuery;
 use util::{paths::PathMatcher, ResultExt as _};
 
-/// Replace an exact match or return None
+/// Performs an exact string replacement in a buffer, requiring precise character-for-character matching.
+/// Uses the search functionality to locate the first occurrence of the exact string.
+/// Returns None if no exact match is found in the buffer.
 pub async fn replace_exact(old: &str, new: &str, snapshot: &BufferSnapshot) -> Option<Diff> {
     let query = SearchQuery::text(
         old,
@@ -42,9 +44,10 @@ pub async fn replace_exact(old: &str, new: &str, snapshot: &BufferSnapshot) -> O
     Some(diff)
 }
 
-/// Replace even if the old/new is missing some leading whitespace, but matches otherwise
-/// The indentation in the `new` string is extended to match the replaced location
-pub fn replace_with_missing_indent(old: &str, new: &str, buffer: &BufferSnapshot) -> Option<Diff> {
+/// Performs a replacement that's indentation-aware - matches text content ignoring leading whitespace differences.
+/// When replacing, preserves the indentation level found in the buffer at each matching line.
+/// Returns None if no match found or if indentation is offset inconsistently across matched lines.
+pub fn replace_with_flexible_indent(old: &str, new: &str, buffer: &BufferSnapshot) -> Option<Diff> {
     let (old_lines, old_min_indent) = lines_with_min_indent(old);
     let (new_lines, new_min_indent) = lines_with_min_indent(new);
     let min_indent = old_min_indent.min(new_min_indent);
@@ -184,7 +187,7 @@ mod tests {
         .unindent();
 
         assert_eq!(
-            test_replace_with_missing_indent(cx, &whole, &old, &new),
+            test_replace_with_flexible_indent(cx, &whole, &old, &new),
             Some(expected.to_string())
         );
     }
@@ -213,7 +216,7 @@ mod tests {
         .unindent();
 
         assert_eq!(
-            test_replace_with_missing_indent(cx, &whole, &old, &new),
+            test_replace_with_flexible_indent(cx, &whole, &old, &new),
             None
         );
     }
@@ -254,7 +257,7 @@ mod tests {
         .unindent();
 
         assert_eq!(
-            test_replace_with_missing_indent(cx, &whole, &old, &new),
+            test_replace_with_flexible_indent(cx, &whole, &old, &new),
             Some(expected.to_string())
         );
     }
@@ -280,7 +283,7 @@ mod tests {
         .unindent();
 
         assert_eq!(
-            test_replace_with_missing_indent(cx, &whole, &old, &new),
+            test_replace_with_flexible_indent(cx, &whole, &old, &new),
             None
         );
     }
@@ -307,7 +310,7 @@ mod tests {
 
         // Should return None because whole doesn't fully contain the old text
         assert_eq!(
-            test_replace_with_missing_indent(cx, &whole, &old, &new),
+            test_replace_with_flexible_indent(cx, &whole, &old, &new),
             None
         );
     }
@@ -380,7 +383,7 @@ mod tests {
         .unindent();
 
         assert_eq!(
-            test_replace_with_missing_indent(cx, &whole, &old, &new),
+            test_replace_with_flexible_indent(cx, &whole, &old, &new),
             Some(expected.to_string())
         );
     }
@@ -464,7 +467,7 @@ mod tests {
         "#
         .unindent();
         assert_eq!(
-            test_replace_with_missing_indent(cx, &whole, &old, &new),
+            test_replace_with_flexible_indent(cx, &whole, &old, &new),
             Some(expected.to_string())
         );
     }
@@ -499,7 +502,7 @@ mod tests {
         );
     }
 
-    fn test_replace_with_missing_indent(
+    fn test_replace_with_flexible_indent(
         cx: &mut TestAppContext,
         whole: &str,
         old: &str,
@@ -512,7 +515,7 @@ mod tests {
         let buffer_snapshot = buffer.read_with(cx, |buffer, _cx| buffer.snapshot());
 
         // Call replace_flexible and transform the result
-        replace_with_missing_indent(old, new, &buffer_snapshot).map(|diff| {
+        replace_with_flexible_indent(old, new, &buffer_snapshot).map(|diff| {
             buffer.update(cx, |buffer, cx| {
                 let _ = buffer.apply_diff(diff, cx);
                 buffer.text()

@@ -13,7 +13,7 @@ use language_model::{
 };
 use log::{EditToolLog, EditToolRequestId};
 use project::Project;
-use replace::{replace_exact, replace_with_missing_indent};
+use replace::{replace_exact, replace_with_flexible_indent};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::fmt::Write;
@@ -297,7 +297,7 @@ impl EditToolRequest {
             replace_exact(&old, &new, &snapshot)
             .await
             // If that fails, try being flexible about indentation
-            .or_else(|| replace_with_missing_indent(&old, &new, &snapshot));
+            .or_else(|| replace_with_flexible_indent(&old, &new, &snapshot));
 
         let Some(diff) = result else {
             return anyhow::Ok(DiffResult::BadSearch(BadSearch {
