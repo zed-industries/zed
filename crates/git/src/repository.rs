@@ -1077,7 +1077,7 @@ impl GitRepository for RealGitRepository {
             smol::fs::remove_file(index_file_path).await.ok();
             delete_temp_index.abort();
 
-            Ok(commit_sha.parse()?)
+            commit_sha.parse()
         })
         .boxed()
     }
