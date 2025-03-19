@@ -890,15 +890,24 @@ impl EditorElement {
         let modifiers = event.modifiers;
         let gutter_hovered = gutter_hitbox.is_hovered(window);
         editor.set_gutter_hovered(gutter_hovered, cx);
+        editor.gutter_breakpoint_indicator = None;
 
         if gutter_hovered {
-            editor.gutter_breakpoint_indicator = Some(
-                position_map
-                    .point_for_position(event.position)
-                    .previous_valid,
-            );
-        } else {
-            editor.gutter_breakpoint_indicator = None;
+            let new_point = position_map
+                .point_for_position(event.position)
+                .previous_valid;
+            let buffer_anchor = position_map
+                .snapshot
+                .display_point_to_anchor(new_point, Bias::Left);
+
+            if position_map
+                .snapshot
+                .buffer_snapshot
+                .buffer_for_excerpt(buffer_anchor.excerpt_id)
+                .is_some_and(|buffer| buffer.file().is_some())
+            {
+                editor.gutter_breakpoint_indicator = Some(new_point);
+            }
         }
 
         cx.notify();
