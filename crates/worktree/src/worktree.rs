@@ -2596,6 +2596,8 @@ impl Snapshot {
             is_last_update: self.completed_scan_id == self.scan_id,
             updated_repositories,
             removed_repositories: Vec::new(),
+            // FIXME
+            updated_repository_work_directory_entries: Vec::new(),
         }
     }
 
@@ -3095,6 +3097,8 @@ impl LocalSnapshot {
             is_last_update: self.completed_scan_id == self.scan_id,
             updated_repositories,
             removed_repositories,
+            // FIXME
+            updated_repository_work_directory_entries: Vec::new(),
         }
     }
 

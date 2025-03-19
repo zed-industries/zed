@@ -859,6 +859,8 @@ pub fn split_worktree_update(mut message: UpdateWorktree) -> impl Iterator<Item 
             is_last_update: done && message.is_last_update,
             updated_repositories,
             removed_repositories,
+            // FIXME
+            updated_repository_work_directory_entries: Vec::new(),
         })
     })
 }

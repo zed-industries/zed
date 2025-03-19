@@ -355,9 +355,10 @@ message Envelope {
         RefreshCodeLens refresh_code_lens = 325;
 
         ToggleBreakpoint toggle_breakpoint = 326;
-        BreakpointsForFile breakpoints_for_file = 327; // current max
+        BreakpointsForFile breakpoints_for_file = 327;
 
-
+        UpdateRepository update_repository = 328;
+        RemoveRepository remove_repository = 329; // current max
     }
 
     reserved 87 to 88;
@@ -637,11 +638,12 @@ message UpdateWorktree {
     string root_name = 3;
     repeated Entry updated_entries = 4;
     repeated uint64 removed_entries = 5;
-    repeated RepositoryEntry updated_repositories = 6;
+    repeated RepositoryEntry updated_repositories = 6; // deprecated
     repeated uint64 removed_repositories = 7;
     uint64 scan_id = 8;
     bool is_last_update = 9;
     string abs_path = 10;
+    repeated uint64 updated_repository_work_directory_entries = 11;
 }
 
 message UpdateWorktreeSettings {
@@ -1907,6 +1909,22 @@ message RepositoryEntry {
     repeated string current_merge_conflicts = 5;
 }
 
+message UpdateRepository {
+    uint64 project_id = 1;
+    uint64 id = 2;
+    string abs_path = 3;
+    repeated uint64 entry_ids = 4;
+    optional Branch branch_summary = 5;
+    repeated StatusEntry updated_statuses = 6;
+    repeated string removed_statuses = 7;
+    repeated string current_merge_conflicts = 8;
+    uint64 scan_id = 9;
+}
+
+message RemoveRepository {
+    uint64 project_id = 1;
+    uint64 id = 2;
+}
 
 message StatusEntry {
     string repo_path = 1;

@@ -106,28 +106,24 @@ CREATE INDEX "index_worktree_entries_on_project_id" ON "worktree_entries" ("proj
 
 CREATE INDEX "index_worktree_entries_on_project_id_and_worktree_id" ON "worktree_entries" ("project_id", "worktree_id");
 
-CREATE TABLE "worktree_repositories" (
+CREATE TABLE "project_repositories" (
     "project_id" INTEGER NOT NULL,
-    "worktree_id" INTEGER NOT NULL,
-    "work_directory_id" INTEGER NOT NULL,
+    "abs_path" VARCHAR,
+    "id" INTEGER NOT NULL,
+    "entry_ids" VARCHAR,
     "branch" VARCHAR,
     "scan_id" INTEGER NOT NULL,
     "is_deleted" BOOL NOT NULL,
     "current_merge_conflicts" VARCHAR,
     "branch_summary" VARCHAR,
-    PRIMARY KEY (project_id, worktree_id, work_directory_id),
-    FOREIGN KEY (project_id, worktree_id) REFERENCES worktrees (project_id, id) ON DELETE CASCADE,
-    FOREIGN KEY (project_id, worktree_id, work_directory_id) REFERENCES worktree_entries (project_id, worktree_id, id) ON DELETE CASCADE
+    PRIMARY KEY (project_id, id),
 );
 
-CREATE INDEX "index_worktree_repositories_on_project_id" ON "worktree_repositories" ("project_id");
+CREATE INDEX "index_project_repositories_on_project_id" ON "project_repositories" ("project_id");
 
-CREATE INDEX "index_worktree_repositories_on_project_id_and_worktree_id" ON "worktree_repositories" ("project_id", "worktree_id");
-
-CREATE TABLE "worktree_repository_statuses" (
+CREATE TABLE "project_repository_statuses" (
     "project_id" INTEGER NOT NULL,
-    "worktree_id" INT8 NOT NULL,
-    "work_directory_id" INT8 NOT NULL,
+    "id" INTEGER NOT NULL,
     "repo_path" VARCHAR NOT NULL,
     "status" INT8 NOT NULL,
     "status_kind" INT4 NOT NULL,
@@ -135,21 +131,12 @@ CREATE TABLE "worktree_repository_statuses" (
     "second_status" INT4 NULL,
     "scan_id" INT8 NOT NULL,
     "is_deleted" BOOL NOT NULL,
-    PRIMARY KEY (
-        project_id,
-        worktree_id,
-        work_directory_id,
-        repo_path
-    ),
-    FOREIGN KEY (project_id, worktree_id) REFERENCES worktrees (project_id, id) ON DELETE CASCADE,
-    FOREIGN KEY (project_id, worktree_id, work_directory_id) REFERENCES worktree_entries (project_id, worktree_id, id) ON DELETE CASCADE
+    PRIMARY KEY (project_id, id, repo_path),
 );
 
-CREATE INDEX "index_wt_repos_statuses_on_project_id" ON "worktree_repository_statuses" ("project_id");
+CREATE INDEX "index_project_repos_statuses_on_project_id" ON "worktree_repository_statuses" ("project_id");
 
-CREATE INDEX "index_wt_repos_statuses_on_project_id_and_wt_id" ON "worktree_repository_statuses" ("project_id", "worktree_id");
-
-CREATE INDEX "index_wt_repos_statuses_on_project_id_and_wt_id_and_wd_id" ON "worktree_repository_statuses" ("project_id", "worktree_id", "work_directory_id");
+CREATE INDEX "index_project_repos_statuses_on_project_id_and_repo_id" ON "worktree_repository_statuses" ("project_id", "id");
 
 CREATE TABLE "worktree_settings_files" (
     "project_id" INTEGER NOT NULL,

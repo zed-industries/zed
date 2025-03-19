@@ -1462,6 +1462,8 @@ fn notify_rejoined_projects(
                 is_last_update: worktree.completed_scan_id == worktree.scan_id,
                 updated_repositories: worktree.updated_repositories,
                 removed_repositories: worktree.removed_repositories,
+                // FIXME
+                updated_repository_work_directory_entries: Vec::new(),
             };
             for update in proto::split_worktree_update(message) {
                 session.peer.send(session.connection_id, update.clone())?;
@@ -1895,6 +1897,8 @@ fn join_project_internal(
             is_last_update: worktree.scan_id == worktree.completed_scan_id,
             updated_repositories: worktree.repository_entries.into_values().collect(),
             removed_repositories: Default::default(),
+            // FIXME
+            updated_repository_work_directory_entries: Vec::new(),
         };
         for update in proto::split_worktree_update(message) {
             session.peer.send(session.connection_id, update.clone())?;
