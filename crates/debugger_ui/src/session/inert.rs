@@ -7,13 +7,30 @@ use settings::Settings as _;
 use task::TCPHost;
 use theme::ThemeSettings;
 use ui::{
-    h_flex, relative, v_flex, ActiveTheme as _, Button, ButtonCommon, ButtonStyle, Clickable,
-    Context, ContextMenu, Disableable, DropdownMenu, InteractiveElement, IntoElement,
-    ParentElement, Render, SharedString, Styled, Window,
+    h_flex, relative, v_flex, ActiveTheme as _, ButtonLike, Clickable, Context, ContextMenu,
+    Disableable, Disclosure, DropdownMenu, FluentBuilder, InteractiveElement, IntoElement, Label,
+    LabelCommon, LabelSize, ParentElement, PopoverMenu, PopoverMenuHandle, Render, SharedString,
+    SplitButton, Styled, Window,
 };
 use workspace::Workspace;
 
 use crate::attach_modal::AttachModal;
+
+#[derive(Clone, Copy, Default, Debug, PartialEq, Eq)]
+enum SpawnMode {
+    #[default]
+    Launch,
+    Attach,
+}
+
+impl SpawnMode {
+    fn label(&self) -> &'static str {
+        match self {
+            SpawnMode::Launch => "Launch",
+            SpawnMode::Attach => "Attach",
+        }
+    }
+}
 
 pub(crate) struct InertState {
     focus_handle: FocusHandle,
@@ -21,6 +38,8 @@ pub(crate) struct InertState {
     program_editor: Entity<Editor>,
     cwd_editor: Entity<Editor>,
     workspace: WeakEntity<Workspace>,
+    spawn_mode: SpawnMode,
+    popover_handle: PopoverMenuHandle<ContextMenu>,
 }
 
 impl InertState {
@@ -47,6 +66,8 @@ impl InertState {
             program_editor,
             selected_debugger: None,
             focus_handle: cx.focus_handle(),
+            spawn_mode: SpawnMode::default(),
+            popover_handle: Default::default(),
         }
     }
 }
@@ -72,19 +93,46 @@ impl Render for InertState {
     ) -> impl ui::IntoElement {
         let weak = cx.weak_entity();
         let disable_buttons = self.selected_debugger.is_none();
+        let spawn_button = ButtonLike::new_rounded_left("spawn-debug-session")
+            .child(Label::new(self.spawn_mode.label()).size(LabelSize::Small))
+            .on_click(cx.listener(|this, _, window, cx| {
+                if this.spawn_mode == SpawnMode::Launch {
+                    let program = this.program_editor.read(cx).text(cx);
+                    let cwd = PathBuf::from(this.cwd_editor.read(cx).text(cx));
+                    let kind =
+                        kind_for_label(this.selected_debugger.as_deref().unwrap_or_else(|| {
+                            unimplemented!(
+                                "Automatic selection of a debugger based on users project"
+                            )
+                        }));
+                    cx.emit(InertEvent::Spawned {
+                        config: DebugAdapterConfig {
+                            label: "hard coded".into(),
+                            kind,
+                            request: DebugRequestType::Launch,
+                            program: Some(program),
+                            cwd: Some(cwd),
+                            initialize_args: None,
+                            supports_attach: false,
+                        },
+                    });
+                } else {
+                    this.attach(window, cx)
+                }
+            }))
+            .disabled(disable_buttons);
         v_flex()
             .track_focus(&self.focus_handle)
             .size_full()
             .gap_1()
             .p_2()
-
             .child(
-                v_flex().gap_1()
+                v_flex()
+                    .gap_1()
                     .child(
                         h_flex()
                             .w_full()
                             .gap_2()
-
                             .child(Self::render_editor(&self.program_editor, cx))
                             .child(
                                 h_flex().child(DropdownMenu::new(
@@ -109,45 +157,63 @@ impl Render for InertState {
                                             .entry("Delve", None, setter_for_name("Delve"))
                                             .entry("LLDB", None, setter_for_name("LLDB"))
                                             .entry("PHP", None, setter_for_name("PHP"))
-                                            .entry("JavaScript", None, setter_for_name("JavaScript"))
+                                            .entry(
+                                                "JavaScript",
+                                                None,
+                                                setter_for_name("JavaScript"),
+                                            )
                                             .entry("Debugpy", None, setter_for_name("Debugpy"))
                                     }),
                                 )),
-                            )
+                            ),
                     )
                     .child(
-                        h_flex().gap_2().child(
-                            Self::render_editor(&self.cwd_editor, cx),
-                        ).child(h_flex()
-                            .gap_4()
-                            .pl_2()
-                            .child(
-                                Button::new("launch-dap", "Launch")
-                                    .style(ButtonStyle::Filled)
-                                    .disabled(disable_buttons)
-                                    .on_click(cx.listener(|this, _, _, cx| {
-                                        let program = this.program_editor.read(cx).text(cx);
-                                        let cwd = PathBuf::from(this.cwd_editor.read(cx).text(cx));
-                                        let kind = kind_for_label(this.selected_debugger.as_deref().unwrap_or_else(|| unimplemented!("Automatic selection of a debugger based on users project")));
-                                        cx.emit(InertEvent::Spawned {
-                                            config: DebugAdapterConfig {
-                                                label: "hard coded".into(),
-                                                kind,
-                                                request: DebugRequestType::Launch,
-                                                program: Some(program),
-                                                cwd: Some(cwd),
-                                                initialize_args: None,
-                                                supports_attach: false,
-                                            },
-                                        });
-                                    })),
-                            )
-                            .child(Button::new("attach-dap", "Attach")
-                                .style(ButtonStyle::Filled)
-                                .disabled(disable_buttons)
-                                .on_click(cx.listener(|this, _, window, cx| this.attach(window, cx)))
-                            ))
-                    )
+                        h_flex()
+                            .gap_2()
+                            .child(Self::render_editor(&self.cwd_editor, cx))
+                            .map(|this| {
+                                let entity = cx.weak_entity();
+                                this.child(SplitButton {
+                                    left: spawn_button,
+                                    right: PopoverMenu::new("debugger-select-spawn-mode")
+                                        .trigger(Disclosure::new(
+                                            "debugger-spawn-button-disclosure",
+                                            self.popover_handle.is_deployed(),
+                                        ))
+                                        .menu(move |window, cx| {
+                                            Some(ContextMenu::build(window, cx, {
+                                                let entity = entity.clone();
+                                                move |this, _, _| {
+                                                    this.entry("Launch", None, {
+                                                        let entity = entity.clone();
+                                                        move |_, cx| {
+                                                            let _ =
+                                                                entity.update(cx, |this, cx| {
+                                                                    this.spawn_mode =
+                                                                        SpawnMode::Launch;
+                                                                    cx.notify();
+                                                                });
+                                                        }
+                                                    })
+                                                    .entry("Attach", None, {
+                                                        let entity = entity.clone();
+                                                        move |_, cx| {
+                                                            let _ =
+                                                                entity.update(cx, |this, cx| {
+                                                                    this.spawn_mode =
+                                                                        SpawnMode::Attach;
+                                                                    cx.notify();
+                                                                });
+                                                        }
+                                                    })
+                                                }
+                                            }))
+                                        })
+                                        .with_handle(self.popover_handle.clone())
+                                        .into_any_element(),
+                                })
+                            }),
+                    ),
             )
     }
 }

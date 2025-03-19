@@ -5680,7 +5680,6 @@ dependencies = [
  "serde_derive",
  "serde_json",
  "settings",
- "smallvec",
  "strum",
  "telemetry",
  "theme",
