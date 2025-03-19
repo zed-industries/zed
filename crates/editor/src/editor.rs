@@ -13063,9 +13063,6 @@ impl Editor {
 
             let mut primary_range = None;
             let mut primary_message = None;
-            dbg!(buffer
-                .diagnostic_group(buffer_id, group_id)
-                .collect::<Vec<_>>());
 
             let diagnostic_group = buffer
                 .diagnostic_group(buffer_id, group_id)

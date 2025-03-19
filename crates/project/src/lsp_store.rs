@@ -7929,7 +7929,6 @@ impl LspStore {
         disk_based_sources: &[String],
         cx: &mut Context<Self>,
     ) -> Result<()> {
-        dbg!(&params);
         if !self.mode.is_local() {
             anyhow::bail!("called update_diagnostics on remote");
         }
