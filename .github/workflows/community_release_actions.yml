@@ -61,7 +61,9 @@ jobs:
           curl -X POST "https://zed.dev/api/send_release_notes_email" \
               -H "Authorization: Bearer ${{ secrets.RELEASE_NOTES_API_TOKEN }}" \
               -H "Content-Type: application/json" \
-              -d '{
-                  "version": "${{ github.event.release.tag_name }}",
-                  "markdown_body": ${{ toJSON(github.event.release.body) }}
-              }'
+              -d @- <<-JSON
+                  {
+                      "version": "${{ github.event.release.tag_name }}",
+                      "markdown_body": ${{ toJSON(github.event.release.body) }}
+                  }
+              JSON
