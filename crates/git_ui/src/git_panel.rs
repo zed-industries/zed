@@ -1443,8 +1443,9 @@ impl GitPanel {
 
         let task = if self.has_staged_changes() {
             // Repository serializes all git operations, so we can just send a commit immediately
-            let commit_task =
-                active_repository.update(cx, |repo, cx| repo.commit(message.into(), None, cx));
+            let commit_task = active_repository.update(cx, |repo, cx| {
+                repo.commit(message.into(), None, self.amend_commit, cx)
+            });
             cx.background_spawn(async move { commit_task.await? })
         } else {
             let changed_files = self
@@ -1462,10 +1463,13 @@ impl GitPanel {
 
             let stage_task =
                 active_repository.update(cx, |repo, cx| repo.stage_entries(changed_files, cx));
+            let amend_commit = self.amend_commit;
+
             cx.spawn(async move |_, cx| {
                 stage_task.await?;
-                let commit_task = active_repository
-                    .update(cx, |repo, cx| repo.commit(message.into(), None, cx))?;
+                let commit_task = active_repository.update(cx, |repo, cx| {
+                    repo.commit(message.into(), None, amend_commit, cx)
+                })?;
                 commit_task.await?
             })
         };

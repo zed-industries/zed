@@ -1252,7 +1252,7 @@ impl GitStore {
 
         repository_handle
             .update(&mut cx, |repository_handle, cx| {
-                repository_handle.commit(message, name.zip(email), cx)
+                repository_handle.commit(message, name.zip(email), false, cx)
             })?
             .await??;
         Ok(proto::Ack {})
