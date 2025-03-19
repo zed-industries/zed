@@ -464,6 +464,7 @@ mod tests {
                     lines: 0,
                     characters: 0,
                     selections: 1,
+                    words: None
                 },
                 workspace
                     .status_bar()
@@ -485,6 +486,7 @@ mod tests {
                     lines: 1,
                     characters: 3,
                     selections: 1,
+                    words: None
                 },
                 workspace
                     .status_bar()
