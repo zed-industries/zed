@@ -418,11 +418,45 @@ impl LspAdapter for EsLintLspAdapter {
             .iter()
             .any(|file| workspace_root.join(file).is_file());
 
+        let use_eslint_class = eslint_user_settings
+            .get("useESLintClass")
+            .cloned()
+            .unwrap_or_else(|| json!(false));
+
+        let format = eslint_user_settings
+            .get("format")
+            .cloned()
+            .unwrap_or_else(|| json!(false));
+
+        let quiet = eslint_user_settings
+            .get("quiet")
+            .cloned()
+            .unwrap_or_else(|| json!(false));
+
+        let on_ignored_files = eslint_user_settings
+            .get("onIgnoredFiles")
+            .cloned()
+            .unwrap_or_else(|| json!("off"));
+
+        let options = eslint_user_settings
+            .get("options")
+            .cloned();
+
+        let settings_run = eslint_user_settings
+            .get("run")
+            .cloned()
+            .unwrap_or_else(|| json!("onType"));
+
         Ok(json!({
             "": {
                 "validate": "on",
+                "useESLintClass": use_eslint_class,
+                "format": format,
+                "quiet": quiet,
+                "onIgnoredFiles": on_ignored_files,
+                "options": options,
                 "rulesCustomizations": rules_customizations,
-                "run": "onType",
+                "run": settings_run,
                 "nodePath": node_path,
                 "workingDirectory": working_directory,
                 "workspaceFolder": {
