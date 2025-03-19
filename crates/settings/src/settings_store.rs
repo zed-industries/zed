@@ -263,7 +263,7 @@ impl SettingsStore {
             raw_editorconfig_settings: BTreeMap::default(),
             tab_size_callback: Default::default(),
             setting_file_updates_tx,
-            _setting_file_updates: cx.spawn(|cx| async move {
+            _setting_file_updates: cx.spawn(async move |cx| {
                 while let Some(setting_file_update) = setting_file_updates_rx.next().await {
                     (setting_file_update)(cx.clone()).await.log_err();
                 }

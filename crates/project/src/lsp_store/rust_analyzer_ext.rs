@@ -51,7 +51,7 @@ pub fn register_notifications(lsp_store: WeakEntity<LspStore>, language_server: 
     language_server
         .on_notification::<ServerStatus, _>({
             let name = name.to_string();
-            move |params, mut cx| {
+            move |params, cx| {
                 let this = this.clone();
                 let name = name.to_string();
                 if let Some(ref message) = params.message {
@@ -74,7 +74,7 @@ pub fn register_notifications(lsp_store: WeakEntity<LspStore>, language_server: 
                                     lsp_name: name.clone(),
                                 };
                                 let _ = this
-                                    .update(&mut cx, |_, cx| {
+                                    .update(cx, |_, cx| {
                                         cx.emit(LspStoreEvent::LanguageServerPrompt(request));
                                     })
                                     .ok();

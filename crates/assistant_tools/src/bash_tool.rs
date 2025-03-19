@@ -50,7 +50,7 @@ impl Tool for BashTool {
         };
         let working_directory = worktree.read(cx).abs_path();
 
-        cx.spawn(|_| async move {
+        cx.spawn(async move |_| {
             // Add 2>&1 to merge stderr into stdout for proper interleaving.
             let command = format!("({}) 2>&1", input.command);
 

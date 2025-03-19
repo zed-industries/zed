@@ -580,7 +580,7 @@ impl SettingsObserver {
         }
 
         let worktree = worktree.clone();
-        cx.spawn(move |this, cx| async move {
+        cx.spawn(async move |this, cx| {
             let settings_contents: Vec<(Arc<Path>, _, _)> =
                 futures::future::join_all(settings_contents).await;
             cx.update(|cx| {

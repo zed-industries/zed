@@ -557,7 +557,7 @@ impl ContextMenu {
             self.delayed = true;
             cx.notify();
             let action = dispatched.boxed_clone();
-            cx.spawn_in(window, |this, mut cx| async move {
+            cx.spawn_in(window, async move |this, cx| {
                 cx.background_executor()
                     .timer(Duration::from_millis(50))
                     .await;

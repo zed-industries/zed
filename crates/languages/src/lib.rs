@@ -284,7 +284,7 @@ pub fn init(languages: Arc<LanguageRegistry>, node: NodeRuntime, cx: &mut App) {
     let mut subscription = languages.subscribe();
     let mut prev_language_settings = languages.language_settings();
 
-    cx.spawn(|cx| async move {
+    cx.spawn(async move |cx| {
         while subscription.next().await.is_some() {
             let language_settings = languages.language_settings();
             if language_settings != prev_language_settings {

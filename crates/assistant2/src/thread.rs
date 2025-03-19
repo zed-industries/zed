@@ -17,6 +17,7 @@ use language_model::{
     LanguageModelToolUseId, MaxMonthlySpendReachedError, MessageContent, PaymentRequiredError,
     Role, StopReason, TokenUsage,
 };
+use project::git::GitStoreCheckpoint;
 use project::{Project, Worktree};
 use prompt_store::{
     AssistantSystemPromptContext, PromptBuilder, RulesFile, WorktreeInfoForSystemPrompt,
@@ -92,6 +93,12 @@ pub struct GitState {
     pub diff: Option<String>,
 }
 
+#[derive(Clone)]
+pub struct ThreadCheckpoint {
+    message_id: MessageId,
+    git_checkpoint: GitStoreCheckpoint,
+}
+
 /// A thread of conversation with the LLM.
 pub struct Thread {
     id: ThreadId,
@@ -103,6 +110,7 @@ pub struct Thread {
     context: BTreeMap<ContextId, ContextSnapshot>,
     context_by_message: HashMap<MessageId, Vec<ContextId>>,
     system_prompt_context: Option<AssistantSystemPromptContext>,
+    checkpoints_by_message: HashMap<MessageId, GitStoreCheckpoint>,
     completion_count: usize,
     pending_completions: Vec<PendingCompletion>,
     project: Entity<Project>,
@@ -133,6 +141,7 @@ impl Thread {
             context: BTreeMap::default(),
             context_by_message: HashMap::default(),
             system_prompt_context: None,
+            checkpoints_by_message: HashMap::default(),
             completion_count: 0,
             pending_completions: Vec::new(),
             project: project.clone(),
@@ -194,6 +203,7 @@ impl Thread {
             context: BTreeMap::default(),
             context_by_message: HashMap::default(),
             system_prompt_context: None,
+            checkpoints_by_message: HashMap::default(),
             completion_count: 0,
             pending_completions: Vec::new(),
             project,
@@ -255,6 +265,45 @@ impl Thread {
         &self.tools
     }
 
+    pub fn checkpoint_for_message(&self, id: MessageId) -> Option<ThreadCheckpoint> {
+        let checkpoint = self.checkpoints_by_message.get(&id).cloned()?;
+        Some(ThreadCheckpoint {
+            message_id: id,
+            git_checkpoint: checkpoint,
+        })
+    }
+
+    pub fn restore_checkpoint(
+        &mut self,
+        checkpoint: ThreadCheckpoint,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<()>> {
+        let project = self.project.read(cx);
+        let restore = project
+            .git_store()
+            .read(cx)
+            .restore_checkpoint(checkpoint.git_checkpoint, cx);
+        cx.spawn(async move |this, cx| {
+            restore.await?;
+            this.update(cx, |this, cx| this.truncate(checkpoint.message_id, cx))
+        })
+    }
+
+    pub fn truncate(&mut self, message_id: MessageId, cx: &mut Context<Self>) {
+        let Some(message_ix) = self
+            .messages
+            .iter()
+            .rposition(|message| message.id == message_id)
+        else {
+            return;
+        };
+        for deleted_message in self.messages.drain(message_ix..) {
+            self.context_by_message.remove(&deleted_message.id);
+            self.checkpoints_by_message.remove(&deleted_message.id);
+        }
+        cx.notify();
+    }
+
     pub fn context_for_message(&self, id: MessageId) -> Option<Vec<ContextSnapshot>> {
         let context = self.context_by_message.get(&id)?;
         Some(
@@ -302,13 +351,6 @@ impl Thread {
         self.scripting_tool_use.tool_results_for_message(id)
     }
 
-    pub fn scripting_changed_buffers<'a>(
-        &self,
-        cx: &'a App,
-    ) -> impl ExactSizeIterator<Item = &'a Entity<language::Buffer>> {
-        self.scripting_session.read(cx).changed_buffers()
-    }
-
     pub fn message_has_tool_results(&self, message_id: MessageId) -> bool {
         self.tool_use.message_has_tool_results(message_id)
     }
@@ -321,6 +363,7 @@ impl Thread {
         &mut self,
         text: impl Into<String>,
         context: Vec<ContextSnapshot>,
+        checkpoint: Option<GitStoreCheckpoint>,
         cx: &mut Context<Self>,
     ) -> MessageId {
         let message_id = self.insert_message(Role::User, text, cx);
@@ -328,6 +371,9 @@ impl Thread {
         self.context
             .extend(context.into_iter().map(|context| (context.id, context)));
         self.context_by_message.insert(message_id, context_ids);
+        if let Some(checkpoint) = checkpoint {
+            self.checkpoints_by_message.insert(message_id, checkpoint);
+        }
         message_id
     }
 
@@ -400,9 +446,9 @@ impl Thread {
     /// Serializes this thread into a format for storage or telemetry.
     pub fn serialize(&self, cx: &mut Context<Self>) -> Task<Result<SerializedThread>> {
         let initial_project_snapshot = self.initial_project_snapshot.clone();
-        cx.spawn(|this, cx| async move {
+        cx.spawn(async move |this, cx| {
             let initial_project_snapshot = initial_project_snapshot.await;
-            this.read_with(&cx, |this, _| SerializedThread {
+            this.read_with(cx, |this, _| SerializedThread {
                 summary: this.summary_or_default(),
                 updated_at: this.updated_at(),
                 messages: this
@@ -687,8 +733,10 @@ impl Thread {
     ) {
         let pending_completion_id = post_inc(&mut self.completion_count);
 
-        let task = cx.spawn(|thread, mut cx| async move {
+        let task = cx.spawn(async move |thread, cx| {
             let stream = model.stream_completion(request, &cx);
+            let initial_token_usage =
+                thread.read_with(cx, |thread, _cx| thread.cumulative_token_usage.clone());
             let stream_completion = async {
                 let mut events = stream.await?;
                 let mut stop_reason = StopReason::EndTurn;
@@ -697,7 +745,7 @@ impl Thread {
                 while let Some(event) = events.next().await {
                     let event = event?;
 
-                    thread.update(&mut cx, |thread, cx| {
+                    thread.update(cx, |thread, cx| {
                         match event {
                             LanguageModelCompletionEvent::StartMessage { .. } => {
                                 thread.insert_message(Role::Assistant, String::new(), cx);
@@ -756,7 +804,7 @@ impl Thread {
                     smol::future::yield_now().await;
                 }
 
-                thread.update(&mut cx, |thread, cx| {
+                thread.update(cx, |thread, cx| {
                     thread
                         .pending_completions
                         .retain(|completion| completion.id != pending_completion_id);
@@ -772,7 +820,7 @@ impl Thread {
             let result = stream_completion.await;
 
             thread
-                .update(&mut cx, |thread, cx| {
+                .update(cx, |thread, cx| {
                     match result.as_ref() {
                         Ok(stop_reason) => match stop_reason {
                             StopReason::ToolUse => {
@@ -803,6 +851,21 @@ impl Thread {
                         }
                     }
                     cx.emit(ThreadEvent::DoneStreaming);
+
+                    if let Ok(initial_usage) = initial_token_usage {
+                        let usage = thread.cumulative_token_usage.clone() - initial_usage;
+
+                        telemetry::event!(
+                            "Assistant Thread Completion",
+                            thread_id = thread.id().to_string(),
+                            model = model.telemetry_id(),
+                            model_provider = model.provider_id().to_string(),
+                            input_tokens = usage.input_tokens,
+                            output_tokens = usage.output_tokens,
+                            cache_creation_input_tokens = usage.cache_creation_input_tokens,
+                            cache_read_input_tokens = usage.cache_read_input_tokens,
+                        );
+                    }
                 })
                 .ok();
         });
@@ -835,7 +898,7 @@ impl Thread {
             cache: false,
         });
 
-        self.pending_summary = cx.spawn(|this, mut cx| {
+        self.pending_summary = cx.spawn(async move |this, cx| {
             async move {
                 let stream = model.stream_completion_text(request, &cx);
                 let mut messages = stream.await?;
@@ -852,7 +915,7 @@ impl Thread {
                     }
                 }
 
-                this.update(&mut cx, |this, cx| {
+                this.update(cx, |this, cx| {
                     if !new_summary.is_empty() {
                         this.summary = Some(new_summary.into());
                     }
@@ -863,6 +926,7 @@ impl Thread {
                 anyhow::Ok(())
             }
             .log_err()
+            .await
         });
     }
 
@@ -908,10 +972,10 @@ impl Thread {
                         });
 
                     let session = self.scripting_session.clone();
-                    cx.spawn(|_, cx| async move {
+                    cx.spawn(async move |_, cx| {
                         script_task.await;
 
-                        let message = session.read_with(&cx, |session, _cx| {
+                        let message = session.read_with(cx, |session, _cx| {
                             // Using a id to get the script output seems impractical.
                             // Why not just include it in the Task result?
                             // This is because we'll later report the script state as it runs,
@@ -936,12 +1000,12 @@ impl Thread {
         output: Task<Result<String>>,
         cx: &mut Context<Self>,
     ) {
-        let insert_output_task = cx.spawn(|thread, mut cx| {
+        let insert_output_task = cx.spawn({
             let tool_use_id = tool_use_id.clone();
-            async move {
+            async move |thread, cx| {
                 let output = output.await;
                 thread
-                    .update(&mut cx, |thread, cx| {
+                    .update(cx, |thread, cx| {
                         let pending_tool_use = thread
                             .tool_use
                             .insert_tool_output(tool_use_id.clone(), output);
@@ -966,12 +1030,12 @@ impl Thread {
         output: Task<Result<String>>,
         cx: &mut Context<Self>,
     ) {
-        let insert_output_task = cx.spawn(|thread, mut cx| {
+        let insert_output_task = cx.spawn({
             let tool_use_id = tool_use_id.clone();
-            async move {
+            async move |thread, cx| {
                 let output = output.await;
                 thread
-                    .update(&mut cx, |thread, cx| {
+                    .update(cx, |thread, cx| {
                         let pending_tool_use = thread
                             .scripting_tool_use
                             .insert_tool_output(tool_use_id.clone(), output);
@@ -1008,6 +1072,7 @@ impl Thread {
             // so for now we provide some text to keep the model on track.
             "Here are the tool results.",
             Vec::new(),
+            None,
             cx,
         );
     }
@@ -1070,7 +1135,7 @@ impl Thread {
             .map(|worktree| Self::worktree_snapshot(worktree, cx))
             .collect();
 
-        cx.spawn(move |_, cx| async move {
+        cx.spawn(async move |_, cx| {
             let worktree_snapshots = futures::future::join_all(worktree_snapshots).await;
 
             let mut unsaved_buffers = Vec::new();
@@ -1097,7 +1162,7 @@ impl Thread {
     }
 
     fn worktree_snapshot(worktree: Entity<project::Worktree>, cx: &App) -> Task<WorktreeSnapshot> {
-        cx.spawn(move |cx| async move {
+        cx.spawn(async move |cx| {
             // Get worktree path and snapshot
             let worktree_info = cx.update(|app_cx| {
                 let worktree = worktree.read(app_cx);
@@ -1121,7 +1186,7 @@ impl Thread {
                     let current_branch = repo_entry.branch().map(|branch| branch.name.to_string());
 
                     // Get repository info
-                    let repo_result = worktree.read_with(&cx, |worktree, _cx| {
+                    let repo_result = worktree.read_with(cx, |worktree, _cx| {
                         if let project::Worktree::Local(local_worktree) = &worktree {
                             local_worktree.get_local_repo(repo_entry).map(|local_repo| {
                                 let repo = local_repo.repo();
@@ -1136,7 +1201,7 @@ impl Thread {
                         Ok(Some((remote_url, head_sha, repository))) => {
                             // Get diff asynchronously
                             let diff = repository
-                                .diff(git::repository::DiffType::HeadToWorktree, cx)
+                                .diff(git::repository::DiffType::HeadToWorktree, cx.clone())
                                 .await
                                 .ok();
 
@@ -1209,6 +1274,10 @@ impl Thread {
 
     pub fn action_log(&self) -> &Entity<ActionLog> {
         &self.action_log
+    }
+
+    pub fn project(&self) -> &Entity<Project> {
+        &self.project
     }
 
     pub fn cumulative_token_usage(&self) -> TokenUsage {

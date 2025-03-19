@@ -43,14 +43,14 @@ impl SharedScreen {
             peer_id,
             user,
             nav_history: Default::default(),
-            _maintain_frame: cx.spawn_in(window, |this, mut cx| async move {
+            _maintain_frame: cx.spawn_in(window, async move |this, cx| {
                 while let Some(frame) = frames.next().await {
-                    this.update(&mut cx, |this, cx| {
+                    this.update(cx, |this, cx| {
                         this.frame = Some(frame);
                         cx.notify();
                     })?;
                 }
-                this.update(&mut cx, |_, cx| cx.emit(Event::Close))?;
+                this.update(cx, |_, cx| cx.emit(Event::Close))?;
                 Ok(())
             }),
             focus: cx.focus_handle(),

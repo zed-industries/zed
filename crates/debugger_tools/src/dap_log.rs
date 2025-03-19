@@ -103,10 +103,10 @@ impl DebugAdapterState {
 impl LogStore {
     fn new(cx: &Context<Self>) -> Self {
         let (rpc_tx, mut rpc_rx) = unbounded::<(SessionId, IoKind, String)>();
-        cx.spawn(|this, mut cx| async move {
+        cx.spawn(async move |this, cx| {
             while let Some((client_id, io_kind, message)) = rpc_rx.next().await {
                 if let Some(this) = this.upgrade() {
-                    this.update(&mut cx, |this, cx| {
+                    this.update(cx, |this, cx| {
                         this.on_rpc_log(client_id, io_kind, &message, cx);
                     })?;
                 }
@@ -118,10 +118,10 @@ impl LogStore {
         .detach_and_log_err(cx);
 
         let (adapter_log_tx, mut adapter_log_rx) = unbounded::<(SessionId, IoKind, String)>();
-        cx.spawn(|this, mut cx| async move {
+        cx.spawn(async move |this, cx| {
             while let Some((client_id, io_kind, message)) = adapter_log_rx.next().await {
                 if let Some(this) = this.upgrade() {
-                    this.update(&mut cx, |this, cx| {
+                    this.update(cx, |this, cx| {
                         this.on_adapter_log(client_id, io_kind, &message, cx);
                     })?;
                 }
@@ -604,9 +604,9 @@ impl DapLogView {
                 .update(cx, |_, cx| {
                     cx.spawn({
                         let buffer = cx.entity();
-                        |_, mut cx| async move {
+                        async move |_, cx| {
                             let language = language.await.ok();
-                            buffer.update(&mut cx, |buffer, cx| {
+                            buffer.update(cx, |buffer, cx| {
                                 buffer.set_language(language, cx);
                             })
                         }

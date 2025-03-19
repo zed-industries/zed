@@ -111,9 +111,9 @@ impl RemoteBufferStore {
         let (tx, rx) = oneshot::channel();
         self.remote_buffer_listeners.entry(id).or_default().push(tx);
 
-        cx.spawn(|this, cx| async move {
+        cx.spawn(async move |this, cx| {
             if let Some(buffer) = this
-                .read_with(&cx, |buffer_store, _| buffer_store.get(id))
+                .read_with(cx, |buffer_store, _| buffer_store.get(id))
                 .ok()
                 .flatten()
             {
@@ -135,7 +135,7 @@ impl RemoteBufferStore {
         let version = buffer.version();
         let rpc = self.upstream_client.clone();
         let project_id = self.project_id;
-        cx.spawn(move |_, mut cx| async move {
+        cx.spawn(async move |_, cx| {
             let response = rpc
                 .request(proto::SaveBuffer {
                     project_id,
@@ -147,7 +147,7 @@ impl RemoteBufferStore {
             let version = deserialize_version(&response.version);
             let mtime = response.mtime.map(|mtime| mtime.into());
 
-            buffer_handle.update(&mut cx, |buffer, cx| {
+            buffer_handle.update(cx, |buffer, cx| {
                 buffer.did_save(version.clone(), mtime, cx);
             })?;
 
@@ -263,15 +263,13 @@ impl RemoteBufferStore {
         push_to_history: bool,
         cx: &mut Context<BufferStore>,
     ) -> Task<Result<ProjectTransaction>> {
-        cx.spawn(|this, mut cx| async move {
+        cx.spawn(async move |this, cx| {
             let mut project_transaction = ProjectTransaction::default();
             for (buffer_id, transaction) in message.buffer_ids.into_iter().zip(message.transactions)
             {
                 let buffer_id = BufferId::new(buffer_id)?;
                 let buffer = this
-                    .update(&mut cx, |this, cx| {
-                        this.wait_for_remote_buffer(buffer_id, cx)
-                    })?
+                    .update(cx, |this, cx| this.wait_for_remote_buffer(buffer_id, cx))?
                     .await?;
                 let transaction = language::proto::deserialize_transaction(transaction)?;
                 project_transaction.0.insert(buffer, transaction);
@@ -279,13 +277,13 @@ impl RemoteBufferStore {
 
             for (buffer, transaction) in &project_transaction.0 {
                 buffer
-                    .update(&mut cx, |buffer, _| {
+                    .update(cx, |buffer, _| {
                         buffer.wait_for_edits(transaction.edit_ids.iter().copied())
                     })?
                     .await?;
 
                 if push_to_history {
-                    buffer.update(&mut cx, |buffer, _| {
+                    buffer.update(cx, |buffer, _| {
                         buffer.push_transaction(transaction.clone(), Instant::now());
                     })?;
                 }
@@ -304,7 +302,7 @@ impl RemoteBufferStore {
         let worktree_id = worktree.read(cx).id().to_proto();
         let project_id = self.project_id;
         let client = self.upstream_client.clone();
-        cx.spawn(move |this, mut cx| async move {
+        cx.spawn(async move |this, cx| {
             let response = client
                 .request(proto::OpenBufferByPath {
                     project_id,
@@ -315,7 +313,7 @@ impl RemoteBufferStore {
             let buffer_id = BufferId::new(response.buffer_id)?;
 
             let buffer = this
-                .update(&mut cx, {
+                .update(cx, {
                     |this, cx| this.wait_for_remote_buffer(buffer_id, cx)
                 })?
                 .await?;
@@ -328,14 +326,12 @@ impl RemoteBufferStore {
         let create = self.upstream_client.request(proto::OpenNewBuffer {
             project_id: self.project_id,
         });
-        cx.spawn(|this, mut cx| async move {
+        cx.spawn(async move |this, cx| {
             let response = create.await?;
             let buffer_id = BufferId::new(response.buffer_id)?;
 
-            this.update(&mut cx, |this, cx| {
-                this.wait_for_remote_buffer(buffer_id, cx)
-            })?
-            .await
+            this.update(cx, |this, cx| this.wait_for_remote_buffer(buffer_id, cx))?
+                .await
         })
     }
 
@@ -353,12 +349,12 @@ impl RemoteBufferStore {
                 .collect(),
         });
 
-        cx.spawn(|this, mut cx| async move {
+        cx.spawn(async move |this, cx| {
             let response = request
                 .await?
                 .transaction
                 .ok_or_else(|| anyhow!("missing transaction"))?;
-            this.update(&mut cx, |this, cx| {
+            this.update(cx, |this, cx| {
                 this.deserialize_project_transaction(response, push_to_history, cx)
             })?
             .await
@@ -392,10 +388,10 @@ impl LocalBufferStore {
             worktree.write_file(path.as_ref(), text, line_ending, cx)
         });
 
-        cx.spawn(move |this, mut cx| async move {
+        cx.spawn(async move |this, cx| {
             let new_file = save.await?;
             let mtime = new_file.disk_state().mtime();
-            this.update(&mut cx, |this, cx| {
+            this.update(cx, |this, cx| {
                 if let Some((downstream_client, project_id)) = this.downstream_client.clone() {
                     if has_changed_file {
                         downstream_client
@@ -416,7 +412,7 @@ impl LocalBufferStore {
                         .log_err();
                 }
             })?;
-            buffer_handle.update(&mut cx, |buffer, cx| {
+            buffer_handle.update(cx, |buffer, cx| {
                 if has_changed_file {
                     buffer.file_updated(new_file, cx);
                 }
@@ -654,7 +650,7 @@ impl LocalBufferStore {
             let load_file = worktree.load_file(path.as_ref(), cx);
             let reservation = cx.reserve_entity();
             let buffer_id = BufferId::from(reservation.entity_id().as_non_zero_u64());
-            cx.spawn(move |_, mut cx| async move {
+            cx.spawn(async move |_, cx| {
                 let loaded = load_file.await?;
                 let text_buffer = cx
                     .background_spawn(async move { text::Buffer::new(0, buffer_id, loaded.text) })
@@ -665,7 +661,7 @@ impl LocalBufferStore {
             })
         });
 
-        cx.spawn(move |this, mut cx| async move {
+        cx.spawn(async move |this, cx| {
             let buffer = match load_buffer.await {
                 Ok(buffer) => Ok(buffer),
                 Err(error) if is_not_found_error(&error) => cx.new(|cx| {
@@ -686,7 +682,7 @@ impl LocalBufferStore {
                 }),
                 Err(e) => Err(e),
             }?;
-            this.update(&mut cx, |this, cx| {
+            this.update(cx, |this, cx| {
                 this.add_buffer(buffer.clone(), cx)?;
                 let buffer_id = buffer.read(cx).remote_id();
                 if let Some(file) = File::from_dyn(buffer.read(cx).file()) {
@@ -713,10 +709,10 @@ impl LocalBufferStore {
     }
 
     fn create_buffer(&self, cx: &mut Context<BufferStore>) -> Task<Result<Entity<Buffer>>> {
-        cx.spawn(|buffer_store, mut cx| async move {
+        cx.spawn(async move |buffer_store, cx| {
             let buffer =
                 cx.new(|cx| Buffer::local("", cx).with_language(language::PLAIN_TEXT.clone(), cx))?;
-            buffer_store.update(&mut cx, |buffer_store, cx| {
+            buffer_store.update(cx, |buffer_store, cx| {
                 buffer_store.add_buffer(buffer.clone(), cx).log_err();
             })?;
             Ok(buffer)
@@ -729,13 +725,11 @@ impl LocalBufferStore {
         push_to_history: bool,
         cx: &mut Context<BufferStore>,
     ) -> Task<Result<ProjectTransaction>> {
-        cx.spawn(move |_, mut cx| async move {
+        cx.spawn(async move |_, cx| {
             let mut project_transaction = ProjectTransaction::default();
             for buffer in buffers {
-                let transaction = buffer
-                    .update(&mut cx, |buffer, cx| buffer.reload(cx))?
-                    .await?;
-                buffer.update(&mut cx, |buffer, cx| {
+                let transaction = buffer.update(cx, |buffer, cx| buffer.reload(cx))?.await?;
+                buffer.update(cx, |buffer, cx| {
                     if let Some(transaction) = transaction {
                         if !push_to_history {
                             buffer.forget_transaction(transaction.id);
@@ -866,9 +860,9 @@ impl BufferStore {
 
                 entry
                     .insert(
-                        cx.spawn(move |this, mut cx| async move {
+                        cx.spawn(async move |this, cx| {
                             let load_result = load_buffer.await;
-                            this.update(&mut cx, |this, cx| {
+                            this.update(cx, |this, cx| {
                                 // Record the fact that the buffer is no longer loading.
                                 this.loading_buffers.remove(&project_path);
 
@@ -936,9 +930,9 @@ impl BufferStore {
                 this.save_remote_buffer(buffer.clone(), Some(path.to_proto()), cx)
             }
         };
-        cx.spawn(|this, mut cx| async move {
+        cx.spawn(async move |this, cx| {
             task.await?;
-            this.update(&mut cx, |_, cx| {
+            this.update(cx, |_, cx| {
                 cx.emit(BufferStoreEvent::BufferChangedFilePath { buffer, old_file });
             })
         })
@@ -978,7 +972,7 @@ impl BufferStore {
                     anyhow::Ok(Some((repo, relative_path, content)))
                 });
 
-                cx.spawn(|cx| async move {
+                cx.spawn(async move |cx| {
                     let Some((repo, relative_path, content)) = blame_params? else {
                         return Ok(None);
                     };
@@ -993,7 +987,7 @@ impl BufferStore {
                 let version = buffer.version();
                 let project_id = worktree.project_id();
                 let client = worktree.client();
-                cx.spawn(|_| async move {
+                cx.spawn(async move |_| {
                     let response = client
                         .request(proto::BlameBuffer {
                             project_id,
@@ -1038,7 +1032,7 @@ impl BufferStore {
                         return Task::ready(Err(anyhow!("no permalink available")));
                     }
                     let file_path = worktree_path.join(file.path());
-                    return cx.spawn(|cx| async move {
+                    return cx.spawn(async move |cx| {
                         let provider_registry =
                             cx.update(GitHostingProviderRegistry::default_global)?;
                         get_permalink_in_rust_registry_src(provider_registry, file_path, selection)
@@ -1058,7 +1052,7 @@ impl BufferStore {
                     .unwrap_or("origin")
                     .to_string();
 
-                cx.spawn(|cx| async move {
+                cx.spawn(async move |cx| {
                     let origin_url = repo
                         .remote_url(&remote)
                         .ok_or_else(|| anyhow!("remote \"{remote}\" not found"))?;
@@ -1092,7 +1086,7 @@ impl BufferStore {
                 let buffer_id = buffer.remote_id();
                 let project_id = worktree.project_id();
                 let client = worktree.client();
-                cx.spawn(|_| async move {
+                cx.spawn(async move |_| {
                     let response = client
                         .request(proto::GetPermalinkToLine {
                             project_id,
@@ -1281,14 +1275,14 @@ impl BufferStore {
             })
             .chunks(MAX_CONCURRENT_BUFFER_OPENS);
 
-        cx.spawn(|this, mut cx| async move {
+        cx.spawn(async move |this, cx| {
             for buffer in unnamed_buffers {
                 tx.send(buffer).await.ok();
             }
 
             let mut project_paths_rx = pin!(project_paths_rx);
             while let Some(project_paths) = project_paths_rx.next().await {
-                let buffers = this.update(&mut cx, |this, cx| {
+                let buffers = this.update(cx, |this, cx| {
                     project_paths
                         .into_iter()
                         .map(|project_path| this.open_buffer(project_path, cx))
@@ -1776,14 +1770,14 @@ impl BufferStore {
             return Task::ready(Ok(()));
         };
 
-        cx.spawn(|this, mut cx| async move {
-            let Some(buffer) = this.update(&mut cx, |this, _| this.get(buffer_id))? else {
+        cx.spawn(async move |this, cx| {
+            let Some(buffer) = this.update(cx, |this, _| this.get(buffer_id))? else {
                 return anyhow::Ok(());
             };
 
-            let operations = buffer.update(&mut cx, |b, cx| b.serialize_ops(None, cx))?;
+            let operations = buffer.update(cx, |b, cx| b.serialize_ops(None, cx))?;
             let operations = operations.await;
-            let state = buffer.update(&mut cx, |buffer, cx| buffer.to_proto(cx))?;
+            let state = buffer.update(cx, |buffer, cx| buffer.to_proto(cx))?;
 
             let initial_state = proto::CreateBufferForPeer {
                 project_id,

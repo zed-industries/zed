@@ -40,7 +40,7 @@ impl ScriptingSession {
             scripts: Vec::new(),
             changes_by_buffer: HashMap::default(),
             foreground_fns_tx,
-            _invoke_foreground_fns: cx.spawn(|this, cx| async move {
+            _invoke_foreground_fns: cx.spawn(async move |this, cx| {
                 while let Some(foreground_fn) = foreground_fns_rx.next().await {
                     foreground_fn.0(this.clone(), cx.clone());
                 }
@@ -70,11 +70,11 @@ impl ScriptingSession {
 
         let task = self.run_lua(script_src, stdout, cx);
 
-        let task = cx.spawn(|session, mut cx| async move {
+        let task = cx.spawn(async move |session, cx| {
             let result = task.await;
 
             session
-                .update(&mut cx, |session, _cx| {
+                .update(cx, |session, _cx| {
                     let script = session.get_mut(id);
                     let stdout = script.stdout_snapshot();
 
@@ -333,10 +333,10 @@ impl ScriptingSession {
                         .project
                         .update(cx, |project, cx| project.open_buffer(project_path, cx));
 
-                    cx.spawn(|_, cx| async move {
+                    cx.spawn(async move |_, cx| {
                         let buffer = open_buffer_task.await?;
 
-                        let text = buffer.read_with(&cx, |buffer, _cx| buffer.text())?;
+                        let text = buffer.read_with(cx, |buffer, _cx| buffer.text())?;
                         Ok(text)
                     })
                 })
@@ -384,14 +384,12 @@ impl ScriptingSession {
                         .project
                         .update(cx, |project, cx| project.open_buffer(project_path, cx));
 
-                    cx.spawn(move |session, mut cx| async move {
+                    cx.spawn(async move |session, cx| {
                         let buffer = open_buffer_task.await?;
 
-                        let diff = buffer
-                            .update(&mut cx, |buffer, cx| buffer.diff(text, cx))?
-                            .await;
+                        let diff = buffer.update(cx, |buffer, cx| buffer.diff(text, cx))?.await;
 
-                        let edit_ids = buffer.update(&mut cx, |buffer, cx| {
+                        let edit_ids = buffer.update(cx, |buffer, cx| {
                             buffer.finalize_last_transaction();
                             buffer.apply_diff(diff, cx);
                             let transaction = buffer.finalize_last_transaction();
@@ -400,7 +398,7 @@ impl ScriptingSession {
                         })?;
 
                         session
-                            .update(&mut cx, {
+                            .update(cx, {
                                 let buffer = buffer.clone();
 
                                 |session, cx| {
@@ -411,13 +409,13 @@ impl ScriptingSession {
                             })?
                             .await?;
 
-                        let snapshot = buffer.read_with(&cx, |buffer, _| buffer.snapshot())?;
+                        let snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot())?;
 
                         // If we saved successfully, mark buffer as changed
                         let buffer_without_changes =
-                            buffer.update(&mut cx, |buffer, cx| buffer.branch(cx))?;
+                            buffer.update(cx, |buffer, cx| buffer.branch(cx))?;
                         session
-                            .update(&mut cx, |session, cx| {
+                            .update(cx, |session, cx| {
                                 let changed_buffer = session
                                     .changes_by_buffer
                                     .entry(buffer)
@@ -757,11 +755,11 @@ impl ScriptingSession {
                                 cx,
                             );
                             let (abs_paths_tx, abs_paths_rx) = mpsc::unbounded();
-                            cx.spawn(|worktree_store, cx| async move {
+                            cx.spawn(async move |worktree_store, cx| {
                                 pin_mut!(candidates);
 
                                 while let Some(project_path) = candidates.next().await {
-                                    worktree_store.read_with(&cx, |worktree_store, cx| {
+                                    worktree_store.read_with(cx, |worktree_store, cx| {
                                         if let Some(worktree) = worktree_store
                                             .worktree_for_id(project_path.worktree_id, cx)
                                         {
@@ -800,17 +798,17 @@ impl ScriptingSession {
             "getting code outline",
             foreground_tx,
             Box::new(move |session, cx| {
-                cx.spawn(move |mut cx| async move {
+                cx.spawn(async move |cx| {
                     // TODO: This will not use file content from `fs_changes`. It will also reflect
                     // user changes that have not been saved.
                     let buffer = session
-                        .update(&mut cx, |session, cx| {
+                        .update(cx, |session, cx| {
                             session
                                 .project
                                 .update(cx, |project, cx| project.open_local_buffer(&path, cx))
                         })?
                         .await?;
-                    buffer.update(&mut cx, |buffer, _cx| {
+                    buffer.update(cx, |buffer, _cx| {
                         if let Some(outline) = buffer.snapshot().outline(None) {
                             Ok(outline)
                         } else {
