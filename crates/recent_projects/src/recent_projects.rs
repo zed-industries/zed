@@ -21,7 +21,9 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
-use ui::{prelude::*, tooltip_container, KeyBinding, ListItem, ListItemSpacing, Tooltip};
+use ui::{
+    prelude::*, text_for_action, tooltip_container, KeyBinding, ListItem, ListItemSpacing, Tooltip,
+};
 use util::{paths::PathExt, ResultExt};
 use workspace::{
     CloseIntent, ModalView, OpenOptions, SerializedWorkspaceLocation, Workspace, WorkspaceId,
@@ -180,13 +182,13 @@ impl PickerDelegate for RecentProjectsDelegate {
     fn placeholder_text(&self, window: &mut Window, cx: &mut App) -> Arc<str> {
         let (create_window, reuse_window) = if self.create_new_window {
             (
-                ui::text_for_action(&menu::Confirm, window, cx).unwrap_or_default(),
-                ui::text_for_action(&menu::SecondaryConfirm, window, cx).unwrap_or_default(),
+                text_for_action(&menu::Confirm, window, cx).unwrap_or_default(),
+                text_for_action(&menu::SecondaryConfirm, window, cx).unwrap_or_default(),
             )
         } else {
             (
-                ui::text_for_action(&menu::SecondaryConfirm, window, cx).unwrap_or_default(),
-                ui::text_for_action(&menu::Confirm, window, cx).unwrap_or_default(),
+                text_for_action(&menu::SecondaryConfirm, window, cx).unwrap_or_default(),
+                text_for_action(&menu::Confirm, window, cx).unwrap_or_default(),
             )
         };
         Arc::from(format!(
