@@ -1597,7 +1597,7 @@ impl MultiBuffer {
     }
 
     pub fn has_excerpt_for_path(&self, path: &PathKey) -> bool {
-        self.excerpts_by_path.get(path).is_some()
+        self.excerpts_by_path.contains_key(path)
     }
 
     fn update_path_excerpts(
