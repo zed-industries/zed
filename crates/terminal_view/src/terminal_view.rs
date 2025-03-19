@@ -55,7 +55,6 @@ use settings::{Settings, SettingsStore};
 use smol::Timer;
 use zed_actions::assistant::InlineAssist;
 
-use std::ops::Range;
 use std::time::Instant;
 use std::{
     borrow::Cow,
@@ -858,23 +857,30 @@ impl TerminalView {
     fn update_maybe_path_open_target(
         &mut self,
         path_like_target: &PathLikeTarget,
-        open_target: Option<(OpenTarget, Range<usize>)>,
+        open_target: Option<OpenTarget>,
         cx: &mut Context<Self>,
     ) {
-        self.terminal.update(cx, |term, cx| {
-            term.confirm_path_like_target(
-                path_like_target,
-                open_target
-                    .as_ref()
-                    .map(|(_, hyperlink_range)| hyperlink_range.clone()),
-                cx,
-            )
-        });
-
-        self.maybe_path_open_target = open_target.map(|(open_target, _)| MaybePathOpenTarget {
-            path_like_target: path_like_target.clone(),
-            open_target,
-        });
+        if let Some(open_target) = open_target {
+            let hyperlink_range = path_like_target
+                .maybe_path_like
+                .hyperlink_range(&open_target.path().position, &open_target.path().range);
+            self.terminal.update(cx, |term, cx| {
+                term.confirm_path_like_target(path_like_target, Some(hyperlink_range.clone()), cx)
+            });
+            self.maybe_path_open_target = Some(MaybePathOpenTarget {
+                path_like_target: path_like_target.clone(),
+                open_target,
+            });
+            self.hover_target_tooltip = Some(
+                path_like_target
+                    .maybe_path_like
+                    .text_at(&hyperlink_range)
+                    .to_string(),
+            );
+        } else {
+            self.maybe_path_open_target = None;
+            self.hover_target_tooltip = None;
+        }
     }
 }
 
@@ -915,31 +921,24 @@ fn subscribe_for_terminal_events(
             }
 
             Event::NewNavigationTarget(maybe_navigation_target) => {
-                this.hover_target_tooltip =
-                    maybe_navigation_target
-                        .as_ref()
-                        .and_then(|navigation_target| match navigation_target {
-                            MaybeNavigationTarget::Url(url) => Some(url.clone()),
-                            MaybeNavigationTarget::PathLike(path_like_target) => {
-                                let open_target_task =
-                                    possible_open_target(
-                                        &workspace,
-                                        path_like_target.terminal_dir.clone(),
-                                        &MaybePath::from_maybe_path_like(&path_like_target.maybe_path_like, Arc::clone(&this.path_hyperlink_regexes)),
-                                        this.path_hyperlink_navigation, this.path_hyperlink_timeout, cx
-                                    );
-                                if let Some(open_target) = smol::block_on(open_target_task) {
-                                    let hyperlink_range = path_like_target.maybe_path_like.hyperlink_range(&open_target.path().position, &open_target.path().range);
-                                    let hover_tooltip = path_like_target.maybe_path_like.text_at(&hyperlink_range).to_string();
-                                    this.update_maybe_path_open_target(path_like_target, Some((open_target, hyperlink_range)), cx);
-                                    Some(hover_tooltip)
-                                } else {
-                                    this.update_maybe_path_open_target(path_like_target, None, cx);
-                                    None
-                                }
-                            }
-                        });
-                cx.notify()
+                if let Some(navigation_target) = maybe_navigation_target {
+                    match navigation_target {
+                        MaybeNavigationTarget::Url(url) => {
+                            this.hover_target_tooltip = Some(url.clone());
+                        }
+                        MaybeNavigationTarget::PathLike(path_like_target) => {
+                            let open_target_task =
+                                possible_open_target(
+                                    &workspace,
+                                    path_like_target.terminal_dir.clone(),
+                                    &MaybePath::from_maybe_path_like(&path_like_target.maybe_path_like, Arc::clone(&this.path_hyperlink_regexes)),
+                                    this.path_hyperlink_navigation, this.path_hyperlink_timeout, cx
+                                );
+                            this.update_maybe_path_open_target(path_like_target, smol::block_on(open_target_task), cx);
+                        }
+                    }
+                    cx.notify()
+                }
             }
 
             Event::Open(maybe_navigation_target) => match maybe_navigation_target {
@@ -973,7 +972,6 @@ fn subscribe_for_terminal_events(
                         }) else {
                             terminal_view.update(cx, |this, cx| {
                                 this.update_maybe_path_open_target(&path_like_target, None, cx);
-                                this.hover_target_tooltip = None;
                             })?;
 
                             return anyhow::Ok(());
@@ -1037,10 +1035,7 @@ fn subscribe_for_terminal_events(
 
                         if newly_confirmed_maybe_path {
                             terminal_view.update(cx, |this, cx| {
-                                let hyperlink_range = path_like_target.maybe_path_like.hyperlink_range(&open_target.path().position, &open_target.path().range);
-                                let hover_tooltip = path_like_target.maybe_path_like.text_at(&hyperlink_range).to_string();
-                                this.update_maybe_path_open_target(&path_like_target, Some((open_target, hyperlink_range)), cx);
-                                this.hover_target_tooltip = Some(hover_tooltip);
+                                this.update_maybe_path_open_target(&path_like_target, Some(open_target), cx);
                             })?;
                         }
 
