@@ -1699,63 +1699,70 @@ impl Workspace {
             let prompt = self.on_prompt_for_new_path.take().unwrap();
             let rx = prompt(self, window, cx);
             self.on_prompt_for_new_path = Some(prompt);
-            rx
-        } else {
-            let start_abs_path = self
-                .project
-                .update(cx, |project, cx| {
-                    let worktree = project.visible_worktrees(cx).next()?;
-                    Some(worktree.read(cx).as_local()?.abs_path().to_path_buf())
-                })
-                .unwrap_or_else(|| Path::new("").into());
+            return rx;
+        }
 
-            let (tx, rx) = oneshot::channel();
-            let abs_path = cx.prompt_for_new_path(&start_abs_path);
-            cx.spawn_in(window, async move |this, cx| {
-                let abs_path = match abs_path.await? {
-                    Ok(path) => path,
-                    Err(err) => {
-                        let rx = this.update_in(cx, |this, window, cx| {
-                            this.show_portal_error(err.to_string(), cx);
-
-                            let prompt = this.on_prompt_for_new_path.take().unwrap();
-                            let rx = prompt(this, window, cx);
-                            this.on_prompt_for_new_path = Some(prompt);
-                            rx
-                        })?;
-                        if let Ok(path) = rx.await {
-                            tx.send(path).log_err();
-                        }
-                        return anyhow::Ok(());
-                    }
+        let (tx, rx) = oneshot::channel();
+        cx.spawn_in(window, async move |this, cx| {
+            let abs_path = this.update(cx, |this, cx| {
+                let mut relative_to = this
+                    .most_recent_active_path(cx)
+                    .and_then(|p| p.parent().map(|p| p.to_path_buf()));
+                if relative_to.is_none() {
+                    let project = this.project.read(cx);
+                    relative_to = project
+                        .visible_worktrees(cx)
+                        .filter_map(|worktree| {
+                            Some(worktree.read(cx).as_local()?.abs_path().to_path_buf())
+                        })
+                        .next()
                 };
 
-                let project_path = abs_path.and_then(|abs_path| {
-                    this.update(cx, |this, cx| {
-                        this.project.update(cx, |project, cx| {
-                            project.find_or_create_worktree(abs_path, true, cx)
-                        })
-                    })
-                    .ok()
-                });
+                cx.prompt_for_new_path(&relative_to.unwrap_or_else(|| PathBuf::from("")))
+            })?;
+            let abs_path = match abs_path.await? {
+                Ok(path) => path,
+                Err(err) => {
+                    let rx = this.update_in(cx, |this, window, cx| {
+                        this.show_portal_error(err.to_string(), cx);
 
-                if let Some(project_path) = project_path {
-                    let (worktree, path) = project_path.await?;
-                    let worktree_id = worktree.read_with(cx, |worktree, _| worktree.id())?;
-                    tx.send(Some(ProjectPath {
-                        worktree_id,
-                        path: path.into(),
-                    }))
-                    .ok();
-                } else {
-                    tx.send(None).ok();
+                        let prompt = this.on_prompt_for_new_path.take().unwrap();
+                        let rx = prompt(this, window, cx);
+                        this.on_prompt_for_new_path = Some(prompt);
+                        rx
+                    })?;
+                    if let Ok(path) = rx.await {
+                        tx.send(path).log_err();
+                    }
+                    return anyhow::Ok(());
                 }
-                anyhow::Ok(())
-            })
-            .detach_and_log_err(cx);
+            };
 
-            rx
-        }
+            let project_path = abs_path.and_then(|abs_path| {
+                this.update(cx, |this, cx| {
+                    this.project.update(cx, |project, cx| {
+                        project.find_or_create_worktree(abs_path, true, cx)
+                    })
+                })
+                .ok()
+            });
+
+            if let Some(project_path) = project_path {
+                let (worktree, path) = project_path.await?;
+                let worktree_id = worktree.read_with(cx, |worktree, _| worktree.id())?;
+                tx.send(Some(ProjectPath {
+                    worktree_id,
+                    path: path.into(),
+                }))
+                .ok();
+            } else {
+                tx.send(None).ok();
+            }
+            anyhow::Ok(())
+        })
+        .detach_and_log_err(cx);
+
+        rx
     }
 
     pub fn titlebar_item(&self) -> Option<AnyView> {
@@ -2354,6 +2361,22 @@ impl Workspace {
 
     fn active_project_path(&self, cx: &App) -> Option<ProjectPath> {
         self.active_item(cx).and_then(|item| item.project_path(cx))
+    }
+
+    pub fn most_recent_active_path(&self, cx: &App) -> Option<PathBuf> {
+        self.recent_navigation_history_iter(cx)
+            .filter_map(|(path, abs_path)| {
+                let worktree = self
+                    .project
+                    .read(cx)
+                    .worktree_for_id(path.worktree_id, cx)?;
+                if worktree.read(cx).is_visible() {
+                    abs_path
+                } else {
+                    None
+                }
+            })
+            .next()
     }
 
     pub fn save_active_item(
