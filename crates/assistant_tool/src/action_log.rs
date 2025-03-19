@@ -324,7 +324,7 @@ mod tests {
                 log.review_edits_in_range(
                     buffer.clone(),
                     Point::new(0, 0)..Point::new(4, 3),
-                    false,
+                    true,
                     cx,
                 )
             })
