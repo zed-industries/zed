@@ -57,6 +57,7 @@ impl From<SortStrategy> for UtilSortStrategy {
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
 pub struct FileSortingSettings {
     pub strategy: SortStrategy,
 }
