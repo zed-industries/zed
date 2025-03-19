@@ -28,10 +28,10 @@ use crate::assistant_model_selector::AssistantModelSelector;
 use crate::context_picker::{ConfirmBehavior, ContextPicker};
 use crate::context_store::{refresh_context_store_text, ContextStore};
 use crate::context_strip::{ContextStrip, ContextStripEvent, SuggestContextKind};
-use crate::thread::{RequestKind, Thread};
+use crate::thread::{RequestKind, Thread, ThreadError};
 use crate::thread_store::ThreadStore;
 use crate::tool_selector::ToolSelector;
-use crate::{Chat, ChatMode, RemoveAllContext, ToggleContextPicker};
+use crate::{Chat, ChatMode, RemoveAllContext, ThreadEvent, ToggleContextPicker};
 
 pub struct MessageEditor {
     thread: Entity<Thread>,
@@ -204,10 +204,32 @@ impl MessageEditor {
         let refresh_task =
             refresh_context_store_text(self.context_store.clone(), &HashSet::default(), cx);
 
+        let system_prompt_task = self.thread.read_with(cx, |thread, _cx| {
+            if thread.is_empty() {
+                Some(thread.load_system_prompt(cx))
+            } else {
+                None
+            }
+        });
+
         let thread = self.thread.clone();
         let context_store = self.context_store.clone();
         cx.spawn(move |_, mut cx| async move {
             refresh_task.await;
+            if let Some(system_prompt_task) = system_prompt_task {
+                let system_prompt_result = system_prompt_task.await;
+                thread
+                    .update(&mut cx, |thread, cx| match system_prompt_result {
+                        Err(err) => {
+                            // todo! Seems wrong to do this here.
+                            cx.emit(ThreadEvent::ShowError(ThreadError::Message(
+                                format!("{err:?}").into(),
+                            )));
+                        }
+                        Ok(system_prompt) => thread.set_system_prompt(system_prompt),
+                    })
+                    .ok();
+            }
             thread
                 .update(&mut cx, |thread, cx| {
                     let context = context_store.read(cx).snapshot(cx).collect::<Vec<_>>();

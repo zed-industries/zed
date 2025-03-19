@@ -6,6 +6,7 @@ use anyhow::{Context as _, Result};
 use assistant_tool::{ActionLog, ToolWorkingSet};
 use chrono::{DateTime, Utc};
 use collections::{BTreeMap, HashMap, HashSet};
+use fs::Fs;
 use futures::future::Shared;
 use futures::{FutureExt, StreamExt as _};
 use git;
@@ -16,11 +17,11 @@ use language_model::{
     LanguageModelToolUseId, MaxMonthlySpendReachedError, MessageContent, PaymentRequiredError,
     Role, StopReason, TokenUsage,
 };
-use project::Project;
-use prompt_store::{AssistantSystemPromptWorktree, PromptBuilder};
+use project::{Project, Worktree};
+use prompt_store::{PromptBuilder, WorktreeInfoForSystemPrompt};
 use scripting_tool::{ScriptingSession, ScriptingTool};
 use serde::{Deserialize, Serialize};
-use util::{post_inc, ResultExt, TryFutureExt as _};
+use util::{post_inc, TryFutureExt as _};
 use uuid::Uuid;
 
 use crate::context::{attach_context_to_message, ContextId, ContextSnapshot};
@@ -95,6 +96,7 @@ pub struct Thread {
     updated_at: DateTime<Utc>,
     summary: Option<SharedString>,
     pending_summary: Task<Option<()>>,
+    system_prompt: Option<String>,
     messages: Vec<Message>,
     next_message_id: MessageId,
     context: BTreeMap<ContextId, ContextSnapshot>,
@@ -124,6 +126,7 @@ impl Thread {
             updated_at: Utc::now(),
             summary: None,
             pending_summary: Task::ready(None),
+            system_prompt: None,
             messages: Vec::new(),
             next_message_id: MessageId(0),
             context: BTreeMap::default(),
@@ -176,6 +179,8 @@ impl Thread {
             updated_at: serialized.updated_at,
             summary: Some(serialized.summary),
             pending_summary: Task::ready(None),
+            // todo! Persist system prompt
+            system_prompt: None,
             messages: serialized
                 .messages
                 .into_iter()
@@ -432,6 +437,77 @@ impl Thread {
         })
     }
 
+    pub fn load_system_prompt(&self, cx: &App) -> Task<Result<String>> {
+        let project = self.project.read(cx);
+        let tasks = project
+            .visible_worktrees(cx)
+            .map(|worktree| {
+                Self::load_worktree_info_for_system_prompt(
+                    project.fs().clone(),
+                    worktree.read(cx),
+                    cx,
+                )
+            })
+            .collect::<Vec<_>>();
+
+        let prompt_builder = self.prompt_builder.clone();
+        cx.spawn(|_cx| async move {
+            let system_prompt_worktrees = futures::future::join_all(tasks)
+                .await
+                .into_iter()
+                .collect::<Result<_>>()?;
+            prompt_builder
+                .generate_assistant_system_prompt(system_prompt_worktrees)
+                .context("failed to generate assistant system prompt")
+        })
+    }
+
+    fn load_worktree_info_for_system_prompt(
+        fs: Arc<dyn Fs>,
+        worktree: &Worktree,
+        cx: &App,
+    ) -> Task<Result<WorktreeInfoForSystemPrompt>> {
+        let root_name = worktree.root_name().into();
+        let abs_path = worktree.abs_path();
+
+        // Note that Cline supports `.clinerules` being a directory, but that is not currently
+        // supported. This doesn't seem to occur often in GitHub repositories.
+        const RULES_PATHS: [&'static str; 4] =
+            [".cursorrules", ".windsurfrules", ".clinerules", "claude.md"];
+        if let Some(rules_path) = RULES_PATHS
+            .into_iter()
+            .filter_map(|rules_path| {
+                worktree
+                    .entry_for_path(rules_path)
+                    .filter(|entry| entry.is_file())
+                    .map(|entry| worktree.absolutize(&entry.path))
+            })
+            .next()
+        {
+            cx.spawn(|_| async move {
+                let rules_path = rules_path?;
+                let rules = fs.load(&rules_path).await.with_context(|| {
+                    format!("failed to load assistant rules file {:?}", rules_path)
+                })?;
+                Ok(WorktreeInfoForSystemPrompt {
+                    root_name,
+                    abs_path,
+                    rules: Some(rules),
+                })
+            })
+        } else {
+            Task::ready(Ok(WorktreeInfoForSystemPrompt {
+                root_name,
+                abs_path,
+                rules: None,
+            }))
+        }
+    }
+
+    pub fn set_system_prompt(&mut self, system_prompt: String) {
+        self.system_prompt = Some(system_prompt);
+    }
+
     pub fn send_to_model(
         &mut self,
         model: Arc<dyn LanguageModel>,
@@ -469,35 +545,20 @@ impl Thread {
         request_kind: RequestKind,
         cx: &App,
     ) -> LanguageModelRequest {
-        let worktree_root_names = self
-            .project
-            .read(cx)
-            .visible_worktrees(cx)
-            .map(|worktree| {
-                let worktree = worktree.read(cx);
-                AssistantSystemPromptWorktree {
-                    root_name: worktree.root_name().into(),
-                    abs_path: worktree.abs_path(),
-                }
-            })
-            .collect::<Vec<_>>();
-        let system_prompt = self
-            .prompt_builder
-            .generate_assistant_system_prompt(worktree_root_names)
-            .context("failed to generate assistant system prompt")
-            .log_err()
-            .unwrap_or_default();
-
         let mut request = LanguageModelRequest {
-            messages: vec![LanguageModelRequestMessage {
-                role: Role::System,
-                content: vec![MessageContent::Text(system_prompt)],
-                cache: true,
-            }],
+            messages: vec![],
             tools: Vec::new(),
             stop: Vec::new(),
             temperature: None,
         };
+
+        if let Some(system_prompt) = self.system_prompt.as_ref() {
+            request.messages.push(LanguageModelRequestMessage {
+                role: Role::System,
+                content: vec![MessageContent::Text(system_prompt.clone())],
+                cache: true,
+            });
+        }
 
         let mut referenced_context_ids = HashSet::default();
 
