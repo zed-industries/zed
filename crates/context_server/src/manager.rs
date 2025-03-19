@@ -155,7 +155,7 @@ impl ContextServerManager {
                 Self::maintain_servers(this.clone(), cx).await?;
 
                 this.update(cx, |this, cx| {
-                    let has_any_context_servers = !this.servers().is_empty();
+                    let has_any_context_servers = !this.running_servers().is_empty();
                     if has_any_context_servers {
                         CommandPaletteFilter::update_global(cx, |filter, _cx| {
                             filter.show_namespace(CONTEXT_SERVERS_NAMESPACE);
@@ -178,6 +178,31 @@ impl ContextServerManager {
             .get(id)
             .filter(|server| server.client().is_some())
             .cloned()
+    }
+
+    pub fn start_server(
+        &self,
+        server: Arc<ContextServer>,
+        cx: &mut Context<Self>,
+    ) -> Task<anyhow::Result<()>> {
+        cx.spawn(async move |this, cx| {
+            let id = server.id.clone();
+            server.start(&cx).await?;
+            this.update(cx, |_, cx| cx.emit(Event::ServerStarted { server_id: id }))?;
+            Ok(())
+        })
+    }
+
+    pub fn stop_server(
+        &self,
+        server: Arc<ContextServer>,
+        cx: &mut Context<Self>,
+    ) -> anyhow::Result<()> {
+        server.stop()?;
+        cx.emit(Event::ServerStopped {
+            server_id: server.id(),
+        });
+        Ok(())
     }
 
     pub fn restart_server(
@@ -206,7 +231,11 @@ impl ContextServerManager {
         })
     }
 
-    pub fn servers(&self) -> Vec<Arc<ContextServer>> {
+    pub fn all_servers(&self) -> Vec<Arc<ContextServer>> {
+        self.servers.values().cloned().collect()
+    }
+
+    pub fn running_servers(&self) -> Vec<Arc<ContextServer>> {
         self.servers
             .values()
             .filter(|server| server.client().is_some())

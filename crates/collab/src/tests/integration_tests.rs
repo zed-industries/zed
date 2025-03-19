@@ -2958,15 +2958,38 @@ async fn test_git_status_sync(
         .insert_tree(
             "/dir",
             json!({
-            ".git": {},
-            "a.txt": "a",
-            "b.txt": "b",
+                ".git": {},
+                "a.txt": "a",
+                "b.txt": "b",
+                "c.txt": "c",
             }),
         )
         .await;
 
-    const A_TXT: &str = "a.txt";
-    const B_TXT: &str = "b.txt";
+    // Initially, a.txt is uncommitted, but present in the index,
+    // and b.txt is unmerged.
+    client_a.fs().set_head_for_repo(
+        "/dir/.git".as_ref(),
+        &[("b.txt".into(), "B".into()), ("c.txt".into(), "c".into())],
+    );
+    client_a.fs().set_index_for_repo(
+        "/dir/.git".as_ref(),
+        &[
+            ("a.txt".into(), "".into()),
+            ("b.txt".into(), "B".into()),
+            ("c.txt".into(), "c".into()),
+        ],
+    );
+    client_a.fs().set_unmerged_paths_for_repo(
+        "/dir/.git".as_ref(),
+        &[(
+            "b.txt".into(),
+            UnmergedStatus {
+                first_head: UnmergedStatusCode::Updated,
+                second_head: UnmergedStatusCode::Deleted,
+            },
+        )],
+    );
 
     const A_STATUS_START: FileStatus = FileStatus::Tracked(TrackedStatus {
         index_status: StatusCode::Added,
@@ -2976,14 +2999,6 @@ async fn test_git_status_sync(
         first_head: UnmergedStatusCode::Updated,
         second_head: UnmergedStatusCode::Deleted,
     });
-
-    client_a.fs().set_status_for_repo_via_git_operation(
-        Path::new("/dir/.git"),
-        &[
-            (Path::new(A_TXT), A_STATUS_START),
-            (Path::new(B_TXT), B_STATUS_START),
-        ],
-    );
 
     let (project_local, _worktree_id) = client_a.build_local_project("/dir", cx_a).await;
     let project_id = active_call_a
@@ -3000,7 +3015,7 @@ async fn test_git_status_sync(
 
     #[track_caller]
     fn assert_status(
-        file: &impl AsRef<Path>,
+        file: impl AsRef<Path>,
         status: Option<FileStatus>,
         project: &Project,
         cx: &App,
@@ -3014,13 +3029,15 @@ async fn test_git_status_sync(
     }
 
     project_local.read_with(cx_a, |project, cx| {
-        assert_status(&Path::new(A_TXT), Some(A_STATUS_START), project, cx);
-        assert_status(&Path::new(B_TXT), Some(B_STATUS_START), project, cx);
+        assert_status("a.txt", Some(A_STATUS_START), project, cx);
+        assert_status("b.txt", Some(B_STATUS_START), project, cx);
+        assert_status("c.txt", None, project, cx);
     });
 
     project_remote.read_with(cx_b, |project, cx| {
-        assert_status(&Path::new(A_TXT), Some(A_STATUS_START), project, cx);
-        assert_status(&Path::new(B_TXT), Some(B_STATUS_START), project, cx);
+        assert_status("a.txt", Some(A_STATUS_START), project, cx);
+        assert_status("b.txt", Some(B_STATUS_START), project, cx);
+        assert_status("c.txt", None, project, cx);
     });
 
     const A_STATUS_END: FileStatus = FileStatus::Tracked(TrackedStatus {
@@ -3029,30 +3046,42 @@ async fn test_git_status_sync(
     });
     const B_STATUS_END: FileStatus = FileStatus::Tracked(TrackedStatus {
         index_status: StatusCode::Deleted,
-        worktree_status: StatusCode::Unmodified,
+        worktree_status: StatusCode::Added,
+    });
+    const C_STATUS_END: FileStatus = FileStatus::Tracked(TrackedStatus {
+        index_status: StatusCode::Unmodified,
+        worktree_status: StatusCode::Modified,
     });
 
-    client_a.fs().set_status_for_repo_via_working_copy_change(
-        Path::new("/dir/.git"),
-        &[
-            (Path::new(A_TXT), A_STATUS_END),
-            (Path::new(B_TXT), B_STATUS_END),
-        ],
+    // Delete b.txt from the index, mark conflict as resolved,
+    // and modify c.txt in the working copy.
+    client_a.fs().set_index_for_repo(
+        "/dir/.git".as_ref(),
+        &[("a.txt".into(), "a".into()), ("c.txt".into(), "c".into())],
     );
+    client_a
+        .fs()
+        .set_unmerged_paths_for_repo("/dir/.git".as_ref(), &[]);
+    client_a
+        .fs()
+        .atomic_write("/dir/c.txt".into(), "CC".into())
+        .await
+        .unwrap();
 
     // Wait for buffer_local_a to receive it
     executor.run_until_parked();
 
     // Smoke test status reading
-
     project_local.read_with(cx_a, |project, cx| {
-        assert_status(&Path::new(A_TXT), Some(A_STATUS_END), project, cx);
-        assert_status(&Path::new(B_TXT), Some(B_STATUS_END), project, cx);
+        assert_status("a.txt", Some(A_STATUS_END), project, cx);
+        assert_status("b.txt", Some(B_STATUS_END), project, cx);
+        assert_status("c.txt", Some(C_STATUS_END), project, cx);
     });
 
     project_remote.read_with(cx_b, |project, cx| {
-        assert_status(&Path::new(A_TXT), Some(A_STATUS_END), project, cx);
-        assert_status(&Path::new(B_TXT), Some(B_STATUS_END), project, cx);
+        assert_status("a.txt", Some(A_STATUS_END), project, cx);
+        assert_status("b.txt", Some(B_STATUS_END), project, cx);
+        assert_status("c.txt", Some(C_STATUS_END), project, cx);
     });
 
     // And synchronization while joining
@@ -3060,8 +3089,9 @@ async fn test_git_status_sync(
     executor.run_until_parked();
 
     project_remote_c.read_with(cx_c, |project, cx| {
-        assert_status(&Path::new(A_TXT), Some(A_STATUS_END), project, cx);
-        assert_status(&Path::new(B_TXT), Some(B_STATUS_END), project, cx);
+        assert_status("a.txt", Some(A_STATUS_END), project, cx);
+        assert_status("b.txt", Some(B_STATUS_END), project, cx);
+        assert_status("c.txt", Some(C_STATUS_END), project, cx);
     });
 }
 

@@ -1605,9 +1605,10 @@ impl App {
 impl AppContext for App {
     type Result<T> = T;
 
-    /// Build an entity that is owned by the application. The given function will be invoked with
-    /// a `Context` and must return an object representing the entity. A `Entity` handle will be returned,
-    /// which can be used to access the entity in a context.
+    /// Builds an entity that is owned by the application.
+    ///
+    /// The given function will be invoked with a [`Context`] and must return an object representing the entity. An
+    /// [`Entity`] handle will be returned, which can be used to access the entity in a context.
     fn new<T: 'static>(
         &mut self,
         build_entity: impl FnOnce(&mut Context<'_, T>) -> T,

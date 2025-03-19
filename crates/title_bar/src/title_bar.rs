@@ -683,7 +683,10 @@ impl TitleBar {
                             "Icon Themes…",
                             zed_actions::icon_theme_selector::Toggle::default().boxed_clone(),
                         )
-                        .action("Extensions", zed_actions::Extensions.boxed_clone())
+                        .action(
+                            "Extensions",
+                            zed_actions::Extensions::default().boxed_clone(),
+                        )
                         .separator()
                         .link(
                             "Book Onboarding",
@@ -730,7 +733,10 @@ impl TitleBar {
                                 "Icon Themes…",
                                 zed_actions::icon_theme_selector::Toggle::default().boxed_clone(),
                             )
-                            .action("Extensions", zed_actions::Extensions.boxed_clone())
+                            .action(
+                                "Extensions",
+                                zed_actions::Extensions::default().boxed_clone(),
+                            )
                             .separator()
                             .link(
                                 "Book Onboarding",

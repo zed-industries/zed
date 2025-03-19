@@ -1,7 +1,6 @@
 use crate::status::GitStatus;
 use crate::{Oid, SHORT_SHA_LENGTH};
 use anyhow::{anyhow, Context as _, Result};
-use askpass::{AskPassResult, AskPassSession};
 use collections::HashMap;
 use futures::future::BoxFuture;
 use futures::{select_biased, AsyncWriteExt, FutureExt as _};
@@ -24,6 +23,8 @@ use sum_tree::MapSeekTarget;
 use util::command::new_smol_command;
 use util::ResultExt;
 use uuid::Uuid;
+
+pub use askpass::{AskPassResult, AskPassSession};
 
 pub const REMOTE_CANCELLED_BY_USER: &str = "Operation cancelled by user";
 
@@ -318,11 +319,13 @@ pub struct RealGitRepository {
 }
 
 impl RealGitRepository {
-    pub fn new(repository: git2::Repository, git_binary_path: Option<PathBuf>) -> Self {
-        Self {
+    pub fn new(dotgit_path: &Path, git_binary_path: Option<PathBuf>) -> Option<Self> {
+        let workdir_root = dotgit_path.parent()?;
+        let repository = git2::Repository::open(workdir_root).log_err()?;
+        Some(Self {
             repository: Arc::new(Mutex::new(repository)),
             git_binary_path: git_binary_path.unwrap_or_else(|| PathBuf::from("git")),
-        }
+        })
     }
 
     fn working_directory(&self) -> Result<PathBuf> {
@@ -1354,8 +1357,8 @@ mod tests {
         cx.executor().allow_parking();
 
         let repo_dir = tempfile::tempdir().unwrap();
-        let git = git2::Repository::init(repo_dir.path()).unwrap();
-        let repo = RealGitRepository::new(git, None);
+        git2::Repository::init(repo_dir.path()).unwrap();
+        let repo = RealGitRepository::new(&repo_dir.path().join(".git"), None).unwrap();
 
         smol::fs::write(repo_dir.path().join("foo"), "foo")
             .await

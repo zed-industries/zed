@@ -5239,8 +5239,8 @@ dependencies = [
  "fsevent",
  "futures 0.3.31",
  "git",
- "git2",
  "gpui",
+ "ignore",
  "libc",
  "log",
  "notify 6.1.1",
@@ -17335,7 +17335,7 @@ dependencies = [
 
 [[package]]
 name = "zed"
-version = "0.179.0"
+version = "0.180.0"
 dependencies = [
  "activity_indicator",
  "anyhow",

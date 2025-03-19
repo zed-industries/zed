@@ -818,7 +818,7 @@ impl ContextStore {
         cx.update_entity(
             &self.context_server_manager,
             |context_server_manager, cx| {
-                for server in context_server_manager.servers() {
+                for server in context_server_manager.running_servers() {
                     context_server_manager
                         .restart_server(&server.id(), cx)
                         .detach_and_log_err(cx);

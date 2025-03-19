@@ -6050,11 +6050,7 @@ async fn test_staging_hunks(cx: &mut gpui::TestAppContext) {
     )
     .await;
 
-    fs.set_head_for_repo(
-        "/dir/.git".as_ref(),
-        &[("file.txt".into(), committed_contents.clone())],
-    );
-    fs.set_index_for_repo(
+    fs.set_head_and_index_for_repo(
         "/dir/.git".as_ref(),
         &[("file.txt".into(), committed_contents.clone())],
     );
