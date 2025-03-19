@@ -39,7 +39,7 @@ impl LocalParticipant {
             .await
     }
 
-    pub async fn publish_track(
+    pub fn publish_track(
         &self,
         track: LocalTrack,
         _options: TrackPublishOptions,
@@ -47,6 +47,7 @@ impl LocalParticipant {
         let this = self.clone();
         let track = track.clone();
         let server = this.room.test_server();
+        let room = self.room.downgrade();
         let sid = match track {
             LocalTrack::Video(track) => {
                 server.publish_video_track(this.room.token(), track).await?

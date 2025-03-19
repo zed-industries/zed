@@ -14,12 +14,13 @@ use collections::{BTreeMap, HashMap, HashSet};
 use fs::Fs;
 use futures::{FutureExt, StreamExt};
 use gpui::{App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, Task, WeakEntity};
+use gpui_tokio::Tokio;
 use language::LanguageRegistry;
 #[cfg(not(all(target_os = "windows", target_env = "gnu")))]
 use livekit::{
     capture_local_audio_track, capture_local_video_track,
     id::ParticipantIdentity,
-    options::{TrackPublishOptions, VideoCodec},
+    options::TrackPublishOptions,
     play_remote_audio_track,
     publication::LocalTrackPublication,
     track::{TrackKind, TrackSource},
@@ -1329,6 +1330,8 @@ impl Room {
     #[cfg(not(all(target_os = "windows", target_env = "gnu")))]
     #[track_caller]
     pub fn share_microphone(&mut self, cx: &mut Context<Self>) -> Task<Result<()>> {
+        use gpui_tokio::Tokio;
+
         if self.status.is_offline() {
             return Task::ready(Err(anyhow!("room is offline")));
         }
@@ -1345,16 +1348,24 @@ impl Room {
         cx.spawn(move |this, mut cx| async move {
             let (track, stream) = capture_local_audio_track(cx.background_executor())?.await;
 
-            let publication = participant
-                .publish_track(
-                    livekit::track::LocalTrack::Audio(track),
-                    TrackPublishOptions {
-                        source: TrackSource::Microphone,
-                        ..Default::default()
-                    },
-                )
-                .await
-                .map_err(|error| anyhow!("failed to publish track: {error}"));
+            let publication = {
+                Tokio::spawn(&mut cx, {
+                    let participant = participant.clone();
+                    async move {
+                        participant
+                            .publish_track(
+                                livekit::track::LocalTrack::Audio(track),
+                                TrackPublishOptions {
+                                    source: TrackSource::Microphone,
+                                    ..Default::default()
+                                },
+                            )
+                            .await
+                    }
+                })?
+                .await?
+                .map_err(|error| anyhow!("failed to publish track: {error}"))
+            };
             this.update(&mut cx, |this, cx| {
                 let live_kit = this
                     .live_kit
@@ -1622,11 +1633,13 @@ impl Room {
             } => {
                 #[cfg(not(all(target_os = "windows", target_env = "gnu")))]
                 {
+                    let guard = Tokio::handle(cx);
                     if should_mute {
                         track_publication.mute()
                     } else {
                         track_publication.unmute()
                     }
+                    drop(guard);
                 }
 
                 None
@@ -1652,12 +1665,12 @@ fn spawn_room_connection(
     if let Some(connection_info) = livekit_connection_info {
         cx.spawn(|this, mut cx| async move {
             let (room, mut events) = Tokio::spawn(&mut cx, async move {
-                livekit::Room::connect(
-                    &connection_info.server_url,
-                    &connection_info.token,
-                    RoomOptions::default(),
-                )
-                .await
+                let connector =
+                    tokio_tungstenite::Connector::Rustls(Arc::new(http_client::tls_config()));
+                let mut config = RoomOptions::default();
+                config.connector = Some(connector);
+                livekit::Room::connect(&connection_info.server_url, &connection_info.token, config)
+                    .await
             })?
             .await??;
 

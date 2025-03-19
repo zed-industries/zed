@@ -11,25 +11,19 @@ pub mod test;
 use anyhow::{anyhow, Context as _, Result};
 use core_foundation::base::TCFType;
 use core_video::{
-    image_buffer::CVImageBuffer,
-    pixel_buffer::{kCVPixelBufferHeightKey, kCVPixelFormatType_420YpCbCr8BiPlanarFullRange},
+    pixel_buffer::kCVPixelFormatType_420YpCbCr8BiPlanarFullRange,
     pixel_buffer_io_surface::kCVPixelBufferIOSurfaceCoreAnimationCompatibilityKey,
     pixel_buffer_pool::{self, CVPixelBufferPool},
 };
-use coreaudio::sys::OSType;
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait as _};
-use futures::{io, Stream, StreamExt as _};
+use futures::{Stream, StreamExt as _};
 use gpui::{
-    BackgroundExecutor, ScreenCaptureFrame, ScreenCaptureSource, ScreenCaptureStream,
-    SurfaceSource, Task,
+    BackgroundExecutor, ScreenCaptureFrame, ScreenCaptureSource, ScreenCaptureStream, Task,
 };
 
 use parking_lot::Mutex;
-use std::{
-    borrow::Cow, collections::VecDeque, ffi::c_void, future::Future, mem, pin::Pin, sync::Arc,
-    thread,
-};
-use util::{debug_panic, ResultExt as _};
+use std::{borrow::Cow, collections::VecDeque, sync::Arc, thread};
+use util::ResultExt as _;
 #[cfg(not(all(target_os = "windows", target_env = "gnu")))]
 use webrtc::{
     audio_frame::AudioFrame,
@@ -75,111 +69,11 @@ pub enum AudioStream {
     },
 }
 
-// struct Dispatcher(Arc<dyn gpui::PlatformDispatcher>);
-
-// #[cfg(not(all(target_os = "windows", target_env = "gnu")))]
-// impl livekit::dispatcher::Dispatcher for Dispatcher {
-//     fn dispatch(&self, runnable: livekit::dispatcher::Runnable) {
-//         self.0.dispatch(runnable, None);
-//     }
-
-//     fn dispatch_after(
-//         &self,
-//         duration: std::time::Duration,
-//         runnable: livekit::dispatcher::Runnable,
-//     ) {
-//         self.0.dispatch_after(duration, runnable);
-//     }
-// }
-
-// struct HttpClientAdapter(Arc<dyn http_client::HttpClient>);
-
-// fn http_2_status(status: http_client::http::StatusCode) -> http_2::StatusCode {
-//     http_2::StatusCode::from_u16(status.as_u16())
-//         .expect("valid status code to status code conversion")
-// }
-
-// #[cfg(not(all(target_os = "windows", target_env = "gnu")))]
-// impl livekit::dispatcher::HttpClient for HttpClientAdapter {
-//     fn get(
-//         &self,
-//         url: &str,
-//     ) -> Pin<Box<dyn Future<Output = io::Result<livekit::tokio::Response>> + Send>> {
-//         let http_client = self.0.clone();
-//         let url = url.to_string();
-//         Box::pin(async move {
-//             let response = http_client
-//                 .get(&url, http_client::AsyncBody::empty(), false)
-//                 .await
-//                 .map_err(io::Error::other)?;
-//             Ok(livekit::dispatcher::Response {
-//                 status: http_2_status(response.status()),
-//                 body: Box::pin(response.into_body()),
-//             })
-//         })
-//     }
-
-//     fn send_async(
-//         &self,
-//         request: http_2::Request<Vec<u8>>,
-//     ) -> Pin<Box<dyn Future<Output = io::Result<livekit::dispatcher::Response>> + Send>> {
-//         let http_client = self.0.clone();
-//         let mut builder = http_client::http::Request::builder()
-//             .method(request.method().as_str())
-//             .uri(request.uri().to_string());
-
-//         for (key, value) in request.headers().iter() {
-//             builder = builder.header(key.as_str(), value.as_bytes());
-//         }
-
-//         if !request.extensions().is_empty() {
-//             debug_panic!(
-//                 "Livekit sent an HTTP request with a protocol extension that Zed doesn't support!"
-//             );
-//         }
-
-//         let request = builder
-//             .body(http_client::AsyncBody::from_bytes(
-//                 request.into_body().into(),
-//             ))
-//             .unwrap();
-
-//         Box::pin(async move {
-//             let response = http_client.send(request).await.map_err(io::Error::other)?;
-//             Ok(livekit::dispatcher::Response {
-//                 status: http_2_status(response.status()),
-//                 body: Box::pin(response.into_body()),
-//             })
-//         })
-//     }
-// }
-
-#[cfg(all(target_os = "windows", target_env = "gnu"))]
-pub fn init(
-    dispatcher: Arc<dyn gpui::PlatformDispatcher>,
-    http_client: Arc<dyn http_client::HttpClient>,
-) {
-}
-
-// #[cfg(not(all(target_os = "windows", target_env = "gnu")))]
-// pub fn init(
-//     dispatcher: Arc<dyn gpui::PlatformDispatcher>,
-//     http_client: Arc<dyn http_client::HttpClient>,
-// ) {
-//     livekit::dispatcher::set_dispatcher(Dispatcher(dispatcher));
-//     livekit::dispatcher::set_http_client(HttpClientAdapter(http_client));
-// }
-
 #[cfg(not(all(target_os = "windows", target_env = "gnu")))]
 pub async fn capture_local_video_track(
     capture_source: &dyn ScreenCaptureSource,
     cx: &mut gpui::AsyncApp,
 ) -> Result<(track::LocalVideoTrack, Box<dyn ScreenCaptureStream>)> {
-    use std::{slice, sync::atomic::AtomicU8};
-
-    use core_foundation::base::TCFType as _;
-    use livekit::webrtc::prelude::{I420ABuffer, I420Buffer, NV12Buffer};
-
     let resolution = capture_source.resolution()?;
     dbg!(&resolution);
     let track_source = gpui_tokio::Tokio::spawn(cx, async move {
@@ -194,70 +88,11 @@ pub async fn capture_local_video_track(
         .stream({
             let track_source = track_source.clone();
             Box::new(move |frame| {
-                // let pixel_buffer = frame.0.as_concrete_TypeRef();
-                // let data = unsafe {
-                //     if CVPixelBufferLockBaseAddress(pixel_buffer, 0) != 0 {
-                //         panic!("uh oh")
-                //     }
-                //     let base_address = CVPixelBufferGetBaseAddress(pixel_buffer);
-                //     if base_address.is_null() {
-                //         CVPixelBufferUnlockBaseAddress(pixel_buffer, 0);
-                //         panic("no no")
-                //     }
-                //     let data_size = CVPixelBufferGetDataSize(pixel_buffer);
-                //     let data = slice::from_raw_parts(base_address as *const u8, data_size);
-                //     println!("{}", data.len());
-                //     CVPixelBufferUnlockBaseAddress(pixel_buffer, 0);
-                //     data
-                // };
-                //
-                // let mut nv12_buffer =
-                //     NV12Buffer::new(resolution.width.0 as u32, resolution.height.0 as u32);
-
-                // let (data_y, data_uv) = nv12_buffer.data_mut();
-                // // Fill Y plane with green (150)
-                // for y in data_y.iter_mut() {
-                //     *y = 150;
-                // }
-
-                // // Fill UV plane with green (-43)
-                // for y in data_uv.iter_mut() {
-                //     *y = if y as *const _ as usize % 2 == 0 {
-                //         213
-                //     } else {
-                //         235
-                //     };
-                // }
-
-                // let mut i420_buffer =
-                //     I420Buffer::new(resolution.width.0 as u32, resolution.height.0 as u32);
-                // let (y_data, u_data, v_data) = i420_buffer.data_mut();
-
-                // // Fill Y plane with green (150)
-                // for y in y_data.iter_mut() {
-                //     *y = 150;
-                // }
-
-                // // Fill U plane with green (-43)
-                // for u in u_data.iter_mut() {
-                //     *u = 213;
-                // }
-
-                // // Fill V plane with green (-21)
-                // for v in v_data.iter_mut() {
-                //     *v = 235;
-                // }
-
                 if let Some(buffer) = video_frame_buffer_to_webrtc(frame) {
-                    dbg!(
-                        buffer.as_ref().width(),
-                        buffer.as_ref().height(),
-                        buffer.as_ref().buffer_type()
-                    );
                     track_source.capture_frame(&VideoFrame {
                         rotation: VideoRotation::VideoRotation0,
                         timestamp_us: 0,
-                        buffer: buffer,
+                        buffer,
                     });
                 }
             })
@@ -609,11 +444,7 @@ fn video_frame_buffer_from_webrtc(
     pool: core_video::pixel_buffer_pool::CVPixelBufferPool,
     buffer: Box<dyn VideoBuffer>,
 ) -> Option<RemoteVideoFrame> {
-    use core_video::{
-        image_buffer::{CVImageBuffer, TCVImageBuffer},
-        pixel_buffer::CVPixelBuffer,
-        r#return::kCVReturnSuccess,
-    };
+    use core_video::{pixel_buffer::CVPixelBuffer, r#return::kCVReturnSuccess};
     use livekit::webrtc::native::yuv_helper::i420_to_nv12;
 
     if let Some(native) = buffer.as_native() {
@@ -643,11 +474,8 @@ fn video_frame_buffer_from_webrtc(
         let dst_y_buffer = std::slice::from_raw_parts_mut(dst_y as *mut u8, dst_y_len as usize);
         let dst_uv_buffer = std::slice::from_raw_parts_mut(dst_uv as *mut u8, dst_uv_len as usize);
 
-        dbg!(width, height, i420_buffer.width(), i420_buffer.height());
-
         let (stride_y, stride_u, stride_v) = i420_buffer.strides();
         let (src_y, src_u, src_v) = i420_buffer.data();
-        dbg!(src_y.len(), src_u.len(), src_v.len());
         i420_to_nv12(
             src_y,
             stride_y,
@@ -718,41 +546,12 @@ fn video_frame_buffer_from_webrtc(buffer: Box<dyn VideoBuffer>) -> Option<Remote
 
 #[cfg(target_os = "macos")]
 fn video_frame_buffer_to_webrtc(frame: ScreenCaptureFrame) -> Option<impl AsRef<dyn VideoBuffer>> {
-    use std::sync::atomic::AtomicU32;
-
-    use core_foundation::base::TCFType as _;
-    use core_video::{
-        buffer::__CVBuffer,
-        pixel_buffer::{
-            CVPixelBufferGetBytesPerRow, CVPixelBufferGetDataSize, CVPixelBufferGetHeight,
-            CVPixelBufferGetPixelFormatType, CVPixelBufferGetWidth,
-        },
-    };
-    use livekit::webrtc::video_frame::native::VideoFrameBufferExt;
+    use core_video::buffer::__CVBuffer;
 
     let pixel_buffer = frame.0.as_concrete_TypeRef() as *mut __CVBuffer;
-    static FRAME_COUNT: AtomicU32 = AtomicU32::new(0);
-    if FRAME_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed) == 0 {
-        unsafe {
-            let format = CVPixelBufferGetPixelFormatType(pixel_buffer);
-            let height = CVPixelBufferGetHeight(pixel_buffer);
-            let width = CVPixelBufferGetWidth(pixel_buffer);
-            let bytes_per_row = CVPixelBufferGetBytesPerRow(pixel_buffer);
-            let data_size = CVPixelBufferGetDataSize(pixel_buffer);
-            dbg!(
-                ">>>>>>>>>>>>>>>>>>>>>> {}",
-                format,
-                width,
-                height,
-                bytes_per_row
-            );
-        }
-    }
     std::mem::forget(frame.0);
     unsafe {
-        Some(
-            webrtc::video_frame::native::NativeBuffer::from_cv_pixel_buffer(pixel_buffer as _), // .to_i420(),
-        )
+        Some(webrtc::video_frame::native::NativeBuffer::from_cv_pixel_buffer(pixel_buffer as _))
     }
 }
 

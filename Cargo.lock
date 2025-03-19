@@ -2268,6 +2268,7 @@ dependencies = [
  "serde_derive",
  "settings",
  "telemetry",
+ "tokio-tungstenite 0.26.2",
  "util",
 ]
 
@@ -2395,15 +2396,13 @@ dependencies = [
 [[package]]
 name = "cargo_metadata"
 version = "0.19.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dd5eb614ed4c27c5d706420e4320fbe3216ab31fa1c33cd8246ac36dae4479ba"
 dependencies = [
  "camino",
  "cargo-platform",
  "semver",
  "serde",
  "serde_json",
- "thiserror 2.0.6",
+ "thiserror 2.0.12",
 ]
 
 [[package]]
@@ -7504,7 +7503,6 @@ dependencies = [
 [[package]]
 name = "libwebrtc"
 version = "0.3.10"
-source = "git+https://github.com/zed-industries/livekit-rust-sdks?rev=a71c9f7953e6cbe3d8a2f4f2848e1bb0cf687951#a71c9f7953e6cbe3d8a2f4f2848e1bb0cf687951"
 dependencies = [
  "cxx",
  "jni",
@@ -7589,7 +7587,6 @@ checksum = "4ee93343901ab17bd981295f2cf0026d4ad018c7c31ba84549a4ddbb47a45104"
 [[package]]
 name = "livekit"
 version = "0.7.6"
-source = "git+https://github.com/zed-industries/livekit-rust-sdks?rev=a71c9f7953e6cbe3d8a2f4f2848e1bb0cf687951#a71c9f7953e6cbe3d8a2f4f2848e1bb0cf687951"
 dependencies = [
  "chrono",
  "futures-util",
@@ -7612,7 +7609,6 @@ dependencies = [
 [[package]]
 name = "livekit-api"
 version = "0.4.2"
-source = "git+https://github.com/zed-industries/livekit-rust-sdks?rev=a71c9f7953e6cbe3d8a2f4f2848e1bb0cf687951#a71c9f7953e6cbe3d8a2f4f2848e1bb0cf687951"
 dependencies = [
  "base64 0.21.7",
  "futures-util",
@@ -7632,14 +7628,13 @@ dependencies = [
  "sha2",
  "thiserror 1.0.69",
  "tokio",
- "tokio-tungstenite 0.20.1",
+ "tokio-tungstenite 0.26.2",
  "url",
 ]
 
 [[package]]
 name = "livekit-protocol"
 version = "0.3.9"
-source = "git+https://github.com/zed-industries/livekit-rust-sdks?rev=a71c9f7953e6cbe3d8a2f4f2848e1bb0cf687951#a71c9f7953e6cbe3d8a2f4f2848e1bb0cf687951"
 dependencies = [
  "futures-util",
  "livekit-runtime",
@@ -7656,7 +7651,6 @@ dependencies = [
 [[package]]
 name = "livekit-runtime"
 version = "0.4.0"
-source = "git+https://github.com/zed-industries/livekit-rust-sdks?rev=a71c9f7953e6cbe3d8a2f4f2848e1bb0cf687951#a71c9f7953e6cbe3d8a2f4f2848e1bb0cf687951"
 dependencies = [
  "tokio",
  "tokio-stream",
@@ -9584,7 +9578,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8b7cafe60d6cf8e62e1b9b2ea516a089c008945bb5a275416789e7db0bc199dc"
 dependencies = [
  "memchr",
- "thiserror 2.0.6",
+ "thiserror 2.0.12",
  "ucd-trie",
 ]
 
@@ -10852,7 +10846,7 @@ dependencies = [
  "rustc-hash 2.1.1",
  "rustls 0.23.23",
  "socket2",
- "thiserror 2.0.6",
+ "thiserror 2.0.12",
  "tokio",
  "tracing",
 ]
@@ -10871,7 +10865,7 @@ dependencies = [
  "rustls 0.23.23",
  "rustls-pki-types",
  "slab",
- "thiserror 2.0.6",
+ "thiserror 2.0.12",
  "tinyvec",
  "tracing",
  "web-time",
@@ -12985,7 +12979,7 @@ dependencies = [
  "serde_json",
  "sha2",
  "smallvec",
- "thiserror 2.0.6",
+ "thiserror 2.0.12",
  "time",
  "tokio",
  "tokio-stream",
@@ -13074,7 +13068,7 @@ dependencies = [
  "smallvec",
  "sqlx-core",
  "stringprep",
- "thiserror 2.0.6",
+ "thiserror 2.0.12",
  "time",
  "tracing",
  "uuid",
@@ -13117,7 +13111,7 @@ dependencies = [
  "smallvec",
  "sqlx-core",
  "stringprep",
- "thiserror 2.0.6",
+ "thiserror 2.0.12",
  "time",
  "tracing",
  "uuid",
@@ -13948,11 +13942,11 @@ dependencies = [
 
 [[package]]
 name = "thiserror"
-version = "2.0.6"
+version = "2.0.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8fec2a1820ebd077e2b90c4df007bebf344cd394098a13c563957d0afc83ea47"
+checksum = "567b8a2dae586314f7be2a752ec7474332959c6460e02bde30d702a66d488708"
 dependencies = [
- "thiserror-impl 2.0.6",
+ "thiserror-impl 2.0.12",
 ]
 
 [[package]]
@@ -13968,9 +13962,9 @@ dependencies = [
 
 [[package]]
 name = "thiserror-impl"
-version = "2.0.6"
+version = "2.0.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d65750cab40f4ff1929fb1ba509e9914eb756131cef4210da8d5d700d26f6312"
+checksum = "7f7cf42b4507d8ea322120659672cf1b9dbb93f8f2d4ecfd6e51350ff5b17a1d"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -14289,6 +14283,21 @@ dependencies = [
  "log",
  "tokio",
  "tungstenite 0.21.0",
+]
+
+[[package]]
+name = "tokio-tungstenite"
+version = "0.26.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7a9daff607c6d2bf6c16fd681ccb7eecc83e4e2cdc1ca067ffaadfca5de7f084"
+dependencies = [
+ "futures-util",
+ "log",
+ "rustls 0.23.23",
+ "rustls-pki-types",
+ "tokio",
+ "tokio-rustls 0.26.1",
+ "tungstenite 0.26.2",
 ]
 
 [[package]]
@@ -14829,6 +14838,25 @@ dependencies = [
  "rand 0.8.5",
  "sha1",
  "thiserror 1.0.69",
+ "utf-8",
+]
+
+[[package]]
+name = "tungstenite"
+version = "0.26.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4793cb5e56680ecbb1d843515b23b6de9a75eb04b66643e256a396d43be33c13"
+dependencies = [
+ "bytes 1.10.1",
+ "data-encoding",
+ "http 1.2.0",
+ "httparse",
+ "log",
+ "rand 0.9.0",
+ "rustls 0.23.23",
+ "rustls-pki-types",
+ "sha1",
+ "thiserror 2.0.12",
  "utf-8",
 ]
 
@@ -15953,7 +15981,6 @@ dependencies = [
 [[package]]
 name = "webrtc-sys"
 version = "0.3.7"
-source = "git+https://github.com/zed-industries/livekit-rust-sdks?rev=a71c9f7953e6cbe3d8a2f4f2848e1bb0cf687951#a71c9f7953e6cbe3d8a2f4f2848e1bb0cf687951"
 dependencies = [
  "cc",
  "cxx",
@@ -15966,7 +15993,6 @@ dependencies = [
 [[package]]
 name = "webrtc-sys-build"
 version = "0.3.6"
-source = "git+https://github.com/zed-industries/livekit-rust-sdks?rev=a71c9f7953e6cbe3d8a2f4f2848e1bb0cf687951#a71c9f7953e6cbe3d8a2f4f2848e1bb0cf687951"
 dependencies = [
  "fs2",
  "regex",

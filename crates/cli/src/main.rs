@@ -710,7 +710,7 @@ mod mac_os {
         string::kCFStringEncodingUTF8,
         url::{CFURLCreateWithBytes, CFURL},
     };
-    use core_services::{kLSLaunchDefaults, LSLaunchURLSpec, LSOpenFromURLSpec, TCFType};
+    use core_services::{kLSLaunchDefaults, LSLaunchURLSpec, LSOpenFromURLSpe};
     use serde::Deserialize;
     use std::{
         ffi::OsStr,
