@@ -9,12 +9,7 @@ mod remote_video_track_view;
 pub mod test;
 
 use anyhow::{anyhow, Context as _, Result};
-use core_foundation::base::TCFType;
-use core_video::{
-    pixel_buffer::kCVPixelFormatType_420YpCbCr8BiPlanarFullRange,
-    pixel_buffer_io_surface::kCVPixelBufferIOSurfaceCoreAnimationCompatibilityKey,
-    pixel_buffer_pool::{self, CVPixelBufferPool},
-};
+
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait as _};
 use futures::{Stream, StreamExt as _};
 use gpui::{
@@ -397,9 +392,18 @@ pub fn play_remote_video_track(
     }
 }
 
-fn create_buffer_pool(width: u32, height: u32) -> Result<CVPixelBufferPool> {
+#[cfg(target_os = "macos")]
+fn create_buffer_pool(
+    width: u32,
+    height: u32,
+) -> Result<core_video::pixel_buffer_pool::CVPixelBufferPool> {
     use core_foundation::{base::TCFType, number::CFNumber, string::CFString};
     use core_video::pixel_buffer;
+    use core_video::{
+        pixel_buffer::kCVPixelFormatType_420YpCbCr8BiPlanarFullRange,
+        pixel_buffer_io_surface::kCVPixelBufferIOSurfaceCoreAnimationCompatibilityKey,
+        pixel_buffer_pool::{self},
+    };
 
     let width_key: CFString =
         unsafe { CFString::wrap_under_get_rule(pixel_buffer::kCVPixelBufferWidthKey) };
@@ -439,6 +443,7 @@ fn video_frame_buffer_from_webrtc(
     pool: core_video::pixel_buffer_pool::CVPixelBufferPool,
     buffer: Box<dyn VideoBuffer>,
 ) -> Option<RemoteVideoFrame> {
+    use core_foundation::base::TCFType;
     use core_video::{pixel_buffer::CVPixelBuffer, r#return::kCVReturnSuccess};
     use livekit::webrtc::native::yuv_helper::i420_to_nv12;
 
