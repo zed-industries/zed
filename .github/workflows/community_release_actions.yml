@@ -62,12 +62,12 @@ jobs:
 
       - name: Send release notes email
         if: steps.check-promotion-from-preview.outputs.was_promoted_from_preview == 'true'
-        env:
-          RELEASE_BODY: "${{ toJSON(github.event.release.body) }}"
         run: |
           TAG="v0.178.4"
-          curl -s 'https://api.github.com/repos/zed-industries/zed/releases' | \
-            jq -r --arg tag "$TAG" '.[] | select(.tag_name == $tag and .prerelease == false) | .body' \
+          echo \"${{ toJSON(github.event.release.body) }}\" > release_body.txt
+          curl \
+              -s 'https://api.github.com/repos/zed-industries/zed/releases' \
+            | jq -r --arg tag "$TAG" '.[] | select(.tag_name == $tag and .prerelease == false) | .body' \
             > release_body.txt
           jq -n --arg tag "$TAG" --rawfile body release_body.txt '{version: $tag, markdown_body: $body}' \
             > release_data.json
