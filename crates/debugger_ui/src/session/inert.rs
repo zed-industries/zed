@@ -8,7 +8,7 @@ use task::TCPHost;
 use theme::ThemeSettings;
 use ui::{
     div, h_flex, relative, v_flex, ActiveTheme as _, ButtonCommon, ButtonLike, Clickable, Context,
-    ContextMenu, Disableable, Disclosure, DropdownMenu, FluentBuilder, Icon, IconName, IconSize,
+    ContextMenu, Disableable, DropdownMenu, FluentBuilder, Icon, IconName, IconSize,
     InteractiveElement, IntoElement, Label, LabelCommon, LabelSize, ParentElement, PopoverMenu,
     PopoverMenuHandle, Render, SharedString, SplitButton, Styled, Window,
 };
