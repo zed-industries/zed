@@ -4,10 +4,6 @@ on:
   release:
     types: [published]
 
-  pull_request:
-    branches:
-      - "**"
-
 jobs:
   discord_release:
     if: github.repository_owner == 'zed-industries'
@@ -33,11 +29,11 @@ jobs:
             ${{ github.event.release.body }}
           maxLength: 2000
           truncationSymbol: "..."
-      # - name: Discord Webhook Action
-      #   uses: tsickert/discord-webhook@c840d45a03a323fbc3f7507ac7769dbd91bfb164 # v5.3.0
-      #   with:
-      #     webhook-url: ${{ secrets.DISCORD_WEBHOOK_URL }}
-      #     content: ${{ steps.get-content.outputs.string }}
+      - name: Discord Webhook Action
+        uses: tsickert/discord-webhook@c840d45a03a323fbc3f7507ac7769dbd91bfb164 # v5.3.0
+        with:
+          webhook-url: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          content: ${{ steps.get-content.outputs.string }}
 
   send_release_notes_email:
     if: github.repository_owner == 'zed-industries' && !github.event.release.prerelease
@@ -51,9 +47,8 @@ jobs:
         id: check-promotion-from-preview
         run: |
           VERSION="${{ github.event.release.tag_name }}"
-          VERSION="v0.178.4"
           PREVIEW_TAG="${VERSION}-pre"
-          git rev-parse "$PREVIEW_TAG"
+
           if git rev-parse "$PREVIEW_TAG" > /dev/null 2>&1; then
               echo "was_promoted_from_preview=true" >> $GITHUB_OUTPUT
           else
@@ -63,7 +58,7 @@ jobs:
       - name: Send release notes email
         if: steps.check-promotion-from-preview.outputs.was_promoted_from_preview == 'true'
         run: |
-          TAG="v0.178.4"
+          TAG="${{ github.event.release.tag_name }}"
           echo \"${{ toJSON(github.event.release.body) }}\" > release_body.txt
           curl \
               -s 'https://api.github.com/repos/zed-industries/zed/releases' \
