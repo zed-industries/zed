@@ -60,10 +60,6 @@ jobs:
         run: |
           TAG="${{ github.event.release.tag_name }}"
           echo \"${{ toJSON(github.event.release.body) }}\" > release_body.txt
-          curl \
-              -s 'https://api.github.com/repos/zed-industries/zed/releases' \
-            | jq -r --arg tag "$TAG" '.[] | select(.tag_name == $tag and .prerelease == false) | .body' \
-            > release_body.txt
           jq -n --arg tag "$TAG" --rawfile body release_body.txt '{version: $tag, markdown_body: $body}' \
             > release_data.json
           curl -X POST "https://zed.dev/api/send_release_notes_email" \
