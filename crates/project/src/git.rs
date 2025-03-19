@@ -530,7 +530,7 @@ impl GitStore {
             Ok(GitStoreCheckpoint {
                 checkpoints_by_dot_git_abs_path: dot_git_abs_paths
                     .into_iter()
-                    .zip(checkpoints.into_iter())
+                    .zip(checkpoints)
                     .collect(),
             })
         })
