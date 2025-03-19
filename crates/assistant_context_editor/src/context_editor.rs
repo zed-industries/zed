@@ -632,6 +632,19 @@ impl ContextEditor {
             ContextEvent::EndedThoughtProcess(end) => {
                 if let Some((crease_id, start)) = self.pending_thought_process.take() {
                     self.editor.update(cx, |editor, cx| {
+                        let multi_buffer_snapshot = editor.buffer().read(cx).snapshot(cx);
+                        let (excerpt_id, _, _) = multi_buffer_snapshot.as_singleton().unwrap();
+                        let start_anchor = multi_buffer_snapshot
+                            .anchor_in_excerpt(*excerpt_id, start.clone())
+                            .unwrap();
+
+                        editor.display_map.update(cx, |display_map, cx| {
+                            display_map.unfold_intersecting(
+                                vec![start_anchor..start_anchor],
+                                true,
+                                cx,
+                            );
+                        });
                         editor.remove_creases(vec![crease_id], cx);
                     });
                     self.insert_thought_process_output_sections(
@@ -756,21 +769,7 @@ impl ContextEditor {
             ContextEvent::SlashCommandOutputSectionAdded { section } => {
                 self.insert_slash_command_output_sections([section.clone()], false, window, cx);
             }
-            ContextEvent::Operation(_) => {
-                // if let Some((_, range)) = self.pending_thought_process.as_ref() {
-                //     self.editor.update(cx, |editor, cx| {
-                //         let snapshot = editor.snapshot(window, cx);
-                //         let buffer_row =
-                //             MultiBufferRow(range.start.to_point(&snapshot.buffer_snapshot).row);
-                //         let crease = snapshot.crease_for_buffer_row(buffer_row);
-                //         dbg!(crease.map(|s| s.range().clone()));
-
-                //         dbg!(snapshot.display_snapshot.intersects_fold(range.start));
-                //         editor.fold_at(&editor::actions::FoldAt { buffer_row }, window, cx);
-                //         dbg!(snapshot.display_snapshot.intersects_fold(range.start));
-                //     });
-                // }
-            }
+            ContextEvent::Operation(_) => {}
             ContextEvent::ShowAssistError(error_message) => {
                 self.last_error = Some(AssistError::Message(error_message.clone()));
             }

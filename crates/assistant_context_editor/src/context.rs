@@ -2337,8 +2337,8 @@ impl AssistantContext {
                     let mut stop_reason = StopReason::EndTurn;
                     let mut thought_process_stack = Vec::new();
 
-                    const THINKING_START: &str = "<thinking>";
-                    const THINKING_END: &str = "</thinking>";
+                    const THOUGHT_PROCESS_START_MARKER: &str = "<think>\n";
+                    const THOUGHT_PROCESS_END_MARKER: &str = "\n</think>";
 
                     while let Some(event) = events.next().await {
                         if response_latency.is_none() {
@@ -2373,7 +2373,7 @@ impl AssistantContext {
                                                 buffer.anchor_before(message_old_end_offset);
                                             thought_process_stack.push(start.clone());
                                             let chunk =
-                                                format!("{THINKING_START}{chunk}{THINKING_END}");
+                                                format!("{THOUGHT_PROCESS_START_MARKER}{chunk}{THOUGHT_PROCESS_END_MARKER}");
                                             let chunk_len = chunk.len();
                                             buffer.edit(
                                                 [(
@@ -2389,13 +2389,11 @@ impl AssistantContext {
                                                 ContextEvent::StartedThoughtProcess(start..end),
                                             );
                                         } else {
+                                            // This ensures that all the thinking chunks are inserted inside the thinking tag
+                                            let insertion_position =
+                                                message_old_end_offset - THOUGHT_PROCESS_END_MARKER.len();
                                             buffer.edit(
-                                                [(
-                                                    message_old_end_offset - THINKING_END.len()
-                                                        ..message_old_end_offset
-                                                            - THINKING_END.len(),
-                                                    chunk,
-                                                )],
+                                                [(insertion_position..insertion_position, chunk)],
                                                 None,
                                                 cx,
                                             );
