@@ -237,9 +237,9 @@ impl WorktreeStore {
                 .insert(abs_path.clone(), task.shared());
         }
         let task = self.loading_worktrees.get(&abs_path).unwrap().clone();
-        cx.spawn(|this, mut cx| async move {
+        cx.spawn(async move |this, cx| {
             let result = task.await;
-            this.update(&mut cx, |this, _| this.loading_worktrees.remove(&abs_path))
+            this.update(cx, |this, _| this.loading_worktrees.remove(&abs_path))
                 .ok();
             match result {
                 Ok(worktree) => Ok(worktree),
@@ -266,7 +266,7 @@ impl WorktreeStore {
         if abs_path.is_empty() || abs_path == "/" {
             abs_path = "~/".to_string();
         }
-        cx.spawn(|this, mut cx| async move {
+        cx.spawn(async move |this, cx| {
             let this = this.upgrade().context("Dropped worktree store")?;
 
             let path = Path::new(abs_path.as_str());
@@ -278,7 +278,7 @@ impl WorktreeStore {
                 })
                 .await?;
 
-            if let Some(existing_worktree) = this.read_with(&cx, |this, cx| {
+            if let Some(existing_worktree) = this.read_with(cx, |this, cx| {
                 this.worktree_for_id(WorktreeId::from_proto(response.worktree_id), cx)
             })? {
                 return Ok(existing_worktree);
@@ -305,7 +305,7 @@ impl WorktreeStore {
                 )
             })?;
 
-            this.update(&mut cx, |this, cx| {
+            this.update(cx, |this, cx| {
                 this.add(&worktree, cx);
             })?;
             Ok(worktree)
@@ -322,12 +322,12 @@ impl WorktreeStore {
         let next_entry_id = self.next_entry_id.clone();
         let path: SanitizedPath = abs_path.into();
 
-        cx.spawn(move |this, mut cx| async move {
-            let worktree = Worktree::local(path.clone(), visible, fs, next_entry_id, &mut cx).await;
+        cx.spawn(async move |this, cx| {
+            let worktree = Worktree::local(path.clone(), visible, fs, next_entry_id, cx).await;
 
             let worktree = worktree?;
 
-            this.update(&mut cx, |this, cx| this.add(&worktree, cx))?;
+            this.update(cx, |this, cx| this.add(&worktree, cx))?;
 
             if visible {
                 cx.update(|cx| {
@@ -554,12 +554,12 @@ impl WorktreeStore {
             downstream_client.send(update).log_err();
             None
         };
-        cx.spawn(|this, mut cx| async move {
+        cx.spawn(async move |this, cx| {
             if let Some(update_project) = update_project {
                 update_project.await?;
             }
 
-            this.update(&mut cx, |this, cx| {
+            this.update(cx, |this, cx| {
                 let worktrees = this.worktrees().collect::<Vec<_>>();
 
                 for worktree in worktrees {

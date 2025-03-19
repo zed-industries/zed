@@ -7,7 +7,7 @@ use gpui::{App, AppContext as _, AsyncApp, Context, Entity, Global, Task, WeakEn
 use postage::stream::Stream;
 use rpc::proto;
 use std::{sync::Arc, time::Duration};
-use util::{ResultExt, TryFutureExt};
+use util::ResultExt;
 
 impl Global for GlobalManager {}
 struct GlobalManager(Entity<Manager>);
@@ -65,7 +65,11 @@ impl Manager {
         if self.maintain_connection.is_none() {
             self.maintain_connection = Some(cx.spawn({
                 let client = self.client.clone();
-                move |_, cx| Self::maintain_connection(manager, client.clone(), cx).log_err()
+                async move |_, cx| {
+                    Self::maintain_connection(manager, client.clone(), cx)
+                        .await
+                        .log_err()
+                }
             }));
         }
     }
@@ -102,11 +106,11 @@ impl Manager {
                 .collect(),
         });
 
-        cx.spawn(|this, mut cx| async move {
+        cx.spawn(async move |this, cx| {
             let response = request.await?;
             let message_id = response.message_id;
 
-            this.update(&mut cx, |_, cx| {
+            this.update(cx, |_, cx| {
                 for rejoined_project in response.payload.rejoined_projects {
                     if let Some(project) = projects.get(&rejoined_project.id) {
                         project.update(cx, |project, cx| {
@@ -133,7 +137,7 @@ impl Manager {
     async fn maintain_connection(
         this: WeakEntity<Self>,
         client: Arc<Client>,
-        mut cx: AsyncApp,
+        cx: &mut AsyncApp,
     ) -> Result<()> {
         let mut client_status = client.status();
         loop {
@@ -155,7 +159,7 @@ impl Manager {
                                 log::info!("client reconnected, attempting to rejoin projects");
 
                                 let Some(this) = this.upgrade() else { break };
-                                match this.update(&mut cx, |this, cx| this.reconnected(cx)) {
+                                match this.update(cx, |this, cx| this.reconnected(cx)) {
                                     Ok(task) => {
                                         if task.await.log_err().is_some() {
                                             return true;
@@ -204,7 +208,7 @@ impl Manager {
         // we leave the room and return an error.
         if let Some(this) = this.upgrade() {
             log::info!("reconnection failed, disconnecting projects");
-            this.update(&mut cx, |this, cx| this.connection_lost(cx))?;
+            this.update(cx, |this, cx| this.connection_lost(cx))?;
         }
 
         Ok(())

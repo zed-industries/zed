@@ -220,10 +220,8 @@ async fn perform_completion(
 
     let bypass_account_age_check = claims.has_llm_subscription || claims.bypass_account_age_check;
     if !bypass_account_age_check {
-        if let Some(account_created_at) = claims.account_created_at {
-            if Utc::now().naive_utc() - account_created_at < MIN_ACCOUNT_AGE_FOR_LLM_USE {
-                Err(anyhow!("account too young"))?
-            }
+        if Utc::now().naive_utc() - claims.account_created_at < MIN_ACCOUNT_AGE_FOR_LLM_USE {
+            Err(anyhow!("account too young"))?
         }
     }
 

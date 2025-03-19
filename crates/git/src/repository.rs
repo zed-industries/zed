@@ -1,7 +1,6 @@
 use crate::status::GitStatus;
 use crate::SHORT_SHA_LENGTH;
 use anyhow::{anyhow, Context as _, Result};
-use askpass::{AskPassResult, AskPassSession};
 use collections::HashMap;
 use futures::future::BoxFuture;
 use futures::{select_biased, AsyncWriteExt, FutureExt as _};
@@ -23,6 +22,8 @@ use std::{
 use sum_tree::MapSeekTarget;
 use util::command::new_smol_command;
 use util::ResultExt;
+
+pub use askpass::{AskPassResult, AskPassSession};
 
 pub const REMOTE_CANCELLED_BY_USER: &str = "Operation cancelled by user";
 
@@ -207,7 +208,7 @@ pub trait GitRepository: Send + Sync {
         &self,
         path: RepoPath,
         content: Rope,
-        cx: AsyncApp,
+        cx: &mut AsyncApp,
     ) -> BoxFuture<Result<crate::blame::Blame>>;
 
     /// Returns the absolute path to the repository. For worktrees, this will be the path to the
@@ -311,11 +312,13 @@ pub struct RealGitRepository {
 }
 
 impl RealGitRepository {
-    pub fn new(repository: git2::Repository, git_binary_path: Option<PathBuf>) -> Self {
-        Self {
+    pub fn new(dotgit_path: &Path, git_binary_path: Option<PathBuf>) -> Option<Self> {
+        let workdir_root = dotgit_path.parent()?;
+        let repository = git2::Repository::open(workdir_root).log_err()?;
+        Some(Self {
             repository: Arc::new(Mutex::new(repository)),
             git_binary_path: git_binary_path.unwrap_or_else(|| PathBuf::from("git")),
-        }
+        })
     }
 
     fn working_directory(&self) -> Result<PathBuf> {
@@ -678,7 +681,7 @@ impl GitRepository for RealGitRepository {
         &self,
         path: RepoPath,
         content: Rope,
-        cx: AsyncApp,
+        cx: &mut AsyncApp,
     ) -> BoxFuture<Result<crate::blame::Blame>> {
         let working_directory = self.working_directory();
         let git_binary_path = self.git_binary_path.clone();

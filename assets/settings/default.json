@@ -136,6 +136,11 @@
   // Whether to use the system provided dialogs for Open and Save As.
   // When set to false, Zed will use the built-in keyboard-first pickers.
   "use_system_path_prompts": true,
+  // Whether to use the system provided dialogs for prompts, such as confirmation
+  // prompts.
+  // When set to false, Zed will use its built-in prompts. Note that on Linux,
+  // this option is ignored and Zed will always use the built-in prompts.
+  "use_system_prompts": true,
   // Whether the cursor blinks in the editor.
   "cursor_blink": true,
   // Cursor shape for the default editor.
@@ -191,7 +196,14 @@
   // The default number of lines to expand excerpts in the multibuffer by.
   "expand_excerpt_lines": 3,
   // Globs to match against file paths to determine if a file is private.
-  "private_files": ["**/.env*", "**/*.pem", "**/*.key", "**/*.cert", "**/*.crt", "**/secrets.yml"],
+  "private_files": [
+    "**/.env*",
+    "**/*.pem",
+    "**/*.key",
+    "**/*.cert",
+    "**/*.crt",
+    "**/secrets.yml"
+  ],
   // Whether to use additional LSP queries to format (and amend) the code after
   // every "trigger" symbol input, defined by LSP server capabilities.
   "use_on_type_format": true,
@@ -324,6 +336,8 @@
     "code_actions": true,
     // Whether to show runnables buttons in the gutter.
     "runnables": true,
+    // Whether to show breakpoints in the gutter.
+    "breakpoints": true,
     // Whether to show fold buttons in the gutter.
     "folds": true
   },
@@ -560,7 +574,6 @@
     //
     // Default: main
     "fallback_branch_name": "main",
-
     "scrollbar": {
       // When to show the scrollbar in the git panel.
       //
@@ -632,7 +645,9 @@
   // The list of language servers to use (or disable) for all languages.
   //
   // This is typically customized on a per-language basis.
-  "language_servers": ["..."],
+  "language_servers": [
+    "..."
+  ],
   // When to automatically save edited buffers. This setting can
   // take four values.
   //
@@ -828,7 +843,9 @@
   // for files that are not tracked by git, but are still important to your project. Note that globs
   // that are overly broad can slow down Zed's file scanning. `file_scan_exclusions` takes
   // precedence over these inclusions.
-  "file_scan_inclusions": [".env*"],
+  "file_scan_inclusions": [
+    ".env*"
+  ],
   // Git gutter behavior configuration.
   "git": {
     // Control whether the git gutter is shown. May take 2 values:
@@ -880,7 +897,15 @@
     // Any addition to this list will be merged with the default list.
     // Globs are matched relative to the worktree root,
     // except when starting with a slash (/) or equivalent in Windows.
-    "disabled_globs": ["**/.env*", "**/*.pem", "**/*.key", "**/*.cert", "**/*.crt", "**/.dev.vars", "**/secrets.yml"],
+    "disabled_globs": [
+      "**/.env*",
+      "**/*.pem",
+      "**/*.key",
+      "**/*.cert",
+      "**/*.crt",
+      "**/.dev.vars",
+      "**/secrets.yml"
+    ],
     // When to show edit predictions previews in buffer.
     // This setting takes two possible values:
     // 1. Display predictions inline when there are no language server completions available.
@@ -1013,7 +1038,12 @@
         // Default directories to search for virtual environments, relative
         // to the current working directory. We recommend overriding this
         // in your project's settings, rather than globally.
-        "directories": [".env", "env", ".venv", "venv"],
+        "directories": [
+          ".env",
+          "env",
+          ".venv",
+          "venv"
+        ],
         // Can also be `csh`, `fish`, `nushell` and `power_shell`
         "activate_script": "default"
       }
@@ -1076,8 +1106,15 @@
   // }
   //
   "file_types": {
-    "JSONC": ["**/.zed/**/*.json", "**/zed/**/*.json", "**/Zed/**/*.json", "**/.vscode/**/*.json"],
-    "Shell Script": [".env.*"]
+    "JSONC": [
+      "**/.zed/**/*.json",
+      "**/zed/**/*.json",
+      "**/Zed/**/*.json",
+      "**/.vscode/**/*.json"
+    ],
+    "Shell Script": [
+      ".env.*"
+    ]
   },
   // By default use a recent system version of node, or install our own.
   // You can override this to use a version of node that is not in $PATH with:
@@ -1130,10 +1167,15 @@
   // Different settings for specific languages.
   "languages": {
     "Astro": {
-      "language_servers": ["astro-language-server", "..."],
+      "language_servers": [
+        "astro-language-server",
+        "..."
+      ],
       "prettier": {
         "allowed": true,
-        "plugins": ["prettier-plugin-astro"]
+        "plugins": [
+          "prettier-plugin-astro"
+        ]
       }
     },
     "Blade": {
@@ -1169,10 +1211,19 @@
       "ensure_final_newline_on_save": false
     },
     "Elixir": {
-      "language_servers": ["elixir-ls", "!next-ls", "!lexical", "..."]
+      "language_servers": [
+        "elixir-ls",
+        "!next-ls",
+        "!lexical",
+        "..."
+      ]
     },
     "Erlang": {
-      "language_servers": ["erlang-ls", "!elp", "..."]
+      "language_servers": [
+        "erlang-ls",
+        "!elp",
+        "..."
+      ]
     },
     "Git Commit": {
       "allow_rewrap": "anywhere"
@@ -1188,7 +1239,12 @@
       }
     },
     "HEEX": {
-      "language_servers": ["elixir-ls", "!next-ls", "!lexical", "..."]
+      "language_servers": [
+        "elixir-ls",
+        "!next-ls",
+        "!lexical",
+        "..."
+      ]
     },
     "HTML": {
       "prettier": {
@@ -1198,11 +1254,17 @@
     "Java": {
       "prettier": {
         "allowed": true,
-        "plugins": ["prettier-plugin-java"]
+        "plugins": [
+          "prettier-plugin-java"
+        ]
       }
     },
     "JavaScript": {
-      "language_servers": ["!typescript-language-server", "vtsls", "..."],
+      "language_servers": [
+        "!typescript-language-server",
+        "vtsls",
+        "..."
+      ],
       "prettier": {
         "allowed": true
       }
@@ -1227,10 +1289,16 @@
       }
     },
     "PHP": {
-      "language_servers": ["phpactor", "!intelephense", "..."],
+      "language_servers": [
+        "phpactor",
+        "!intelephense",
+        "..."
+      ],
       "prettier": {
         "allowed": true,
-        "plugins": ["@prettier/plugin-php"],
+        "plugins": [
+          "@prettier/plugin-php"
+        ],
         "parser": "php"
       }
     },
@@ -1238,7 +1306,12 @@
       "allow_rewrap": "anywhere"
     },
     "Ruby": {
-      "language_servers": ["solargraph", "!ruby-lsp", "!rubocop", "..."]
+      "language_servers": [
+        "solargraph",
+        "!ruby-lsp",
+        "!rubocop",
+        "..."
+      ]
     },
     "SCSS": {
       "prettier": {
@@ -1248,21 +1321,36 @@
     "SQL": {
       "prettier": {
         "allowed": true,
-        "plugins": ["prettier-plugin-sql"]
+        "plugins": [
+          "prettier-plugin-sql"
+        ]
       }
     },
     "Starlark": {
-      "language_servers": ["starpls", "!buck2-lsp", "..."]
+      "language_servers": [
+        "starpls",
+        "!buck2-lsp",
+        "..."
+      ]
     },
     "Svelte": {
-      "language_servers": ["svelte-language-server", "..."],
+      "language_servers": [
+        "svelte-language-server",
+        "..."
+      ],
       "prettier": {
         "allowed": true,
-        "plugins": ["prettier-plugin-svelte"]
+        "plugins": [
+          "prettier-plugin-svelte"
+        ]
       }
     },
     "TSX": {
-      "language_servers": ["!typescript-language-server", "vtsls", "..."],
+      "language_servers": [
+        "!typescript-language-server",
+        "vtsls",
+        "..."
+      ],
       "prettier": {
         "allowed": true
       }
@@ -1273,13 +1361,20 @@
       }
     },
     "TypeScript": {
-      "language_servers": ["!typescript-language-server", "vtsls", "..."],
+      "language_servers": [
+        "!typescript-language-server",
+        "vtsls",
+        "..."
+      ],
       "prettier": {
         "allowed": true
       }
     },
     "Vue.js": {
-      "language_servers": ["vue-language-server", "..."],
+      "language_servers": [
+        "vue-language-server",
+        "..."
+      ],
       "prettier": {
         "allowed": true
       }
@@ -1287,7 +1382,9 @@
     "XML": {
       "prettier": {
         "allowed": true,
-        "plugins": ["@prettier/plugin-xml"]
+        "plugins": [
+          "@prettier/plugin-xml"
+        ]
       }
     },
     "YAML": {
@@ -1296,7 +1393,10 @@
       }
     },
     "Zig": {
-      "language_servers": ["zls", "..."]
+      "language_servers": [
+        "zls",
+        "..."
+      ]
     }
   },
   // Different settings for specific language models.
@@ -1455,6 +1555,11 @@
   "ssh_connections": [],
   // Configures context servers for use in the Assistant.
   "context_servers": {},
+  "debugger": {
+    "stepping_granularity": "line",
+    "save_breakpoints": true,
+    "button": true
+  },
   "file_sorting": {
     // Sort strategy for the project panel.
     // This setting can take two values:

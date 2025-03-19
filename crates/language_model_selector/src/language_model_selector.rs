@@ -102,7 +102,7 @@ impl LanguageModelSelector {
             .map(|provider| (provider.id(), provider.name(), provider.authenticate(cx)))
             .collect::<Vec<_>>();
 
-        cx.spawn(|_cx| async move {
+        cx.spawn(async move |_cx| {
             for (provider_id, provider_name, authenticate_task) in authenticate_all_providers {
                 if let Err(err) = authenticate_task.await {
                     if matches!(err, AuthenticateError::CredentialsNotFound) {
@@ -300,7 +300,7 @@ impl PickerDelegate for LanguageModelPickerDelegate {
             .map(|provider| provider.id())
             .collect::<Vec<_>>();
 
-        cx.spawn_in(window, |this, mut cx| async move {
+        cx.spawn_in(window, async move |this, cx| {
             let filtered_models = cx
                 .background_spawn(async move {
                     let displayed_models = if configured_providers.is_empty() {
@@ -332,7 +332,7 @@ impl PickerDelegate for LanguageModelPickerDelegate {
                 })
                 .await;
 
-            this.update_in(&mut cx, |this, window, cx| {
+            this.update_in(cx, |this, window, cx| {
                 this.delegate.filtered_models = filtered_models;
                 // Preserve selection focus
                 let new_index = if current_index >= this.delegate.filtered_models.len() {

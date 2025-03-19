@@ -1,11 +1,12 @@
 use anyhow::Context as _;
 use collections::HashMap;
+use dap::adapters::DebugAdapterName;
 use fs::Fs;
 use gpui::{App, AsyncApp, BorrowAppContext, Context, Entity, EventEmitter};
 use lsp::LanguageServerName;
 use paths::{
-    local_settings_file_relative_path, local_tasks_file_relative_path,
-    local_vscode_tasks_file_relative_path, EDITORCONFIG_NAME,
+    local_debug_file_relative_path, local_settings_file_relative_path,
+    local_tasks_file_relative_path, local_vscode_tasks_file_relative_path, EDITORCONFIG_NAME,
 };
 use rpc::{
     proto::{self, FromProto, ToProto},
@@ -15,7 +16,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{
     parse_json_with_comments, InvalidSettingsError, LocalSettingsKind, Settings, SettingsLocation,
-    SettingsSources, SettingsStore,
+    SettingsSources, SettingsStore, TaskKind,
 };
 use std::{path::Path, sync::Arc, time::Duration};
 use task::{TaskTemplates, VsCodeTaskFile};
@@ -91,6 +92,10 @@ pub struct ProjectSettings {
     #[serde(default)]
     pub lsp: HashMap<LanguageServerName, LspSettings>,
 
+    /// Configuration for Debugger-related features
+    #[serde(default)]
+    pub dap: HashMap<DebugAdapterName, DapSettings>,
+
     /// Configuration for Diagnostics-related features.
     #[serde(default)]
     pub diagnostics: DiagnosticsSettings,
@@ -117,6 +122,12 @@ pub struct ProjectSettings {
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub struct DapSettings {
+    pub binary: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct NodeBinarySettings {
     /// The path to the Node binary.
     pub path: Option<String>,
@@ -139,7 +150,7 @@ pub enum DirenvSettings {
 
 #[derive(Copy, Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
 pub struct DiagnosticsSettings {
-    /// Whether or not to include warning diagnostics
+    /// Whether to include warning diagnostics
     #[serde(default = "true_value")]
     pub include_warnings: bool,
 
@@ -150,7 +161,7 @@ pub struct DiagnosticsSettings {
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct InlineDiagnosticsSettings {
-    /// Whether or not to show inline diagnostics
+    /// Whether to show inline diagnostics
     ///
     /// Default: false
     #[serde(default)]
@@ -210,7 +221,7 @@ fn default_inline_diagnostics_padding() -> u32 {
 
 #[derive(Copy, Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
 pub struct GitSettings {
-    /// Whether or not to show the git gutter.
+    /// Whether to show the git gutter.
     ///
     /// Default: tracked_files
     pub git_gutter: Option<GitGutterSetting>,
@@ -218,7 +229,7 @@ pub struct GitSettings {
     ///
     /// Default: null
     pub gutter_debounce: Option<u64>,
-    /// Whether or not to show git blame data inline in
+    /// Whether to show git blame data inline in
     /// the currently focused line.
     ///
     /// Default: on
@@ -282,7 +293,7 @@ pub enum GitGutterSetting {
 #[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub struct InlineBlameSettings {
-    /// Whether or not to show git blame data inline in
+    /// Whether to show git blame data inline in
     /// the currently focused line.
     ///
     /// Default: true
@@ -325,7 +336,7 @@ pub struct LspSettings {
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct SessionSettings {
-    /// Whether or not to restore unsaved buffers on restart.
+    /// Whether to restore unsaved buffers on restart.
     ///
     /// If this is true, user won't be prompted whether to save/discard
     /// dirty files when closing the application.
@@ -538,7 +549,7 @@ impl SettingsObserver {
                         )
                         .unwrap(),
                 );
-                (settings_dir, LocalSettingsKind::Tasks)
+                (settings_dir, LocalSettingsKind::Tasks(TaskKind::Script))
             } else if path.ends_with(local_vscode_tasks_file_relative_path()) {
                 let settings_dir = Arc::<Path>::from(
                     path.ancestors()
@@ -550,7 +561,19 @@ impl SettingsObserver {
                         )
                         .unwrap(),
                 );
-                (settings_dir, LocalSettingsKind::Tasks)
+                (settings_dir, LocalSettingsKind::Tasks(TaskKind::Script))
+            } else if path.ends_with(local_debug_file_relative_path()) {
+                let settings_dir = Arc::<Path>::from(
+                    path.ancestors()
+                        .nth(
+                            local_debug_file_relative_path()
+                                .components()
+                                .count()
+                                .saturating_sub(1),
+                        )
+                        .unwrap(),
+                );
+                (settings_dir, LocalSettingsKind::Tasks(TaskKind::Debug))
             } else if path.ends_with(EDITORCONFIG_NAME) {
                 let Some(settings_dir) = path.parent().map(Arc::from) else {
                     continue;
@@ -612,7 +635,7 @@ impl SettingsObserver {
         }
 
         let worktree = worktree.clone();
-        cx.spawn(move |this, cx| async move {
+        cx.spawn(async move |this, cx| {
             let settings_contents: Vec<(Arc<Path>, _, _)> =
                 futures::future::join_all(settings_contents).await;
             cx.update(|cx| {
@@ -671,7 +694,7 @@ impl SettingsObserver {
                             }
                         }
                     }),
-                LocalSettingsKind::Tasks => task_store.update(cx, |task_store, cx| {
+                LocalSettingsKind::Tasks(task_kind) => task_store.update(cx, |task_store, cx| {
                     task_store
                         .update_user_tasks(
                             Some(SettingsLocation {
@@ -679,6 +702,7 @@ impl SettingsObserver {
                                 path: directory.as_ref(),
                             }),
                             file_content.as_deref(),
+                            task_kind,
                             cx,
                         )
                         .log_err();
@@ -703,7 +727,7 @@ impl SettingsObserver {
 pub fn local_settings_kind_from_proto(kind: proto::LocalSettingsKind) -> LocalSettingsKind {
     match kind {
         proto::LocalSettingsKind::Settings => LocalSettingsKind::Settings,
-        proto::LocalSettingsKind::Tasks => LocalSettingsKind::Tasks,
+        proto::LocalSettingsKind::Tasks => LocalSettingsKind::Tasks(TaskKind::Script),
         proto::LocalSettingsKind::Editorconfig => LocalSettingsKind::Editorconfig,
     }
 }
@@ -711,7 +735,7 @@ pub fn local_settings_kind_from_proto(kind: proto::LocalSettingsKind) -> LocalSe
 pub fn local_settings_kind_to_proto(kind: LocalSettingsKind) -> proto::LocalSettingsKind {
     match kind {
         LocalSettingsKind::Settings => proto::LocalSettingsKind::Settings,
-        LocalSettingsKind::Tasks => proto::LocalSettingsKind::Tasks,
+        LocalSettingsKind::Tasks(_) => proto::LocalSettingsKind::Tasks,
         LocalSettingsKind::Editorconfig => proto::LocalSettingsKind::Editorconfig,
     }
 }

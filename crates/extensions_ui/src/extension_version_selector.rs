@@ -129,7 +129,7 @@ impl PickerDelegate for ExtensionVersionSelectorDelegate {
             })
             .collect::<Vec<_>>();
 
-        cx.spawn_in(window, move |this, mut cx| async move {
+        cx.spawn_in(window, async move |this, cx| {
             let matches = if query.is_empty() {
                 candidates
                     .into_iter()
@@ -153,7 +153,7 @@ impl PickerDelegate for ExtensionVersionSelectorDelegate {
                 .await
             };
 
-            this.update(&mut cx, |this, _cx| {
+            this.update(cx, |this, _cx| {
                 this.delegate.matches = matches;
                 this.delegate.selected_index = this
                     .delegate

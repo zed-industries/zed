@@ -337,6 +337,7 @@ impl TerminalBuilder {
         is_ssh_terminal: bool,
         window: AnyWindowHandle,
         completion_tx: Sender<()>,
+        debug_terminal: bool,
         cx: &App,
     ) -> Result<TerminalBuilder> {
         // If the parent environment doesn't have a locale set
@@ -473,6 +474,7 @@ impl TerminalBuilder {
             url_regex: RegexSearch::new(URL_REGEX).unwrap(),
             word_regex: RegexSearch::new(WORD_REGEX).unwrap(),
             vi_mode_enabled: false,
+            debug_terminal,
             is_ssh_terminal,
             python_venv_directory,
         };
@@ -485,9 +487,9 @@ impl TerminalBuilder {
 
     pub fn subscribe(mut self, cx: &Context<Terminal>) -> Terminal {
         //Event loop
-        cx.spawn(|terminal, mut cx| async move {
+        cx.spawn(async move |terminal, cx| {
             while let Some(event) = self.events_rx.next().await {
-                terminal.update(&mut cx, |terminal, cx| {
+                terminal.update(cx, |terminal, cx| {
                     //Process the first event immediately for lowered latency
                     terminal.process_event(&event, cx);
                 })?;
@@ -525,7 +527,7 @@ impl TerminalBuilder {
                         break 'outer;
                     }
 
-                    terminal.update(&mut cx, |this, cx| {
+                    terminal.update(cx, |this, cx| {
                         if wakeup {
                             this.process_event(&AlacTermEvent::Wakeup, cx);
                         }
@@ -629,6 +631,7 @@ pub struct Terminal {
     word_regex: RegexSearch,
     task: Option<TaskState>,
     vi_mode_enabled: bool,
+    debug_terminal: bool,
     is_ssh_terminal: bool,
 }
 
@@ -1803,11 +1806,15 @@ impl Terminal {
         self.task.as_ref()
     }
 
+    pub fn debug_terminal(&self) -> bool {
+        self.debug_terminal
+    }
+
     pub fn wait_for_completed_task(&self, cx: &App) -> Task<()> {
         if let Some(task) = self.task() {
             if task.status == TaskStatus::Running {
                 let completion_receiver = task.completion_rx.clone();
-                return cx.spawn(|_| async move {
+                return cx.spawn(async move |_| {
                     let _ = completion_receiver.recv().await;
                 });
             }

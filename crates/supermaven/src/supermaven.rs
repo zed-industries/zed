@@ -87,11 +87,11 @@ impl Supermaven {
 
     pub fn start(&mut self, client: Arc<Client>, cx: &mut Context<Self>) {
         if let Self::Starting = self {
-            cx.spawn(|this, mut cx| async move {
+            cx.spawn(async move |this, cx| {
                 let binary_path =
                     supermaven_api::get_supermaven_agent_path(client.http_client()).await?;
 
-                this.update(&mut cx, |this, cx| {
+                this.update(cx, |this, cx| {
                     if let Self::Starting = this {
                         *this =
                             Self::Spawned(SupermavenAgent::new(binary_path, client.clone(), cx)?);
@@ -290,7 +290,7 @@ impl SupermavenAgent {
         cx.spawn({
             let client = client.clone();
             let outgoing_tx = outgoing_tx.clone();
-            move |this, mut cx| async move {
+            async move |this, cx| {
                 let mut status = client.status();
                 while let Some(status) = status.next().await {
                     if status.is_connected() {
@@ -298,7 +298,7 @@ impl SupermavenAgent {
                         outgoing_tx
                             .unbounded_send(OutboundMessage::SetApiKey(SetApiKey { api_key }))
                             .ok();
-                        this.update(&mut cx, |this, cx| {
+                        this.update(cx, |this, cx| {
                             if let Supermaven::Spawned(this) = this {
                                 this.account_status = AccountStatus::Ready;
                                 cx.notify();
@@ -317,10 +317,12 @@ impl SupermavenAgent {
             next_state_id: SupermavenCompletionStateId::default(),
             states: BTreeMap::default(),
             outgoing_tx,
-            _handle_outgoing_messages: cx
-                .spawn(|_, _cx| Self::handle_outgoing_messages(outgoing_rx, stdin)),
-            _handle_incoming_messages: cx
-                .spawn(|this, cx| Self::handle_incoming_messages(this, stdout, cx)),
+            _handle_outgoing_messages: cx.spawn(async move |_, _cx| {
+                Self::handle_outgoing_messages(outgoing_rx, stdin).await
+            }),
+            _handle_incoming_messages: cx.spawn(async move |this, cx| {
+                Self::handle_incoming_messages(this, stdout, cx).await
+            }),
             account_status: AccountStatus::Unknown,
             service_tier: None,
             client,
@@ -342,7 +344,7 @@ impl SupermavenAgent {
     async fn handle_incoming_messages(
         this: WeakEntity<Supermaven>,
         stdout: ChildStdout,
-        mut cx: AsyncApp,
+        cx: &mut AsyncApp,
     ) -> Result<()> {
         const MESSAGE_PREFIX: &str = "SM-MESSAGE ";
 
@@ -362,7 +364,7 @@ impl SupermavenAgent {
                 continue;
             };
 
-            this.update(&mut cx, |this, _cx| {
+            this.update(cx, |this, _cx| {
                 if let Supermaven::Spawned(this) = this {
                     this.handle_message(message);
                 }

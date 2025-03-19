@@ -226,17 +226,17 @@ impl RegisteredBuffer {
             let id = buffer.entity_id();
             let prev_pending_change =
                 mem::replace(&mut self.pending_buffer_change, Task::ready(None));
-            self.pending_buffer_change = cx.spawn(move |copilot, mut cx| async move {
+            self.pending_buffer_change = cx.spawn(async move |copilot, cx| {
                 prev_pending_change.await;
 
                 let old_version = copilot
-                    .update(&mut cx, |copilot, _| {
+                    .update(cx, |copilot, _| {
                         let server = copilot.server.as_authenticated().log_err()?;
                         let buffer = server.registered_buffers.get_mut(&id)?;
                         Some(buffer.snapshot.version.clone())
                     })
                     .ok()??;
-                let new_snapshot = buffer.update(&mut cx, |buffer, _| buffer.snapshot()).ok()?;
+                let new_snapshot = buffer.update(cx, |buffer, _| buffer.snapshot()).ok()?;
 
                 let content_changes = cx
                     .background_spawn({
@@ -265,7 +265,7 @@ impl RegisteredBuffer {
                     .await;
 
                 copilot
-                    .update(&mut cx, |copilot, _| {
+                    .update(cx, |copilot, _| {
                         let server = copilot.server.as_authenticated().log_err()?;
                         let buffer = server.registered_buffers.get_mut(&id)?;
                         if !content_changes.is_empty() {
@@ -388,7 +388,7 @@ impl Copilot {
         let node_runtime = self.node_runtime.clone();
         let env = self.build_env(&language_settings.edit_predictions.copilot);
         let start_task = cx
-            .spawn(move |this, cx| {
+            .spawn(async move |this, cx| {
                 Self::start_language_server(
                     server_id,
                     http,
@@ -398,6 +398,7 @@ impl Copilot {
                     awaiting_sign_in_after_start,
                     cx,
                 )
+                .await
             })
             .shared();
         self.server = CopilotServer::Starting { task: start_task };
@@ -442,7 +443,7 @@ impl Copilot {
             },
             "copilot".into(),
             Default::default(),
-            cx.to_async(),
+            &mut cx.to_async(),
         );
         let http = http_client::FakeHttpClient::create(|_| async { unreachable!() });
         let node_runtime = NodeRuntime::unavailable();
@@ -468,7 +469,7 @@ impl Copilot {
         env: Option<HashMap<String, String>>,
         this: WeakEntity<Self>,
         awaiting_sign_in_after_start: bool,
-        mut cx: AsyncApp,
+        cx: &mut AsyncApp,
     ) {
         let start_language_server = async {
             let server_path = get_copilot_lsp(http).await?;
@@ -495,7 +496,7 @@ impl Copilot {
                 root_path,
                 None,
                 Default::default(),
-                cx.clone(),
+                cx,
             )?;
 
             server
@@ -535,7 +536,7 @@ impl Copilot {
         };
 
         let server = start_language_server.await;
-        this.update(&mut cx, |this, cx| {
+        this.update(cx, |this, cx| {
             cx.notify();
             match server {
                 Ok((server, status)) => {
@@ -569,7 +570,7 @@ impl Copilot {
                 SignInStatus::SignedOut { .. } | SignInStatus::Unauthorized { .. } => {
                     let lsp = server.lsp.clone();
                     let task = cx
-                        .spawn(|this, mut cx| async move {
+                        .spawn(async move |this, cx| {
                             let sign_in = async {
                                 let sign_in = lsp
                                     .request::<request::SignInInitiate>(
@@ -581,7 +582,7 @@ impl Copilot {
                                         Ok(request::SignInStatus::Ok { user: Some(user) })
                                     }
                                     request::SignInInitiateResult::PromptUserDeviceFlow(flow) => {
-                                        this.update(&mut cx, |this, cx| {
+                                        this.update(cx, |this, cx| {
                                             if let CopilotServer::Running(RunningCopilotServer {
                                                 sign_in_status: status,
                                                 ..
@@ -610,7 +611,7 @@ impl Copilot {
                             };
 
                             let sign_in = sign_in.await;
-                            this.update(&mut cx, |this, cx| match sign_in {
+                            this.update(cx, |this, cx| match sign_in {
                                 Ok(status) => {
                                     this.update_sign_in_status(status, cx);
                                     Ok(())
@@ -670,7 +671,7 @@ impl Copilot {
                 let http = self.http.clone();
                 let node_runtime = self.node_runtime.clone();
                 let server_id = self.server_id;
-                move |this, cx| async move {
+                async move |this, cx| {
                     clear_copilot_dir().await;
                     Self::start_language_server(server_id, http, node_runtime, env, this, false, cx)
                         .await

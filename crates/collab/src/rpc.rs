@@ -404,6 +404,8 @@ impl Server {
             .add_request_handler(forward_read_only_project_request::<proto::GitReset>)
             .add_request_handler(forward_read_only_project_request::<proto::GitCheckoutFiles>)
             .add_request_handler(forward_mutating_project_request::<proto::SetIndexText>)
+            .add_request_handler(forward_mutating_project_request::<proto::ToggleBreakpoint>)
+            .add_message_handler(broadcast_project_message_from_host::<proto::BreakpointsForFile>)
             .add_request_handler(forward_mutating_project_request::<proto::OpenCommitMessageBuffer>)
             .add_request_handler(forward_mutating_project_request::<proto::GitDiff>)
             .add_request_handler(forward_mutating_project_request::<proto::GitCreateBranch>)
@@ -2064,7 +2066,7 @@ async fn update_worktree_settings(
     Ok(())
 }
 
-/// Notify other participants that a  language server has started.
+/// Notify other participants that a language server has started.
 async fn start_language_server(
     request: proto::StartLanguageServer,
     session: Session,
@@ -4047,8 +4049,6 @@ async fn get_llm_api_token(
 
     let flags = db.get_user_flags(session.user_id()).await?;
     let has_language_models_feature_flag = flags.iter().any(|flag| flag == "language-models");
-    let has_bypass_account_age_check_feature_flag =
-        flags.iter().any(|flag| flag == "bypass-account-age-check");
 
     if !session.is_staff() && !has_language_models_feature_flag {
         Err(anyhow!("permission denied"))?
@@ -4065,17 +4065,6 @@ async fn get_llm_api_token(
     }
 
     let has_llm_subscription = session.has_llm_subscription(&db).await?;
-
-    // This check is now handled in the `perform_completion` endpoint. We can remove the check here once the tokens have
-    // had ~1 hour to cycle.
-    let bypass_account_age_check =
-        has_llm_subscription || has_bypass_account_age_check_feature_flag;
-    if !bypass_account_age_check {
-        if Utc::now().naive_utc() - user.account_created_at() < MIN_ACCOUNT_AGE_FOR_LLM_USE {
-            Err(anyhow!("account too young"))?
-        }
-    }
-
     let billing_preferences = db.get_billing_preferences(user.id).await?;
 
     let token = LlmTokenClaims::create(
