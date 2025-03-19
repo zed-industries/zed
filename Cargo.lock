@@ -244,7 +244,7 @@ dependencies = [
  "serde",
  "serde_json",
  "strum",
- "thiserror 1.0.69",
+ "thiserror 2.0.12",
  "util",
 ]
 
@@ -1843,7 +1843,7 @@ dependencies = [
  "serde",
  "serde_json",
  "strum",
- "thiserror 1.0.69",
+ "thiserror 2.0.12",
  "tokio",
 ]
 
@@ -2444,7 +2444,7 @@ dependencies = [
  "semver",
  "serde",
  "serde_json",
- "thiserror 2.0.6",
+ "thiserror 2.0.12",
 ]
 
 [[package]]
@@ -2768,7 +2768,7 @@ dependencies = [
  "telemetry",
  "telemetry_events",
  "text",
- "thiserror 1.0.69",
+ "thiserror 2.0.12",
  "time",
  "tiny_http",
  "tokio-socks",
@@ -2969,7 +2969,7 @@ dependencies = [
  "telemetry_events",
  "text",
  "theme",
- "thiserror 1.0.69",
+ "thiserror 2.0.12",
  "time",
  "tokio",
  "toml 0.8.20",
@@ -5881,7 +5881,7 @@ dependencies = [
  "strum",
  "sum_tree",
  "taffy",
- "thiserror 1.0.69",
+ "thiserror 2.0.12",
  "unicode-segmentation",
  "usvg",
  "util",
@@ -7329,7 +7329,7 @@ dependencies = [
  "smol",
  "strum",
  "telemetry_events",
- "thiserror 1.0.69",
+ "thiserror 2.0.12",
  "ui",
  "util",
 ]
@@ -9691,7 +9691,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8b7cafe60d6cf8e62e1b9b2ea516a089c008945bb5a275416789e7db0bc199dc"
 dependencies = [
  "memchr",
- "thiserror 2.0.6",
+ "thiserror 2.0.12",
  "ucd-trie",
 ]
 
@@ -10963,7 +10963,7 @@ dependencies = [
  "rustc-hash 2.1.1",
  "rustls 0.23.23",
  "socket2",
- "thiserror 2.0.6",
+ "thiserror 2.0.12",
  "tokio",
  "tracing",
 ]
@@ -10982,7 +10982,7 @@ dependencies = [
  "rustls 0.23.23",
  "rustls-pki-types",
  "slab",
- "thiserror 2.0.6",
+ "thiserror 2.0.12",
  "tinyvec",
  "tracing",
  "web-time",
@@ -11391,7 +11391,7 @@ dependencies = [
  "shlex",
  "smol",
  "tempfile",
- "thiserror 1.0.69",
+ "thiserror 2.0.12",
  "urlencoding",
  "util",
 ]
@@ -13099,7 +13099,7 @@ dependencies = [
  "serde_json",
  "sha2",
  "smallvec",
- "thiserror 2.0.6",
+ "thiserror 2.0.12",
  "time",
  "tokio",
  "tokio-stream",
@@ -13188,7 +13188,7 @@ dependencies = [
  "smallvec",
  "sqlx-core",
  "stringprep",
- "thiserror 2.0.6",
+ "thiserror 2.0.12",
  "time",
  "tracing",
  "uuid",
@@ -13231,7 +13231,7 @@ dependencies = [
  "smallvec",
  "sqlx-core",
  "stringprep",
- "thiserror 2.0.6",
+ "thiserror 2.0.12",
  "time",
  "tracing",
  "uuid",
@@ -13905,7 +13905,7 @@ dependencies = [
  "sysinfo",
  "task",
  "theme",
- "thiserror 1.0.69",
+ "thiserror 2.0.12",
  "util",
  "windows 0.60.0",
 ]
@@ -14000,7 +14000,7 @@ dependencies = [
  "serde_repr",
  "settings",
  "strum",
- "thiserror 1.0.69",
+ "thiserror 2.0.12",
  "util",
  "uuid",
 ]
@@ -14066,11 +14066,11 @@ dependencies = [
 
 [[package]]
 name = "thiserror"
-version = "2.0.6"
+version = "2.0.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8fec2a1820ebd077e2b90c4df007bebf344cd394098a13c563957d0afc83ea47"
+checksum = "567b8a2dae586314f7be2a752ec7474332959c6460e02bde30d702a66d488708"
 dependencies = [
- "thiserror-impl 2.0.6",
+ "thiserror-impl 2.0.12",
 ]
 
 [[package]]
@@ -14086,9 +14086,9 @@ dependencies = [
 
 [[package]]
 name = "thiserror-impl"
-version = "2.0.6"
+version = "2.0.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d65750cab40f4ff1929fb1ba509e9914eb756131cef4210da8d5d700d26f6312"
+checksum = "7f7cf42b4507d8ea322120659672cf1b9dbb93f8f2d4ecfd6e51350ff5b17a1d"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -17736,7 +17736,7 @@ dependencies = [
  "telemetry",
  "telemetry_events",
  "theme",
- "thiserror 1.0.69",
+ "thiserror 2.0.12",
  "tree-sitter-go",
  "tree-sitter-rust",
  "ui",
