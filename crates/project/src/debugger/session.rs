@@ -522,6 +522,11 @@ impl ThreadStates {
         self.known_thread_states.clear();
     }
 
+    fn exit_all_threads(&mut self) {
+        self.global_state = Some(ThreadStatus::Exited);
+        self.known_thread_states.clear();
+    }
+
     fn continue_all_threads(&mut self) {
         self.global_state = Some(ThreadStatus::Running);
         self.known_thread_states.clear();
@@ -1051,6 +1056,7 @@ impl Session {
 
         if !self.thread_states.any_stopped_thread()
             && request.type_id() != TypeId::of::<ThreadsCommand>()
+            || self.is_session_terminated
         {
             return;
         }
@@ -1331,6 +1337,10 @@ impl Session {
     }
 
     pub fn shutdown(&mut self, cx: &mut Context<Self>) -> Task<()> {
+        self.is_session_terminated = true;
+        self.thread_states.exit_all_threads();
+        cx.notify();
+
         let task = if self
             .capabilities
             .supports_terminate_request
