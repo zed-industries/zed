@@ -37,7 +37,7 @@ fn main() {
         let live_kit_key = std::env::var("LIVE_KIT_KEY").unwrap_or("devkey".into());
         let live_kit_secret = std::env::var("LIVE_KIT_SECRET").unwrap_or("secret".into());
 
-        cx.spawn(|cx| async move {
+        cx.spawn(async move |cx| {
             let user_a_token = token::create(
                 &live_kit_key,
                 &live_kit_secret,

@@ -16,6 +16,7 @@ mod terminal_inline_assistant;
 mod thread;
 mod thread_history;
 mod thread_store;
+mod tool_selector;
 mod tool_use;
 mod ui;
 
@@ -30,8 +31,11 @@ use gpui::{actions, App};
 use prompt_store::PromptBuilder;
 use settings::Settings as _;
 
+pub use crate::active_thread::ActiveThread;
 pub use crate::assistant_panel::{AssistantPanel, ConcreteAssistantPanelDelegate};
 pub use crate::inline_assistant::InlineAssistant;
+pub use crate::thread::{Message, RequestKind, Thread, ThreadEvent};
+pub use crate::thread_store::ThreadStore;
 
 actions!(
     assistant2,
@@ -52,7 +56,8 @@ actions!(
         FocusLeft,
         FocusRight,
         RemoveFocusedContext,
-        AcceptSuggestedContext
+        AcceptSuggestedContext,
+        OpenActiveThreadAsMarkdown
     ]
 );
 

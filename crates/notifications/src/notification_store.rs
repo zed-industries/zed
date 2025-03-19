@@ -76,20 +76,20 @@ impl NotificationStore {
 
     pub fn new(client: Arc<Client>, user_store: Entity<UserStore>, cx: &mut Context<Self>) -> Self {
         let mut connection_status = client.status();
-        let watch_connection_status = cx.spawn(|this, mut cx| async move {
+        let watch_connection_status = cx.spawn(async move |this, cx| {
             while let Some(status) = connection_status.next().await {
                 let this = this.upgrade()?;
                 match status {
                     client::Status::Connected { .. } => {
                         if let Some(task) = this
-                            .update(&mut cx, |this, cx| this.handle_connect(cx))
+                            .update(cx, |this, cx| this.handle_connect(cx))
                             .log_err()?
                         {
                             task.await.log_err()?;
                         }
                     }
                     _ => this
-                        .update(&mut cx, |this, cx| this.handle_disconnect(cx))
+                        .update(cx, |this, cx| this.handle_disconnect(cx))
                         .log_err()?,
                 }
             }
@@ -161,15 +161,13 @@ impl NotificationStore {
             self.notifications.first().map(|entry| entry.id)
         };
         let request = self.client.request(proto::GetNotifications { before_id });
-        Some(cx.spawn(|this, mut cx| async move {
+        Some(cx.spawn(async move |this, cx| {
             let this = this
                 .upgrade()
                 .context("Notification store was dropped while loading notifications")?;
 
             let response = request.await?;
-            this.update(&mut cx, |this, _| {
-                this.loaded_all_notifications = response.done
-            })?;
+            this.update(cx, |this, _| this.loaded_all_notifications = response.done)?;
             Self::add_notifications(
                 this,
                 response.notifications,
@@ -199,7 +197,7 @@ impl NotificationStore {
     async fn handle_new_notification(
         this: Entity<Self>,
         envelope: TypedEnvelope<proto::AddNotification>,
-        cx: AsyncApp,
+        mut cx: AsyncApp,
     ) -> Result<()> {
         Self::add_notifications(
             this,
@@ -209,7 +207,7 @@ impl NotificationStore {
                 clear_old: false,
                 includes_first: false,
             },
-            cx,
+            &mut cx,
         )
         .await
     }
@@ -239,9 +237,9 @@ impl NotificationStore {
                         this.fetch_channel_messages(vec![message_id], cx)
                     });
 
-                    cx.spawn(|this, mut cx| async move {
+                    cx.spawn(async move |this, cx| {
                         let messages = fetch_message_task.await?;
-                        this.update(&mut cx, move |this, cx| {
+                        this.update(cx, move |this, cx| {
                             for message in messages {
                                 this.channel_messages.insert(message_id, message);
                             }
@@ -259,7 +257,7 @@ impl NotificationStore {
         this: Entity<Self>,
         notifications: Vec<proto::Notification>,
         options: AddNotificationsOptions,
-        mut cx: AsyncApp,
+        cx: &mut AsyncApp,
     ) -> Result<()> {
         let mut user_ids = Vec::new();
         let mut message_ids = Vec::new();
@@ -307,19 +305,19 @@ impl NotificationStore {
             }
         }
 
-        let (user_store, channel_store) = this.read_with(&cx, |this, _| {
+        let (user_store, channel_store) = this.read_with(cx, |this, _| {
             (this.user_store.clone(), this.channel_store.clone())
         })?;
 
         user_store
-            .update(&mut cx, |store, cx| store.get_users(user_ids, cx))?
+            .update(cx, |store, cx| store.get_users(user_ids, cx))?
             .await?;
         let messages = channel_store
-            .update(&mut cx, |store, cx| {
+            .update(cx, |store, cx| {
                 store.fetch_channel_messages(message_ids, cx)
             })?
             .await?;
-        this.update(&mut cx, |this, cx| {
+        this.update(cx, |this, cx| {
             if options.clear_old {
                 cx.emit(NotificationEvent::NotificationsUpdated {
                     old_range: 0..this.notifications.summary().count,

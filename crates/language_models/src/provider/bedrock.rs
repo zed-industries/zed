@@ -90,12 +90,12 @@ pub struct State {
 impl State {
     fn reset_credentials(&self, cx: &mut Context<Self>) -> Task<Result<()>> {
         let credentials_provider = <dyn CredentialsProvider>::global(cx);
-        cx.spawn(|this, mut cx| async move {
+        cx.spawn(async move |this, cx| {
             credentials_provider
                 .delete_credentials(AMAZON_AWS_URL, &cx)
                 .await
                 .log_err();
-            this.update(&mut cx, |this, cx| {
+            this.update(cx, |this, cx| {
                 this.credentials = None;
                 this.credentials_from_env = false;
                 cx.notify();
@@ -109,7 +109,7 @@ impl State {
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
         let credentials_provider = <dyn CredentialsProvider>::global(cx);
-        cx.spawn(|this, mut cx| async move {
+        cx.spawn(async move |this, cx| {
             credentials_provider
                 .write_credentials(
                     AMAZON_AWS_URL,
@@ -118,7 +118,7 @@ impl State {
                     &cx,
                 )
                 .await?;
-            this.update(&mut cx, |this, cx| {
+            this.update(cx, |this, cx| {
                 this.credentials = Some(credentials);
                 cx.notify();
             })
@@ -135,7 +135,7 @@ impl State {
         }
 
         let credentials_provider = <dyn CredentialsProvider>::global(cx);
-        cx.spawn(|this, mut cx| async move {
+        cx.spawn(async move |this, cx| {
             let (credentials, from_env) =
                 if let Ok(credentials) = std::env::var(ZED_AWS_CREDENTIALS_VAR) {
                     (credentials, true)
@@ -154,7 +154,7 @@ impl State {
             let credentials: BedrockCredentials =
                 serde_json::from_str(&credentials).context("failed to parse credentials")?;
 
-            this.update(&mut cx, |this, cx| {
+            this.update(cx, |this, cx| {
                 this.credentials = Some(credentials);
                 this.credentials_from_env = from_env;
                 cx.notify();
@@ -400,7 +400,7 @@ impl LanguageModel for BedrockModel {
 
         let request = self.stream_completion(request, cx);
         let future = self.request_limiter.stream(async move {
-            let response = request.map_err(|e| anyhow!(e)).unwrap().await;
+            let response = request.map_err(|err| anyhow!(err))?.await;
             Ok(map_to_language_model_completion_events(
                 response,
                 owned_handle,
@@ -424,26 +424,28 @@ impl LanguageModel for BedrockModel {
             self.model.max_output_tokens(),
         );
 
-        request.tool_choice = Some(BedrockToolChoice::Tool(
-            BedrockSpecificTool::builder()
-                .name(name.clone())
-                .build()
-                .unwrap(),
-        ));
+        request.tool_choice = BedrockSpecificTool::builder()
+            .name(name.clone())
+            .build()
+            .log_err()
+            .map(BedrockToolChoice::Tool);
 
-        request.tools = vec![BedrockTool::builder()
+        if let Some(tool) = BedrockTool::builder()
             .name(name.clone())
             .description(description.clone())
             .input_schema(BedrockToolInputSchema::Json(value_to_aws_document(&schema)))
             .build()
-            .unwrap()];
+            .log_err()
+        {
+            request.tools.push(tool);
+        }
 
         let handle = self.handler.clone();
 
         let request = self.stream_completion(request, _cx);
         self.request_limiter
             .run(async move {
-                let response = request.map_err(|e| anyhow!(e)).unwrap().await;
+                let response = request.map_err(|err| anyhow!(err))?.await;
                 Ok(extract_tool_args_from_events(name, response, handle)
                     .await?
                     .boxed())
@@ -757,7 +759,8 @@ pub fn map_to_language_model_completion_events(
                         None
                     })
                     .await
-                    .unwrap()
+                    .log_err()
+                    .flatten()
             }
         },
     )
@@ -786,15 +789,15 @@ impl ConfigurationView {
 
         let load_credentials_task = Some(cx.spawn({
             let state = state.clone();
-            |this, mut cx| async move {
+            async move |this, cx| {
                 if let Some(task) = state
-                    .update(&mut cx, |state, cx| state.authenticate(cx))
+                    .update(cx, |state, cx| state.authenticate(cx))
                     .log_err()
                 {
                     // We don't log an error, because "not signed in" is also an error.
                     let _ = task.await;
                 }
-                this.update(&mut cx, |this, cx| {
+                this.update(cx, |this, cx| {
                     this.load_credentials_task = None;
                     cx.notify();
                 })
@@ -852,9 +855,9 @@ impl ConfigurationView {
             .to_string();
 
         let state = self.state.clone();
-        cx.spawn(|_, mut cx| async move {
+        cx.spawn(async move |_, cx| {
             state
-                .update(&mut cx, |state, cx| {
+                .update(cx, |state, cx| {
                     let credentials: BedrockCredentials = BedrockCredentials {
                         access_key_id: access_key_id.clone(),
                         secret_access_key: secret_access_key.clone(),
@@ -877,9 +880,9 @@ impl ConfigurationView {
             .update(cx, |editor, cx| editor.set_text("", window, cx));
 
         let state = self.state.clone();
-        cx.spawn(|_, mut cx| async move {
+        cx.spawn(async move |_, cx| {
             state
-                .update(&mut cx, |state, cx| state.reset_credentials(cx))?
+                .update(cx, |state, cx| state.reset_credentials(cx))?
                 .await
         })
         .detach_and_log_err(cx);
@@ -966,7 +969,7 @@ impl Render for ConfigurationView {
                 .bg(bg_color)
                 .border_1()
                 .border_color(border_color)
-                .rounded_md()
+                .rounded_sm()
         };
 
         if self.load_credentials_task.is_some() {

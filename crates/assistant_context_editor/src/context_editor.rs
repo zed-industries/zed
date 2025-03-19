@@ -38,7 +38,7 @@ use language_model::{
     Role,
 };
 use language_model_selector::{
-    assistant_language_model_selector, LanguageModelSelector, ToggleModelSelector,
+    LanguageModelSelector, LanguageModelSelectorPopoverMenu, ToggleModelSelector,
 };
 use multi_buffer::MultiBufferRow;
 use picker::Picker;
@@ -197,7 +197,8 @@ pub struct ContextEditor {
     // the file is opened. In order to keep the worktree alive for the duration of the
     // context editor, we keep a reference here.
     dragged_file_worktrees: Vec<Entity<Worktree>>,
-    language_model_selector: PopoverMenuHandle<LanguageModelSelector>,
+    language_model_selector: Entity<LanguageModelSelector>,
+    language_model_selector_menu_handle: PopoverMenuHandle<LanguageModelSelector>,
 }
 
 pub const DEFAULT_TAB_TITLE: &str = "New Chat";
@@ -228,6 +229,7 @@ impl ContextEditor {
             editor.set_show_git_diff_gutter(false, cx);
             editor.set_show_code_actions(false, cx);
             editor.set_show_runnables(false, cx);
+            editor.set_show_breakpoints(false, cx);
             editor.set_show_wrap_guides(false, cx);
             editor.set_show_indent_guides(false, cx);
             editor.set_completion_provider(Some(Box::new(completion_provider)));
@@ -263,7 +265,7 @@ impl ContextEditor {
             image_blocks: Default::default(),
             scroll_position: None,
             remote_id: None,
-            fs,
+            fs: fs.clone(),
             workspace,
             project,
             pending_slash_command_creases: HashMap::default(),
@@ -275,7 +277,20 @@ impl ContextEditor {
             show_accept_terms: false,
             slash_menu_handle: Default::default(),
             dragged_file_worktrees: Vec::new(),
-            language_model_selector: PopoverMenuHandle::default(),
+            language_model_selector: cx.new(|cx| {
+                LanguageModelSelector::new(
+                    move |model, cx| {
+                        update_settings_file::<AssistantSettings>(
+                            fs.clone(),
+                            cx,
+                            move |settings, _| settings.set_model(model.clone()),
+                        );
+                    },
+                    window,
+                    cx,
+                )
+            }),
+            language_model_selector_menu_handle: PopoverMenuHandle::default(),
         };
         this.update_message_headers(cx);
         this.update_image_blocks(cx);
@@ -521,7 +536,6 @@ impl ContextEditor {
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub fn run_command(
         &mut self,
         command_range: Range<language::Anchor>,
@@ -893,7 +907,7 @@ impl ContextEditor {
                         if editor_state.opened_patch != patch {
                             state.update_task = Some({
                                 let this = this.clone();
-                                cx.spawn_in(window, |_, cx| async move {
+                                cx.spawn_in(window, async move |_, cx| {
                                     Self::update_patch_editor(this.clone(), patch, cx)
                                         .await
                                         .log_err();
@@ -1056,10 +1070,9 @@ impl ContextEditor {
                         })
                         .ok();
                 } else {
-                    patch_state.update_task =
-                        Some(cx.spawn_in(window, move |this, cx| async move {
-                            Self::open_patch_editor(this, new_patch, cx).await.log_err();
-                        }));
+                    patch_state.update_task = Some(cx.spawn_in(window, async move |this, cx| {
+                        Self::open_patch_editor(this, new_patch, cx).await.log_err();
+                    }));
                 }
             }
         }
@@ -1089,10 +1102,10 @@ impl ContextEditor {
     async fn open_patch_editor(
         this: WeakEntity<Self>,
         patch: AssistantPatch,
-        mut cx: AsyncWindowContext,
+        cx: &mut AsyncWindowContext,
     ) -> Result<()> {
-        let project = this.read_with(&cx, |this, _| this.project.clone())?;
-        let resolved_patch = patch.resolve(project.clone(), &mut cx).await;
+        let project = this.read_with(cx, |this, _| this.project.clone())?;
+        let resolved_patch = patch.resolve(project.clone(), cx).await;
 
         let editor = cx.new_window_entity(|window, cx| {
             let editor = ProposedChangesEditor::new(
@@ -1116,7 +1129,7 @@ impl ContextEditor {
             editor
         })?;
 
-        this.update(&mut cx, |this, _| {
+        this.update(cx, |this, _| {
             if let Some(patch_state) = this.patches.get_mut(&patch.range) {
                 patch_state.editor = Some(PatchEditorState {
                     editor: editor.downgrade(),
@@ -1125,8 +1138,8 @@ impl ContextEditor {
                 patch_state.update_task.take();
             }
         })?;
-        this.read_with(&cx, |this, _| this.workspace.clone())?
-            .update_in(&mut cx, |workspace, window, cx| {
+        this.read_with(cx, |this, _| this.workspace.clone())?
+            .update_in(cx, |workspace, window, cx| {
                 workspace.add_item_to_active_pane(Box::new(editor.clone()), None, false, window, cx)
             })
             .log_err();
@@ -1137,11 +1150,11 @@ impl ContextEditor {
     async fn update_patch_editor(
         this: WeakEntity<Self>,
         patch: AssistantPatch,
-        mut cx: AsyncWindowContext,
+        cx: &mut AsyncWindowContext,
     ) -> Result<()> {
-        let project = this.update(&mut cx, |this, _| this.project.clone())?;
-        let resolved_patch = patch.resolve(project.clone(), &mut cx).await;
-        this.update_in(&mut cx, |this, window, cx| {
+        let project = this.update(cx, |this, _| this.project.clone())?;
+        let resolved_patch = patch.resolve(project.clone(), cx).await;
+        this.update_in(cx, |this, window, cx| {
             let patch_state = this.patches.get_mut(&patch.range)?;
 
             let locations = resolved_patch
@@ -1227,7 +1240,7 @@ impl ContextEditor {
             .child("Press")
             .child(
                 h_flex()
-                    .rounded_md()
+                    .rounded_sm()
                     .px_1()
                     .mr_0p5()
                     .border_1()
@@ -1611,14 +1624,14 @@ impl ContextEditor {
                     .map(|path| Workspace::project_path_for_path(project.clone(), &path, false, cx))
                     .collect::<Vec<_>>();
 
-                cx.spawn(move |_, cx| async move {
+                cx.spawn(async move |_, cx| {
                     let mut paths = vec![];
                     let mut worktrees = vec![];
 
                     let opened_paths = futures::future::join_all(tasks).await;
                     for (worktree, project_path) in opened_paths.into_iter().flatten() {
                         let Ok(worktree_root_name) =
-                            worktree.read_with(&cx, |worktree, _| worktree.root_name().to_string())
+                            worktree.read_with(cx, |worktree, _| worktree.root_name().to_string())
                         else {
                             continue;
                         };
@@ -1635,12 +1648,12 @@ impl ContextEditor {
         };
 
         window
-            .spawn(cx, |mut cx| async move {
+            .spawn(cx, async move |cx| {
                 let (paths, dragged_file_worktrees) = paths.await;
                 let cmd_name = FileSlashCommand.name();
 
                 context_editor_view
-                    .update_in(&mut cx, |context_editor, window, cx| {
+                    .update_in(cx, |context_editor, window, cx| {
                         let file_argument = paths
                             .into_iter()
                             .map(|path| path.to_string_lossy().to_string())
@@ -2043,7 +2056,6 @@ impl ContextEditor {
             .unwrap_or_else(|| Cow::Borrowed(DEFAULT_TAB_TITLE))
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn render_patch_block(
         &mut self,
         range: Range<text::Anchor>,
@@ -2078,7 +2090,7 @@ impl ContextEditor {
                 .ml(gutter_width)
                 .pb_1()
                 .w(max_width - gutter_width)
-                .rounded_md()
+                .rounded_sm()
                 .border_1()
                 .border_color(theme.colors().border_variant)
                 .overflow_hidden()
@@ -2187,9 +2199,9 @@ impl ContextEditor {
                                     .log_err();
 
                                 if let Some(client) = client {
-                                    cx.spawn(|this, mut cx| async move {
-                                        client.authenticate_and_connect(true, &mut cx).await?;
-                                        this.update(&mut cx, |_, cx| cx.notify())
+                                    cx.spawn(async move |this, cx| {
+                                        client.authenticate_and_connect(true, cx).await?;
+                                        this.update(cx, |_, cx| cx.notify())
                                     })
                                     .detach_and_log_err(cx)
                                 }
@@ -2373,6 +2385,46 @@ impl ContextEditor {
                 )
             },
         )
+    }
+
+    fn render_language_model_selector(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let active_model = LanguageModelRegistry::read_global(cx).active_model();
+        let focus_handle = self.editor().focus_handle(cx).clone();
+        let model_name = match active_model {
+            Some(model) => model.name().0,
+            None => SharedString::from("No model selected"),
+        };
+
+        LanguageModelSelectorPopoverMenu::new(
+            self.language_model_selector.clone(),
+            ButtonLike::new("active-model")
+                .style(ButtonStyle::Subtle)
+                .child(
+                    h_flex()
+                        .gap_0p5()
+                        .child(
+                            Label::new(model_name)
+                                .size(LabelSize::Small)
+                                .color(Color::Muted),
+                        )
+                        .child(
+                            Icon::new(IconName::ChevronDown)
+                                .color(Color::Muted)
+                                .size(IconSize::XSmall),
+                        ),
+                ),
+            move |window, cx| {
+                Tooltip::for_action_in(
+                    "Change Model",
+                    &ToggleModelSelector,
+                    &focus_handle,
+                    window,
+                    cx,
+                )
+            },
+            gpui::Corner::BottomLeft,
+        )
+        .with_handle(self.language_model_selector_menu_handle.clone())
     }
 
     fn render_last_error(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
@@ -2818,9 +2870,8 @@ impl Render for ContextEditor {
         } else {
             None
         };
-        let fs_clone = self.fs.clone();
 
-        let language_model_selector = self.language_model_selector.clone();
+        let language_model_selector = self.language_model_selector_menu_handle.clone();
         v_flex()
             .key_context("ContextEditor")
             .capture_action(cx.listener(ContextEditor::cancel))
@@ -2873,18 +2924,11 @@ impl Render for ContextEditor {
                                 .gap_1()
                                 .child(self.render_inject_context_menu(cx))
                                 .child(ui::Divider::vertical())
-                                .child(div().pl_0p5().child(assistant_language_model_selector(
-                                    self.editor().focus_handle(cx),
-                                    Some(self.language_model_selector.clone()),
-                                    cx,
-                                    move |model, cx| {
-                                        update_settings_file::<AssistantSettings>(
-                                            fs_clone.clone(),
-                                            cx,
-                                            move |settings, _| settings.set_model(model.clone()),
-                                        );
-                                    },
-                                ))),
+                                .child(
+                                    div()
+                                        .pl_0p5()
+                                        .child(self.render_language_model_selector(cx)),
+                                ),
                         )
                         .child(
                             h_flex()
@@ -3116,10 +3160,10 @@ impl FollowableItem for ContextEditor {
             assistant_panel_delegate.open_remote_context(workspace, context_id, window, cx)
         });
 
-        Some(window.spawn(cx, |mut cx| async move {
+        Some(window.spawn(cx, async move |cx| {
             let context_editor = context_editor_task.await?;
             context_editor
-                .update_in(&mut cx, |context_editor, window, cx| {
+                .update_in(cx, |context_editor, window, cx| {
                     context_editor.remote_id = Some(id);
                     context_editor.editor.update(cx, |editor, cx| {
                         editor.apply_update_proto(
@@ -3376,7 +3420,7 @@ fn invoked_slash_command_fold_placeholder(
                 .ml_6()
                 .gap_2()
                 .bg(cx.theme().colors().surface_background)
-                .rounded_md()
+                .rounded_sm()
                 .child(Label::new(format!("/{}", command.name.clone())))
                 .map(|parent| match &command.status {
                     InvokedSlashCommandStatus::Running(_) => {
