@@ -113,16 +113,6 @@ pub enum LspFormatTarget {
 
 pub type OpenLspBufferHandle = Entity<Entity<Buffer>>;
 
-// Currently, formatting operations are represented differently depending on
-// whether they come from a language server or an external command.
-#[derive(Debug)]
-pub enum FormatOperation {
-    Lsp(Vec<(Range<Anchor>, Arc<str>)>),
-    External(Diff),
-    Prettier(Diff),
-    CodeActions(HashMap<LanguageServerId, Vec<CodeAction>>),
-}
-
 impl FormatTrigger {
     fn from_proto(value: i32) -> FormatTrigger {
         match value {
@@ -1334,8 +1324,7 @@ impl LocalLspStore {
                             result = Err(diff_result.unwrap_err());
                             break 'formatters;
                         };
-                        // todo! have format with prettier return diff instead of operation
-                        let Some(FormatOperation::Prettier(diff)) = diff else {
+                        let Some(diff) = diff else {
                             continue 'formatters;
                         };
                         if let Some(err) = err_if_buffer_edited_since_start(buffer, &cx) {
