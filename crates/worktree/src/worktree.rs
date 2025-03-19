@@ -211,6 +211,7 @@ pub struct RepositoryEntry {
     pub current_merge_conflicts: TreeSet<RepoPath>,
 }
 
+#[derive(Debug)]
 pub enum WorktreeRelatedMessage {
     UpdateWorktree(proto::UpdateWorktree),
     UpdateRepository(proto::UpdateRepository),
@@ -896,11 +897,6 @@ impl Worktree {
                                     || !update.removed_entries.is_empty()
                                 {
                                     entries_changed = true;
-                                }
-                                if !update.updated_repositories.is_empty()
-                                    || !update.removed_repositories.is_empty()
-                                {
-                                    git_repos_changed = true;
                                 }
                                 if let Some(tx) = &this.update_observer {
                                     // FIXME
@@ -2633,13 +2629,6 @@ impl Snapshot {
             .collect::<Vec<_>>();
         updated_entries.sort_unstable_by_key(|e| e.id);
 
-        let updated_repositories = Vec::new();
-        let updated_repository_work_directory_entries = self
-            .repositories
-            .iter()
-            .map(|repository| repository.work_directory_id().to_proto())
-            .collect::<Vec<_>>();
-
         let update_worktree = proto::UpdateWorktree {
             project_id,
             worktree_id,
@@ -2649,9 +2638,6 @@ impl Snapshot {
             removed_entries: Vec::new(),
             scan_id: self.scan_id as u64,
             is_last_update: self.completed_scan_id == self.scan_id,
-            updated_repositories,
-            removed_repositories: Vec::new(),
-            updated_repositories: updated_repository_work_directory_entries,
         };
         let update_repositories = self
             .repositories
