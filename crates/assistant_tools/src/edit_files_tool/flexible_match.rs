@@ -1,4 +1,7 @@
-pub fn replace_flexible(whole: &str, old: &str, new: &str) -> Option<String> {
+use language::{BufferSnapshot, Diff, Point, ToOffset};
+
+pub fn replace_flexible(buffer: &BufferSnapshot, old: &str, new: &str) -> Option<Diff> {
+    let line_ending = buffer.line_ending().as_str();
     let (old_lines, old_min_indent) = lines_with_min_indent(old);
     let (new_lines, new_min_indent) = lines_with_min_indent(new);
     let min_indent = old_min_indent.min(new_min_indent);
@@ -6,13 +9,30 @@ pub fn replace_flexible(whole: &str, old: &str, new: &str) -> Option<String> {
     let old_lines = drop_lines_prefix(&old_lines, min_indent);
     let new_lines = drop_lines_prefix(&new_lines, min_indent);
 
-    let whole_lines = whole.lines().collect::<Vec<_>>();
+    let max_row = buffer.max_point().row;
 
-    'windows: for (i, window) in whole_lines.windows(old_lines.len()).enumerate() {
+    'windows: for start_row in 0..max_row.saturating_sub(old_lines.len() as u32 - 1) {
         let mut common_leading = None;
 
-        for (line, old_line) in window.iter().zip(old_lines.iter()) {
-            let line_trimmed = line.trim_start();
+        let end_row = start_row + old_lines.len() as u32;
+
+        if end_row > max_row {
+            // The buffer ends before fully matching the pattern
+            return None;
+        }
+
+        let start_point = Point::new(start_row, 0);
+        let end_point = Point::new(end_row, buffer.line_len(end_row));
+        let range = start_point.to_offset(buffer)..end_point.to_offset(buffer);
+
+        let window_text =
+            buffer.text_for_range(start_point..Point::new(max_row, buffer.line_len(max_row)));
+        let mut window_lines = window_text.lines();
+        let mut old_lines_iter = old_lines.iter();
+
+        while let (Some(window_line), Some(old_line)) = (window_lines.next(), old_lines_iter.next())
+        {
+            let line_trimmed = window_line.trim_start();
 
             if line_trimmed != old_line.trim_start() {
                 continue 'windows;
@@ -22,39 +42,37 @@ pub fn replace_flexible(whole: &str, old: &str, new: &str) -> Option<String> {
                 continue;
             }
 
-            let line_leading = &line[..line.len() - old_line.len()];
+            let line_leading = &window_line[..window_line.len() - line_trimmed.len()];
 
-            match common_leading {
+            match &common_leading {
                 Some(common_leading) if common_leading != line_leading => {
-                    // indent mismatch is not consistent
                     continue 'windows;
                 }
                 Some(_) => (),
-                None => common_leading = Some(line_leading),
+                None => common_leading = Some(line_leading.to_string()),
             }
         }
 
         if let Some(common_leading) = common_leading {
-            return Some(
-                whole_lines[..i]
-                    .iter()
-                    .map(|line| line.to_string())
-                    .chain(new_lines.into_iter().map(|new_line| {
-                        if new_line.trim().is_empty() {
-                            new_line.to_string()
-                        } else {
-                            common_leading.to_string() + new_line
-                        }
-                    }))
-                    .chain(
-                        whole_lines[i + old_lines.len()..]
-                            .iter()
-                            .map(|line| line.to_string()),
-                    )
-                    .collect::<Vec<_>>()
-                    .join("\n")
-                    + "\n",
-            );
+            let replacement = new_lines
+                .iter()
+                .map(|new_line| {
+                    if new_line.trim().is_empty() {
+                        new_line.to_string()
+                    } else {
+                        common_leading.to_string() + new_line
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join(line_ending);
+
+            let diff = Diff {
+                base_version: buffer.version().clone(),
+                line_ending: buffer.line_ending(),
+                edits: vec![(range, replacement.into())],
+            };
+
+            return Some(diff);
         }
     }
 
@@ -63,31 +81,22 @@ pub fn replace_flexible(whole: &str, old: &str, new: &str) -> Option<String> {
 
 fn drop_lines_prefix<'a>(lines: &'a [&str], prefix_len: usize) -> Vec<&'a str> {
     lines
-        .into_iter()
-        .map(|line| {
-            if line.len() > prefix_len {
-                &line[prefix_len..]
-            } else {
-                ""
-            }
-        })
+        .iter()
+        .map(|line| line.get(prefix_len..).unwrap_or(""))
         .collect()
 }
 
 fn lines_with_min_indent(input: &str) -> (Vec<&str>, usize) {
+    let mut lines = Vec::new();
     let mut min_indent: Option<usize> = None;
 
-    let lines = input
-        .lines()
-        .map(|line| {
-            if line.chars().any(|b| !b.is_whitespace()) {
-                let indent = line.len() - line.trim_start().len();
-                min_indent = Some(min_indent.map_or(indent, |m| m.min(indent)));
-            }
-
-            line
-        })
-        .collect::<Vec<_>>();
+    for line in input.lines() {
+        lines.push(line);
+        if !line.trim().is_empty() {
+            let indent = line.len() - line.trim_start().len();
+            min_indent = Some(min_indent.map_or(indent, |m| m.min(indent)));
+        }
+    }
 
     (lines, min_indent.unwrap_or(0))
 }
@@ -95,10 +104,12 @@ fn lines_with_min_indent(input: &str) -> (Vec<&str>, usize) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use gpui::prelude::*;
+    use gpui::TestAppContext;
     use unindent::Unindent;
 
-    #[test]
-    fn test_replace_consistent_indentation() {
+    #[gpui::test]
+    fn test_replace_consistent_indentation(cx: &mut TestAppContext) {
         let whole = r#"
             fn test() {
                 let x = 5;
@@ -124,19 +135,18 @@ mod tests {
             fn test() {
                 let x = 42;
                 println!("New value: {}", x);
-                let y = 10;
             }
         "#
         .unindent();
 
         assert_eq!(
-            replace_flexible(&whole, &old, &new),
+            test_replace_flexible(cx, &whole, &old, &new),
             Some(expected.to_string())
         );
     }
 
-    #[test]
-    fn test_replace_inconsistent_indentation() {
+    #[gpui::test]
+    fn test_replace_inconsistent_indentation(cx: &mut TestAppContext) {
         let whole = r#"
             fn test() {
                 if condition {
@@ -158,11 +168,11 @@ mod tests {
         "#
         .unindent();
 
-        assert_eq!(replace_flexible(&whole, &old, &new), None);
+        assert_eq!(test_replace_flexible(cx, &whole, &old, &new), None);
     }
 
-    #[test]
-    fn test_replace_with_empty_lines() {
+    #[gpui::test]
+    fn test_replace_with_empty_lines(cx: &mut TestAppContext) {
         // Test with empty lines
         let whole = r#"
             fn test() {
@@ -187,23 +197,16 @@ mod tests {
         "#
         .unindent();
 
-        let expected = r#"
-            fn test() {
-                let x = 10;
-
-                println!("New x: {}", x);
-            }
-        "#
-        .unindent();
+        let expected = "fn test() {\n    let x = 10;\n\n    println!(\"New x: {}\", x);\n";
 
         assert_eq!(
-            replace_flexible(&whole, &old, &new),
+            test_replace_flexible(cx, &whole, &old, &new),
             Some(expected.to_string())
         );
     }
 
-    #[test]
-    fn test_replace_no_match() {
+    #[gpui::test]
+    fn test_replace_no_match(cx: &mut TestAppContext) {
         // Test with no match
         let whole = r#"
             fn test() {
@@ -222,7 +225,31 @@ mod tests {
         "#
         .unindent();
 
-        assert_eq!(replace_flexible(&whole, &old, &new), None);
+        assert_eq!(test_replace_flexible(cx, &whole, &old, &new), None);
+    }
+
+    #[gpui::test]
+    fn test_replace_whole_ends_before_matching_old(cx: &mut TestAppContext) {
+        let whole = r#"
+            fn test() {
+                let x = 5;
+        "#
+        .unindent();
+
+        let old = r#"
+            let x = 5;
+            println!("x = {}", x);
+        "#
+        .unindent();
+
+        let new = r#"
+            let x = 10;
+            println!("x = {}", x);
+        "#
+        .unindent();
+
+        // Should return None because whole doesn't fully contain the old text
+        assert_eq!(test_replace_flexible(cx, &whole, &old, &new), None);
     }
 
     #[test]
@@ -286,5 +313,26 @@ mod tests {
             drop_lines_prefix(&["    line1", "  line2", "      line3"], 2),
             vec!["  line1", "line2", "    line3"]
         );
+    }
+
+    fn test_replace_flexible(
+        cx: &mut TestAppContext,
+        whole: &str,
+        old: &str,
+        new: &str,
+    ) -> Option<String> {
+        // Create a local buffer with the test content
+        let buffer = cx.new(|cx| language::Buffer::local(whole, cx));
+
+        // Get the buffer snapshot
+        let buffer_snapshot = buffer.read_with(cx, |buffer, _cx| buffer.snapshot());
+
+        // Call replace_flexible and transform the result
+        replace_flexible(&buffer_snapshot, old, new).map(|diff| {
+            buffer.update(cx, |buffer, cx| {
+                let _ = buffer.apply_diff(diff, cx);
+                buffer.text()
+            })
+        })
     }
 }

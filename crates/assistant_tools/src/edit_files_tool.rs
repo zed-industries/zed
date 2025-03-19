@@ -6,6 +6,7 @@ use anyhow::{anyhow, Context, Result};
 use assistant_tool::{ActionLog, Tool};
 use collections::HashSet;
 use edit_action::{EditAction, EditActionParser};
+use flexible_match::replace_flexible;
 use futures::StreamExt;
 use gpui::{App, AsyncApp, Entity, Task};
 use language_model::{
@@ -305,10 +306,14 @@ impl EditToolRequest {
         let matches = query.search(&snapshot, None).await;
 
         if matches.is_empty() {
-            return Ok(DiffResult::BadSearch(BadSearch {
-                search: new.clone(),
-                file_path: file_path.display().to_string(),
-            }));
+            let Some(diff) = replace_flexible(&snapshot, &old, &new) else {
+                return anyhow::Ok(DiffResult::BadSearch(BadSearch {
+                    search: new,
+                    file_path: file_path.display().to_string(),
+                }));
+            };
+
+            return anyhow::Ok(DiffResult::Diff(diff));
         }
 
         let edit_range = matches[0].clone();
