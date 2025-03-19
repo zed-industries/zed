@@ -5,13 +5,19 @@ use gpui::Entity;
 use scripting_tool::ScriptingTool;
 use ui::{prelude::*, ContextMenu, PopoverMenu, Tooltip};
 
+use crate::agent_profile::AgentProfile;
+
 pub struct ToolSelector {
+    profiles: Vec<AgentProfile>,
     tools: Arc<ToolWorkingSet>,
 }
 
 impl ToolSelector {
     pub fn new(tools: Arc<ToolWorkingSet>, _cx: &mut Context<Self>) -> Self {
-        Self { tools }
+        Self {
+            profiles: vec![AgentProfile::read_only(), AgentProfile::code_writer()],
+            tools,
+        }
     }
 
     fn build_context_menu(
@@ -19,9 +25,31 @@ impl ToolSelector {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Entity<ContextMenu> {
+        let profiles = self.profiles.clone();
         let tool_set = self.tools.clone();
         ContextMenu::build_persistent(window, cx, move |mut menu, _window, cx| {
             let icon_position = IconPosition::End;
+
+            menu = menu.header("Profiles");
+            for profile in profiles.clone() {
+                menu = menu.toggleable_entry(profile.name.clone(), false, icon_position, None, {
+                    let tools = tool_set.clone();
+                    move |_window, cx| {
+                        tools.disable_source(ToolSource::Native, cx);
+                        tools.enable(
+                            ToolSource::Native,
+                            &profile
+                                .tools
+                                .iter()
+                                .filter_map(|(tool, enabled)| enabled.then(|| tool.clone()))
+                                .collect::<Vec<_>>(),
+                        );
+                    }
+                });
+            }
+
+            menu = menu.separator();
+
             let tools_by_source = tool_set.tools_by_source(cx);
 
             let all_tools_enabled = tool_set.are_all_tools_enabled();
