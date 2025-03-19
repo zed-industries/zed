@@ -1035,13 +1035,9 @@ impl ContextEditor {
                     Crease::inline(
                         start..end,
                         FoldPlaceholder {
-                            render: render_fold_icon_button(
+                            render: render_thought_process_fold_icon_button(
                                 cx.entity().downgrade(),
-                                IconName::Ai,
-                                match status {
-                                    ThoughtProcessStatus::Pending => "Thinking...".into(),
-                                    ThoughtProcessStatus::Completed => "Thought Process".into(),
-                                },
+                                status,
                             ),
                             merge_adjacent: false,
                             ..Default::default()
@@ -2771,6 +2767,52 @@ fn find_surrounding_code_block(snapshot: &BufferSnapshot, offset: usize) -> Opti
     }
 
     None
+}
+
+fn render_thought_process_fold_icon_button(
+    editor: WeakEntity<Editor>,
+    status: ThoughtProcessStatus,
+) -> Arc<dyn Send + Sync + Fn(FoldId, Range<Anchor>, &mut App) -> AnyElement> {
+    Arc::new(move |fold_id, fold_range, _cx| {
+        let editor = editor.clone();
+        
+        let button = ButtonLike::new(fold_id).layer(ElevationIndex::ElevatedSurface);
+        let button = match status {
+            ThoughtProcessStatus::Pending => button
+                .child(
+                    Icon::new(IconName::Brain)
+                        .size(IconSize::Small)
+                        .color(Color::Muted),
+                )
+                .child(
+                    Label::new("Thinking…").color(Color::Muted).with_animation(
+                        "pulsating-label",
+                        Animation::new(Duration::from_secs(2))
+                            .repeat()
+                            .with_easing(pulsating_between(0.4, 0.8)),
+                        |label, delta| label.alpha(delta),
+                    ),
+                ),
+            ThoughtProcessStatus::Completed => button
+                .style(ButtonStyle::Filled)
+                .child(Icon::new(IconName::Brain).size(IconSize::Small))
+                .child(Label::new("Thought Process").single_line()),
+        };
+
+        button
+            .on_click(move |_, window, cx| {
+                editor
+                    .update(cx, |editor, cx| {
+                        let buffer_start = fold_range
+                            .start
+                            .to_point(&editor.buffer().read(cx).read(cx));
+                        let buffer_row = MultiBufferRow(buffer_start.row);
+                        editor.unfold_at(&UnfoldAt { buffer_row }, window, cx);
+                    })
+                    .ok();
+            })
+            .into_any_element()
+    })
 }
 
 fn render_fold_icon_button(

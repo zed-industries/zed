@@ -156,6 +156,7 @@ pub enum IconName {
     Book,
     BookCopy,
     BookPlus,
+    Brain,
     CaseSensitive,
     Check,
     ChevronDown,
