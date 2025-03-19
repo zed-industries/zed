@@ -73,12 +73,8 @@ jobs:
           )"
           echo "$TAG"
           echo "$RELEASE_BODY"
-          curl -X POST "https://zed.dev/api/send_release_notes_email" \
+          echo "{\"version\": \"$TAG\", \"markdown_body\": $RELEASE_BODY}" \
+            | curl -X POST "https://zed.dev/api/send_release_notes_email" \
               -H "Authorization: Bearer ${{ secrets.RELEASE_NOTES_API_TOKEN }}" \
               -H "Content-Type: application/json" \
-              -d @- <<-JSONHERE
-                  {
-                      "version": "${TAG}",
-                      "markdown_body": ${RELEASE_BODY}
-                  }
-              JSONHERE
+              -d @-
