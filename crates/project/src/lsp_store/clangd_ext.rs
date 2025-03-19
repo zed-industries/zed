@@ -35,14 +35,18 @@ pub fn register_notifications(
     }
     let server_id = language_server.server_id();
 
+    // TODO: inactiveRegions support needs do add diagnostics, not replace them as `this.update_diagnostics` call below does
+    if true {
+        return;
+    }
     language_server
         .on_notification::<InactiveRegions, _>({
             let adapter = adapter.clone();
             let this = lsp_store;
 
-            move |params: InactiveRegionsParams, mut cx| {
+            move |params: InactiveRegionsParams, cx| {
                 let adapter = adapter.clone();
-                this.update(&mut cx, |this, cx| {
+                this.update(cx, |this, cx| {
                     let diagnostics = params
                         .regions
                         .into_iter()

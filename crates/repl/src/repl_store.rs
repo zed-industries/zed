@@ -122,12 +122,12 @@ impl ReplStore {
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
         let kernel_specifications = python_env_kernel_specifications(project, worktree_id, cx);
-        cx.spawn(move |this, mut cx| async move {
+        cx.spawn(async move |this, cx| {
             let kernel_specifications = kernel_specifications
                 .await
                 .map_err(|e| anyhow::anyhow!("Failed to get python kernelspecs: {:?}", e))?;
 
-            this.update(&mut cx, |this, cx| {
+            this.update(cx, |this, cx| {
                 this.kernel_specifications_for_worktree
                     .insert(worktree_id, kernel_specifications);
                 cx.notify();
@@ -149,7 +149,7 @@ impl ReplStore {
                     token,
                 };
                 let http_client = cx.http_client();
-                Some(cx.spawn(|_, _| async move {
+                Some(cx.spawn(async move |_, _| {
                     list_remote_kernelspecs(remote_server, http_client)
                         .await
                         .map(|specs| specs.into_iter().map(KernelSpecification::Remote).collect())
@@ -180,11 +180,11 @@ impl ReplStore {
             anyhow::Ok(all_specs)
         });
 
-        cx.spawn(|this, mut cx| async move {
+        cx.spawn(async move |this, cx| {
             let all_specs = all_specs.await;
 
             if let Ok(specs) = all_specs {
-                this.update(&mut cx, |this, cx| {
+                this.update(cx, |this, cx| {
                     this.kernel_specifications = specs;
                     cx.notify();
                 })

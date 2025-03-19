@@ -6,11 +6,11 @@ use gpui::{
 };
 use language::Buffer;
 use language::CodeLabel;
-use lsp::LanguageServerId;
 use markdown::Markdown;
 use multi_buffer::{Anchor, ExcerptId};
 use ordered_float::OrderedFloat;
 use project::lsp_store::CompletionDocumentation;
+use project::CompletionSource;
 use project::{CodeAction, Completion, TaskSourceKind};
 
 use std::{
@@ -180,6 +180,7 @@ pub struct CompletionsMenu {
     scroll_handle: UniformListScrollHandle,
     resolve_completions: bool,
     show_completion_documentation: bool,
+    pub(super) ignore_completion_provider: bool,
     last_rendered_range: Rc<RefCell<Option<Range<usize>>>>,
     markdown_element: Option<Entity<Markdown>>,
 }
@@ -189,6 +190,7 @@ impl CompletionsMenu {
         id: CompletionId,
         sort_completions: bool,
         show_completion_documentation: bool,
+        ignore_completion_provider: bool,
         initial_position: Anchor,
         buffer: Entity<Buffer>,
         completions: Box<[Completion]>,
@@ -205,6 +207,7 @@ impl CompletionsMenu {
             initial_position,
             buffer,
             show_completion_documentation,
+            ignore_completion_provider,
             completions: RefCell::new(completions).into(),
             match_candidates,
             entries: RefCell::new(Vec::new()).into(),
@@ -233,11 +236,9 @@ impl CompletionsMenu {
                     runs: Default::default(),
                     filter_range: Default::default(),
                 },
-                server_id: LanguageServerId(usize::MAX),
                 documentation: None,
-                lsp_completion: Default::default(),
                 confirm: None,
-                resolved: true,
+                source: CompletionSource::Custom,
             })
             .collect();
 
@@ -268,6 +269,7 @@ impl CompletionsMenu {
             scroll_handle: UniformListScrollHandle::new(),
             resolve_completions: false,
             show_completion_documentation: false,
+            ignore_completion_provider: false,
             last_rendered_range: RefCell::new(None).into(),
             markdown_element: None,
         }
@@ -414,9 +416,9 @@ impl CompletionsMenu {
             cx,
         );
 
-        cx.spawn(move |editor, mut cx| async move {
+        cx.spawn(async move |editor, cx| {
             if let Some(true) = resolve_task.await.log_err() {
-                editor.update(&mut cx, |_, cx| cx.notify()).ok();
+                editor.update(cx, |_, cx| cx.notify()).ok();
             }
         })
         .detach();
@@ -500,7 +502,12 @@ impl CompletionsMenu {
                                     // Ignore font weight for syntax highlighting, as we'll use it
                                     // for fuzzy matches.
                                     highlight.font_weight = None;
-                                    if completion.lsp_completion.deprecated.unwrap_or(false) {
+                                    if completion
+                                        .source
+                                        .lsp_completion(false)
+                                        .and_then(|lsp_completion| lsp_completion.deprecated)
+                                        .unwrap_or(false)
+                                    {
                                         highlight.strikethrough = Some(StrikethroughStyle {
                                             thickness: 1.0.into(),
                                             ..Default::default()
@@ -708,7 +715,12 @@ impl CompletionsMenu {
 
                 let completion = &completions[mat.candidate_id];
                 let sort_key = completion.sort_key();
-                let sort_text = completion.lsp_completion.sort_text.as_deref();
+                let sort_text =
+                    if let CompletionSource::Lsp { lsp_completion, .. } = &completion.source {
+                        lsp_completion.sort_text.as_deref()
+                    } else {
+                        None
+                    };
                 let score = Reverse(OrderedFloat(mat.score));
 
                 if mat.score >= 0.2 {

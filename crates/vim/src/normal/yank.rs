@@ -36,7 +36,7 @@ impl Vim {
                         motion.expand_selection(map, selection, times, true, &text_layout_details);
                     });
                 });
-                vim.yank_selections_content(editor, motion.linewise(), cx);
+                vim.yank_selections_content(editor, motion.linewise(), window, cx);
                 editor.change_selections(None, window, cx, |s| {
                     s.move_with(|_, selection| {
                         let (head, goal) = original_positions.remove(&selection.id).unwrap();
@@ -66,7 +66,7 @@ impl Vim {
                         start_positions.insert(selection.id, start_position);
                     });
                 });
-                vim.yank_selections_content(editor, false, cx);
+                vim.yank_selections_content(editor, false, window, cx);
                 editor.change_selections(None, window, cx, |s| {
                     s.move_with(|_, selection| {
                         let (head, goal) = start_positions.remove(&selection.id).unwrap();
@@ -82,6 +82,7 @@ impl Vim {
         &mut self,
         editor: &mut Editor,
         linewise: bool,
+        window: &mut Window,
         cx: &mut Context<Editor>,
     ) {
         self.copy_ranges(
@@ -94,6 +95,7 @@ impl Vim {
                 .iter()
                 .map(|s| s.range())
                 .collect(),
+            window,
             cx,
         )
     }
@@ -102,6 +104,7 @@ impl Vim {
         &mut self,
         editor: &mut Editor,
         linewise: bool,
+        window: &mut Window,
         cx: &mut Context<Editor>,
     ) {
         self.copy_ranges(
@@ -114,6 +117,7 @@ impl Vim {
                 .iter()
                 .map(|s| s.range())
                 .collect(),
+            window,
             cx,
         )
     }
@@ -124,27 +128,34 @@ impl Vim {
         linewise: bool,
         is_yank: bool,
         selections: Vec<Range<Point>>,
+        window: &mut Window,
         cx: &mut Context<Editor>,
     ) {
         let buffer = editor.buffer().read(cx).snapshot(cx);
-        let mut text = String::new();
-        let mut clipboard_selections = Vec::with_capacity(selections.len());
-        let mut ranges_to_highlight = Vec::new();
-
-        self.marks.insert(
+        self.set_mark(
             "[".to_string(),
             selections
                 .iter()
                 .map(|s| buffer.anchor_before(s.start))
                 .collect(),
+            editor.buffer(),
+            window,
+            cx,
         );
-        self.marks.insert(
+        self.set_mark(
             "]".to_string(),
             selections
                 .iter()
                 .map(|s| buffer.anchor_after(s.end))
                 .collect(),
+            editor.buffer(),
+            window,
+            cx,
         );
+
+        let mut text = String::new();
+        let mut clipboard_selections = Vec::with_capacity(selections.len());
+        let mut ranges_to_highlight = Vec::new();
 
         {
             let mut is_first = true;
@@ -217,11 +228,11 @@ impl Vim {
             |colors| colors.editor_document_highlight_read_background,
             cx,
         );
-        cx.spawn(|this, mut cx| async move {
+        cx.spawn(async move |this, cx| {
             cx.background_executor()
                 .timer(Duration::from_millis(highlight_duration))
                 .await;
-            this.update(&mut cx, |editor, cx| {
+            this.update(cx, |editor, cx| {
                 editor.clear_background_highlights::<HighlightOnYank>(cx)
             })
             .ok();

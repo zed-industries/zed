@@ -307,6 +307,7 @@ impl Server {
             .add_request_handler(forward_read_only_project_request::<proto::SynchronizeBuffers>)
             .add_request_handler(forward_read_only_project_request::<proto::InlayHints>)
             .add_request_handler(forward_read_only_project_request::<proto::ResolveInlayHint>)
+            .add_request_handler(forward_mutating_project_request::<proto::GetCodeLens>)
             .add_request_handler(forward_read_only_project_request::<proto::OpenBufferByPath>)
             .add_request_handler(forward_read_only_project_request::<proto::GitGetBranches>)
             .add_request_handler(forward_read_only_project_request::<proto::OpenUnstagedDiff>)
@@ -347,6 +348,7 @@ impl Server {
             .add_message_handler(create_buffer_for_peer)
             .add_request_handler(update_buffer)
             .add_message_handler(broadcast_project_message_from_host::<proto::RefreshInlayHints>)
+            .add_message_handler(broadcast_project_message_from_host::<proto::RefreshCodeLens>)
             .add_message_handler(broadcast_project_message_from_host::<proto::UpdateBufferFile>)
             .add_message_handler(broadcast_project_message_from_host::<proto::BufferReloaded>)
             .add_message_handler(broadcast_project_message_from_host::<proto::BufferSaved>)
@@ -396,11 +398,14 @@ impl Server {
             .add_request_handler(forward_mutating_project_request::<proto::Stage>)
             .add_request_handler(forward_mutating_project_request::<proto::Unstage>)
             .add_request_handler(forward_mutating_project_request::<proto::Commit>)
+            .add_request_handler(forward_mutating_project_request::<proto::GitInit>)
             .add_request_handler(forward_read_only_project_request::<proto::GetRemotes>)
             .add_request_handler(forward_read_only_project_request::<proto::GitShow>)
             .add_request_handler(forward_read_only_project_request::<proto::GitReset>)
             .add_request_handler(forward_read_only_project_request::<proto::GitCheckoutFiles>)
             .add_request_handler(forward_mutating_project_request::<proto::SetIndexText>)
+            .add_request_handler(forward_mutating_project_request::<proto::ToggleBreakpoint>)
+            .add_message_handler(broadcast_project_message_from_host::<proto::BreakpointsForFile>)
             .add_request_handler(forward_mutating_project_request::<proto::OpenCommitMessageBuffer>)
             .add_request_handler(forward_mutating_project_request::<proto::GitDiff>)
             .add_request_handler(forward_mutating_project_request::<proto::GitCreateBranch>)
@@ -697,7 +702,6 @@ impl Server {
         })
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub fn handle_connection(
         self: &Arc<Self>,
         connection: Connection,
@@ -1081,7 +1085,6 @@ pub fn routes(server: Arc<Server>) -> Router<(), Body> {
         .layer(Extension(server))
 }
 
-#[allow(clippy::too_many_arguments)]
 pub async fn handle_websocket_request(
     TypedHeader(ProtocolVersion(protocol_version)): TypedHeader<ProtocolVersion>,
     app_version_header: Option<TypedHeader<AppVersionHeader>>,
@@ -2063,7 +2066,7 @@ async fn update_worktree_settings(
     Ok(())
 }
 
-/// Notify other participants that a  language server has started.
+/// Notify other participants that a language server has started.
 async fn start_language_server(
     request: proto::StartLanguageServer,
     session: Session,
@@ -4035,7 +4038,7 @@ async fn accept_terms_of_service(
 }
 
 /// The minimum account age an account must have in order to use the LLM service.
-const MIN_ACCOUNT_AGE_FOR_LLM_USE: chrono::Duration = chrono::Duration::days(30);
+pub const MIN_ACCOUNT_AGE_FOR_LLM_USE: chrono::Duration = chrono::Duration::days(30);
 
 async fn get_llm_api_token(
     _request: proto::GetLlmToken,
@@ -4046,8 +4049,6 @@ async fn get_llm_api_token(
 
     let flags = db.get_user_flags(session.user_id()).await?;
     let has_language_models_feature_flag = flags.iter().any(|flag| flag == "language-models");
-    let has_llm_closed_beta_feature_flag = flags.iter().any(|flag| flag == "llm-closed-beta");
-    let has_predict_edits_feature_flag = flags.iter().any(|flag| flag == "predict-edits");
 
     if !session.is_staff() && !has_language_models_feature_flag {
         Err(anyhow!("permission denied"))?
@@ -4064,27 +4065,13 @@ async fn get_llm_api_token(
     }
 
     let has_llm_subscription = session.has_llm_subscription(&db).await?;
-
-    let bypass_account_age_check =
-        has_llm_subscription || flags.iter().any(|flag| flag == "bypass-account-age-check");
-    if !bypass_account_age_check {
-        let mut account_created_at = user.created_at;
-        if let Some(github_created_at) = user.github_user_created_at {
-            account_created_at = account_created_at.min(github_created_at);
-        }
-        if Utc::now().naive_utc() - account_created_at < MIN_ACCOUNT_AGE_FOR_LLM_USE {
-            Err(anyhow!("account too young"))?
-        }
-    }
-
     let billing_preferences = db.get_billing_preferences(user.id).await?;
 
     let token = LlmTokenClaims::create(
         &user,
         session.is_staff(),
         billing_preferences,
-        has_llm_closed_beta_feature_flag,
-        has_predict_edits_feature_flag,
+        &flags,
         has_llm_subscription,
         session.current_plan(&db).await?,
         session.system_id.clone(),

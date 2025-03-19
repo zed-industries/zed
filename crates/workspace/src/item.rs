@@ -718,13 +718,13 @@ impl<T: Item> ItemHandle for Entity<T> {
 
                 send_follower_updates = Some(cx.spawn_in(window, {
                     let pending_update = pending_update.clone();
-                    |workspace, mut cx| async move {
+                    async move |workspace, cx| {
                         while let Some(mut leader_id) = pending_update_rx.next().await {
                             while let Ok(Some(id)) = pending_update_rx.try_next() {
                                 leader_id = id;
                             }
 
-                            workspace.update_in(&mut cx, |workspace, window, cx| {
+                            workspace.update_in(cx, |workspace, window, cx| {
                                 let Some(item) = item.upgrade() else { return };
                                 workspace.update_followers(
                                     is_project_item,
@@ -852,6 +852,7 @@ impl<T: Item> ItemHandle for Entity<T> {
             .detach();
 
             let item_id = self.item_id();
+            workspace.update_item_dirty_state(self, window, cx);
             cx.observe_release_in(self, window, move |workspace, _, _, _| {
                 workspace.panes_by_item.remove(&item_id);
                 event_subscription.take();

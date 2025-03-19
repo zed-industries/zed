@@ -1,4 +1,6 @@
-use editor::{display_map::ToDisplayPoint, movement, scroll::Autoscroll, Bias, Direction, Editor};
+use editor::{
+    display_map::ToDisplayPoint, movement, scroll::Autoscroll, Anchor, Bias, Direction, Editor,
+};
 use gpui::{actions, Context, Window};
 
 use crate::{state::Mode, Vim};
@@ -48,8 +50,10 @@ impl Vim {
     }
 
     pub(crate) fn push_to_change_list(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some((map, selections)) = self.update_editor(window, cx, |_, editor, _, cx| {
-            editor.selections.all_adjusted_display(cx)
+        let Some((map, selections, buffer)) = self.update_editor(window, cx, |_, editor, _, cx| {
+            let (map, selections) = editor.selections.all_adjusted_display(cx);
+            let buffer = editor.buffer().clone();
+            (map, selections, buffer)
         }) else {
             return;
         };
@@ -65,7 +69,7 @@ impl Vim {
             })
             .unwrap_or(false);
 
-        let new_positions = selections
+        let new_positions: Vec<Anchor> = selections
             .into_iter()
             .map(|s| {
                 let point = if self.mode == Mode::Insert {
@@ -81,7 +85,8 @@ impl Vim {
         if pop_state {
             self.change_list.pop();
         }
-        self.change_list.push(new_positions);
+        self.change_list.push(new_positions.clone());
+        self.set_mark(".".to_string(), new_positions, &buffer, window, cx)
     }
 }
 
