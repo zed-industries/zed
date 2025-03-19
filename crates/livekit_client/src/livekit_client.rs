@@ -9,16 +9,25 @@ mod remote_video_track_view;
 pub mod test;
 
 use anyhow::{anyhow, Context as _, Result};
+use core_foundation::base::TCFType;
+use core_video::{
+    image_buffer::CVImageBuffer,
+    pixel_buffer::{kCVPixelBufferHeightKey, kCVPixelFormatType_420YpCbCr8BiPlanarFullRange},
+    pixel_buffer_io_surface::kCVPixelBufferIOSurfaceCoreAnimationCompatibilityKey,
+    pixel_buffer_pool::{self, CVPixelBufferPool},
+};
 use coreaudio::sys::OSType;
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait as _};
 use futures::{io, Stream, StreamExt as _};
 use gpui::{
-    BackgroundExecutor, ScreenCaptureFrame, ScreenCaptureSource, ScreenCaptureStream, Task,
+    BackgroundExecutor, ScreenCaptureFrame, ScreenCaptureSource, ScreenCaptureStream,
+    SurfaceSource, Task,
 };
-use media::core_video::__CVImageBuffer;
+
 use parking_lot::Mutex;
 use std::{
-    borrow::Cow, collections::VecDeque, ffi::c_void, future::Future, pin::Pin, sync::Arc, thread,
+    borrow::Cow, collections::VecDeque, ffi::c_void, future::Future, mem, pin::Pin, sync::Arc,
+    thread,
 };
 use util::{debug_panic, ResultExt as _};
 #[cfg(not(all(target_os = "windows", target_env = "gnu")))]
@@ -170,7 +179,7 @@ pub async fn capture_local_video_track(
 
     use core_foundation::base::TCFType as _;
     use livekit::webrtc::prelude::{I420ABuffer, I420Buffer, NV12Buffer};
-    use media::core_video::CVImageBuffer;
+
     let resolution = capture_source.resolution()?;
     dbg!(&resolution);
     let track_source = gpui_tokio::Tokio::spawn(cx, async move {
@@ -526,103 +535,133 @@ fn start_output_stream(
 pub fn play_remote_video_track(
     track: &track::RemoteVideoTrack,
 ) -> impl Stream<Item = RemoteVideoFrame> {
-    futures::stream::empty()
+    Ok(futures::stream::empty())
 }
 
 #[cfg(not(all(target_os = "windows", target_env = "gnu")))]
 pub fn play_remote_video_track(
     track: &track::RemoteVideoTrack,
 ) -> impl Stream<Item = RemoteVideoFrame> {
-    NativeVideoStream::new(track.rtc_track()).filter_map(|frame| async move {
-        dbg!(
-            frame.buffer.width(),
-            frame.buffer.height(),
-            frame.buffer.buffer_type()
-        );
-        video_frame_buffer_from_webrtc(frame.buffer)
-    })
+    #[cfg(target_os = "macos")]
+    {
+        let mut pool = None;
+        let most_recent_frame_size = (0, 0);
+        NativeVideoStream::new(track.rtc_track()).filter_map(move |frame| {
+            if pool == None
+                || most_recent_frame_size != (frame.buffer.width(), frame.buffer.height())
+            {
+                pool = create_buffer_pool(frame.buffer.width(), frame.buffer.height()).log_err();
+            }
+            let pool = pool.clone();
+            async move { video_frame_buffer_from_webrtc(pool?, frame.buffer) }
+        })
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        NativeVideoStream::new(track.rtc_track())
+            .filter_map(|frame| async move { video_frame_buffer_from_webrtc(frame.buffer) })
+    }
+}
+
+fn create_buffer_pool(width: u32, height: u32) -> Result<CVPixelBufferPool> {
+    use core_foundation::{base::TCFType, number::CFNumber, string::CFString};
+    use core_video::pixel_buffer;
+
+    let width_key: CFString =
+        unsafe { CFString::wrap_under_get_rule(pixel_buffer::kCVPixelBufferWidthKey) };
+    let height_key: CFString =
+        unsafe { CFString::wrap_under_get_rule(pixel_buffer::kCVPixelBufferHeightKey) };
+    let animation_key: CFString = unsafe {
+        CFString::wrap_under_get_rule(kCVPixelBufferIOSurfaceCoreAnimationCompatibilityKey)
+    };
+    let format_key: CFString =
+        unsafe { CFString::wrap_under_get_rule(pixel_buffer::kCVPixelBufferPixelFormatTypeKey) };
+
+    let yes: CFNumber = 1.into();
+    let width: CFNumber = (width as i32).into();
+    let height: CFNumber = (height as i32).into();
+    let format: CFNumber = (kCVPixelFormatType_420YpCbCr8BiPlanarFullRange as i64).into();
+
+    let buffer_attributes = core_foundation::dictionary::CFDictionary::from_CFType_pairs(&[
+        (width_key, width.into_CFType()),
+        (height_key, height.into_CFType()),
+        (animation_key, yes.into_CFType()),
+        (format_key, format.into_CFType()),
+    ]);
+
+    Ok(
+        pixel_buffer_pool::CVPixelBufferPool::new(None, Some(&buffer_attributes)).map_err(
+            |cv_return| {
+                anyhow!(
+                    "failed to create pixel buffer pool: CVReturn({})",
+                    cv_return
+                )
+            },
+        )?,
+    )
 }
 
 #[cfg(target_os = "macos")]
-pub type RemoteVideoFrame = media::core_video::CVImageBuffer;
+#[derive(Clone)]
+pub struct RemoteVideoFrame(core_video::image_buffer::CVImageBuffer);
+#[cfg(target_os = "macos")]
+impl Into<SurfaceSource> for RemoteVideoFrame {
+    fn into(self) -> SurfaceSource {
+        unsafe {
+            SurfaceSource::Surface(media::core_video::CVImageBuffer::wrap_under_get_rule(
+                self.0.as_CFTypeRef() as _,
+            ))
+        }
+    }
+}
 
 #[cfg(target_os = "macos")]
-fn video_frame_buffer_from_webrtc(buffer: Box<dyn VideoBuffer>) -> Option<RemoteVideoFrame> {
-    use std::{ffi, sync::atomic::AtomicU8};
-
-    use core_foundation::base::{CFRetain, TCFType as _};
-    use coreaudio::sys::{
-        kCFStringEncodingUTF8, CFDictionaryCreate, CFStringCreateWithCString, CGSize,
+fn video_frame_buffer_from_webrtc(
+    pool: core_video::pixel_buffer_pool::CVPixelBufferPool,
+    buffer: Box<dyn VideoBuffer>,
+) -> Option<RemoteVideoFrame> {
+    use core_video::{
+        image_buffer::{CVImageBuffer, TCVImageBuffer},
+        r#return::kCVReturnSuccess,
     };
-    use livekit::webrtc::native::yuv_helper::{i420_to_bgra, i420_to_nv12};
-    use media::core_video::{
-        kCVPixelFormatType_32BGRA, kCVPixelFormatType_420YpCbCr8BiPlanarFullRange,
-        kCVReturnSuccess, CVImageBuffer,
-    };
-    use objc::{runtime::YES, *};
+    use livekit::webrtc::native::yuv_helper::i420_to_nv12;
 
-    dbg!(buffer.buffer_type());
-    let i420_buffer = buffer.as_i420()?;
-    let width = i420_buffer.width();
-    let height = i420_buffer.height();
-    let dimensions = CGSize {
-        width: width as f64,
-        height: height as f64,
-    };
-
-    let image_buffer = unsafe {
-        //
-        let pixel_format = kCVPixelFormatType_420YpCbCr8BiPlanarFullRange;
-        let mut pixel_buffer: CVImageBufferRef = std::ptr::null();
-
-        let c_str = ffi::CString::new("IOSurfaceCoreAnimationCompatibility").unwrap();
-        let str =
-            CFStringCreateWithCString(std::ptr::null(), c_str.as_ptr(), kCFStringEncodingUTF8);
-        let yes: *mut c_void = msg_send![class!(NSNumber), numberWithBool:YES];
-        let attrs = msg_send![class!(NSDictionary),
-            dictionaryWithObject: yes
-            forKey: str
-        ];
-
-        let ret = CVPixelBufferCreate(
-            std::ptr::null(),
-            width as i64,
-            height as i64,
-            pixel_format,
-            attrs,
-            &mut pixel_buffer,
-        );
-        if ret != kCVReturnSuccess {
-            panic!("got {}", ret)
-        }
-
+    if let Some(native) = buffer.as_native() {
+        let pixel_buffer = native.get_cv_pixel_buffer();
         if pixel_buffer.is_null() {
             return None;
         }
+        return unsafe {
+            Some(RemoteVideoFrame(CVImageBuffer::wrap_under_get_rule(
+                pixel_buffer as _,
+            )))
+        };
+    }
 
-        let ret = CVPixelBufferLockBaseAddress(pixel_buffer, 0);
+    let i420_buffer = buffer.as_i420()?;
+    let pixel_buffer = pool.create_pixel_buffer().log_err()?;
 
-        if ret != kCVReturnSuccess {
-            panic!("got {}", ret)
+    let image_buffer = unsafe {
+        if pixel_buffer.lock_base_address(0) != kCVReturnSuccess {
+            return None;
         }
 
-        let dst_y = CVPixelBufferGetBaseAddressOfPlane(pixel_buffer, 0);
-        let dst_y_stride = CVPixelBufferGetBytesPerRowOfPlane(pixel_buffer, 0);
-        if dst_y.is_null() {
-            panic!("oops")
-        }
-        let dst_uv = CVPixelBufferGetBaseAddressOfPlane(pixel_buffer, 1);
-        let dst_uv_stride = CVPixelBufferGetBytesPerRowOfPlane(pixel_buffer, 1);
-        if dst_uv.is_null() {
-            panic!("oops")
-        }
-        let dst_stride = CVPixelBufferGetBytesPerRow(pixel_buffer);
-        let dst_len = CVPixelBufferGetDataSize(pixel_buffer);
-        let dst_y_buffer = std::slice::from_raw_parts_mut(dst_y as *mut u8, dst_len as usize);
-        let dst_uv_buffer = std::slice::from_raw_parts_mut(dst_uv as *mut u8, dst_len as usize);
+        let dst_y = pixel_buffer.get_base_address_of_plane(0);
+        let dst_y_stride = pixel_buffer.get_bytes_per_row_of_plane(0);
+        let dst_y_len = pixel_buffer.get_height_of_plane(0) * dst_y_stride;
+        let dst_uv = pixel_buffer.get_base_address_of_plane(1);
+        let dst_uv_stride = pixel_buffer.get_bytes_per_row_of_plane(1);
+        let dst_uv_len = pixel_buffer.get_height_of_plane(1) * dst_uv_stride;
+        let width = pixel_buffer.get_width();
+        let height = pixel_buffer.get_height();
+        let dst_y_buffer = std::slice::from_raw_parts_mut(dst_y as *mut u8, dst_y_len as usize);
+        let dst_uv_buffer = std::slice::from_raw_parts_mut(dst_uv as *mut u8, dst_uv_len as usize);
+
+        dbg!(width, height, i420_buffer.width(), i420_buffer.height());
 
         let (stride_y, stride_u, stride_v) = i420_buffer.strides();
         let (src_y, src_u, src_v) = i420_buffer.data();
+        dbg!(src_y.len(), src_u.len(), src_v.len());
         i420_to_nv12(
             src_y,
             stride_y,
@@ -637,61 +676,15 @@ fn video_frame_buffer_from_webrtc(buffer: Box<dyn VideoBuffer>) -> Option<Remote
             width as i32,
             height as i32,
         );
-        dbg!(&dst_y_buffer[0..10]);
-        dbg!(&dst_uv_buffer[0..10]);
 
-        // std::ptr::copy_nonoverlapping(y_data.as_ptr(), dst as *mut u8, y_data.len());
-
-        // let dst = CVPixelBufferGetBaseAddressOfPlane(pixel_buffer, 1);
-        // if dst.is_null() {
-        //     panic!("wat")
-        // }
-        // std::ptr::copy_nonoverlapping(u_data.as_ptr(), dst as *mut u8, u_data.len());
-
-        // let dst = CVPixelBufferGetBaseAddressOfPlane(pixel_buffer, 2);
-        // if dst.is_null() {
-        //     panic!("zing")
-        // }
-        // std::ptr::copy_nonoverlapping(v_data.as_ptr(), dst as *mut u8, v_data.len());
-        // CFRetain(pixel_buffer as _);
-
-        let ret = CVPixelBufferUnlockBaseAddress(pixel_buffer, 0);
-        if ret != kCVReturnSuccess {
-            panic!("got {}", ret)
+        if pixel_buffer.unlock_base_address(0) != kCVReturnSuccess {
+            return None;
         }
 
-        CVImageBuffer::wrap_under_create_rule(pixel_buffer as _)
+        pixel_buffer.as_image_buffer()
     };
-    // Some(image_buffer)
-    // let i420_buffer = buffer.as_i420()?;
 
-    // let buffer = buffer.as_native()?;
-    // dbg!(buffer.buffer_type());
-    // let pixel_buffer = buffer.get_cv_pixel_buffer() as CVImageBufferRef;
-    // if pixel_buffer.is_null() {
-    //     dbg!(buffer.buffer_type());
-    //     return None;
-    // }
-    // static FRAME_COUNT: AtomicU8 = AtomicU8::new(0);
-    // if FRAME_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed) % 64 == 0 {
-    //     unsafe {
-    //         let format = CVPixelBufferGetPixelFormatType(pixel_buffer);
-    //         let height = CVPixelBufferGetHeight(pixel_buffer);
-    //         let width = CVPixelBufferGetWidth(pixel_buffer);
-    //         let bytes_per_row = CVPixelBufferGetBytesPerRow(pixel_buffer);
-    //         let data_size = CVPixelBufferGetDataSize(pixel_buffer);
-    //         dbg!(
-    //             "<<<<<<<<< {}",
-    //             format,
-    //             width,
-    //             height,
-    //             bytes_per_row,
-    //             data_size
-    //         );
-    //     }
-    // }
-
-    Some(image_buffer)
+    Some(RemoteVideoFrame(image_buffer))
 }
 
 #[cfg(not(target_os = "macos"))]
@@ -737,39 +730,21 @@ fn video_frame_buffer_from_webrtc(buffer: Box<dyn VideoBuffer>) -> Option<Remote
     ))))
 }
 
-type CVImageBufferRef = *const __CVImageBuffer;
-extern "C" {
-    fn CVPixelBufferLockBaseAddress(pixelBuffer: CVImageBufferRef, flags: u32) -> i32;
-    fn CVPixelBufferUnlockBaseAddress(pixelBuffer: CVImageBufferRef, flags: u32) -> i32;
-    fn CVPixelBufferGetBaseAddress(pixelBuffer: CVImageBufferRef) -> *mut c_void;
-    fn CVPixelBufferGetBaseAddressOfPlane(
-        pixelBuffer: CVImageBufferRef,
-        planeIndex: i64,
-    ) -> *mut c_void;
-    fn CVPixelBufferGetBytesPerRowOfPlane(pixelBuffer: CVImageBufferRef, planeIndex: i64) -> i64;
-    fn CVPixelBufferGetDataSize(pixelBuffer: CVImageBufferRef) -> usize;
-    fn CVPixelBufferGetPixelFormatType(pixelBuffer: CVImageBufferRef) -> OSType;
-    fn CVPixelBufferGetHeight(pixelBuffer: CVImageBufferRef) -> i64;
-    fn CVPixelBufferGetWidth(pixelBuffer: CVImageBufferRef) -> i64;
-    fn CVPixelBufferGetBytesPerRow(pixelBuffer: CVImageBufferRef) -> i64;
-    fn CVPixelBufferCreate(
-        allocator: *const c_void,
-        width: i64,
-        height: i64,
-        pixelFormatType: OSType,
-        attrs: *const c_void,
-        outPixelBuffer: *mut CVImageBufferRef,
-    ) -> i32;
-}
-
 #[cfg(target_os = "macos")]
 fn video_frame_buffer_to_webrtc(frame: ScreenCaptureFrame) -> Option<impl AsRef<dyn VideoBuffer>> {
     use std::sync::atomic::AtomicU32;
 
     use core_foundation::base::TCFType as _;
+    use core_video::{
+        buffer::__CVBuffer,
+        pixel_buffer::{
+            CVPixelBufferGetBytesPerRow, CVPixelBufferGetDataSize, CVPixelBufferGetHeight,
+            CVPixelBufferGetPixelFormatType, CVPixelBufferGetWidth,
+        },
+    };
     use livekit::webrtc::video_frame::native::VideoFrameBufferExt;
 
-    let pixel_buffer = frame.0.as_concrete_TypeRef();
+    let pixel_buffer = frame.0.as_concrete_TypeRef() as *mut __CVBuffer;
     static FRAME_COUNT: AtomicU32 = AtomicU32::new(0);
     if FRAME_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed) == 0 {
         unsafe {

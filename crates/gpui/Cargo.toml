@@ -122,10 +122,11 @@ lyon = "1.0"
 block = "0.1"
 cocoa.workspace = true
 core-foundation.workspace = true
-core-foundation-sys = "0.8"
-core-graphics = "0.23"
-core-text = "20.1"
-font-kit = { git = "https://github.com/zed-industries/font-kit", rev = "40391b7", optional = true }
+core-foundation-sys.workspace = true
+core-graphics = "0.24"
+core-text = "21"
+# font-kit = { git = "https://github.com/zed-industries/font-kit", rev = "40391b7", optional = true }
+font-kit = { path = "../../../font-kit", optional = true}
 foreign-types = "0.5"
 log.workspace = true
 media.workspace = true
@@ -153,9 +154,11 @@ blade-macros = { workspace = true, optional = true }
 blade-util = { workspace = true, optional = true }
 bytemuck = { version = "1", optional = true }
 cosmic-text = { git = "https://github.com/pop-os/cosmic-text", rev = "542b20c", optional = true }
-font-kit = { git = "https://github.com/zed-industries/font-kit", rev = "40391b7", features = [
-    "source-fontconfig-dlopen",
-], optional = true }
+# font-kit = { git = "https://github.com/zed-industries/font-kit", rev = "40391b7", features = [
+# #     "source-fontconfig-dlopen",
+# ], optional = true }
+
+font-kit = { path = "../../../font-kit"}
 calloop = { version = "0.13.0" }
 filedescriptor = { version = "0.8.2", optional = true }
 open = { version = "5.2.0", optional = true }

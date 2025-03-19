@@ -59,6 +59,10 @@ pub mod core_video {
     impl_CFTypeDescription!(CVImageBuffer);
 
     impl CVImageBuffer {
+        pub unsafe fn new(ptr: *const c_void) -> Self {
+            Self(ptr as _)
+        }
+
         pub fn io_surface(&self) -> IOSurface {
             unsafe {
                 IOSurface::wrap_under_get_rule(CVPixelBufferGetIOSurface(
