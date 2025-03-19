@@ -487,9 +487,6 @@ fn main() {
 
         load_embedded_fonts(cx);
 
-        #[cfg(any(target_os = "linux", target_os = "freebsd"))]
-        crate::zed::linux_prompts::init(cx);
-
         app_state.languages.set_theme(cx.theme().clone());
         editor::init(cx);
         image_viewer::init(cx);
@@ -498,6 +495,7 @@ fn main() {
 
         audio::init(Assets, cx);
         workspace::init(app_state.clone(), cx);
+        ui_prompt::init(cx);
 
         go_to_line::init(cx);
         file_finder::init(cx);

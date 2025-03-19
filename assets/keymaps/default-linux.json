@@ -53,7 +53,9 @@
     "context": "Prompt",
     "bindings": {
       "left": "menu::SelectPrevious",
-      "right": "menu::SelectNext"
+      "right": "menu::SelectNext",
+      "h": "menu::SelectPrevious",
+      "l": "menu::SelectNext"
     }
   },
   {

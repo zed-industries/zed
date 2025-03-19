@@ -15023,6 +15023,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "ui_prompt"
+version = "0.1.0"
+dependencies = [
+ "gpui",
+ "markdown",
+ "menu",
+ "settings",
+ "theme",
+ "ui",
+ "workspace",
+]
+
+[[package]]
 name = "unicase"
 version = "2.8.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -17381,7 +17394,6 @@ dependencies = [
  "languages",
  "libc",
  "log",
- "markdown",
  "markdown_preview",
  "menu",
  "migrator",
@@ -17433,6 +17445,7 @@ dependencies = [
  "tree-sitter-md",
  "tree-sitter-rust",
  "ui",
+ "ui_prompt",
  "url",
  "urlencoding",
  "util",

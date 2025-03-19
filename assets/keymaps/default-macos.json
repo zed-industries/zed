@@ -706,6 +706,16 @@
     }
   },
   {
+    "context": "Prompt",
+    "use_key_equivalents": true,
+    "bindings": {
+      "left": "menu::SelectPrevious",
+      "right": "menu::SelectNext",
+      "h": "menu::SelectPrevious",
+      "l": "menu::SelectNext"
+    }
+  },
+  {
     "context": "ProjectSearchBar && !in_replace",
     "use_key_equivalents": true,
     "bindings": {
