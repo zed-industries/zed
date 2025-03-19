@@ -189,7 +189,7 @@ impl BufferDiffSnapshot {
 
 impl BufferDiffInner {
     /// Returns the new index text and new pending hunks.
-    fn stage_or_unstage_hunks(
+    fn stage_or_unstage_hunks_impl(
         &mut self,
         unstaged_diff: &Self,
         stage: bool,
@@ -233,9 +233,6 @@ impl BufferDiffInner {
                 return (rope, tree);
             }
         };
-
-        let mut unstaged_hunk_cursor = unstaged_diff.hunks.cursor::<DiffHunkSummary>(buffer);
-        unstaged_hunk_cursor.next(buffer);
 
         let mut pending_hunks = SumTree::new(buffer);
         let mut old_pending_hunks = unstaged_diff
@@ -290,6 +287,9 @@ impl BufferDiffInner {
         }
         // append the remainder
         pending_hunks.append(old_pending_hunks.suffix(buffer), buffer);
+
+        let mut unstaged_hunk_cursor = unstaged_diff.hunks.cursor::<DiffHunkSummary>(buffer);
+        unstaged_hunk_cursor.next(buffer);
 
         let mut prev_unstaged_hunk_buffer_offset = 0;
         let mut prev_unstaged_hunk_base_text_offset = 0;
@@ -854,7 +854,7 @@ impl BufferDiff {
         file_exists: bool,
         cx: &mut Context<Self>,
     ) -> Option<Rope> {
-        let (new_index_text, new_pending_hunks) = self.inner.stage_or_unstage_hunks(
+        let (new_index_text, new_pending_hunks) = self.inner.stage_or_unstage_hunks_impl(
             &self.secondary_diff.as_ref()?.read(cx).inner,
             stage,
             &hunks,
