@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use ::serde::{Deserialize, Serialize};
 use gpui::WeakEntity;
-use language::CachedLspAdapter;
+use language::{CachedLspAdapter, Diagnostic};
 use lsp::LanguageServer;
 use util::ResultExt as _;
 
@@ -23,6 +23,15 @@ pub struct InactiveRegions;
 impl lsp::notification::Notification for InactiveRegions {
     type Params = InactiveRegionsParams;
     const METHOD: &'static str = "textDocument/inactiveRegions";
+}
+
+pub fn is_inactive_region(diag: &Diagnostic) -> bool {
+    diag.severity == lsp::DiagnosticSeverity::INFORMATION
+        && diag.is_unnecessary
+        && diag
+            .source
+            .as_ref()
+            .is_some_and(|v| v == CLANGD_SERVER_NAME)
 }
 
 pub fn register_notifications(
@@ -66,13 +75,7 @@ pub fn register_notifications(
                         &adapter.disk_based_diagnostic_sources,
                         |diag| {
                             // we want to retain anything that isn't `inactiveRegions`.
-                            !(diag.severity == lsp::DiagnosticSeverity::INFORMATION
-                                && diag
-                                    .source
-                                    .as_ref()
-                                    .is_some_and(|v| v == CLANGD_SERVER_NAME)
-                                && diag.is_unnecessary
-                                && diag.message == "inactive region")
+                            !is_inactive_region(diag)
                         },
                         cx,
                     )

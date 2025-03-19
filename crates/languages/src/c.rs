@@ -4,7 +4,7 @@ use futures::StreamExt;
 use gpui::AsyncApp;
 use http_client::github::{latest_github_release, GitHubLspBinaryVersion};
 pub use language::*;
-use lsp::{InitializeParams, LanguageServerBinary, LanguageServerName};
+use lsp::{DiagnosticTag, InitializeParams, LanguageServerBinary, LanguageServerName};
 use serde_json::json;
 use smol::fs::{self, File};
 use std::{any::Any, env::consts, path::PathBuf, sync::Arc};
@@ -290,6 +290,25 @@ impl super::LspAdapter for CLspAdapter {
             original.capabilities.experimental = Some(experimental);
         }
         Ok(original)
+    }
+
+    fn process_diagnostics(
+        &self,
+        params: &mut lsp::PublishDiagnosticsParams,
+        diagnostics: Option<&'_ mut dyn Iterator<Item = lsp::Diagnostic>>,
+    ) {
+        let inactive_regions = diagnostics.into_iter().flatten().filter(|v| {
+            v.severity
+                .is_some_and(|v| v == DiagnosticSeverity::INFORMATION)
+                && v.tags
+                    .as_ref()
+                    .is_some_and(|v| v.contains(&DiagnosticTag::UNNECESSARY))
+                && v.source
+                    .as_ref()
+                    .is_some_and(|v| v == Self::SERVER_NAME.0.as_ref())
+                && v.message == "inactive region"
+        });
+        params.diagnostics.extend(inactive_regions);
     }
 }
 

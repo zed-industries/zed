@@ -225,8 +225,13 @@ impl CachedLspAdapter {
         self.adapter.code_action_kinds()
     }
 
-    pub fn process_diagnostics(&self, params: &mut lsp::PublishDiagnosticsParams) {
-        self.adapter.process_diagnostics(params)
+    pub fn process_diagnostics(
+        &self,
+        params: &mut lsp::PublishDiagnosticsParams,
+        existing_diagnostics: Option<&'_ mut dyn Iterator<Item = lsp::Diagnostic>>,
+    ) {
+        self.adapter
+            .process_diagnostics(params, existing_diagnostics)
     }
 
     pub async fn process_completions(&self, completion_items: &mut [lsp::CompletionItem]) {
@@ -442,7 +447,12 @@ pub trait LspAdapter: 'static + Send + Sync {
         delegate: &dyn LspAdapterDelegate,
     ) -> Option<LanguageServerBinary>;
 
-    fn process_diagnostics(&self, _: &mut lsp::PublishDiagnosticsParams) {}
+    fn process_diagnostics(
+        &self,
+        _: &mut lsp::PublishDiagnosticsParams,
+        _: Option<&'_ mut dyn Iterator<Item = lsp::Diagnostic>>,
+    ) {
+    }
 
     /// Post-processes completions provided by the language server.
     async fn process_completions(&self, _: &mut [lsp::CompletionItem]) {}
@@ -2017,7 +2027,12 @@ impl LspAdapter for FakeLspAdapter {
         unreachable!();
     }
 
-    fn process_diagnostics(&self, _: &mut lsp::PublishDiagnosticsParams) {}
+    fn process_diagnostics(
+        &self,
+        _: &mut lsp::PublishDiagnosticsParams,
+        _: Option<&'_ mut dyn Iterator<Item = lsp::Diagnostic>>,
+    ) {
+    }
 
     fn disk_based_diagnostic_sources(&self) -> Vec<String> {
         self.disk_based_diagnostics_sources.clone()

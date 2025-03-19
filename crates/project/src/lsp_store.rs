@@ -448,8 +448,46 @@ impl LocalLspStore {
                 move |mut params, cx| {
                     let adapter = adapter.clone();
                     if let Some(this) = this.upgrade() {
-                        adapter.process_diagnostics(&mut params);
                         this.update(cx, |this, cx| {
+                            {
+                                let diags = if let Ok(file_path) = params.uri.to_file_path() {
+                                    if let Some(buffer) = this.get_buffer(&file_path, cx) {
+                                        let snapshot = buffer.snapshot();
+                                        let diag = buffer
+                                            .get_diagnostics(server_id)
+                                            .into_iter()
+                                            .flat_map(|v| v.iter())
+                                            .map(move |diag| {
+                                                let range = language::range_to_lsp(
+                                                    diag.range.to_point_utf16(&snapshot),
+                                                )
+                                                .unwrap();
+                                                let mut tags = vec![];
+                                                if diag.diagnostic.is_unnecessary {
+                                                    tags.push(DiagnosticTag::UNNECESSARY);
+                                                }
+                                                lsp::Diagnostic {
+                                                    range,
+                                                    severity: Some(diag.diagnostic.severity),
+                                                    source: diag.diagnostic.source.clone(),
+                                                    tags: Some(tags),
+                                                    message: diag.diagnostic.message.clone(),
+                                                    code: diag.diagnostic.code.clone(),
+                                                    ..Default::default()
+                                                }
+                                            });
+                                        Some(diag)
+                                    } else {
+                                        None
+                                    }
+                                } else {
+                                    None
+                                };
+                                if let Some(mut d) = diags {
+                                    adapter.process_diagnostics(&mut params, Some(&mut d));
+                                }
+                            }
+
                             this.update_diagnostics(
                                 server_id,
                                 params,
@@ -7934,6 +7972,23 @@ impl LspStore {
             })
             .detach();
         }
+    }
+
+    fn get_buffer<'a>(&self, abs_path: &Path, cx: &'a App) -> Option<&'a Buffer> {
+        let (worktree, relative_path) =
+            self.worktree_store.read(cx).find_worktree(&abs_path, cx)?;
+
+        let project_path = ProjectPath {
+            worktree_id: worktree.read(cx).id(),
+            path: relative_path.into(),
+        };
+
+        Some(
+            self.buffer_store()
+                .read(cx)
+                .get_by_path(&project_path, cx)?
+                .read(cx),
+        )
     }
 
     pub fn update_diagnostics(

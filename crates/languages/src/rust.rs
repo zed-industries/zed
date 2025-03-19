@@ -241,7 +241,11 @@ impl LspAdapter for RustLspAdapter {
         Some("rust-analyzer/flycheck".into())
     }
 
-    fn process_diagnostics(&self, params: &mut lsp::PublishDiagnosticsParams) {
+    fn process_diagnostics(
+        &self,
+        params: &mut lsp::PublishDiagnosticsParams,
+        _: Option<&'_ mut dyn Iterator<Item = lsp::Diagnostic>>,
+    ) {
         static REGEX: LazyLock<Regex> =
             LazyLock::new(|| Regex::new(r"(?m)`([^`]+)\n`$").expect("Failed to create REGEX"));
 
@@ -945,7 +949,7 @@ mod tests {
                 },
             ],
         };
-        RustLspAdapter.process_diagnostics(&mut params);
+        RustLspAdapter.process_diagnostics(&mut params, None);
 
         assert_eq!(params.diagnostics[0].message, "use of moved value `a`");
 
