@@ -12120,12 +12120,18 @@ impl Editor {
         &mut self,
         excerpt: ExcerptId,
         direction: ExpandExcerptDirection,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let current_scroll_position = self.scroll_position(cx);
         let lines = EditorSettings::get_global(cx).expand_excerpt_lines;
         self.buffer.update(cx, |buffer, cx| {
             buffer.expand_excerpts([excerpt], lines, direction, cx)
-        })
+        });
+        if direction == ExpandExcerptDirection::Down {
+            let new_scroll_position = current_scroll_position + gpui::Point::new(0.0, lines as f32);
+            self.set_scroll_position(new_scroll_position, window, cx);
+        }
     }
 
     pub fn go_to_singleton_buffer_point(

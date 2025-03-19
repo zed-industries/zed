@@ -2263,9 +2263,9 @@ impl EditorElement {
                     .selected_icon_color(Color::Custom(cx.theme().colors().editor_foreground))
                     .icon_size(IconSize::Custom(rems(editor_font_size / window.rem_size())))
                     .width(width.into())
-                    .on_click(move |_, _, cx| {
+                    .on_click(move |_, window, cx| {
                         editor.update(cx, |editor, cx| {
-                            editor.expand_excerpt(excerpt_id, direction, cx);
+                            editor.expand_excerpt(excerpt_id, direction, window, cx);
                         });
                     })
                     .tooltip(Tooltip::for_action_title(
