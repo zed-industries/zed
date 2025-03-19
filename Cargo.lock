@@ -2396,6 +2396,7 @@ dependencies = [
 [[package]]
 name = "cargo_metadata"
 version = "0.19.2"
+source = "git+https://github.com/zed-industries/cargo_metadata?rev=ce8171bad673923d61a77b6761d0dc4aff63398a#ce8171bad673923d61a77b6761d0dc4aff63398a"
 dependencies = [
  "camino",
  "cargo-platform",
@@ -4958,6 +4959,7 @@ checksum = "f81ec6369c545a7d40e4589b5597581fa1c441fe1cce96dd1de43159910a36a2"
 [[package]]
 name = "font-kit"
 version = "0.14.1"
+source = "git+https://github.com/zed-industries/font-kit?rev=5474cfad4b719a72ec8ed2cb7327b2b01fd10568#5474cfad4b719a72ec8ed2cb7327b2b01fd10568"
 dependencies = [
  "bitflags 2.8.0",
  "byteorder",
