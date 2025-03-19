@@ -42,7 +42,7 @@ impl Tool for BashTool {
     ) -> (SharedString, Task<Result<String>>) {
         // Extract the command from input for display
         let display_command = match serde_json::from_value::<BashToolInput>(input.clone()) {
-            Ok(input) => format!("$ {}", input.command),
+            Ok(input) => format!("`$ {}`", input.command),
             Err(_) => self.name(),
         };
 

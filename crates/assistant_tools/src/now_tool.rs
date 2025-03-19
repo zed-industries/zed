@@ -3,7 +3,7 @@ use std::sync::Arc;
 use anyhow::{anyhow, Result};
 use assistant_tool::{ActionLog, Tool};
 use chrono::{Local, Utc};
-use gpui::{App, Entity, Task};
+use gpui::{App, Entity, SharedString, Task};
 use language_model::LanguageModelRequestMessage;
 use project::Project;
 use schemars::JsonSchema;
@@ -47,10 +47,11 @@ impl Tool for NowTool {
         _project: Entity<Project>,
         _action_log: Entity<ActionLog>,
         _cx: &mut App,
-    ) -> Task<Result<String>> {
+    ) -> (SharedString, Task<Result<String>>) {
+        let display_text = SharedString::from("Get current date and time".to_string());
         let input: NowToolInput = match serde_json::from_value(input) {
             Ok(input) => input,
-            Err(err) => return Task::ready(Err(anyhow!(err))),
+            Err(err) => return (display_text, Task::ready(Err(anyhow!(err)))),
         };
 
         let now = match input.timezone {
@@ -59,6 +60,6 @@ impl Tool for NowTool {
         };
         let text = format!("The current datetime is {now}.");
 
-        Task::ready(Ok(text))
+        (display_text, Task::ready(Ok(text)))
     }
 }

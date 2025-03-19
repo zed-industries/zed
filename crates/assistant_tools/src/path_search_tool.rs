@@ -1,6 +1,6 @@
 use anyhow::{anyhow, Result};
 use assistant_tool::{ActionLog, Tool};
-use gpui::{App, AppContext, Entity, Task};
+use gpui::{App, AppContext, Entity, SharedString, Task};
 use language_model::LanguageModelRequestMessage;
 use project::Project;
 use schemars::JsonSchema;
@@ -55,14 +55,20 @@ impl Tool for PathSearchTool {
         project: Entity<Project>,
         _action_log: Entity<ActionLog>,
         cx: &mut App,
-    ) -> Task<Result<String>> {
+    ) -> (SharedString, Task<Result<String>>) {
+        let display_text = format!("Find paths matching `{glob}`");
         let (offset, glob) = match serde_json::from_value::<PathSearchToolInput>(input) {
             Ok(input) => (input.offset.unwrap_or(0), input.glob),
-            Err(err) => return Task::ready(Err(anyhow!(err))),
+            Err(err) => return (display_text.into(), Task::ready(Err(anyhow!(err)))),
         };
         let path_matcher = match PathMatcher::new(&[glob.clone()]) {
             Ok(matcher) => matcher,
-            Err(err) => return Task::ready(Err(anyhow!("Invalid glob: {}", err))),
+            Err(err) => {
+                return (
+                    display_text.into(),
+                    Task::ready(Err(anyhow!("Invalid glob: {err}"))),
+                )
+            }
         };
         let snapshots: Vec<Snapshot> = project
             .read(cx)
@@ -70,7 +76,7 @@ impl Tool for PathSearchTool {
             .map(|worktree| worktree.read(cx).snapshot())
             .collect();
 
-        cx.background_spawn(async move {
+        let task = cx.background_spawn(async move {
             let mut matches = Vec::new();
 
             for worktree in snapshots {
@@ -116,6 +122,8 @@ impl Tool for PathSearchTool {
 
                 Ok(response)
             }
-        })
+        });
+
+        (display_text.into(), task)
     }
 }

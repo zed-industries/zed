@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use anyhow::{anyhow, bail, Result};
 use assistant_tool::{ActionLog, Tool, ToolSource};
-use gpui::{App, Entity, Task};
+use gpui::{App, Entity, Task, SharedString};
 use language_model::LanguageModelRequestMessage;
 use project::Project;
 
@@ -63,9 +63,10 @@ impl Tool for ContextServerTool {
         _project: Entity<Project>,
         _action_log: Entity<ActionLog>,
         cx: &mut App,
-    ) -> Task<Result<String>> {
+    ) -> (SharedString, Task<Result<String>>) {
+        let tool_name = SharedString::from(self.tool.name.clone());
         if let Some(server) = self.server_manager.read(cx).get_server(&self.server_id) {
-            cx.foreground_executor().spawn({
+            let task = cx.spawn({
                 let tool_name = self.tool.name.clone();
                 async move {
                     let Some(protocol) = server.client() else {
@@ -101,9 +102,10 @@ impl Tool for ContextServerTool {
                     }
                     Ok(result)
                 }
-            })
+            });
+            (tool_name, task)
         } else {
-            Task::ready(Err(anyhow!("Context server not found")))
+            (tool_name, Task::ready(Err(anyhow!("Context server not found"))))
         }
     }
 }

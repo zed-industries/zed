@@ -1,6 +1,6 @@
 use anyhow::{anyhow, Result};
 use assistant_tool::{ActionLog, Tool};
-use gpui::{App, Entity, Task};
+use gpui::{App, Entity, SharedString, Task};
 use language::{DiagnosticSeverity, OffsetRangeExt};
 use language_model::LanguageModelRequestMessage;
 use project::Project;
@@ -53,19 +53,25 @@ impl Tool for DiagnosticsTool {
         project: Entity<Project>,
         _action_log: Entity<ActionLog>,
         cx: &mut App,
-    ) -> Task<Result<String>> {
+    ) -> (SharedString, Task<Result<String>>) {
         let input = match serde_json::from_value::<DiagnosticsToolInput>(input) {
             Ok(input) => input,
-            Err(err) => return Task::ready(Err(anyhow!(err))),
+            Err(err) => return (display_text.into(), Task::ready(Err(anyhow!(err)))),
         };
 
         if let Some(path) = input.path {
             let Some(project_path) = project.read(cx).find_project_path(&path, cx) else {
-                return Task::ready(Err(anyhow!("Could not find path in project")));
+                return (
+                    display_text.into(),
+                    Task::ready(Err(anyhow!(
+                        "Could not find path {} in project",
+                        path.display()
+                    ))),
+                );
             };
             let buffer = project.update(cx, |project, cx| project.open_buffer(project_path, cx));
 
-            cx.spawn(async move |cx| {
+            let task = cx.spawn(async move |cx| {
                 let mut output = String::new();
                 let buffer = buffer.await?;
                 let snapshot = buffer.read_with(cx, |buffer, _cx| buffer.snapshot())?;
@@ -93,7 +99,9 @@ impl Tool for DiagnosticsTool {
                 } else {
                     Ok(output)
                 }
-            })
+            });
+
+            (display_text.into(), task)
         } else {
             let project = project.read(cx);
             let mut output = String::new();
@@ -119,9 +127,12 @@ impl Tool for DiagnosticsTool {
             }
 
             if has_diagnostics {
-                Task::ready(Ok(output))
+                (display_text.into(), Task::ready(Ok(output)))
             } else {
-                Task::ready(Ok("No errors or warnings found in the project.".to_string()))
+                (
+                    display_text.into(),
+                    Task::ready(Ok("No errors or warnings found in the project.".to_string())),
+                )
             }
         }
     }

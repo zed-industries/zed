@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use anyhow::{anyhow, Result};
 use assistant_tool::{ActionLog, Tool};
-use gpui::{App, Entity, Task};
+use gpui::{App, Entity, SharedString, Task};
 use language_model::LanguageModelRequestMessage;
 use project::Project;
 use schemars::JsonSchema;
@@ -38,11 +38,14 @@ impl Tool for ThinkingTool {
         _project: Entity<Project>,
         _action_log: Entity<ActionLog>,
         _cx: &mut App,
-    ) -> Task<Result<String>> {
+    ) -> (SharedString, Task<Result<String>>) {
         // This tool just "thinks out loud" and doesn't perform any actions.
-        Task::ready(match serde_json::from_value::<ThinkingToolInput>(input) {
-            Ok(_input) => Ok("Finished thinking.".to_string()),
-            Err(err) => Err(anyhow!(err)),
-        })
+        (
+            SharedString::from("Thinking…"),
+            Task::ready(match serde_json::from_value::<ThinkingToolInput>(input) {
+                Ok(_input) => Ok("Finished thinking.".to_string()),
+                Err(err) => Err(anyhow!(err)),
+            }),
+        )
     }
 }

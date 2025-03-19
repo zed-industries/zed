@@ -7,7 +7,7 @@ use assistant_tool::{ActionLog, Tool};
 use collections::HashSet;
 use edit_action::{EditAction, EditActionParser};
 use futures::StreamExt;
-use gpui::{App, AsyncApp, Entity, Task};
+use gpui::{App, AsyncApp, Entity, SharedString, Task};
 use language_model::{
     LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage, MessageContent, Role,
 };
@@ -83,18 +83,24 @@ impl Tool for EditFilesTool {
         project: Entity<Project>,
         action_log: Entity<ActionLog>,
         cx: &mut App,
-    ) -> Task<Result<String>> {
-        let input = match serde_json::from_value::<EditFilesToolInput>(input) {
-            Ok(input) => input,
-            Err(err) => return Task::ready(Err(anyhow!(err))),
+    ) -> (SharedString, Task<Result<String>>) {
+        let display_text = match serde_json::from_value::<EditFilesToolInput>(input.clone()) {
+            Ok(input) => format!("Edit files: {}", input.edit_instructions),
+            Err(_) => self.name(),
         };
 
-        match EditToolLog::try_global(cx) {
+        let input = match serde_json::from_value::<EditFilesToolInput>(input) {
+            Ok(input) => input,
+            Err(err) => return (display_text.into(), Task::ready(Err(anyhow!(err)))),
+        };
+
+        let task = match EditToolLog::try_global(cx) {
             Some(log) => {
                 let req_id = log.update(cx, |log, cx| {
                     log.new_request(input.edit_instructions.clone(), cx)
                 });
 
+                let display_text = SharedString::from("Edit files...");
                 let task = EditToolRequest::new(
                     input,
                     messages,
@@ -120,7 +126,9 @@ impl Tool for EditFilesTool {
             }
 
             None => EditToolRequest::new(input, messages, project, action_log, None, cx),
-        }
+        };
+
+        (display_text.into(), task)
     }
 }
 

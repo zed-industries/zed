@@ -5,7 +5,7 @@ use std::sync::Arc;
 use anyhow::{anyhow, bail, Context as _, Result};
 use assistant_tool::{ActionLog, Tool};
 use futures::AsyncReadExt as _;
-use gpui::{App, AppContext as _, Entity, Task};
+use gpui::{App, AppContext as _, Entity, SharedString, Task};
 use html_to_markdown::{convert_html_to_markdown, markdown, TagHandler};
 use http_client::{AsyncBody, HttpClientWithUrl};
 use language_model::LanguageModelRequestMessage;
@@ -129,10 +129,15 @@ impl Tool for FetchTool {
         _project: Entity<Project>,
         _action_log: Entity<ActionLog>,
         cx: &mut App,
-    ) -> Task<Result<String>> {
+    ) -> (SharedString, Task<Result<String>>) {
+        let display_text = match serde_json::from_value::<FetchToolInput>(input.clone()) {
+            Ok(input) => format!("Fetch `{}`", input.url),
+            Err(_) => self.name(),
+        };
+
         let input = match serde_json::from_value::<FetchToolInput>(input) {
             Ok(input) => input,
-            Err(err) => return Task::ready(Err(anyhow!(err))),
+            Err(err) => return (display_text.into(), Task::ready(Err(anyhow!(err)))),
         };
 
         let text = cx.background_spawn({
@@ -141,13 +146,15 @@ impl Tool for FetchTool {
             async move { Self::build_message(http_client, &url).await }
         });
 
-        cx.foreground_executor().spawn(async move {
+        let task = cx.foreground_executor().spawn(async move {
             let text = text.await?;
             if text.trim().is_empty() {
                 bail!("no textual content found");
             }
 
             Ok(text)
-        })
+        });
+
+        (display_text.into(), task)
     }
 }

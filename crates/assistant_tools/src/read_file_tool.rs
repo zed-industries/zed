@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use anyhow::{anyhow, Result};
 use assistant_tool::{ActionLog, Tool};
-use gpui::{App, Entity, Task};
+use gpui::{App, Entity, SharedString, Task};
 use itertools::Itertools;
 use language_model::LanguageModelRequestMessage;
 use project::Project;
@@ -60,17 +60,26 @@ impl Tool for ReadFileTool {
         project: Entity<Project>,
         action_log: Entity<ActionLog>,
         cx: &mut App,
-    ) -> Task<Result<String>> {
+    ) -> (SharedString, Task<Result<String>>) {
         let input = match serde_json::from_value::<ReadFileToolInput>(input) {
             Ok(input) => input,
-            Err(err) => return Task::ready(Err(anyhow!(err))),
+            Err(err) => {
+                return (
+                    SharedString::from("Read file"),
+                    Task::ready(Err(anyhow!(err))),
+                )
+            }
         };
 
+        let display_text = format!("Read `{}`", &input.path);
         let Some(project_path) = project.read(cx).find_project_path(&input.path, cx) else {
-            return Task::ready(Err(anyhow!("Path not found in project")));
+            return (
+                display_text.into(),
+                Task::ready(Err(anyhow!("Path {} not found in project", &input.path))),
+            );
         };
 
-        cx.spawn(async move |cx| {
+        let task = cx.spawn(async move |cx| {
             let buffer = cx
                 .update(|cx| {
                     project.update(cx, |project, cx| project.open_buffer(project_path, cx))
@@ -98,6 +107,8 @@ impl Tool for ReadFileTool {
             })?;
 
             anyhow::Ok(result)
-        })
+        });
+
+        (display_text.into(), task)
     }
 }
