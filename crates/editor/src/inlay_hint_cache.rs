@@ -36,6 +36,7 @@ pub struct InlayHintCache {
     allowed_hint_kinds: HashSet<Option<InlayHintKind>>,
     version: usize,
     pub(super) enabled: bool,
+    modifiers_override: bool,
     enabled_in_settings: bool,
     update_tasks: HashMap<ExcerptId, TasksForRanges>,
     refresh_task: Task<()>,
@@ -265,6 +266,7 @@ impl InlayHintCache {
         Self {
             allowed_hint_kinds: inlay_hint_settings.enabled_inlay_hint_kinds(),
             enabled: inlay_hint_settings.enabled,
+            modifiers_override: false,
             enabled_in_settings: inlay_hint_settings.enabled,
             hints: HashMap::default(),
             update_tasks: HashMap::default(),
@@ -295,8 +297,9 @@ impl InlayHintCache {
         // visibility would not change when updating the setting if they were ever toggled.
         if new_hint_settings.enabled != self.enabled_in_settings {
             self.enabled = new_hint_settings.enabled;
+            self.enabled_in_settings = new_hint_settings.enabled;
+            self.modifiers_override = false;
         };
-        self.enabled_in_settings = new_hint_settings.enabled;
         self.invalidate_debounce = debounce_value(new_hint_settings.edit_debounce_ms);
         self.append_debounce = debounce_value(new_hint_settings.scroll_debounce_ms);
         let new_allowed_hint_kinds = new_hint_settings.enabled_inlay_hint_kinds();
@@ -323,6 +326,7 @@ impl InlayHintCache {
                 }
             }
             (true, false) => {
+                self.modifiers_override = false;
                 self.allowed_hint_kinds = new_allowed_hint_kinds;
                 if self.hints.is_empty() {
                     ControlFlow::Break(None)
@@ -335,10 +339,37 @@ impl InlayHintCache {
                 }
             }
             (false, true) => {
+                self.modifiers_override = false;
                 self.allowed_hint_kinds = new_allowed_hint_kinds;
                 ControlFlow::Continue(())
             }
         }
+    }
+
+    pub(super) fn modifiers_override(&mut self, new_override: bool) -> Option<bool> {
+        if self.modifiers_override == new_override {
+            return None;
+        }
+        self.modifiers_override = new_override;
+        if (self.enabled && self.modifiers_override) || (!self.enabled && !self.modifiers_override)
+        {
+            self.clear();
+            Some(false)
+        } else {
+            Some(true)
+        }
+    }
+
+    pub(super) fn toggle(&mut self, enabled: bool) -> bool {
+        if self.enabled == enabled {
+            return false;
+        }
+        self.enabled = enabled;
+        self.modifiers_override = false;
+        if !enabled {
+            self.clear();
+        }
+        true
     }
 
     /// If needed, queries LSP for new inlay hints, using the invalidation strategy given.
@@ -353,7 +384,8 @@ impl InlayHintCache {
         ignore_debounce: bool,
         cx: &mut Context<Editor>,
     ) -> Option<InlaySplice> {
-        if !self.enabled {
+        if (self.enabled && self.modifiers_override) || (!self.enabled && !self.modifiers_override)
+        {
             return None;
         }
         let mut invalidated_hints = Vec::new();
@@ -380,13 +412,13 @@ impl InlayHintCache {
         } else {
             self.append_debounce
         };
-        self.refresh_task = cx.spawn(|editor, mut cx| async move {
+        self.refresh_task = cx.spawn(async move |editor, cx| {
             if let Some(debounce_duration) = debounce_duration {
                 cx.background_executor().timer(debounce_duration).await;
             }
 
             editor
-                .update(&mut cx, |editor, cx| {
+                .update(cx, |editor, cx| {
                     spawn_new_update_tasks(
                         editor,
                         reason_description,
@@ -549,6 +581,7 @@ impl InlayHintCache {
             self.version += 1;
         }
         self.update_tasks.clear();
+        self.refresh_task = Task::ready(());
         self.hints.clear();
     }
 
@@ -593,8 +626,8 @@ impl InlayHintCache {
                     let server_id = *server_id;
                     cached_hint.resolve_state = ResolveState::Resolving;
                     drop(guard);
-                    cx.spawn_in(window, |editor, mut cx| async move {
-                        let resolved_hint_task = editor.update(&mut cx, |editor, cx| {
+                    cx.spawn_in(window, async move |editor, cx| {
+                        let resolved_hint_task = editor.update(cx, |editor, cx| {
                             let buffer = editor.buffer().read(cx).buffer(buffer_id)?;
                             editor.semantics_provider.as_ref()?.resolve_inlay_hint(
                                 hint_to_resolve,
@@ -606,7 +639,7 @@ impl InlayHintCache {
                         if let Some(resolved_hint_task) = resolved_hint_task {
                             let mut resolved_hint =
                                 resolved_hint_task.await.context("hint resolve task")?;
-                            editor.update(&mut cx, |editor, _| {
+                            editor.update(cx, |editor, _| {
                                 if let Some(excerpt_hints) =
                                     editor.inlay_hint_cache.hints.get(&excerpt_id)
                                 {
@@ -813,14 +846,14 @@ fn new_update_task(
     excerpt_buffer: Entity<Buffer>,
     cx: &mut Context<Editor>,
 ) -> Task<()> {
-    cx.spawn(move |editor, mut cx| async move {
+    cx.spawn(async move |editor, cx| {
         let visible_range_update_results = future::join_all(
             query_ranges
                 .visible
                 .into_iter()
                 .filter_map(|visible_range| {
                     let fetch_task = editor
-                        .update(&mut cx, |_, cx| {
+                        .update(cx, |_, cx| {
                             fetch_and_update_hints(
                                 excerpt_buffer.clone(),
                                 query,
@@ -858,7 +891,7 @@ fn new_update_task(
 
         for (range, result) in visible_range_update_results {
             if let Err(e) = result {
-                query_range_failed(&range, e, &mut cx);
+                query_range_failed(&range, e, cx);
             }
         }
 
@@ -870,7 +903,7 @@ fn new_update_task(
                 .chain(query_ranges.after_visible.into_iter())
                 .filter_map(|invisible_range| {
                     let fetch_task = editor
-                        .update(&mut cx, |_, cx| {
+                        .update(cx, |_, cx| {
                             fetch_and_update_hints(
                                 excerpt_buffer.clone(),
                                 query,
@@ -886,7 +919,7 @@ fn new_update_task(
         .await;
         for (range, result) in invisible_range_update_results {
             if let Err(e) = result {
-                query_range_failed(&range, e, &mut cx);
+                query_range_failed(&range, e, cx);
             }
         }
     })
@@ -899,10 +932,10 @@ fn fetch_and_update_hints(
     invalidate: bool,
     cx: &mut Context<Editor>,
 ) -> Task<anyhow::Result<()>> {
-    cx.spawn(|editor, mut cx| async move {
-        let buffer_snapshot = excerpt_buffer.update(&mut cx, |buffer, _| buffer.snapshot())?;
+    cx.spawn(async move |editor, cx|{
+        let buffer_snapshot = excerpt_buffer.update(cx, |buffer, _| buffer.snapshot())?;
         let (lsp_request_limiter, multi_buffer_snapshot) =
-            editor.update(&mut cx, |editor, cx| {
+            editor.update(cx, |editor, cx| {
                 let multi_buffer_snapshot =
                     editor.buffer().update(cx, |buffer, cx| buffer.snapshot(cx));
                 let lsp_request_limiter = Arc::clone(&editor.inlay_hint_cache.lsp_request_limiter);
@@ -920,7 +953,7 @@ fn fetch_and_update_hints(
         let fetch_range_to_log = fetch_range.start.to_point(&buffer_snapshot)
             ..fetch_range.end.to_point(&buffer_snapshot);
         let inlay_hints_fetch_task = editor
-            .update(&mut cx, |editor, cx| {
+            .update(cx, |editor, cx| {
                 if got_throttled {
                     let query_not_around_visible_range = match editor
                         .excerpts_for_inlay_hints_query(None, cx)
@@ -964,7 +997,7 @@ fn fetch_and_update_hints(
             .ok()
             .flatten();
 
-        let cached_excerpt_hints = editor.update(&mut cx, |editor, _| {
+        let cached_excerpt_hints = editor.update(cx, |editor, _| {
             editor
                 .inlay_hint_cache
                 .hints
@@ -972,7 +1005,7 @@ fn fetch_and_update_hints(
                 .cloned()
         })?;
 
-        let visible_hints = editor.update(&mut cx, |editor, cx| editor.visible_inlay_hints(cx))?;
+        let visible_hints = editor.update(cx, |editor, cx| editor.visible_inlay_hints(cx))?;
         let new_hints = match inlay_hints_fetch_task {
             Some(fetch_task) => {
                 log::debug!(
@@ -1017,7 +1050,7 @@ fn fetch_and_update_hints(
             );
             log::trace!("New update: {new_update:?}");
             editor
-                .update(&mut cx, |editor,  cx| {
+                .update(cx, |editor,  cx| {
                     apply_hint_update(
                         editor,
                         new_update,
@@ -1288,6 +1321,7 @@ pub mod tests {
                 show_parameter_hints: allowed_hint_kinds.contains(&Some(InlayHintKind::Parameter)),
                 show_other_hints: allowed_hint_kinds.contains(&None),
                 show_background: false,
+                toggle_on_modifiers_press: None,
             })
         });
         let (_, editor, fake_server) = prepare_test_objects(cx, |fake_server, file_with_hints| {
@@ -1391,6 +1425,7 @@ pub mod tests {
                 show_parameter_hints: true,
                 show_other_hints: true,
                 show_background: false,
+                toggle_on_modifiers_press: None,
             })
         });
 
@@ -1493,6 +1528,7 @@ pub mod tests {
                 show_parameter_hints: true,
                 show_other_hints: true,
                 show_background: false,
+                toggle_on_modifiers_press: None,
             })
         });
 
@@ -1712,6 +1748,7 @@ pub mod tests {
                 show_parameter_hints: allowed_hint_kinds.contains(&Some(InlayHintKind::Parameter)),
                 show_other_hints: allowed_hint_kinds.contains(&None),
                 show_background: false,
+                toggle_on_modifiers_press: None,
             })
         });
 
@@ -1871,6 +1908,7 @@ pub mod tests {
                         .contains(&Some(InlayHintKind::Parameter)),
                     show_other_hints: new_allowed_hint_kinds.contains(&None),
                     show_background: false,
+                    toggle_on_modifiers_press: None,
                 })
             });
             cx.executor().run_until_parked();
@@ -1913,6 +1951,7 @@ pub mod tests {
                     .contains(&Some(InlayHintKind::Parameter)),
                 show_other_hints: another_allowed_hint_kinds.contains(&None),
                 show_background: false,
+                toggle_on_modifiers_press: None,
             })
         });
         cx.executor().run_until_parked();
@@ -1967,6 +2006,7 @@ pub mod tests {
                     .contains(&Some(InlayHintKind::Parameter)),
                 show_other_hints: final_allowed_hint_kinds.contains(&None),
                 show_background: false,
+                toggle_on_modifiers_press: None,
             })
         });
         cx.executor().run_until_parked();
@@ -2038,6 +2078,7 @@ pub mod tests {
                 show_parameter_hints: true,
                 show_other_hints: true,
                 show_background: false,
+                toggle_on_modifiers_press: None,
             })
         });
 
@@ -2169,6 +2210,7 @@ pub mod tests {
                 show_parameter_hints: true,
                 show_other_hints: true,
                 show_background: false,
+                toggle_on_modifiers_press: None,
             })
         });
 
@@ -2467,6 +2509,7 @@ pub mod tests {
                 show_parameter_hints: true,
                 show_other_hints: true,
                 show_background: false,
+                toggle_on_modifiers_press: None,
             })
         });
 
@@ -2575,7 +2618,7 @@ pub mod tests {
 
         cx.executor().run_until_parked();
         let editor = cx.add_window(|window, cx| {
-            Editor::for_multibuffer(multibuffer, Some(project.clone()), true, window, cx)
+            Editor::for_multibuffer(multibuffer, Some(project.clone()), window, cx)
         });
 
         let editor_edited = Arc::new(AtomicBool::new(false));
@@ -2787,7 +2830,6 @@ pub mod tests {
                     "main hint #5".to_string(),
                     "other hint(edited) #0".to_string(),
                     "other hint(edited) #1".to_string(),
-                    "other hint(edited) #2".to_string(),
                 ];
                 assert_eq!(
                     expected_hints,
@@ -2811,6 +2853,7 @@ pub mod tests {
                 show_parameter_hints: false,
                 show_other_hints: false,
                 show_background: false,
+                toggle_on_modifiers_press: None,
             })
         });
 
@@ -2877,7 +2920,7 @@ pub mod tests {
 
         cx.executor().run_until_parked();
         let editor = cx.add_window(|window, cx| {
-            Editor::for_multibuffer(multibuffer, Some(project.clone()), true, window, cx)
+            Editor::for_multibuffer(multibuffer, Some(project.clone()), window, cx)
         });
         let editor_edited = Arc::new(AtomicBool::new(false));
         let fake_server = fake_servers.next().await.unwrap();
@@ -2992,6 +3035,7 @@ pub mod tests {
                 show_parameter_hints: true,
                 show_other_hints: true,
                 show_background: false,
+                toggle_on_modifiers_press: None,
             })
         });
         cx.executor().run_until_parked();
@@ -3023,6 +3067,7 @@ pub mod tests {
                 show_parameter_hints: true,
                 show_other_hints: true,
                 show_background: false,
+                toggle_on_modifiers_press: None,
             })
         });
 
@@ -3114,6 +3159,7 @@ pub mod tests {
                 show_parameter_hints: true,
                 show_other_hints: true,
                 show_background: false,
+                toggle_on_modifiers_press: None,
             })
         });
 
@@ -3187,6 +3233,7 @@ pub mod tests {
                 show_parameter_hints: true,
                 show_other_hints: true,
                 show_background: false,
+                toggle_on_modifiers_press: None,
             })
         });
         cx.executor().run_until_parked();
@@ -3246,6 +3293,7 @@ pub mod tests {
                 show_parameter_hints: true,
                 show_other_hints: true,
                 show_background: false,
+                toggle_on_modifiers_press: None,
             })
         });
 

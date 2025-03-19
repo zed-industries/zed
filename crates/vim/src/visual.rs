@@ -16,8 +16,8 @@ use workspace::searchable::Direction;
 
 use crate::{
     motion::{first_non_whitespace, next_line_end, start_of_line, Motion},
-    object::{self, Object},
-    state::{Mode, Operator},
+    object::Object,
+    state::{Mark, Mode, Operator},
     Vim,
 };
 
@@ -107,14 +107,20 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
         let Some((stored_mode, reversed)) = vim.stored_visual_mode.take() else {
             return;
         };
-        let Some((start, end)) = vim.marks.get("<").zip(vim.marks.get(">")) else {
+        let marks = vim
+            .update_editor(window, cx, |vim, editor, window, cx| {
+                vim.get_mark("<", editor, window, cx)
+                    .zip(vim.get_mark(">", editor, window, cx))
+            })
+            .flatten();
+        let Some((Mark::Local(start), Mark::Local(end))) = marks else {
             return;
         };
         let ranges = start
             .iter()
             .zip(end)
             .zip(reversed)
-            .map(|((start, end), reversed)| (*start, *end, reversed))
+            .map(|((start, end), reversed)| (*start, end, reversed))
             .collect::<Vec<_>>();
 
         if vim.mode.is_visual() {
@@ -375,9 +381,6 @@ impl Vim {
                                 } else {
                                     selection.end = range.end;
                                 }
-                                if !around && object.is_multiline() {
-                                    object::preserve_indented_newline(map, selection);
-                                }
                             }
 
                             // In the visual selection result of a paragraph object, the cursor is
@@ -502,7 +505,7 @@ impl Vim {
                         selection.goal = SelectionGoal::None;
                     });
                 });
-                vim.copy_selections_content(editor, line_mode, cx);
+                vim.copy_selections_content(editor, line_mode, window, cx);
                 editor.insert("", window, cx);
 
                 // Fixup cursor position after the deletion
@@ -531,7 +534,7 @@ impl Vim {
         self.update_editor(window, cx, |vim, editor, window, cx| {
             let line_mode = line_mode || editor.selections.line_mode;
             editor.selections.line_mode = line_mode;
-            vim.yank_selections_content(editor, line_mode, cx);
+            vim.yank_selections_content(editor, line_mode, window, cx);
             editor.change_selections(None, window, cx, |s| {
                 s.move_with(|map, selection| {
                     if line_mode {

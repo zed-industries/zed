@@ -339,10 +339,10 @@ impl ContextProvider for PythonContextProvider {
         };
 
         let worktree_id = location.buffer.read(cx).file().map(|f| f.worktree_id(cx));
-        cx.spawn(move |mut cx| async move {
+        cx.spawn(async move |cx| {
             let active_toolchain = if let Some(worktree_id) = worktree_id {
                 toolchains
-                    .active_toolchain(worktree_id, "Python".into(), &mut cx)
+                    .active_toolchain(worktree_id, "Python".into(), cx)
                     .await
                     .map_or_else(
                         || "python3".to_owned(),
@@ -684,7 +684,7 @@ impl<'a> EnvironmentApi<'a> {
     }
 }
 
-impl<'a> pet_core::os_environment::Environment for EnvironmentApi<'a> {
+impl pet_core::os_environment::Environment for EnvironmentApi<'_> {
     fn get_user_home(&self) -> Option<PathBuf> {
         self.user_home()
     }

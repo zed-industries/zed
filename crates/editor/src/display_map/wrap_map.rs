@@ -69,7 +69,7 @@ pub struct WrapRows<'a> {
     transforms: Cursor<'a, Transform, (WrapPoint, TabPoint)>,
 }
 
-impl<'a> WrapRows<'a> {
+impl WrapRows<'_> {
     pub(crate) fn seek(&mut self, start_row: u32) {
         self.transforms
             .seek(&WrapPoint::new(start_row, 0), Bias::Left, &());
@@ -198,9 +198,9 @@ impl WrapMap {
                     self.edits_since_sync = self.edits_since_sync.compose(&edits);
                 }
                 Err(wrap_task) => {
-                    self.background_task = Some(cx.spawn(|this, mut cx| async move {
+                    self.background_task = Some(cx.spawn(async move |this, cx| {
                         let (snapshot, edits) = wrap_task.await;
-                        this.update(&mut cx, |this, cx| {
+                        this.update(cx, |this, cx| {
                             this.snapshot = snapshot;
                             this.edits_since_sync = this
                                 .edits_since_sync
@@ -276,9 +276,9 @@ impl WrapMap {
                         self.edits_since_sync = self.edits_since_sync.compose(&output_edits);
                     }
                     Err(update_task) => {
-                        self.background_task = Some(cx.spawn(|this, mut cx| async move {
+                        self.background_task = Some(cx.spawn(async move |this, cx| {
                             let (snapshot, edits) = update_task.await;
-                            this.update(&mut cx, |this, cx| {
+                            this.update(cx, |this, cx| {
                                 this.snapshot = snapshot;
                                 this.edits_since_sync = this
                                     .edits_since_sync
@@ -872,7 +872,7 @@ impl WrapSnapshot {
     }
 }
 
-impl<'a> WrapChunks<'a> {
+impl WrapChunks<'_> {
     pub(crate) fn seek(&mut self, rows: Range<u32>) {
         let output_start = WrapPoint::new(rows.start, 0);
         let output_end = WrapPoint::new(rows.end, 0);
@@ -955,7 +955,7 @@ impl<'a> Iterator for WrapChunks<'a> {
     }
 }
 
-impl<'a> Iterator for WrapRows<'a> {
+impl Iterator for WrapRows<'_> {
     type Item = RowInfo;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -983,6 +983,7 @@ impl<'a> Iterator for WrapRows<'a> {
                 buffer_row: None,
                 multibuffer_row: None,
                 diff_status,
+                expand_info: None,
             }
         } else {
             buffer_row
@@ -1120,7 +1121,7 @@ impl<'a> sum_tree::Dimension<'a, TransformSummary> for TabPoint {
     }
 }
 
-impl<'a> sum_tree::SeekTarget<'a, TransformSummary, TransformSummary> for TabPoint {
+impl sum_tree::SeekTarget<'_, TransformSummary, TransformSummary> for TabPoint {
     fn cmp(&self, cursor_location: &TransformSummary, _: &()) -> std::cmp::Ordering {
         Ord::cmp(&self.0, &cursor_location.input.lines)
     }

@@ -16,7 +16,7 @@ pub enum ToggleButtonPosition {
 }
 
 #[derive(IntoElement, IntoComponent)]
-#[component(scope = "input")]
+#[component(scope = "Input")]
 pub struct ToggleButton {
     base: ButtonLike,
     position_in_group: Option<ToggleButtonPosition>,
@@ -144,7 +144,7 @@ impl RenderOnce for ToggleButton {
 }
 
 impl ComponentPreview for ToggleButton {
-    fn preview(_window: &mut Window, _cx: &App) -> AnyElement {
+    fn preview(_window: &mut Window, _cx: &mut App) -> AnyElement {
         v_flex()
             .gap_6()
             .children(vec![

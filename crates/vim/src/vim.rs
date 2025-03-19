@@ -23,14 +23,14 @@ use anyhow::Result;
 use collections::HashMap;
 use editor::{
     movement::{self, FindRange},
-    Anchor, Bias, Editor, EditorEvent, EditorMode, ToPoint,
+    Anchor, Bias, Editor, EditorEvent, EditorMode, EditorSettings, ToPoint,
 };
 use gpui::{
-    actions, impl_actions, Action, App, AppContext as _, Axis, Context, Entity, EventEmitter,
+    actions, impl_actions, Action, App, AppContext, Axis, Context, Entity, EventEmitter,
     KeyContext, KeystrokeEvent, Render, Subscription, Task, WeakEntity, Window,
 };
 use insert::{NormalBefore, TemporaryNormal};
-use language::{CursorShape, Point, Selection, SelectionGoal, TransactionId};
+use language::{CharKind, CursorShape, Point, Selection, SelectionGoal, TransactionId};
 pub use mode_indicator::ModeIndicator;
 use motion::Motion;
 use normal::search::SearchSubmit;
@@ -126,6 +126,7 @@ actions!(
         SwitchToVisualBlockMode,
         SwitchToHelixNormalMode,
         ClearOperators,
+        ClearExchange,
         Tab,
         Enter,
         InnerObject,
@@ -138,6 +139,7 @@ actions!(
         ResizePaneDown,
         PushChange,
         PushDelete,
+        Exchange,
         PushYank,
         PushReplace,
         PushDeleteSurrounds,
@@ -150,6 +152,7 @@ actions!(
         PushLowercase,
         PushUppercase,
         PushOppositeCase,
+        ToggleRegistersView,
         PushRegister,
         PushRecordRegister,
         PushReplayRegister,
@@ -311,7 +314,6 @@ pub(crate) struct Vim {
     operator_stack: Vec<Operator>,
     pub(crate) replacements: Vec<(Range<editor::Anchor>, String)>,
 
-    pub(crate) marks: HashMap<String, Vec<Anchor>>,
     pub(crate) stored_visual_mode: Option<(Mode, Vec<bool>)>,
     pub(crate) change_list: Vec<Vec<Anchor>>,
     pub(crate) change_list_position: Option<usize>,
@@ -352,14 +354,13 @@ impl Vim {
         let editor = cx.entity().clone();
 
         cx.new(|cx| Vim {
-            mode: Mode::Normal,
+            mode: VimSettings::get_global(cx).default_mode,
             last_mode: Mode::Normal,
             temp_mode: false,
             exit_temporary_mode: false,
             operator_stack: Vec::new(),
             replacements: Vec::new(),
 
-            marks: HashMap::default(),
             stored_visual_mode: None,
             change_list: Vec::new(),
             change_list_position: None,
@@ -637,6 +638,18 @@ impl Vim {
                 },
             );
 
+            Vim::action(editor, cx, |vim, _: &Exchange, window, cx| {
+                if vim.mode.is_visual() {
+                    vim.exchange_visual(window, cx)
+                } else {
+                    vim.push_operator(Operator::Exchange, window, cx)
+                }
+            });
+
+            Vim::action(editor, cx, |vim, _: &ClearExchange, window, cx| {
+                vim.clear_exchange(window, cx)
+            });
+
             Vim::action(editor, cx, |vim, _: &PushToggleComments, window, cx| {
                 vim.push_operator(Operator::ToggleComments, window, cx)
             });
@@ -813,22 +826,9 @@ impl Vim {
     }
 
     fn push_operator(&mut self, operator: Operator, window: &mut Window, cx: &mut Context<Self>) {
-        if matches!(
-            operator,
-            Operator::Change
-                | Operator::Delete
-                | Operator::Replace
-                | Operator::Indent
-                | Operator::Outdent
-                | Operator::AutoIndent
-                | Operator::Lowercase
-                | Operator::Uppercase
-                | Operator::OppositeCase
-                | Operator::ToggleComments
-                | Operator::ReplaceWithRegister
-        ) {
-            self.start_recording(cx)
-        };
+        if operator.starts_dot_recording() {
+            self.start_recording(cx);
+        }
         // Since these operations can only be entered with pre-operators,
         // we need to clear the previous operators when pushing,
         // so that the current stack is the most correct
@@ -839,9 +839,6 @@ impl Vim {
                 | Operator::DeleteSurrounds
         ) {
             self.operator_stack.clear();
-            if let Operator::AddSurrounds { target: None } = operator {
-                self.start_recording(cx);
-            }
         };
         self.operator_stack.push(operator);
         self.sync_vim_settings(window, cx);
@@ -982,7 +979,7 @@ impl Vim {
         count
     }
 
-    pub fn cursor_shape(&self) -> CursorShape {
+    pub fn cursor_shape(&self, cx: &mut App) -> CursorShape {
         match self.mode {
             Mode::Normal => {
                 if let Some(operator) = self.operator_stack.last() {
@@ -1008,7 +1005,10 @@ impl Vim {
             Mode::HelixNormal | Mode::Visual | Mode::VisualLine | Mode::VisualBlock => {
                 CursorShape::Block
             }
-            Mode::Insert => CursorShape::Bar,
+            Mode::Insert => {
+                let editor_settings = EditorSettings::get_global(cx);
+                editor_settings.cursor_shape.unwrap_or_default()
+            }
         }
     }
 
@@ -1147,7 +1147,7 @@ impl Vim {
         self.store_visual_marks(window, cx);
         self.clear_operator(window, cx);
         self.update_editor(window, cx, |vim, editor, _, cx| {
-            if vim.cursor_shape() == CursorShape::Block {
+            if vim.cursor_shape(cx) == CursorShape::Block {
                 editor.set_cursor_shape(CursorShape::Hollow, cx);
             }
         });
@@ -1155,7 +1155,7 @@ impl Vim {
 
     fn cursor_shape_changed(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.update_editor(window, cx, |vim, editor, _, cx| {
-            editor.set_cursor_shape(vim.cursor_shape(), cx);
+            editor.set_cursor_shape(vim.cursor_shape(cx), cx);
         });
     }
 
@@ -1181,6 +1181,28 @@ impl Vim {
                 .iter()
                 .map(|selection| selection.tail()..selection.head())
                 .collect()
+        })
+        .unwrap_or_default()
+    }
+
+    fn editor_cursor_word(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<String> {
+        self.update_editor(window, cx, |_, editor, window, cx| {
+            let selection = editor.selections.newest::<usize>(cx);
+
+            let snapshot = &editor.snapshot(window, cx).buffer_snapshot;
+            let (range, kind) = snapshot.surrounding_word(selection.start, true);
+            if kind == Some(CharKind::Word) {
+                let text: String = snapshot.text_for_range(range).collect();
+                if !text.trim().is_empty() {
+                    return Some(text);
+                }
+            }
+
+            None
         })
         .unwrap_or_default()
     }
@@ -1549,7 +1571,7 @@ impl Vim {
                 }
                 _ => self.clear_operator(window, cx),
             },
-            Some(Operator::Mark) => self.create_mark(text, false, window, cx),
+            Some(Operator::Mark) => self.create_mark(text, window, cx),
             Some(Operator::RecordRegister) => {
                 self.record_register(text.chars().next().unwrap(), window, cx)
             }
@@ -1598,7 +1620,7 @@ impl Vim {
 
     fn sync_vim_settings(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.update_editor(window, cx, |vim, editor, window, cx| {
-            editor.set_cursor_shape(vim.cursor_shape(), cx);
+            editor.set_cursor_shape(vim.cursor_shape(cx), cx);
             editor.set_clip_at_line_ends(vim.clip_at_line_ends(), cx);
             editor.set_collapse_matches(true);
             editor.set_input_enabled(vim.editor_input_enabled());
@@ -1629,6 +1651,7 @@ pub enum UseSystemClipboard {
 
 #[derive(Deserialize)]
 struct VimSettings {
+    pub default_mode: Mode,
     pub toggle_relative_line_numbers: bool,
     pub use_system_clipboard: UseSystemClipboard,
     pub use_multiline_find: bool,
@@ -1639,6 +1662,7 @@ struct VimSettings {
 
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
 struct VimSettingsContent {
+    pub default_mode: Option<ModeContent>,
     pub toggle_relative_line_numbers: Option<bool>,
     pub use_system_clipboard: Option<UseSystemClipboard>,
     pub use_multiline_find: Option<bool>,
@@ -1647,12 +1671,62 @@ struct VimSettingsContent {
     pub highlight_on_yank_duration: Option<u64>,
 }
 
+#[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ModeContent {
+    #[default]
+    Normal,
+    Insert,
+    Replace,
+    Visual,
+    VisualLine,
+    VisualBlock,
+    HelixNormal,
+}
+
+impl From<ModeContent> for Mode {
+    fn from(mode: ModeContent) -> Self {
+        match mode {
+            ModeContent::Normal => Self::Normal,
+            ModeContent::Insert => Self::Insert,
+            ModeContent::Replace => Self::Replace,
+            ModeContent::Visual => Self::Visual,
+            ModeContent::VisualLine => Self::VisualLine,
+            ModeContent::VisualBlock => Self::VisualBlock,
+            ModeContent::HelixNormal => Self::HelixNormal,
+        }
+    }
+}
+
 impl Settings for VimSettings {
     const KEY: Option<&'static str> = Some("vim");
 
     type FileContent = VimSettingsContent;
 
     fn load(sources: SettingsSources<Self::FileContent>, _: &mut App) -> Result<Self> {
-        sources.json_merge()
+        let settings: VimSettingsContent = sources.json_merge()?;
+
+        Ok(Self {
+            default_mode: settings
+                .default_mode
+                .ok_or_else(Self::missing_default)?
+                .into(),
+            toggle_relative_line_numbers: settings
+                .toggle_relative_line_numbers
+                .ok_or_else(Self::missing_default)?,
+            use_system_clipboard: settings
+                .use_system_clipboard
+                .ok_or_else(Self::missing_default)?,
+            use_multiline_find: settings
+                .use_multiline_find
+                .ok_or_else(Self::missing_default)?,
+            use_smartcase_find: settings
+                .use_smartcase_find
+                .ok_or_else(Self::missing_default)?,
+            custom_digraphs: settings.custom_digraphs.ok_or_else(Self::missing_default)?,
+            highlight_on_yank_duration: settings
+                .highlight_on_yank_duration
+                .ok_or_else(Self::missing_default)?,
+        })
     }
 }

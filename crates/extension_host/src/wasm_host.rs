@@ -334,9 +334,9 @@ impl WasmHost {
         cx: &mut App,
     ) -> Arc<Self> {
         let (tx, mut rx) = mpsc::unbounded::<MainThreadCall>();
-        let task = cx.spawn(|mut cx| async move {
+        let task = cx.spawn(async move |cx| {
             while let Some(message) = rx.next().await {
-                message(&mut cx).await;
+                message(cx).await;
             }
         });
         Arc::new(Self {

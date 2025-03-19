@@ -1,5 +1,7 @@
 #[cfg(test)]
 mod file_finder_tests;
+#[cfg(test)]
+mod open_path_prompt_tests;
 
 pub mod file_finder_settings;
 mod new_path_prompt;
@@ -40,11 +42,11 @@ use ui::{
 };
 use util::{maybe, paths::PathWithPosition, post_inc, ResultExt};
 use workspace::{
-    item::PreviewTabsSettings, notifications::NotifyResultExt, pane, ModalView, SplitDirection,
-    Workspace,
+    item::PreviewTabsSettings, notifications::NotifyResultExt, pane, ModalView, OpenOptions,
+    OpenVisible, SplitDirection, Workspace,
 };
 
-actions!(file_finder, [SelectPrev, ToggleMenu]);
+actions!(file_finder, [SelectPrevious, ToggleMenu]);
 
 impl ModalView for FileFinder {
     fn on_before_dismiss(
@@ -143,11 +145,11 @@ impl FileFinder {
                 }
             })
             .collect::<Vec<_>>();
-        cx.spawn_in(window, move |workspace, mut cx| async move {
+        cx.spawn_in(window, async move |workspace, cx| {
             let history_items = join_all(history_items).await.into_iter().flatten();
 
             workspace
-                .update_in(&mut cx, |workspace, window, cx| {
+                .update_in(cx, |workspace, window, cx| {
                     let project = workspace.project().clone();
                     let weak_workspace = cx.entity().downgrade();
                     workspace.toggle_modal(window, cx, |window, cx| {
@@ -199,9 +201,14 @@ impl FileFinder {
         }
     }
 
-    fn handle_select_prev(&mut self, _: &SelectPrev, window: &mut Window, cx: &mut Context<Self>) {
+    fn handle_select_prev(
+        &mut self,
+        _: &SelectPrevious,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         self.init_modifiers = Some(window.modifiers());
-        window.dispatch_action(Box::new(menu::SelectPrev), cx);
+        window.dispatch_action(Box::new(menu::SelectPrevious), cx);
     }
 
     fn handle_toggle_menu(&mut self, _: &ToggleMenu, window: &mut Window, cx: &mut Context<Self>) {
@@ -646,7 +653,6 @@ impl FileSearchQuery {
 }
 
 impl FileFinderDelegate {
-    #[allow(clippy::too_many_arguments)]
     fn new(
         file_finder: WeakEntity<FileFinder>,
         workspace: WeakEntity<Workspace>,
@@ -732,7 +738,7 @@ impl FileFinderDelegate {
         self.cancel_flag.store(true, atomic::Ordering::Relaxed);
         self.cancel_flag = Arc::new(AtomicBool::new(false));
         let cancel_flag = self.cancel_flag.clone();
-        cx.spawn_in(window, |picker, mut cx| async move {
+        cx.spawn_in(window, async move |picker, cx| {
             let matches = fuzzy::match_path_sets(
                 candidate_sets.as_slice(),
                 query.path_query(),
@@ -747,7 +753,7 @@ impl FileFinderDelegate {
             .map(ProjectPanelOrdMatch);
             let did_cancel = cancel_flag.load(atomic::Ordering::Relaxed);
             picker
-                .update(&mut cx, |picker, cx| {
+                .update(cx, |picker, cx| {
                     picker
                         .delegate
                         .set_search_matches(search_id, did_cancel, query, matches, cx)
@@ -909,7 +915,9 @@ impl FileFinderDelegate {
                 (normal, small)
             };
             let budget = full_path_budget(&file_name, normal_em, small_em, max_width);
-            if full_path.len() > budget {
+            // If the computed budget is zero, we certainly won't be able to achieve it,
+            // so no point trying to elide the path.
+            if budget > 0 && full_path.len() > budget {
                 let components = PathComponentSlice::new(&full_path);
                 if let Some(elided_range) =
                     components.elision_range(budget - 1, &full_path_positions)
@@ -975,9 +983,9 @@ impl FileFinderDelegate {
         window: &mut Window,
         cx: &mut Context<Picker<Self>>,
     ) -> Task<()> {
-        cx.spawn_in(window, |picker, mut cx| async move {
+        cx.spawn_in(window, async move |picker, cx| {
             let Some(project) = picker
-                .update(&mut cx, |picker, _| picker.delegate.project.clone())
+                .update(cx, |picker, _| picker.delegate.project.clone())
                 .log_err()
             else {
                 return;
@@ -986,7 +994,7 @@ impl FileFinderDelegate {
             let query_path = Path::new(query.path_query());
             let mut path_matches = Vec::new();
 
-            let abs_file_exists = if let Ok(task) = project.update(&mut cx, |this, cx| {
+            let abs_file_exists = if let Ok(task) = project.update(cx, |this, cx| {
                 this.resolve_abs_file_path(query.path_query(), cx)
             }) {
                 task.await.is_some()
@@ -996,7 +1004,7 @@ impl FileFinderDelegate {
 
             if abs_file_exists {
                 let update_result = project
-                    .update(&mut cx, |project, cx| {
+                    .update(cx, |project, cx| {
                         if let Some((worktree, relative_path)) =
                             project.find_worktree(query_path, cx)
                         {
@@ -1018,7 +1026,7 @@ impl FileFinderDelegate {
             }
 
             picker
-                .update_in(&mut cx, |picker, _, cx| {
+                .update_in(cx, |picker, _, cx| {
                     let picker_delegate = &mut picker.delegate;
                     let search_id = util::post_inc(&mut picker_delegate.search_count);
                     picker_delegate.set_search_matches(search_id, false, query, path_matches, cx);
@@ -1193,6 +1201,7 @@ impl PickerDelegate for FileFinderDelegate {
                                     None,
                                     true,
                                     allow_preview,
+                                    true,
                                     window,
                                     cx,
                                 )
@@ -1229,7 +1238,10 @@ impl PickerDelegate for FileFinderDelegate {
                                         } else {
                                             workspace.open_abs_path(
                                                 abs_path.to_path_buf(),
-                                                false,
+                                                OpenOptions {
+                                                    visible: Some(OpenVisible::None),
+                                                    ..Default::default()
+                                                },
                                                 window,
                                                 cx,
                                             )
@@ -1272,13 +1284,13 @@ impl PickerDelegate for FileFinderDelegate {
                     .saturating_sub(1);
                 let finder = self.file_finder.clone();
 
-                cx.spawn_in(window, |_, mut cx| async move {
-                    let item = open_task.await.notify_async_err(&mut cx)?;
+                cx.spawn_in(window, async move |_, cx| {
+                    let item = open_task.await.notify_async_err(cx)?;
                     if let Some(row) = row {
                         if let Some(active_editor) = item.downcast::<Editor>() {
                             active_editor
                                 .downgrade()
-                                .update_in(&mut cx, |editor, window, cx| {
+                                .update_in(cx, |editor, window, cx| {
                                     editor.go_to_singleton_buffer_point(
                                         Point::new(row, col),
                                         window,
@@ -1288,7 +1300,7 @@ impl PickerDelegate for FileFinderDelegate {
                                 .log_err();
                         }
                     }
-                    finder.update(&mut cx, |_, cx| cx.emit(DismissEvent)).ok()?;
+                    finder.update(cx, |_, cx| cx.emit(DismissEvent)).ok()?;
 
                     Some(())
                 })
@@ -1448,9 +1460,9 @@ impl<'a> PathComponentSlice<'a> {
                     matches.next();
                 }
                 if is_first_normal || is_last || !is_normal || contains_match {
-                    if !longest
+                    if longest
                         .as_ref()
-                        .is_some_and(|old| old.end - old.start > cur.end - cur.start)
+                        .is_none_or(|old| old.end - old.start <= cur.end - cur.start)
                     {
                         longest = Some(cur);
                     }
@@ -1459,9 +1471,9 @@ impl<'a> PathComponentSlice<'a> {
                     cur.end = i + 1;
                 }
             }
-            if !longest
+            if longest
                 .as_ref()
-                .is_some_and(|old| old.end - old.start > cur.end - cur.start)
+                .is_none_or(|old| old.end - old.start <= cur.end - cur.start)
             {
                 longest = Some(cur);
             }

@@ -17,7 +17,7 @@ use gpui::{
     ListState, MouseDownEvent, ParentElement, Pixels, Point, PromptLevel, Render, SharedString,
     Styled, Subscription, Task, TextStyle, WeakEntity, Window,
 };
-use menu::{Cancel, Confirm, SecondaryConfirm, SelectNext, SelectPrev};
+use menu::{Cancel, Confirm, SecondaryConfirm, SelectNext, SelectPrevious};
 use project::{Fs, Project};
 use rpc::{
     proto::{self, ChannelVisibility, PeerId},
@@ -869,7 +869,6 @@ impl CollabPanel {
             })
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn render_participant_project(
         &self,
         project_id: u64,
@@ -1430,7 +1429,7 @@ impl CollabPanel {
         cx.notify();
     }
 
-    fn select_prev(&mut self, _: &SelectPrev, _: &mut Window, cx: &mut Context<Self>) {
+    fn select_previous(&mut self, _: &SelectPrevious, _: &mut Window, cx: &mut Context<Self>) {
         let ix = self.selection.take().unwrap_or(0);
         if ix > 0 {
             self.selection = Some(ix - 1);
@@ -1570,9 +1569,9 @@ impl CollabPanel {
                         channel_store.create_channel(&channel_name, *location, cx)
                     });
                     if location.is_none() {
-                        cx.spawn_in(window, |this, mut cx| async move {
+                        cx.spawn_in(window, async move |this, cx| {
                             let channel_id = create.await?;
-                            this.update_in(&mut cx, |this, window, cx| {
+                            this.update_in(cx, |this, window, cx| {
                                 this.show_channel_modal(
                                     channel_id,
                                     channel_modal::Mode::InviteMembers,
@@ -1945,8 +1944,8 @@ impl CollabPanel {
         let user_store = self.user_store.clone();
         let channel_store = self.channel_store.clone();
 
-        cx.spawn_in(window, |_, mut cx| async move {
-            workspace.update_in(&mut cx, |workspace, window, cx| {
+        cx.spawn_in(window, async move |_, cx| {
+            workspace.update_in(cx, |workspace, window, cx| {
                 workspace.toggle_modal(window, cx, |window, cx| {
                     ChannelModal::new(
                         user_store.clone(),
@@ -1977,11 +1976,11 @@ impl CollabPanel {
             &["Leave", "Cancel"],
             cx,
         );
-        cx.spawn_in(window, |this, mut cx| async move {
+        cx.spawn_in(window, async move |this, cx| {
             if answer.await? != 0 {
                 return Ok(());
             }
-            this.update(&mut cx, |this, cx| {
+            this.update(cx, |this, cx| {
                 this.channel_store.update(cx, |channel_store, cx| {
                     channel_store.remove_member(channel_id, user_id, cx)
                 })
@@ -2010,13 +2009,13 @@ impl CollabPanel {
                 &["Remove", "Cancel"],
                 cx,
             );
-            cx.spawn_in(window, |this, mut cx| async move {
+            cx.spawn_in(window, async move |this, cx| {
                 if answer.await? == 0 {
                     channel_store
-                        .update(&mut cx, |channels, _| channels.remove_channel(channel_id))?
+                        .update(cx, |channels, _| channels.remove_channel(channel_id))?
                         .await
-                        .notify_async_err(&mut cx);
-                    this.update_in(&mut cx, |_, window, cx| cx.focus_self(window))
+                        .notify_async_err(cx);
+                    this.update_in(cx, |_, window, cx| cx.focus_self(window))
                         .ok();
                 }
                 anyhow::Ok(())
@@ -2044,12 +2043,12 @@ impl CollabPanel {
             &["Remove", "Cancel"],
             cx,
         );
-        cx.spawn_in(window, |_, mut cx| async move {
+        cx.spawn_in(window, async move |_, cx| {
             if answer.await? == 0 {
                 user_store
-                    .update(&mut cx, |store, cx| store.remove_contact(user_id, cx))?
+                    .update(cx, |store, cx| store.remove_contact(user_id, cx))?
                     .await
-                    .notify_async_err(&mut cx);
+                    .notify_async_err(cx);
             }
             anyhow::Ok(())
         })
@@ -2162,11 +2161,11 @@ impl CollabPanel {
                             .full_width()
                             .on_click(cx.listener(|this, _, window, cx| {
                                 let client = this.client.clone();
-                                cx.spawn_in(window, |_, mut cx| async move {
+                                cx.spawn_in(window, async move |_, cx| {
                                     client
                                         .authenticate_and_connect(true, &cx)
                                         .await
-                                        .notify_async_err(&mut cx);
+                                        .notify_async_err(cx);
                                 })
                                 .detach()
                             })),
@@ -2878,7 +2877,7 @@ impl Render for CollabPanel {
             .key_context("CollabPanel")
             .on_action(cx.listener(CollabPanel::cancel))
             .on_action(cx.listener(CollabPanel::select_next))
-            .on_action(cx.listener(CollabPanel::select_prev))
+            .on_action(cx.listener(CollabPanel::select_previous))
             .on_action(cx.listener(CollabPanel::confirm))
             .on_action(cx.listener(CollabPanel::insert_space))
             .on_action(cx.listener(CollabPanel::remove_selected_channel))

@@ -47,7 +47,7 @@ const CONTENT_LEN_HEADER: &str = "Content-Length: ";
 const LSP_REQUEST_TIMEOUT: Duration = Duration::from_secs(60 * 2);
 const SERVER_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
 
-type NotificationHandler = Box<dyn Send + FnMut(Option<RequestId>, Value, AsyncApp)>;
+type NotificationHandler = Box<dyn Send + FnMut(Option<RequestId>, Value, &mut AsyncApp)>;
 type ResponseHandler = Box<dyn Send + FnOnce(Result<String, Error>)>;
 type IoHandler = Box<dyn Send + FnMut(IoKind, &str)>;
 
@@ -299,34 +299,6 @@ pub struct AdapterServerCapabilities {
     pub code_action_kinds: Option<Vec<CodeActionKind>>,
 }
 
-/// Experimental: Informs the end user about the state of the server
-///
-/// [Rust Analyzer Specification](https://github.com/rust-lang/rust-analyzer/blob/master/docs/dev/lsp-extensions.md#server-status)
-#[derive(Debug)]
-pub enum ServerStatus {}
-
-/// Other(String) variant to handle unknown values due to this still being experimental
-#[derive(Debug, PartialEq, Deserialize, Serialize, Clone)]
-#[serde(rename_all = "camelCase")]
-pub enum ServerHealthStatus {
-    Ok,
-    Warning,
-    Error,
-    Other(String),
-}
-
-#[derive(Debug, PartialEq, Deserialize, Serialize, Clone)]
-#[serde(rename_all = "camelCase")]
-pub struct ServerStatusParams {
-    pub health: ServerHealthStatus,
-    pub message: Option<String>,
-}
-
-impl lsp_types::notification::Notification for ServerStatus {
-    type Params = ServerStatusParams;
-    const METHOD: &'static str = "experimental/serverStatus";
-}
-
 impl LanguageServer {
     /// Starts a language server process.
     pub fn new(
@@ -336,7 +308,8 @@ impl LanguageServer {
         binary: LanguageServerBinary,
         root_path: &Path,
         code_action_kinds: Option<Vec<CodeActionKind>>,
-        cx: AsyncApp,
+        workspace_folders: Arc<Mutex<BTreeSet<Url>>>,
+        cx: &mut AsyncApp,
     ) -> Result<Self> {
         let working_dir = if root_path.is_dir() {
             root_path
@@ -383,6 +356,7 @@ impl LanguageServer {
             code_action_kinds,
             binary,
             root_uri,
+            workspace_folders,
             cx,
             move |notification| {
                 log::info!(
@@ -397,7 +371,6 @@ impl LanguageServer {
         Ok(server)
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn new_internal<Stdin, Stdout, Stderr, F>(
         server_id: LanguageServerId,
         server_name: LanguageServerName,
@@ -409,7 +382,8 @@ impl LanguageServer {
         code_action_kinds: Option<Vec<CodeActionKind>>,
         binary: LanguageServerBinary,
         root_uri: Url,
-        cx: AsyncApp,
+        workspace_folders: Arc<Mutex<BTreeSet<Url>>>,
+        cx: &mut AsyncApp,
         on_unhandled_notification: F,
     ) -> Self
     where
@@ -431,7 +405,7 @@ impl LanguageServer {
             let notification_handlers = notification_handlers.clone();
             let response_handlers = response_handlers.clone();
             let io_handlers = io_handlers.clone();
-            move |cx| {
+            async move |cx| {
                 Self::handle_input(
                     stdout,
                     on_unhandled_notification,
@@ -441,16 +415,21 @@ impl LanguageServer {
                     cx,
                 )
                 .log_err()
+                .await
             }
         });
         let stderr_input_task = stderr
             .map(|stderr| {
                 let io_handlers = io_handlers.clone();
                 let stderr_captures = stderr_capture.clone();
-                cx.spawn(|_| Self::handle_stderr(stderr, io_handlers, stderr_captures).log_err())
+                cx.spawn(async move |_| {
+                    Self::handle_stderr(stderr, io_handlers, stderr_captures)
+                        .log_err()
+                        .await
+                })
             })
             .unwrap_or_else(|| Task::ready(None));
-        let input_task = cx.spawn(|_| async move {
+        let input_task = cx.spawn(async move |_| {
             let (stdout, stderr) = futures::join!(stdout_input_task, stderr_input_task);
             stdout.or(stderr)
         });
@@ -491,7 +470,7 @@ impl LanguageServer {
             io_tasks: Mutex::new(Some((input_task, output_task))),
             output_done_rx: Mutex::new(Some(output_done_rx)),
             server: Arc::new(Mutex::new(server)),
-            workspace_folders: Default::default(),
+            workspace_folders,
             root_uri,
         }
     }
@@ -507,7 +486,7 @@ impl LanguageServer {
         notification_handlers: Arc<Mutex<HashMap<&'static str, NotificationHandler>>>,
         response_handlers: Arc<Mutex<Option<HashMap<RequestId, ResponseHandler>>>>,
         io_handlers: Arc<Mutex<HashMap<i32, IoHandler>>>,
-        cx: AsyncApp,
+        cx: &mut AsyncApp,
     ) -> anyhow::Result<()>
     where
         Stdout: AsyncRead + Unpin + Send + 'static,
@@ -532,7 +511,7 @@ impl LanguageServer {
             {
                 let mut notification_handlers = notification_handlers.lock();
                 if let Some(handler) = notification_handlers.get_mut(msg.method.as_str()) {
-                    handler(msg.id, msg.params.unwrap_or(Value::Null), cx.clone());
+                    handler(msg.id, msg.params.unwrap_or(Value::Null), cx);
                 } else {
                     drop(notification_handlers);
                     on_unhandled_notification(msg);
@@ -617,6 +596,16 @@ impl LanguageServer {
     }
 
     pub fn default_initialize_params(&self, cx: &App) -> InitializeParams {
+        let workspace_folders = self
+            .workspace_folders
+            .lock()
+            .iter()
+            .cloned()
+            .map(|uri| WorkspaceFolder {
+                name: Default::default(),
+                uri,
+            })
+            .collect::<Vec<_>>();
         #[allow(deprecated)]
         InitializeParams {
             process_id: None,
@@ -648,6 +637,9 @@ impl LanguageServer {
                     diagnostic: Some(DiagnosticWorkspaceClientCapabilities {
                         refresh_support: None,
                     }),
+                    code_lens: Some(CodeLensWorkspaceClientCapabilities {
+                        refresh_support: Some(true),
+                    }),
                     workspace_edit: Some(WorkspaceEditClientCapabilities {
                         resource_operations: Some(vec![
                             ResourceOperationKind::Create,
@@ -665,6 +657,9 @@ impl LanguageServer {
                         ..Default::default()
                     }),
                     apply_edit: Some(true),
+                    execute_command: Some(ExecuteCommandClientCapabilities {
+                        dynamic_registration: Some(false),
+                    }),
                     ..Default::default()
                 }),
                 text_document: Some(TextDocumentClientCapabilities {
@@ -776,6 +771,9 @@ impl LanguageServer {
                         did_save: Some(true),
                         ..TextDocumentSyncClientCapabilities::default()
                     }),
+                    code_lens: Some(CodeLensClientCapabilities {
+                        dynamic_registration: Some(false),
+                    }),
                     ..TextDocumentClientCapabilities::default()
                 }),
                 experimental: Some(json!({
@@ -791,7 +789,7 @@ impl LanguageServer {
                 }),
             },
             trace: None,
-            workspace_folders: Some(vec![]),
+            workspace_folders: Some(workspace_folders),
             client_info: release_channel::ReleaseChannel::try_global(cx).map(|release_channel| {
                 ClientInfo {
                     name: release_channel.display_name().to_string(),
@@ -814,7 +812,7 @@ impl LanguageServer {
         configuration: Arc<DidChangeConfigurationParams>,
         cx: &App,
     ) -> Task<Result<Arc<Self>>> {
-        cx.spawn(|_| async move {
+        cx.spawn(async move |_| {
             let response = self.request::<request::Initialize>(params).await?;
             if let Some(info) = response.server_info {
                 self.process_name = info.name.into();
@@ -885,7 +883,7 @@ impl LanguageServer {
     pub fn on_notification<T, F>(&self, f: F) -> Subscription
     where
         T: notification::Notification,
-        F: 'static + Send + FnMut(T::Params, AsyncApp),
+        F: 'static + Send + FnMut(T::Params, &mut AsyncApp),
     {
         self.on_custom_notification(T::METHOD, f)
     }
@@ -898,7 +896,7 @@ impl LanguageServer {
     where
         T: request::Request,
         T::Params: 'static + Send,
-        F: 'static + FnMut(T::Params, AsyncApp) -> Fut + Send,
+        F: 'static + FnMut(T::Params, &mut AsyncApp) -> Fut + Send,
         Fut: 'static + Future<Output = Result<T::Result>>,
     {
         self.on_custom_request(T::METHOD, f)
@@ -936,7 +934,7 @@ impl LanguageServer {
     #[must_use]
     fn on_custom_notification<Params, F>(&self, method: &'static str, mut f: F) -> Subscription
     where
-        F: 'static + FnMut(Params, AsyncApp) + Send,
+        F: 'static + FnMut(Params, &mut AsyncApp) + Send,
         Params: DeserializeOwned,
     {
         let prev_handler = self.notification_handlers.lock().insert(
@@ -960,7 +958,7 @@ impl LanguageServer {
     #[must_use]
     fn on_custom_request<Params, Res, Fut, F>(&self, method: &'static str, mut f: F) -> Subscription
     where
-        F: 'static + FnMut(Params, AsyncApp) -> Fut + Send,
+        F: 'static + FnMut(Params, &mut AsyncApp) -> Fut + Send,
         Fut: 'static + Future<Output = Result<Res>>,
         Params: DeserializeOwned + Send + 'static,
         Res: Serialize,
@@ -972,7 +970,7 @@ impl LanguageServer {
                 if let Some(id) = id {
                     match serde_json::from_value(params) {
                         Ok(params) => {
-                            let response = f(params, cx.clone());
+                            let response = f(params, cx);
                             cx.foreground_executor()
                                 .spawn({
                                     let outbound_tx = outbound_tx.clone();
@@ -1260,24 +1258,27 @@ impl LanguageServer {
     }
     pub fn set_workspace_folders(&self, folders: BTreeSet<Url>) {
         let mut workspace_folders = self.workspace_folders.lock();
+
+        let old_workspace_folders = std::mem::take(&mut *workspace_folders);
         let added: Vec<_> = folders
-            .iter()
+            .difference(&old_workspace_folders)
             .map(|uri| WorkspaceFolder {
                 uri: uri.clone(),
                 name: String::default(),
             })
             .collect();
 
-        let removed: Vec<_> = std::mem::replace(&mut *workspace_folders, folders)
-            .into_iter()
+        let removed: Vec<_> = old_workspace_folders
+            .difference(&folders)
             .map(|uri| WorkspaceFolder {
                 uri: uri.clone(),
                 name: String::default(),
             })
             .collect();
         let should_notify = !added.is_empty() || !removed.is_empty();
-
         if should_notify {
+            *workspace_folders = folders;
+            drop(workspace_folders);
             let params = DidChangeWorkspaceFoldersParams {
                 event: WorkspaceFoldersChangeEvent { added, removed },
             };
@@ -1383,7 +1384,7 @@ impl FakeLanguageServer {
         binary: LanguageServerBinary,
         name: String,
         capabilities: ServerCapabilities,
-        cx: AsyncApp,
+        cx: &mut AsyncApp,
     ) -> (LanguageServer, FakeLanguageServer) {
         let (stdin_writer, stdin_reader) = async_pipe::pipe();
         let (stdout_writer, stdout_reader) = async_pipe::pipe();
@@ -1392,6 +1393,7 @@ impl FakeLanguageServer {
         let server_name = LanguageServerName(name.clone().into());
         let process_name = Arc::from(name.as_str());
         let root = Self::root_path();
+        let workspace_folders: Arc<Mutex<BTreeSet<Url>>> = Default::default();
         let mut server = LanguageServer::new_internal(
             server_id,
             server_name.clone(),
@@ -1403,7 +1405,8 @@ impl FakeLanguageServer {
             None,
             binary.clone(),
             root,
-            cx.clone(),
+            workspace_folders.clone(),
+            cx,
             |_| {},
         );
         server.process_name = process_name;
@@ -1421,7 +1424,8 @@ impl FakeLanguageServer {
                     None,
                     binary,
                     Self::root_path(),
-                    cx.clone(),
+                    workspace_folders,
+                    cx,
                     move |msg| {
                         notifications_tx
                             .try_send((
@@ -1635,7 +1639,7 @@ mod tests {
             },
             "the-lsp".to_string(),
             Default::default(),
-            cx.to_async(),
+            &mut cx.to_async(),
         );
 
         let (message_tx, message_rx) = channel::unbounded();

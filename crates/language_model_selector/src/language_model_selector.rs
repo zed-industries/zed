@@ -2,8 +2,8 @@ use std::sync::Arc;
 
 use feature_flags::ZedPro;
 use gpui::{
-    Action, AnyElement, AnyView, App, Corner, DismissEvent, Entity, EventEmitter, FocusHandle,
-    Focusable, Subscription, Task, WeakEntity,
+    action_with_deprecated_aliases, Action, AnyElement, AnyView, App, Corner, DismissEvent, Entity,
+    EventEmitter, FocusHandle, Focusable, Subscription, Task, WeakEntity,
 };
 use language_model::{
     AuthenticateError, LanguageModel, LanguageModelAvailability, LanguageModelRegistry,
@@ -12,6 +12,12 @@ use picker::{Picker, PickerDelegate};
 use proto::Plan;
 use ui::{prelude::*, ListItem, ListItemSpacing, PopoverMenu, PopoverMenuHandle, PopoverTrigger};
 use workspace::ShowConfiguration;
+
+action_with_deprecated_aliases!(
+    assistant,
+    ToggleModelSelector,
+    ["assistant2::ToggleModelSelector"]
+);
 
 const TRY_ZED_PRO_URL: &str = "https://zed.dev/pro";
 
@@ -96,7 +102,7 @@ impl LanguageModelSelector {
             .map(|provider| (provider.id(), provider.name(), provider.authenticate(cx)))
             .collect::<Vec<_>>();
 
-        cx.spawn(|_cx| async move {
+        cx.spawn(async move |_cx| {
             for (provider_id, provider_name, authenticate_task) in authenticate_all_providers {
                 if let Err(err) = authenticate_task.await {
                     if matches!(err, AuthenticateError::CredentialsNotFound) {
@@ -294,7 +300,7 @@ impl PickerDelegate for LanguageModelPickerDelegate {
             .map(|provider| provider.id())
             .collect::<Vec<_>>();
 
-        cx.spawn_in(window, |this, mut cx| async move {
+        cx.spawn_in(window, async move |this, cx| {
             let filtered_models = cx
                 .background_spawn(async move {
                     let displayed_models = if configured_providers.is_empty() {
@@ -326,7 +332,7 @@ impl PickerDelegate for LanguageModelPickerDelegate {
                 })
                 .await;
 
-            this.update_in(&mut cx, |this, window, cx| {
+            this.update_in(cx, |this, window, cx| {
                 this.delegate.filtered_models = filtered_models;
                 // Preserve selection focus
                 let new_index = if current_index >= this.delegate.filtered_models.len() {
@@ -430,9 +436,9 @@ impl PickerDelegate for LanguageModelPickerDelegate {
                         .pl_0p5()
                         .w(px(240.))
                         .child(
-                            div().max_w_40().child(
-                                Label::new(model_info.model.name().0.clone()).text_ellipsis(),
-                            ),
+                            div()
+                                .max_w_40()
+                                .child(Label::new(model_info.model.name().0.clone()).truncate()),
                         )
                         .child(
                             h_flex()

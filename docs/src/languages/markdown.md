@@ -2,7 +2,7 @@
 
 Markdown support is available natively in Zed.
 
-- Tree Sitter: [tree-sitter-markdown](https://github.com/tree-sitter-grammars/tree-sitter-markdown)
+- Tree-sitter: [tree-sitter-markdown](https://github.com/tree-sitter-grammars/tree-sitter-markdown)
 - Language Server: N/A
 
 ## Syntax Highlighting Code Blocks
@@ -23,7 +23,7 @@ def fib(n):
 
 ### Format
 
-Zed supports using Prettier to automatically re-format Markdown documents. You can trigger this manually via the {#action editor::Format} action or via the {#kb editor::Format} keyboard shortcut. Alternately, you can automattically format by enabling [`format_on_save`](./configuring-zed.md#format-on-save) in your settings.json:
+Zed supports using Prettier to automatically re-format Markdown documents. You can trigger this manually via the {#action editor::Format} action or via the {#kb editor::Format} keyboard shortcut. Alternately, you can automatically format by enabling [`format_on_save`](./configuring-zed.md#format-on-save) in your settings.json:
 
 ```json
   "languages": {

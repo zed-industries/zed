@@ -73,8 +73,8 @@ pub use buffer::Operation;
 pub use buffer::*;
 pub use diagnostic_set::{DiagnosticEntry, DiagnosticGroup};
 pub use language_registry::{
-    AvailableLanguage, LanguageNotFound, LanguageQueries, LanguageRegistry,
-    LanguageServerBinaryStatus, QUERY_FILENAME_PREFIXES,
+    AvailableLanguage, BinaryStatus, LanguageNotFound, LanguageQueries, LanguageRegistry,
+    QUERY_FILENAME_PREFIXES,
 };
 pub use lsp::{LanguageServerId, LanguageServerName};
 pub use outline::*;
@@ -304,7 +304,7 @@ pub trait LspAdapterDelegate: Send + Sync {
     fn worktree_id(&self) -> WorktreeId;
     fn worktree_root_path(&self) -> &Path;
     fn exists(&self, path: &Path, is_dir: Option<bool>) -> bool;
-    fn update_status(&self, language: LanguageServerName, status: LanguageServerBinaryStatus);
+    fn update_status(&self, language: LanguageServerName, status: BinaryStatus);
     async fn language_server_download_dir(&self, name: &LanguageServerName) -> Option<Arc<Path>>;
 
     async fn npm_package_installed_version(
@@ -382,7 +382,7 @@ pub trait LspAdapter: 'static + Send + Sync {
                 } else {
                     delegate.update_status(
                         self.name(),
-                        LanguageServerBinaryStatus::Failed {
+                        BinaryStatus::Failed {
                             error: format!("{error:?}"),
                         },
                     );
@@ -555,6 +555,23 @@ pub trait LspAdapter: 'static + Send + Sync {
         // By default all language servers are rooted at the root of the worktree.
         Some(Arc::from("".as_ref()))
     }
+
+    /// Method only implemented by the default JSON language server adapter.
+    /// Used to provide dynamic reloading of the JSON schemas used to
+    /// provide autocompletion and diagnostics in Zed setting and keybind
+    /// files
+    fn is_primary_zed_json_schema_adapter(&self) -> bool {
+        false
+    }
+
+    /// Method only implemented by the default JSON language server adapter.
+    /// Used to clear the cache of JSON schemas that are used to provide
+    /// autocompletion and diagnostics in Zed settings and keybinds files.
+    /// Should not be called unless the callee is sure that
+    /// `Self::is_primary_zed_json_schema_adapter` returns `true`
+    async fn clear_zed_json_schema_cache(&self) {
+        unreachable!("Not implemented for this adapter. This method should only be called on the default JSON language server adapter");
+    }
 }
 
 async fn try_fetch_server_binary<L: LspAdapter + 'static + Send + Sync + ?Sized>(
@@ -569,7 +586,7 @@ async fn try_fetch_server_binary<L: LspAdapter + 'static + Send + Sync + ?Sized>
 
     let name = adapter.name();
     log::info!("fetching latest version of language server {:?}", name.0);
-    delegate.update_status(name.clone(), LanguageServerBinaryStatus::CheckingForUpdate);
+    delegate.update_status(name.clone(), BinaryStatus::CheckingForUpdate);
 
     let latest_version = adapter
         .fetch_latest_server_version(delegate.as_ref())
@@ -580,16 +597,16 @@ async fn try_fetch_server_binary<L: LspAdapter + 'static + Send + Sync + ?Sized>
         .await
     {
         log::info!("language server {:?} is already installed", name.0);
-        delegate.update_status(name.clone(), LanguageServerBinaryStatus::None);
+        delegate.update_status(name.clone(), BinaryStatus::None);
         Ok(binary)
     } else {
         log::info!("downloading language server {:?}", name.0);
-        delegate.update_status(adapter.name(), LanguageServerBinaryStatus::Downloading);
+        delegate.update_status(adapter.name(), BinaryStatus::Downloading);
         let binary = adapter
             .fetch_server_binary(latest_version, container_dir, delegate.as_ref())
             .await;
 
-        delegate.update_status(name.clone(), LanguageServerBinaryStatus::None);
+        delegate.update_status(name.clone(), BinaryStatus::None);
         binary
     }
 }
@@ -680,6 +697,9 @@ pub struct LanguageConfig {
     /// languages, but should not appear to the user as a distinct language.
     #[serde(default)]
     pub hidden: bool,
+    /// If configured, this language contains JSX style tags, and should support auto-closing of those tags.
+    #[serde(default)]
+    pub jsx_tag_auto_close: Option<JsxTagAutoCloseConfig>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, Default, JsonSchema)]
@@ -695,6 +715,34 @@ pub struct LanguageMatcher {
     )]
     #[schemars(schema_with = "regex_json_schema")]
     pub first_line_pattern: Option<Regex>,
+}
+
+/// The configuration for JSX tag auto-closing.
+#[derive(Clone, Deserialize, JsonSchema)]
+pub struct JsxTagAutoCloseConfig {
+    /// The name of the node for a opening tag
+    pub open_tag_node_name: String,
+    /// The name of the node for an closing tag
+    pub close_tag_node_name: String,
+    /// The name of the node for a complete element with children for open and close tags
+    pub jsx_element_node_name: String,
+    /// The name of the node found within both opening and closing
+    /// tags that describes the tag name
+    pub tag_name_node_name: String,
+    /// Some grammars are smart enough to detect a closing tag
+    /// that is not valid i.e. doesn't match it's corresponding
+    /// opening tag or does not have a corresponding opening tag
+    /// This should be set to the name of the node for invalid
+    /// closing tags if the grammar contains such a node, otherwise
+    /// detecting already closed tags will not work properly
+    #[serde(default)]
+    pub erroneous_close_tag_node_name: Option<String>,
+    /// See above for erroneous_close_tag_node_name for details
+    /// This should be set if the node used for the tag name
+    /// within erroneous closing tags is different from the
+    /// normal tag name node name
+    #[serde(default)]
+    pub erroneous_close_tag_name_node_name: Option<String>,
 }
 
 /// Represents a language for the given range. Some languages (e.g. HTML)
@@ -767,6 +815,7 @@ impl Default for LanguageConfig {
             soft_wrap: None,
             prettier_parser_name: None,
             hidden: false,
+            jsx_tag_auto_close: None,
         }
     }
 }
@@ -888,7 +937,7 @@ pub struct BracketPair {
 }
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy)]
-pub(crate) struct LanguageId(usize);
+pub struct LanguageId(usize);
 
 impl LanguageId {
     pub(crate) fn new() -> Self {
@@ -1054,6 +1103,10 @@ struct BracketsPatternConfig {
 impl Language {
     pub fn new(config: LanguageConfig, ts_language: Option<tree_sitter::Language>) -> Self {
         Self::new_with_id(LanguageId::new(), config, ts_language)
+    }
+
+    pub fn id(&self) -> LanguageId {
+        self.id
     }
 
     fn new_with_id(

@@ -13,7 +13,7 @@ use extension::{
 };
 use futures::{io::BufReader, FutureExt as _};
 use futures::{lock::Mutex, AsyncReadExt};
-use language::{language_settings::AllLanguageSettings, LanguageName, LanguageServerBinaryStatus};
+use language::{language_settings::AllLanguageSettings, BinaryStatus, LanguageName};
 use project::project_settings::ProjectSettings;
 use semantic_version::SemanticVersion;
 use std::{
@@ -576,6 +576,37 @@ impl platform::Host for WasmState {
     }
 }
 
+impl From<std::process::Output> for process::Output {
+    fn from(output: std::process::Output) -> Self {
+        Self {
+            status: output.status.code(),
+            stdout: output.stdout,
+            stderr: output.stderr,
+        }
+    }
+}
+
+impl process::Host for WasmState {
+    async fn run_command(
+        &mut self,
+        command: process::Command,
+    ) -> wasmtime::Result<Result<process::Output, String>> {
+        maybe!(async {
+            self.manifest.allow_exec(&command.command, &command.args)?;
+
+            let output = util::command::new_smol_command(command.command.as_str())
+                .args(&command.args)
+                .envs(command.env)
+                .output()
+                .await?;
+
+            Ok(output.into())
+        })
+        .await
+        .to_wasmtime_result()
+    }
+}
+
 #[async_trait]
 impl slash_command::Host for WasmState {}
 
@@ -661,16 +692,10 @@ impl ExtensionImports for WasmState {
         status: LanguageServerInstallationStatus,
     ) -> wasmtime::Result<()> {
         let status = match status {
-            LanguageServerInstallationStatus::CheckingForUpdate => {
-                LanguageServerBinaryStatus::CheckingForUpdate
-            }
-            LanguageServerInstallationStatus::Downloading => {
-                LanguageServerBinaryStatus::Downloading
-            }
-            LanguageServerInstallationStatus::None => LanguageServerBinaryStatus::None,
-            LanguageServerInstallationStatus::Failed(error) => {
-                LanguageServerBinaryStatus::Failed { error }
-            }
+            LanguageServerInstallationStatus::CheckingForUpdate => BinaryStatus::CheckingForUpdate,
+            LanguageServerInstallationStatus::Downloading => BinaryStatus::Downloading,
+            LanguageServerInstallationStatus::None => BinaryStatus::None,
+            LanguageServerInstallationStatus::Failed(error) => BinaryStatus::Failed { error },
         };
 
         self.host
