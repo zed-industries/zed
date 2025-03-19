@@ -1,7 +1,6 @@
 use crate::NumericPrefixWithSuffix;
 use globset::{Glob, GlobSet, GlobSetBuilder};
 use regex::Regex;
-use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;
 use std::path::StripPrefixError;
@@ -469,7 +468,7 @@ fn natural_sort(a: &str, b: &str) -> Ordering {
     }
 }
 
-#[derive(Copy, Clone, Debug, Default, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum SortStrategy {
     #[default]
@@ -477,7 +476,7 @@ pub enum SortStrategy {
     Alphabetical,
 }
 
-#[derive(Copy, Clone, Debug, Default, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub struct FileSortingSettings {
     pub strategy: SortStrategy,

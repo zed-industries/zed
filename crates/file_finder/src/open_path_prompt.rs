@@ -179,7 +179,7 @@ impl PickerDelegate for OpenPathDelegate {
                                 // transform DirectoryItem to (&Path, is_dir)
                                 let a = (a.path.as_ref(), a.is_dir);
                                 let b = (b.path.as_ref(), b.is_dir);
-                                compare_paths_with_strategy(a, b, sort_strategy)
+                                compare_paths_with_strategy(a, b, sort_strategy.into())
                             });
                             let match_candidates = paths
                                 .iter()

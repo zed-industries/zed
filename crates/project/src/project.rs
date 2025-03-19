@@ -3440,9 +3440,11 @@ impl Project {
             (None, None) => a.read(cx).remote_id().cmp(&b.read(cx).remote_id()),
             (None, Some(_)) => std::cmp::Ordering::Less,
             (Some(_), None) => std::cmp::Ordering::Greater,
-            (Some(a), Some(b)) => {
-                compare_paths_with_strategy((a.path(), true), (b.path(), true), sort_strategy)
-            }
+            (Some(a), Some(b)) => compare_paths_with_strategy(
+                (a.path(), true),
+                (b.path(), true),
+                sort_strategy.into(),
+            ),
         });
         for buffer in buffers {
             tx.send_blocking(buffer.clone()).unwrap()

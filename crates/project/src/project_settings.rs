@@ -19,14 +19,63 @@ use settings::{
 };
 use std::{path::Path, sync::Arc, time::Duration};
 use task::{TaskTemplates, VsCodeTaskFile};
-use util::paths::FileSortingSettings;
-use util::ResultExt;
+use util::{
+    paths::{FileSortingSettings as UtilFileSortingSettings, SortStrategy as UtilSortStrategy},
+    ResultExt,
+};
 use worktree::{PathChange, UpdatedEntriesSet, Worktree, WorktreeId};
 
 use crate::{
     task_store::TaskStore,
     worktree_store::{WorktreeStore, WorktreeStoreEvent},
 };
+
+#[derive(Copy, Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum SortStrategy {
+    #[default]
+    Lexicographical,
+    Alphabetical,
+}
+
+impl From<UtilSortStrategy> for SortStrategy {
+    fn from(s: UtilSortStrategy) -> Self {
+        match s {
+            UtilSortStrategy::Lexicographical => SortStrategy::Lexicographical,
+            UtilSortStrategy::Alphabetical => SortStrategy::Alphabetical,
+        }
+    }
+}
+
+impl From<SortStrategy> for UtilSortStrategy {
+    fn from(s: SortStrategy) -> Self {
+        match s {
+            SortStrategy::Lexicographical => UtilSortStrategy::Lexicographical,
+            SortStrategy::Alphabetical => UtilSortStrategy::Alphabetical,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
+pub struct FileSortingSettings {
+    pub strategy: SortStrategy,
+}
+
+impl From<UtilFileSortingSettings> for FileSortingSettings {
+    fn from(s: UtilFileSortingSettings) -> Self {
+        FileSortingSettings {
+            strategy: s.strategy.into(),
+        }
+    }
+}
+
+impl From<FileSortingSettings> for UtilFileSortingSettings {
+    fn from(s: FileSortingSettings) -> Self {
+        UtilFileSortingSettings {
+            strategy: s.strategy.into(),
+        }
+    }
+}
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
 pub struct ProjectSettings {

@@ -1558,7 +1558,7 @@ impl ProjectPanel {
                     (Some(a), Some(b)) => compare_paths_with_strategy(
                         (&a.path, a.is_file()),
                         (&b.path, b.is_file()),
-                        sort_strategy,
+                        sort_strategy.into(),
                     ),
                     _ => cmp::Ordering::Equal,
                 }
@@ -1584,7 +1584,7 @@ impl ProjectPanel {
             .collect();
 
         let sort_strategy = ProjectSettings::get_global(cx).file_sorting.strategy;
-        project::sort_worktree_entries(&mut siblings, sort_strategy);
+        project::sort_worktree_entries(&mut siblings, sort_strategy.into());
         let sibling_entry_index = siblings
             .iter()
             .position(|sibling| sibling.id == latest_entry.id)?;
@@ -2792,7 +2792,7 @@ impl ProjectPanel {
             }
 
             let sort_strategy = ProjectSettings::get_global(cx).file_sorting.strategy;
-            project::sort_worktree_entries(&mut visible_worktree_entries, sort_strategy);
+            project::sort_worktree_entries(&mut visible_worktree_entries, sort_strategy.into());
 
             self.visible_entries
                 .push((worktree_id, visible_worktree_entries, OnceCell::new()));
@@ -9704,7 +9704,7 @@ mod tests {
                     worktree_settings.file_scan_exclusions = Some(Vec::new());
                 });
                 store.update_user_settings::<ProjectSettings>(cx, |project_settings| {
-                    project_settings.file_sorting.strategy = SortStrategy::Lexicographical;
+                    project_settings.file_sorting.strategy = SortStrategy::Lexicographical.into();
                 });
             });
         });
@@ -9729,7 +9729,7 @@ mod tests {
                     worktree_settings.file_scan_exclusions = Some(Vec::new());
                 });
                 store.update_user_settings::<ProjectSettings>(cx, |project_settings| {
-                    project_settings.file_sorting.strategy = SortStrategy::Lexicographical;
+                    project_settings.file_sorting.strategy = SortStrategy::Lexicographical.into();
                 });
             });
         });
