@@ -1071,26 +1071,6 @@ impl ActiveThread {
                             .color(Color::Muted)
                             .buffer_font(cx),
                     )
-                    /*
-                    .child(
-                        Label::new("Rules Included")
-                            .size(LabelSize::XSmall)
-                            .color(Color::Muted)
-                            .buffer_font(cx),
-                    )
-                    .child(
-                        div()
-                            .size_0p5()
-                            .rounded_full()
-                            .bg(cx.theme().colors().border_variant),
-                    )
-                    .child(
-                        Label::new(format!("{} Files", rules_files.len()))
-                            .size(LabelSize::XSmall)
-                            .color(Color::Muted)
-                            .buffer_font(cx),
-                    )
-                    */
                     .child(Divider::horizontal().color(DividerColor::BorderVariant))
                     .child(div().visible_on_hover("rules-item").child(
                         Button::new("open-rules", "Open Rules").label_size(LabelSize::XSmall),
