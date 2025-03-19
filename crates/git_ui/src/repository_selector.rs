@@ -95,7 +95,7 @@ pub(crate) fn filtered_repository_entries(
                 .any(|repo| !repo.read(cx).is_from_single_file_worktree);
             chunk.iter().filter(move |repo| {
                 // Remove any entry that comes from a single file worktree and represents a repository that is also represented by a non-single-file worktree.
-                repo.read(cx).is_from_single_file_worktree && has_non_single_file_worktree
+                !repo.read(cx).is_from_single_file_worktree || !has_non_single_file_worktree
             })
         })
         .map(|&repo| repo.clone())
