@@ -162,6 +162,9 @@ pub struct DebugTaskDefinition {
     program: Option<String>,
     /// The current working directory of your project
     cwd: Option<String>,
+    /// Locator to use
+    /// -- rust
+    locator: Option<String>,
     /// Additional initialization arguments to be sent on DAP initialization
     initialize_args: Option<serde_json::Value>,
 }
@@ -183,6 +186,7 @@ impl DebugTaskDefinition {
             kind: self.kind,
             request: self.request,
             initialize_args: self.initialize_args,
+            locator: self.locator,
             supports_attach: true,
         });
 

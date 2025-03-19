@@ -323,9 +323,45 @@ impl DapStore {
         Ok(())
     }
 
+    async fn run_cargo_build_json(cwd: PathBuf) -> std::io::Result<Option<String>> {
+        use serde_json::Value;
+        use smol::{
+            io::AsyncReadExt,
+            process::{Command, Stdio},
+        };
+
+        let mut child = Command::new("cargo")
+            .args(["build", "--message-format=json"])
+            .current_dir(cwd)
+            .stdout(Stdio::piped())
+            .spawn()?;
+
+        let mut output = String::new();
+        if let Some(mut stdout) = child.stdout.take() {
+            stdout.read_to_string(&mut output).await?;
+        }
+
+        let status = child.status().await?;
+        if !status.success() {
+            return Ok(None);
+        }
+
+        let executable = output
+            .lines()
+            .filter(|line| !line.trim().is_empty())
+            .filter_map(|line| serde_json::from_str(line).ok())
+            .find_map(|json: Value| {
+                json.get("executable")
+                    .and_then(Value::as_str)
+                    .map(String::from)
+            });
+
+        Ok(executable)
+    }
+
     pub fn new_session(
         &mut self,
-        config: DebugAdapterConfig,
+        mut config: DebugAdapterConfig,
         worktree: &Entity<Worktree>,
         parent_session: Option<Entity<Session>>,
         cx: &mut Context<Self>,
@@ -350,18 +386,39 @@ impl DapStore {
 
         let (initialized_tx, initialized_rx) = oneshot::channel();
 
-        let start_client_task = Session::local(
-            self.breakpoint_store.clone(),
-            session_id,
-            parent_session,
-            delegate,
-            config,
-            local_store.start_debugging_tx.clone(),
-            initialized_tx,
-            cx,
-        );
+        // let start_client_task = Session::local(
+        //     self.breakpoint_store.clone(),
+        //     session_id,
+        //     parent_session,
+        //     delegate,
+        //     config,
+        //     local_store.start_debugging_tx.clone(),
+        //     initialized_tx,
+        //     cx,
+        // );
+        //
+        let start_debugging_tx = local_store.start_debugging_tx.clone();
 
         let task = cx.spawn(async move |this, cx| {
+            let executable =
+                Self::run_cargo_build_json(config.cwd.as_ref().unwrap().clone()).await?;
+
+            if let Some(executable) = executable {
+                config.program = Some(executable);
+            }
+            let start_client_task = this.update(cx, |this, cx| {
+                Session::local(
+                    this.breakpoint_store.clone(),
+                    session_id,
+                    parent_session,
+                    delegate,
+                    config,
+                    start_debugging_tx.clone(),
+                    initialized_tx,
+                    cx,
+                )
+            })?;
+
             let session = match start_client_task.await {
                 Ok(session) => session,
                 Err(error) => {

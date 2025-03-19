@@ -355,6 +355,7 @@ impl PickerDelegate for TasksModalDelegate {
                             }
                         }
                     }
+                    TaskType::Locator => {}
                 };
             })
             .ok();
@@ -519,11 +520,30 @@ impl PickerDelegate for TasksModalDelegate {
                     ),
                     // TODO: Should create a schedule_resolved_debug_task function
                     // This would allow users to access to debug history and other issues
-                    TaskType::Debug(_) => workspace.project().update(cx, |project, cx| {
-                        project
-                            .start_debug_session(task.resolved_debug_adapter_config().unwrap(), cx)
-                            .detach_and_log_err(cx);
-                    }),
+                    TaskType::Debug(debug_args) => {
+                        // if let Some(locator_task) = debug_args.locator.as_ref().and_then(|name| {
+                        //     self.task_store
+                        //         .read(cx)
+                        //         .task_inventory()
+                        //         .and_then(|inventory| {
+                        //             inventory
+                        //                 .read(cx)
+                        //                 .locators
+                        //                 .get(name)
+                        //                 .map(|locator| locator.generate_task_template())
+                        //         })
+                        // }) {};
+
+                        workspace.project().update(cx, |project, cx| {
+                            project
+                                .start_debug_session(
+                                    task.resolved_debug_adapter_config().unwrap(),
+                                    cx,
+                                )
+                                .detach_and_log_err(cx);
+                        })
+                    }
+                    TaskType::Locator => {}
                 };
             })
             .ok();
@@ -653,6 +673,7 @@ fn string_match_candidates<'a>(
         .filter(|(_, (_, candidate))| match candidate.task_type() {
             TaskType::Script => task_modal_type == TaskModal::ScriptModal,
             TaskType::Debug(_) => task_modal_type == TaskModal::DebugModal,
+            TaskType::Locator => false,
         })
         .map(|(index, (_, candidate))| StringMatchCandidate::new(index, candidate.display_label()))
         .collect()

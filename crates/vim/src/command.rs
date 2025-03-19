@@ -1411,6 +1411,7 @@ impl ShellExec {
     }
 
     pub fn run(&self, vim: &mut Vim, window: &mut Window, cx: &mut Context<Vim>) {
+        dbg!("Running");
         let Some(workspace) = vim.workspace(window) else {
             return;
         };
@@ -1439,7 +1440,6 @@ impl ShellExec {
                         reveal_target: RevealTarget::Dock,
                         hide: HideStrategy::Never,
                         shell,
-                        program: None,
                         show_summary: false,
                         show_command: false,
                         show_rerun: false,

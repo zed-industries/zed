@@ -24,11 +24,31 @@ use worktree::WorktreeId;
 
 use crate::worktree_store::WorktreeStore;
 
+#[derive(Debug, Default)]
+pub struct TaskLocator {
+    pub build_command: String,
+    pub build_args: Vec<String>,
+}
+
+impl TaskLocator {
+    pub fn generate_task_template(&self) -> TaskTemplate {
+        TaskTemplate {
+            label: "rust locator".to_owned(),
+            command: self.build_command.clone(),
+            args: self.build_args.clone(),
+            env: HashMap::default(),
+            task_type: task::TaskType::Locator,
+            ..Default::default()
+        }
+    }
+}
+
 /// Inventory tracks available tasks for a given project.
 #[derive(Debug, Default)]
 pub struct Inventory {
     last_scheduled_tasks: VecDeque<(TaskSourceKind, ResolvedTask)>,
     templates_from_settings: ParsedTemplates,
+    pub locators: HashMap<String, TaskLocator>,
 }
 
 #[derive(Debug, Default)]
@@ -326,20 +346,22 @@ impl Inventory {
             .global
             .clone()
             .into_iter()
-            .map(|template| {
-                (
+            .filter_map(|template| match template.task_type {
+                task::TaskType::Script => Some((
                     TaskSourceKind::AbsPath {
-                        id_base: match template.task_type {
-                            task::TaskType::Script => Cow::Borrowed("global tasks.json"),
-                            task::TaskType::Debug(_) => Cow::Borrowed("global debug.json"),
-                        },
-                        abs_path: match template.task_type {
-                            task::TaskType::Script => paths::tasks_file().clone(),
-                            task::TaskType::Debug(_) => paths::debug_tasks_file().clone(),
-                        },
+                        id_base: Cow::Borrowed("global tasks.json"),
+                        abs_path: paths::tasks_file().clone(),
                     },
                     template,
-                )
+                )),
+                task::TaskType::Debug(_) => Some((
+                    TaskSourceKind::AbsPath {
+                        id_base: Cow::Borrowed("global debug.json"),
+                        abs_path: paths::debug_tasks_file().clone(),
+                    },
+                    template,
+                )),
+                task::TaskType::Locator => None,
             })
     }
 
@@ -387,6 +409,7 @@ impl Inventory {
         let new_templates = raw_tasks
             .into_iter()
             .filter_map(|raw_template| match &task_kind {
+                TaskKind::Locator => None,
                 TaskKind::Script => serde_json::from_value::<TaskTemplate>(raw_template).log_err(),
                 TaskKind::Debug => serde_json::from_value::<DebugTaskDefinition>(raw_template)
                     .log_err()

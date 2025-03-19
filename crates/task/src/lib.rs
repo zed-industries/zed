@@ -19,7 +19,7 @@ pub use debug_format::{
     DebugRequestType, DebugTaskDefinition, DebugTaskFile, TCPHost,
 };
 pub use task_template::{
-    HideStrategy, RevealStrategy, TaskModal, TaskTemplate, TaskTemplates, TaskType,
+    DebugArgs, HideStrategy, RevealStrategy, TaskModal, TaskTemplate, TaskTemplates, TaskType,
 };
 pub use vscode_format::VsCodeTaskFile;
 pub use zed_actions::RevealTarget;
@@ -61,8 +61,6 @@ pub struct SpawnInTerminal {
     pub hide: HideStrategy,
     /// Which shell to use when spawning the task.
     pub shell: Shell,
-    /// Tells debug tasks which program to debug
-    pub program: Option<String>,
     /// Whether to show the task summary line in the task output (sucess/failure).
     pub show_summary: bool,
     /// Whether to show the command line in the task output.
@@ -106,17 +104,20 @@ impl ResolvedTask {
     /// Get the configuration for the debug adapter that should be used for this task.
     pub fn resolved_debug_adapter_config(&self) -> Option<DebugAdapterConfig> {
         match self.original_task.task_type.clone() {
-            TaskType::Script => None,
+            TaskType::Script | TaskType::Locator => None,
             TaskType::Debug(debug_args) => {
                 let adapter_config = if let Some(resolved) = &self.resolved {
                     DebugAdapterConfig {
                         label: resolved.label.clone(),
                         kind: debug_args.kind.clone(),
                         request: debug_args.request.clone(),
-                        program: resolved
-                            .program
-                            .clone()
-                            .or(Some(self.original_task.command.to_owned())),
+                        program: resolved.command.clone().map(|program| {
+                            if program.is_empty() {
+                                None
+                            } else {
+                                Some(program)
+                            }
+                        }),
                         cwd: resolved.cwd.clone().take_if(|p| p.exists()),
                         initialize_args: debug_args.initialize_args,
                         supports_attach: debug_args.supports_attach,

@@ -17,7 +17,7 @@ use std::{
     path::{Path, PathBuf},
     sync::{Arc, LazyLock},
 };
-use task::{TaskTemplate, TaskTemplates, TaskVariables, VariableName};
+use task::{TaskTemplate, TaskTemplates, TaskType, TaskVariables, VariableName};
 use util::{fs::remove_matching, maybe, ResultExt};
 
 use crate::language_settings::language_settings;
@@ -555,10 +555,25 @@ impl ContextProvider for RustContextProvider {
             .variables
             .get(CUSTOM_TARGET_DIR)
             .cloned();
-        let run_task_args = if let Some(package_to_run) = package_to_run {
+        let run_task_args = if let Some(package_to_run) = package_to_run.clone() {
             vec!["run".into(), "-p".into(), package_to_run]
         } else {
             vec!["run".into()]
+        };
+        let debug_task_args = if let Some(package_to_run) = package_to_run {
+            vec![
+                "run".into(),
+                "-p".into(),
+                package_to_run,
+                "--no-run".into(),
+                "--message-format=json".into(),
+            ]
+        } else {
+            vec![
+                "run".into(),
+                "--no-run".into(),
+                "--message-format=json".into(),
+            ]
         };
         let mut task_templates = vec![
             TaskTemplate {
@@ -676,6 +691,19 @@ impl ContextProvider for RustContextProvider {
                 command: "cargo".into(),
                 args: run_task_args,
                 cwd: Some("$ZED_DIRNAME".to_owned()),
+                ..TaskTemplate::default()
+            },
+            TaskTemplate {
+                label: "Debug".into(),
+                cwd: Some("$ZED_DIRNAME".to_owned()),
+                task_type: TaskType::Debug(task::DebugArgs {
+                    request: task::DebugRequestType::Launch,
+                    kind: task::DebugAdapterKind::Lldb,
+                    initialize_args: None,
+                    locator: None,
+                    supports_attach: true,
+                }),
+                tags: vec!["rust-main".to_owned()],
                 ..TaskTemplate::default()
             },
             TaskTemplate {

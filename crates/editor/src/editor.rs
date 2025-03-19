@@ -4690,17 +4690,35 @@ impl Editor {
 
         match action {
             CodeActionsItem::Task(task_source_kind, resolved_task) => {
-                workspace.update(cx, |workspace, cx| {
-                    workspace::tasks::schedule_resolved_task(
-                        workspace,
-                        task_source_kind,
-                        resolved_task,
-                        false,
-                        cx,
-                    );
+                match resolved_task.task_type() {
+                    task::TaskType::Script => workspace.update(cx, |workspace, cx| {
+                        workspace::tasks::schedule_resolved_task(
+                            workspace,
+                            task_source_kind,
+                            resolved_task,
+                            false,
+                            cx,
+                        );
 
-                    Some(Task::ready(Ok(())))
-                })
+                        Some(Task::ready(Ok(())))
+                    }),
+                    task::TaskType::Locator => None,
+                    task::TaskType::Debug(_) => {
+                        if let Some(project) = self.project.as_ref() {
+                            project
+                                .update(cx, |project, cx| {
+                                    project.start_debug_session(
+                                        resolved_task.resolved_debug_adapter_config().unwrap(),
+                                        cx,
+                                    )
+                                })
+                                .detach_and_log_err(cx);
+                            Some(Task::ready(Ok(())))
+                        } else {
+                            Some(Task::ready(Ok(())))
+                        }
+                    }
+                }
             }
             CodeActionsItem::CodeAction {
                 excerpt_id,

@@ -76,13 +76,20 @@ pub struct TaskTemplate {
 }
 
 #[derive(Deserialize, Serialize, Eq, PartialEq, JsonSchema, Clone, Debug)]
+/// This represents the arguments for the debug task.
 pub struct DebugArgs {
     #[serde(default)]
-    pub(crate) request: DebugRequestType,
+    /// The launch type
+    pub request: DebugRequestType,
     #[serde(flatten)]
-    pub(crate) kind: DebugAdapterKind,
-    pub(crate) initialize_args: Option<serde_json::value::Value>,
-    pub(crate) supports_attach: bool,
+    /// Adapter choice
+    pub kind: DebugAdapterKind,
+    /// da
+    pub initialize_args: Option<serde_json::value::Value>,
+    /// supports attach
+    pub supports_attach: bool,
+    /// the locator to use
+    pub locator: Option<String>,
 }
 
 /// Represents the type of task that is being ran
@@ -95,6 +102,8 @@ pub enum TaskType {
     Script,
     /// This task starts the debugger for a language
     Debug(DebugArgs),
+    /// This type of task is used for script and debug tasks to generate env variables
+    Locator,
 }
 
 #[cfg(test)]
@@ -120,6 +129,7 @@ mod deserialization_tests {
             request: crate::DebugRequestType::Launch,
             supports_attach: false,
             initialize_args: None,
+            locator: None,
         };
         let json = json!({
             "type": "debug",
@@ -274,16 +284,6 @@ impl TaskTemplate {
             &mut substituted_variables,
         )?;
 
-        let program = match &self.task_type {
-            TaskType::Script => None,
-            TaskType::Debug(_) => substitute_all_template_variables_in_str(
-                &self.command,
-                &task_variables,
-                &variable_names,
-                &mut substituted_variables,
-            ),
-        };
-
         let task_hash = to_hex_hash(self)
             .context("hashing task template")
             .log_err()?;
@@ -339,7 +339,6 @@ impl TaskTemplate {
                 reveal_target: self.reveal_target,
                 hide: self.hide,
                 shell: self.shell.clone(),
-                program,
                 show_summary: self.show_summary,
                 show_command: self.show_command,
                 show_rerun: true,

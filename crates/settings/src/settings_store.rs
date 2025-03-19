@@ -218,6 +218,7 @@ pub enum LocalSettingsKind {
 pub enum TaskKind {
     Debug,
     Script,
+    Locator,
 }
 
 impl Global for SettingsStore {}
