@@ -136,7 +136,7 @@ impl CommitModal {
         cx: &mut Context<Self>,
     ) -> Self {
         let panel = git_panel.read(cx);
-        let suggested_commit_message = panel.suggest_commit_message();
+        let suggested_commit_message = panel.suggest_commit_message(cx);
 
         let commit_editor = git_panel.update(cx, |git_panel, cx| {
             git_panel.set_modal_open(true, cx);

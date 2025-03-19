@@ -594,20 +594,9 @@ impl GitStore {
                         let repo = if let Some(existing_repo) = existing_repo {
                             // Update the statuses and merge message but keep everything else.
                             let existing_repo = existing_repo.clone();
-                            existing_repo.update(cx, |existing_repo, cx| {
+                            existing_repo.update(cx, |existing_repo, _| {
                                 existing_repo.repository_entry = repo_entry.clone();
-                                if matches!(git_repo, GitRepo::Local { .. })
-                                    && existing_repo.merge_message != merge_message
-                                {
-                                    if let (Some(merge_message), Some(buffer)) =
-                                        (&merge_message, &existing_repo.commit_message_buffer)
-                                    {
-                                        buffer.update(cx, |buffer, cx| {
-                                            if buffer.is_empty() {
-                                                buffer.set_text(merge_message.as_str(), cx);
-                                            }
-                                        })
-                                    }
+                                if matches!(git_repo, GitRepo::Local { .. }) {
                                     existing_repo.merge_message = merge_message;
                                 }
                             });
@@ -2197,7 +2186,6 @@ impl Repository {
         buffer_store: Entity<BufferStore>,
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<Buffer>>> {
-        let merge_message = self.merge_message.clone();
         cx.spawn(|repository, mut cx| async move {
             let buffer = buffer_store
                 .update(&mut cx, |buffer_store, cx| buffer_store.create_buffer(cx))?
@@ -2207,12 +2195,6 @@ impl Repository {
                 let git_commit_language = language_registry.language_for_name("Git Commit").await?;
                 buffer.update(&mut cx, |buffer, cx| {
                     buffer.set_language(Some(git_commit_language), cx);
-                })?;
-            }
-
-            if let Some(merge_message) = merge_message {
-                buffer.update(&mut cx, |buffer, cx| {
-                    buffer.set_text(merge_message.as_str(), cx)
                 })?;
             }
 

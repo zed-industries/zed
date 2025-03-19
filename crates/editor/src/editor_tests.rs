@@ -2,8 +2,10 @@ use super::*;
 use crate::{
     scroll::scroll_amount::ScrollAmount,
     test::{
-        assert_text_with_selections, build_editor, editor_lsp_test_context::EditorLspTestContext,
-        editor_test_context::EditorTestContext, select_ranges,
+        assert_text_with_selections, build_editor,
+        editor_lsp_test_context::{git_commit_lang, EditorLspTestContext},
+        editor_test_context::EditorTestContext,
+        select_ranges,
     },
     JoinLines,
 };
@@ -28,8 +30,11 @@ use language_settings::{Formatter, FormatterList, IndentGuideSettings};
 use multi_buffer::{IndentGuide, PathKey};
 use parking_lot::Mutex;
 use pretty_assertions::{assert_eq, assert_ne};
-use project::project_settings::{LspSettings, ProjectSettings};
-use project::FakeFs;
+use project::{
+    debugger::breakpoint_store::{BreakpointKind, SerializedBreakpoint},
+    project_settings::{LspSettings, ProjectSettings},
+    FakeFs,
+};
 use serde_json::{self, json};
 use std::{cell::RefCell, future::Future, rc::Rc, sync::atomic::AtomicBool, time::Instant};
 use std::{
@@ -4743,6 +4748,7 @@ async fn test_hard_wrap(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
     let mut cx = EditorTestContext::new(cx).await;
 
+    cx.update_buffer(|buffer, cx| buffer.set_language(Some(git_commit_lang()), cx));
     cx.update_editor(|editor, _, cx| {
         editor.set_hard_wrap(Some(14), cx);
     });
@@ -4759,6 +4765,69 @@ async fn test_hard_wrap(cx: &mut TestAppContext) {
         "
         one two three
         fourˇ
+        "
+    ));
+
+    cx.update_editor(|editor, window, cx| {
+        editor.newline(&Default::default(), window, cx);
+    });
+    cx.run_until_parked();
+    cx.assert_editor_state(indoc!(
+        "
+        one two three
+        four
+        ˇ
+        "
+    ));
+
+    cx.simulate_input("five");
+    cx.run_until_parked();
+    cx.assert_editor_state(indoc!(
+        "
+        one two three
+        four
+        fiveˇ
+        "
+    ));
+
+    cx.update_editor(|editor, window, cx| {
+        editor.newline(&Default::default(), window, cx);
+    });
+    cx.run_until_parked();
+    cx.simulate_input("# ");
+    cx.run_until_parked();
+    cx.assert_editor_state(indoc!(
+        "
+        one two three
+        four
+        five
+        # ˇ
+        "
+    ));
+
+    cx.update_editor(|editor, window, cx| {
+        editor.newline(&Default::default(), window, cx);
+    });
+    cx.run_until_parked();
+    cx.assert_editor_state(indoc!(
+        "
+        one two three
+        four
+        five
+        #\x20
+        #ˇ
+        "
+    ));
+
+    cx.simulate_input(" 6");
+    cx.run_until_parked();
+    cx.assert_editor_state(indoc!(
+        "
+        one two three
+        four
+        five
+        #
+        # 6ˇ
         "
     ));
 }
@@ -9212,7 +9281,7 @@ async fn test_completion(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-async fn test_words_completion(cx: &mut TestAppContext) {
+async fn test_word_completion(cx: &mut TestAppContext) {
     let lsp_fetch_timeout_ms = 10;
     init_test(cx, |language_settings| {
         language_settings.defaults.completions = Some(CompletionSettings {
@@ -9354,7 +9423,7 @@ async fn test_word_completions_do_not_duplicate_lsp_ones(cx: &mut TestAppContext
     cx.executor().run_until_parked();
     cx.condition(|editor, _| editor.context_menu_visible())
         .await;
-    cx.update_editor(|editor, window, cx| {
+    cx.update_editor(|editor, _, _| {
         if let Some(CodeContextMenu::Completions(menu)) = editor.context_menu.borrow_mut().as_ref()
         {
             assert_eq!(
@@ -9365,7 +9434,78 @@ async fn test_word_completions_do_not_duplicate_lsp_ones(cx: &mut TestAppContext
         } else {
             panic!("expected completion menu to be open");
         }
-        editor.cancel(&Cancel, window, cx);
+    });
+}
+
+#[gpui::test]
+async fn test_word_completions_continue_on_typing(cx: &mut TestAppContext) {
+    init_test(cx, |language_settings| {
+        language_settings.defaults.completions = Some(CompletionSettings {
+            words: WordsCompletionMode::Disabled,
+            lsp: true,
+            lsp_fetch_timeout_ms: 0,
+        });
+    });
+
+    let mut cx = EditorLspTestContext::new_rust(
+        lsp::ServerCapabilities {
+            completion_provider: Some(lsp::CompletionOptions {
+                trigger_characters: Some(vec![".".to_string(), ":".to_string()]),
+                ..lsp::CompletionOptions::default()
+            }),
+            signature_help_provider: Some(lsp::SignatureHelpOptions::default()),
+            ..lsp::ServerCapabilities::default()
+        },
+        cx,
+    )
+    .await;
+
+    let _completion_requests_handler =
+        cx.lsp
+            .server
+            .on_request::<lsp::request::Completion, _, _>(move |_, _| async move {
+                panic!("LSP completions should not be queried when dealing with word completions")
+            });
+
+    cx.set_state(indoc! {"ˇ
+        first
+        last
+        second
+    "});
+    cx.update_editor(|editor, window, cx| {
+        editor.show_word_completions(&ShowWordCompletions, window, cx);
+    });
+    cx.executor().run_until_parked();
+    cx.condition(|editor, _| editor.context_menu_visible())
+        .await;
+    cx.update_editor(|editor, _, _| {
+        if let Some(CodeContextMenu::Completions(menu)) = editor.context_menu.borrow_mut().as_ref()
+        {
+            assert_eq!(
+                completion_menu_entries(&menu),
+                &["first", "last", "second"],
+                "`ShowWordCompletions` action should show word completions"
+            );
+        } else {
+            panic!("expected completion menu to be open");
+        }
+    });
+
+    cx.simulate_keystroke("s");
+    cx.executor().run_until_parked();
+    cx.condition(|editor, _| editor.context_menu_visible())
+        .await;
+    cx.update_editor(|editor, _, _| {
+        if let Some(CodeContextMenu::Completions(menu)) = editor.context_menu.borrow_mut().as_ref()
+        {
+            assert_eq!(
+                completion_menu_entries(&menu),
+                &["second"],
+                "After showing word completions, further editing should filter them and not query the LSP"
+            );
+        } else {
+            panic!("expected completion menu to be open");
+        }
     });
 }
 
@@ -11853,6 +11993,7 @@ async fn test_move_to_enclosing_bracket(cx: &mut TestAppContext) {
         cx.update_editor(|editor, window, cx| {
             editor.move_to_enclosing_bracket(&MoveToEnclosingBracket, window, cx)
         });
+        cx.run_until_parked();
         cx.assert_editor_state(after);
     };
 
@@ -17038,6 +17179,337 @@ async fn assert_highlighted_edits(
         );
         assertion_fn(highlighted_edits, cx)
     });
+}
+
+#[track_caller]
+fn assert_breakpoint(
+    breakpoints: &BTreeMap<Arc<Path>, Vec<SerializedBreakpoint>>,
+    path: &Arc<Path>,
+    expected: Vec<(u32, BreakpointKind)>,
+) {
+    if expected.len() == 0usize {
+        assert!(!breakpoints.contains_key(path));
+    } else {
+        let mut breakpoint = breakpoints
+            .get(path)
+            .unwrap()
+            .into_iter()
+            .map(|breakpoint| (breakpoint.position, breakpoint.kind.clone()))
+            .collect::<Vec<_>>();
+
+        breakpoint.sort_by_key(|(cached_position, _)| *cached_position);
+
+        assert_eq!(expected, breakpoint);
+    }
+}
+
+fn add_log_breakpoint_at_cursor(
+    editor: &mut Editor,
+    log_message: &str,
+    window: &mut Window,
+    cx: &mut Context<Editor>,
+) {
+    let (anchor, bp) = editor
+        .breakpoint_at_cursor_head(window, cx)
+        .unwrap_or_else(|| {
+            let cursor_position: Point = editor.selections.newest(cx).head();
+
+            let breakpoint_position = editor
+                .snapshot(window, cx)
+                .display_snapshot
+                .buffer_snapshot
+                .anchor_before(Point::new(cursor_position.row, 0));
+
+            let kind = BreakpointKind::Log(Arc::from(log_message));
+
+            (breakpoint_position, Breakpoint { kind })
+        });
+
+    editor.edit_breakpoint_at_anchor(
+        anchor,
+        bp.kind,
+        BreakpointEditAction::EditLogMessage(log_message.into()),
+        cx,
+    );
+}
+
+#[gpui::test]
+async fn test_breakpoint_toggling(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let sample_text = "First line\nSecond line\nThird line\nFourth line".to_string();
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/a"),
+        json!({
+            "main.rs": sample_text,
+        }),
+    )
+    .await;
+    let project = Project::test(fs, [path!("/a").as_ref()], cx).await;
+    let workspace = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+    let cx = &mut VisualTestContext::from_window(*workspace.deref(), cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/a"),
+        json!({
+            "main.rs": sample_text,
+        }),
+    )
+    .await;
+    let project = Project::test(fs, [path!("/a").as_ref()], cx).await;
+    let workspace = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+    let cx = &mut VisualTestContext::from_window(*workspace.deref(), cx);
+    let worktree_id = workspace
+        .update(cx, |workspace, _window, cx| {
+            workspace.project().update(cx, |project, cx| {
+                project.worktrees(cx).next().unwrap().read(cx).id()
+            })
+        })
+        .unwrap();
+
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_buffer((worktree_id, "main.rs"), cx)
+        })
+        .await
+        .unwrap();
+
+    let (editor, cx) = cx.add_window_view(|window, cx| {
+        Editor::new(
+            EditorMode::Full,
+            MultiBuffer::build_from_buffer(buffer, cx),
+            Some(project.clone()),
+            window,
+            cx,
+        )
+    });
+
+    let project_path = editor.update(cx, |editor, cx| editor.project_path(cx).unwrap());
+    let abs_path = project.read_with(cx, |project, cx| {
+        project
+            .absolute_path(&project_path, cx)
+            .map(|path_buf| Arc::from(path_buf.to_owned()))
+            .unwrap()
+    });
+
+    // assert we can add breakpoint on the first line
+    editor.update_in(cx, |editor, window, cx| {
+        editor.toggle_breakpoint(&actions::ToggleBreakpoint, window, cx);
+        editor.move_to_end(&MoveToEnd, window, cx);
+        editor.toggle_breakpoint(&actions::ToggleBreakpoint, window, cx);
+    });
+
+    let breakpoints = editor.update(cx, |editor, cx| {
+        editor
+            .breakpoint_store()
+            .as_ref()
+            .unwrap()
+            .read(cx)
+            .all_breakpoints(cx)
+            .clone()
+    });
+
+    assert_eq!(1, breakpoints.len());
+    assert_breakpoint(
+        &breakpoints,
+        &abs_path,
+        vec![(0, BreakpointKind::Standard), (3, BreakpointKind::Standard)],
+    );
+
+    editor.update_in(cx, |editor, window, cx| {
+        editor.move_to_beginning(&MoveToBeginning, window, cx);
+        editor.toggle_breakpoint(&actions::ToggleBreakpoint, window, cx);
+    });
+
+    let breakpoints = editor.update(cx, |editor, cx| {
+        editor
+            .breakpoint_store()
+            .as_ref()
+            .unwrap()
+            .read(cx)
+            .all_breakpoints(cx)
+            .clone()
+    });
+
+    assert_eq!(1, breakpoints.len());
+    assert_breakpoint(&breakpoints, &abs_path, vec![(3, BreakpointKind::Standard)]);
+
+    editor.update_in(cx, |editor, window, cx| {
+        editor.move_to_end(&MoveToEnd, window, cx);
+        editor.toggle_breakpoint(&actions::ToggleBreakpoint, window, cx);
+    });
+
+    let breakpoints = editor.update(cx, |editor, cx| {
+        editor
+            .breakpoint_store()
+            .as_ref()
+            .unwrap()
+            .read(cx)
+            .all_breakpoints(cx)
+            .clone()
+    });
+
+    assert_eq!(0, breakpoints.len());
+    assert_breakpoint(&breakpoints, &abs_path, vec![]);
+}
+
+#[gpui::test]
+async fn test_log_breakpoint_editing(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let sample_text = "First line\nSecond line\nThird line\nFourth line".to_string();
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/a"),
+        json!({
+            "main.rs": sample_text,
+        }),
+    )
+    .await;
+    let project = Project::test(fs, [path!("/a").as_ref()], cx).await;
+    let (workspace, cx) =
+        cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+
+    let worktree_id = workspace.update(cx, |workspace, cx| {
+        workspace.project().update(cx, |project, cx| {
+            project.worktrees(cx).next().unwrap().read(cx).id()
+        })
+    });
+
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_buffer((worktree_id, "main.rs"), cx)
+        })
+        .await
+        .unwrap();
+
+    let (editor, cx) = cx.add_window_view(|window, cx| {
+        Editor::new(
+            EditorMode::Full,
+            MultiBuffer::build_from_buffer(buffer, cx),
+            Some(project.clone()),
+            window,
+            cx,
+        )
+    });
+
+    let project_path = editor.update(cx, |editor, cx| editor.project_path(cx).unwrap());
+    let abs_path = project.read_with(cx, |project, cx| {
+        project
+            .absolute_path(&project_path, cx)
+            .map(|path_buf| Arc::from(path_buf.to_owned()))
+            .unwrap()
+    });
+
+    editor.update_in(cx, |editor, window, cx| {
+        add_log_breakpoint_at_cursor(editor, "hello world", window, cx);
+    });
+
+    let breakpoints = editor.update(cx, |editor, cx| {
+        editor
+            .breakpoint_store()
+            .as_ref()
+            .unwrap()
+            .read(cx)
+            .all_breakpoints(cx)
+            .clone()
+    });
+
+    assert_breakpoint(
+        &breakpoints,
+        &abs_path,
+        vec![(0, BreakpointKind::Log("hello world".into()))],
+    );
+
+    // Removing a log message from a log breakpoint should remove it
+    editor.update_in(cx, |editor, window, cx| {
+        add_log_breakpoint_at_cursor(editor, "", window, cx);
+    });
+
+    let breakpoints = editor.update(cx, |editor, cx| {
+        editor
+            .breakpoint_store()
+            .as_ref()
+            .unwrap()
+            .read(cx)
+            .all_breakpoints(cx)
+            .clone()
+    });
+
+    assert_breakpoint(&breakpoints, &abs_path, vec![]);
+
+    editor.update_in(cx, |editor, window, cx| {
+        editor.toggle_breakpoint(&actions::ToggleBreakpoint, window, cx);
+        editor.move_to_end(&MoveToEnd, window, cx);
+        editor.toggle_breakpoint(&actions::ToggleBreakpoint, window, cx);
+        // Not adding a log message to a standard breakpoint shouldn't remove it
+        add_log_breakpoint_at_cursor(editor, "", window, cx);
+    });
+
+    let breakpoints = editor.update(cx, |editor, cx| {
+        editor
+            .breakpoint_store()
+            .as_ref()
+            .unwrap()
+            .read(cx)
+            .all_breakpoints(cx)
+            .clone()
+    });
+
+    assert_breakpoint(
+        &breakpoints,
+        &abs_path,
+        vec![(0, BreakpointKind::Standard), (3, BreakpointKind::Standard)],
+    );
+
+    editor.update_in(cx, |editor, window, cx| {
+        add_log_breakpoint_at_cursor(editor, "hello world", window, cx);
+    });
+
+    let breakpoints = editor.update(cx, |editor, cx| {
+        editor
+            .breakpoint_store()
+            .as_ref()
+            .unwrap()
+            .read(cx)
+            .all_breakpoints(cx)
+            .clone()
+    });
+
+    assert_breakpoint(
+        &breakpoints,
+        &abs_path,
+        vec![
+            (0, BreakpointKind::Standard),
+            (3, BreakpointKind::Log("hello world".into())),
+        ],
+    );
+
+    editor.update_in(cx, |editor, window, cx| {
+        add_log_breakpoint_at_cursor(editor, "hello Earth!!", window, cx);
+    });
+
+    let breakpoints = editor.update(cx, |editor, cx| {
+        editor
+            .breakpoint_store()
+            .as_ref()
+            .unwrap()
+            .read(cx)
+            .all_breakpoints(cx)
+            .clone()
+    });
+
+    assert_breakpoint(
+        &breakpoints,
+        &abs_path,
+        vec![
+            (0, BreakpointKind::Standard),
+            (3, BreakpointKind::Log("hello Earth !!".into())),
+        ],
+    );
 }
 
 #[gpui::test]

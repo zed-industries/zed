@@ -163,7 +163,7 @@ pub fn init(cx: &mut App) -> Arc<HeadlessAppState> {
     language::init(cx);
     language_model::init(client.clone(), cx);
     language_models::init(user_store.clone(), client.clone(), fs.clone(), cx);
-    assistant_tools::init(cx);
+    assistant_tools::init(client.http_client().clone(), cx);
     context_server::init(cx);
     let stdout_is_a_pty = false;
     let prompt_builder = PromptBuilder::load(fs.clone(), stdout_is_a_pty, cx);

@@ -76,9 +76,6 @@ use util::{
 };
 pub use worktree_settings::WorktreeSettings;
 
-#[cfg(feature = "test-support")]
-pub const FS_WATCH_LATENCY: Duration = Duration::from_millis(100);
-#[cfg(not(feature = "test-support"))]
 pub const FS_WATCH_LATENCY: Duration = Duration::from_millis(100);
 
 /// A set of local or remote files that are being opened as part of a project.
@@ -5464,6 +5461,7 @@ impl BackgroundScanner {
                     }
                 };
 
+                inc_scans_running(&self.scans_running);
                 status_updates
                     .push(self.schedule_git_statuses_update(&mut state, local_repository));
             }
@@ -5496,9 +5494,12 @@ impl BackgroundScanner {
             });
         }
 
+        let scans_running = self.scans_running.clone();
         self.executor.spawn(async move {
-            let _updates_finished: Vec<Result<(), oneshot::Canceled>> =
+            let updates_finished: Vec<Result<(), oneshot::Canceled>> =
                 join_all(status_updates).await;
+            let n = updates_finished.len();
+            dec_scans_running(&scans_running, n as i32);
         })
     }
 
