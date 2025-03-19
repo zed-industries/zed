@@ -604,6 +604,8 @@ impl Thread {
 
         let task = cx.spawn(async move |thread, cx| {
             let stream = model.stream_completion(request, &cx);
+            let initial_token_usage =
+                thread.read_with(&cx, |thread, _cx| thread.cumulative_token_usage.clone());
             let stream_completion = async {
                 let mut events = stream.await?;
                 let mut stop_reason = StopReason::EndTurn;
@@ -718,6 +720,21 @@ impl Thread {
                         }
                     }
                     cx.emit(ThreadEvent::DoneStreaming);
+
+                    if let Ok(initial_usage) = initial_token_usage {
+                        let usage = thread.cumulative_token_usage.clone() - initial_usage;
+
+                        telemetry::event!(
+                            "Assistant Thread Completion",
+                            thread_id = thread.id().to_string(),
+                            model = model.telemetry_id(),
+                            model_provider = model.provider_id().to_string(),
+                            input_tokens = usage.input_tokens,
+                            output_tokens = usage.output_tokens,
+                            cache_creation_input_tokens = usage.cache_creation_input_tokens,
+                            cache_read_input_tokens = usage.cache_read_input_tokens,
+                        );
+                    }
                 })
                 .ok();
         });
