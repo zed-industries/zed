@@ -3,11 +3,12 @@ use anyhow::Result;
 use buffer_diff::DiffHunkStatus;
 use collections::HashSet;
 use editor::{Editor, EditorEvent, MultiBuffer};
+use futures::future;
 use gpui::{
     prelude::*, AnyElement, AnyView, App, Entity, EventEmitter, FocusHandle, Focusable,
     SharedString, Subscription, Task, WeakEntity, Window,
 };
-use language::{Anchor, Capability, OffsetRangeExt};
+use language::{Capability, OffsetRangeExt};
 use multi_buffer::PathKey;
 use project::{Project, ProjectPath};
 use std::{
@@ -16,6 +17,7 @@ use std::{
     sync::Arc,
 };
 use ui::{prelude::*, IconButtonShape, Tooltip};
+use util::TryFutureExt;
 use workspace::{
     item::{BreadcrumbText, ItemEvent, TabContentParams},
     searchable::SearchableItemHandle,
@@ -74,7 +76,7 @@ impl AssistantDiff {
                   hunk_range,
                   is_created_file,
                   line_height,
-                  editor: &Entity<Editor>,
+                  _editor: &Entity<Editor>,
                   cx: &mut App| {
                 render_diff_hunk_controls(
                     row,
@@ -83,7 +85,6 @@ impl AssistantDiff {
                     is_created_file,
                     line_height,
                     &assistant_diff,
-                    editor,
                     cx,
                 )
             }
@@ -119,7 +120,7 @@ impl AssistantDiff {
         this
     }
 
-    fn update_excerpts(&mut self, window: &mut Window, cx: &mut Context<'_, AssistantDiff>) {
+    fn update_excerpts(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let thread = self.thread.read(cx);
         let unreviewed_buffers = thread.action_log().read(cx).unreviewed_buffers();
         let mut paths_to_delete = self.multibuffer.read(cx).paths().collect::<HashSet<_>>();
@@ -135,7 +136,11 @@ impl AssistantDiff {
             let snapshot = buffer.read(cx).snapshot();
             let diff = tracked.diff.read(cx);
             let diff_hunk_ranges = diff
-                .hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &snapshot, cx)
+                .hunks_intersecting_range(
+                    language::Anchor::MIN..language::Anchor::MAX,
+                    &snapshot,
+                    cx,
+                )
                 .map(|diff_hunk| diff_hunk.buffer_range.to_point(&snapshot))
                 .collect::<Vec<_>>();
 
@@ -200,6 +205,37 @@ impl AssistantDiff {
             ThreadEvent::SummaryChanged => self.update_title(cx),
             _ => {}
         }
+    }
+
+    fn accept_diff_hunks(
+        &mut self,
+        hunk_ranges: Vec<Range<editor::Anchor>>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let snapshot = self.multibuffer.read(cx).snapshot(cx);
+        let diff_hunks_in_ranges = self
+            .editor
+            .read(cx)
+            .diff_hunks_in_ranges(&hunk_ranges, &snapshot)
+            .collect::<Vec<_>>();
+
+        let mut tasks = Vec::new();
+        for hunk in diff_hunks_in_ranges {
+            let buffer = self.multibuffer.read(cx).buffer(hunk.buffer_id);
+            if let Some(buffer) = buffer {
+                let task = self.thread.update(cx, |thread, cx| {
+                    thread.accept_edits_in_range(buffer, hunk.buffer_range, cx)
+                });
+                tasks.push(task.log_err());
+            }
+        }
+
+        cx.spawn_in(window, async move |this, cx| {
+            future::join_all(tasks).await;
+            this.update_in(cx, |this, window, cx| this.update_excerpts(window, cx))
+        })
+        .detach_and_log_err(cx);
     }
 }
 
@@ -402,13 +438,13 @@ impl Render for AssistantDiff {
 fn render_diff_hunk_controls(
     row: u32,
     status: &DiffHunkStatus,
-    _hunk_range: Range<editor::Anchor>,
+    hunk_range: Range<editor::Anchor>,
     is_created_file: bool,
     line_height: Pixels,
-    _assistant_diff: &Entity<AssistantDiff>,
-    editor: &Entity<Editor>,
+    assistant_diff: &Entity<AssistantDiff>,
     cx: &mut App,
 ) -> AnyElement {
+    let editor = assistant_diff.read(cx).editor.clone();
     h_flex()
         .h(line_height)
         .mr_1()
@@ -424,7 +460,7 @@ fn render_diff_hunk_controls(
         .occlude()
         .shadow_md()
         .child(if status.has_secondary_hunk() {
-            Button::new(("stage", row as u64), "Stage")
+            Button::new(("stage", row as u64), "Accept")
                 .alpha(if status.is_pending() { 0.66 } else { 1.0 })
                 // .tooltip({
                 //     let focus_handle = editor.focus_handle(cx);
@@ -439,15 +475,15 @@ fn render_diff_hunk_controls(
                 //     }
                 // })
                 .on_click({
-                    let _editor = editor.clone();
-                    move |_event, _window, _cx| {
-                        // editor.update(cx, |editor, cx| {
-                        //     editor.stage_or_unstage_diff_hunks(
-                        //         true,
-                        //         vec![hunk_range.start..hunk_range.start],
-                        //         cx,
-                        //     );
-                        // });
+                    let assistant_diff = assistant_diff.clone();
+                    move |_event, window, cx| {
+                        assistant_diff.update(cx, |diff, cx| {
+                            diff.accept_diff_hunks(
+                                vec![hunk_range.start..hunk_range.start],
+                                window,
+                                cx,
+                            );
+                        });
                     }
                 })
         } else {

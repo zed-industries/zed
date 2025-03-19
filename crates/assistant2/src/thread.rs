@@ -1,5 +1,6 @@
 use std::fmt::Write as _;
 use std::io::Write;
+use std::ops::Range;
 use std::sync::Arc;
 
 use anyhow::{Context as _, Result};
@@ -1125,6 +1126,17 @@ impl Thread {
         }
 
         Ok(String::from_utf8_lossy(&markdown).to_string())
+    }
+
+    pub fn accept_edits_in_range(
+        &mut self,
+        buffer: Entity<language::Buffer>,
+        buffer_range: Range<language::Anchor>,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<()>> {
+        self.action_log.update(cx, |action_log, cx| {
+            action_log.accept_edits_in_range(buffer, buffer_range, cx)
+        })
     }
 
     pub fn action_log(&self) -> &Entity<ActionLog> {
