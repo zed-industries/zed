@@ -171,17 +171,10 @@ impl ToolUseState {
                 ToolUseStatus::Pending
             })();
 
-            let ui_text =
-                if let Some(pending_tool_use) = self.pending_tool_uses_by_id.get(&tool_use.id) {
-                    pending_tool_use.ui_text.clone().into()
-                } else {
-                    tool_use.name.clone().into()
-                };
-
             tool_uses.push(ToolUse {
                 id: tool_use.id.clone(),
                 name: tool_use.name.clone().into(),
-                ui_text,
+                ui_text: tool_use.ui_text.clone().into(),
                 input: tool_use.input.clone(),
                 status,
             })
