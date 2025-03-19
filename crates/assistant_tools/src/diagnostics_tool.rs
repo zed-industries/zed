@@ -54,15 +54,16 @@ impl Tool for DiagnosticsTool {
         _action_log: Entity<ActionLog>,
         cx: &mut App,
     ) -> (SharedString, Task<Result<String>>) {
-        let input = match serde_json::from_value::<DiagnosticsToolInput>(input) {
-            Ok(input) => input,
-            Err(err) => return (display_text.into(), Task::ready(Err(anyhow!(err)))),
-        };
+        if let Some(path) = serde_json::from_value::<DiagnosticsToolInput>(input)
+            .ok()
+            .and_then(|input| input.path)
+        {
+            let display_text =
+                SharedString::from(format!("Check diagnostics for {}", path.display()));
 
-        if let Some(path) = input.path {
             let Some(project_path) = project.read(cx).find_project_path(&path, cx) else {
                 return (
-                    display_text.into(),
+                    display_text,
                     Task::ready(Err(anyhow!(
                         "Could not find path {} in project",
                         path.display()
@@ -101,8 +102,9 @@ impl Tool for DiagnosticsTool {
                 }
             });
 
-            (display_text.into(), task)
+            (display_text, task)
         } else {
+            let display_text = SharedString::from("Check project diagnostics");
             let project = project.read(cx);
             let mut output = String::new();
             let mut has_diagnostics = false;
@@ -127,10 +129,10 @@ impl Tool for DiagnosticsTool {
             }
 
             if has_diagnostics {
-                (display_text.into(), Task::ready(Ok(output)))
+                (display_text, Task::ready(Ok(output)))
             } else {
                 (
-                    display_text.into(),
+                    display_text,
                     Task::ready(Ok("No errors or warnings found in the project.".to_string())),
                 )
             }

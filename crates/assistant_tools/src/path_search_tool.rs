@@ -56,7 +56,12 @@ impl Tool for PathSearchTool {
         _action_log: Entity<ActionLog>,
         cx: &mut App,
     ) -> (SharedString, Task<Result<String>>) {
-        let display_text = format!("Find paths matching `{glob}`");
+        let input_parsed = serde_json::from_value::<PathSearchToolInput>(input.clone());
+        let glob = match &input_parsed {
+            Ok(input) => &input.glob,
+            Err(_) => "unknown pattern",
+        };
+        let display_text = format!("Find paths matching `{}`", glob);
         let (offset, glob) = match serde_json::from_value::<PathSearchToolInput>(input) {
             Ok(input) => (input.offset.unwrap_or(0), input.glob),
             Err(err) => return (display_text.into(), Task::ready(Err(anyhow!(err)))),

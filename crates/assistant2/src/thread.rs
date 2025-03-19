@@ -605,7 +605,7 @@ impl Thread {
         let task = cx.spawn(async move |thread, cx| {
             let stream = model.stream_completion(request, &cx);
             let initial_token_usage =
-                thread.read_with(&cx, |thread, _cx| thread.cumulative_token_usage.clone());
+                thread.read_with(cx, |thread, _cx| thread.cumulative_token_usage.clone());
             let stream_completion = async {
                 let mut events = stream.await?;
                 let mut stop_reason = StopReason::EndTurn;
@@ -819,7 +819,12 @@ impl Thread {
                     cx,
                 );
 
+                self.tool_use
+                    .update_pending_tool_ui_text(tool_use.id.clone(), ui_text.clone());
+                cx.notify();
+
                 self.insert_tool_output(tool_use.id.clone(), ui_text, task, cx);
+                // TODO this is where we do whatever
             }
         }
 
@@ -859,7 +864,12 @@ impl Thread {
                 }
             };
 
-            self.insert_scripting_tool_output(scripting_tool_use.id.clone(), scripting_tool_use.name.clone().into(), task, cx);
+            let ui_text: SharedString = scripting_tool_use.name.clone().into();
+            self.scripting_tool_use
+                .update_pending_tool_ui_text(scripting_tool_use.id.clone(), ui_text.clone());
+            cx.notify();
+
+            self.insert_scripting_tool_output(scripting_tool_use.id.clone(), ui_text, task, cx);
         }
     }
 
@@ -877,9 +887,11 @@ impl Thread {
                 let output = output.await;
                 thread
                     .update(cx, |thread, cx| {
-                        let pending_tool_use = thread
-                            .tool_use
-                            .insert_tool_output(tool_use_id.clone(), ui_text, output);
+                        let pending_tool_use = thread.tool_use.insert_tool_output(
+                            tool_use_id.clone(),
+                            Some(ui_text),
+                            output,
+                        );
 
                         cx.emit(ThreadEvent::ToolFinished {
                             tool_use_id,
@@ -892,7 +904,8 @@ impl Thread {
         });
 
         self.tool_use
-            .run_pending_tool(tool_use_id, insert_output_task);
+            .run_pending_tool(tool_use_id, Some(ui_text), insert_output_task);
+        cx.notify();
     }
 
     pub fn insert_scripting_tool_output(
@@ -909,9 +922,11 @@ impl Thread {
                 let output = output.await;
                 thread
                     .update(cx, |thread, cx| {
-                        let pending_tool_use = thread
-                            .scripting_tool_use
-                            .insert_tool_output(tool_use_id.clone(), ui_text, output);
+                        let pending_tool_use = thread.scripting_tool_use.insert_tool_output(
+                            tool_use_id.clone(),
+                            Some(ui_text),
+                            output,
+                        );
 
                         cx.emit(ThreadEvent::ToolFinished {
                             tool_use_id,
@@ -924,7 +939,8 @@ impl Thread {
         });
 
         self.scripting_tool_use
-            .run_pending_tool(tool_use_id, insert_output_task);
+            .run_pending_tool(tool_use_id, Some(ui_text), insert_output_task);
+        cx.notify();
     }
 
     pub fn attach_tool_results(

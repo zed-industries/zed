@@ -341,6 +341,7 @@ impl ActiveThread {
                 self.thread.update(cx, |thread, cx| {
                     thread.use_pending_tools(cx);
                 });
+                cx.notify();
             }
             ThreadEvent::ToolFinished {
                 pending_tool_use,
@@ -409,6 +410,9 @@ impl ActiveThread {
                         .detach();
                     }
                 }
+            }
+            ThreadEvent::ToolUiTextChanged { .. } => {
+                cx.notify();
             }
         }
     }
@@ -786,7 +790,7 @@ impl ActiveThread {
                                     }),
                                 ))
                                 .child(div().text_ui(cx).child(self.render_markdown(
-                                    tool_use.ui_text.clone(),
+                                    dbg!(tool_use.ui_text.clone()),
                                     window,
                                     cx,
                                 ))),

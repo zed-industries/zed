@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use anyhow::{anyhow, bail, Result};
 use assistant_tool::{ActionLog, Tool, ToolSource};
-use gpui::{App, Entity, Task, SharedString};
+use gpui::{App, Entity, SharedString, Task};
 use language_model::LanguageModelRequestMessage;
 use project::Project;
 
@@ -66,46 +66,50 @@ impl Tool for ContextServerTool {
     ) -> (SharedString, Task<Result<String>>) {
         let tool_name = SharedString::from(self.tool.name.clone());
         if let Some(server) = self.server_manager.read(cx).get_server(&self.server_id) {
-            let task = cx.spawn({
-                let tool_name = self.tool.name.clone();
-                async move {
-                    let Some(protocol) = server.client() else {
-                        bail!("Context server not initialized");
-                    };
+            let tool_name_clone = self.tool.name.clone();
+            let server_clone = server.clone();
+            let input_clone = input.clone();
 
-                    let arguments = if let serde_json::Value::Object(map) = input {
-                        Some(map.into_iter().collect())
-                    } else {
-                        None
-                    };
+            let task = cx.spawn(async move |_cx| {
+                let Some(protocol) = server_clone.client() else {
+                    bail!("Context server not initialized");
+                };
 
-                    log::trace!(
-                        "Running tool: {} with arguments: {:?}",
-                        tool_name,
-                        arguments
-                    );
-                    let response = protocol.run_tool(tool_name, arguments).await?;
+                let arguments = if let serde_json::Value::Object(map) = input_clone {
+                    Some(map.into_iter().collect())
+                } else {
+                    None
+                };
 
-                    let mut result = String::new();
-                    for content in response.content {
-                        match content {
-                            types::ToolResponseContent::Text { text } => {
-                                result.push_str(&text);
-                            }
-                            types::ToolResponseContent::Image { .. } => {
-                                log::warn!("Ignoring image content from tool response");
-                            }
-                            types::ToolResponseContent::Resource { .. } => {
-                                log::warn!("Ignoring resource content from tool response");
-                            }
+                log::trace!(
+                    "Running tool: {} with arguments: {:?}",
+                    tool_name_clone,
+                    arguments
+                );
+                let response = protocol.run_tool(tool_name_clone, arguments).await?;
+
+                let mut result = String::new();
+                for content in response.content {
+                    match content {
+                        types::ToolResponseContent::Text { text } => {
+                            result.push_str(&text);
+                        }
+                        types::ToolResponseContent::Image { .. } => {
+                            log::warn!("Ignoring image content from tool response");
+                        }
+                        types::ToolResponseContent::Resource { .. } => {
+                            log::warn!("Ignoring resource content from tool response");
                         }
                     }
-                    Ok(result)
                 }
+                Ok(result)
             });
             (tool_name, task)
         } else {
-            (tool_name, Task::ready(Err(anyhow!("Context server not found"))))
+            (
+                tool_name,
+                Task::ready(Err(anyhow!("Context server not found"))),
+            )
         }
     }
 }

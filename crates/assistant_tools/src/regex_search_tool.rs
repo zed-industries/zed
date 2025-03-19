@@ -1,7 +1,7 @@
 use anyhow::{anyhow, Result};
 use assistant_tool::{ActionLog, Tool};
 use futures::StreamExt;
-use gpui::{App, Entity, Task, SharedString};
+use gpui::{App, Entity, SharedString, Task};
 use language::OffsetRangeExt;
 use language_model::LanguageModelRequestMessage;
 use project::{
@@ -55,7 +55,12 @@ impl Tool for RegexSearchTool {
 
         let (offset, regex) = match serde_json::from_value::<RegexSearchToolInput>(input) {
             Ok(input) => (input.offset.unwrap_or(0), input.regex),
-            Err(err) => return (SharedString::from("regex-search"), Task::ready(Err(anyhow!(err)))),
+            Err(err) => {
+                return (
+                    SharedString::from("regex-search"),
+                    Task::ready(Err(anyhow!(err))),
+                )
+            }
         };
 
         let display_text = SharedString::from(format!("Search files for `{regex}`"));

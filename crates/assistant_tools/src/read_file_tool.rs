@@ -71,11 +71,14 @@ impl Tool for ReadFileTool {
             }
         };
 
-        let display_text = format!("Read `{}`", &input.path);
+        let display_text = format!("Read `{}`", &input.path.display());
         let Some(project_path) = project.read(cx).find_project_path(&input.path, cx) else {
             return (
                 display_text.into(),
-                Task::ready(Err(anyhow!("Path {} not found in project", &input.path))),
+                Task::ready(Err(anyhow!(
+                    "Path {} not found in project",
+                    &input.path.display()
+                ))),
             );
         };
 

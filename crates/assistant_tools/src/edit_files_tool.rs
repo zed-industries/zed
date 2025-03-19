@@ -26,9 +26,6 @@ pub struct EditFilesToolInput {
     /// model, so explain the changes you want that model to make and which
     /// file paths need changing.
     ///
-    /// The description should be concise and clear. We will show this
-    /// description to the user as well.
-    ///
     /// WARNING: When specifying which file paths need changing, you MUST
     /// start each path with one of the project's root directories.
     ///
@@ -58,6 +55,11 @@ pub struct EditFilesToolInput {
     /// Notice how we never specify code snippets in the instructions!
     /// </example>
     pub edit_instructions: String,
+
+    /// A user-friendly description of what changes are being made.
+    /// This will be shown to the user in the UI to describe the edit operation.
+    /// Should be clear and concise, focusing on the high-level changes being made.
+    pub display_description: String,
 }
 
 pub struct EditFilesTool;
@@ -85,7 +87,7 @@ impl Tool for EditFilesTool {
         cx: &mut App,
     ) -> (SharedString, Task<Result<String>>) {
         let display_text = match serde_json::from_value::<EditFilesToolInput>(input.clone()) {
-            Ok(input) => format!("Edit files: {}", input.edit_instructions),
+            Ok(input) => input.display_description,
             Err(_) => self.name(),
         };
 
@@ -100,9 +102,8 @@ impl Tool for EditFilesTool {
                     log.new_request(input.edit_instructions.clone(), cx)
                 });
 
-                let display_text = SharedString::from("Edit files...");
                 let task = EditToolRequest::new(
-                    input,
+                    input.clone(),
                     messages,
                     project,
                     action_log,
@@ -135,6 +136,7 @@ impl Tool for EditFilesTool {
 struct EditToolRequest {
     parser: EditActionParser,
     output: String,
+    display_description: Option<String>,
     changed_buffers: HashSet<Entity<language::Buffer>>,
     bad_searches: Vec<BadSearch>,
     project: Entity<Project>,
@@ -226,6 +228,13 @@ impl EditToolRequest {
     }
 
     async fn process_response_chunk(&mut self, chunk: &str, cx: &mut AsyncApp) -> Result<()> {
+        // Check for description in the response
+        if self.display_description.is_none() && chunk.starts_with("Description: ") {
+            let desc_end = chunk.find('\n').unwrap_or(chunk.len());
+            self.display_description = Some(chunk[12..desc_end].trim().to_string());
+            return Ok(());
+        }
+
         let new_actions = self.parser.parse_chunk(chunk);
 
         if let Some((ref log, req_id)) = self.tool_log {
