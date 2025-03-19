@@ -10,7 +10,7 @@ use project::{
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use std::{cmp, fmt::Write, sync::Arc};
+use std::{cmp, fmt::Write, ops::Range, sync::Arc};
 use util::paths::PathMatcher;
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
@@ -79,6 +79,11 @@ impl Tool for RegexSearchTool {
 
         let results = project.update(cx, |project, cx| project.search(query, cx));
 
+        enum MatchRange {
+            Lines(Range<Point>),
+            LongLine(Range<Point>),
+        }
+
         cx.spawn(|cx| async move {
             futures::pin_mut!(results);
 
@@ -97,12 +102,28 @@ impl Tool for RegexSearchTool {
                         let mut file_header_written = false;
                         let mut ranges = ranges
                             .into_iter()
-                            .map(|range| {
+                            .map(|range| -> MatchRange {
                                 let mut point_range = range.to_point(buffer);
                                 let is_long_line = buffer.line_len(point_range.start.row) > MAX_LINE_LENGTH;
 
                                 if is_long_line {
+                                    let line_range = Point::new(point_range.start.row, 0)..Point::new(point_range.start.row, buffer.line_len(point_range.start.row));
+                                    let line_text = buffer.text_for_range(line_range).collect::<String>();
 
+                                    for (match_start, match_end) in find_matches(line_text.clone(), &regex) {
+                                        let start_char = match_start.saturating_sub(LONG_LINE_CONTEXT);
+                                        let end_char = (match_end + LONG_LINE_CONTEXT).min(buffer.line_len(point_range.start.row) as usize);
+                                        writeln!(output, "\n### Line {}, chars {}-{}\n```", point_range.start.row + 1, start_char, end_char)?;
+                                        output.push_str(&line_text[start_char..end_char]);
+                                        output.push_str("\n```\n");
+                                    }
+                                    matches_found += 1;
+
+                                    if matches_found >= RESULTS_PER_PAGE {
+                                        has_more_matches = true;
+                                    }
+
+                                    Ok((Point::new(point_range.start.row + 1, 0)..Point::new(point_range.start.row + 1, 0), true))
                                 } else {
                                     point_range.start.row = point_range.start.row.saturating_sub(CONTEXT_LINES);
                                     point_range.start.column = 0;
@@ -111,116 +132,50 @@ impl Tool for RegexSearchTool {
                                         point_range.end.row + CONTEXT_LINES,
                                     );
                                     point_range.end.column = buffer.line_len(point_range.end.row);
+                                    Ok((point_range, is_long_line))
                                 }
-
-                                (point_range, is_long_line)
                             })
                             .peekable();
 
-                        while let Some(mut range) = ranges.next() {
+                        while let Some(range_result) = ranges.next() {
+                            let (range, is_long) = range_result?;
+                            // Skip long lines as they were already handled
+                            if is_long {
+                                continue;
+                            }
+
                             if skips_remaining > 0 {
                                 skips_remaining -= 1;
                                 continue;
                             }
 
-                            // We'd already found a full page of matches, and we just found one more.
+                            // We've found a full page of matches
                             if matches_found >= RESULTS_PER_PAGE {
                                 has_more_matches = true;
-                                return Ok(());
+                                break;
                             }
 
-                            while let Some(next_range) = ranges.peek() {
-                                if range.end.row >= next_range.start.row {
-                                    range.end = next_range.end;
-                                    ranges.next();
-                                } else {
-                                    break;
-                                }
-                            }
-
+                            // Write file header if needed
                             if !file_header_written {
-                                writeln!(output, "\n## Matches in {}", path.display())?;
+                                let _ = writeln!(output, "\n## Matches in {}", path.display());
                                 file_header_written = true;
                             }
 
-                            let mut processed_lines = std::collections::HashSet::<u32>::new();
+                            // Show the match with context lines
+                            let context_start = range.start.row;
+                            let context_end = range.end.row;
+                            let context_range = Point::new(context_start, 0)..Point::new(context_end, buffer.line_len(context_end));
+                            let context_text = buffer.text_for_range(context_range).collect::<String>();
 
-                            // Process matches in two passes:
-                            // 1. Long lines (>240 chars): Show only the matched line, with 120 chars of context around each match
-                            // 2. Other lines: Show the matched line plus context lines before/after
-
-                            // First pass: handle long lines
-                            for row in range.start.row..=range.end.row {
-                                let line_len = buffer.line_len(row);
-                                if line_len > MAX_LINE_LENGTH {
-                                    let line_range = Point::new(row, 0)..Point::new(row, line_len);
-                                    let line_text = buffer.text_for_range(line_range).collect::<String>();
-
-                                    if line_text.contains(&regex) {
-                                        if skips_remaining == 0 {
-                                            // Show each match in the long line with limited context
-                                            for (match_start, match_end) in find_matches(line_text.clone(), &regex) {
-                                                let start_char = match_start.saturating_sub(LONG_LINE_CONTEXT);
-                                                let end_char = (match_end + LONG_LINE_CONTEXT).min(line_len as usize);
-                                                writeln!(output, "\n### Line {}, chars {}-{}\n```", row + 1, start_char, end_char)?;
-                                                output.push_str(&line_text[start_char..end_char]);
-                                                output.push_str("\n```\n");
-                                            }
-                                            matches_found += 1;
-                                        } else {
-                                            skips_remaining -= 1;
-                                        }
-
-                                        processed_lines.insert(row);
-                                    }
-                                }
+                            if context_text.contains(&regex) {
+                                let _ = writeln!(output, "\n### Lines {}-{}\n```", context_start + 1, context_end + 1);
+                                output.push_str(&context_text);
+                                output.push_str("\n```\n");
+                                matches_found += 1;
                             }
-
-                            // Second pass: handle regular lines with context
-                            let mut row = range.start.row;
-                            while row <= range.end.row {
-                                if processed_lines.contains(&row) {
-                                    row += 1;
-                                    continue;
-                                }
-
-                                let line_len = buffer.line_len(row);
-                                let line_range = Point::new(row, 0)..Point::new(row, line_len);
-                                let line_text = buffer.text_for_range(line_range).collect::<String>();
-
-                                if line_text.contains(&regex) {
-                                    if skips_remaining > 0 {
-                                        skips_remaining -= 1;
-                                        row += 1;
-                                        continue;
-                                    }
-
-                                    // Show the match with context lines
-                                    let context_start = row.saturating_sub(CONTEXT_LINES);
-                                    let context_end = (row + CONTEXT_LINES).min(buffer.max_point().row);
-                                    let context_range = Point::new(context_start, 0)..Point::new(context_end, buffer.line_len(context_end));
-
-                                    writeln!(output, "\n### Lines {}-{}\n```", context_start + 1, context_end + 1)?;
-                                    output.push_str(&buffer.text_for_range(context_range).collect::<String>());
-                                    output.push_str("\n```\n");
-
-                                    // Mark all lines in this context range as processed
-                                    for r in context_start..=context_end {
-                                        processed_lines.insert(r);
-                                    }
-
-                                    matches_found += 1;
-                                    row = context_end + 1;
-                                } else {
-                                    row += 1;
-                                }
-                            }
-
                         }
                     }
-
-                    Ok(())
-                })??;
+                })?;
             }
 
             if matches_found == 0 {
@@ -319,18 +274,19 @@ mod tests {
     #[test]
     fn test_line_length_classification() {
         // Test if lines are correctly classified as long or regular
+        let max_len = MAX_LINE_LENGTH as usize;
 
         // Line shorter than MAX_LINE_LENGTH
-        let regular_line = "x".repeat(MAX_LINE_LENGTH - 1);
-        assert!(regular_line.len() < MAX_LINE_LENGTH);
+        let regular_line = "x".repeat(max_len - 1);
+        assert!(regular_line.len() < max_len);
 
         // Line exactly at MAX_LINE_LENGTH
-        let boundary_line = "x".repeat(MAX_LINE_LENGTH);
-        assert_eq!(boundary_line.len(), MAX_LINE_LENGTH);
+        let boundary_line = "x".repeat(max_len);
+        assert_eq!(boundary_line.len(), max_len);
 
         // Line longer than MAX_LINE_LENGTH
-        let long_line = "x".repeat(MAX_LINE_LENGTH + 1);
-        assert!(long_line.len() > MAX_LINE_LENGTH);
+        let long_line = "x".repeat(max_len + 1);
+        assert!(long_line.len() > max_len);
     }
 
     #[test]
@@ -338,9 +294,9 @@ mod tests {
         // For long lines: "### Line X, chars Y-Z"
         // For regular lines: "### Lines X-Y"
 
-        let long_line_row = 42_u32;
-        let start_char = 100;
-        let end_char = 340;
+        let long_line_row = 42_usize;
+        let start_char = 100_usize;
+        let end_char = 340_usize;
 
         // In the implementation, the heading format for long lines is "### Line"
         let long_line_heading = format!(
@@ -351,8 +307,8 @@ mod tests {
         );
         assert_eq!(long_line_heading, "### Line 43, chars 100-340");
 
-        let context_start = 40_u32;
-        let context_end = 44_u32;
+        let context_start = 40_usize;
+        let context_end = 44_usize;
         let regular_heading = format!("### Lines {}-{}", context_start + 1, context_end + 1);
         assert_eq!(regular_heading, "### Lines 41-45");
     }
@@ -400,12 +356,13 @@ mod tests {
         // Test very long lines with matches at different positions
 
         // Create a very long line (3 * MAX_LINE_LENGTH)
-        let long_prefix = "prefix_".repeat(MAX_LINE_LENGTH / 7);
-        let middle = "middle_".repeat(MAX_LINE_LENGTH / 7);
-        let long_suffix = "suffix_".repeat(MAX_LINE_LENGTH / 7);
+        let max_len = MAX_LINE_LENGTH as usize;
+        let long_prefix = "prefix_".repeat(max_len / 7);
+        let middle = "middle_".repeat(max_len / 7);
+        let long_suffix = "suffix_".repeat(max_len / 7);
         let very_long_line = format!("{}{}{}", long_prefix, middle, long_suffix);
 
-        assert!(very_long_line.len() > MAX_LINE_LENGTH);
+        assert!(very_long_line.len() > max_len);
 
         // Find matches for "middle" in the very long line
         let matches = find_matches(very_long_line.clone(), "middle_");
@@ -439,11 +396,11 @@ mod tests {
         // - Format: "### Lines X-Y"
 
         // Test that multiple matches in a long line are shown separately
-        let row = 42_u32;
-        let match1_start: usize = 100;
-        let match1_end: usize = 110;
-        let match2_start: usize = 300;
-        let match2_end: usize = 310;
+        let row = 42_usize;
+        let match1_start = 100_usize;
+        let match1_end = 110_usize;
+        let match2_start = 300_usize;
+        let match2_end = 310_usize;
 
         let heading1 = format!(
             "### Line {}, chars {}-{}",
