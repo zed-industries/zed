@@ -1,7 +1,6 @@
-use crate::Thread;
+use crate::{Thread, ThreadEvent};
 use anyhow::Result;
-use assistant_tool::ActionLog;
-use collections::{HashMap, HashSet};
+use collections::HashSet;
 use editor::{Editor, EditorEvent, MultiBuffer};
 use gpui::{
     prelude::*, AnyElement, AnyView, App, Entity, EventEmitter, FocusHandle, Focusable,
@@ -24,6 +23,7 @@ pub struct AssistantDiff {
     thread: Entity<Thread>,
     focus_handle: FocusHandle,
     workspace: WeakEntity<Workspace>,
+    title: SharedString,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -67,33 +67,37 @@ impl AssistantDiff {
                 Editor::for_multibuffer(multibuffer.clone(), Some(project.clone()), window, cx);
             editor.disable_inline_diagnostics();
             editor.set_expand_all_diff_hunks(cx);
-            // todo!()
-            // editor.register_addon(...);
             editor
         });
 
         let action_log = thread.read(cx).action_log().clone();
         let mut this = Self {
-            _subscriptions: vec![cx.observe_in(
-                &action_log,
-                window,
-                |this, _action_log, window, cx| this.refresh(window, cx),
-            )],
+            _subscriptions: vec![
+                cx.observe_in(&action_log, window, |this, _action_log, window, cx| {
+                    this.update_excerpts(window, cx)
+                }),
+                cx.subscribe(&thread, |this, _thread, event, cx| {
+                    this.handle_thread_event(event, cx)
+                }),
+            ],
+            title: SharedString::default(),
             multibuffer,
             editor,
             thread,
             focus_handle,
             workspace,
         };
-        this.refresh(window, cx);
+        this.update_excerpts(window, cx);
+        this.update_title(cx);
         this
     }
 
-    fn refresh(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    fn update_excerpts(&mut self, window: &mut Window, cx: &mut Context<'_, AssistantDiff>) {
         let thread = self.thread.read(cx);
+        let unreviewed_buffers = thread.action_log().read(cx).unreviewed_buffers();
         let mut paths_to_delete = self.multibuffer.read(cx).paths().collect::<HashSet<_>>();
 
-        for (buffer, tracked) in thread.action_log().read(cx).unreviewed_buffers() {
+        for (buffer, tracked) in unreviewed_buffers {
             let Some(file) = buffer.read(cx).file().cloned() else {
                 continue;
             };
@@ -155,6 +159,25 @@ impl AssistantDiff {
             });
         }
     }
+
+    fn update_title(&mut self, cx: &mut Context<Self>) {
+        let new_title = self
+            .thread
+            .read(cx)
+            .summary()
+            .unwrap_or("Assistant Changes".into());
+        if new_title != self.title {
+            self.title = new_title;
+            cx.emit(EditorEvent::TitleChanged);
+        }
+    }
+
+    fn handle_thread_event(&mut self, event: &ThreadEvent, cx: &mut Context<Self>) {
+        match event {
+            ThreadEvent::SummaryChanged => self.update_title(cx),
+            _ => {}
+        }
+    }
 }
 
 impl EventEmitter<EditorEvent> for AssistantDiff {}
@@ -173,7 +196,7 @@ impl Item for AssistantDiff {
     type Event = EditorEvent;
 
     fn tab_icon(&self, _window: &Window, _cx: &App) -> Option<Icon> {
-        Some(Icon::new(IconName::Ai).color(Color::Muted))
+        Some(Icon::new(IconName::ZedAssistant).color(Color::Muted))
     }
 
     fn to_item_events(event: &EditorEvent, f: impl FnMut(ItemEvent)) {
@@ -199,8 +222,13 @@ impl Item for AssistantDiff {
         Some("Project Diff".into())
     }
 
-    fn tab_content(&self, params: TabContentParams, _window: &Window, _: &App) -> AnyElement {
-        Label::new("Uncommitted Changes")
+    fn tab_content(&self, params: TabContentParams, _window: &Window, cx: &App) -> AnyElement {
+        let summary = self
+            .thread
+            .read(cx)
+            .summary()
+            .unwrap_or("Assistant Changes".into());
+        Label::new(format!("Review: {}", summary))
             .color(if params.selected {
                 Color::Default
             } else {
