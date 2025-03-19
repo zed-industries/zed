@@ -6763,7 +6763,7 @@ mod tests {
 
         let fs = FakeFs::new(cx.executor().clone());
         fs.insert_tree(
-            "/root",
+            path!("/root"),
             json!({
                 "tree1": {
                     ".git": {},
@@ -6794,7 +6794,7 @@ mod tests {
 
         // Mark files as git modified
         fs.set_git_content_for_repo(
-            "/root/tree1/.git".as_ref(),
+            path!("/root/tree1/.git").as_ref(),
             &[
                 ("dir1/modified1.txt".into(), "modified".into(), None),
                 ("dir1/modified2.txt".into(), "modified".into(), None),
@@ -6803,7 +6803,7 @@ mod tests {
             ],
         );
         fs.set_git_content_for_repo(
-            "/root/tree2/.git".as_ref(),
+            path!("/root/tree2/.git").as_ref(),
             &[
                 ("dir3/modified5.txt".into(), "modified".into(), None),
                 ("modified6.txt".into(), "modified".into(), None),
@@ -6812,7 +6812,7 @@ mod tests {
 
         let project = Project::test(
             fs.clone(),
-            ["/root/tree1".as_ref(), "/root/tree2".as_ref()],
+            [path!("/root/tree1").as_ref(), path!("/root/tree2").as_ref()],
             cx,
         )
         .await;

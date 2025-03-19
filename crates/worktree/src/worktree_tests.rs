@@ -700,7 +700,7 @@ async fn test_rescan_with_gitignore(cx: &mut TestAppContext) {
     });
     let fs = FakeFs::new(cx.background_executor.clone());
     fs.insert_tree(
-        "/root",
+        path!("/root"),
         json!({
             ".gitignore": "ancestor-ignored-file1\nancestor-ignored-file2\n",
             "tree": {
@@ -718,7 +718,7 @@ async fn test_rescan_with_gitignore(cx: &mut TestAppContext) {
     )
     .await;
     fs.set_head_and_index_for_repo(
-        "/root/tree/.git".as_ref(),
+        path!("/root/tree/.git").as_ref(),
         &[
             (".gitignore".into(), "ignored-dir\n".into()),
             ("tracked-dir/tracked-file1".into(), "".into()),
@@ -726,7 +726,7 @@ async fn test_rescan_with_gitignore(cx: &mut TestAppContext) {
     );
 
     let tree = Worktree::local(
-        "/root/tree".as_ref(),
+        path!("/root/tree").as_ref(),
         true,
         fs.clone(),
         Default::default(),
@@ -753,13 +753,13 @@ async fn test_rescan_with_gitignore(cx: &mut TestAppContext) {
     });
 
     fs.create_file(
-        "/root/tree/tracked-dir/tracked-file2".as_ref(),
+        path!("/root/tree/tracked-dir/tracked-file2").as_ref(),
         Default::default(),
     )
     .await
     .unwrap();
     fs.set_index_for_repo(
-        "/root/tree/.git".as_ref(),
+        path!("/root/tree/.git").as_ref(),
         &[
             (".gitignore".into(), "ignored-dir\n".into()),
             ("tracked-dir/tracked-file1".into(), "".into()),
@@ -767,13 +767,13 @@ async fn test_rescan_with_gitignore(cx: &mut TestAppContext) {
         ],
     );
     fs.create_file(
-        "/root/tree/tracked-dir/ancestor-ignored-file2".as_ref(),
+        path!("/root/tree/tracked-dir/ancestor-ignored-file2").as_ref(),
         Default::default(),
     )
     .await
     .unwrap();
     fs.create_file(
-        "/root/tree/ignored-dir/ignored-file2".as_ref(),
+        path!("/root/tree/ignored-dir/ignored-file2").as_ref(),
         Default::default(),
     )
     .await
@@ -799,7 +799,7 @@ async fn test_update_gitignore(cx: &mut TestAppContext) {
     init_test(cx);
     let fs = FakeFs::new(cx.background_executor.clone());
     fs.insert_tree(
-        "/root",
+        path!("/root"),
         json!({
             ".git": {},
             ".gitignore": "*.txt\n",
@@ -810,7 +810,7 @@ async fn test_update_gitignore(cx: &mut TestAppContext) {
     .await;
 
     fs.set_head_and_index_for_repo(
-        "/root/.git".as_ref(),
+        path!("/root/.git").as_ref(),
         &[
             (".gitignore".into(), "*.txt\n".into()),
             ("a.xml".into(), "<a></a>".into()),
@@ -818,7 +818,7 @@ async fn test_update_gitignore(cx: &mut TestAppContext) {
     );
 
     let tree = Worktree::local(
-        "/root".as_ref(),
+        path!("/root").as_ref(),
         true,
         fs.clone(),
         Default::default(),
@@ -845,11 +845,11 @@ async fn test_update_gitignore(cx: &mut TestAppContext) {
     });
 
     // Change the gitignore, and stage the newly non-ignored file.
-    fs.atomic_write("/root/.gitignore".into(), "*.xml\n".into())
+    fs.atomic_write(path!("/root/.gitignore").into(), "*.xml\n".into())
         .await
         .unwrap();
     fs.set_index_for_repo(
-        Path::new("/root/.git"),
+        Path::new(path!("/root/.git")),
         &[
             (".gitignore".into(), "*.txt\n".into()),
             ("a.xml".into(), "<a></a>".into()),
@@ -1480,7 +1480,7 @@ async fn test_bump_mtime_of_git_repo_workdir(cx: &mut TestAppContext) {
     // Create a worktree with a git directory.
     let fs = FakeFs::new(cx.background_executor.clone());
     fs.insert_tree(
-        "/root",
+        path!("/root"),
         json!({
             ".git": {},
             "a.txt": "",
@@ -1491,13 +1491,13 @@ async fn test_bump_mtime_of_git_repo_workdir(cx: &mut TestAppContext) {
     )
     .await;
     fs.set_head_and_index_for_repo(
-        "/root/.git".as_ref(),
+        path!("/root/.git").as_ref(),
         &[("a.txt".into(), "".into()), ("b/c.txt".into(), "".into())],
     );
     cx.run_until_parked();
 
     let tree = Worktree::local(
-        "/root".as_ref(),
+        path!("/root").as_ref(),
         true,
         fs.clone(),
         Default::default(),
@@ -1517,7 +1517,7 @@ async fn test_bump_mtime_of_git_repo_workdir(cx: &mut TestAppContext) {
     // Regression test: after the directory is scanned, touch the git repo's
     // working directory, bumping its mtime. That directory keeps its project
     // entry id after the directories are re-scanned.
-    fs.touch_path("/root").await;
+    fs.touch_path(path!("/root")).await;
     cx.executor().run_until_parked();
 
     let (new_entry_ids, new_mtimes) = tree.read_with(cx, |tree, _| {
@@ -1532,7 +1532,7 @@ async fn test_bump_mtime_of_git_repo_workdir(cx: &mut TestAppContext) {
     // Regression test: changes to the git repository should still be
     // detected.
     fs.set_head_for_repo(
-        "/root/.git".as_ref(),
+        path!("/root/.git").as_ref(),
         &[
             ("a.txt".into(), "".into()),
             ("b/c.txt".into(), "something-else".into()),
@@ -2922,7 +2922,7 @@ async fn test_traverse_with_git_status(cx: &mut TestAppContext) {
     init_test(cx);
     let fs = FakeFs::new(cx.background_executor.clone());
     fs.insert_tree(
-        "/root",
+        path!("/root"),
         json!({
             "x": {
                 ".git": {},
@@ -2945,23 +2945,23 @@ async fn test_traverse_with_git_status(cx: &mut TestAppContext) {
     .await;
 
     fs.set_status_for_repo(
-        Path::new("/root/x/.git"),
+        Path::new(path!("/root/x/.git")),
         &[
             (Path::new("x2.txt"), StatusCode::Modified.index()),
             (Path::new("z.txt"), StatusCode::Added.index()),
         ],
     );
     fs.set_status_for_repo(
-        Path::new("/root/x/y/.git"),
+        Path::new(path!("/root/x/y/.git")),
         &[(Path::new("y1.txt"), CONFLICT)],
     );
     fs.set_status_for_repo(
-        Path::new("/root/z/.git"),
+        Path::new(path!("/root/z/.git")),
         &[(Path::new("z2.txt"), StatusCode::Added.index())],
     );
 
     let tree = Worktree::local(
-        Path::new("/root"),
+        Path::new(path!("/root")),
         true,
         fs.clone(),
         Default::default(),
@@ -3009,7 +3009,7 @@ async fn test_propagate_git_statuses(cx: &mut TestAppContext) {
     init_test(cx);
     let fs = FakeFs::new(cx.background_executor.clone());
     fs.insert_tree(
-        "/root",
+        path!("/root"),
         json!({
             ".git": {},
             "a": {
@@ -3035,7 +3035,7 @@ async fn test_propagate_git_statuses(cx: &mut TestAppContext) {
     .await;
 
     fs.set_status_for_repo(
-        Path::new("/root/.git"),
+        Path::new(path!("/root/.git")),
         &[
             (Path::new("a/b/c1.txt"), StatusCode::Added.index()),
             (Path::new("a/d/e2.txt"), StatusCode::Modified.index()),
@@ -3044,7 +3044,7 @@ async fn test_propagate_git_statuses(cx: &mut TestAppContext) {
     );
 
     let tree = Worktree::local(
-        Path::new("/root"),
+        Path::new(path!("/root")),
         true,
         fs.clone(),
         Default::default(),
@@ -3117,7 +3117,7 @@ async fn test_propagate_statuses_for_repos_under_project(cx: &mut TestAppContext
     init_test(cx);
     let fs = FakeFs::new(cx.background_executor.clone());
     fs.insert_tree(
-        "/root",
+        path!("/root"),
         json!({
             "x": {
                 ".git": {},
@@ -3139,23 +3139,23 @@ async fn test_propagate_statuses_for_repos_under_project(cx: &mut TestAppContext
     .await;
 
     fs.set_status_for_repo(
-        Path::new("/root/x/.git"),
+        Path::new(path!("/root/x/.git")),
         &[(Path::new("x1.txt"), StatusCode::Added.index())],
     );
     fs.set_status_for_repo(
-        Path::new("/root/y/.git"),
+        Path::new(path!("/root/y/.git")),
         &[
             (Path::new("y1.txt"), CONFLICT),
             (Path::new("y2.txt"), StatusCode::Modified.index()),
         ],
     );
     fs.set_status_for_repo(
-        Path::new("/root/z/.git"),
+        Path::new(path!("/root/z/.git")),
         &[(Path::new("z2.txt"), StatusCode::Modified.index())],
     );
 
     let tree = Worktree::local(
-        Path::new("/root"),
+        Path::new(path!("/root")),
         true,
         fs.clone(),
         Default::default(),
@@ -3219,7 +3219,7 @@ async fn test_propagate_statuses_for_nested_repos(cx: &mut TestAppContext) {
     init_test(cx);
     let fs = FakeFs::new(cx.background_executor.clone());
     fs.insert_tree(
-        "/root",
+        path!("/root"),
         json!({
             "x": {
                 ".git": {},
@@ -3242,24 +3242,24 @@ async fn test_propagate_statuses_for_nested_repos(cx: &mut TestAppContext) {
     .await;
 
     fs.set_status_for_repo(
-        Path::new("/root/x/.git"),
+        Path::new(path!("/root/x/.git")),
         &[
             (Path::new("x2.txt"), StatusCode::Modified.index()),
             (Path::new("z.txt"), StatusCode::Added.index()),
         ],
     );
     fs.set_status_for_repo(
-        Path::new("/root/x/y/.git"),
+        Path::new(path!("/root/x/y/.git")),
         &[(Path::new("y1.txt"), CONFLICT)],
     );
 
     fs.set_status_for_repo(
-        Path::new("/root/z/.git"),
+        Path::new(path!("/root/z/.git")),
         &[(Path::new("z2.txt"), StatusCode::Added.index())],
     );
 
     let tree = Worktree::local(
-        Path::new("/root"),
+        Path::new(path!("/root")),
         true,
         fs.clone(),
         Default::default(),
