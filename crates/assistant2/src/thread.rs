@@ -494,7 +494,7 @@ impl Thread {
                     abs_path,
                     rules_file: Some(RulesFile {
                         rel_path: rel_rules_path,
-                        text,
+                        text: text.trim().to_string(),
                     }),
                 })
             })
