@@ -226,7 +226,6 @@ pub mod core_video {
     #[cfg(target_os = "macos")]
     use std::ffi::c_void;
 
-    use super::*;
     pub use crate::bindings::{
         kCVPixelFormatType_32BGRA, kCVPixelFormatType_420YpCbCr8BiPlanarFullRange,
         kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange, kCVPixelFormatType_420YpCbCr8Planar,

@@ -12,7 +12,7 @@ use blade_util::{BufferBelt, BufferBeltDescriptor};
 use bytemuck::{Pod, Zeroable};
 use collections::HashMap;
 #[cfg(target_os = "macos")]
-use media::core_video::core_video::CVMetalTextureCache;
+use media::core_video::CVMetalTextureCache;
 use std::{mem, sync::Arc};
 
 const MAX_FRAME_TIME_MS: u32 = 10000;

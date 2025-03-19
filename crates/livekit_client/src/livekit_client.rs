@@ -423,16 +423,12 @@ fn create_buffer_pool(width: u32, height: u32) -> Result<CVPixelBufferPool> {
         (format_key, format.into_CFType()),
     ]);
 
-    Ok(
-        pixel_buffer_pool::CVPixelBufferPool::new(None, Some(&buffer_attributes)).map_err(
-            |cv_return| {
-                anyhow!(
-                    "failed to create pixel buffer pool: CVReturn({})",
-                    cv_return
-                )
-            },
-        )?,
-    )
+    pixel_buffer_pool::CVPixelBufferPool::new(None, Some(&buffer_attributes)).map_err(|cv_return| {
+        anyhow!(
+            "failed to create pixel buffer pool: CVReturn({})",
+            cv_return
+        )
+    })
 }
 
 #[cfg(target_os = "macos")]
@@ -470,8 +466,8 @@ fn video_frame_buffer_from_webrtc(
         let dst_uv_len = pixel_buffer.get_height_of_plane(1) * dst_uv_stride;
         let width = pixel_buffer.get_width();
         let height = pixel_buffer.get_height();
-        let dst_y_buffer = std::slice::from_raw_parts_mut(dst_y as *mut u8, dst_y_len as usize);
-        let dst_uv_buffer = std::slice::from_raw_parts_mut(dst_uv as *mut u8, dst_uv_len as usize);
+        let dst_y_buffer = std::slice::from_raw_parts_mut(dst_y as *mut u8, dst_y_len);
+        let dst_uv_buffer = std::slice::from_raw_parts_mut(dst_uv as *mut u8, dst_uv_len);
 
         let (stride_y, stride_u, stride_v) = i420_buffer.strides();
         let (src_y, src_u, src_v) = i420_buffer.data();
@@ -545,9 +541,7 @@ fn video_frame_buffer_from_webrtc(buffer: Box<dyn VideoBuffer>) -> Option<Remote
 
 #[cfg(target_os = "macos")]
 fn video_frame_buffer_to_webrtc(frame: ScreenCaptureFrame) -> Option<impl AsRef<dyn VideoBuffer>> {
-    use core_video::buffer::__CVBuffer;
-
-    let pixel_buffer = frame.0.as_concrete_TypeRef() as *mut __CVBuffer;
+    let pixel_buffer = frame.0.as_concrete_TypeRef();
     std::mem::forget(frame.0);
     unsafe {
         Some(webrtc::video_frame::native::NativeBuffer::from_cv_pixel_buffer(pixel_buffer as _))

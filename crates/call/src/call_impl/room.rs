@@ -1447,7 +1447,7 @@ impl Room {
             let sources = sources.await??;
             let source = sources.first().ok_or_else(|| anyhow!("no display found"))?;
 
-            let (track, stream) = capture_local_video_track(&**source, &mut cx).await?;
+            let (track, stream) = capture_local_video_track(&**source, cx).await?;
 
             let participant2 = participant.clone();
             let mut cx2 = cx.clone();
@@ -1665,10 +1665,10 @@ fn spawn_room_connection(
     use gpui_tokio::Tokio;
 
     if let Some(connection_info) = livekit_connection_info {
-        cx.spawn(|this, mut cx| async move {
+        cx.spawn(async move |this, cx| {
             let (room, mut events) = Tokio::spawn(cx, async move {
                 let connector =
-                    tokio_tungstenite::Connector::Rustls(Arc::new(http_client::tls_config()));
+                    tokio_tungstenite::Connector::Rustls(Arc::new(http_client_tls::tls_config()));
                 let mut config = RoomOptions::default();
                 config.connector = Some(connector);
                 livekit::Room::connect(&connection_info.server_url, &connection_info.token, config)
