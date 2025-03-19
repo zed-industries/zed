@@ -811,7 +811,7 @@ impl Thread {
 
         for tool_use in pending_tool_uses {
             if let Some(tool) = self.tools.tool(&tool_use.name, cx) {
-                let task = tool.run(
+                let (ui_text, task) = tool.run(
                     tool_use.input,
                     &request.messages,
                     self.project.clone(),
@@ -819,7 +819,7 @@ impl Thread {
                     cx,
                 );
 
-                self.insert_tool_output(tool_use.id.clone(), task, cx);
+                self.insert_tool_output(tool_use.id.clone(), ui_text, task, cx);
             }
         }
 
@@ -859,25 +859,27 @@ impl Thread {
                 }
             };
 
-            self.insert_scripting_tool_output(scripting_tool_use.id.clone(), task, cx);
+            self.insert_scripting_tool_output(scripting_tool_use.id.clone(), scripting_tool_use.name.clone().into(), task, cx);
         }
     }
 
     pub fn insert_tool_output(
         &mut self,
         tool_use_id: LanguageModelToolUseId,
+        ui_text: SharedString,
         output: Task<Result<String>>,
         cx: &mut Context<Self>,
     ) {
         let insert_output_task = cx.spawn({
             let tool_use_id = tool_use_id.clone();
+            let ui_text = ui_text.clone();
             async move |thread, cx| {
                 let output = output.await;
                 thread
                     .update(cx, |thread, cx| {
                         let pending_tool_use = thread
                             .tool_use
-                            .insert_tool_output(tool_use_id.clone(), output);
+                            .insert_tool_output(tool_use_id.clone(), ui_text, output);
 
                         cx.emit(ThreadEvent::ToolFinished {
                             tool_use_id,
@@ -896,18 +898,20 @@ impl Thread {
     pub fn insert_scripting_tool_output(
         &mut self,
         tool_use_id: LanguageModelToolUseId,
+        ui_text: SharedString,
         output: Task<Result<String>>,
         cx: &mut Context<Self>,
     ) {
         let insert_output_task = cx.spawn({
             let tool_use_id = tool_use_id.clone();
+            let ui_text = ui_text.clone();
             async move |thread, cx| {
                 let output = output.await;
                 thread
                     .update(cx, |thread, cx| {
                         let pending_tool_use = thread
                             .scripting_tool_use
-                            .insert_tool_output(tool_use_id.clone(), output);
+                            .insert_tool_output(tool_use_id.clone(), ui_text, output);
 
                         cx.emit(ThreadEvent::ToolFinished {
                             tool_use_id,

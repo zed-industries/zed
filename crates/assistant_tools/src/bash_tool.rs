@@ -1,6 +1,6 @@
 use anyhow::{anyhow, Context as _, Result};
 use assistant_tool::{ActionLog, Tool};
-use gpui::{App, Entity, Task};
+use gpui::{App, Entity, SharedString, Task};
 use language_model::LanguageModelRequestMessage;
 use project::Project;
 use schemars::JsonSchema;
@@ -39,18 +39,27 @@ impl Tool for BashTool {
         project: Entity<Project>,
         _action_log: Entity<ActionLog>,
         cx: &mut App,
-    ) -> Task<Result<String>> {
+    ) -> (SharedString, Task<Result<String>>) {
+        // Extract the command from input for display
+        let display_command = match serde_json::from_value::<BashToolInput>(input.clone()) {
+            Ok(input) => format!("$ {}", input.command),
+            Err(_) => self.name(),
+        };
+
         let input: BashToolInput = match serde_json::from_value(input) {
             Ok(input) => input,
-            Err(err) => return Task::ready(Err(anyhow!(err))),
+            Err(err) => return (display_command.into(), Task::ready(Err(anyhow!(err)))),
         };
 
         let Some(worktree) = project.read(cx).worktree_for_root_name(&input.cd, cx) else {
-            return Task::ready(Err(anyhow!("Working directory not found in the project")));
+            return (
+                display_command.into(),
+                Task::ready(Err(anyhow!("Working directory not found in the project"))),
+            );
         };
         let working_directory = worktree.read(cx).abs_path();
 
-        cx.spawn(async move |_| {
+        let task = cx.spawn(async move |_| {
             // Add 2>&1 to merge stderr into stdout for proper interleaving.
             let command = format!("({}) 2>&1", input.command);
 
@@ -77,6 +86,8 @@ impl Tool for BashTool {
                     &output_string
                 ))
             }
-        })
+        });
+
+        (display_command.into(), task)
     }
 }

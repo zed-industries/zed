@@ -171,9 +171,16 @@ impl ToolUseState {
                 ToolUseStatus::Pending
             })();
 
+            let ui_text = if let Some(pending_tool_use) = self.pending_tool_uses_by_id.get(&tool_use.id) {
+                pending_tool_use.ui_text.clone().into()
+            } else {
+                tool_use.name.clone().into()
+            };
+
             tool_uses.push(ToolUse {
                 id: tool_use.id.clone(),
                 name: tool_use.name.clone().into(),
+                ui_text,
                 input: tool_use.input.clone(),
                 status,
             })
@@ -229,7 +236,8 @@ impl ToolUseState {
             PendingToolUse {
                 assistant_message_id,
                 id: tool_use.id,
-                name: tool_use.name,
+                name: tool_use.name.clone(),
+                ui_text: tool_use.name,
                 input: tool_use.input,
                 status: PendingToolUseStatus::Idle,
             },
@@ -247,6 +255,7 @@ impl ToolUseState {
     pub fn insert_tool_output(
         &mut self,
         tool_use_id: LanguageModelToolUseId,
+        ui_text: SharedString,
         output: Result<String>,
     ) -> Option<PendingToolUse> {
         match output {
@@ -318,6 +327,7 @@ pub struct PendingToolUse {
     #[allow(unused)]
     pub assistant_message_id: MessageId,
     pub name: Arc<str>,
+    pub ui_text: Arc<str>,
     pub input: serde_json::Value,
     pub status: PendingToolUseStatus,
 }
