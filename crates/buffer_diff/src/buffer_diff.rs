@@ -357,7 +357,15 @@ impl BufferDiffInner {
             edits.push((index_range, replacement_text));
         }
 
-        debug_assert!(edits.iter().is_sorted_by_key(|(range, _)| range.start));
+        #[cfg(debug_assertions)] // invariants: non-overlapping and sorted
+        {
+            use util::RangeExt;
+            for window in edits.windows(2) {
+                let (range_a, range_b) = (window[0].0.clone(), window[1].0.clone());
+                debug_assert!(!range_a.overlaps(&range_b));
+                debug_assert!(range_a.end < range_b.start);
+            }
+        }
 
         let mut new_index_text = Rope::new();
         let mut index_cursor = index_text.cursor(0);
