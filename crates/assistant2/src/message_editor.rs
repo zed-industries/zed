@@ -206,10 +206,10 @@ impl MessageEditor {
 
         let thread = self.thread.clone();
         let context_store = self.context_store.clone();
-        cx.spawn(move |_, mut cx| async move {
+        cx.spawn(async move |_, cx| {
             refresh_task.await;
             thread
-                .update(&mut cx, |thread, cx| {
+                .update(cx, |thread, cx| {
                     let context = context_store.read(cx).snapshot(cx).collect::<Vec<_>>();
                     thread.insert_user_message(user_message, context, cx);
                     thread.send_to_model(model, request_kind, cx);
@@ -297,9 +297,9 @@ impl MessageEditor {
             .thread
             .update(cx, |thread, cx| thread.report_feedback(is_positive, cx));
 
-        cx.spawn(|_, mut cx| async move {
+        cx.spawn(async move |_, cx| {
             report.await?;
-            workspace.update(&mut cx, |workspace, cx| {
+            workspace.update(cx, |workspace, cx| {
                 let message = if is_positive {
                     "Positive feedback recorded. Thank you!"
                 } else {

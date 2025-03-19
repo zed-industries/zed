@@ -266,7 +266,7 @@ impl PickerDelegate for ThemeSelectorDelegate {
             .map(|(id, meta)| StringMatchCandidate::new(id, &meta.name))
             .collect::<Vec<_>>();
 
-        cx.spawn_in(window, |this, mut cx| async move {
+        cx.spawn_in(window, async move |this, cx| {
             let matches = if query.is_empty() {
                 candidates
                     .into_iter()
@@ -290,7 +290,7 @@ impl PickerDelegate for ThemeSelectorDelegate {
                 .await
             };
 
-            this.update(&mut cx, |this, cx| {
+            this.update(cx, |this, cx| {
                 this.delegate.matches = matches;
                 this.delegate.selected_index = this
                     .delegate

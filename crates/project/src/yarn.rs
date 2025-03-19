@@ -91,9 +91,9 @@ impl YarnPathStore {
         };
         if let Some(zip_file) = zip_path(&path) {
             let zip_file: Arc<Path> = Arc::from(zip_file);
-            cx.spawn(|this, mut cx| async move {
+            cx.spawn(async move |this, cx| {
                 let dir = this
-                    .update(&mut cx, |this, _| {
+                    .update(cx, |this, _| {
                         this.temp_dirs
                             .get(&zip_file)
                             .map(|temp| temp.path().to_owned())
@@ -102,10 +102,10 @@ impl YarnPathStore {
                 let zip_root = if let Some(dir) = dir {
                     dir
                 } else {
-                    let fs = this.update(&mut cx, |this, _| this.fs.clone()).ok()?;
+                    let fs = this.update(cx, |this, _| this.fs.clone()).ok()?;
                     let tempdir = dump_zip(zip_file.clone(), fs).await.log_err()?;
                     let new_path = tempdir.path().to_owned();
-                    this.update(&mut cx, |this, _| {
+                    this.update(cx, |this, _| {
                         this.temp_dirs.insert(zip_file.clone(), tempdir);
                     })
                     .ok()?;

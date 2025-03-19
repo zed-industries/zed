@@ -210,8 +210,14 @@ impl FromStr for Editorconfig {
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub enum LocalSettingsKind {
     Settings,
-    Tasks,
+    Tasks(TaskKind),
     Editorconfig,
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+pub enum TaskKind {
+    Debug,
+    Script,
 }
 
 impl Global for SettingsStore {}
@@ -257,7 +263,7 @@ impl SettingsStore {
             raw_editorconfig_settings: BTreeMap::default(),
             tab_size_callback: Default::default(),
             setting_file_updates_tx,
-            _setting_file_updates: cx.spawn(|cx| async move {
+            _setting_file_updates: cx.spawn(async move |cx| {
                 while let Some(setting_file_update) = setting_file_updates_rx.next().await {
                     (setting_file_update)(cx.clone()).await.log_err();
                 }
@@ -604,7 +610,7 @@ impl SettingsStore {
                 .map(|content| content.trim())
                 .filter(|content| !content.is_empty()),
         ) {
-            (LocalSettingsKind::Tasks, _) => {
+            (LocalSettingsKind::Tasks(_), _) => {
                 return Err(InvalidSettingsError::Tasks {
                     message: "Attempted to submit tasks into the settings store".to_string(),
                 })

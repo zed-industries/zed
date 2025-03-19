@@ -40,7 +40,7 @@ impl TerminalCodegen {
         let telemetry = self.telemetry.clone();
         self.status = CodegenStatus::Pending;
         self.transaction = Some(TerminalTransaction::start(self.terminal.clone()));
-        self.generation = cx.spawn(|this, mut cx| async move {
+        self.generation = cx.spawn(async move |this, cx| {
             let model_telemetry_id = model.telemetry_id();
             let model_provider_id = model.provider_id();
             let response = model.stream_completion_text(prompt, &cx).await;
@@ -97,12 +97,12 @@ impl TerminalCodegen {
                     }
                 });
 
-                this.update(&mut cx, |this, _| {
+                this.update(cx, |this, _| {
                     this.message_id = message_id;
                 })?;
 
                 while let Some(hunk) = hunks_rx.next().await {
-                    this.update(&mut cx, |this, cx| {
+                    this.update(cx, |this, cx| {
                         if let Some(transaction) = &mut this.transaction {
                             transaction.push(hunk, cx);
                             cx.notify();
@@ -116,7 +116,7 @@ impl TerminalCodegen {
 
             let result = generate.await;
 
-            this.update(&mut cx, |this, cx| {
+            this.update(cx, |this, cx| {
                 if let Err(error) = result {
                     this.status = CodegenStatus::Error(error);
                 } else {

@@ -11,6 +11,7 @@ mod channel_buffer_tests;
 mod channel_guest_tests;
 mod channel_message_tests;
 mod channel_tests;
+// mod debug_panel_tests;
 mod editor_tests;
 mod following_tests;
 mod git_tests;

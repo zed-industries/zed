@@ -165,7 +165,7 @@ impl ProjectDiff {
         let (mut send, recv) = postage::watch::channel::<()>();
         let worker = window.spawn(cx, {
             let this = cx.weak_entity();
-            |cx| Self::handle_status_updates(this, recv, cx)
+            async |cx| Self::handle_status_updates(this, recv, cx).await
         });
         // Kick off a refresh immediately
         *send.borrow_mut() = ();
@@ -361,10 +361,10 @@ impl ProjectDiff {
                     .update(cx, |project, cx| project.open_buffer(project_path, cx));
 
                 let project = self.project.clone();
-                result.push(cx.spawn(|_, mut cx| async move {
+                result.push(cx.spawn(async move |_, cx| {
                     let buffer = load_buffer.await?;
                     let changes = project
-                        .update(&mut cx, |project, cx| {
+                        .update(cx, |project, cx| {
                             project.open_uncommitted_diff(buffer.clone(), cx)
                         })?
                         .await?;
@@ -447,10 +447,10 @@ impl ProjectDiff {
     pub async fn handle_status_updates(
         this: WeakEntity<Self>,
         mut recv: postage::watch::Receiver<()>,
-        mut cx: AsyncWindowContext,
+        cx: &mut AsyncWindowContext,
     ) -> Result<()> {
         while let Some(_) = recv.next().await {
-            this.update(&mut cx, |this, cx| {
+            this.update(cx, |this, cx| {
                 let new_branch =
                     this.git_store
                         .read(cx)
@@ -464,7 +464,7 @@ impl ProjectDiff {
                 }
             })?;
 
-            let buffers_to_load = this.update(&mut cx, |this, cx| this.load_buffers(cx))?;
+            let buffers_to_load = this.update(cx, |this, cx| this.load_buffers(cx))?;
             for buffer_to_load in buffers_to_load {
                 if let Some(buffer) = buffer_to_load.await.log_err() {
                     cx.update(|window, cx| {
@@ -473,7 +473,7 @@ impl ProjectDiff {
                     })?;
                 }
             }
-            this.update(&mut cx, |this, cx| {
+            this.update(cx, |this, cx| {
                 this.pending_scroll.take();
                 cx.notify();
             })?;
@@ -750,8 +750,8 @@ impl SerializableItem for ProjectDiff {
         window: &mut Window,
         cx: &mut App,
     ) -> Task<Result<Entity<Self>>> {
-        window.spawn(cx, |mut cx| async move {
-            workspace.update_in(&mut cx, |workspace, window, cx| {
+        window.spawn(cx, async move |cx| {
+            workspace.update_in(cx, |workspace, window, cx| {
                 let workspace_handle = cx.entity();
                 cx.new(|cx| Self::new(workspace.project().clone(), workspace_handle, window, cx))
             })
