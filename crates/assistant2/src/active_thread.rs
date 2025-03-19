@@ -832,15 +832,9 @@ impl ActiveThread {
                                         }
                                     }),
                                 ))
-                                .child(
-                                    div()
-                                        .max_w_64()
-                                        .text_ui(cx)
-                                        .truncate()
-                                        .children(
-                                            self.rendered_tool_use_labels.get(&tool_use.id).cloned(),
-                                        ),
-                                ),
+                                .child(div().max_w_full().flex_grow().text_ui(cx).truncate().children(
+                                    self.rendered_tool_use_labels.get(&tool_use.id).cloned(),
+                                )),
                         )
                         .child({
                             let (icon_name, color, animated) = match &tool_use.status {
@@ -1014,16 +1008,9 @@ impl ActiveThread {
                                         }
                                     }),
                                 ))
-                                .child(
-                                    div()
-                                        .max_w_64()
-                                        .text_ui(cx)
-                                        .truncate()
-                                        .child(self.render_markdown(
-                                            tool_use.ui_text.clone(),
-                                            window,
-                                    cx,
-                                ))),
+                                .child(div().max_w_full().flex_grow().text_ui(cx).truncate().child(
+                                    self.render_markdown(tool_use.ui_text.clone(), window, cx),
+                                )),
                         )
                         .child(
                             Label::new(match tool_use.status {
