@@ -1,4 +1,4 @@
-use crate::thread::{MessageId, RequestKind, Thread, ThreadError, ThreadEvent};
+use crate::thread::{MessageId, MessageSegment, RequestKind, Thread, ThreadError, ThreadEvent};
 use crate::thread_store::ThreadStore;
 use crate::tool_use::{ToolUse, ToolUseStatus};
 use crate::ui::ContextPill;
@@ -32,12 +32,164 @@ pub struct ActiveThread {
     save_thread_task: Option<Task<()>>,
     messages: Vec<MessageId>,
     list_state: ListState,
-    rendered_messages_by_id: HashMap<MessageId, Entity<Markdown>>,
+    rendered_messages_by_id: HashMap<MessageId, RenderedMessage>,
     rendered_scripting_tool_uses: HashMap<LanguageModelToolUseId, Entity<Markdown>>,
     editing_message: Option<(MessageId, EditMessageState)>,
     expanded_tool_uses: HashMap<LanguageModelToolUseId, bool>,
     last_error: Option<ThreadError>,
     _subscriptions: Vec<Subscription>,
+}
+
+struct RenderedMessage {
+    language_registry: Arc<LanguageRegistry>,
+    segments: Vec<RenderedMessageSegment>,
+}
+
+impl RenderedMessage {
+    fn from_segments(
+        segments: &[MessageSegment],
+        language_registry: Arc<LanguageRegistry>,
+        window: &Window,
+        cx: &mut App,
+    ) -> Self {
+        let mut this = Self {
+            language_registry,
+            segments: Vec::with_capacity(segments.len()),
+        };
+        for segment in segments {
+            this.push_segment(segment, window, cx);
+        }
+        this
+    }
+
+    fn append_thinking(&mut self, text: &String, window: &Window, cx: &mut App) {
+        if let Some(RenderedMessageSegment::Thinking(markdown)) = self.segments.last_mut() {
+            markdown.update(cx, |markdown, cx| markdown.append(text, cx));
+        } else {
+            self.segments
+                .push(RenderedMessageSegment::Thinking(render_markdown(
+                    text.into(),
+                    self.language_registry.clone(),
+                    window,
+                    cx,
+                )));
+        }
+    }
+
+    fn append_text(&mut self, text: &String, window: &Window, cx: &mut App) {
+        if let Some(RenderedMessageSegment::Text(markdown)) = self.segments.last_mut() {
+            markdown.update(cx, |markdown, cx| markdown.append(text, cx));
+        } else {
+            self.segments
+                .push(RenderedMessageSegment::Text(render_markdown(
+                    SharedString::from(text),
+                    self.language_registry.clone(),
+                    window,
+                    cx,
+                )));
+        }
+    }
+
+    fn push_segment(&mut self, segment: &MessageSegment, window: &Window, cx: &mut App) {
+        let rendered_segment =
+            match segment {
+                MessageSegment::Thinking(text) => RenderedMessageSegment::Thinking(
+                    render_markdown(text.into(), self.language_registry.clone(), window, cx),
+                ),
+                MessageSegment::Text(text) => RenderedMessageSegment::Text(render_markdown(
+                    text.into(),
+                    self.language_registry.clone(),
+                    window,
+                    cx,
+                )),
+            };
+        self.segments.push(rendered_segment);
+    }
+}
+
+enum RenderedMessageSegment {
+    Thinking(Entity<Markdown>),
+    Text(Entity<Markdown>),
+}
+
+fn render_markdown(
+    text: SharedString,
+    language_registry: Arc<LanguageRegistry>,
+    window: &Window,
+    cx: &mut App,
+) -> Entity<Markdown> {
+    let theme_settings = ThemeSettings::get_global(cx);
+    let colors = cx.theme().colors();
+    let ui_font_size = TextSize::Default.rems(cx);
+    let buffer_font_size = TextSize::Small.rems(cx);
+    let mut text_style = window.text_style();
+
+    text_style.refine(&TextStyleRefinement {
+        font_family: Some(theme_settings.ui_font.family.clone()),
+        font_fallbacks: theme_settings.ui_font.fallbacks.clone(),
+        font_features: Some(theme_settings.ui_font.features.clone()),
+        font_size: Some(ui_font_size.into()),
+        color: Some(cx.theme().colors().text),
+        ..Default::default()
+    });
+
+    let markdown_style = MarkdownStyle {
+        base_text_style: text_style,
+        syntax: cx.theme().syntax().clone(),
+        selection_background_color: cx.theme().players().local().selection,
+        code_block_overflow_x_scroll: true,
+        table_overflow_x_scroll: true,
+        code_block: StyleRefinement {
+            margin: EdgesRefinement {
+                top: Some(Length::Definite(rems(0.).into())),
+                left: Some(Length::Definite(rems(0.).into())),
+                right: Some(Length::Definite(rems(0.).into())),
+                bottom: Some(Length::Definite(rems(0.5).into())),
+            },
+            padding: EdgesRefinement {
+                top: Some(DefiniteLength::Absolute(AbsoluteLength::Pixels(Pixels(8.)))),
+                left: Some(DefiniteLength::Absolute(AbsoluteLength::Pixels(Pixels(8.)))),
+                right: Some(DefiniteLength::Absolute(AbsoluteLength::Pixels(Pixels(8.)))),
+                bottom: Some(DefiniteLength::Absolute(AbsoluteLength::Pixels(Pixels(8.)))),
+            },
+            background: Some(colors.editor_background.into()),
+            border_color: Some(colors.border_variant),
+            border_widths: EdgesRefinement {
+                top: Some(AbsoluteLength::Pixels(Pixels(1.))),
+                left: Some(AbsoluteLength::Pixels(Pixels(1.))),
+                right: Some(AbsoluteLength::Pixels(Pixels(1.))),
+                bottom: Some(AbsoluteLength::Pixels(Pixels(1.))),
+            },
+            text: Some(TextStyleRefinement {
+                font_family: Some(theme_settings.buffer_font.family.clone()),
+                font_fallbacks: theme_settings.buffer_font.fallbacks.clone(),
+                font_features: Some(theme_settings.buffer_font.features.clone()),
+                font_size: Some(buffer_font_size.into()),
+                ..Default::default()
+            }),
+            ..Default::default()
+        },
+        inline_code: TextStyleRefinement {
+            font_family: Some(theme_settings.buffer_font.family.clone()),
+            font_fallbacks: theme_settings.buffer_font.fallbacks.clone(),
+            font_features: Some(theme_settings.buffer_font.features.clone()),
+            font_size: Some(buffer_font_size.into()),
+            background_color: Some(colors.editor_foreground.opacity(0.1)),
+            ..Default::default()
+        },
+        link: TextStyleRefinement {
+            background_color: Some(colors.editor_foreground.opacity(0.025)),
+            underline: Some(UnderlineStyle {
+                color: Some(colors.text_accent.opacity(0.5)),
+                thickness: px(1.),
+                ..Default::default()
+            }),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+
+    cx.new(|cx| Markdown::new(text, markdown_style, Some(language_registry), None, cx))
 }
 
 struct EditMessageState {
@@ -81,7 +233,7 @@ impl ActiveThread {
         };
 
         for message in thread.read(cx).messages().cloned().collect::<Vec<_>>() {
-            this.push_message(&message.id, message.text.clone(), window, cx);
+            this.push_message(&message.id, &message.segments, window, cx);
 
             for tool_use in thread.read(cx).scripting_tool_uses_for_message(message.id) {
                 this.render_scripting_tool_use_markdown(
@@ -130,7 +282,7 @@ impl ActiveThread {
     fn push_message(
         &mut self,
         id: &MessageId,
-        text: String,
+        segments: &[MessageSegment],
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -138,8 +290,9 @@ impl ActiveThread {
         self.messages.push(*id);
         self.list_state.splice(old_len..old_len, 1);
 
-        let markdown = self.render_markdown(text.into(), window, cx);
-        self.rendered_messages_by_id.insert(*id, markdown);
+        let rendered_message =
+            RenderedMessage::from_segments(segments, self.language_registry.clone(), window, cx);
+        self.rendered_messages_by_id.insert(*id, rendered_message);
         self.list_state.scroll_to(ListOffset {
             item_ix: old_len,
             offset_in_item: Pixels(0.0),
@@ -149,7 +302,7 @@ impl ActiveThread {
     fn edited_message(
         &mut self,
         id: &MessageId,
-        text: String,
+        segments: &[MessageSegment],
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -157,8 +310,9 @@ impl ActiveThread {
             return;
         };
         self.list_state.splice(index..index + 1, 1);
-        let markdown = self.render_markdown(text.into(), window, cx);
-        self.rendered_messages_by_id.insert(*id, markdown);
+        let rendered_message =
+            RenderedMessage::from_segments(segments, self.language_registry.clone(), window, cx);
+        self.rendered_messages_by_id.insert(*id, rendered_message);
     }
 
     fn deleted_message(&mut self, id: &MessageId) {
@@ -168,94 +322,6 @@ impl ActiveThread {
         self.messages.remove(index);
         self.list_state.splice(index..index + 1, 0);
         self.rendered_messages_by_id.remove(id);
-    }
-
-    fn render_markdown(
-        &self,
-        text: SharedString,
-        window: &Window,
-        cx: &mut Context<Self>,
-    ) -> Entity<Markdown> {
-        let theme_settings = ThemeSettings::get_global(cx);
-        let colors = cx.theme().colors();
-        let ui_font_size = TextSize::Default.rems(cx);
-        let buffer_font_size = TextSize::Small.rems(cx);
-        let mut text_style = window.text_style();
-
-        text_style.refine(&TextStyleRefinement {
-            font_family: Some(theme_settings.ui_font.family.clone()),
-            font_fallbacks: theme_settings.ui_font.fallbacks.clone(),
-            font_features: Some(theme_settings.ui_font.features.clone()),
-            font_size: Some(ui_font_size.into()),
-            color: Some(cx.theme().colors().text),
-            ..Default::default()
-        });
-
-        let markdown_style = MarkdownStyle {
-            base_text_style: text_style,
-            syntax: cx.theme().syntax().clone(),
-            selection_background_color: cx.theme().players().local().selection,
-            code_block_overflow_x_scroll: true,
-            table_overflow_x_scroll: true,
-            code_block: StyleRefinement {
-                margin: EdgesRefinement {
-                    top: Some(Length::Definite(rems(0.).into())),
-                    left: Some(Length::Definite(rems(0.).into())),
-                    right: Some(Length::Definite(rems(0.).into())),
-                    bottom: Some(Length::Definite(rems(0.5).into())),
-                },
-                padding: EdgesRefinement {
-                    top: Some(DefiniteLength::Absolute(AbsoluteLength::Pixels(Pixels(8.)))),
-                    left: Some(DefiniteLength::Absolute(AbsoluteLength::Pixels(Pixels(8.)))),
-                    right: Some(DefiniteLength::Absolute(AbsoluteLength::Pixels(Pixels(8.)))),
-                    bottom: Some(DefiniteLength::Absolute(AbsoluteLength::Pixels(Pixels(8.)))),
-                },
-                background: Some(colors.editor_background.into()),
-                border_color: Some(colors.border_variant),
-                border_widths: EdgesRefinement {
-                    top: Some(AbsoluteLength::Pixels(Pixels(1.))),
-                    left: Some(AbsoluteLength::Pixels(Pixels(1.))),
-                    right: Some(AbsoluteLength::Pixels(Pixels(1.))),
-                    bottom: Some(AbsoluteLength::Pixels(Pixels(1.))),
-                },
-                text: Some(TextStyleRefinement {
-                    font_family: Some(theme_settings.buffer_font.family.clone()),
-                    font_fallbacks: theme_settings.buffer_font.fallbacks.clone(),
-                    font_features: Some(theme_settings.buffer_font.features.clone()),
-                    font_size: Some(buffer_font_size.into()),
-                    ..Default::default()
-                }),
-                ..Default::default()
-            },
-            inline_code: TextStyleRefinement {
-                font_family: Some(theme_settings.buffer_font.family.clone()),
-                font_fallbacks: theme_settings.buffer_font.fallbacks.clone(),
-                font_features: Some(theme_settings.buffer_font.features.clone()),
-                font_size: Some(buffer_font_size.into()),
-                background_color: Some(colors.editor_foreground.opacity(0.1)),
-                ..Default::default()
-            },
-            link: TextStyleRefinement {
-                background_color: Some(colors.editor_foreground.opacity(0.025)),
-                underline: Some(UnderlineStyle {
-                    color: Some(colors.text_accent.opacity(0.5)),
-                    thickness: px(1.),
-                    ..Default::default()
-                }),
-                ..Default::default()
-            },
-            ..Default::default()
-        };
-
-        cx.new(|cx| {
-            Markdown::new(
-                text,
-                markdown_style,
-                Some(self.language_registry.clone()),
-                None,
-                cx,
-            )
-        })
     }
 
     /// Renders the input of a scripting tool use to Markdown.
@@ -277,8 +343,12 @@ impl ActiveThread {
             .map(|input| input.lua_script)
             .unwrap_or_default();
 
-        let lua_script =
-            self.render_markdown(format!("```lua\n{lua_script}\n```").into(), window, cx);
+        let lua_script = render_markdown(
+            format!("```lua\n{lua_script}\n```").into(),
+            self.language_registry.clone(),
+            window,
+            cx,
+        );
 
         self.rendered_scripting_tool_uses
             .insert(tool_use_id, lua_script);
@@ -300,33 +370,36 @@ impl ActiveThread {
             }
             ThreadEvent::DoneStreaming => {}
             ThreadEvent::StreamedAssistantText(message_id, text) => {
-                if let Some(markdown) = self.rendered_messages_by_id.get_mut(&message_id) {
-                    markdown.update(cx, |markdown, cx| {
-                        markdown.append(text, cx);
-                    });
+                if let Some(rendered_message) = self.rendered_messages_by_id.get_mut(&message_id) {
+                    rendered_message.append_text(text, window, cx);
+                }
+            }
+            ThreadEvent::StreamedAssistantThinking(message_id, text) => {
+                if let Some(rendered_message) = self.rendered_messages_by_id.get_mut(&message_id) {
+                    rendered_message.append_thinking(text, window, cx);
                 }
             }
             ThreadEvent::MessageAdded(message_id) => {
-                if let Some(message_text) = self
+                if let Some(message_segments) = self
                     .thread
                     .read(cx)
                     .message(*message_id)
-                    .map(|message| message.text.clone())
+                    .map(|message| message.segments.clone())
                 {
-                    self.push_message(message_id, message_text, window, cx);
+                    self.push_message(message_id, &message_segments, window, cx);
                 }
 
                 self.save_thread(cx);
                 cx.notify();
             }
             ThreadEvent::MessageEdited(message_id) => {
-                if let Some(message_text) = self
+                if let Some(message_segments) = self
                     .thread
                     .read(cx)
                     .message(*message_id)
-                    .map(|message| message.text.clone())
+                    .map(|message| message.segments.clone())
                 {
-                    self.edited_message(message_id, message_text, window, cx);
+                    self.edited_message(message_id, &message_segments, window, cx);
                 }
 
                 self.save_thread(cx);
@@ -435,10 +508,14 @@ impl ActiveThread {
     fn start_editing_message(
         &mut self,
         message_id: MessageId,
-        message_text: String,
+        message_segments: &[MessageSegment],
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let Some(MessageSegment::Text(message_text)) = message_segments.first() else {
+            return;
+        };
+
         let buffer = cx.new(|cx| {
             MultiBuffer::singleton(cx.new(|cx| Buffer::local(message_text.clone(), cx)), cx)
         });
@@ -479,7 +556,12 @@ impl ActiveThread {
         };
         let edited_text = state.editor.read(cx).text(cx);
         self.thread.update(cx, |thread, cx| {
-            thread.edit_message(message_id, Role::User, edited_text, cx);
+            thread.edit_message(
+                message_id,
+                Role::User,
+                vec![MessageSegment::Text(edited_text)],
+                cx,
+            );
             for message_id in self.messages_after(message_id) {
                 thread.delete_message(*message_id, cx);
             }
@@ -544,7 +626,7 @@ impl ActiveThread {
             return Empty.into_any();
         };
 
-        let Some(markdown) = self.rendered_messages_by_id.get(&message_id) else {
+        let Some(rendered_message) = self.rendered_messages_by_id.get(&message_id) else {
             return Empty.into_any();
         };
 
@@ -583,7 +665,10 @@ impl ActiveThread {
                         .p_2p5()
                         .child(edit_message_editor)
                 } else {
-                    div().p_2p5().text_ui(cx).child(markdown.clone())
+                    div()
+                        .p_2p5()
+                        .text_ui(cx)
+                        .child(self.render_message_content(rendered_message, cx))
                 },
             )
             .when_some(context, |parent, context| {
@@ -688,11 +773,11 @@ impl ActiveThread {
                                             Button::new("edit-message", "Edit")
                                                 .label_size(LabelSize::Small)
                                                 .on_click(cx.listener({
-                                                    let message_text = message.text.clone();
+                                                    let message_segments = message.segments.clone();
                                                     move |this, _, window, cx| {
                                                         this.start_editing_message(
                                                             message_id,
-                                                            message_text.clone(),
+                                                            &message_segments,
                                                             window,
                                                             cx,
                                                         );
@@ -734,6 +819,26 @@ impl ActiveThread {
         };
 
         styled_message.into_any()
+    }
+
+    fn render_message_content(
+        &self,
+        rendered_message: &RenderedMessage,
+        cx: &Context<Self>,
+    ) -> impl IntoElement {
+        div()
+            .p_2p5()
+            .text_ui(cx)
+            .gap_2()
+            .children(rendered_message.segments.iter().map(|segment| {
+                match segment {
+                    RenderedMessageSegment::Thinking(markdown) => div()
+                        .debug_bg_green()
+                        .child(markdown.clone())
+                        .into_any_element(),
+                    RenderedMessageSegment::Text(markdown) => markdown.clone().into_any_element(),
+                }
+            }))
     }
 
     fn render_tool_use(&self, tool_use: ToolUse, cx: &mut Context<Self>) -> impl IntoElement {

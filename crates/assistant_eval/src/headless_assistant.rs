@@ -131,6 +131,7 @@ impl HeadlessAssistant {
             ThreadEvent::StreamedCompletion
             | ThreadEvent::SummaryChanged
             | ThreadEvent::StreamedAssistantText(_, _)
+            | ThreadEvent::StreamedAssistantThinking(_, _)
             | ThreadEvent::MessageAdded(_)
             | ThreadEvent::MessageEdited(_)
             | ThreadEvent::MessageDeleted(_) => {}

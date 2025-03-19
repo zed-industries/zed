@@ -250,11 +250,21 @@ pub struct SerializedThread {
 pub struct SerializedMessage {
     pub id: MessageId,
     pub role: Role,
-    pub text: String,
+    #[serde(default)]
+    pub segments: Vec<SerializedMessageSegment>,
     #[serde(default)]
     pub tool_uses: Vec<SerializedToolUse>,
     #[serde(default)]
     pub tool_results: Vec<SerializedToolResult>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(tag = "type")]
+pub enum SerializedMessageSegment {
+    #[serde(rename = "text")]
+    Text { text: String },
+    #[serde(rename = "thinking")]
+    Thinking { text: String },
 }
 
 #[derive(Debug, Serialize, Deserialize)]

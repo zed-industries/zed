@@ -162,6 +162,7 @@ pub enum IconName {
     ChevronDown,
     /// This chevron indicates a popover menu.
     ChevronDownSmall,
+    ChevronDownUp,
     ChevronLeft,
     ChevronRight,
     ChevronUp,
