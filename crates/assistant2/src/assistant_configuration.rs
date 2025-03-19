@@ -5,9 +5,12 @@ use collections::HashMap;
 use context_server::manager::ContextServerManager;
 use gpui::{Action, AnyView, App, Entity, EventEmitter, FocusHandle, Focusable, Subscription};
 use language_model::{LanguageModelProvider, LanguageModelProviderId, LanguageModelRegistry};
-use ui::{prelude::*, Disclosure, Divider, DividerColor, ElevationIndex, Indicator, Switch};
+use ui::{
+    prelude::*, Disclosure, Divider, DividerColor, ElevationIndex, Indicator, Switch, Tooltip,
+};
 use util::ResultExt as _;
 use zed_actions::assistant::DeployPromptLibrary;
+use zed_actions::ExtensionCategoryFilter;
 
 pub struct AssistantConfiguration {
     focus_handle: FocusHandle,
@@ -168,7 +171,7 @@ impl AssistantConfiguration {
         v_flex()
             .p(DynamicSpacing::Base16.rems(cx))
             .mt_1()
-            .gap_6()
+            .gap_2()
             .flex_1()
             .child(
                 v_flex()
@@ -292,6 +295,49 @@ impl AssistantConfiguration {
                         )))
                     })
             }))
+            .child(
+                h_flex()
+                    .justify_between()
+                    .gap_2()
+                    .child(
+                        h_flex().w_full().child(
+                            Button::new("add-context-server", "Add Context Server")
+                                .style(ButtonStyle::Filled)
+                                .layer(ElevationIndex::ModalSurface)
+                                .full_width()
+                                .icon(IconName::Plus)
+                                .icon_size(IconSize::Small)
+                                .icon_position(IconPosition::Start)
+                                .disabled(true)
+                                .tooltip(Tooltip::text("Not yet implemented")),
+                        ),
+                    )
+                    .child(
+                        h_flex().w_full().child(
+                            Button::new(
+                                "install-context-server-extensions",
+                                "Install Context Server Extensions",
+                            )
+                            .style(ButtonStyle::Filled)
+                            .layer(ElevationIndex::ModalSurface)
+                            .full_width()
+                            .icon(IconName::DatabaseZap)
+                            .icon_size(IconSize::Small)
+                            .icon_position(IconPosition::Start)
+                            .on_click(|_event, window, cx| {
+                                window.dispatch_action(
+                                    zed_actions::Extensions {
+                                        category_filter: Some(
+                                            ExtensionCategoryFilter::ContextServers,
+                                        ),
+                                    }
+                                    .boxed_clone(),
+                                    cx,
+                                )
+                            }),
+                        ),
+                    ),
+            )
     }
 }
 
