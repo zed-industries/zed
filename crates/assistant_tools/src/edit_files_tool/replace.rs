@@ -178,6 +178,7 @@ mod tests {
             fn test() {
                 let x = 42;
                 println!("New value: {}", x);
+                let y = 10;
             }
         "#
         .unindent();
@@ -243,7 +244,14 @@ mod tests {
         "#
         .unindent();
 
-        let expected = "fn test() {\n    let x = 10;\n\n    println!(\"New x: {}\", x);\n";
+        let expected = r#"
+            fn test() {
+                let x = 10;
+
+                println!("New x: {}", x);
+            }
+        "#
+        .unindent();
 
         assert_eq!(
             test_replace_with_missing_indent(cx, &whole, &old, &new),
