@@ -453,7 +453,6 @@ dependencies = [
  "assistant_slash_command",
  "assistant_tool",
  "async-watch",
- "buffer_diff",
  "chrono",
  "client",
  "clock",
@@ -692,7 +691,6 @@ name = "assistant_tool"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "buffer_diff",
  "clock",
  "collections",
  "derive_more",
