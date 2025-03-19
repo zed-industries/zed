@@ -262,7 +262,7 @@ impl Zeta {
                 |this, _listener, _event, cx| {
                     let client = this.client.clone();
                     let llm_token = this.llm_token.clone();
-                    cx.spawn(|_this, _cx| async move {
+                    cx.spawn(async move |_this, _cx| {
                         llm_token.refresh(&client).await?;
                         anyhow::Ok(())
                     })
@@ -405,7 +405,7 @@ impl Zeta {
             None
         };
 
-        cx.spawn(|_, cx| async move {
+        cx.spawn(async move |_, cx| {
             let request_sent_at = Instant::now();
 
             struct BackgroundValues {
@@ -666,12 +666,12 @@ and then another
             ),
         ];
 
-        cx.spawn(|zeta, mut cx| async move {
+        cx.spawn(async move |zeta, cx| {
             for task in completion_tasks {
                 task.await.unwrap();
             }
 
-            zeta.update(&mut cx, |zeta, _cx| {
+            zeta.update(cx, |zeta, _cx| {
                 zeta.shown_completions.get_mut(2).unwrap().edits = Arc::new([]);
                 zeta.shown_completions.get_mut(3).unwrap().edits = Arc::new([]);
             })
@@ -806,7 +806,7 @@ and then another
         let snapshot = snapshot.clone();
         let request_id = prediction_response.request_id;
         let output_excerpt = prediction_response.output_excerpt;
-        cx.spawn(|cx| async move {
+        cx.spawn(async move |cx| {
             let output_excerpt: Arc<str> = output_excerpt.into();
 
             let edits: Arc<[(Range<Anchor>, String)]> = cx
@@ -819,7 +819,7 @@ and then another
                 .await?
                 .into();
 
-            let Some((edits, snapshot, edit_preview)) = buffer.read_with(&cx, {
+            let Some((edits, snapshot, edit_preview)) = buffer.read_with(cx, {
                 let edits = edits.clone();
                 |buffer, cx| {
                     let new_snapshot = buffer.snapshot();
@@ -1457,14 +1457,14 @@ impl inline_completion::EditPredictionProvider for ZetaInlineCompletionProvider 
         let can_collect_data = self.provider_data_collection.can_collect_data(cx);
         let last_request_timestamp = self.last_request_timestamp;
 
-        let task = cx.spawn(|this, mut cx| async move {
+        let task = cx.spawn(async move |this, cx| {
             if let Some(timeout) = (last_request_timestamp + Self::THROTTLE_TIMEOUT)
                 .checked_duration_since(Instant::now())
             {
                 cx.background_executor().timer(timeout).await;
             }
 
-            let completion_request = this.update(&mut cx, |this, cx| {
+            let completion_request = this.update(cx, |this, cx| {
                 this.last_request_timestamp = Instant::now();
                 this.zeta.update(cx, |zeta, cx| {
                     zeta.request_completion(
@@ -1494,7 +1494,7 @@ impl inline_completion::EditPredictionProvider for ZetaInlineCompletionProvider 
                 .log_err()
                 .flatten()
             else {
-                this.update(&mut cx, |this, cx| {
+                this.update(cx, |this, cx| {
                     if this.pending_completions[0].id == pending_completion_id {
                         this.pending_completions.remove(0);
                     } else {
@@ -1507,7 +1507,7 @@ impl inline_completion::EditPredictionProvider for ZetaInlineCompletionProvider 
                 return;
             };
 
-            this.update(&mut cx, |this, cx| {
+            this.update(cx, |this, cx| {
                 if this.pending_completions[0].id == pending_completion_id {
                     this.pending_completions.remove(0);
                 } else {

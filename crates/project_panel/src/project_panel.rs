@@ -159,7 +159,7 @@ struct EntryDetails {
     git_status: GitSummary,
     is_private: bool,
     worktree_id: WorktreeId,
-    canonical_path: Option<Box<Path>>,
+    canonical_path: Option<Arc<Path>>,
 }
 
 #[derive(PartialEq, Clone, Default, Debug, Deserialize, JsonSchema)]
@@ -1162,23 +1162,23 @@ impl ProjectPanel {
         edit_state.processing_filename = Some(filename);
         cx.notify();
 
-        Some(cx.spawn_in(window, |project_panel, mut cx| async move {
+        Some(cx.spawn_in(window, async move |project_panel, cx| {
             let new_entry = edit_task.await;
-            project_panel.update(&mut cx, |project_panel, cx| {
+            project_panel.update(cx, |project_panel, cx| {
                 project_panel.edit_state = None;
                 cx.notify();
             })?;
 
             match new_entry {
                 Err(e) => {
-                    project_panel.update(&mut cx, |project_panel, cx| {
+                    project_panel.update( cx, |project_panel, cx| {
                         project_panel.marked_entries.clear();
                         project_panel.update_visible_entries(None,  cx);
                     }).ok();
                     Err(e)?;
                 }
                 Ok(CreatedEntry::Included(new_entry)) => {
-                    project_panel.update(&mut cx, |project_panel, cx| {
+                    project_panel.update( cx, |project_panel, cx| {
                         if let Some(selection) = &mut project_panel.selection {
                             if selection.entry_id == edited_entry_id {
                                 selection.worktree_id = worktree_id;
@@ -1196,7 +1196,7 @@ impl ProjectPanel {
                 }
                 Ok(CreatedEntry::Excluded { abs_path }) => {
                     if let Some(open_task) = project_panel
-                        .update_in(&mut cx, |project_panel, window, cx| {
+                        .update_in( cx, |project_panel, window, cx| {
                             project_panel.marked_entries.clear();
                             project_panel.update_visible_entries(None,  cx);
 
@@ -1494,7 +1494,7 @@ impl ProjectPanel {
                 None
             };
             let next_selection = self.find_next_selection_after_deletion(items_to_delete, cx);
-            cx.spawn_in(window, |panel, mut cx| async move {
+            cx.spawn_in(window, async move |panel, cx| {
                 if let Some(answer) = answer {
                     if answer.await != Ok(0) {
                         return anyhow::Ok(());
@@ -1502,7 +1502,7 @@ impl ProjectPanel {
                 }
                 for (entry_id, _) in file_paths {
                     panel
-                        .update(&mut cx, |panel, cx| {
+                        .update(cx, |panel, cx| {
                             panel
                                 .project
                                 .update(cx, |project, cx| project.delete_entry(entry_id, trash, cx))
@@ -1510,7 +1510,7 @@ impl ProjectPanel {
                         })??
                         .await?;
                 }
-                panel.update_in(&mut cx, |panel, window, cx| {
+                panel.update_in(cx, |panel, window, cx| {
                     if let Some(next_selection) = next_selection {
                         panel.selection = Some(next_selection);
                         panel.autoscroll(cx);
@@ -2105,7 +2105,7 @@ impl ProjectPanel {
 
             let item_count = paste_entry_tasks.len();
 
-            cx.spawn_in(window, |project_panel, mut cx| async move {
+            cx.spawn_in(window, async move |project_panel, cx| {
                 let mut last_succeed = None;
                 let mut need_delete_ids = Vec::new();
                 for ((entry_id, need_delete), task) in paste_entry_tasks.into_iter() {
@@ -2128,7 +2128,7 @@ impl ProjectPanel {
                 // remove entry for cut in difference worktree
                 for entry_id in need_delete_ids {
                     project_panel
-                        .update(&mut cx, |project_panel, cx| {
+                        .update(cx, |project_panel, cx| {
                             project_panel
                                 .project
                                 .update(cx, |project, cx| project.delete_entry(entry_id, true, cx))
@@ -2139,7 +2139,7 @@ impl ProjectPanel {
                 // update selection
                 if let Some(entry) = last_succeed {
                     project_panel
-                        .update_in(&mut cx, |project_panel, window, cx| {
+                        .update_in(cx, |project_panel, window, cx| {
                             project_panel.selection = Some(SelectedEntry {
                                 worktree_id,
                                 entry_id: entry.id,
@@ -2884,7 +2884,7 @@ impl ProjectPanel {
             }
         }
 
-        cx.spawn_in(window, |this, mut cx| {
+        cx.spawn_in(window, async move |this, cx| {
             async move {
                 for (filename, original_path) in &paths_to_replace {
                     let answer = cx.update(|window, cx| {
@@ -2909,18 +2909,18 @@ impl ProjectPanel {
                     return Ok(());
                 }
 
-                let task = worktree.update(&mut cx, |worktree, cx| {
+                let task = worktree.update( cx, |worktree, cx| {
                     worktree.copy_external_entries(target_directory, paths, true, cx)
                 })?;
 
                 let opened_entries = task.await?;
-                this.update(&mut cx, |this, cx| {
+                this.update(cx, |this, cx| {
                     if open_file_after_drop && !opened_entries.is_empty() {
                         this.open_entry(opened_entries[0], true, false, cx);
                     }
                 })
             }
-            .log_err()
+            .log_err().await
         })
         .detach();
     }
@@ -2962,7 +2962,7 @@ impl ProjectPanel {
 
                 let item_count = copy_tasks.len();
 
-                cx.spawn_in(window, |project_panel, mut cx| async move {
+                cx.spawn_in(window, async move |project_panel, cx| {
                     let mut last_succeed = None;
                     for task in copy_tasks.into_iter() {
                         if let Some(Some(entry)) = task.await.log_err() {
@@ -2972,7 +2972,7 @@ impl ProjectPanel {
                     // update selection
                     if let Some(entry_id) = last_succeed {
                         project_panel
-                            .update_in(&mut cx, |project_panel, window, cx| {
+                            .update_in(cx, |project_panel, window, cx| {
                                 project_panel.selection = Some(SelectedEntry {
                                     worktree_id,
                                     entry_id,
@@ -3679,11 +3679,11 @@ impl ProjectPanel {
 
                         let bounds = event.bounds;
                         this.hover_expand_task =
-                            Some(cx.spawn_in(window, |this, mut cx| async move {
+                            Some(cx.spawn_in(window, async move |this, cx| {
                                 cx.background_executor()
                                     .timer(Duration::from_millis(500))
                                     .await;
-                                this.update_in(&mut cx, |this, window, cx| {
+                                this.update_in(cx, |this, window, cx| {
                                     this.hover_expand_task.take();
                                     if this.last_selection_drag_over_entry == Some(entry_id)
                                         && bounds.contains(&window.mouse_position())
@@ -4221,12 +4221,12 @@ impl ProjectPanel {
         if !Self::should_autohide_scrollbar(cx) {
             return;
         }
-        self.hide_scrollbar_task = Some(cx.spawn_in(window, |panel, mut cx| async move {
+        self.hide_scrollbar_task = Some(cx.spawn_in(window, async move |panel, cx| {
             cx.background_executor()
                 .timer(SCROLLBAR_SHOW_INTERVAL)
                 .await;
             panel
-                .update(&mut cx, |panel, cx| {
+                .update(cx, |panel, cx| {
                     panel.show_scrollbar = false;
                     cx.notify();
                 })
@@ -4246,7 +4246,7 @@ impl ProjectPanel {
             if skip_ignored
                 && worktree
                     .entry_for_id(entry_id)
-                    .map_or(true, |entry| entry.is_ignored)
+                    .map_or(true, |entry| entry.is_ignored && !entry.is_always_included)
             {
                 return;
             }
@@ -4387,30 +4387,27 @@ impl Render for ProjectPanel {
                     return;
                 };
                 let adjustment = point(px(0.), px(vertical_scroll_offset));
-                this.hover_scroll_task =
-                    Some(cx.spawn_in(window, move |this, mut cx| async move {
-                        loop {
-                            let should_stop_scrolling = this
-                                .update(&mut cx, |this, cx| {
-                                    this.hover_scroll_task.as_ref()?;
-                                    let handle = this.scroll_handle.0.borrow_mut();
-                                    let offset = handle.base_handle.offset();
+                this.hover_scroll_task = Some(cx.spawn_in(window, async move |this, cx| loop {
+                    let should_stop_scrolling = this
+                        .update(cx, |this, cx| {
+                            this.hover_scroll_task.as_ref()?;
+                            let handle = this.scroll_handle.0.borrow_mut();
+                            let offset = handle.base_handle.offset();
 
-                                    handle.base_handle.set_offset(offset + adjustment);
-                                    cx.notify();
-                                    Some(())
-                                })
-                                .ok()
-                                .flatten()
-                                .is_some();
-                            if should_stop_scrolling {
-                                return;
-                            }
-                            cx.background_executor()
-                                .timer(Duration::from_millis(16))
-                                .await;
-                        }
-                    }));
+                            handle.base_handle.set_offset(offset + adjustment);
+                            cx.notify();
+                            Some(())
+                        })
+                        .ok()
+                        .flatten()
+                        .is_some();
+                    if should_stop_scrolling {
+                        return;
+                    }
+                    cx.background_executor()
+                        .timer(Duration::from_millis(16))
+                        .await;
+                }));
             }
             h_flex()
                 .id("project-panel")
@@ -6759,74 +6756,60 @@ mod tests {
 
     #[gpui::test]
     async fn test_select_git_entry(cx: &mut gpui::TestAppContext) {
-        use git::status::{FileStatus, StatusCode, TrackedStatus};
-        use std::path::Path;
-
         init_test_with_editor(cx);
 
         let fs = FakeFs::new(cx.executor().clone());
         fs.insert_tree(
-            "/root",
+            path!("/root"),
             json!({
                 "tree1": {
                     ".git": {},
                     "dir1": {
-                        "modified1.txt": "",
-                        "unmodified1.txt": "",
-                        "modified2.txt": "",
+                        "modified1.txt": "1",
+                        "unmodified1.txt": "1",
+                        "modified2.txt": "1",
                     },
                     "dir2": {
-                        "modified3.txt": "",
-                        "unmodified2.txt": "",
+                        "modified3.txt": "1",
+                        "unmodified2.txt": "1",
                     },
-                    "modified4.txt": "",
-                    "unmodified3.txt": "",
+                    "modified4.txt": "1",
+                    "unmodified3.txt": "1",
                 },
                 "tree2": {
                     ".git": {},
                     "dir3": {
-                        "modified5.txt": "",
-                        "unmodified4.txt": "",
+                        "modified5.txt": "1",
+                        "unmodified4.txt": "1",
                     },
-                    "modified6.txt": "",
-                    "unmodified5.txt": "",
+                    "modified6.txt": "1",
+                    "unmodified5.txt": "1",
                 }
             }),
         )
         .await;
 
         // Mark files as git modified
-        let tree1_modified_files = [
-            "dir1/modified1.txt",
-            "dir1/modified2.txt",
-            "modified4.txt",
-            "dir2/modified3.txt",
-        ];
-
-        let tree2_modified_files = ["dir3/modified5.txt", "modified6.txt"];
-
-        let root1_dot_git = Path::new("/root/tree1/.git");
-        let root2_dot_git = Path::new("/root/tree2/.git");
-        let set_value = FileStatus::Tracked(TrackedStatus {
-            index_status: StatusCode::Modified,
-            worktree_status: StatusCode::Modified,
-        });
-
-        fs.with_git_state(&root1_dot_git, true, |git_repo_state| {
-            for file_path in tree1_modified_files {
-                git_repo_state.statuses.insert(file_path.into(), set_value);
-            }
-        });
-
-        fs.with_git_state(&root2_dot_git, true, |git_repo_state| {
-            for file_path in tree2_modified_files {
-                git_repo_state.statuses.insert(file_path.into(), set_value);
-            }
-        });
+        fs.set_git_content_for_repo(
+            path!("/root/tree1/.git").as_ref(),
+            &[
+                ("dir1/modified1.txt".into(), "modified".into(), None),
+                ("dir1/modified2.txt".into(), "modified".into(), None),
+                ("modified4.txt".into(), "modified".into(), None),
+                ("dir2/modified3.txt".into(), "modified".into(), None),
+            ],
+        );
+        fs.set_git_content_for_repo(
+            path!("/root/tree2/.git").as_ref(),
+            &[
+                ("dir3/modified5.txt".into(), "modified".into(), None),
+                ("modified6.txt".into(), "modified".into(), None),
+            ],
+        );
 
         let project = Project::test(
             fs.clone(),
-            ["/root/tree1".as_ref(), "/root/tree2".as_ref()],
+            [path!("/root/tree1").as_ref(), path!("/root/tree2").as_ref()],
             cx,
         )
         .await;
@@ -7868,6 +7851,123 @@ mod tests {
                 "      .gitignore",
             ],
             "When a gitignored entry is explicitly revealed, it should be shown in the project tree"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_gitignored_and_always_included(cx: &mut gpui::TestAppContext) {
+        init_test_with_editor(cx);
+        cx.update(|cx| {
+            cx.update_global::<SettingsStore, _>(|store, cx| {
+                store.update_user_settings::<WorktreeSettings>(cx, |worktree_settings| {
+                    worktree_settings.file_scan_exclusions = Some(Vec::new());
+                    worktree_settings.file_scan_inclusions =
+                        Some(vec!["always_included_but_ignored_dir/*".to_string()]);
+                });
+                store.update_user_settings::<ProjectPanelSettings>(cx, |project_panel_settings| {
+                    project_panel_settings.auto_reveal_entries = Some(false)
+                });
+            })
+        });
+
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            "/project_root",
+            json!({
+                ".git": {},
+                ".gitignore": "**/gitignored_dir\n/always_included_but_ignored_dir",
+                "dir_1": {
+                    "file_1.py": "# File 1_1 contents",
+                    "file_2.py": "# File 1_2 contents",
+                    "file_3.py": "# File 1_3 contents",
+                    "gitignored_dir": {
+                        "file_a.py": "# File contents",
+                        "file_b.py": "# File contents",
+                        "file_c.py": "# File contents",
+                    },
+                },
+                "dir_2": {
+                    "file_1.py": "# File 2_1 contents",
+                    "file_2.py": "# File 2_2 contents",
+                    "file_3.py": "# File 2_3 contents",
+                },
+                "always_included_but_ignored_dir": {
+                    "file_a.py": "# File contents",
+                    "file_b.py": "# File contents",
+                    "file_c.py": "# File contents",
+                },
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), ["/project_root".as_ref()], cx).await;
+        let workspace =
+            cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let cx = &mut VisualTestContext::from_window(*workspace, cx);
+        let panel = workspace.update(cx, ProjectPanel::new).unwrap();
+
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..20, cx),
+            &[
+                "v project_root",
+                "    > .git",
+                "    > always_included_but_ignored_dir",
+                "    > dir_1",
+                "    > dir_2",
+                "      .gitignore",
+            ]
+        );
+
+        let gitignored_dir_file =
+            find_project_entry(&panel, "project_root/dir_1/gitignored_dir/file_a.py", cx);
+        let always_included_but_ignored_dir_file = find_project_entry(
+            &panel,
+            "project_root/always_included_but_ignored_dir/file_a.py",
+            cx,
+        )
+        .expect("file that is .gitignored but set to always be included should have an entry");
+        assert_eq!(
+            gitignored_dir_file, None,
+            "File in the gitignored dir should not have an entry unless its directory is toggled"
+        );
+
+        toggle_expand_dir(&panel, "project_root/dir_1", cx);
+        cx.run_until_parked();
+        cx.update(|_, cx| {
+            cx.update_global::<SettingsStore, _>(|store, cx| {
+                store.update_user_settings::<ProjectPanelSettings>(cx, |project_panel_settings| {
+                    project_panel_settings.auto_reveal_entries = Some(true)
+                });
+            })
+        });
+
+        panel.update(cx, |panel, cx| {
+            panel.project.update(cx, |_, cx| {
+                cx.emit(project::Event::ActiveEntryChanged(Some(
+                    always_included_but_ignored_dir_file,
+                )))
+            })
+        });
+        cx.run_until_parked();
+
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..20, cx),
+            &[
+                "v project_root",
+                "    > .git",
+                "    v always_included_but_ignored_dir",
+                "          file_a.py  <== selected  <== marked",
+                "          file_b.py",
+                "          file_c.py",
+                "    v dir_1",
+                "        > gitignored_dir",
+                "          file_1.py",
+                "          file_2.py",
+                "          file_3.py",
+                "    > dir_2",
+                "      .gitignore",
+            ],
+            "When auto reveal is enabled, a gitignored but always included selected entry should be revealed in the project panel"
         );
     }
 
@@ -9703,7 +9803,7 @@ mod tests {
             cx: &mut App,
         ) -> Option<Task<gpui::Result<Entity<Self>>>> {
             let path = path.clone();
-            Some(cx.spawn(|mut cx| async move { cx.new(|_| Self { path }) }))
+            Some(cx.spawn(async move |cx| cx.new(|_| Self { path })))
         }
 
         fn entry_id(&self, _: &App) -> Option<ProjectEntryId> {

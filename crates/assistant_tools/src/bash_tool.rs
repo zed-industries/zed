@@ -1,5 +1,5 @@
 use anyhow::{anyhow, Context as _, Result};
-use assistant_tool::Tool;
+use assistant_tool::{ActionLog, Tool};
 use gpui::{App, Entity, Task};
 use language_model::LanguageModelRequestMessage;
 use project::Project;
@@ -37,6 +37,7 @@ impl Tool for BashTool {
         input: serde_json::Value,
         _messages: &[LanguageModelRequestMessage],
         project: Entity<Project>,
+        _action_log: Entity<ActionLog>,
         cx: &mut App,
     ) -> Task<Result<String>> {
         let input: BashToolInput = match serde_json::from_value(input) {
@@ -49,7 +50,7 @@ impl Tool for BashTool {
         };
         let working_directory = worktree.read(cx).abs_path();
 
-        cx.spawn(|_| async move {
+        cx.spawn(async move |_| {
             // Add 2>&1 to merge stderr into stdout for proper interleaving.
             let command = format!("({}) 2>&1", input.command);
 

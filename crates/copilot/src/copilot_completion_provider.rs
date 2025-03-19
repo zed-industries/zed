@@ -83,7 +83,7 @@ impl EditPredictionProvider for CopilotCompletionProvider {
         cx: &mut Context<Self>,
     ) {
         let copilot = self.copilot.clone();
-        self.pending_refresh = Some(cx.spawn(|this, mut cx| async move {
+        self.pending_refresh = Some(cx.spawn(async move |this, cx| {
             if debounce {
                 cx.background_executor()
                     .timer(COPILOT_DEBOUNCE_TIMEOUT)
@@ -91,12 +91,12 @@ impl EditPredictionProvider for CopilotCompletionProvider {
             }
 
             let completions = copilot
-                .update(&mut cx, |copilot, cx| {
+                .update(cx, |copilot, cx| {
                     copilot.completions(&buffer, cursor_position, cx)
                 })?
                 .await?;
 
-            this.update(&mut cx, |this, cx| {
+            this.update(cx, |this, cx| {
                 if !completions.is_empty() {
                     this.cycled = false;
                     this.pending_refresh = None;
@@ -153,14 +153,14 @@ impl EditPredictionProvider for CopilotCompletionProvider {
             cx.notify();
         } else {
             let copilot = self.copilot.clone();
-            self.pending_cycling_refresh = Some(cx.spawn(|this, mut cx| async move {
+            self.pending_cycling_refresh = Some(cx.spawn(async move |this, cx| {
                 let completions = copilot
-                    .update(&mut cx, |copilot, cx| {
+                    .update(cx, |copilot, cx| {
                         copilot.completions_cycling(&buffer, cursor_position, cx)
                     })?
                     .await?;
 
-                this.update(&mut cx, |this, cx| {
+                this.update(cx, |this, cx| {
                     this.cycled = true;
                     this.file_extension = buffer.read(cx).file().and_then(|file| {
                         Some(

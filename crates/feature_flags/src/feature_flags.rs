@@ -115,6 +115,11 @@ impl FeatureFlag for AutoCommand {
     }
 }
 
+pub struct Debugger {}
+impl FeatureFlag for Debugger {
+    const NAME: &'static str = "debugger";
+}
+
 pub trait FeatureFlagViewExt<V: 'static> {
     fn observe_flag<T: FeatureFlag, F>(&mut self, window: &Window, callback: F) -> Subscription
     where
@@ -247,7 +252,7 @@ impl FeatureFlagAppExt for App {
     fn wait_for_flag_or_timeout<T: FeatureFlag>(&mut self, timeout: Duration) -> Task<bool> {
         let wait_for_flag = self.wait_for_flag::<T>();
 
-        self.spawn(|_cx| async move {
+        self.spawn(async move |_cx| {
             let mut wait_for_flag = wait_for_flag.fuse();
             let mut timeout = FutureExt::fuse(smol::Timer::after(timeout));
 

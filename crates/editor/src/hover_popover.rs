@@ -149,18 +149,18 @@ pub fn hover_at_inlay(
 
         let hover_popover_delay = EditorSettings::get_global(cx).hover_popover_delay;
 
-        let task = cx.spawn_in(window, |this, mut cx| {
+        let task = cx.spawn_in(window, async move |this, cx| {
             async move {
                 cx.background_executor()
                     .timer(Duration::from_millis(hover_popover_delay))
                     .await;
-                this.update(&mut cx, |this, _| {
+                this.update(cx, |this, _| {
                     this.hover_state.diagnostic_popover = None;
                 })?;
 
-                let language_registry = project.update(&mut cx, |p, _| p.languages().clone())?;
+                let language_registry = project.update(cx, |p, _| p.languages().clone())?;
                 let blocks = vec![inlay_hover.tooltip];
-                let parsed_content = parse_blocks(&blocks, &language_registry, None, &mut cx).await;
+                let parsed_content = parse_blocks(&blocks, &language_registry, None, cx).await;
 
                 let scroll_handle = ScrollHandle::new();
                 let hover_popover = InfoPopover {
@@ -172,7 +172,7 @@ pub fn hover_at_inlay(
                     anchor: None,
                 };
 
-                this.update(&mut cx, |this, cx| {
+                this.update(cx, |this, cx| {
                     // TODO: no background highlights happen for inlays currently
                     this.hover_state.info_popovers = vec![hover_popover];
                     cx.notify();
@@ -181,6 +181,7 @@ pub fn hover_at_inlay(
                 anyhow::Ok(())
             }
             .log_err()
+            .await
         });
 
         editor.hover_state.info_task = Some(task);
@@ -257,7 +258,7 @@ fn show_hover(
 
     let hover_popover_delay = EditorSettings::get_global(cx).hover_popover_delay;
 
-    let task = cx.spawn_in(window, |this, mut cx| {
+    let task = cx.spawn_in(window, async move |this, cx| {
         async move {
             // If we need to delay, delay a set amount initially before making the lsp request
             let delay = if ignore_timeout {
@@ -375,7 +376,7 @@ fn show_hover(
                 None
             };
 
-            this.update(&mut cx, |this, _| {
+            this.update(cx, |this, _| {
                 this.hover_state.diagnostic_popover = diagnostic_popover;
             })?;
 
@@ -409,7 +410,7 @@ fn show_hover(
             } else {
                 Vec::new()
             };
-            let snapshot = this.update_in(&mut cx, |this, window, cx| this.snapshot(window, cx))?;
+            let snapshot = this.update_in(cx, |this, window, cx| this.snapshot(window, cx))?;
             let mut hover_highlights = Vec::with_capacity(hovers_response.len());
             let mut info_popovers = Vec::with_capacity(
                 hovers_response.len() + if invisible_char.is_some() { 1 } else { 0 },
@@ -420,7 +421,7 @@ fn show_hover(
                     text: format!("Unicode character U+{:02X}", invisible as u32),
                     kind: HoverBlockKind::PlainText,
                 }];
-                let parsed_content = parse_blocks(&blocks, &language_registry, None, &mut cx).await;
+                let parsed_content = parse_blocks(&blocks, &language_registry, None, cx).await;
                 let scroll_handle = ScrollHandle::new();
                 info_popovers.push(InfoPopover {
                     symbol_range: RangeInEditor::Text(range),
@@ -459,8 +460,7 @@ fn show_hover(
 
                 let blocks = hover_result.contents;
                 let language = hover_result.language;
-                let parsed_content =
-                    parse_blocks(&blocks, &language_registry, language, &mut cx).await;
+                let parsed_content = parse_blocks(&blocks, &language_registry, language, cx).await;
                 let scroll_handle = ScrollHandle::new();
                 hover_highlights.push(range.clone());
                 info_popovers.push(InfoPopover {
@@ -473,7 +473,7 @@ fn show_hover(
                 });
             }
 
-            this.update_in(&mut cx, |editor, window, cx| {
+            this.update_in(cx, |editor, window, cx| {
                 if hover_highlights.is_empty() {
                     editor.clear_background_highlights::<HoverState>(cx);
                 } else {
@@ -493,6 +493,7 @@ fn show_hover(
             anyhow::Ok(())
         }
         .log_err()
+        .await
     });
 
     editor.hover_state.info_task = Some(task);
@@ -642,7 +643,7 @@ pub fn open_markdown_url(link: SharedString, window: &mut Window, cx: &mut App) 
                         cx,
                     );
 
-                    cx.spawn_in(window, |_, mut cx| async move {
+                    cx.spawn_in(window, async move |_, cx| {
                         let item = task.await?;
                         // Ruby LSP uses URLs with #L1,1-4,4
                         // we'll just take the first number and assume it's a line number
@@ -664,7 +665,7 @@ pub fn open_markdown_url(link: SharedString, window: &mut Window, cx: &mut App) 
                         let Some(editor) = cx.update(|_, cx| item.act_as::<Editor>(cx))? else {
                             return Ok(());
                         };
-                        editor.update_in(&mut cx, |editor, window, cx| {
+                        editor.update_in(cx, |editor, window, cx| {
                             editor.change_selections(
                                 Some(Autoscroll::fit()),
                                 window,

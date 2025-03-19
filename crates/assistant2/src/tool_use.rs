@@ -118,6 +118,22 @@ impl ToolUseState {
         this
     }
 
+    pub fn cancel_pending(&mut self) -> Vec<PendingToolUse> {
+        let mut pending_tools = Vec::new();
+        for (tool_use_id, tool_use) in self.pending_tool_uses_by_id.drain() {
+            self.tool_results.insert(
+                tool_use_id.clone(),
+                LanguageModelToolResult {
+                    tool_use_id,
+                    content: "Tool canceled by user".into(),
+                    is_error: true,
+                },
+            );
+            pending_tools.push(tool_use.clone());
+        }
+        pending_tools
+    }
+
     pub fn pending_tool_uses(&self) -> Vec<&PendingToolUse> {
         self.pending_tool_uses_by_id.values().collect()
     }
@@ -182,6 +198,13 @@ impl ToolUseState {
             .map_or(false, |results| !results.is_empty())
     }
 
+    pub fn tool_result(
+        &self,
+        tool_use_id: &LanguageModelToolUseId,
+    ) -> Option<&LanguageModelToolResult> {
+        self.tool_results.get(tool_use_id)
+    }
+
     pub fn request_tool_use(
         &mut self,
         assistant_message_id: MessageId,
@@ -226,12 +249,12 @@ impl ToolUseState {
         output: Result<String>,
     ) -> Option<PendingToolUse> {
         match output {
-            Ok(output) => {
+            Ok(tool_result) => {
                 self.tool_results.insert(
                     tool_use_id.clone(),
                     LanguageModelToolResult {
                         tool_use_id: tool_use_id.clone(),
-                        content: output.into(),
+                        content: tool_result.into(),
                         is_error: false,
                     },
                 );
@@ -263,9 +286,17 @@ impl ToolUseState {
     ) {
         if let Some(tool_uses) = self.tool_uses_by_assistant_message.get(&message_id) {
             for tool_use in tool_uses {
-                request_message
-                    .content
-                    .push(MessageContent::ToolUse(tool_use.clone()));
+                if self.tool_results.contains_key(&tool_use.id) {
+                    // Do not send tool uses until they are completed
+                    request_message
+                        .content
+                        .push(MessageContent::ToolUse(tool_use.clone()));
+                } else {
+                    log::debug!(
+                        "skipped tool use {:?} because it is still pending",
+                        tool_use
+                    );
+                }
             }
         }
     }
@@ -278,9 +309,19 @@ impl ToolUseState {
         if let Some(tool_uses) = self.tool_uses_by_user_message.get(&message_id) {
             for tool_use_id in tool_uses {
                 if let Some(tool_result) = self.tool_results.get(tool_use_id) {
-                    request_message
-                        .content
-                        .push(MessageContent::ToolResult(tool_result.clone()));
+                    request_message.content.push(MessageContent::ToolResult(
+                        LanguageModelToolResult {
+                            tool_use_id: tool_use_id.clone(),
+                            is_error: tool_result.is_error,
+                            content: if tool_result.content.is_empty() {
+                                // Surprisingly, the API fails if we return an empty string here.
+                                // It thinks we are sending a tool use without a tool result.
+                                "<Tool returned an empty string>".into()
+                            } else {
+                                tool_result.content.clone()
+                            },
+                        },
+                    ));
                 }
             }
         }

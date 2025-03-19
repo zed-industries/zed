@@ -22,10 +22,13 @@ use ui::Color;
 use ui::{prelude::*, Disclosure, KeyBinding};
 use util::ResultExt as _;
 
+use crate::context_store::{refresh_context_store_text, ContextStore};
+
 pub struct ActiveThread {
     language_registry: Arc<LanguageRegistry>,
     thread_store: Entity<ThreadStore>,
     thread: Entity<Thread>,
+    context_store: Entity<ContextStore>,
     save_thread_task: Option<Task<()>>,
     messages: Vec<MessageId>,
     list_state: ListState,
@@ -46,6 +49,7 @@ impl ActiveThread {
         thread: Entity<Thread>,
         thread_store: Entity<ThreadStore>,
         language_registry: Arc<LanguageRegistry>,
+        context_store: Entity<ContextStore>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -58,6 +62,7 @@ impl ActiveThread {
             language_registry,
             thread_store,
             thread: thread.clone(),
+            context_store,
             save_thread_task: None,
             messages: Vec::new(),
             rendered_messages_by_id: HashMap::default(),
@@ -111,7 +116,7 @@ impl ActiveThread {
     pub fn cancel_last_completion(&mut self, cx: &mut App) -> bool {
         self.last_error.take();
         self.thread
-            .update(cx, |thread, _cx| thread.cancel_last_completion())
+            .update(cx, |thread, cx| thread.cancel_last_completion(cx))
     }
 
     pub fn last_error(&self) -> Option<ThreadError> {
@@ -293,6 +298,7 @@ impl ActiveThread {
             ThreadEvent::StreamedCompletion | ThreadEvent::SummaryChanged => {
                 self.save_thread(cx);
             }
+            ThreadEvent::DoneStreaming => {}
             ThreadEvent::StreamedAssistantText(message_id, text) => {
                 if let Some(markdown) = self.rendered_messages_by_id.get_mut(&message_id) {
                     markdown.update(cx, |markdown, cx| {
@@ -337,8 +343,11 @@ impl ActiveThread {
                 });
             }
             ThreadEvent::ToolFinished {
-                pending_tool_use, ..
+                pending_tool_use,
+                canceled,
+                ..
             } => {
+                let canceled = *canceled;
                 if let Some(tool_use) = pending_tool_use {
                     self.render_scripting_tool_use_markdown(
                         tool_use.id.clone(),
@@ -350,11 +359,54 @@ impl ActiveThread {
                 }
 
                 if self.thread.read(cx).all_tools_finished() {
+                    let pending_refresh_buffers = self.thread.update(cx, |thread, cx| {
+                        thread.action_log().update(cx, |action_log, _cx| {
+                            action_log.take_stale_buffers_in_context()
+                        })
+                    });
+
+                    let context_update_task = if !pending_refresh_buffers.is_empty() {
+                        let refresh_task = refresh_context_store_text(
+                            self.context_store.clone(),
+                            &pending_refresh_buffers,
+                            cx,
+                        );
+
+                        cx.spawn(async move |this, cx| {
+                            let updated_context_ids = refresh_task.await;
+
+                            this.update(cx, |this, cx| {
+                                this.context_store.read_with(cx, |context_store, cx| {
+                                    context_store
+                                        .context()
+                                        .iter()
+                                        .filter(|context| {
+                                            updated_context_ids.contains(&context.id())
+                                        })
+                                        .flat_map(|context| context.snapshot(cx))
+                                        .collect()
+                                })
+                            })
+                        })
+                    } else {
+                        Task::ready(anyhow::Ok(Vec::new()))
+                    };
+
                     let model_registry = LanguageModelRegistry::read_global(cx);
                     if let Some(model) = model_registry.active_model() {
-                        self.thread.update(cx, |thread, cx| {
-                            thread.send_tool_results_to_model(model, cx);
-                        });
+                        cx.spawn(async move |this, cx| {
+                            let updated_context = context_update_task.await?;
+
+                            this.update(cx, |this, cx| {
+                                this.thread.update(cx, |thread, cx| {
+                                    thread.attach_tool_results(updated_context, cx);
+                                    if !canceled {
+                                        thread.send_to_model(model, RequestKind::Chat, cx);
+                                    }
+                                });
+                            })
+                        })
+                        .detach();
                     }
                 }
             }
@@ -366,9 +418,9 @@ impl ActiveThread {
     /// Only one task to save the thread will be in flight at a time.
     fn save_thread(&mut self, cx: &mut Context<Self>) {
         let thread = self.thread.clone();
-        self.save_thread_task = Some(cx.spawn(|this, mut cx| async move {
+        self.save_thread_task = Some(cx.spawn(async move |this, cx| {
             let task = this
-                .update(&mut cx, |this, cx| {
+                .update(cx, |this, cx| {
                     this.thread_store
                         .update(cx, |thread_store, cx| thread_store.save_thread(&thread, cx))
                 })
@@ -498,6 +550,7 @@ impl ActiveThread {
 
         let thread = self.thread.read(cx);
         // Get all the data we need from thread before we start using it in closures
+        let checkpoint = thread.checkpoint_for_message(message_id);
         let context = thread.context_for_message(message_id);
         let tool_uses = thread.tool_uses_for_message(message_id);
         let scripting_tool_uses = thread.scripting_tool_uses_for_message(message_id);
@@ -531,7 +584,7 @@ impl ActiveThread {
                         .p_2p5()
                         .child(edit_message_editor)
                 } else {
-                    div().p_2p5().text_ui(cx).child(markdown.clone())
+                    div().text_ui(cx).child(markdown.clone())
                 },
             )
             .when_some(context, |parent, context| {
@@ -551,15 +604,16 @@ impl ActiveThread {
         let styled_message = match message.role {
             Role::User => v_flex()
                 .id(("message-container", ix))
-                .pt_2p5()
-                .px_2p5()
+                .pt_2()
+                .pl_2()
+                .pr_2p5()
                 .child(
                     v_flex()
                         .bg(colors.editor_background)
                         .rounded_lg()
                         .border_1()
                         .border_color(colors.border)
-                        .shadow_sm()
+                        .shadow_md()
                         .child(
                             h_flex()
                                 .py_1()
@@ -650,12 +704,12 @@ impl ActiveThread {
                                     },
                                 ),
                         )
-                        .child(message_content),
+                        .child(div().p_2().child(message_content)),
                 ),
             Role::Assistant => {
                 v_flex()
                     .id(("message-container", ix))
-                    .child(message_content)
+                    .child(div().py_3().px_4().child(message_content))
                     .when(
                         !tool_uses.is_empty() || !scripting_tool_uses.is_empty(),
                         |parent| {
@@ -677,11 +731,29 @@ impl ActiveThread {
                 v_flex()
                     .bg(colors.editor_background)
                     .rounded_sm()
-                    .child(message_content),
+                    .child(div().p_4().child(message_content)),
             ),
         };
 
-        styled_message.into_any()
+        v_flex()
+            .when_some(checkpoint, |parent, checkpoint| {
+                parent.child(
+                    h_flex().pl_2().child(
+                        Button::new("restore-checkpoint", "Restore Checkpoint")
+                            .icon(IconName::Undo)
+                            .size(ButtonSize::Compact)
+                            .on_click(cx.listener(move |this, _, _window, cx| {
+                                this.thread.update(cx, |thread, cx| {
+                                    thread
+                                        .restore_checkpoint(checkpoint.clone(), cx)
+                                        .detach_and_log_err(cx);
+                                });
+                            })),
+                    ),
+                )
+            })
+            .child(styled_message)
+            .into_any()
     }
 
     fn render_tool_use(&self, tool_use: ToolUse, cx: &mut Context<Self>) -> impl IntoElement {
@@ -693,7 +765,7 @@ impl ActiveThread {
 
         let lighter_border = cx.theme().colors().border.opacity(0.5);
 
-        div().px_2p5().child(
+        div().px_4().child(
             v_flex()
                 .rounded_lg()
                 .border_1()

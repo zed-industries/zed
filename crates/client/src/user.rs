@@ -29,6 +29,12 @@ impl std::fmt::Display for ChannelId {
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy)]
 pub struct ProjectId(pub u64);
 
+impl ProjectId {
+    pub fn to_proto(&self) -> u64 {
+        self.0
+    }
+}
+
 #[derive(
     Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy, serde::Serialize, serde::Deserialize,
 )]
@@ -162,11 +168,10 @@ impl UserStore {
             invite_info: None,
             client: Arc::downgrade(&client),
             update_contacts_tx,
-            _maintain_contacts: cx.spawn(|this, mut cx| async move {
+            _maintain_contacts: cx.spawn(async move |this, cx| {
                 let _subscriptions = rpc_subscriptions;
                 while let Some(message) = update_contacts_rx.next().await {
-                    if let Ok(task) =
-                        this.update(&mut cx, |this, cx| this.update_contacts(message, cx))
+                    if let Ok(task) = this.update(cx, |this, cx| this.update_contacts(message, cx))
                     {
                         task.log_err().await;
                     } else {
@@ -174,7 +179,7 @@ impl UserStore {
                     }
                 }
             }),
-            _maintain_current_user: cx.spawn(|this, mut cx| async move {
+            _maintain_current_user: cx.spawn(async move |this, cx| {
                 let mut status = client.status();
                 let weak = Arc::downgrade(&client);
                 drop(client);
@@ -186,10 +191,9 @@ impl UserStore {
                     match status {
                         Status::Connected { .. } => {
                             if let Some(user_id) = client.user_id() {
-                                let fetch_user = if let Ok(fetch_user) = this
-                                    .update(&mut cx, |this, cx| {
-                                        this.get_user(user_id, cx).log_err()
-                                    }) {
+                                let fetch_user = if let Ok(fetch_user) =
+                                    this.update(cx, |this, cx| this.get_user(user_id, cx).log_err())
+                                {
                                     fetch_user
                                 } else {
                                     break;
@@ -233,12 +237,12 @@ impl UserStore {
 
                                 current_user_tx.send(user).await.ok();
 
-                                this.update(&mut cx, |_, cx| cx.notify())?;
+                                this.update(cx, |_, cx| cx.notify())?;
                             }
                         }
                         Status::SignedOut => {
                             current_user_tx.send(None).await.ok();
-                            this.update(&mut cx, |this, cx| {
+                            this.update(cx, |this, cx| {
                                 this.accepted_tos_at = None;
                                 cx.emit(Event::PrivateUserInfoUpdated);
                                 cx.notify();
@@ -247,7 +251,7 @@ impl UserStore {
                             .await;
                         }
                         Status::ConnectionLost => {
-                            this.update(&mut cx, |this, cx| {
+                            this.update(cx, |this, cx| {
                                 cx.notify();
                                 this.clear_contacts()
                             })?
@@ -344,7 +348,7 @@ impl UserStore {
                 user_ids.extend(message.outgoing_requests.iter());
 
                 let load_users = self.get_users(user_ids.into_iter().collect(), cx);
-                cx.spawn(|this, mut cx| async move {
+                cx.spawn(async move |this, cx| {
                     load_users.await?;
 
                     // Users are fetched in parallel above and cached in call to get_users
@@ -354,25 +358,22 @@ impl UserStore {
                         .upgrade()
                         .ok_or_else(|| anyhow!("can't upgrade user store handle"))?;
                     for contact in message.contacts {
-                        updated_contacts.push(Arc::new(
-                            Contact::from_proto(contact, &this, &mut cx).await?,
-                        ));
+                        updated_contacts
+                            .push(Arc::new(Contact::from_proto(contact, &this, cx).await?));
                     }
 
                     let mut incoming_requests = Vec::new();
                     for request in message.incoming_requests {
                         incoming_requests.push({
-                            this.update(&mut cx, |this, cx| {
-                                this.get_user(request.requester_id, cx)
-                            })?
-                            .await?
+                            this.update(cx, |this, cx| this.get_user(request.requester_id, cx))?
+                                .await?
                         });
                     }
 
                     let mut outgoing_requests = Vec::new();
                     for requested_user_id in message.outgoing_requests {
                         outgoing_requests.push(
-                            this.update(&mut cx, |this, cx| this.get_user(requested_user_id, cx))?
+                            this.update(cx, |this, cx| this.get_user(requested_user_id, cx))?
                                 .await?,
                         );
                     }
@@ -384,7 +385,7 @@ impl UserStore {
                     let removed_outgoing_requests =
                         HashSet::<u64>::from_iter(message.remove_outgoing_requests.iter().copied());
 
-                    this.update(&mut cx, |this, cx| {
+                    this.update(cx, |this, cx| {
                         // Remove contacts
                         this.contacts
                             .retain(|contact| !removed_contacts.contains(&contact.user.id));
@@ -537,7 +538,7 @@ impl UserStore {
         cx: &Context<Self>,
     ) -> Task<Result<()>> {
         let client = self.client.upgrade();
-        cx.spawn(move |_, _| async move {
+        cx.spawn(async move |_, _| {
             client
                 .ok_or_else(|| anyhow!("can't upgrade client reference"))?
                 .request(proto::RespondToContactRequest {
@@ -559,12 +560,12 @@ impl UserStore {
         *self.pending_contact_requests.entry(user_id).or_insert(0) += 1;
         cx.notify();
 
-        cx.spawn(move |this, mut cx| async move {
+        cx.spawn(async move |this, cx| {
             let response = client
                 .ok_or_else(|| anyhow!("can't upgrade client reference"))?
                 .request(request)
                 .await;
-            this.update(&mut cx, |this, cx| {
+            this.update(cx, |this, cx| {
                 if let Entry::Occupied(mut request_count) =
                     this.pending_contact_requests.entry(user_id)
                 {
@@ -608,9 +609,9 @@ impl UserStore {
         let mut user_ids_to_fetch = user_ids.clone();
         user_ids_to_fetch.retain(|id| !self.users.contains_key(id));
 
-        cx.spawn(|this, mut cx| async move {
+        cx.spawn(async move |this, cx| {
             if !user_ids_to_fetch.is_empty() {
-                this.update(&mut cx, |this, cx| {
+                this.update(cx, |this, cx| {
                     this.load_users(
                         proto::GetUsers {
                             user_ids: user_ids_to_fetch,
@@ -621,7 +622,7 @@ impl UserStore {
                 .await?;
             }
 
-            this.update(&mut cx, |this, _| {
+            this.update(cx, |this, _| {
                 user_ids
                     .iter()
                     .map(|user_id| {
@@ -662,9 +663,9 @@ impl UserStore {
         }
 
         let load_users = self.get_users(vec![user_id], cx);
-        cx.spawn(move |this, mut cx| async move {
+        cx.spawn(async move |this, cx| {
             load_users.await?;
-            this.update(&mut cx, |this, _| {
+            this.update(cx, |this, _| {
                 this.users
                     .get(&user_id)
                     .cloned()
@@ -702,14 +703,14 @@ impl UserStore {
         };
 
         let client = self.client.clone();
-        cx.spawn(move |this, mut cx| async move {
+        cx.spawn(async move |this, cx| {
             if let Some(client) = client.upgrade() {
                 let response = client
                     .request(proto::AcceptTermsOfService {})
                     .await
                     .context("error accepting tos")?;
 
-                this.update(&mut cx, |this, cx| {
+                this.update(cx, |this, cx| {
                     this.set_current_user_accepted_tos_at(Some(response.accepted_tos_at));
                     cx.emit(Event::PrivateUserInfoUpdated);
                 })
@@ -731,12 +732,12 @@ impl UserStore {
         cx: &Context<Self>,
     ) -> Task<Result<Vec<Arc<User>>>> {
         let client = self.client.clone();
-        cx.spawn(|this, mut cx| async move {
+        cx.spawn(async move |this, cx| {
             if let Some(rpc) = client.upgrade() {
                 let response = rpc.request(request).await.context("error loading users")?;
                 let users = response.users;
 
-                this.update(&mut cx, |this, _| this.insert(users))
+                this.update(cx, |this, _| this.insert(users))
             } else {
                 Ok(Vec::new())
             }
@@ -790,8 +791,8 @@ impl UserStore {
         }
         if !missing_user_ids.is_empty() {
             let this = self.weak_self.clone();
-            cx.spawn(|mut cx| async move {
-                this.update(&mut cx, |this, cx| this.get_users(missing_user_ids, cx))?
+            cx.spawn(async move |cx| {
+                this.update(cx, |this, cx| this.get_users(missing_user_ids, cx))?
                     .await
             })
             .detach_and_log_err(cx);

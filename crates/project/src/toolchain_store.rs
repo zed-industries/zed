@@ -288,8 +288,8 @@ impl LocalToolchainStore {
         toolchain: Toolchain,
         cx: &mut Context<Self>,
     ) -> Task<Option<()>> {
-        cx.spawn(move |this, mut cx| async move {
-            this.update(&mut cx, |this, cx| {
+        cx.spawn(async move |this, cx| {
+            this.update(cx, |this, cx| {
                 this.active_toolchains.insert(
                     (worktree_id, toolchain.language_name.clone()),
                     toolchain.clone(),
@@ -317,9 +317,9 @@ impl LocalToolchainStore {
         };
 
         let environment = self.project_environment.clone();
-        cx.spawn(|mut cx| async move {
+        cx.spawn(async move |cx| {
             let project_env = environment
-                .update(&mut cx, |environment, cx| {
+                .update(cx, |environment, cx| {
                     environment.get_environment(Some(worktree_id), Some(root.clone()), cx)
                 })
                 .ok()?
@@ -363,7 +363,7 @@ impl RemoteToolchainStore {
     ) -> Task<Option<()>> {
         let project_id = self.project_id;
         let client = self.client.clone();
-        cx.spawn(move |_| async move {
+        cx.spawn(async move |_| {
             let path = PathBuf::from(toolchain.path.to_string());
             let _ = client
                 .request(proto::ActivateToolchain {
@@ -390,7 +390,7 @@ impl RemoteToolchainStore {
     ) -> Task<Option<ToolchainList>> {
         let project_id = self.project_id;
         let client = self.client.clone();
-        cx.spawn(move |_| async move {
+        cx.spawn(async move |_| {
             let response = client
                 .request(proto::ListToolchains {
                     project_id,
@@ -441,7 +441,7 @@ impl RemoteToolchainStore {
     ) -> Task<Option<Toolchain>> {
         let project_id = self.project_id;
         let client = self.client.clone();
-        cx.spawn(move |_| async move {
+        cx.spawn(async move |_| {
             let response = client
                 .request(proto::ActiveToolchain {
                     project_id,

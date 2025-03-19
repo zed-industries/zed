@@ -1,5 +1,5 @@
 use anyhow::{anyhow, Result};
-use assistant_tool::Tool;
+use assistant_tool::{ActionLog, Tool};
 use gpui::{App, Entity, Task};
 use language::{DiagnosticSeverity, OffsetRangeExt};
 use language_model::LanguageModelRequestMessage;
@@ -51,6 +51,7 @@ impl Tool for DiagnosticsTool {
         input: serde_json::Value,
         _messages: &[LanguageModelRequestMessage],
         project: Entity<Project>,
+        _action_log: Entity<ActionLog>,
         cx: &mut App,
     ) -> Task<Result<String>> {
         let input = match serde_json::from_value::<DiagnosticsToolInput>(input) {
@@ -64,10 +65,10 @@ impl Tool for DiagnosticsTool {
             };
             let buffer = project.update(cx, |project, cx| project.open_buffer(project_path, cx));
 
-            cx.spawn(|cx| async move {
+            cx.spawn(async move |cx| {
                 let mut output = String::new();
                 let buffer = buffer.await?;
-                let snapshot = buffer.read_with(&cx, |buffer, _cx| buffer.snapshot())?;
+                let snapshot = buffer.read_with(cx, |buffer, _cx| buffer.snapshot())?;
 
                 for (_, group) in snapshot.diagnostic_groups(None) {
                     let entry = &group.entries[group.primary_ix];
