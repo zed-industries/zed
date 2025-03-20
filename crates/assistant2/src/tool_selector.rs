@@ -1,11 +1,11 @@
 use std::sync::Arc;
 
+use assistant_settings::{AgentProfile, AssistantSettings};
 use assistant_tool::{ToolSource, ToolWorkingSet};
 use gpui::Entity;
 use scripting_tool::ScriptingTool;
+use settings::Settings as _;
 use ui::{prelude::*, ContextMenu, PopoverMenu, Tooltip};
-
-use crate::agent_profile::AgentProfile;
 
 pub struct ToolSelector {
     profiles: Vec<AgentProfile>,
@@ -13,11 +13,27 @@ pub struct ToolSelector {
 }
 
 impl ToolSelector {
-    pub fn new(tools: Arc<ToolWorkingSet>, _cx: &mut Context<Self>) -> Self {
-        Self {
-            profiles: vec![AgentProfile::read_only(), AgentProfile::code_writer()],
-            tools,
+    pub fn new(tools: Arc<ToolWorkingSet>, cx: &mut Context<Self>) -> Self {
+        let settings = AssistantSettings::get_global(cx);
+        let mut profiles = settings.profiles.clone();
+
+        let read_only = AgentProfile::read_only();
+        if !profiles
+            .iter()
+            .any(|profile| profile.name == read_only.name)
+        {
+            profiles.insert(0, read_only);
         }
+
+        let code_writer = AgentProfile::code_writer();
+        if !profiles
+            .iter()
+            .any(|profile| profile.name == code_writer.name)
+        {
+            profiles.insert(0, code_writer);
+        }
+
+        Self { profiles, tools }
     }
 
     fn build_context_menu(
@@ -44,6 +60,10 @@ impl ToolSelector {
                                 .filter_map(|(tool, enabled)| enabled.then(|| tool.clone()))
                                 .collect::<Vec<_>>(),
                         );
+
+                        if profile.tools.contains_key(ScriptingTool::NAME) {
+                            tools.enable_scripting_tool();
+                        }
                     }
                 });
             }
