@@ -39,6 +39,10 @@ impl Tool for PathSearchTool {
         "path-search".into()
     }
 
+    fn needs_confirmation(&self) -> bool {
+        false
+    }
+
     fn description(&self) -> String {
         include_str!("./path_search_tool/description.md").into()
     }

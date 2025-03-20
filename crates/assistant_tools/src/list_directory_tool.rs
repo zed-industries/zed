@@ -41,6 +41,10 @@ impl Tool for ListDirectoryTool {
         "list-directory".into()
     }
 
+    fn needs_confirmation(&self) -> bool {
+        false
+    }
+
     fn description(&self) -> String {
         include_str!("./list_directory_tool/description.md").into()
     }

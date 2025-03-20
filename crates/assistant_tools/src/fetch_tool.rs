@@ -113,6 +113,10 @@ impl Tool for FetchTool {
         "fetch".to_string()
     }
 
+    fn needs_confirmation(&self) -> bool {
+        true
+    }
+
     fn description(&self) -> String {
         include_str!("./fetch_tool/description.md").to_string()
     }

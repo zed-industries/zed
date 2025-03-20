@@ -166,7 +166,9 @@ impl ToolUseState {
                 if let Some(pending_tool_use) = self.pending_tool_uses_by_id.get(&tool_use.id) {
                     return match pending_tool_use.status {
                         PendingToolUseStatus::Idle => ToolUseStatus::Pending,
-                        PendingToolUseStatus::NeedsConfirmation => ToolUseStatus::NeedsConfirmation,
+                        PendingToolUseStatus::NeedsConfirmation { ..
+                          // TODO investigate: do we need to pass this along?
+                        } => ToolUseStatus::NeedsConfirmation,
                         PendingToolUseStatus::Running { .. } => ToolUseStatus::Running,
                         PendingToolUseStatus::Error(ref err) => {
                             ToolUseStatus::Error(err.clone().into())
@@ -400,9 +402,5 @@ impl PendingToolUseStatus {
 
     pub fn is_error(&self) -> bool {
         matches!(self, PendingToolUseStatus::Error(_))
-    }
-
-    pub fn needs_confirmation(&self) -> bool {
-        matches!(self, PendingToolUseStatus::NeedsConfirmation)
     }
 }

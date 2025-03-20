@@ -23,6 +23,10 @@ impl Tool for BashTool {
         "bash".to_string()
     }
 
+    fn needs_confirmation(&self) -> bool {
+        true
+    }
+
     fn description(&self) -> String {
         include_str!("./bash_tool/description.md").to_string()
     }
