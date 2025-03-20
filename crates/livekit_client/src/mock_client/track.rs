@@ -1,14 +1,9 @@
 use std::sync::Arc;
 
-use crate::{ParticipantIdentity, TrackSid};
-
-use super::{TestServerAudioTrack, TestServerVideoTrack, WeakRoom};
-
-#[derive(Clone, Debug)]
-pub enum LocalTrack {
-    Audio(LocalAudioTrack),
-    Video(LocalVideoTrack),
-}
+use crate::{
+    test::{TestServerAudioTrack, TestServerVideoTrack, WeakRoom},
+    ParticipantIdentity, TrackSid,
+};
 
 #[derive(Clone, Debug)]
 pub struct LocalVideoTrack {}
@@ -18,14 +13,14 @@ pub struct LocalAudioTrack {}
 
 #[derive(Clone, Debug)]
 pub struct RemoteVideoTrack {
-    pub(super) server_track: Arc<TestServerVideoTrack>,
-    pub(super) _room: WeakRoom,
+    pub(crate) server_track: Arc<TestServerVideoTrack>,
+    pub(crate) _room: WeakRoom,
 }
 
 #[derive(Clone, Debug)]
 pub struct RemoteAudioTrack {
-    pub(super) server_track: Arc<TestServerAudioTrack>,
-    pub(super) room: WeakRoom,
+    pub(crate) server_track: Arc<TestServerAudioTrack>,
+    pub(crate) room: WeakRoom,
 }
 
 impl RemoteAudioTrack {
@@ -52,6 +47,17 @@ impl RemoteAudioTrack {
                 .lock()
                 .paused_audio_tracks
                 .insert(self.server_track.sid.clone());
+        }
+    }
+
+    pub fn enabled(&self) -> bool {
+        if let Some(room) = self.room.upgrade() {
+            room.0
+                .lock()
+                .paused_audio_tracks
+                .contains(&self.server_track.sid)
+        } else {
+            false
         }
     }
 

@@ -1,10 +1,6 @@
-pub mod participant;
-pub mod publication;
-pub mod track;
-
 use crate::{Participant, RemoteTrack, RoomEvent, TrackPublication};
 
-use self::{participant::*, publication::*, track::*};
+use crate::mock_client::{participant::*, publication::*, track::*};
 use anyhow::{anyhow, Context as _, Result};
 use async_trait::async_trait;
 use collections::{btree_map::Entry as BTreeEntry, hash_map::Entry, BTreeMap, HashMap, HashSet};
@@ -298,7 +294,7 @@ impl TestServer {
         }
     }
 
-    async fn publish_video_track(
+    pub(crate) async fn publish_video_track(
         &self,
         token: String,
         _local_track: LocalVideoTrack,
@@ -364,7 +360,7 @@ impl TestServer {
         Ok(sid)
     }
 
-    async fn publish_audio_track(
+    pub(crate) async fn publish_audio_track(
         &self,
         token: String,
         _local_track: &LocalAudioTrack,
@@ -431,11 +427,16 @@ impl TestServer {
         Ok(sid)
     }
 
-    async fn unpublish_track(&self, _token: String, _track: &TrackSid) -> Result<()> {
+    pub(crate) async fn unpublish_track(&self, _token: String, _track: &TrackSid) -> Result<()> {
         Ok(())
     }
 
-    fn set_track_muted(&self, token: &str, track_sid: &TrackSid, muted: bool) -> Result<()> {
+    pub(crate) fn set_track_muted(
+        &self,
+        token: &str,
+        track_sid: &TrackSid,
+        muted: bool,
+    ) -> Result<()> {
         let claims = livekit_api::token::validate(&token, &self.secret_key)?;
         let room_name = claims.video.room.unwrap();
         let identity = ParticipantIdentity(claims.sub.unwrap().to_string());
@@ -489,7 +490,7 @@ impl TestServer {
         Ok(())
     }
 
-    fn is_track_muted(&self, token: &str, track_sid: &TrackSid) -> Option<bool> {
+    pub(crate) fn is_track_muted(&self, token: &str, track_sid: &TrackSid) -> Option<bool> {
         let claims = livekit_api::token::validate(&token, &self.secret_key).ok()?;
         let room_name = claims.video.room.unwrap();
 
@@ -504,7 +505,7 @@ impl TestServer {
         })
     }
 
-    fn video_tracks(&self, token: String) -> Result<Vec<RemoteVideoTrack>> {
+    pub(crate) fn video_tracks(&self, token: String) -> Result<Vec<RemoteVideoTrack>> {
         let claims = livekit_api::token::validate(&token, &self.secret_key)?;
         let room_name = claims.video.room.unwrap();
         let identity = ParticipantIdentity(claims.sub.unwrap().to_string());
@@ -527,7 +528,7 @@ impl TestServer {
             .collect())
     }
 
-    fn audio_tracks(&self, token: String) -> Result<Vec<RemoteAudioTrack>> {
+    pub(crate) fn audio_tracks(&self, token: String) -> Result<Vec<RemoteAudioTrack>> {
         let claims = livekit_api::token::validate(&token, &self.secret_key)?;
         let room_name = claims.video.room.unwrap();
         let identity = ParticipantIdentity(claims.sub.unwrap().to_string());
@@ -565,17 +566,17 @@ struct TestServerRoom {
 }
 
 #[derive(Debug)]
-struct TestServerVideoTrack {
-    sid: TrackSid,
-    publisher_id: ParticipantIdentity,
+pub(crate) struct TestServerVideoTrack {
+    pub(crate) sid: TrackSid,
+    pub(crate) publisher_id: ParticipantIdentity,
     // frames_rx: async_broadcast::Receiver<Frame>,
 }
 
 #[derive(Debug)]
-struct TestServerAudioTrack {
-    sid: TrackSid,
-    publisher_id: ParticipantIdentity,
-    muted: AtomicBool,
+pub(crate) struct TestServerAudioTrack {
+    pub(crate) sid: TrackSid,
+    pub(crate) publisher_id: ParticipantIdentity,
+    pub(crate) muted: AtomicBool,
 }
 
 pub struct TestApiClient {
@@ -642,17 +643,17 @@ impl livekit_api::Client for TestApiClient {
     }
 }
 
-struct RoomState {
-    url: String,
-    token: String,
-    local_identity: ParticipantIdentity,
-    connection_state: ConnectionState,
-    paused_audio_tracks: HashSet<TrackSid>,
-    updates_tx: mpsc::Sender<RoomEvent>,
+pub(crate) struct RoomState {
+    pub(crate) url: String,
+    pub(crate) token: String,
+    pub(crate) local_identity: ParticipantIdentity,
+    pub(crate) connection_state: ConnectionState,
+    pub(crate) paused_audio_tracks: HashSet<TrackSid>,
+    pub(crate) updates_tx: mpsc::Sender<RoomEvent>,
 }
 
 #[derive(Clone, Debug)]
-pub struct Room(Arc<Mutex<RoomState>>);
+pub struct Room(pub(crate) Arc<Mutex<RoomState>>);
 
 #[derive(Clone, Debug)]
 pub(crate) struct WeakRoom(Weak<Mutex<RoomState>>);
@@ -670,7 +671,7 @@ impl std::fmt::Debug for RoomState {
 }
 
 impl Room {
-    fn downgrade(&self) -> WeakRoom {
+    pub(crate) fn downgrade(&self) -> WeakRoom {
         WeakRoom(Arc::downgrade(&self.0))
     }
 
@@ -721,11 +722,11 @@ impl Room {
             .unwrap()
     }
 
-    fn test_server(&self) -> Arc<TestServer> {
+    pub(crate) fn test_server(&self) -> Arc<TestServer> {
         TestServer::get(&self.0.lock().url).unwrap()
     }
 
-    fn token(&self) -> String {
+    pub(crate) fn token(&self) -> String {
         self.0.lock().token.clone()
     }
 }
@@ -745,7 +746,7 @@ impl Drop for RoomState {
 }
 
 impl WeakRoom {
-    fn upgrade(&self) -> Option<Room> {
+    pub(crate) fn upgrade(&self) -> Option<Room> {
         self.0.upgrade().map(Room)
     }
 }

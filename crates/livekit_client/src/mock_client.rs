@@ -2,15 +2,19 @@ use gpui::BackgroundExecutor;
 
 use crate::test;
 
-pub type RemoteVideoTrack = test::track::RemoteVideoTrack;
-pub type RemoteAudioTrack = test::track::RemoteAudioTrack;
-pub type RemoteTrackPublication = test::publication::RemoteTrackPublication;
-pub type RemoteParticipant = test::participant::RemoteParticipant;
+pub(crate) mod participant;
+pub(crate) mod publication;
+pub(crate) mod track;
 
-pub type LocalVideoTrack = test::track::LocalVideoTrack;
-pub type LocalAudioTrack = test::track::LocalAudioTrack;
-pub type LocalTrackPublication = test::publication::LocalTrackPublication;
-pub type LocalParticipant = test::participant::LocalParticipant;
+pub type RemoteVideoTrack = track::RemoteVideoTrack;
+pub type RemoteAudioTrack = track::RemoteAudioTrack;
+pub type RemoteTrackPublication = publication::RemoteTrackPublication;
+pub type RemoteParticipant = participant::RemoteParticipant;
+
+pub type LocalVideoTrack = track::LocalVideoTrack;
+pub type LocalAudioTrack = track::LocalAudioTrack;
+pub type LocalTrackPublication = publication::LocalTrackPublication;
+pub type LocalParticipant = participant::LocalParticipant;
 
 pub type Room = test::Room;
 pub use test::{ConnectionState, ParticipantIdentity, TrackSid};

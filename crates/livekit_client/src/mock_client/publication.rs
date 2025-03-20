@@ -1,6 +1,6 @@
 use gpui::App;
 
-use super::*;
+use crate::{test::WeakRoom, RemoteTrack, TrackSid};
 
 #[derive(Clone, Debug)]
 pub struct LocalTrackPublication {

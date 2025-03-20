@@ -29,7 +29,7 @@ futures.workspace = true
 gpui.workspace = true
 livekit_api.workspace = true
 log.workspace = true
-# nanoid = { workspace = true, optional = true }
+nanoid.workspace = true
 parking_lot.workspace = true
 postage.workspace = true
 util.workspace = true
@@ -41,9 +41,6 @@ http_client_tls.workspace = true
 [target.'cfg(not(all(target_os = "windows", target_env = "gnu")))'.dependencies]
 livekit.workspace = true
 
-[target.'cfg(all(target_os = "windows", target_env = "gnu"))'.dependencies]
-nanoid.workspace = true
-
 [target.'cfg(target_os = "macos")'.dependencies]
 core-foundation.workspace = true
 coreaudio-rs = "0.12.1"
@@ -53,7 +50,6 @@ core-video.workspace = true
 [dev-dependencies]
 collections = { workspace = true, features = ["test-support"] }
 gpui = { workspace = true, features = ["test-support"] }
-# nanoid.workspace = true
 sha2.workspace = true
 simplelog.workspace = true
 

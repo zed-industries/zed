@@ -2085,7 +2085,7 @@ async fn test_mute_deafen(
                     audio_tracks_playing: participant
                         .audio_tracks
                         .values()
-                        .map(|(track, _)| track.rtc_track().enabled())
+                        .map(|(track, _)| track.enabled())
                         .collect(),
                 })
                 .collect::<Vec<_>>()

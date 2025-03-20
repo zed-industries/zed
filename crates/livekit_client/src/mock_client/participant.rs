@@ -1,19 +1,22 @@
+use crate::{
+    test::{Room, WeakRoom},
+    AudioStream, LocalAudioTrack, LocalTrackPublication, LocalVideoTrack, Participant,
+    ParticipantIdentity, RemoteTrack, RemoteTrackPublication, TrackSid,
+};
+use anyhow::Result;
+use collections::HashMap;
 use gpui::{AsyncApp, ScreenCaptureSource, ScreenCaptureStream};
-
-use crate::{AudioStream, Participant};
-
-use super::*;
 
 #[derive(Clone, Debug)]
 pub struct LocalParticipant {
-    pub(super) identity: ParticipantIdentity,
-    pub(super) room: Room,
+    pub(crate) identity: ParticipantIdentity,
+    pub(crate) room: Room,
 }
 
 #[derive(Clone, Debug)]
 pub struct RemoteParticipant {
-    pub(super) identity: ParticipantIdentity,
-    pub(super) room: WeakRoom,
+    pub(crate) identity: ParticipantIdentity,
+    pub(crate) room: WeakRoom,
 }
 
 impl Participant {
