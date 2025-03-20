@@ -254,7 +254,7 @@ impl RepositoryEntry {
         worktree_scan_id: usize,
     ) -> proto::UpdateRepository {
         proto::UpdateRepository {
-            branch_summary: dbg!(self.current_branch.as_ref().map(branch_to_proto)),
+            branch_summary: self.current_branch.as_ref().map(branch_to_proto),
             updated_statuses: self
                 .statuses_by_path
                 .iter()
@@ -328,7 +328,7 @@ impl RepositoryEntry {
         }
 
         proto::UpdateRepository {
-            branch_summary: dbg!(self.current_branch.as_ref().map(branch_to_proto)),
+            branch_summary: self.current_branch.as_ref().map(branch_to_proto),
             updated_statuses,
             removed_statuses,
             current_merge_conflicts: self
@@ -1611,7 +1611,6 @@ impl LocalWorktree {
         self.snapshot = new_snapshot;
 
         if let Some(share) = self.update_observer.as_mut() {
-            dbg!(repo_changes.len());
             share
                 .snapshots_tx
                 .unbounded_send((
@@ -2328,7 +2327,6 @@ impl LocalWorktree {
         let _maintain_remote_snapshot = cx.background_spawn(async move {
             let mut is_first = true;
             while let Some((snapshot, entry_changes, repo_changes)) = snapshots_rx.next().await {
-                dbg!("update");
                 let updates = if is_first {
                     is_first = false;
                     snapshot.build_initial_update(project_id, worktree_id)
@@ -2729,8 +2727,6 @@ impl Snapshot {
         // ID field to store the work directory ID, but eventually it will be a different
         // kind of ID.
         let work_directory_id = ProjectEntryId::from_proto(update.id);
-
-        dbg!(&update);
 
         if let Some(work_dir_entry) = self.entry_for_id(work_directory_id) {
             let conflicted_paths = TreeSet::from_ordered_entries(
@@ -5691,7 +5687,6 @@ async fn update_branches(
         .repository(repository.work_directory.path_key())
         .context("Missing repository")?;
     repository.current_branch = branches.into_iter().find(|branch| branch.is_head);
-    dbg!(&repository.current_branch);
 
     let mut state = state.lock();
     state

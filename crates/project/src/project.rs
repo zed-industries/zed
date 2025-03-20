@@ -4286,7 +4286,6 @@ impl Project {
         envelope: TypedEnvelope<proto::UpdateRepository>,
         mut cx: AsyncApp,
     ) -> Result<()> {
-        dbg!(&envelope.payload);
         this.update(&mut cx, |this, cx| {
             if let Some((worktree, _relative_path)) =
                 this.find_worktree(envelope.payload.abs_path.as_ref(), cx)
