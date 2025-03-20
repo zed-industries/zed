@@ -24,7 +24,7 @@ use util::ResultExt;
 use worktree::{PathChange, UpdatedEntriesSet, Worktree, WorktreeId};
 
 use crate::{
-    task_store::TaskStore,
+    task_store::{TaskSettingsLocation, TaskStore},
     worktree_store::{WorktreeStore, WorktreeStoreEvent},
 };
 
@@ -642,7 +642,7 @@ impl SettingsObserver {
                 LocalSettingsKind::Tasks(task_kind) => task_store.update(cx, |task_store, cx| {
                     task_store
                         .update_user_tasks(
-                            Some(SettingsLocation {
+                            TaskSettingsLocation::Worktree(SettingsLocation {
                                 worktree_id,
                                 path: directory.as_ref(),
                             }),
