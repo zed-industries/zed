@@ -199,7 +199,7 @@ impl ManifestTree {
                 .unwrap_or_else(|| path.components().count() + 1);
 
             if depth > 0 {
-                let root = adapter.0.manifest_name(&path, depth, &delegate);
+                let root = adapter.0.manifest_name();
                 match root {
                     Some(known_root) => worktree_roots.update(cx, |this, _| {
                         let root = TriePath::from(&*known_root);
