@@ -1,4 +1,7 @@
-use std::{path::PathBuf, sync::Arc};
+use std::{
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 
 use anyhow::Context as _;
 use collections::HashMap;
@@ -47,6 +50,12 @@ enum StoreMode {
 }
 
 impl EventEmitter<crate::Event> for TaskStore {}
+
+#[derive(Debug)]
+pub enum TaskSettingsLocation<'a> {
+    Global(&'a Path),
+    Worktree(SettingsLocation<'a>),
+}
 
 impl TaskStore {
     pub fn init(client: Option<&AnyProtoClient>) {
@@ -286,7 +295,7 @@ impl TaskStore {
 
     pub(super) fn update_user_tasks(
         &self,
-        location: Option<SettingsLocation<'_>>,
+        location: TaskSettingsLocation<'_>,
         raw_tasks_json: Option<&str>,
         task_type: TaskKind,
         cx: &mut Context<'_, Self>,
@@ -310,13 +319,19 @@ impl TaskStore {
         file_path: PathBuf,
         cx: &mut Context<'_, Self>,
     ) -> Task<()> {
-        let mut user_tasks_file_rx = watch_config_file(&cx.background_executor(), fs, file_path);
+        let mut user_tasks_file_rx =
+            watch_config_file(&cx.background_executor(), fs, file_path.clone());
         let user_tasks_content = cx.background_executor().block(user_tasks_file_rx.next());
         cx.spawn(async move |task_store, cx| {
             if let Some(user_tasks_content) = user_tasks_content {
                 let Ok(_) = task_store.update(cx, |task_store, cx| {
                     task_store
-                        .update_user_tasks(None, Some(&user_tasks_content), task_kind, cx)
+                        .update_user_tasks(
+                            TaskSettingsLocation::Global(&file_path),
+                            Some(&user_tasks_content),
+                            task_kind,
+                            cx,
+                        )
                         .log_err();
                 }) else {
                     return;
@@ -325,7 +340,7 @@ impl TaskStore {
             while let Some(user_tasks_content) = user_tasks_file_rx.next().await {
                 let Ok(()) = task_store.update(cx, |task_store, cx| {
                     let result = task_store.update_user_tasks(
-                        None,
+                        TaskSettingsLocation::Global(&file_path),
                         Some(&user_tasks_content),
                         task_kind,
                         cx,
