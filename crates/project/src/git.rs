@@ -542,7 +542,8 @@ impl GitStore {
         let mut tasks = Vec::new();
         for (dot_git_abs_path, checkpoint) in checkpoint.checkpoints_by_dot_git_abs_path {
             if let Some(repository) = repositories_by_dot_git_abs_path.get(&dot_git_abs_path) {
-                tasks.push(repository.read(cx).restore_checkpoint(checkpoint));
+                let restore = repository.read(cx).restore_checkpoint(checkpoint);
+                tasks.push(async move { restore.await? });
             }
         }
         cx.background_spawn(async move {
