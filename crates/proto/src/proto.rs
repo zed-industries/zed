@@ -898,6 +898,7 @@ pub fn split_repository_update(
 ) -> impl Iterator<Item = UpdateRepository> {
     let mut updated_statuses_iter = mem::take(&mut update.updated_statuses).into_iter().fuse();
     let mut removed_statuses_iter = mem::take(&mut update.removed_statuses).into_iter().fuse();
+    let mut is_first = true;
     std::iter::from_fn(move || {
         let updated_statuses = updated_statuses_iter
             .by_ref()
@@ -907,9 +908,10 @@ pub fn split_repository_update(
             .by_ref()
             .take(MAX_WORKTREE_UPDATE_MAX_CHUNK_SIZE)
             .collect::<Vec<_>>();
-        if updated_statuses.is_empty() && removed_statuses.is_empty() {
+        if updated_statuses.is_empty() && removed_statuses.is_empty() && !is_first {
             return None;
         }
+        is_first = false;
         Some(UpdateRepository {
             updated_statuses,
             removed_statuses,

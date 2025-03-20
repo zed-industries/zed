@@ -2882,7 +2882,6 @@ async fn test_git_branch_name(
         .unwrap();
 
     let project_remote = client_b.join_remote_project(project_id, cx_b).await;
-    eprintln!("------------------------ set branch name");
     client_a
         .fs()
         .set_branch_name(Path::new("/dir/.git"), Some("branch-1"));
@@ -2929,8 +2928,6 @@ async fn test_git_branch_name(
     project_remote.read_with(cx_b, |project, cx| {
         assert_branch(Some("branch-2"), project, cx)
     });
-
-    eprintln!("client c joins >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>");
 
     let project_remote_c = client_c.join_remote_project(project_id, cx_c).await;
     executor.run_until_parked();
