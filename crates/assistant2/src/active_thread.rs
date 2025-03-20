@@ -391,7 +391,12 @@ impl ActiveThread {
     ) {
         self.rendered_tool_use_labels.insert(
             tool_use_id,
-            self.render_markdown(tool_label.into(), window, cx),
+            render_markdown(
+                tool_label.into(),
+                self.language_registry.clone(),
+                window,
+                cx,
+            ),
         );
     }
 
@@ -1255,8 +1260,9 @@ impl ActiveThread {
                                         }
                                     }),
                                 ))
-                                .child(div().text_ui_sm(cx).child(self.render_markdown(
+                                .child(div().text_ui_sm(cx).child(render_markdown(
                                     tool_use.ui_text.clone(),
+                                    self.language_registry.clone(),
                                     window,
                                     cx,
                                 )))
