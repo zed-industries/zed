@@ -3059,16 +3059,6 @@ impl Snapshot {
             .map(|entry| entry.to_owned())
     }
 
-    pub fn git_entry(&self, work_directory_path: Arc<Path>) -> Option<RepositoryEntry> {
-        self.repositories
-            .get(&PathKey(work_directory_path), &())
-            .map(|entry| entry.to_owned())
-    }
-
-    pub fn git_entries(&self) -> impl Iterator<Item = &RepositoryEntry> {
-        self.repositories.iter()
-    }
-
     pub fn scan_id(&self) -> usize {
         self.scan_id
     }

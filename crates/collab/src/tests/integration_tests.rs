@@ -6771,7 +6771,7 @@ async fn test_remote_git_branches(
         .map(ToString::to_string)
         .collect::<HashSet<_>>();
 
-    let (project_a, worktree_id) = client_a.build_local_project("/project", cx_a).await;
+    let (project_a, _) = client_a.build_local_project("/project", cx_a).await;
 
     let project_id = active_call_a
         .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
@@ -6783,8 +6783,6 @@ async fn test_remote_git_branches(
     executor.run_until_parked();
 
     let repo_b = cx_b.update(|cx| project_b.read(cx).active_repository(cx).unwrap());
-
-    let root_path = ProjectPath::root_path(worktree_id);
 
     let branches_b = cx_b
         .update(|cx| repo_b.update(cx, |repository, _| repository.branches()))
@@ -6810,11 +6808,15 @@ async fn test_remote_git_branches(
 
     let host_branch = cx_a.update(|cx| {
         project_a.update(cx, |project, cx| {
-            project.worktree_store().update(cx, |worktree_store, cx| {
-                worktree_store
-                    .current_branch(root_path.clone(), cx)
-                    .unwrap()
-            })
+            project
+                .repositories(cx)
+                .values()
+                .next()
+                .unwrap()
+                .read(cx)
+                .current_branch()
+                .unwrap()
+                .clone()
         })
     });
 
@@ -6843,9 +6845,15 @@ async fn test_remote_git_branches(
 
     let host_branch = cx_a.update(|cx| {
         project_a.update(cx, |project, cx| {
-            project.worktree_store().update(cx, |worktree_store, cx| {
-                worktree_store.current_branch(root_path, cx).unwrap()
-            })
+            project
+                .repositories(cx)
+                .values()
+                .next()
+                .unwrap()
+                .read(cx)
+                .current_branch()
+                .unwrap()
+                .clone()
         })
     });
 

@@ -2885,7 +2885,7 @@ async fn test_conflicted_cherry_pick(cx: &mut TestAppContext) {
     );
     tree.flush_fs_events(cx).await;
     let conflicts = tree.update(cx, |tree, _| {
-        let entry = tree.git_entries().nth(0).expect("No git entry").clone();
+        let entry = tree.repositories.first().expect("No git entry").clone();
         entry
             .current_merge_conflicts
             .iter()
@@ -2902,7 +2902,7 @@ async fn test_conflicted_cherry_pick(cx: &mut TestAppContext) {
     pretty_assertions::assert_eq!(git_status(&repo), collections::HashMap::default());
     tree.flush_fs_events(cx).await;
     let conflicts = tree.update(cx, |tree, _| {
-        let entry = tree.git_entries().nth(0).expect("No git entry").clone();
+        let entry = tree.repositories.first().expect("No git entry").clone();
         entry
             .current_merge_conflicts
             .iter()
