@@ -157,11 +157,6 @@ macro_rules! row_column_desc_regex_msbuild {
 // If there is a word on the line that contains a colon that word up to (but not including)
 // its last colon, it is treated as a maybe path.
 // e.g., Ruby (see https://github.com/zed-industries/zed/issues/25086)
-//
-// Note that unlike the original fix for that issue, we don't check the characters before
-// and after the colon for digit-ness so that in case the line and column suffix is in
-// MSBuild-style (<line>,<column>):message or some other style. Line and column suffixes are
-// processed later in termainl_view.
 const PATH_ROW_COLUMN_DESC_REGEX: &str = row_column_desc_regex!(path_char);
 const PATH_ROW_COLUMN_DESC_REGEX_MSBUILD: &str = row_column_desc_regex_msbuild!(path_char_msbuild);
 
@@ -170,7 +165,6 @@ const PREAPPROVED_PATH_HYPERLINK_REGEXES: [&str; 2] = [
     PATH_ROW_COLUMN_DESC_REGEX_MSBUILD,
 ];
 
-/// Used on user settings provided regexes
 pub fn load_path_hyperlink_regexes<'a, T>(regexes: &'a T) -> Vec<Regex>
 where
     &'a T: IntoIterator<
@@ -387,7 +381,7 @@ impl MaybePathLike {
 
     /// Computes the best heuristic match for link highlighting in the terminal. This
     /// will be linkified immediately even though we don't yet know if it is a real path.
-    /// Once we've determined (in the background) is it is a real path, the hyperlink
+    /// Once we've determined (in the background) if it is a real path, the hyperlink
     /// will be updated to the real path if a real path was found, or cleared if not.
     pub(super) fn best_heuristic_hovered_word(
         &self,
@@ -439,7 +433,7 @@ impl MaybePathLike {
                 r#"(?x)
                     ^\.            # does not start with a period
                     |
-                    ^[a-zA-Z]:     # starts with a window drive
+                    ^[a-zA-Z]:     # starts with a Windows drive
                     |
                     [/\\]          # contains a path separator
                     |

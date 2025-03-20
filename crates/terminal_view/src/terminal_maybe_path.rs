@@ -102,8 +102,8 @@ impl MaybePath {
 
     /// Simple maybe path variants. These need to be kept to a small well-defined set of variants.
     ///
-    /// On the main thread, these will be checked against worktrees only, using
-    /// [PathHyperlinkNavigation::Default].
+    /// On the main thread, these will be checked against worktrees only, using the
+    /// `terminal.path_hyperlink_navigation` setting.
     ///
     /// *Local Only*--If no worktree match is found they will also be checked
     /// for existence in the workspace's real file system on the background thread,
@@ -179,6 +179,8 @@ impl MaybePath {
         })
     }
 
+    // TODO(davewa): Maybe return a Box<dyn Iterator<...>> here instead of creating
+    // a new Vec on every call.
     fn path_hyperlink_regexes(
         &self,
         path_hyperlink_navigation: PathHyperlinkNavigation,
@@ -190,10 +192,10 @@ impl MaybePath {
                 .collect_vec()
         } else {
             // TODO(davewa): We (currently) don't include self.path_hyperlink_regexes
-            // here because we don't want to let user settings tank perforamce on the
+            // here because we don't want to let user settings tank performance on the
             // main thread. But, the experience will be worse, (no hyperlink on remote
             // workspaces, delayed hyperlink on local workspaces, no line and column
-            // information from user settings provided regexes. Also it is a pathological
+            // information from user settings provided regexes). Also it is a pathological
             // case--in practice it would be unlikely that a user would add so many regexes
             // that it adversly affects performance. We perhaps could add a separate
             // `terminal.path_hyperlink_main_thread_timout` that defaults to a much smaller
@@ -323,8 +325,10 @@ impl<'a> MaybePathVariant<'a> {
 
         // For all of these, path must be at least 2 characters
         if maybe_path.len() > 2 {
+            let is_maybe_path_surrounded = has_common_surrounding_symbols(maybe_path);
             // Git diff parsing--only if we did not strip common symbols
-            if (maybe_path.starts_with('a') || maybe_path.starts_with('b'))
+            if !is_maybe_path_surrounded
+                && (maybe_path.starts_with('a') || maybe_path.starts_with('b'))
                 && maybe_path[1..].starts_with(MAIN_SEPARATORS)
             {
                 absolutize_home_dir = false;
@@ -338,7 +342,7 @@ impl<'a> MaybePathVariant<'a> {
             // Before running the regexes, if we don't have any surrounding symbols, but we are surrounded
             // by them, expand to from the opening symbol to the end of the line so that the regex can
             // grab optional line and column position information.
-            if !has_common_surrounding_symbols(maybe_path)
+            if !is_maybe_path_surrounded
                 && path.start > 0
                 && path.end < line.len()
                 && has_common_surrounding_symbols(&line[path.start - 1..path.end + 1])
@@ -443,10 +447,10 @@ impl<'a> MaybePathVariant<'a> {
         _range: &Range<usize>,
         _position: Option<RowColumn>,
         _absolutized: &mut Vec<MaybePathWithPosition<'a>>,
-    ) -> () {
+    ) {
     }
 
-    /// Yields all absolutized variations of all relative and absolute variations
+    /// Returns all absolutized variations of all relative and absolute variations
     #[cfg(not(target_os = "windows"))]
     fn absolutize_home_dir(
         &self,
@@ -455,7 +459,7 @@ impl<'a> MaybePathVariant<'a> {
         range: &Range<usize>,
         position: Option<RowColumn>,
         absolutized: &mut Vec<MaybePathWithPosition<'a>>,
-    ) -> () {
+    ) {
         if self.absolutize_home_dir {
             if let Ok(tildeless_path) = path.strip_prefix("~") {
                 absolutized.push(MaybePathWithPosition::new(
