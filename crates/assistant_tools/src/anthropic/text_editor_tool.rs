@@ -5,6 +5,7 @@ use anyhow::{anyhow, Result};
 use assistant_tool::{ActionLog, Tool, ToolSource};
 use collections::HashSet;
 use gpui::{App, Entity, Task};
+use language::Point;
 use language_model::LanguageModelRequestMessage;
 use project::Project;
 use schemars::JsonSchema;
@@ -153,10 +154,15 @@ impl Tool for TextEditorTool {
                 TextEditorToolInput::View { view_range, .. } => {
                     changed = false;
 
-                    format!(
-                        "View command not yet implemented for path: {}",
-                        path.display()
-                    )
+                    buffer.read_with(cx, |buffer, _cx| match view_range {
+                        Some((start_row, end_row)) => {
+                            let start = Point::new(start_row.saturating_sub(1) as u32, 0);
+                            let end = Point::new(end_row as u32, 0);
+
+                            buffer.text_for_range(start..end).collect::<String>()
+                        }
+                        None => buffer.text(),
+                    })?
                 }
                 TextEditorToolInput::StrReplace {
                     path,
