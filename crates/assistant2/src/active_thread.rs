@@ -949,7 +949,7 @@ impl ActiveThread {
                                             .map(|tool_use| self.render_tool_use(tool_use, cx)),
                                     )
                                     .children(scripting_tool_uses.into_iter().map(|tool_use| {
-                                        self.render_scripting_tool_use(tool_use, cx)
+                                        self.render_scripting_tool_use(tool_use, window, cx)
                                     })),
                             )
                         },

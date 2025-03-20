@@ -155,17 +155,6 @@ impl MessageEditor {
         });
     }
 
-    fn open_commit_editor(
-        &mut self,
-        _: &ExpandCommitEditor,
-        _window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        cx.defer(|cx| {
-            cx.dispatch_action(&ExpandCommitEditor);
-        });
-    }
-
     pub fn remove_all_context(
         &mut self,
         _: &RemoveAllContext,
@@ -511,8 +500,6 @@ impl Render for MessageEditor {
                                         }),
                                 )
                                 .child(
-                                    // DL TODO: Keybinding not working here
-                                    // DL TODO: Should we use the same bindings that the Git Panel uses?
                                     Button::new("commit", "Commit Changes")
                                         .label_size(LabelSize::XSmall)
                                         .key_binding({
@@ -542,8 +529,8 @@ impl Render for MessageEditor {
                     }))
                     .on_action(cx.listener(Self::toggle_context_picker))
                     .on_action(cx.listener(Self::remove_all_context))
-                    .on_action(cx.listener(Self::toggle_project_diff))
-                    .on_action(cx.listener(Self::open_commit_editor))
+                    // .on_action(cx.listener(Self::toggle_project_diff))
+                    // .on_action(cx.listener(Self::open_commit_editor))
                     .on_action(cx.listener(Self::move_up))
                     .on_action(cx.listener(Self::toggle_chat_mode))
                     .gap_2()
