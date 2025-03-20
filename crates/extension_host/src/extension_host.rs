@@ -907,9 +907,8 @@ impl ExtensionStore {
                 }
             })
             .await
-            .map_err(|error| {
-                util::log_err(&error);
-                error
+            .inspect_err(|error| {
+                util::log_err(error);
             })?;
 
             let output_path = &extensions_dir.join(extension_id.as_ref());
