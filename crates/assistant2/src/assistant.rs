@@ -1,4 +1,5 @@
 mod active_thread;
+mod agent_profile;
 mod assistant_configuration;
 mod assistant_model_selector;
 mod assistant_panel;

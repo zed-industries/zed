@@ -9492,7 +9492,7 @@ async fn test_word_completions_continue_on_typing(cx: &mut TestAppContext) {
         }
     });
 
-    cx.simulate_keystroke("s");
+    cx.simulate_keystroke("l");
     cx.executor().run_until_parked();
     cx.condition(|editor, _| editor.context_menu_visible())
         .await;
@@ -9501,7 +9501,7 @@ async fn test_word_completions_continue_on_typing(cx: &mut TestAppContext) {
         {
             assert_eq!(
                 completion_menu_entries(&menu),
-                &["second"],
+                &["last"],
                 "After showing word completions, further editing should filter them and not query the LSP"
             );
         } else {
@@ -12871,7 +12871,7 @@ async fn test_completions_in_languages_with_extra_word_characters(cx: &mut TestA
                 overrides: [(
                     "element".into(),
                     LanguageConfigOverride {
-                        word_characters: Override::Set(['-'].into_iter().collect()),
+                        completion_query_characters: Override::Set(['-'].into_iter().collect()),
                         ..Default::default()
                     },
                 )]

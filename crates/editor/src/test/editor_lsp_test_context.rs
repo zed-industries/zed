@@ -264,7 +264,7 @@ impl EditorLspTestContext {
                     ..Default::default()
                 },
                 block_comment: Some(("<!-- ".into(), " -->".into())),
-                word_characters: ['-'].into_iter().collect(),
+                completion_query_characters: ['-'].into_iter().collect(),
                 ..Default::default()
             },
             Some(tree_sitter_html::LANGUAGE.into()),

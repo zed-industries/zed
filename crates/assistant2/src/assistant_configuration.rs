@@ -195,6 +195,7 @@ impl AssistantConfiguration {
                 let tool_count = tools.len();
 
                 v_flex()
+                    .id(SharedString::from(context_server.id()))
                     .border_1()
                     .rounded_sm()
                     .border_color(cx.theme().colors().border)

@@ -53,6 +53,13 @@ impl Tool for ReadFileTool {
         serde_json::to_value(&schema).unwrap()
     }
 
+    fn ui_text(&self, input: &serde_json::Value) -> String {
+        match serde_json::from_value::<ReadFileToolInput>(input.clone()) {
+            Ok(input) => format!("Read file `{}`", input.path.display()),
+            Err(_) => "Read file".to_string(),
+        }
+    }
+
     fn run(
         self: Arc<Self>,
         input: serde_json::Value,
@@ -67,7 +74,10 @@ impl Tool for ReadFileTool {
         };
 
         let Some(project_path) = project.read(cx).find_project_path(&input.path, cx) else {
-            return Task::ready(Err(anyhow!("Path not found in project")));
+            return Task::ready(Err(anyhow!(
+                "Path {} not found in project",
+                &input.path.display()
+            )));
         };
 
         cx.spawn(async move |cx| {

@@ -535,7 +535,7 @@ sys-locale = "0.3.1"
 sysinfo = "0.31.0"
 take-until = "0.2.0"
 tempfile = "3.9.0"
-thiserror = "1.0.29"
+thiserror = "2.0.12"
 tiktoken-rs = "0.6.0"
 time = { version = "0.3", features = [
     "macros",
