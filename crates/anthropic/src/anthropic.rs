@@ -545,6 +545,8 @@ pub enum ResponseContent {
     Text { text: String },
     #[serde(rename = "thinking")]
     Thinking { thinking: String },
+    #[serde(rename = "redacted_thinking")]
+    RedactedThinking { data: String },
     #[serde(rename = "tool_use")]
     ToolUse {
         id: String,

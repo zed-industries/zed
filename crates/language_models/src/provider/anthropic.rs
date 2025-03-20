@@ -622,6 +622,10 @@ pub fn map_to_language_model_completion_events(
                                     state,
                                 ));
                             }
+                            ResponseContent::RedactedThinking { .. } => {
+                                // Redacted thinking is encrypted and not accessible to the user, see:
+                                // https://docs.anthropic.com/en/docs/build-with-claude/extended-thinking#suggestions-for-handling-redacted-thinking-in-production
+                            }
                             ResponseContent::ToolUse { id, name, .. } => {
                                 state.tool_uses_by_index.insert(
                                     index,
