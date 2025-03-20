@@ -7,8 +7,8 @@ use editor::{Editor, MultiBuffer};
 use gpui::{
     linear_color_stop, linear_gradient, list, percentage, pulsating_between, AbsoluteLength,
     Animation, AnimationExt, AnyElement, App, ClickEvent, DefiniteLength, EdgesRefinement, Empty,
-    Entity, Focusable, Length, ListAlignment, ListOffset, ListState, StyleRefinement, Subscription,
-    Task, TextStyleRefinement, Transformation, UnderlineStyle, WeakEntity,
+    Entity, Focusable, Length, ListAlignment, ListOffset, ListState, ScrollHandle, StyleRefinement,
+    Subscription, Task, TextStyleRefinement, Transformation, UnderlineStyle, WeakEntity,
 };
 use language::{Buffer, LanguageRegistry};
 use language_model::{LanguageModelRegistry, LanguageModelToolUseId, Role};
@@ -66,18 +66,20 @@ impl RenderedMessage {
     }
 
     fn append_thinking(&mut self, text: &String, window: &Window, cx: &mut App) {
-        if let Some(RenderedMessageSegment::Thinking(markdown)) = self.segments.last_mut() {
-            markdown.update(cx, |markdown, cx| {
+        if let Some(RenderedMessageSegment::Thinking {
+            content,
+            scroll_handle,
+        }) = self.segments.last_mut()
+        {
+            content.update(cx, |markdown, cx| {
                 markdown.append(text, cx);
             });
+            scroll_handle.scroll_to_bottom();
         } else {
-            self.segments
-                .push(RenderedMessageSegment::Thinking(render_markdown(
-                    text.into(),
-                    self.language_registry.clone(),
-                    window,
-                    cx,
-                )));
+            self.segments.push(RenderedMessageSegment::Thinking {
+                content: render_markdown(text.into(), self.language_registry.clone(), window, cx),
+                scroll_handle: ScrollHandle::default(),
+            });
         }
     }
 
@@ -96,24 +98,27 @@ impl RenderedMessage {
     }
 
     fn push_segment(&mut self, segment: &MessageSegment, window: &Window, cx: &mut App) {
-        let rendered_segment =
-            match segment {
-                MessageSegment::Thinking(text) => RenderedMessageSegment::Thinking(
-                    render_markdown(text.into(), self.language_registry.clone(), window, cx),
-                ),
-                MessageSegment::Text(text) => RenderedMessageSegment::Text(render_markdown(
-                    text.into(),
-                    self.language_registry.clone(),
-                    window,
-                    cx,
-                )),
-            };
+        let rendered_segment = match segment {
+            MessageSegment::Thinking(text) => RenderedMessageSegment::Thinking {
+                content: render_markdown(text.into(), self.language_registry.clone(), window, cx),
+                scroll_handle: ScrollHandle::default(),
+            },
+            MessageSegment::Text(text) => RenderedMessageSegment::Text(render_markdown(
+                text.into(),
+                self.language_registry.clone(),
+                window,
+                cx,
+            )),
+        };
         self.segments.push(rendered_segment);
     }
 }
 
 enum RenderedMessageSegment {
-    Thinking(Entity<Markdown>),
+    Thinking {
+        content: Entity<Markdown>,
+        scroll_handle: ScrollHandle,
+    },
     Text(Entity<Markdown>),
 }
 
@@ -914,7 +919,7 @@ impl ActiveThread {
             .iter()
             .enumerate()
             .last()
-            .filter(|(_, segment)| matches!(segment, RenderedMessageSegment::Thinking(_)))
+            .filter(|(_, segment)| matches!(segment, RenderedMessageSegment::Thinking { .. }))
             .map(|(index, _)| index);
 
         div()
@@ -923,11 +928,15 @@ impl ActiveThread {
             .children(
                 rendered_message.segments.iter().enumerate().map(
                     |(index, segment)| match segment {
-                        RenderedMessageSegment::Thinking(markdown) => self
+                        RenderedMessageSegment::Thinking {
+                            content,
+                            scroll_handle,
+                        } => self
                             .render_message_thinking_segment(
                                 message_id,
                                 index,
-                                markdown.clone(),
+                                content.clone(),
+                                &scroll_handle,
                                 Some(index) == pending_thinking_segment_index,
                                 cx,
                             )
@@ -945,6 +954,7 @@ impl ActiveThread {
         message_id: MessageId,
         ix: usize,
         markdown: Entity<Markdown>,
+        scroll_handle: &ScrollHandle,
         pending: bool,
         cx: &Context<Self>,
     ) -> impl IntoElement {
@@ -1052,15 +1062,19 @@ impl ActiveThread {
 
                 this.child(
                     div()
-                        .id(("thinking-content", ix))
                         .relative()
-                        .h_20()
-                        .p_2()
                         .bg(editor_bg)
                         .rounded_b_lg()
                         .text_ui_sm(cx)
-                        .overflow_hidden()
-                        .child(markdown.clone())
+                        .child(
+                            div()
+                                .id(("thinking-content", ix))
+                                .p_2()
+                                .h_20()
+                                .track_scroll(scroll_handle)
+                                .child(markdown.clone())
+                                .overflow_hidden(),
+                        )
                         .child(gradient_overlay),
                 )
             })
