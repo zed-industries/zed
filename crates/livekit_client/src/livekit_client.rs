@@ -5,35 +5,15 @@ use std::sync::Arc;
 use anyhow::Result;
 use collections::HashMap;
 use futures::{channel::mpsc, SinkExt};
-use gpui::{App, AsyncApp, Task};
+use gpui::{App, AsyncApp, ScreenCaptureSource, ScreenCaptureStream, Task};
 use gpui_tokio::Tokio;
-pub use playback::*;
+use playback::{capture_local_audio_track, capture_local_video_track};
+pub use playback::{play_remote_audio_track, AudioStream};
+pub use remote_video_track_view::{RemoteVideoTrackView, RemoteVideoTrackViewEvent};
 
 mod remote_video_track_view;
-#[cfg(any(
-    test,
-    feature = "test-support",
-    all(target_os = "windows", target_env = "gnu")
-))]
+#[cfg(any(test, feature = "test-support",))]
 pub mod test;
-
-// #[cfg(all(
-//     not(any(test, feature = "test-support")),
-//     not(all(target_os = "windows", target_env = "gnu"))
-// ))]
-// pub use livekit::*;
-// #[cfg(any(
-//     test,
-//     feature = "test-support",
-//     all(target_os = "windows", target_env = "gnu")
-// ))]
-// use test::track::RemoteAudioTrack;
-// #[cfg(any(
-//     test,
-//     feature = "test-support",
-//     all(target_os = "windows", target_env = "gnu")
-// ))]
-// pub use test::*;
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq, PartialOrd, Ord)]
 pub struct ParticipantIdentity(pub String);
@@ -43,20 +23,21 @@ pub struct RemoteVideoTrack(livekit::track::RemoteVideoTrack);
 #[derive(Clone, Debug)]
 pub struct RemoteAudioTrack(livekit::track::RemoteAudioTrack);
 #[derive(Clone, Debug)]
-pub struct LocalTrackPublication(livekit::publication::LocalTrackPublication);
-#[derive(Clone, Debug)]
 pub struct RemoteTrackPublication(livekit::publication::RemoteTrackPublication);
-
-#[derive(Clone, Debug)]
-pub struct LocalParticipant(livekit::participant::LocalParticipant);
 #[derive(Clone, Debug)]
 pub struct RemoteParticipant(livekit::participant::RemoteParticipant);
 
-pub type LocalTrack = livekit::track::LocalTrack;
-pub type TrackPublishOptions = livekit::options::TrackPublishOptions;
+#[derive(Clone, Debug)]
+pub struct LocalVideoTrack(livekit::track::LocalVideoTrack);
+#[derive(Clone, Debug)]
+pub struct LocalAudioTrack(livekit::track::LocalAudioTrack);
+#[derive(Clone, Debug)]
+pub struct LocalTrackPublication(livekit::publication::LocalTrackPublication);
+#[derive(Clone, Debug)]
+pub struct LocalParticipant(livekit::participant::LocalParticipant);
+
 pub type TrackSid = livekit::id::TrackSid;
 pub type TrackKind = livekit::track::TrackKind;
-pub type TrackSource = livekit::track::TrackSource;
 pub type ConnectionState = livekit::ConnectionState;
 
 #[derive(Debug, Clone)]
@@ -115,6 +96,21 @@ impl From<livekit::track::RemoteTrack> for RemoteTrack {
     }
 }
 
+#[derive(Clone, Debug)]
+pub enum LocalTrack {
+    Audio(LocalAudioTrack),
+    Video(LocalVideoTrack),
+}
+
+impl From<livekit::track::LocalTrack> for LocalTrack {
+    fn from(track: livekit::track::LocalTrack) -> Self {
+        match track {
+            livekit::track::LocalTrack::Audio(audio) => LocalTrack::Audio(LocalAudioTrack(audio)),
+            livekit::track::LocalTrack::Video(video) => LocalTrack::Video(LocalVideoTrack(video)),
+        }
+    }
+}
+
 pub struct Room {
     room: livekit::Room,
     _task: Task<()>,
@@ -124,20 +120,22 @@ impl Room {
     pub async fn connect(
         url: String,
         token: String,
-        cx: &mut App,
+        cx: &mut AsyncApp,
     ) -> Result<(Self, mpsc::UnboundedReceiver<RoomEvent>)> {
-        let _guard = Tokio::handle(cx);
         let connector =
             tokio_tungstenite::Connector::Rustls(Arc::new(http_client_tls::tls_config()));
         let mut config = livekit::RoomOptions::default();
         config.connector = Some(connector);
-        let (room, mut events) = livekit::Room::connect(&url, &token, config).await?;
+        let (room, mut events) = Tokio::spawn(cx, async move {
+            livekit::Room::connect(&url, &token, config).await
+        })?
+        .await??;
 
         let (mut tx, rx) = mpsc::unbounded();
         let task = cx.background_executor().spawn(async move {
             while let Some(event) = events.recv().await {
                 if let Some(event) = RoomEvent::from_livekit(event) {
-                    tx.send(event.into()).await;
+                    tx.send(event.into()).await.ok();
                 }
             }
         });
@@ -157,17 +155,53 @@ impl Room {
             .collect()
     }
 
-    pub fn connection_state(&self, cx: &App) -> ConnectionState {
-        let _guard = Tokio::handle(cx);
+    pub fn connection_state(&self) -> ConnectionState {
         self.room.connection_state()
     }
 }
 
 impl LocalParticipant {
-    pub async fn publish_track(
+    pub async fn publish_microphone_track(
         &self,
-        track: LocalTrack,
-        options: TrackPublishOptions,
+        cx: &mut AsyncApp,
+    ) -> Result<(LocalTrackPublication, AudioStream)> {
+        let (track, stream) = capture_local_audio_track(cx.background_executor())?.await;
+        let publication = self
+            .publish_track(
+                livekit::track::LocalTrack::Audio(track.0),
+                livekit::options::TrackPublishOptions {
+                    source: livekit::track::TrackSource::Microphone,
+                    ..Default::default()
+                },
+                cx,
+            )
+            .await?;
+
+        Ok((publication, stream))
+    }
+
+    pub async fn publish_screenshare_track(
+        &self,
+        source: &dyn ScreenCaptureSource,
+        cx: &mut AsyncApp,
+    ) -> Result<(LocalTrackPublication, Box<dyn ScreenCaptureStream>)> {
+        let (track, stream) = capture_local_video_track(&*source, cx).await?;
+        let options = livekit::options::TrackPublishOptions {
+            source: livekit::track::TrackSource::Screenshare,
+            video_codec: livekit::options::VideoCodec::VP8,
+            ..Default::default()
+        };
+        let publication = self
+            .publish_track(livekit::track::LocalTrack::Video(track.0), options, cx)
+            .await?;
+
+        Ok((publication, stream))
+    }
+
+    async fn publish_track(
+        &self,
+        track: livekit::track::LocalTrack,
+        options: livekit::options::TrackPublishOptions,
         cx: &mut AsyncApp,
     ) -> Result<LocalTrackPublication> {
         let participant = self.0.clone();
@@ -194,13 +228,27 @@ impl LocalParticipant {
 
 impl LocalTrackPublication {
     pub fn mute(&self, cx: &App) {
-        let _guard = Tokio::handle(cx);
-        self.0.mute()
+        let track = self.0.clone();
+        Tokio::spawn(cx, async move {
+            track.mute();
+        })
+        .detach();
     }
 
     pub fn unmute(&self, cx: &App) {
-        let _guard = Tokio::handle(cx);
-        self.0.unmute()
+        let track = self.0.clone();
+        Tokio::spawn(cx, async move {
+            track.unmute();
+        })
+        .detach();
+    }
+
+    pub fn sid(&self) -> TrackSid {
+        self.0.sid()
+    }
+
+    pub fn is_muted(&self) -> bool {
+        self.0.is_muted()
     }
 }
 
@@ -235,6 +283,10 @@ impl RemoteTrackPublication {
         self.0.is_muted()
     }
 
+    pub fn is_enabled(&self) -> bool {
+        self.0.is_enabled()
+    }
+
     pub fn track(&self) -> Option<RemoteTrack> {
         Some(self.0.track()?.into())
     }
@@ -244,8 +296,12 @@ impl RemoteTrackPublication {
     }
 
     pub fn set_enabled(&self, enabled: bool, cx: &App) {
-        let _guard = Tokio::handle(cx);
-        self.0.set_enabled(enabled)
+        let track = self.0.clone();
+        Tokio::spawn(cx, async move { track.set_enabled(enabled) }).detach();
+    }
+
+    pub fn sid(&self) -> TrackSid {
+        self.0.sid()
     }
 }
 
@@ -257,15 +313,47 @@ impl RemoteTrack {
         }
     }
 
-    pub fn set_enabled(&self, enabled: bool, cx: &App) -> bool {
-        let _guard = Tokio::handle(cx);
+    pub fn set_enabled(&self, enabled: bool, cx: &App) {
+        let this = self.clone();
+        Tokio::spawn(cx, async move {
+            match this {
+                RemoteTrack::Audio(remote_audio_track) => {
+                    remote_audio_track.0.rtc_track().set_enabled(enabled)
+                }
+                RemoteTrack::Video(remote_video_track) => {
+                    remote_video_track.0.rtc_track().set_enabled(enabled)
+                }
+            }
+        })
+        .detach();
+    }
+}
+
+impl Participant {
+    pub fn identity(&self) -> ParticipantIdentity {
         match self {
-            RemoteTrack::Audio(remote_audio_track) => {
-                remote_audio_track.0.rtc_track().set_enabled(enabled)
+            Participant::Local(local_participant) => {
+                ParticipantIdentity(local_participant.0.identity().0)
             }
-            RemoteTrack::Video(remote_video_track) => {
-                remote_video_track.0.rtc_track().set_enabled(enabled)
+            Participant::Remote(remote_participant) => {
+                ParticipantIdentity(remote_participant.0.identity().0)
             }
+        }
+    }
+}
+
+impl TrackPublication {
+    pub fn sid(&self) -> TrackSid {
+        match self {
+            TrackPublication::Local(local) => local.0.sid(),
+            TrackPublication::Remote(remote) => remote.0.sid(),
+        }
+    }
+
+    pub fn is_muted(&self) -> bool {
+        match self {
+            TrackPublication::Local(local) => local.0.is_muted(),
+            TrackPublication::Remote(remote) => remote.0.is_muted(),
         }
     }
 }
@@ -412,7 +500,7 @@ impl RoomEvent {
                 participant,
             } => RoomEvent::LocalTrackPublished {
                 publication: LocalTrackPublication(publication),
-                track,
+                track: track.into(),
                 participant: LocalParticipant(participant),
             },
             livekit::RoomEvent::LocalTrackUnpublished {
@@ -422,9 +510,9 @@ impl RoomEvent {
                 publication: LocalTrackPublication(publication),
                 participant: LocalParticipant(participant),
             },
-            livekit::RoomEvent::LocalTrackSubscribed { track } => {
-                RoomEvent::LocalTrackSubscribed { track }
-            }
+            livekit::RoomEvent::LocalTrackSubscribed { track } => RoomEvent::LocalTrackSubscribed {
+                track: track.into(),
+            },
             livekit::RoomEvent::TrackSubscribed {
                 track,
                 publication,

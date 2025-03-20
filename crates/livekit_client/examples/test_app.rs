@@ -1,3 +1,4 @@
+use futures::StreamExt;
 use gpui::{
     actions, bounds, div, point,
     prelude::{FluentBuilder as _, IntoElement},
@@ -6,12 +7,10 @@ use gpui::{
     StatefulInteractiveElement as _, Styled, Task, Window, WindowBounds, WindowHandle,
     WindowOptions,
 };
-use gpui_tokio::Tokio;
 use livekit_client::{
-    AudioStream, LocalTrackPublication, ParticipantIdentity, RemoteTrackPublication,
-    RemoteVideoTrack, RemoteVideoTrackView, Room, RoomEvent,
+    AudioStream, LocalTrackPublication, Participant, ParticipantIdentity, RemoteParticipant,
+    RemoteTrackPublication, RemoteVideoTrack, RemoteVideoTrackView, Room, RoomEvent,
 };
-use postage::stream::Stream;
 
 #[cfg(target_os = "windows")]
 use livekit_client::{
@@ -78,8 +77,7 @@ fn main() {
                 .unwrap();
 
                 let bounds = bounds(point(width * i, px(0.0)), size(width, height));
-                let window =
-                    LivekitWindow::new(livekit_url.clone(), token, bounds, cx.clone()).await;
+                let window = LivekitWindow::new(livekit_url.clone(), token, bounds, cx).await;
                 windows.push(window);
             }
         })
@@ -116,13 +114,9 @@ impl LivekitWindow {
         url: String,
         token: String,
         bounds: Bounds<Pixels>,
-        mut cx: AsyncApp,
+        cx: &mut AsyncApp,
     ) -> WindowHandle<Self> {
-        let (room, mut events) = cx
-            .update(|cx| Room::connect(url, token, cx))
-            .unwrap()
-            .await
-            .unwrap();
+        let (room, mut events) = Room::connect(url, token, cx).await.unwrap();
 
         cx.update(|cx| {
             cx.open_window(
@@ -133,7 +127,7 @@ impl LivekitWindow {
                 |window, cx| {
                     cx.new(|cx| {
                         let _events_task = cx.spawn_in(window, async move |this, cx| {
-                            while let Some(event) = events.recv().await {
+                            while let Some(event) = events.next().await {
                                 cx.update(|window, cx| {
                                     this.update(cx, |this: &mut LivekitWindow, cx| {
                                         this.handle_room_event(event, window, cx)
@@ -194,13 +188,17 @@ impl LivekitWindow {
             } => {
                 let output = self.remote_participant(participant);
                 match track {
-                    RemoteTrack::Audio(track) => {
+                    livekit_client::RemoteTrack::Audio(track) => {
                         output.audio_output_stream = Some((
                             publication.clone(),
-                            play_remote_audio_track(&track, cx.background_executor()).unwrap(),
+                            livekit_client::play_remote_audio_track(
+                                &track,
+                                cx.background_executor(),
+                            )
+                            .unwrap(),
                         ));
                     }
-                    RemoteTrack::Video(track) => {
+                    livekit_client::RemoteTrack::Video(track) => {
                         output.screen_share_output_view = Some((
                             track.clone(),
                             cx.new(|cx| RemoteVideoTrackView::new(track, window, cx)),
@@ -260,26 +258,15 @@ impl LivekitWindow {
     fn toggle_mute(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(track) = &self.microphone_track {
             if track.is_muted() {
-                track.unmute();
+                track.unmute(cx);
             } else {
-                track.mute();
+                track.mute(cx);
             }
             cx.notify();
         } else {
             let participant = self.room.local_participant();
             cx.spawn_in(window, async move |this, cx| {
-                let (track, stream) = capture_local_audio_track(cx.background_executor())?.await;
-                let publication = participant
-                    .publish_track(
-                        LocalTrack::Audio(track),
-                        TrackPublishOptions {
-                            source: TrackSource::Microphone,
-                            ..Default::default()
-                        },
-                        cx,
-                    )
-                    .await
-                    .unwrap();
+                let (publication, stream) = participant.publish_microphone_track(cx).await.unwrap();
                 this.update(cx, |this, cx| {
                     this.microphone_track = Some(publication);
                     this.microphone_stream = Some(stream);
@@ -294,8 +281,8 @@ impl LivekitWindow {
         if let Some(track) = self.screen_share_track.take() {
             self.screen_share_stream.take();
             let participant = self.room.local_participant();
-            Tokio::spawn(cx, async move {
-                participant.unpublish_track(&track.sid()).await.unwrap();
+            cx.spawn(async move |_, cx| {
+                participant.unpublish_track(track.sid(), cx).await.unwrap();
             })
             .detach();
             cx.notify();
@@ -306,24 +293,10 @@ impl LivekitWindow {
                 let sources = sources.await.unwrap()?;
                 let source = sources.into_iter().next().unwrap();
 
-                let (track, stream) = capture_local_video_track(&*source, cx).await?;
-                let publication = Tokio::spawn(cx, async move {
-                    participant
-                        .publish_track(
-                            LocalTrack::Video(track),
-                            TrackPublishOptions {
-                                source: TrackSource::Screenshare,
-                                video_codec: VideoCodec::VP8,
-                                // simulcast: true,
-                                ..Default::default()
-                            },
-                        )
-                        .await
-                })
-                .unwrap()
-                .await
-                .unwrap()
-                .unwrap();
+                let (publication, stream) = participant
+                    .publish_screenshare_track(&*source, cx)
+                    .await
+                    .unwrap();
                 this.update(cx, |this, cx| {
                     this.screen_share_track = Some(publication);
                     this.screen_share_stream = Some(stream);
@@ -348,7 +321,7 @@ impl LivekitWindow {
             }
         })?;
         let publication = &participant.audio_output_stream.as_ref()?.0;
-        publication.set_enabled(!publication.is_enabled());
+        publication.set_enabled(!publication.is_enabled(), cx);
         cx.notify();
         Some(())
     }

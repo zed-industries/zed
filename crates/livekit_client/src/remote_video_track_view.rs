@@ -1,13 +1,13 @@
+use crate::{playback, RemoteVideoTrack};
 use anyhow::Result;
 use futures::StreamExt as _;
 use gpui::{
     AppContext as _, Context, Empty, Entity, EventEmitter, IntoElement, Render, Task, Window,
 };
-use livekit::track::RemoteVideoTrack;
 
 pub struct RemoteVideoTrackView {
     track: RemoteVideoTrack,
-    latest_frame: Option<crate::RemoteVideoFrame>,
+    latest_frame: Option<playback::RemoteVideoFrame>,
     #[cfg(not(target_os = "macos"))]
     current_rendered_frame: Option<crate::RemoteVideoFrame>,
     #[cfg(not(target_os = "macos"))]
@@ -23,7 +23,7 @@ pub enum RemoteVideoTrackViewEvent {
 impl RemoteVideoTrackView {
     pub fn new(track: RemoteVideoTrack, window: &mut Window, cx: &mut Context<Self>) -> Self {
         cx.focus_handle();
-        let frames = super::play_remote_video_track(&track);
+        let frames = playback::play_remote_video_track(&track);
         let _window_handle = window.window_handle();
 
         Self {
