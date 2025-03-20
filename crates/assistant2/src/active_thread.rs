@@ -791,7 +791,7 @@ impl ActiveThread {
             .when_some(checkpoint, |parent, checkpoint| {
                 parent.child(
                     h_flex().pl_2().child(
-                        Button::new("restore-checkpoint", "Restore Checkpoint")
+                        Button::new(("restore-checkpoint", ix), "Restore Checkpoint")
                             .icon(IconName::Undo)
                             .size(ButtonSize::Compact)
                             .on_click(cx.listener(move |this, _, _window, cx| {
