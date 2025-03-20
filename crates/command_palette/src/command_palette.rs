@@ -398,9 +398,11 @@ impl PickerDelegate for CommandPaletteDelegate {
         self.matches.clear();
         self.commands.clear();
         let command_name = command.name.clone();
-        cx.background_spawn(
-            async move { COMMAND_PALETTE_HISTORY.write_command(command_name).await },
-        )
+        cx.background_spawn(async move {
+            COMMAND_PALETTE_HISTORY
+                .write_command_invocation(&command_name, "")
+                .await
+        })
         .detach_and_log_err(cx);
         let action = command.action;
         window.focus(&self.previous_focus_handle);

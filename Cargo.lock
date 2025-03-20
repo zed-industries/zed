@@ -3029,6 +3029,7 @@ dependencies = [
  "settings",
  "telemetry",
  "theme",
+ "time",
  "ui",
  "util",
  "workspace",
