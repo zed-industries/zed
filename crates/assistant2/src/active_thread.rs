@@ -18,8 +18,7 @@ use settings::Settings as _;
 use std::sync::Arc;
 use std::time::Duration;
 use theme::ThemeSettings;
-use ui::Color;
-use ui::{prelude::*, Disclosure, KeyBinding};
+use ui::{prelude::*, Disclosure, IconButton, KeyBinding, Tooltip};
 use util::ResultExt as _;
 
 use crate::context_store::{refresh_context_store_text, ContextStore};
@@ -37,6 +36,7 @@ pub struct ActiveThread {
     editing_message: Option<(MessageId, EditMessageState)>,
     expanded_tool_uses: HashMap<LanguageModelToolUseId, bool>,
     last_error: Option<ThreadError>,
+    feedback_state: HashMap<MessageId, bool>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -77,6 +77,7 @@ impl ActiveThread {
             }),
             editing_message: None,
             last_error: None,
+            feedback_state: HashMap::default(),
             _subscriptions: subscriptions,
         };
 
@@ -538,6 +539,29 @@ impl ActiveThread {
         self.confirm_editing_message(&menu::Confirm, window, cx);
     }
 
+    fn handle_feedback_click(
+        &mut self,
+        is_positive: bool,
+        message_id: MessageId,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let report = self
+            .thread
+            .update(cx, |thread, cx| thread.report_feedback(is_positive, cx));
+
+        let this = cx.entity().downgrade();
+        cx.spawn(async move |_, cx| {
+            report.await?;
+
+            this.update(cx, |this, cx| {
+                this.feedback_state.insert(message_id, is_positive);
+                cx.notify();
+            })
+        })
+        .detach_and_log_err(cx);
+    }
+
     fn render_message(&self, ix: usize, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let message_id = self.messages[ix];
         let Some(message) = self.thread.read(cx).message(message_id) else {
@@ -604,6 +628,117 @@ impl ActiveThread {
                     parent
                 }
             });
+
+        let feedback_container = h_flex().pt_2p5().pb_1p5().gap_2().justify_between();
+        let feedback_state = self.feedback_state.get(&message_id);
+        let feedback_items = match feedback_state {
+            Some(positive) => feedback_container
+                .child(
+                    Label::new(if *positive {
+                        "Thanks for your feedback!"
+                    } else {
+                        "We appreciate your feedback and will use it to improve."
+                    })
+                    .color(Color::Muted)
+                    .size(LabelSize::XSmall),
+                )
+                .child(
+                    h_flex()
+                        .gap_1()
+                        .child(
+                            IconButton::new(
+                                "feedback-thumbs-up",
+                                IconName::ThumbsUp,
+                            )
+                            .icon_size(IconSize::XSmall)
+                            .icon_color(if *positive {
+                                Color::Accent
+                            } else {
+                                Color::Ignored
+                            })
+                            .shape(ui::IconButtonShape::Square)
+                            .tooltip(Tooltip::text("Helpful Response"))
+                            .on_click(cx.listener({
+                                let message_id = message_id;
+                                move |this, _, window, cx| {
+                                    this.handle_feedback_click(
+                                        true, message_id, window, cx,
+                                    );
+                                }
+                            })),
+                        )
+                        .child(
+                            IconButton::new(
+                                "feedback-thumbs-down",
+                                IconName::ThumbsDown,
+                            )
+                            .icon_size(IconSize::XSmall)
+                            .icon_color(if *positive {
+                                Color::Ignored
+                            } else {
+                                Color::Accent
+                            })
+                            .shape(ui::IconButtonShape::Square)
+                            .tooltip(Tooltip::text("Not Helpful"))
+                            .on_click(cx.listener({
+                                let message_id = message_id;
+                                move |this, _, window, cx| {
+                                    this.handle_feedback_click(
+                                        false, message_id, window, cx,
+                                    );
+                                }
+                            })),
+                        ),
+                )
+                .into_any_element(),
+            None => feedback_container
+                .child(
+                    Label::new("Rating the thread sends all of your conversation from this point up to the Zed team.")
+                        .color(Color::Muted)
+                        .size(LabelSize::XSmall),
+                )
+                .child(
+                    h_flex()
+                        .gap_1()
+                        .child(
+                            IconButton::new(
+                                "feedback-thumbs-up",
+                                IconName::ThumbsUp,
+                            )
+                            .icon_size(IconSize::XSmall)
+                            .icon_color(Color::Ignored)
+                            .shape(ui::IconButtonShape::Square)
+                            .tooltip(Tooltip::text("Helpful Response"))
+                            .on_click(cx.listener({
+                                let message_id = message_id;
+                                move |this, _, window, cx| {
+                                    this.handle_feedback_click(
+                                        true, message_id, window, cx,
+                                    );
+                                }
+                            })),
+                        )
+                        .child(
+                            IconButton::new(
+                                "feedback-thumbs-down",
+                                IconName::ThumbsDown,
+                            )
+                            .icon_size(IconSize::XSmall)
+                            .icon_color(Color::Ignored)
+                            .shape(ui::IconButtonShape::Square)
+                            .tooltip(Tooltip::text("Not Helpful"))
+                            .on_click(cx.listener({
+                                let message_id = message_id;
+                                move |this, _, window, cx| {
+                                    this.handle_feedback_click(
+                                        false, message_id, window, cx,
+                                    );
+                                }
+                            })),
+                        ),
+                )
+                .into_any_element(),
+        };
 
         let styled_message = match message.role {
             Role::User => v_flex()
@@ -737,7 +872,13 @@ impl ActiveThread {
             Role::Assistant => {
                 v_flex()
                     .id(("message-container", ix))
-                    .child(div().py_3().px_4().child(message_content))
+                    .child(
+                        v_flex()
+                            .py_3()
+                            .px_4()
+                            .child(message_content)
+                            .child(feedback_items),
+                    )
                     .when(
                         !tool_uses.is_empty() || !scripting_tool_uses.is_empty(),
                         |parent| {

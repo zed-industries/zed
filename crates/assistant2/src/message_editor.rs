@@ -23,8 +23,7 @@ use ui::{
 };
 use util::ResultExt;
 use vim_mode_setting::VimModeSetting;
-use workspace::notifications::{NotificationId, NotifyTaskExt};
-use workspace::{Toast, Workspace};
+use workspace::Workspace;
 
 use crate::assistant_model_selector::AssistantModelSelector;
 use crate::context_picker::{ConfirmBehavior, ContextPicker};
@@ -312,34 +311,6 @@ impl MessageEditor {
             self.context_strip.focus_handle(cx).focus(window);
         }
     }
-
-    fn handle_feedback_click(
-        &mut self,
-        is_positive: bool,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let workspace = self.workspace.clone();
-        let report = self
-            .thread
-            .update(cx, |thread, cx| thread.report_feedback(is_positive, cx));
-
-        cx.spawn(async move |_, cx| {
-            report.await?;
-            workspace.update(cx, |workspace, cx| {
-                let message = if is_positive {
-                    "Positive feedback recorded. Thank you!"
-                } else {
-                    "Negative feedback recorded. Thank you for helping us improve!"
-                };
-
-                struct ThreadFeedback;
-                let id = NotificationId::unique::<ThreadFeedback>();
-                workspace.show_toast(Toast::new(id, message).autohide(), cx)
-            })
-        })
-        .detach_and_notify_err(window, cx);
-    }
 }
 
 impl Focusable for MessageEditor {
@@ -561,45 +532,7 @@ impl Render for MessageEditor {
                     .bg(editor_bg_color)
                     .border_t_1()
                     .border_color(cx.theme().colors().border)
-                    .child(
-                        h_flex()
-                            .justify_between()
-                            .child(self.context_strip.clone())
-                            .when(!self.thread.read(cx).is_empty(), |this| {
-                                this.child(
-                                    h_flex()
-                                        .gap_2()
-                                        .child(
-                                            IconButton::new(
-                                                "feedback-thumbs-up",
-                                                IconName::ThumbsUp,
-                                            )
-                                            .style(ButtonStyle::Subtle)
-                                            .icon_size(IconSize::Small)
-                                            .tooltip(Tooltip::text("Helpful"))
-                                            .on_click(
-                                                cx.listener(|this, _, window, cx| {
-                                                    this.handle_feedback_click(true, window, cx);
-                                                }),
-                                            ),
-                                        )
-                                        .child(
-                                            IconButton::new(
-                                                "feedback-thumbs-down",
-                                                IconName::ThumbsDown,
-                                            )
-                                            .style(ButtonStyle::Subtle)
-                                            .icon_size(IconSize::Small)
-                                            .tooltip(Tooltip::text("Not Helpful"))
-                                            .on_click(
-                                                cx.listener(|this, _, window, cx| {
-                                                    this.handle_feedback_click(false, window, cx);
-                                                }),
-                                            ),
-                                        ),
-                                )
-                            }),
-                    )
+                    .child(h_flex().justify_between().child(self.context_strip.clone()))
                     .child(
                         v_flex()
                             .gap_5()
