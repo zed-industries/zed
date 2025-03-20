@@ -575,22 +575,23 @@ impl ActiveThread {
         let colors = cx.theme().colors();
 
         let message_content = v_flex()
+            .gap_1p5()
             .child(
                 if let Some(edit_message_editor) = edit_message_editor.clone() {
                     div()
                         .key_context("EditMessageEditor")
                         .on_action(cx.listener(Self::cancel_editing_message))
                         .on_action(cx.listener(Self::confirm_editing_message))
-                        .p_2p5()
+                        .min_h_6()
                         .child(edit_message_editor)
                 } else {
-                    div().text_ui(cx).child(markdown.clone())
+                    div().min_h_6().text_ui(cx).child(markdown.clone())
                 },
             )
             .when_some(context, |parent, context| {
                 if !context.is_empty() {
                     parent.child(
-                        h_flex().flex_wrap().gap_1().px_1p5().pb_1p5().children(
+                        h_flex().flex_wrap().gap_1().children(
                             context
                                 .into_iter()
                                 .map(|context| ContextPill::added(context, false, false, None)),
@@ -623,7 +624,7 @@ impl ActiveThread {
                                 .border_b_1()
                                 .border_color(colors.border)
                                 .justify_between()
-                                .rounded_t(px(6.))
+                                .rounded_t_md()
                                 .child(
                                     h_flex()
                                         .gap_1p5()
@@ -638,14 +639,15 @@ impl ActiveThread {
                                                 .color(Color::Muted),
                                         ),
                                 )
-                                .when_some(
-                                    edit_message_editor.clone(),
-                                    |this, edit_message_editor| {
-                                        let focus_handle = edit_message_editor.focus_handle(cx);
-                                        this.child(
-                                            h_flex()
-                                                .gap_1()
-                                                .child(
+                                .child(
+                                    h_flex()
+                                        .gap_1()
+                                        .when_some(
+                                            edit_message_editor.clone(),
+                                            |this, edit_message_editor| {
+                                                let focus_handle =
+                                                    edit_message_editor.focus_handle(cx);
+                                                this.child(
                                                     Button::new("cancel-edit-message", "Cancel")
                                                         .label_size(LabelSize::Small)
                                                         .key_binding(
@@ -679,29 +681,52 @@ impl ActiveThread {
                                                     .on_click(
                                                         cx.listener(Self::handle_regenerate_click),
                                                     ),
-                                                ),
+                                                )
+                                            },
                                         )
-                                    },
-                                )
-                                .when(
-                                    edit_message_editor.is_none() && allow_editing_message,
-                                    |this| {
-                                        this.child(
-                                            Button::new("edit-message", "Edit")
-                                                .label_size(LabelSize::Small)
-                                                .on_click(cx.listener({
-                                                    let message_text = message.text.clone();
-                                                    move |this, _, window, cx| {
-                                                        this.start_editing_message(
-                                                            message_id,
-                                                            message_text.clone(),
-                                                            window,
-                                                            cx,
-                                                        );
-                                                    }
-                                                })),
-                                        )
-                                    },
+                                        .when(edit_message_editor.is_none(), |parent| {
+                                            parent.when_some(checkpoint, |parent, checkpoint| {
+                                                parent.child(
+                                                    Button::new(
+                                                        "restore-checkpoint",
+                                                        "Restore Checkpoint",
+                                                    )
+                                                    .label_size(LabelSize::Small)
+                                                    .on_click(cx.listener(
+                                                        move |this, _, _window, cx| {
+                                                            this.thread.update(cx, |thread, cx| {
+                                                                thread
+                                                                    .restore_checkpoint(
+                                                                        checkpoint.clone(),
+                                                                        cx,
+                                                                    )
+                                                                    .detach_and_log_err(cx);
+                                                            });
+                                                        },
+                                                    )),
+                                                )
+                                            })
+                                        })
+                                        .when(
+                                            edit_message_editor.is_none() && allow_editing_message,
+                                            |this| {
+                                                this.child(
+                                                    Button::new("edit-message", "Edit")
+                                                        .label_size(LabelSize::Small)
+                                                        .on_click(cx.listener({
+                                                            let message_text = message.text.clone();
+                                                            move |this, _, window, cx| {
+                                                                this.start_editing_message(
+                                                                    message_id,
+                                                                    message_text.clone(),
+                                                                    window,
+                                                                    cx,
+                                                                );
+                                                            }
+                                                        })),
+                                                )
+                                            },
+                                        ),
                                 ),
                         )
                         .child(div().p_2().child(message_content)),
@@ -735,25 +760,7 @@ impl ActiveThread {
             ),
         };
 
-        v_flex()
-            .when_some(checkpoint, |parent, checkpoint| {
-                parent.child(
-                    h_flex().pl_2().child(
-                        Button::new("restore-checkpoint", "Restore Checkpoint")
-                            .icon(IconName::Undo)
-                            .size(ButtonSize::Compact)
-                            .on_click(cx.listener(move |this, _, _window, cx| {
-                                this.thread.update(cx, |thread, cx| {
-                                    thread
-                                        .restore_checkpoint(checkpoint.clone(), cx)
-                                        .detach_and_log_err(cx);
-                                });
-                            })),
-                    ),
-                )
-            })
-            .child(styled_message)
-            .into_any()
+        styled_message.into_any()
     }
 
     fn render_tool_use(&self, tool_use: ToolUse, cx: &mut Context<Self>) -> impl IntoElement {
