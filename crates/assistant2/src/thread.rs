@@ -10,7 +10,7 @@ use fs::Fs;
 use futures::future::Shared;
 use futures::{FutureExt, StreamExt as _};
 use git;
-use gpui::{App, AppContext, Context, Entity, EventEmitter, SharedString, Task};
+use gpui::{App, AppContext, Context, Entity, EventEmitter, SharedString, Task, WeakEntity};
 use language_model::{
     LanguageModel, LanguageModelCompletionEvent, LanguageModelRegistry, LanguageModelRequest,
     LanguageModelRequestMessage, LanguageModelRequestTool, LanguageModelToolResult,
@@ -966,6 +966,7 @@ impl Thread {
         cx: &mut Context<Self>,
     ) -> impl IntoIterator<Item = PendingToolUse> {
         let request = self.to_completion_request(RequestKind::Chat, cx);
+        let messages = Arc::new(request.messages);
         let pending_tool_uses = self
             .tool_use
             .pending_tool_uses()
@@ -976,47 +977,49 @@ impl Thread {
 
         for tool_use in pending_tool_uses.iter() {
             if let Some(tool) = self.tools.tool(&tool_use.name, cx) {
-                let needs_confirmation = tool.needs_confirmation();
-                let run_tool = tool.run(
-                    tool_use.input.clone(),
-                    &request.messages,
-                    self.project.clone(),
-                    self.action_log.clone(),
-                    cx,
-                );
-
-                let insert_output_task = cx.spawn({
-                    let tool_use_id = tool_use.id.clone();
-                    async move |thread, cx| {
-                        let output = run_tool.await;
-                        thread
-                            .update(cx, |thread, cx| {
-                                let pending_tool_use = thread
-                                    .tool_use
-                                    .insert_tool_output(tool_use_id.clone(), output);
-
-                                cx.emit(ThreadEvent::ToolFinished {
-                                    tool_use_id,
-                                    pending_tool_use,
-                                    canceled: false,
-                                });
-                            })
-                            .ok();
-                    }
-                });
-
-                if needs_confirmation {
+                if tool.needs_confirmation() {
                     self.tool_use.confirm_tool_use(
                         tool_use.id.clone(),
+                        tool_use.input.clone(),
                         tool_use.ui_text.clone().into(),
-                        insert_output_task,
+                        messages.clone(),
+                        false,
                     );
                 } else {
+                    let run_tool = tool.run(
+                        tool_use.input.clone(),
+                        &messages,
+                        self.project.clone(),
+                        self.action_log.clone(),
+                        cx,
+                    );
+
+                    let task = cx.spawn({
+                        let tool_use_id = tool_use.id.clone();
+                        async move |thread: WeakEntity<Thread>, cx| {
+                            let output = run_tool.await;
+
+                            thread
+                                .update(cx, |thread, cx| {
+                                    let pending_tool_use = thread
+                                        .tool_use
+                                        .insert_tool_output(tool_use_id.clone(), output);
+
+                                    cx.emit(ThreadEvent::ToolFinished {
+                                        tool_use_id,
+                                        pending_tool_use,
+                                        canceled: false,
+                                    });
+                                })
+                                .ok();
+                        }
+                    });
+
                     self.tool_use.run_pending_tool(
                         tool_use.id.clone(),
                         tool_use.ui_text.clone().into(),
-                        insert_output_task,
-                    );
+                        task,
+                    )
                 }
             }
         }
@@ -1030,57 +1033,12 @@ impl Thread {
             .collect::<Vec<_>>();
 
         for scripting_tool_use in pending_scripting_tool_uses.iter() {
-            let task = match ScriptingTool::deserialize_input(scripting_tool_use.input.clone()) {
-                Err(err) => Task::ready(Err(err.into())),
-                Ok(input) => {
-                    let (script_id, script_task) =
-                        self.scripting_session.update(cx, move |session, cx| {
-                            session.run_script(input.lua_script, cx)
-                        });
-
-                    let session = self.scripting_session.clone();
-                    cx.spawn(async move |_, cx| {
-                        script_task.await;
-
-                        let message = session.read_with(cx, |session, _cx| {
-                            // Using a id to get the script output seems impractical.
-                            // Why not just include it in the Task result?
-                            // This is because we'll later report the script state as it runs,
-                            session
-                                .get(script_id)
-                                .output_message_for_llm()
-                                .expect("Script shouldn't still be running")
-                        })?;
-
-                        Ok(message)
-                    })
-                }
-            };
-
-            let insert_output_task = cx.spawn({
-                let tool_use_id = scripting_tool_use.id.clone();
-                async move |thread, cx| {
-                    let output = task.await;
-                    thread
-                        .update(cx, |thread, cx| {
-                            let pending_tool_use = thread
-                                .scripting_tool_use
-                                .insert_tool_output(tool_use_id.clone(), output);
-
-                            cx.emit(ThreadEvent::ToolFinished {
-                                tool_use_id,
-                                pending_tool_use,
-                                canceled: false,
-                            });
-                        })
-                        .ok();
-                }
-            });
-
             self.scripting_tool_use.confirm_tool_use(
                 scripting_tool_use.id.clone(),
-                scripting_tool_use.name.clone().into(),
-                insert_output_task,
+                scripting_tool_use.input.clone(),
+                scripting_tool_use.ui_text.clone().into(),
+                messages.clone(),
+                true,
             );
         }
 
