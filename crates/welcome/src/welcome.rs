@@ -123,23 +123,134 @@ impl Render for WelcomePage {
                         h_flex()
                             .items_start()
                             .gap_8()
+
                             .child(
                                 v_flex()
                                     .gap_2()
                                     .pr_8()
                                     .border_r_1()
                                     .border_color(cx.theme().colors().border_variant)
+                                    // .child(
+                                    //     v_flex()
+                                    //         .gap_1()
+
+                                    // .child(
+                                    //     Label::new("Step #2")
+                                    //         .size(LabelSize::XSmall)
+                                    //         .color(Color::Muted)
+                                    //         .buffer_font(cx)
+                                    // )
+                                    // .child(
+                                    //     Headline::new("Start A Project").size(HeadlineSize::Small)
+                                    //         // .size(LabelSize::XSmall)
+                                    //         // .color(Color::Muted)
+                                    //         // .buffer_font(cx)
+                                    // )
+                                    // )
                                     .child(
-                                        self.section_label( cx).child(
-                                            Label::new("Get Started")
-                                                .size(LabelSize::XSmall)
-                                                .color(Color::Muted),
-                                        ),
+                                        div().pl_1().child(
+                                        Label::new("Start a Project")
+                                            .size(LabelSize::XSmall)
+                                            .color(Color::Muted)
+                                            .buffer_font(cx))
+                                    )
+                                    .when(cfg!(target_os = "macos"), |el| {
+                                        el.child(
+                                            Button::new("open-a-project", "Open a Project")
+                                                .icon(IconName::Plus)
+                                                .icon_size(IconSize::Small)
+                                                .icon_color(Color::Muted)
+                                                .icon_position(IconPosition::Start)
+                                                .on_click(cx.listener(|_, _, _, cx| {
+                                                    telemetry::event!("Welcome Project Opened");
+                                                    cx
+                                                        .spawn(async move |_, cx| {
+                                                            install_cli::install_cli(&cx).await
+                                                        })
+                                                        .detach_and_log_err(cx);
+                                                })),
+                                        )
+                                    })
+                                    .child(
+                                        Button::new("connect-remote", "Connect Remote")
+                                            .icon(IconName::Cloud)
+                                            .icon_size(IconSize::Small)
+                                            .icon_color(Color::Muted)
+                                            .icon_position(IconPosition::Start)
+                                            .on_click(cx.listener(|_, _, _, cx| {
+                                                telemetry::event!("Welcome Remote Connected");
+                                                cx.open_url(DOCS_URL);
+                                            })),
+                                    )
+                                    .child(
+                                        Button::new("clone-repo", "Clone Repo")
+                                            .icon(IconName::GitBranchSmall)
+                                            .icon_size(IconSize::Small)
+                                            .icon_color(Color::Muted)
+                                            .icon_position(IconPosition::Start)
+                                            .on_click(cx.listener(|_, _, _, cx| {
+                                                telemetry::event!("Welcome Repo Cloned");
+                                                cx.open_url(DOCS_URL);
+                                            })),
+                                    ),
+                                    // .child(
+                                    //     Button::new("explore-extensions", "Explore Extensions")
+                                    //         .icon(IconName::Blocks)
+                                    //         .icon_size(IconSize::XSmall)
+                                    //         .icon_color(Color::Muted)
+                                    //         .icon_position(IconPosition::Start)
+                                    //         .on_click(cx.listener(|_, _, window, cx| {
+                                    //             telemetry::event!("Welcome Extensions Page Opened");
+                                    //             window.dispatch_action(Box::new(
+                                    //                 zed_actions::Extensions::default(),
+                                    //             ), cx);
+                                    //         })),
+                                    // )
+                                    // .child(
+                                    //     Button::new("book-onboarding", "Book Onboarding")
+                                    //         .icon(IconName::PhoneIncoming)
+                                    //         .icon_size(IconSize::XSmall)
+                                    //         .icon_color(Color::Muted)
+                                    //         .icon_position(IconPosition::Start)
+                                    //         .on_click(cx.listener(|_, _, _, cx| {
+                                    //             telemetry::event!("Welcome Book Onboarding Opened");
+                                    //             cx.open_url(BOOK_ONBOARDING);
+                                    //         })),
+                                    // ),
+                            )
+                            .child(
+                                v_flex()
+                                    .gap_2()
+
+                                    // .child(
+                                    //     v_flex()
+                                    //         .gap_1()
+
+                                    // .child(
+                                    //     Label::new("Step #1")
+                                    //         .size(LabelSize::XSmall)
+                                    //         .color(Color::Muted)
+                                    //         .buffer_font(cx)
+                                    // )
+                                    // .child(
+                                    //     Headline::new("Make Yourself At Home").size(HeadlineSize::Small)
+                                    //         // .size(LabelSize::XSmall)
+                                    //         // .color(Color::Muted)
+                                    //         // .buffer_font(cx)
+                                    // )
+                                    // )
+
+                                    .child(
+                                        div().pl_1().child(
+                                        Label::new("Make Yourself At Home")
+                                            .size(LabelSize::XSmall)
+                                            .color(Color::Muted)
+                                            .buffer_font(cx))
                                     )
                                     .child(
                                         Button::new("choose-theme", "Choose a Theme")
                                             .icon(IconName::SwatchBook)
-                                            .icon_size(IconSize::XSmall)
+                                            .icon_size(IconSize::Small)
                                             .icon_color(Color::Muted)
                                             .icon_position(IconPosition::Start)
                                             .on_click(cx.listener(|this, _, window, cx| {
@@ -154,7 +265,7 @@ impl Render for WelcomePage {
                                     .child(
                                         Button::new("choose-keymap", "Choose a Keymap")
                                             .icon(IconName::Keyboard)
-                                            .icon_size(IconSize::XSmall)
+                                            .icon_size(IconSize::Small)
                                             .icon_color(Color::Muted)
                                             .icon_position(IconPosition::Start)
                                             .on_click(cx.listener(|this, _, window, cx| {
@@ -170,106 +281,6 @@ impl Render for WelcomePage {
                                                     .ok();
                                             })),
                                     )
-                                    .child(
-                                        Button::new(
-                                            "try-zed-edit-prediction",
-                                            edit_prediction_label,
-                                        )
-                                        .disabled(edit_prediction_provider_is_zed)
-                                        .icon(IconName::ZedPredict)
-                                        .icon_size(IconSize::XSmall)
-                                        .icon_color(Color::Muted)
-                                        .icon_position(IconPosition::Start)
-                                        .on_click(
-                                            cx.listener(|_, _, window, cx| {
-                                                telemetry::event!("Welcome Screen Try Edit Prediction clicked");
-                                                window.dispatch_action(zed_actions::OpenZedPredictOnboarding.boxed_clone(), cx);
-                                            }),
-                                        ),
-                                    )
-                                    .child(
-                                        Button::new("edit settings", "Edit Settings")
-                                            .icon(IconName::Settings)
-                                            .icon_size(IconSize::XSmall)
-                                            .icon_color(Color::Muted)
-                                            .icon_position(IconPosition::Start)
-                                            .on_click(cx.listener(|_, _, window, cx| {
-                                                telemetry::event!("Welcome Settings Edited");
-                                                window.dispatch_action(Box::new(
-                                                    zed_actions::OpenSettings,
-                                                ), cx);
-                                            })),
-                                    ),
-                            )
-                            .child(
-                                v_flex()
-                                    .gap_2()
-                                    .child(
-                                        self.section_label(cx).child(
-                                            Label::new("Resources")
-                                                .size(LabelSize::XSmall)
-                                                .color(Color::Muted),
-                                        ),
-                                    )
-                                    .when(cfg!(target_os = "macos"), |el| {
-                                        el.child(
-                                            Button::new("install-cli", "Install the CLI")
-                                                .icon(IconName::Terminal)
-                                                .icon_size(IconSize::XSmall)
-                                                .icon_color(Color::Muted)
-                                                .icon_position(IconPosition::Start)
-                                                .on_click(cx.listener(|_, _, _, cx| {
-                                                    telemetry::event!("Welcome CLI Installed");
-                                                    cx
-                                                        .spawn(async move |_, cx| {
-                                                            install_cli::install_cli(&cx).await
-                                                        })
-                                                        .detach_and_log_err(cx);
-                                                })),
-                                        )
-                                    })
-                                    .child(
-                                        Button::new("view-docs", "View Documentation")
-                                            .icon(IconName::FileCode)
-                                            .icon_size(IconSize::XSmall)
-                                            .icon_color(Color::Muted)
-                                            .icon_position(IconPosition::Start)
-                                            .on_click(cx.listener(|_, _, _, cx| {
-                                                telemetry::event!("Welcome Documentation Viewed");
-                                                cx.open_url(DOCS_URL);
-                                            })),
-                                    )
-                                    .child(
-                                        Button::new("explore-extensions", "Explore Extensions")
-                                            .icon(IconName::Blocks)
-                                            .icon_size(IconSize::XSmall)
-                                            .icon_color(Color::Muted)
-                                            .icon_position(IconPosition::Start)
-                                            .on_click(cx.listener(|_, _, window, cx| {
-                                                telemetry::event!("Welcome Extensions Page Opened");
-                                                window.dispatch_action(Box::new(
-                                                    zed_actions::Extensions::default(),
-                                                ), cx);
-                                            })),
-                                    )
-                                    .child(
-                                        Button::new("book-onboarding", "Book Onboarding")
-                                            .icon(IconName::PhoneIncoming)
-                                            .icon_size(IconSize::XSmall)
-                                            .icon_color(Color::Muted)
-                                            .icon_position(IconPosition::Start)
-                                            .on_click(cx.listener(|_, _, _, cx| {
-                                                cx.open_url(BOOK_ONBOARDING);
-                                            })),
-                                    ),
-                            ),
-                    )
-                    .child(
-                        v_container()
-                            .gap_2()
-                            .child(
-                                h_flex()
-                                    .justify_between()
                                     .child(
                                         CheckboxWithLabel::new(
                                             "enable-vim",
@@ -291,16 +302,84 @@ impl Render for WelcomePage {
                                         .fill()
                                         .elevation(ElevationIndex::ElevatedSurface),
                                     )
-                                    .child(
-                                        IconButton::new("vim-mode", IconName::Info)
-                                            .icon_size(IconSize::XSmall)
-                                            .icon_color(Color::Muted)
-                                            .tooltip(
-                                                Tooltip::text(
-                                                    "You can also toggle Vim Mode via the command palette or Editor Controls menu.")
-                                            ),
-                                    ),
+                                    // .child(
+                                    //     Button::new(
+                                    //         "try-zed-edit-prediction",
+                                    //         edit_prediction_label,
+                                    //     )
+                                    //     .disabled(edit_prediction_provider_is_zed)
+                                    //     .icon(IconName::ZedPredict)
+                                    //     .icon_size(IconSize::XSmall)
+                                    //     .icon_color(Color::Muted)
+                                    //     .icon_position(IconPosition::Start)
+                                    //     .on_click(
+                                    //         cx.listener(|_, _, window, cx| {
+                                    //             telemetry::event!("Welcome Screen Try Edit Prediction clicked");
+                                    //             window.dispatch_action(zed_actions::OpenZedPredictOnboarding.boxed_clone(), cx);
+                                    //         }),
+                                    //     ),
+                                    // )
+                                    // .child(
+                                    //     Button::new("edit settings", "Edit Settings")
+                                    //         .icon(IconName::Settings)
+                                    //         .icon_size(IconSize::XSmall)
+                                    //         .icon_color(Color::Muted)
+                                    //         .icon_position(IconPosition::Start)
+                                    //         .on_click(cx.listener(|_, _, window, cx| {
+                                    //             telemetry::event!("Welcome Settings Edited");
+                                    //             window.dispatch_action(Box::new(
+                                    //                 zed_actions::OpenSettings,
+                                    //             ), cx);
+                                    //         })),
+                                    // ),
                             )
+
+
+                        ,
+                    )
+                    .child(
+                        v_container()
+                            .gap_2()
+                            // .child(
+                            //     Label::new("Make Yourself At Home")
+                            //         .size(LabelSize::XSmall)
+                            //         .color(Color::Muted)
+                            //         .buffer_font(cx)
+                            // )
+                            // .child(
+                            //     h_flex()
+                            //         .justify_between()
+                            //         .child(
+                            //             CheckboxWithLabel::new(
+                            //                 "enable-vim",
+                            //                 Label::new("Enable Vim Mode"),
+                            //                 if VimModeSetting::get_global(cx).0 {
+                            //                     ui::ToggleState::Selected
+                            //                 } else {
+                            //                     ui::ToggleState::Unselected
+                            //                 },
+                            //                 cx.listener(move |this, selection, _window, cx| {
+                            //                     telemetry::event!("Welcome Vim Mode Toggled");
+                            //                     this.update_settings::<VimModeSetting>(
+                            //                         selection,
+                            //                         cx,
+                            //                         |setting, value| *setting = Some(value),
+                            //                     );
+                            //                 }),
+                            //             )
+                            //             .fill()
+                            //             .elevation(ElevationIndex::ElevatedSurface),
+                            //         )
+                            //         .child(
+                            //             IconButton::new("vim-mode", IconName::Info)
+                            //                 .icon_size(IconSize::XSmall)
+                            //                 .icon_color(Color::Muted)
+                            //                 .tooltip(
+                            //                     Tooltip::text(
+                            //                         "You can also toggle Vim Mode via the command palette or Editor Controls menu.")
+                            //                 ),
+                            //         ),
+                            // )
                             .child(
                                 CheckboxWithLabel::new(
                                     "enable-crash",

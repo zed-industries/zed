@@ -689,12 +689,27 @@ impl TitleBar {
                         )
                         .separator()
                         .link(
+                            "View Documentation",
+                            OpenBrowser {
+                                url: BOOK_ONBOARDING.to_string(),
+                            }
+                            .boxed_clone(),
+                        )
+                        .link(
+                            "View Repo",
+                            OpenBrowser {
+                                url: BOOK_ONBOARDING.to_string(),
+                            }
+                            .boxed_clone(),
+                        )
+                        .link(
                             "Book Onboarding",
                             OpenBrowser {
                                 url: BOOK_ONBOARDING.to_string(),
                             }
                             .boxed_clone(),
                         )
+                        .separator()
                         .action("Sign Out", client::SignOut.boxed_clone())
                     })
                     .into()
@@ -739,12 +754,27 @@ impl TitleBar {
                             )
                             .separator()
                             .link(
+                                "View Documentation",
+                                OpenBrowser {
+                                    url: BOOK_ONBOARDING.to_string(),
+                                }
+                                .boxed_clone(),
+                            )
+                            .link(
+                                "View Repo",
+                                OpenBrowser {
+                                    url: BOOK_ONBOARDING.to_string(),
+                                }
+                                .boxed_clone(),
+                            )
+                            .link(
                                 "Book Onboarding",
                                 OpenBrowser {
                                     url: BOOK_ONBOARDING.to_string(),
                                 }
                                 .boxed_clone(),
                             )
+                            .separator()
                     })
                     .into()
                 })
