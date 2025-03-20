@@ -1117,7 +1117,7 @@ impl GitStore {
         Some(status.status)
     }
 
-    fn repository_and_path_for_buffer_id(
+    pub fn repository_and_path_for_buffer_id(
         &self,
         buffer_id: BufferId,
         cx: &App,

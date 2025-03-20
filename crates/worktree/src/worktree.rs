@@ -2973,8 +2973,9 @@ impl Snapshot {
 
     /// Given an ordered iterator of entries, returns an iterator of those entries,
     /// along with their containing git repository.
+    #[cfg(test)]
     #[track_caller]
-    pub fn entries_with_repositories<'a>(
+    fn entries_with_repositories<'a>(
         &'a self,
         entries: impl 'a + Iterator<Item = &'a Entry>,
     ) -> impl 'a + Iterator<Item = (&'a Entry, Option<&'a RepositoryEntry>)> {
@@ -3051,12 +3052,6 @@ impl Snapshot {
 
     pub fn root_name(&self) -> &str {
         &self.root_name
-    }
-
-    pub fn root_git_entry(&self) -> Option<RepositoryEntry> {
-        self.repositories
-            .get(&PathKey(Path::new("").into()), &())
-            .map(|entry| entry.to_owned())
     }
 
     pub fn scan_id(&self) -> usize {
@@ -6017,8 +6012,8 @@ impl WorktreeModelHandle for Entity<Worktree> {
         let tree = self.clone();
         let (fs, root_path, mut git_dir_scan_id) = self.update(cx, |tree, _| {
             let tree = tree.as_local().unwrap();
-            let root_entry = tree.root_git_entry().unwrap();
-            let local_repo_entry = tree.get_local_repo(&root_entry).unwrap();
+            let repository = tree.repositories.first().unwrap();
+            let local_repo_entry = tree.get_local_repo(&repository).unwrap();
             (
                 tree.fs.clone(),
                 local_repo_entry.dot_git_dir_abs_path.clone(),
@@ -6027,11 +6022,11 @@ impl WorktreeModelHandle for Entity<Worktree> {
         });
 
         let scan_id_increased = |tree: &mut Worktree, git_dir_scan_id: &mut usize| {
-            let root_entry = tree.root_git_entry().unwrap();
+            let repository = tree.repositories.first().unwrap();
             let local_repo_entry = tree
                 .as_local()
                 .unwrap()
-                .get_local_repo(&root_entry)
+                .get_local_repo(&repository)
                 .unwrap();
 
             if local_repo_entry.git_dir_scan_id > *git_dir_scan_id {

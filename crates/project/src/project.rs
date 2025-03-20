@@ -56,7 +56,7 @@ use futures::{
 pub use image_store::{ImageItem, ImageStore};
 use image_store::{ImageItemEvent, ImageStoreEvent};
 
-use ::git::{blame::Blame, repository::GitRepository, status::FileStatus};
+use ::git::{blame::Blame, status::FileStatus};
 use gpui::{
     AnyEntity, App, AppContext, AsyncApp, BorrowAppContext, Context, Entity, EventEmitter, Hsla,
     SharedString, Task, WeakEntity, Window,
@@ -4049,12 +4049,6 @@ impl Project {
                 .abs_path()
                 .to_path_buf(),
         )
-    }
-
-    pub fn get_first_worktree_root_repo(&self, cx: &App) -> Option<Arc<dyn GitRepository>> {
-        let worktree = self.visible_worktrees(cx).next()?.read(cx).as_local()?;
-        let root_entry = worktree.root_git_entry()?;
-        worktree.get_local_repo(&root_entry)?.repo().clone().into()
     }
 
     pub fn blame_buffer(

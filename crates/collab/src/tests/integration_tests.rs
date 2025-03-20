@@ -2895,9 +2895,10 @@ async fn test_git_branch_name(
         let worktrees = project.visible_worktrees(cx).collect::<Vec<_>>();
         assert_eq!(worktrees.len(), 1);
         let worktree = worktrees[0].clone();
-        let root_entry = worktree.read(cx).snapshot().root_git_entry().unwrap();
+        let snapshot = worktree.read(cx).snapshot();
+        let repo = snapshot.repositories().first().clone().unwrap();
         assert_eq!(
-            root_entry.branch().map(|branch| branch.name.to_string()),
+            repo.branch().map(|branch| branch.name.to_string()),
             branch_name
         );
     }
