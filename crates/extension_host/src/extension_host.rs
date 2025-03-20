@@ -906,7 +906,11 @@ impl ExtensionStore {
                         .await
                 }
             })
-            .await?;
+            .await
+            .map_err(|error| {
+                util::log_err(&error);
+                error
+            })?;
 
             let output_path = &extensions_dir.join(extension_id.as_ref());
             if let Some(metadata) = fs.metadata(output_path).await? {
