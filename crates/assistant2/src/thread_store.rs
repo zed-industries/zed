@@ -20,8 +20,7 @@ use prompt_store::PromptBuilder;
 use serde::{Deserialize, Serialize};
 use util::ResultExt as _;
 
-use crate::thread::{MessageId, ProjectSnapshot, Thread, ThreadId};
-use crate::ThreadEvent;
+use crate::thread::{MessageId, ProjectSnapshot, Thread, ThreadEvent, ThreadId};
 
 pub fn init(cx: &mut App) {
     ThreadsDatabase::init(cx);
