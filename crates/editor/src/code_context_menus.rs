@@ -665,7 +665,7 @@ impl CompletionsMenu {
                 .collect()
         };
 
-        let mut non_first_char_matches = Vec::new();
+        let mut additional_matches = Vec::new();
         // Deprioritize all candidates where the query's start does not match the start of any word in the candidate
         if let Some(query) = query {
             if let Some(query_start) = query.chars().next() {
@@ -676,15 +676,11 @@ impl CompletionsMenu {
                         word.chars()
                             .flat_map(|codepoint| codepoint.to_lowercase())
                             .zip(query_start.to_lowercase())
-                            .all(|(word_cp, query_cp)| {
-                                let chars_match = word_cp == query_cp;
-                                let is_at_word_start = string_match.positions.first() == Some(&0);
-                                chars_match && is_at_word_start
-                            })
+                            .all(|(word_cp, query_cp)| word_cp == query_cp)
                     })
                 });
                 matches = primary;
-                non_first_char_matches = secondary;
+                additional_matches = secondary;
             }
         }
 
@@ -747,7 +743,7 @@ impl CompletionsMenu {
         }
         drop(completions);
 
-        matches.extend(non_first_char_matches);
+        matches.extend(additional_matches);
 
         *self.entries.borrow_mut() = matches;
         self.selected_item = 0;
