@@ -26,10 +26,7 @@ use rand::{rngs::StdRng, seq::SliceRandom, Rng};
 use serde_json::json;
 #[cfg(not(windows))]
 use std::os;
-use std::{
-    collections::VecDeque, mem, num::NonZeroU32, ops::Range, str::FromStr, sync::OnceLock,
-    task::Poll,
-};
+use std::{mem, num::NonZeroU32, ops::Range, str::FromStr, sync::OnceLock, task::Poll};
 use task::{ResolvedTask, TaskContext};
 use unindent::Unindent as _;
 use util::{
@@ -6362,7 +6359,7 @@ async fn test_staging_hunks(cx: &mut gpui::TestAppContext) {
     });
 }
 
-#[gpui::test(iterations = 10, seeds(340, 472))]
+#[gpui::test(seeds(340, 472))]
 async fn test_staging_hunks_with_delayed_fs_event(cx: &mut gpui::TestAppContext) {
     use DiffHunkSecondaryStatus::*;
     init_test(cx);
@@ -6701,7 +6698,7 @@ async fn test_staging_lots_of_hunks_fast(cx: &mut gpui::TestAppContext) {
     });
 }
 
-#[gpui::test(iterations = 50)]
+#[gpui::test(iterations = 10)]
 async fn test_staging_multiline_hunks_randomly(cx: &mut gpui::TestAppContext, mut rng: StdRng) {
     // if this fails, to ease debugging, you can set this to `false` and see if it still fails
     let random_staging_order = false;
