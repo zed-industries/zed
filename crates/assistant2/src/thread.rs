@@ -3,7 +3,7 @@ use std::io::Write;
 use std::sync::Arc;
 
 use anyhow::{Context as _, Result};
-use assistant_tool::{ActionLog, ToolWorkingSet};
+use assistant_tool::{ActionLog, Tool, ToolWorkingSet};
 use chrono::{DateTime, Utc};
 use collections::{BTreeMap, HashMap, HashSet};
 use fs::Fs;
@@ -983,37 +983,16 @@ impl Thread {
                         tool_use.input.clone(),
                         tool_use.ui_text.clone().into(),
                         messages.clone(),
-                        false,
+                        tool.clone(),
                     );
                 } else {
-                    let run_tool = tool.run(
-                        tool_use.input.clone(),
+                    let task = self.spawn_tool_use(
+                        tool_use.id.clone(),
                         &messages,
-                        self.project.clone(),
-                        self.action_log.clone(),
+                        tool_use.input.clone(),
+                        tool,
                         cx,
                     );
-
-                    let task = cx.spawn({
-                        let tool_use_id = tool_use.id.clone();
-                        async move |thread: WeakEntity<Thread>, cx| {
-                            let output = run_tool.await;
-
-                            thread
-                                .update(cx, |thread, cx| {
-                                    let pending_tool_use = thread
-                                        .tool_use
-                                        .insert_tool_output(tool_use_id.clone(), output);
-
-                                    cx.emit(ThreadEvent::ToolFinished {
-                                        tool_use_id,
-                                        pending_tool_use,
-                                        canceled: false,
-                                    });
-                                })
-                                .ok();
-                        }
-                    });
 
                     self.tool_use.run_pending_tool(
                         tool_use.id.clone(),
@@ -1033,18 +1012,57 @@ impl Thread {
             .collect::<Vec<_>>();
 
         for scripting_tool_use in pending_scripting_tool_uses.iter() {
-            self.scripting_tool_use.confirm_tool_use(
-                scripting_tool_use.id.clone(),
-                scripting_tool_use.input.clone(),
-                scripting_tool_use.ui_text.clone().into(),
-                messages.clone(),
-                true,
-            );
+            if let Some(tool) = self.tools.tool(&scripting_tool_use.name, cx) {
+                self.scripting_tool_use.confirm_tool_use(
+                    scripting_tool_use.id.clone(),
+                    scripting_tool_use.input.clone(),
+                    scripting_tool_use.ui_text.clone().into(),
+                    messages.clone(),
+                    tool,
+                );
+            }
         }
 
         pending_tool_uses
             .into_iter()
             .chain(pending_scripting_tool_uses)
+    }
+
+    fn spawn_tool_use(
+        &mut self,
+        tool_use_id: LanguageModelToolUseId,
+        messages: &Vec<LanguageModelRequestMessage>,
+        input: serde_json::Value,
+        tool: Arc<dyn Tool>,
+        cx: &mut Context<'_, Thread>,
+    ) -> Task<()> {
+        let run_tool = tool.run(
+            input,
+            messages,
+            self.project.clone(),
+            self.action_log.clone(),
+            cx,
+        );
+
+        cx.spawn({
+            async move |thread: WeakEntity<Thread>, cx| {
+                let output = run_tool.await;
+
+                thread
+                    .update(cx, |thread, cx| {
+                        let pending_tool_use = thread
+                            .tool_use
+                            .insert_tool_output(tool_use_id.clone(), output);
+
+                        cx.emit(ThreadEvent::ToolFinished {
+                            tool_use_id,
+                            pending_tool_use,
+                            canceled: false,
+                        });
+                    })
+                    .ok();
+            }
+        })
     }
 
     pub fn attach_tool_results(

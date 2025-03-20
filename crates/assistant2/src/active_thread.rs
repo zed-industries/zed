@@ -984,9 +984,16 @@ impl ActiveThread {
                                                 .buffer_font(cx),
                                         )
                                         .child(
-                                            Label::new("Are you sure?")
-                                                .size(LabelSize::Small)
-                                                .buffer_font(cx),
+                                            h_flex()
+                                                .gap_1()
+                                                .child(
+                                                    Button::new("accept-tool", "Accept")
+                                                        .on_click(cx.listener(Self::handle_tool_accept)),
+                                                )
+                                                .child(
+                                                    Button::new("deny-tool", "Deny")
+                                                        .on_click(cx.listener(Self::handle_tool_deny)),
+                                                ),
                                         ),
                                 ),
                             }),
@@ -1115,7 +1122,18 @@ impl ActiveThread {
                                         .py_1()
                                         .px_2p5()
                                         .child(Label::new("Confirmation:"))
-                                        .child(Label::new("Are you sure?")),
+                                        .child(
+                                            h_flex()
+                                                .gap_1()
+                                                .child(
+                                                    Button::new("accept-tool", "Accept")
+                                                        .on_click(cx.listener(Self::handle_tool_accept)),
+                                                )
+                                                .child(
+                                                    Button::new("deny-tool", "Deny")
+                                                        .on_click(cx.listener(Self::handle_tool_deny)),
+                                                ),
+                                        ),
                                 ),
                             }),
                     )
@@ -1178,6 +1196,14 @@ impl ActiveThread {
                     ),
             )
             .into_any()
+    }
+
+    fn handle_tool_accept(&mut self, _: &ClickEvent, _: &mut Window, _: &mut Context<Self>) {
+        println!("Accept clicked");
+    }
+
+    fn handle_tool_deny(&mut self, _: &ClickEvent, _: &mut Window, _: &mut Context<Self>) {
+        println!("Deny clicked");
     }
 
     fn handle_open_rules(&mut self, _: &ClickEvent, window: &mut Window, cx: &mut Context<Self>) {

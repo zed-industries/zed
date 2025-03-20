@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use anyhow::Result;
-use assistant_tool::ToolWorkingSet;
+use assistant_tool::{Tool, ToolWorkingSet};
 use collections::HashMap;
 use futures::future::Shared;
 use futures::FutureExt as _;
@@ -282,7 +282,7 @@ impl ToolUseState {
         input: serde_json::Value,
         ui_text: SharedString,
         messages: Arc<Vec<LanguageModelRequestMessage>>,
-        is_scripting_tool: bool,
+        tool: Arc<dyn Tool>,
     ) {
         if let Some(tool_use) = self.pending_tool_uses_by_id.get_mut(&tool_use_id) {
             tool_use.ui_text = ui_text.into();
@@ -290,7 +290,7 @@ impl ToolUseState {
                 tool_use_id,
                 input,
                 messages,
-                is_scripting_tool,
+                tool,
             };
         }
     }
@@ -399,7 +399,7 @@ pub enum PendingToolUseStatus {
         tool_use_id: LanguageModelToolUseId,
         input: serde_json::Value,
         messages: Arc<Vec<LanguageModelRequestMessage>>,
-        is_scripting_tool: bool,
+        tool: Arc<dyn Tool>,
     },
     Running {
         _task: Shared<Task<()>>,
