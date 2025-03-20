@@ -134,6 +134,7 @@ pub struct Repository {
     pub worktree_abs_path: Arc<Path>,
     pub is_from_single_file_worktree: bool,
     pub merge_message: Option<String>,
+    pub completed_scan_id: usize,
     git_repo: RepositoryState,
     job_sender: mpsc::UnboundedSender<GitJob>,
     askpass_delegates: Arc<Mutex<HashMap<u64, AskPassDelegate>>>,
@@ -646,6 +647,7 @@ impl GitStore {
                                 existing_repo.repository_entry = repo_entry.clone();
                                 if matches!(git_repo, RepositoryState::Local { .. }) {
                                     existing_repo.merge_message = merge_message;
+                                    existing_repo.completed_scan_id = worktree.completed_scan_id();
                                 }
                             });
                             existing_repo
@@ -668,6 +670,7 @@ impl GitStore {
                                 job_sender: self.update_sender.clone(),
                                 merge_message,
                                 commit_message_buffer: None,
+                                completed_scan_id: worktree.completed_scan_id(),
                             })
                         };
                         new_repositories.insert(repo_entry.work_directory_id(), repo);
