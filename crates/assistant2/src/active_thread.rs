@@ -8,7 +8,7 @@ use gpui::{
     list, percentage, AbsoluteLength, Animation, AnimationExt, AnyElement, App, ClickEvent,
     DefiniteLength, EdgesRefinement, Empty, Entity, Focusable, Length, ListAlignment, ListOffset,
     ListState, StyleRefinement, Subscription, Task, TextStyleRefinement, Transformation,
-    UnderlineStyle,
+    UnderlineStyle, WeakEntity,
 };
 use language::{Buffer, LanguageRegistry};
 use language_model::{LanguageModelRegistry, LanguageModelToolUseId, Role};
@@ -20,6 +20,7 @@ use std::time::Duration;
 use theme::ThemeSettings;
 use ui::{prelude::*, Disclosure, IconButton, KeyBinding, Tooltip};
 use util::ResultExt as _;
+use workspace::{OpenOptions, Workspace};
 
 use crate::context_store::{refresh_context_store_text, ContextStore};
 
@@ -28,11 +29,13 @@ pub struct ActiveThread {
     thread_store: Entity<ThreadStore>,
     thread: Entity<Thread>,
     context_store: Entity<ContextStore>,
+    workspace: WeakEntity<Workspace>,
     save_thread_task: Option<Task<()>>,
     messages: Vec<MessageId>,
     list_state: ListState,
     rendered_messages_by_id: HashMap<MessageId, Entity<Markdown>>,
     rendered_scripting_tool_uses: HashMap<LanguageModelToolUseId, Entity<Markdown>>,
+    rendered_tool_use_labels: HashMap<LanguageModelToolUseId, Entity<Markdown>>,
     editing_message: Option<(MessageId, EditMessageState)>,
     expanded_tool_uses: HashMap<LanguageModelToolUseId, bool>,
     last_error: Option<ThreadError>,
@@ -50,6 +53,7 @@ impl ActiveThread {
         thread_store: Entity<ThreadStore>,
         language_registry: Arc<LanguageRegistry>,
         context_store: Entity<ContextStore>,
+        workspace: WeakEntity<Workspace>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -63,10 +67,12 @@ impl ActiveThread {
             thread_store,
             thread: thread.clone(),
             context_store,
+            workspace,
             save_thread_task: None,
             messages: Vec::new(),
             rendered_messages_by_id: HashMap::default(),
             rendered_scripting_tool_uses: HashMap::default(),
+            rendered_tool_use_labels: HashMap::default(),
             expanded_tool_uses: HashMap::default(),
             list_state: ListState::new(0, ListAlignment::Bottom, px(1024.), {
                 let this = cx.entity().downgrade();
@@ -84,10 +90,29 @@ impl ActiveThread {
         for message in thread.read(cx).messages().cloned().collect::<Vec<_>>() {
             this.push_message(&message.id, message.text.clone(), window, cx);
 
-            for tool_use in thread.read(cx).scripting_tool_uses_for_message(message.id) {
+            for tool_use in thread.read(cx).tool_uses_for_message(message.id, cx) {
+                this.render_tool_use_label_markdown(
+                    tool_use.id.clone(),
+                    tool_use.ui_text.clone(),
+                    window,
+                    cx,
+                );
+            }
+
+            for tool_use in thread
+                .read(cx)
+                .scripting_tool_uses_for_message(message.id, cx)
+            {
+                this.render_tool_use_label_markdown(
+                    tool_use.id.clone(),
+                    tool_use.ui_text.clone(),
+                    window,
+                    cx,
+                );
+
                 this.render_scripting_tool_use_markdown(
                     tool_use.id.clone(),
-                    tool_use.name.as_ref(),
+                    tool_use.ui_text.as_ref(),
                     tool_use.input.clone(),
                     window,
                     cx,
@@ -285,6 +310,19 @@ impl ActiveThread {
             .insert(tool_use_id, lua_script);
     }
 
+    fn render_tool_use_label_markdown(
+        &mut self,
+        tool_use_id: LanguageModelToolUseId,
+        tool_label: impl Into<SharedString>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.rendered_tool_use_labels.insert(
+            tool_use_id,
+            self.render_markdown(tool_label.into(), window, cx),
+        );
+    }
+
     fn handle_thread_event(
         &mut self,
         _thread: &Entity<Thread>,
@@ -339,9 +377,18 @@ impl ActiveThread {
                 cx.notify();
             }
             ThreadEvent::UsePendingTools => {
-                self.thread.update(cx, |thread, cx| {
-                    thread.use_pending_tools(cx);
-                });
+                let tool_uses = self
+                    .thread
+                    .update(cx, |thread, cx| thread.use_pending_tools(cx));
+
+                for tool_use in tool_uses {
+                    self.render_tool_use_label_markdown(
+                        tool_use.id,
+                        tool_use.ui_text.clone(),
+                        window,
+                        cx,
+                    );
+                }
             }
             ThreadEvent::ToolFinished {
                 pending_tool_use,
@@ -350,6 +397,13 @@ impl ActiveThread {
             } => {
                 let canceled = *canceled;
                 if let Some(tool_use) = pending_tool_use {
+                    self.render_tool_use_label_markdown(
+                        tool_use.id.clone(),
+                        SharedString::from(tool_use.ui_text.clone()),
+                        window,
+                        cx,
+                    );
+
                     self.render_scripting_tool_use_markdown(
                         tool_use.id.clone(),
                         tool_use.name.as_ref(),
@@ -576,8 +630,8 @@ impl ActiveThread {
         // Get all the data we need from thread before we start using it in closures
         let checkpoint = thread.checkpoint_for_message(message_id);
         let context = thread.context_for_message(message_id);
-        let tool_uses = thread.tool_uses_for_message(message_id);
-        let scripting_tool_uses = thread.scripting_tool_uses_for_message(message_id);
+        let tool_uses = thread.tool_uses_for_message(message_id, cx);
+        let scripting_tool_uses = thread.scripting_tool_uses_for_message(message_id, cx);
 
         // Don't render user messages that are just there for returning tool results.
         if message.role == Role::User
@@ -871,6 +925,7 @@ impl ActiveThread {
                         )
                         .child(div().p_2().child(message_content)),
                 ),
+
             Role::Assistant => {
                 v_flex()
                     .id(("message-container", ix))
@@ -900,6 +955,7 @@ impl ActiveThread {
                         },
                     )
             }
+
             Role::System => div().id(("message-container", ix)).py_1().px_2().child(
                 v_flex()
                     .bg(colors.editor_background)
@@ -907,6 +963,7 @@ impl ActiveThread {
                     .child(div().p_4().child(message_content)),
             ),
         };
+
 
         styled_message.into_any()
     }
@@ -956,11 +1013,10 @@ impl ActiveThread {
                                         }
                                     }),
                                 ))
-                                .child(
-                                    Label::new(tool_use.name)
-                                        .size(LabelSize::Small)
-                                        .buffer_font(cx),
-                                ),
+                                .child(div().text_ui_sm(cx).children(
+                                    self.rendered_tool_use_labels.get(&tool_use.id).cloned(),
+                                ))
+                                .truncate(),
                         )
                         .child({
                             let (icon_name, color, animated) = match &tool_use.status {
@@ -1088,6 +1144,7 @@ impl ActiveThread {
     fn render_scripting_tool_use(
         &self,
         tool_use: ToolUse,
+        window: &Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let is_open = self
@@ -1133,7 +1190,12 @@ impl ActiveThread {
                                         }
                                     }),
                                 ))
-                                .child(Label::new(tool_use.name)),
+                                .child(div().text_ui_sm(cx).child(self.render_markdown(
+                                    tool_use.ui_text.clone(),
+                                    window,
+                                    cx,
+                                )))
+                                .truncate(),
                         )
                         .child(
                             Label::new(match tool_use.status {
@@ -1196,6 +1258,86 @@ impl ActiveThread {
                     )
                 }),
         )
+    }
+
+    fn render_rules_item(&self, cx: &Context<Self>) -> AnyElement {
+        let Some(system_prompt_context) = self.thread.read(cx).system_prompt_context().as_ref()
+        else {
+            return div().into_any();
+        };
+
+        let rules_files = system_prompt_context
+            .worktrees
+            .iter()
+            .filter_map(|worktree| worktree.rules_file.as_ref())
+            .collect::<Vec<_>>();
+
+        let label_text = match rules_files.as_slice() {
+            &[] => return div().into_any(),
+            &[rules_file] => {
+                format!("Using {:?} file", rules_file.rel_path)
+            }
+            rules_files => {
+                format!("Using {} rules files", rules_files.len())
+            }
+        };
+
+        div()
+            .pt_1()
+            .px_2p5()
+            .child(
+                h_flex()
+                    .group("rules-item")
+                    .w_full()
+                    .gap_2()
+                    .justify_between()
+                    .child(
+                        h_flex()
+                            .gap_1p5()
+                            .child(
+                                Icon::new(IconName::File)
+                                    .size(IconSize::XSmall)
+                                    .color(Color::Disabled),
+                            )
+                            .child(
+                                Label::new(label_text)
+                                    .size(LabelSize::XSmall)
+                                    .color(Color::Muted)
+                                    .buffer_font(cx),
+                            ),
+                    )
+                    .child(
+                        div().visible_on_hover("rules-item").child(
+                            Button::new("open-rules", "Open Rules")
+                                .label_size(LabelSize::XSmall)
+                                .on_click(cx.listener(Self::handle_open_rules)),
+                        ),
+                    ),
+            )
+            .into_any()
+    }
+
+    fn handle_open_rules(&mut self, _: &ClickEvent, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(system_prompt_context) = self.thread.read(cx).system_prompt_context().as_ref()
+        else {
+            return;
+        };
+
+        let abs_paths = system_prompt_context
+            .worktrees
+            .iter()
+            .flat_map(|worktree| worktree.rules_file.as_ref())
+            .map(|rules_file| rules_file.abs_path.to_path_buf())
+            .collect::<Vec<_>>();
+
+        if let Ok(task) = self.workspace.update(cx, move |workspace, cx| {
+            // TODO: Open a multibuffer instead? In some cases this doesn't make the set of rules
+            // files clear. For example, if rules file 1 is already open but rules file 2 is not,
+            // this would open and focus rules file 2 in a tab that is not next to rules file 1.
+            workspace.open_paths(abs_paths, OpenOptions::default(), None, window, cx)
+        }) {
+            task.detach();
+        }
     }
 }
 

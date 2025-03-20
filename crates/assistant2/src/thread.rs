@@ -6,6 +6,7 @@ use anyhow::{Context as _, Result};
 use assistant_tool::{ActionLog, ToolWorkingSet};
 use chrono::{DateTime, Utc};
 use collections::{BTreeMap, HashMap, HashSet};
+use fs::Fs;
 use futures::future::Shared;
 use futures::{FutureExt, StreamExt as _};
 use git;
@@ -17,11 +18,13 @@ use language_model::{
     Role, StopReason, TokenUsage,
 };
 use project::git::GitStoreCheckpoint;
-use project::Project;
-use prompt_store::{AssistantSystemPromptWorktree, PromptBuilder};
+use project::{Project, Worktree};
+use prompt_store::{
+    AssistantSystemPromptContext, PromptBuilder, RulesFile, WorktreeInfoForSystemPrompt,
+};
 use scripting_tool::{ScriptingSession, ScriptingTool};
 use serde::{Deserialize, Serialize};
-use util::{post_inc, ResultExt, TryFutureExt as _};
+use util::{maybe, post_inc, ResultExt as _, TryFutureExt as _};
 use uuid::Uuid;
 
 use crate::context::{attach_context_to_message, ContextId, ContextSnapshot};
@@ -106,6 +109,7 @@ pub struct Thread {
     next_message_id: MessageId,
     context: BTreeMap<ContextId, ContextSnapshot>,
     context_by_message: HashMap<MessageId, Vec<ContextId>>,
+    system_prompt_context: Option<AssistantSystemPromptContext>,
     checkpoints_by_message: HashMap<MessageId, GitStoreCheckpoint>,
     completion_count: usize,
     pending_completions: Vec<PendingCompletion>,
@@ -136,15 +140,16 @@ impl Thread {
             next_message_id: MessageId(0),
             context: BTreeMap::default(),
             context_by_message: HashMap::default(),
+            system_prompt_context: None,
             checkpoints_by_message: HashMap::default(),
             completion_count: 0,
             pending_completions: Vec::new(),
             project: project.clone(),
             prompt_builder,
-            tools,
-            tool_use: ToolUseState::new(),
+            tools: tools.clone(),
+            tool_use: ToolUseState::new(tools.clone()),
             scripting_session: cx.new(|cx| ScriptingSession::new(project.clone(), cx)),
-            scripting_tool_use: ToolUseState::new(),
+            scripting_tool_use: ToolUseState::new(tools),
             action_log: cx.new(|_| ActionLog::new()),
             initial_project_snapshot: {
                 let project_snapshot = Self::project_snapshot(project, cx);
@@ -171,11 +176,12 @@ impl Thread {
                 .map(|message| message.id.0 + 1)
                 .unwrap_or(0),
         );
-        let tool_use = ToolUseState::from_serialized_messages(&serialized.messages, |name| {
-            name != ScriptingTool::NAME
-        });
+        let tool_use =
+            ToolUseState::from_serialized_messages(tools.clone(), &serialized.messages, |name| {
+                name != ScriptingTool::NAME
+            });
         let scripting_tool_use =
-            ToolUseState::from_serialized_messages(&serialized.messages, |name| {
+            ToolUseState::from_serialized_messages(tools.clone(), &serialized.messages, |name| {
                 name == ScriptingTool::NAME
             });
         let scripting_session = cx.new(|cx| ScriptingSession::new(project.clone(), cx));
@@ -197,6 +203,7 @@ impl Thread {
             next_message_id,
             context: BTreeMap::default(),
             context_by_message: HashMap::default(),
+            system_prompt_context: None,
             checkpoints_by_message: HashMap::default(),
             completion_count: 0,
             pending_completions: Vec::new(),
@@ -322,12 +329,12 @@ impl Thread {
         all_pending_tool_uses.all(|tool_use| tool_use.status.is_error())
     }
 
-    pub fn tool_uses_for_message(&self, id: MessageId) -> Vec<ToolUse> {
-        self.tool_use.tool_uses_for_message(id)
+    pub fn tool_uses_for_message(&self, id: MessageId, cx: &App) -> Vec<ToolUse> {
+        self.tool_use.tool_uses_for_message(id, cx)
     }
 
-    pub fn scripting_tool_uses_for_message(&self, id: MessageId) -> Vec<ToolUse> {
-        self.scripting_tool_use.tool_uses_for_message(id)
+    pub fn scripting_tool_uses_for_message(&self, id: MessageId, cx: &App) -> Vec<ToolUse> {
+        self.scripting_tool_use.tool_uses_for_message(id, cx)
     }
 
     pub fn tool_results_for_message(&self, id: MessageId) -> Vec<&LanguageModelToolResult> {
@@ -442,7 +449,7 @@ impl Thread {
         let initial_project_snapshot = self.initial_project_snapshot.clone();
         cx.spawn(async move |this, cx| {
             let initial_project_snapshot = initial_project_snapshot.await;
-            this.read_with(cx, |this, _| SerializedThread {
+            this.read_with(cx, |this, cx| SerializedThread {
                 summary: this.summary_or_default(),
                 updated_at: this.updated_at(),
                 messages: this
@@ -452,9 +459,9 @@ impl Thread {
                         role: message.role,
                         text: message.text.clone(),
                         tool_uses: this
-                            .tool_uses_for_message(message.id)
+                            .tool_uses_for_message(message.id, cx)
                             .into_iter()
-                            .chain(this.scripting_tool_uses_for_message(message.id))
+                            .chain(this.scripting_tool_uses_for_message(message.id, cx))
                             .map(|tool_use| SerializedToolUse {
                                 id: tool_use.id,
                                 name: tool_use.name,
@@ -476,6 +483,116 @@ impl Thread {
                 initial_project_snapshot,
             })
         })
+    }
+
+    pub fn set_system_prompt_context(&mut self, context: AssistantSystemPromptContext) {
+        self.system_prompt_context = Some(context);
+    }
+
+    pub fn system_prompt_context(&self) -> &Option<AssistantSystemPromptContext> {
+        &self.system_prompt_context
+    }
+
+    pub fn load_system_prompt_context(
+        &self,
+        cx: &App,
+    ) -> Task<(AssistantSystemPromptContext, Option<ThreadError>)> {
+        let project = self.project.read(cx);
+        let tasks = project
+            .visible_worktrees(cx)
+            .map(|worktree| {
+                Self::load_worktree_info_for_system_prompt(
+                    project.fs().clone(),
+                    worktree.read(cx),
+                    cx,
+                )
+            })
+            .collect::<Vec<_>>();
+
+        cx.spawn(async |_cx| {
+            let results = futures::future::join_all(tasks).await;
+            let mut first_err = None;
+            let worktrees = results
+                .into_iter()
+                .map(|(worktree, err)| {
+                    if first_err.is_none() && err.is_some() {
+                        first_err = err;
+                    }
+                    worktree
+                })
+                .collect::<Vec<_>>();
+            (AssistantSystemPromptContext::new(worktrees), first_err)
+        })
+    }
+
+    fn load_worktree_info_for_system_prompt(
+        fs: Arc<dyn Fs>,
+        worktree: &Worktree,
+        cx: &App,
+    ) -> Task<(WorktreeInfoForSystemPrompt, Option<ThreadError>)> {
+        let root_name = worktree.root_name().into();
+        let abs_path = worktree.abs_path();
+
+        // Note that Cline supports `.clinerules` being a directory, but that is not currently
+        // supported. This doesn't seem to occur often in GitHub repositories.
+        const RULES_FILE_NAMES: [&'static str; 5] = [
+            ".rules",
+            ".cursorrules",
+            ".windsurfrules",
+            ".clinerules",
+            "CLAUDE.md",
+        ];
+        let selected_rules_file = RULES_FILE_NAMES
+            .into_iter()
+            .filter_map(|name| {
+                worktree
+                    .entry_for_path(name)
+                    .filter(|entry| entry.is_file())
+                    .map(|entry| (entry.path.clone(), worktree.absolutize(&entry.path)))
+            })
+            .next();
+
+        if let Some((rel_rules_path, abs_rules_path)) = selected_rules_file {
+            cx.spawn(async move |_| {
+                let rules_file_result = maybe!(async move {
+                    let abs_rules_path = abs_rules_path?;
+                    let text = fs.load(&abs_rules_path).await.with_context(|| {
+                        format!("Failed to load assistant rules file {:?}", abs_rules_path)
+                    })?;
+                    anyhow::Ok(RulesFile {
+                        rel_path: rel_rules_path,
+                        abs_path: abs_rules_path.into(),
+                        text: text.trim().to_string(),
+                    })
+                })
+                .await;
+                let (rules_file, rules_file_error) = match rules_file_result {
+                    Ok(rules_file) => (Some(rules_file), None),
+                    Err(err) => (
+                        None,
+                        Some(ThreadError::Message {
+                            header: "Error loading rules file".into(),
+                            message: format!("{err}").into(),
+                        }),
+                    ),
+                };
+                let worktree_info = WorktreeInfoForSystemPrompt {
+                    root_name,
+                    abs_path,
+                    rules_file,
+                };
+                (worktree_info, rules_file_error)
+            })
+        } else {
+            Task::ready((
+                WorktreeInfoForSystemPrompt {
+                    root_name,
+                    abs_path,
+                    rules_file: None,
+                },
+                None,
+            ))
+        }
     }
 
     pub fn send_to_model(
@@ -515,35 +632,29 @@ impl Thread {
         request_kind: RequestKind,
         cx: &App,
     ) -> LanguageModelRequest {
-        let worktree_root_names = self
-            .project
-            .read(cx)
-            .visible_worktrees(cx)
-            .map(|worktree| {
-                let worktree = worktree.read(cx);
-                AssistantSystemPromptWorktree {
-                    root_name: worktree.root_name().into(),
-                    abs_path: worktree.abs_path(),
-                }
-            })
-            .collect::<Vec<_>>();
-        let system_prompt = self
-            .prompt_builder
-            .generate_assistant_system_prompt(worktree_root_names)
-            .context("failed to generate assistant system prompt")
-            .log_err()
-            .unwrap_or_default();
-
         let mut request = LanguageModelRequest {
-            messages: vec![LanguageModelRequestMessage {
-                role: Role::System,
-                content: vec![MessageContent::Text(system_prompt)],
-                cache: true,
-            }],
+            messages: vec![],
             tools: Vec::new(),
             stop: Vec::new(),
             temperature: None,
         };
+
+        if let Some(system_prompt_context) = self.system_prompt_context.as_ref() {
+            if let Some(system_prompt) = self
+                .prompt_builder
+                .generate_assistant_system_prompt(system_prompt_context)
+                .context("failed to generate assistant system prompt")
+                .log_err()
+            {
+                request.messages.push(LanguageModelRequestMessage {
+                    role: Role::System,
+                    content: vec![MessageContent::Text(system_prompt)],
+                    cache: true,
+                });
+            }
+        } else {
+            log::error!("system_prompt_context not set.")
+        }
 
         let mut referenced_context_ids = HashSet::default();
 
@@ -699,13 +810,17 @@ impl Thread {
                                     .rfind(|message| message.role == Role::Assistant)
                                 {
                                     if tool_use.name.as_ref() == ScriptingTool::NAME {
-                                        thread
-                                            .scripting_tool_use
-                                            .request_tool_use(last_assistant_message.id, tool_use);
+                                        thread.scripting_tool_use.request_tool_use(
+                                            last_assistant_message.id,
+                                            tool_use,
+                                            cx,
+                                        );
                                     } else {
-                                        thread
-                                            .tool_use
-                                            .request_tool_use(last_assistant_message.id, tool_use);
+                                        thread.tool_use.request_tool_use(
+                                            last_assistant_message.id,
+                                            tool_use,
+                                            cx,
+                                        );
                                     }
                                 }
                             }
@@ -757,9 +872,10 @@ impl Thread {
                                     .map(|err| err.to_string())
                                     .collect::<Vec<_>>()
                                     .join("\n");
-                                cx.emit(ThreadEvent::ShowError(ThreadError::Message(
-                                    SharedString::from(error_message.clone()),
-                                )));
+                                cx.emit(ThreadEvent::ShowError(ThreadError::Message {
+                                    header: "Error interacting with language model".into(),
+                                    message: SharedString::from(error_message.clone()),
+                                }));
                             }
 
                             thread.cancel_last_completion(cx);
@@ -845,7 +961,10 @@ impl Thread {
         });
     }
 
-    pub fn use_pending_tools(&mut self, cx: &mut Context<Self>) {
+    pub fn use_pending_tools(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) -> impl IntoIterator<Item = PendingToolUse> {
         let request = self.to_completion_request(RequestKind::Chat, cx);
         let pending_tool_uses = self
             .tool_use
@@ -855,17 +974,22 @@ impl Thread {
             .cloned()
             .collect::<Vec<_>>();
 
-        for tool_use in pending_tool_uses {
+        for tool_use in pending_tool_uses.iter() {
             if let Some(tool) = self.tools.tool(&tool_use.name, cx) {
                 let task = tool.run(
-                    tool_use.input,
+                    tool_use.input.clone(),
                     &request.messages,
                     self.project.clone(),
                     self.action_log.clone(),
                     cx,
                 );
 
-                self.insert_tool_output(tool_use.id.clone(), task, cx);
+                self.insert_tool_output(
+                    tool_use.id.clone(),
+                    tool_use.ui_text.clone().into(),
+                    task,
+                    cx,
+                );
             }
         }
 
@@ -877,8 +1001,8 @@ impl Thread {
             .cloned()
             .collect::<Vec<_>>();
 
-        for scripting_tool_use in pending_scripting_tool_uses {
-            let task = match ScriptingTool::deserialize_input(scripting_tool_use.input) {
+        for scripting_tool_use in pending_scripting_tool_uses.iter() {
+            let task = match ScriptingTool::deserialize_input(scripting_tool_use.input.clone()) {
                 Err(err) => Task::ready(Err(err.into())),
                 Ok(input) => {
                     let (script_id, script_task) =
@@ -905,13 +1029,20 @@ impl Thread {
                 }
             };
 
-            self.insert_scripting_tool_output(scripting_tool_use.id.clone(), task, cx);
+            let ui_text: SharedString = scripting_tool_use.name.clone().into();
+
+            self.insert_scripting_tool_output(scripting_tool_use.id.clone(), ui_text, task, cx);
         }
+
+        pending_tool_uses
+            .into_iter()
+            .chain(pending_scripting_tool_uses)
     }
 
     pub fn insert_tool_output(
         &mut self,
         tool_use_id: LanguageModelToolUseId,
+        ui_text: SharedString,
         output: Task<Result<String>>,
         cx: &mut Context<Self>,
     ) {
@@ -936,12 +1067,13 @@ impl Thread {
         });
 
         self.tool_use
-            .run_pending_tool(tool_use_id, insert_output_task);
+            .run_pending_tool(tool_use_id, ui_text, insert_output_task);
     }
 
     pub fn insert_scripting_tool_output(
         &mut self,
         tool_use_id: LanguageModelToolUseId,
+        ui_text: SharedString,
         output: Task<Result<String>>,
         cx: &mut Context<Self>,
     ) {
@@ -966,7 +1098,7 @@ impl Thread {
         });
 
         self.scripting_tool_use
-            .run_pending_tool(tool_use_id, insert_output_task);
+            .run_pending_tool(tool_use_id, ui_text, insert_output_task);
     }
 
     pub fn attach_tool_results(
@@ -1139,7 +1271,7 @@ impl Thread {
         })
     }
 
-    pub fn to_markdown(&self) -> Result<String> {
+    pub fn to_markdown(&self, cx: &App) -> Result<String> {
         let mut markdown = Vec::new();
 
         if let Some(summary) = self.summary() {
@@ -1158,7 +1290,7 @@ impl Thread {
             )?;
             writeln!(markdown, "{}\n", message.text)?;
 
-            for tool_use in self.tool_uses_for_message(message.id) {
+            for tool_use in self.tool_uses_for_message(message.id, cx) {
                 writeln!(
                     markdown,
                     "**Use Tool: {} ({})**",
@@ -1204,7 +1336,10 @@ impl Thread {
 pub enum ThreadError {
     PaymentRequired,
     MaxMonthlySpendReached,
-    Message(SharedString),
+    Message {
+        header: SharedString,
+        message: SharedString,
+    },
 }
 
 #[derive(Debug, Clone)]

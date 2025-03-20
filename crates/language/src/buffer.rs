@@ -4727,21 +4727,25 @@ impl CharClassifier {
     }
 
     pub fn kind_with(&self, c: char, ignore_punctuation: bool) -> CharKind {
-        if c.is_whitespace() {
-            return CharKind::Whitespace;
-        } else if c.is_alphanumeric() || c == '_' {
+        if c.is_alphanumeric() || c == '_' {
             return CharKind::Word;
         }
 
         if let Some(scope) = &self.scope {
-            if let Some(characters) = scope.word_characters() {
+            let characters = if self.for_completion {
+                scope.completion_query_characters()
+            } else {
+                scope.word_characters()
+            };
+            if let Some(characters) = characters {
                 if characters.contains(&c) {
-                    if c == '-' && !self.for_completion && !ignore_punctuation {
-                        return CharKind::Punctuation;
-                    }
                     return CharKind::Word;
                 }
             }
+        }
+
+        if c.is_whitespace() {
+            return CharKind::Whitespace;
         }
 
         if ignore_punctuation {

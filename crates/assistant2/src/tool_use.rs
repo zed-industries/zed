@@ -1,10 +1,11 @@
 use std::sync::Arc;
 
 use anyhow::Result;
+use assistant_tool::ToolWorkingSet;
 use collections::HashMap;
 use futures::future::Shared;
 use futures::FutureExt as _;
-use gpui::{SharedString, Task};
+use gpui::{App, SharedString, Task};
 use language_model::{
     LanguageModelRequestMessage, LanguageModelToolResult, LanguageModelToolUse,
     LanguageModelToolUseId, MessageContent, Role,
@@ -17,6 +18,7 @@ use crate::thread_store::SerializedMessage;
 pub struct ToolUse {
     pub id: LanguageModelToolUseId,
     pub name: SharedString,
+    pub ui_text: SharedString,
     pub status: ToolUseStatus,
     pub input: serde_json::Value,
 }
@@ -30,6 +32,7 @@ pub enum ToolUseStatus {
 }
 
 pub struct ToolUseState {
+    tools: Arc<ToolWorkingSet>,
     tool_uses_by_assistant_message: HashMap<MessageId, Vec<LanguageModelToolUse>>,
     tool_uses_by_user_message: HashMap<MessageId, Vec<LanguageModelToolUseId>>,
     tool_results: HashMap<LanguageModelToolUseId, LanguageModelToolResult>,
@@ -37,8 +40,9 @@ pub struct ToolUseState {
 }
 
 impl ToolUseState {
-    pub fn new() -> Self {
+    pub fn new(tools: Arc<ToolWorkingSet>) -> Self {
         Self {
+            tools,
             tool_uses_by_assistant_message: HashMap::default(),
             tool_uses_by_user_message: HashMap::default(),
             tool_results: HashMap::default(),
@@ -50,10 +54,11 @@ impl ToolUseState {
     ///
     /// Accepts a function to filter the tools that should be used to populate the state.
     pub fn from_serialized_messages(
+        tools: Arc<ToolWorkingSet>,
         messages: &[SerializedMessage],
         mut filter_by_tool_name: impl FnMut(&str) -> bool,
     ) -> Self {
-        let mut this = Self::new();
+        let mut this = Self::new(tools);
         let mut tool_names_by_id = HashMap::default();
 
         for message in messages {
@@ -138,7 +143,7 @@ impl ToolUseState {
         self.pending_tool_uses_by_id.values().collect()
     }
 
-    pub fn tool_uses_for_message(&self, id: MessageId) -> Vec<ToolUse> {
+    pub fn tool_uses_for_message(&self, id: MessageId, cx: &App) -> Vec<ToolUse> {
         let Some(tool_uses_for_message) = &self.tool_uses_by_assistant_message.get(&id) else {
             return Vec::new();
         };
@@ -173,12 +178,26 @@ impl ToolUseState {
             tool_uses.push(ToolUse {
                 id: tool_use.id.clone(),
                 name: tool_use.name.clone().into(),
+                ui_text: self.tool_ui_label(&tool_use.name, &tool_use.input, cx),
                 input: tool_use.input.clone(),
                 status,
             })
         }
 
         tool_uses
+    }
+
+    pub fn tool_ui_label(
+        &self,
+        tool_name: &str,
+        input: &serde_json::Value,
+        cx: &App,
+    ) -> SharedString {
+        if let Some(tool) = self.tools.tool(tool_name, cx) {
+            tool.ui_text(input).into()
+        } else {
+            "Unknown tool".into()
+        }
     }
 
     pub fn tool_results_for_message(&self, message_id: MessageId) -> Vec<&LanguageModelToolResult> {
@@ -209,6 +228,7 @@ impl ToolUseState {
         &mut self,
         assistant_message_id: MessageId,
         tool_use: LanguageModelToolUse,
+        cx: &App,
     ) {
         self.tool_uses_by_assistant_message
             .entry(assistant_message_id)
@@ -228,15 +248,24 @@ impl ToolUseState {
             PendingToolUse {
                 assistant_message_id,
                 id: tool_use.id,
-                name: tool_use.name,
+                name: tool_use.name.clone(),
+                ui_text: self
+                    .tool_ui_label(&tool_use.name, &tool_use.input, cx)
+                    .into(),
                 input: tool_use.input,
                 status: PendingToolUseStatus::Idle,
             },
         );
     }
 
-    pub fn run_pending_tool(&mut self, tool_use_id: LanguageModelToolUseId, task: Task<()>) {
+    pub fn run_pending_tool(
+        &mut self,
+        tool_use_id: LanguageModelToolUseId,
+        ui_text: SharedString,
+        task: Task<()>,
+    ) {
         if let Some(tool_use) = self.pending_tool_uses_by_id.get_mut(&tool_use_id) {
+            tool_use.ui_text = ui_text.into();
             tool_use.status = PendingToolUseStatus::Running {
                 _task: task.shared(),
             };
@@ -335,6 +364,7 @@ pub struct PendingToolUse {
     #[allow(unused)]
     pub assistant_message_id: MessageId,
     pub name: Arc<str>,
+    pub ui_text: Arc<str>,
     pub input: serde_json::Value,
     pub status: PendingToolUseStatus,
 }

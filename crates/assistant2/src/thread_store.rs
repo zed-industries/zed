@@ -20,7 +20,7 @@ use prompt_store::PromptBuilder;
 use serde::{Deserialize, Serialize};
 use util::ResultExt as _;
 
-use crate::thread::{MessageId, ProjectSnapshot, Thread, ThreadId};
+use crate::thread::{MessageId, ProjectSnapshot, Thread, ThreadEvent, ThreadId};
 
 pub fn init(cx: &mut App) {
     ThreadsDatabase::init(cx);
@@ -113,7 +113,7 @@ impl ThreadStore {
                 .await?
                 .ok_or_else(|| anyhow!("no thread found with ID: {id:?}"))?;
 
-            this.update(cx, |this, cx| {
+            let thread = this.update(cx, |this, cx| {
                 cx.new(|cx| {
                     Thread::deserialize(
                         id.clone(),
@@ -124,7 +124,19 @@ impl ThreadStore {
                         cx,
                     )
                 })
-            })
+            })?;
+
+            let (system_prompt_context, load_error) = thread
+                .update(cx, |thread, cx| thread.load_system_prompt_context(cx))?
+                .await;
+            thread.update(cx, |thread, cx| {
+                thread.set_system_prompt_context(system_prompt_context);
+                if let Some(load_error) = load_error {
+                    cx.emit(ThreadEvent::ShowError(load_error));
+                }
+            })?;
+
+            Ok(thread)
         })
     }
 

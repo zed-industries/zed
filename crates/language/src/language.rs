@@ -700,6 +700,9 @@ pub struct LanguageConfig {
     /// If configured, this language contains JSX style tags, and should support auto-closing of those tags.
     #[serde(default)]
     pub jsx_tag_auto_close: Option<JsxTagAutoCloseConfig>,
+    /// A list of characters that Zed should treat as word characters for completion queries.
+    #[serde(default)]
+    pub completion_query_characters: HashSet<char>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, Default, JsonSchema)]
@@ -765,6 +768,8 @@ pub struct LanguageConfigOverride {
     #[serde(default)]
     pub word_characters: Override<HashSet<char>>,
     #[serde(default)]
+    pub completion_query_characters: Override<HashSet<char>>,
+    #[serde(default)]
     pub opt_into_language_servers: Vec<LanguageServerName>,
 }
 
@@ -816,6 +821,7 @@ impl Default for LanguageConfig {
             prettier_parser_name: None,
             hidden: false,
             jsx_tag_auto_close: None,
+            completion_query_characters: Default::default(),
         }
     }
 }
@@ -1702,6 +1708,16 @@ impl LanguageScope {
         Override::as_option(
             self.config_override().map(|o| &o.word_characters),
             Some(&self.language.config.word_characters),
+        )
+    }
+
+    /// Returns a list of language-specific characters that are considered part of
+    /// a completion query.
+    pub fn completion_query_characters(&self) -> Option<&HashSet<char>> {
+        Override::as_option(
+            self.config_override()
+                .map(|o| &o.completion_query_characters),
+            Some(&self.language.config.completion_query_characters),
         )
     }
 
