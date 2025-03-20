@@ -90,7 +90,7 @@ impl Eval {
                 cx.update(|cx| HeadlessAssistant::new(app_state.clone(), cx))??;
 
             let _worktree = assistant
-                .update(&mut cx, |assistant, cx| {
+                .update(cx, |assistant, cx| {
                     assistant.project.update(cx, |project, cx| {
                         project.create_worktree(&self.repo_path, true, cx)
                     })
@@ -99,10 +99,25 @@ impl Eval {
 
             let start_time = std::time::SystemTime::now();
 
-            assistant.update(&mut cx, |assistant, cx| {
+            let (system_prompt_context, load_error) = cx
+                .update(|cx| {
+                    assistant
+                        .read(cx)
+                        .thread
+                        .read(cx)
+                        .load_system_prompt_context(cx)
+                })?
+                .await;
+
+            if let Some(load_error) = load_error {
+                return Err(anyhow!("{:?}", load_error));
+            };
+
+            assistant.update(cx, |assistant, cx| {
                 assistant.thread.update(cx, |thread, cx| {
                     let context = vec![];
-                    thread.insert_user_message(self.user_prompt.clone(), context, cx);
+                    thread.insert_user_message(self.user_prompt.clone(), context, None, cx);
+                    thread.set_system_prompt_context(system_prompt_context);
                     thread.send_to_model(model, RequestKind::Chat, cx);
                 });
             })?;
@@ -140,7 +155,7 @@ impl Eval {
                 format!("# Staged changes\n{}\n\n# Unstaged changes\n{}", staged_diff, unstaged_diff)
             };
 
-            assistant.update(&mut cx, |assistant, cx| {
+            assistant.update(cx, |assistant, cx| {
                 let thread = assistant.thread.read(cx);
                 let last_message = thread.messages().last().unwrap();
                 if last_message.role != language_model::Role::Assistant {

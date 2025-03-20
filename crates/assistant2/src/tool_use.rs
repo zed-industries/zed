@@ -286,9 +286,17 @@ impl ToolUseState {
     ) {
         if let Some(tool_uses) = self.tool_uses_by_assistant_message.get(&message_id) {
             for tool_use in tool_uses {
-                request_message
-                    .content
-                    .push(MessageContent::ToolUse(tool_use.clone()));
+                if self.tool_results.contains_key(&tool_use.id) {
+                    // Do not send tool uses until they are completed
+                    request_message
+                        .content
+                        .push(MessageContent::ToolUse(tool_use.clone()));
+                } else {
+                    log::debug!(
+                        "skipped tool use {:?} because it is still pending",
+                        tool_use
+                    );
+                }
             }
         }
     }
@@ -301,9 +309,19 @@ impl ToolUseState {
         if let Some(tool_uses) = self.tool_uses_by_user_message.get(&message_id) {
             for tool_use_id in tool_uses {
                 if let Some(tool_result) = self.tool_results.get(tool_use_id) {
-                    request_message
-                        .content
-                        .push(MessageContent::ToolResult(tool_result.clone()));
+                    request_message.content.push(MessageContent::ToolResult(
+                        LanguageModelToolResult {
+                            tool_use_id: tool_use_id.clone(),
+                            is_error: tool_result.is_error,
+                            content: if tool_result.content.is_empty() {
+                                // Surprisingly, the API fails if we return an empty string here.
+                                // It thinks we are sending a tool use without a tool result.
+                                "<Tool returned an empty string>".into()
+                            } else {
+                                tool_result.content.clone()
+                            },
+                        },
+                    ));
                 }
             }
         }

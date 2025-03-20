@@ -63,7 +63,7 @@ impl Judge {
         };
 
         let model = self.model.clone();
-        cx.spawn(move |cx| send_language_model_request(model, request, cx))
+        cx.spawn(async move |cx| send_language_model_request(model, request, cx).await)
     }
 
     // Add a new method that accepts a prompt from the original_message field

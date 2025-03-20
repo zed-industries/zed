@@ -83,7 +83,7 @@ define_connection!(
     //   scroll_top_row: usize,
     //   scroll_vertical_offset: f32,
     //   scroll_horizontal_offset: f32,
-    //   content: Option<String>,
+    //   contents: Option<String>,
     //   language: Option<String>,
     //   mtime_seconds: Option<i64>,
     //   mtime_nanos: Option<i32>,

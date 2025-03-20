@@ -63,16 +63,22 @@ fn get_dismissed() -> bool {
 }
 
 fn persist_dismissed(cx: &mut App) {
-    cx.spawn(|_| {
+    cx.spawn(async |_| {
         let time = Utc::now().to_rfc3339();
-        db::kvp::KEY_VALUE_STORE.write_kvp(DISMISSED_AT_KEY.into(), time)
+        db::kvp::KEY_VALUE_STORE
+            .write_kvp(DISMISSED_AT_KEY.into(), time)
+            .await
     })
     .detach_and_log_err(cx);
 }
 
 pub(crate) fn clear_dismissed(cx: &mut App) {
-    cx.spawn(|_| db::kvp::KEY_VALUE_STORE.delete_kvp(DISMISSED_AT_KEY.into()))
-        .detach_and_log_err(cx);
+    cx.spawn(async |_| {
+        db::kvp::KEY_VALUE_STORE
+            .delete_kvp(DISMISSED_AT_KEY.into())
+            .await
+    })
+    .detach_and_log_err(cx);
 }
 
 impl Render for ZedPredictBanner {

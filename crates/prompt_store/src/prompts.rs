@@ -18,13 +18,34 @@ use util::ResultExt;
 
 #[derive(Serialize)]
 pub struct AssistantSystemPromptContext {
-    pub worktrees: Vec<AssistantSystemPromptWorktree>,
+    pub worktrees: Vec<WorktreeInfoForSystemPrompt>,
+    pub has_rules: bool,
+}
+
+impl AssistantSystemPromptContext {
+    pub fn new(worktrees: Vec<WorktreeInfoForSystemPrompt>) -> Self {
+        let has_rules = worktrees
+            .iter()
+            .any(|worktree| worktree.rules_file.is_some());
+        Self {
+            worktrees,
+            has_rules,
+        }
+    }
 }
 
 #[derive(Serialize)]
-pub struct AssistantSystemPromptWorktree {
+pub struct WorktreeInfoForSystemPrompt {
     pub root_name: String,
     pub abs_path: Arc<Path>,
+    pub rules_file: Option<RulesFile>,
+}
+
+#[derive(Serialize)]
+pub struct RulesFile {
+    pub rel_path: Arc<Path>,
+    pub abs_path: Arc<Path>,
+    pub text: String,
 }
 
 #[derive(Serialize)]
@@ -234,12 +255,11 @@ impl PromptBuilder {
 
     pub fn generate_assistant_system_prompt(
         &self,
-        worktrees: Vec<AssistantSystemPromptWorktree>,
+        context: &AssistantSystemPromptContext,
     ) -> Result<String, RenderError> {
-        let prompt = AssistantSystemPromptContext { worktrees };
         self.handlebars
             .lock()
-            .render("assistant_system_prompt", &prompt)
+            .render("assistant_system_prompt", context)
     }
 
     pub fn generate_inline_transformation_prompt(

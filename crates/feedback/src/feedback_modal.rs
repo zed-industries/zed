@@ -115,9 +115,9 @@ impl ModalView for FeedbackModal {
             cx,
         );
 
-        cx.spawn_in(window, move |this, mut cx| async move {
+        cx.spawn_in(window, async move |this, cx| {
             if answer.await.ok() == Some(0) {
-                this.update(&mut cx, |this, cx| {
+                this.update(cx, |this, cx| {
                     this.dismiss_modal = true;
                     cx.emit(DismissEvent)
                 })
@@ -144,14 +144,14 @@ impl FeedbackModal {
                     let project = workspace.project().clone();
 
                     let system_specs = SystemSpecs::new(window, cx);
-                    cx.spawn_in(window, |workspace, mut cx| async move {
+                    cx.spawn_in(window, async move |workspace, cx| {
                         let markdown = markdown.await.log_err();
-                        let buffer = project.update(&mut cx, |project, cx| {
+                        let buffer = project.update(cx, |project, cx| {
                             project.create_local_buffer("", markdown, cx)
                         })?;
                         let system_specs = system_specs.await;
 
-                        workspace.update_in(&mut cx, |workspace, window, cx| {
+                        workspace.update_in(cx, |workspace, window, cx| {
                             workspace.toggle_modal(window, cx, move |window, cx| {
                                 FeedbackModal::new(system_specs, project, buffer, window, cx)
                             });
@@ -240,10 +240,10 @@ impl FeedbackModal {
         );
         let client = Client::global(cx).clone();
         let specs = self.system_specs.clone();
-        cx.spawn_in(window, |this, mut cx| async move {
+        cx.spawn_in(window, async move |this, cx| {
             let answer = answer.await.ok();
             if answer == Some(0) {
-                this.update(&mut cx, |this, cx| {
+                this.update(cx, |this, cx| {
                     this.submission_state = Some(SubmissionState::CannotSubmit {
                         reason: CannotSubmitReason::AwaitingSubmission,
                     });
@@ -256,7 +256,7 @@ impl FeedbackModal {
 
                 match res {
                     Ok(_) => {
-                        this.update(&mut cx, |this, cx| {
+                        this.update(cx, |this, cx| {
                             this.dismiss_modal = true;
                             cx.notify();
                             cx.emit(DismissEvent)
@@ -265,7 +265,7 @@ impl FeedbackModal {
                     }
                     Err(error) => {
                         log::error!("{}", error);
-                        this.update_in(&mut cx, |this, window, cx| {
+                        this.update_in(cx, |this, window, cx| {
                             let prompt = window.prompt(
                                 PromptLevel::Critical,
                                 FEEDBACK_SUBMISSION_ERROR_TEXT,
@@ -273,7 +273,7 @@ impl FeedbackModal {
                                 &["OK"],
                                 cx,
                             );
-                            cx.spawn_in(window, |_, _cx| async move {
+                            cx.spawn_in(window, async move |_, _cx| {
                                 prompt.await.ok();
                             })
                             .detach();
@@ -369,20 +369,18 @@ impl FeedbackModal {
     fn update_email_in_store(&self, window: &mut Window, cx: &mut Context<Self>) {
         let email = self.email_address_editor.read(cx).text_option(cx);
 
-        cx.spawn_in(window, |_, _| async move {
-            match email {
-                Some(email) => {
-                    KEY_VALUE_STORE
-                        .write_kvp(DATABASE_KEY_NAME.to_string(), email)
-                        .await
-                        .ok();
-                }
-                None => {
-                    KEY_VALUE_STORE
-                        .delete_kvp(DATABASE_KEY_NAME.to_string())
-                        .await
-                        .ok();
-                }
+        cx.spawn_in(window, async move |_, _| match email {
+            Some(email) => {
+                KEY_VALUE_STORE
+                    .write_kvp(DATABASE_KEY_NAME.to_string(), email)
+                    .await
+                    .ok();
+            }
+            None => {
+                KEY_VALUE_STORE
+                    .delete_kvp(DATABASE_KEY_NAME.to_string())
+                    .await
+                    .ok();
             }
         })
         .detach();
@@ -516,9 +514,8 @@ impl Render for FeedbackModal {
                                     .style(ButtonStyle::Subtle)
                                     .color(Color::Muted)
                                     .on_click(cx.listener(move |_, _, window, cx| {
-                                        cx.spawn_in(window, |this, mut cx| async move {
-                                            this.update(&mut cx, |_, cx| cx.emit(DismissEvent))
-                                                .ok();
+                                        cx.spawn_in(window, async move |this, cx| {
+                                            this.update(cx, |_, cx| cx.emit(DismissEvent)).ok();
                                         })
                                         .detach();
                                     })),

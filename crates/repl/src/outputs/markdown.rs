@@ -17,20 +17,18 @@ pub struct MarkdownView {
 
 impl MarkdownView {
     pub fn from(text: String, cx: &mut Context<Self>) -> Self {
-        let task = cx.spawn(|markdown_view, mut cx| {
+        let parsed = {
             let text = text.clone();
-            let parsed =
-                cx.background_spawn(async move { parse_markdown(&text, None, None).await });
+            cx.background_spawn(async move { parse_markdown(&text.clone(), None, None).await })
+        };
+        let task = cx.spawn(async move |markdown_view, cx| {
+            let content = parsed.await;
 
-            async move {
-                let content = parsed.await;
-
-                markdown_view.update(&mut cx, |markdown, cx| {
-                    markdown.parsing_markdown_task.take();
-                    markdown.contents = Some(content);
-                    cx.notify();
-                })
-            }
+            markdown_view.update(cx, |markdown, cx| {
+                markdown.parsing_markdown_task.take();
+                markdown.contents = Some(content);
+                cx.notify();
+            })
         });
 
         Self {
