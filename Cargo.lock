@@ -7869,6 +7869,7 @@ dependencies = [
  "futures 0.3.31",
  "gpui",
  "gpui_tokio",
+ "http_client_tls",
  "image",
  "livekit",
  "livekit_api",
@@ -7882,6 +7883,7 @@ dependencies = [
  "sha2",
  "simplelog",
  "smallvec",
+ "tokio-tungstenite 0.26.2",
  "util",
 ]
 

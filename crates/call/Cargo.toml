@@ -42,8 +42,8 @@ settings.workspace = true
 telemetry.workspace = true
 util.workspace = true
 gpui_tokio.workspace = true
-tokio-tungstenite = { version = "0.26", features = ["__rustls-tls"]}
-livekit_client = { workspace = true }
+tokio-tungstenite.workspace = true
+livekit_client.workspace = true
 
 [dev-dependencies]
 client = { workspace = true, features = ["test-support"] }

@@ -52,7 +52,7 @@ impl Tokio {
         })
     }
 
-    pub fn handle(cx: &mut App) -> tokio::runtime::Handle {
+    pub fn handle(cx: &App) -> tokio::runtime::Handle {
         GlobalTokio::global(cx).runtime.handle().clone()
     }
 }

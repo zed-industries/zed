@@ -16,18 +16,11 @@ use futures::{FutureExt, StreamExt};
 use gpui::{App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, Task, WeakEntity};
 use gpui_tokio::Tokio;
 use language::LanguageRegistry;
-#[cfg(not(all(target_os = "windows", target_env = "gnu")))]
 use livekit::{
-    capture_local_audio_track, capture_local_video_track,
-    id::ParticipantIdentity,
-    options::TrackPublishOptions,
-    play_remote_audio_track,
-    publication::LocalTrackPublication,
-    track::{TrackKind, TrackSource},
-    RoomEvent, RoomOptions,
+    capture_local_audio_track, capture_local_video_track, play_remote_audio_track,
+    LocalTrackPublication, ParticipantIdentity, RoomEvent, TrackKind, TrackPublishOptions,
+    TrackSource,
 };
-#[cfg(all(target_os = "windows", target_env = "gnu"))]
-use livekit::{publication::LocalTrackPublication, RoomEvent};
 use livekit_client as livekit;
 use postage::{sink::Sink, stream::Stream, watch};
 use project::Project;
@@ -105,13 +98,9 @@ impl Room {
         !self.shared_projects.is_empty()
     }
 
-    #[cfg(all(
-        any(test, feature = "test-support"),
-        not(all(target_os = "windows", target_env = "gnu"))
-    ))]
-    pub fn is_connected(&self) -> bool {
+    pub fn is_connected(&self, cx: &App) -> bool {
         if let Some(live_kit) = self.live_kit.as_ref() {
-            live_kit.room.connection_state() == livekit::ConnectionState::Connected
+            live_kit.room.connection_state(cx) == livekit::ConnectionState::Connected
         } else {
             false
         }
@@ -850,7 +839,7 @@ impl Room {
                                     .get(&ParticipantIdentity(user.id.to_string()))
                                 {
                                     for publication in
-                                        livekit_participant.track_publications().into_values()
+                                        livekit_participant.track_publications(cx).into_values()
                                     {
                                         if let Some(track) = publication.track() {
                                             this.livekit_room_updated(
@@ -957,10 +946,10 @@ impl Room {
                     )
                 })?;
                 if self.live_kit.as_ref().map_or(true, |kit| kit.deafened) {
-                    track.rtc_track().set_enabled(false);
+                    track.set_enabled(false);
                 }
                 match track {
-                    livekit::track::RemoteTrack::Audio(track) => {
+                    livekit_client::RemoteTrack::Audio(track) => {
                         cx.emit(Event::RemoteAudioTracksChanged {
                             participant_id: participant.peer_id,
                         });
@@ -968,7 +957,7 @@ impl Room {
                         participant.audio_tracks.insert(track_id, (track, stream));
                         participant.muted = publication.is_muted();
                     }
-                    livekit::track::RemoteTrack::Video(track) => {
+                    livekit_client::RemoteTrack::Video(track) => {
                         cx.emit(Event::RemoteVideoTracksChanged {
                             participant_id: participant.peer_id,
                         });
@@ -989,14 +978,14 @@ impl Room {
                     )
                 })?;
                 match track {
-                    livekit::track::RemoteTrack::Audio(track) => {
+                    livekit_client::RemoteTrack::Audio(track) => {
                         participant.audio_tracks.remove(&track.sid());
                         participant.muted = true;
                         cx.emit(Event::RemoteAudioTracksChanged {
                             participant_id: participant.peer_id,
                         });
                     }
-                    livekit::track::RemoteTrack::Video(track) => {
+                    livekit_client::RemoteTrack::Video(track) => {
                         participant.video_tracks.remove(&track.sid());
                         cx.emit(Event::RemoteVideoTracksChanged {
                             participant_id: participant.peer_id,
@@ -1342,32 +1331,23 @@ impl Room {
             let publish_id = post_inc(&mut live_kit.next_publish_id);
             live_kit.microphone_track = LocalTrack::Pending { publish_id };
             cx.notify();
-            (live_kit.room.local_participant(), publish_id)
+            (live_kit.room.local_participant(cx), publish_id)
         } else {
             return Task::ready(Err(anyhow!("live-kit was not initialized")));
         };
 
         cx.spawn(async move |this, cx| {
             let (track, stream) = capture_local_audio_track(cx.background_executor())?.await;
-
-            let publication = {
-                Tokio::spawn(cx, {
-                    let participant = participant.clone();
-                    async move {
-                        participant
-                            .publish_track(
-                                livekit::track::LocalTrack::Audio(track),
-                                TrackPublishOptions {
-                                    source: TrackSource::Microphone,
-                                    ..Default::default()
-                                },
-                            )
-                            .await
-                    }
-                })?
-                .await?
-                .map_err(|error| anyhow!("failed to publish track: {error}"))
-            };
+            let publication = participant
+                .publish_track(
+                    livekit_client::LocalTrack::Audio(track),
+                    TrackPublishOptions {
+                        source: TrackSource::Microphone,
+                        ..Default::default()
+                    },
+                    cx,
+                )
+                .await;
             this.update(cx, |this, cx| {
                 let live_kit = this
                     .live_kit
@@ -1386,8 +1366,8 @@ impl Room {
                 match publication {
                     Ok(publication) => {
                         if canceled {
-                            cx.background_spawn(async move {
-                                participant.unpublish_track(&publication.sid()).await
+                            cx.spawn(|_, cx| async move {
+                                participant.unpublish_track(publication.sid(), cx).await
                             })
                             .detach_and_log_err(cx)
                         } else {
@@ -1637,9 +1617,9 @@ impl Room {
                 {
                     let guard = Tokio::handle(cx);
                     if should_mute {
-                        track_publication.mute()
+                        track_publication.mute(cx)
                     } else {
-                        track_publication.unmute()
+                        track_publication.unmute(cx)
                     }
                     drop(guard);
                 }
@@ -1666,15 +1646,8 @@ fn spawn_room_connection(
 
     if let Some(connection_info) = livekit_connection_info {
         cx.spawn(async move |this, cx| {
-            let (room, mut events) = Tokio::spawn(cx, async move {
-                let connector =
-                    tokio_tungstenite::Connector::Rustls(Arc::new(http_client_tls::tls_config()));
-                let mut config = RoomOptions::default();
-                config.connector = Some(connector);
-                livekit::Room::connect(&connection_info.server_url, &connection_info.token, config)
-                    .await
-            })?
-            .await??;
+            let (room, mut events) =
+                livekit::Room::connect(connection_info.server_url, connection_info.token).await?;
 
             this.update(cx, |this, cx| {
                 let _handle_updates = cx.spawn(async move |this, cx| {

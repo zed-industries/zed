@@ -1,9 +1,9 @@
-use crate::track::RemoteVideoTrack;
 use anyhow::Result;
 use futures::StreamExt as _;
 use gpui::{
     AppContext as _, Context, Empty, Entity, EventEmitter, IntoElement, Render, Task, Window,
 };
+use livekit::track::RemoteVideoTrack;
 
 pub struct RemoteVideoTrackView {
     track: RemoteVideoTrack,

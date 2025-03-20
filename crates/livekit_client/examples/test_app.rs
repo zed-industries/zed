@@ -1,8 +1,3 @@
-#![cfg_attr(windows, allow(unused))]
-// TODO: For some reason mac build complains about import of postage::stream::Stream, but removal of
-// it causes compile errors.
-#![cfg_attr(target_os = "macos", allow(unused_imports))]
-
 use gpui::{
     actions, bounds, div, point,
     prelude::{FluentBuilder as _, IntoElement},
@@ -12,18 +7,10 @@ use gpui::{
     WindowOptions,
 };
 use gpui_tokio::Tokio;
-#[cfg(not(target_os = "windows"))]
 use livekit_client::{
-    capture_local_audio_track, capture_local_video_track,
-    id::ParticipantIdentity,
-    options::{TrackPublishOptions, VideoCodec},
-    participant::{Participant, RemoteParticipant},
-    play_remote_audio_track,
-    publication::{LocalTrackPublication, RemoteTrackPublication},
-    track::{LocalTrack, RemoteTrack, RemoteVideoTrack, TrackSource},
-    AudioStream, RemoteVideoTrackView, Room, RoomEvent, RoomOptions,
+    AudioStream, LocalTrackPublication, ParticipantIdentity, RemoteTrackPublication,
+    RemoteVideoTrack, RemoteVideoTrackView, Room, RoomEvent,
 };
-#[cfg(not(target_os = "windows"))]
 use postage::stream::Stream;
 
 #[cfg(target_os = "windows")]
@@ -105,10 +92,10 @@ fn quit(_: &Quit, cx: &mut gpui::App) {
 }
 
 struct LivekitWindow {
-    room: Room,
+    room: livekit_client::Room,
     microphone_track: Option<LocalTrackPublication>,
     screen_share_track: Option<LocalTrackPublication>,
-    microphone_stream: Option<AudioStream>,
+    microphone_stream: Option<livekit_client::AudioStream>,
     screen_share_stream: Option<Box<dyn ScreenCaptureStream>>,
     #[cfg(not(target_os = "windows"))]
     remote_participants: Vec<(ParticipantIdentity, ParticipantState)>,
@@ -131,13 +118,11 @@ impl LivekitWindow {
         bounds: Bounds<Pixels>,
         mut cx: AsyncApp,
     ) -> WindowHandle<Self> {
-        let (room, mut events) = Tokio::spawn(&mut cx, async move {
-            Room::connect(&url, &token, RoomOptions::default()).await
-        })
-        .unwrap()
-        .await
-        .unwrap()
-        .unwrap();
+        let (room, mut events) = cx
+            .update(|cx| Room::connect(url, token, cx))
+            .unwrap()
+            .await
+            .unwrap();
 
         cx.update(|cx| {
             cx.open_window(
@@ -291,6 +276,7 @@ impl LivekitWindow {
                             source: TrackSource::Microphone,
                             ..Default::default()
                         },
+                        cx,
                     )
                     .await
                     .unwrap();

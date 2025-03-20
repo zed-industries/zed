@@ -36,6 +36,8 @@ postage.workspace = true
 util.workspace = true
 smallvec.workspace = true
 image.workspace = true
+tokio-tungstenite.workspace = true
+http_client_tls.workspace = true
 
 [target.'cfg(not(all(target_os = "windows", target_env = "gnu")))'.dependencies]
 livekit.workspace = true

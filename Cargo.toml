@@ -542,6 +542,7 @@ time = { version = "0.3", features = [
 tiny_http = "0.8"
 toml = "0.8"
 tokio = { version = "1" }
+tokio-tungstenite = { version = "0.26", features = ["__rustls-tls"]}
 tower-http = "0.4.4"
 tree-sitter = { version = "0.25.3", features = ["wasm"] }
 tree-sitter-bash = "0.23"
