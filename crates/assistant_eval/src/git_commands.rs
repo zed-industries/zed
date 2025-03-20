@@ -1,9 +1,6 @@
 use anyhow::{anyhow, Result};
 use serde::Deserialize;
-use std::{
-    fs,
-    path::Path,
-};
+use std::{fs, path::Path};
 use tempfile::TempDir;
 use util::command::new_smol_command;
 use walkdir::WalkDir;
