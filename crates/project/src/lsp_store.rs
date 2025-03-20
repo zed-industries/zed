@@ -1698,8 +1698,6 @@ impl LocalLspStore {
                     .cloned()
                     .expect("There is a transaction on the undo stack if we were able to peek it");
                 // debug_assert_eq!(transaction.id, transaction_id);
-                // todo! make sure if edits happened while formatting, we make sure we
-                // are operating with the correct transaction here
                 if !push_to_history {
                     buffer.forget_transaction(transaction.id);
                 }
