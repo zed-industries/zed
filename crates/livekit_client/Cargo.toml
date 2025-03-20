@@ -17,7 +17,6 @@ doctest = false
 name = "test_app"
 
 [features]
-no-webrtc = []
 test-support = ["collections/test-support", "gpui/test-support"]
 
 [dependencies]
@@ -39,8 +38,10 @@ image.workspace = true
 tokio-tungstenite.workspace = true
 http_client_tls.workspace = true
 
-# [target.'cfg(not(all(target_os = "windows", target_env = "gnu")))'.dependencies]
-# livekit.workspace = true
+[target.'cfg(not(all(target_os = "windows", target_env = "gnu")))'.dependencies]
+livekit.workspace = true
+
+[target.'cfg(all(target_os = "windows", target_env = "gnu"))'.dependencies]
 nanoid.workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]
