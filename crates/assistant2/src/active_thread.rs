@@ -743,28 +743,34 @@ impl ActiveThread {
                                             },
                                         )
                                         .when(edit_message_editor.is_none(), |parent| {
-                                            parent.when_some(checkpoint, |parent, checkpoint| {
-                                                // DL TODO: Checkpoints and Edit messages? Aren't these overlaping actions?
-                                                parent.child(
-                                                    Button::new(
-                                                        "restore-checkpoint",
-                                                        "Restore Checkpoint",
+                                            parent.when_some(
+                                                checkpoint.clone(),
+                                                |parent, checkpoint| {
+                                                    // DL TODO: Checkpoints and Edit messages? Aren't these overlaping actions?
+                                                    parent.child(
+                                                        Button::new(
+                                                            "restore-checkpoint",
+                                                            "Restore Checkpoint",
+                                                        )
+                                                        .label_size(LabelSize::Small)
+                                                        .on_click(cx.listener(
+                                                            move |this, _, _window, cx| {
+                                                                this.thread.update(
+                                                                    cx,
+                                                                    |thread, cx| {
+                                                                        thread
+                                                                            .restore_checkpoint(
+                                                                                checkpoint.clone(),
+                                                                                cx,
+                                                                            )
+                                                                            .detach_and_log_err(cx);
+                                                                    },
+                                                                );
+                                                            },
+                                                        )),
                                                     )
-                                                    .label_size(LabelSize::Small)
-                                                    .on_click(cx.listener(
-                                                        move |this, _, _window, cx| {
-                                                            this.thread.update(cx, |thread, cx| {
-                                                                thread
-                                                                    .restore_checkpoint(
-                                                                        checkpoint.clone(),
-                                                                        cx,
-                                                                    )
-                                                                    .detach_and_log_err(cx);
-                                                            });
-                                                        },
-                                                    )),
-                                                )
-                                            })
+                                                },
+                                            )
                                         })
                                         .when(
                                             edit_message_editor.is_none() && allow_editing_message,
@@ -790,7 +796,6 @@ impl ActiveThread {
                         )
                         .child(div().p_2().child(message_content)),
                 ),
-
             Role::Assistant => v_flex()
                 .id(("message-container", ix))
                 .child(v_flex().py_3().px_4().child(message_content))
@@ -810,7 +815,6 @@ impl ActiveThread {
                         )
                     },
                 ),
-
             Role::System => div().id(("message-container", ix)).py_1().px_2().child(
                 v_flex()
                     .bg(colors.editor_background)
@@ -821,7 +825,7 @@ impl ActiveThread {
 
         v_flex()
             .when(ix == 0, |parent| parent.child(self.render_rules_item(cx)))
-            .when_some(checkpoint, |parent, checkpoint| {
+            .when_some(checkpoint.clone(), |parent, checkpoint| {
                 let mut is_pending = false;
                 let mut error = None;
                 if let Some(last_restore_checkpoint) =
@@ -881,8 +885,8 @@ impl ActiveThread {
             })
             .child(styled_message)
             .into_any()
-      
-        styled_message.into_any()
+
+        // styled_message.into_any()
     }
 
     fn render_tool_use(&self, tool_use: ToolUse, cx: &mut Context<Self>) -> impl IntoElement {
