@@ -323,15 +323,19 @@ impl DapStore {
         Ok(())
     }
 
-    async fn run_cargo_build_json(cwd: PathBuf) -> std::io::Result<Option<String>> {
+    async fn run_cargo_build_json(
+        command: String,
+        args: Vec<String>,
+        cwd: PathBuf,
+    ) -> std::io::Result<Option<String>> {
         use serde_json::Value;
         use smol::{
             io::AsyncReadExt,
             process::{Command, Stdio},
         };
 
-        let mut child = Command::new("cargo")
-            .args(["build", "--message-format=json"])
+        let mut child = Command::new(command)
+            .args(args)
             .current_dir(cwd)
             .stdout(Stdio::piped())
             .spawn()?;
@@ -386,26 +390,21 @@ impl DapStore {
 
         let (initialized_tx, initialized_rx) = oneshot::channel();
 
-        // let start_client_task = Session::local(
-        //     self.breakpoint_store.clone(),
-        //     session_id,
-        //     parent_session,
-        //     delegate,
-        //     config,
-        //     local_store.start_debugging_tx.clone(),
-        //     initialized_tx,
-        //     cx,
-        // );
-        //
         let start_debugging_tx = local_store.start_debugging_tx.clone();
 
         let task = cx.spawn(async move |this, cx| {
-            let executable =
-                Self::run_cargo_build_json(config.cwd.as_ref().unwrap().clone()).await?;
-
-            if let Some(executable) = executable {
-                config.program = Some(executable);
+            if let Some(locator) = config.locator.as_ref() {
+                if let Some(executable) = Self::run_cargo_build_json(
+                    locator.clone(),
+                    config.args.clone(),
+                    config.cwd.as_ref().unwrap().clone(),
+                )
+                .await?
+                {
+                    config.program = Some(executable);
+                }
             }
+
             let start_client_task = this.update(cx, |this, cx| {
                 Session::local(
                     this.breakpoint_store.clone(),
@@ -504,8 +503,10 @@ impl DapStore {
                 },
                 program: config.program,
                 cwd: config.cwd,
+                args: vec![],
                 initialize_args: Some(args.configuration),
                 supports_attach: config.supports_attach,
+                locator: None,
             },
             &worktree,
             Some(parent_session.clone()),

@@ -107,6 +107,21 @@ impl ResolvedTask {
             TaskType::Script | TaskType::Locator => None,
             TaskType::Debug(debug_args) => {
                 let adapter_config = if let Some(resolved) = &self.resolved {
+                    let args = resolved
+                        .args
+                        .iter()
+                        .cloned()
+                        .map(|arg| {
+                            if arg.starts_with("$") {
+                                arg.strip_prefix("$")
+                                    .and_then(|arg| resolved.env.get(arg).map(ToOwned::to_owned))
+                                    .unwrap_or_else(|| arg)
+                            } else {
+                                arg
+                            }
+                        })
+                        .collect();
+
                     DebugAdapterConfig {
                         label: resolved.label.clone(),
                         kind: debug_args.kind.clone(),
@@ -120,7 +135,9 @@ impl ResolvedTask {
                         }),
                         cwd: resolved.cwd.clone().take_if(|p| p.exists()),
                         initialize_args: debug_args.initialize_args,
+                        args,
                         supports_attach: debug_args.supports_attach,
+                        locator: debug_args.locator.clone(),
                     }
                 } else {
                     let cwd = self
@@ -142,8 +159,10 @@ impl ResolvedTask {
                         kind: debug_args.kind.clone(),
                         request: debug_args.request.clone(),
                         cwd,
+                        args: self.original_task.args.clone(),
                         initialize_args: debug_args.initialize_args.clone(),
                         supports_attach: debug_args.supports_attach,
+                        locator: debug_args.locator.clone(),
                     }
                 };
 

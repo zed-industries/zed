@@ -114,6 +114,8 @@ impl Render for InertState {
                             cwd: Some(cwd),
                             initialize_args: None,
                             supports_attach: false,
+                            args: Default::default(),
+                            locator: None,
                         },
                     });
                 } else {
@@ -277,6 +279,8 @@ impl InertState {
             cwd: Some(cwd),
             initialize_args: None,
             supports_attach: true,
+            args: Default::default(),
+            locator: None,
         };
 
         let _ = self.workspace.update(cx, |workspace, cx| {

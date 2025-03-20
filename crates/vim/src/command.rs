@@ -1411,7 +1411,6 @@ impl ShellExec {
     }
 
     pub fn run(&self, vim: &mut Vim, window: &mut Window, cx: &mut Context<Vim>) {
-        dbg!("Running");
         let Some(workspace) = vim.workspace(window) else {
             return;
         };

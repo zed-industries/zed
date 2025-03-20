@@ -34,5 +34,7 @@ pub fn test_config(
         supports_attach: false,
         cwd: None,
         initialize_args: None,
+        args: Vec::default(),
+        locator: None,
     }
 }

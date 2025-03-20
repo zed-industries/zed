@@ -132,8 +132,12 @@ pub struct DebugAdapterConfig {
     pub cwd: Option<PathBuf>,
     /// Additional initialization arguments to be sent on DAP initialization
     pub initialize_args: Option<serde_json::Value>,
+    /// Args to pass to a debug adapter (only used in locator right now)
+    pub args: Vec<String>,
     /// Whether the debug adapter supports attaching to a running process.
     pub supports_attach: bool,
+    /// What Locator to use to configure the debug task
+    pub locator: Option<String>,
 }
 
 /// Represents the type of the debugger adapter connection

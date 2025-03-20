@@ -562,18 +562,13 @@ impl ContextProvider for RustContextProvider {
         };
         let debug_task_args = if let Some(package_to_run) = package_to_run {
             vec![
-                "run".into(),
+                "build".into(),
                 "-p".into(),
                 package_to_run,
-                "--no-run".into(),
                 "--message-format=json".into(),
             ]
         } else {
-            vec![
-                "run".into(),
-                "--no-run".into(),
-                "--message-format=json".into(),
-            ]
+            vec!["build".into(), "--message-format=json".into()]
         };
         let mut task_templates = vec![
             TaskTemplate {
@@ -611,6 +606,32 @@ impl ContextProvider for RustContextProvider {
                     RUST_TEST_NAME_TASK_VARIABLE.template_value(),
                     "--".into(),
                     "--nocapture".into(),
+                ],
+                tags: vec!["rust-test".to_owned()],
+                cwd: Some("$ZED_DIRNAME".to_owned()),
+                ..TaskTemplate::default()
+            },
+            TaskTemplate {
+                label: format!(
+                    "Debug Test '{}' (package: {})",
+                    RUST_TEST_NAME_TASK_VARIABLE.template_value(),
+                    RUST_PACKAGE_TASK_VARIABLE.template_value(),
+                ),
+                task_type: TaskType::Debug(task::DebugArgs {
+                    kind: task::DebugAdapterKind::Lldb,
+                    request: task::DebugRequestType::Launch,
+                    supports_attach: true,
+                    locator: Some("cargo".into()),
+                    initialize_args: None,
+                }),
+                command: "cargo".into(),
+                args: vec![
+                    "test".into(),
+                    "-p".into(),
+                    RUST_PACKAGE_TASK_VARIABLE.template_value(),
+                    RUST_TEST_NAME_TASK_VARIABLE.template_value(),
+                    "--no-run".into(),
+                    "--message-format=json".into(),
                 ],
                 tags: vec!["rust-test".to_owned()],
                 cwd: Some("$ZED_DIRNAME".to_owned()),
@@ -700,9 +721,10 @@ impl ContextProvider for RustContextProvider {
                     request: task::DebugRequestType::Launch,
                     kind: task::DebugAdapterKind::Lldb,
                     initialize_args: None,
-                    locator: None,
+                    locator: Some("cargo".into()),
                     supports_attach: true,
                 }),
+                args: debug_task_args,
                 tags: vec!["rust-main".to_owned()],
                 ..TaskTemplate::default()
             },

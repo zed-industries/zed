@@ -123,6 +123,7 @@ pub use proposed_changes_editor::{
     ProposedChangeLocation, ProposedChangesEditor, ProposedChangesEditorToolbar,
 };
 use smallvec::smallvec;
+use smol::net::resolve;
 use std::iter::Peekable;
 use task::{ResolvedTask, TaskTemplate, TaskVariables};
 
@@ -4682,6 +4683,7 @@ impl Editor {
             } else {
                 return None;
             };
+
         let action_ix = action.item_ix.unwrap_or(actions_menu.selected_item);
         let action = actions_menu.actions.get(action_ix)?;
         let title = action.label();
