@@ -7,8 +7,7 @@ use std::cmp::Ordering;
 use std::mem;
 use std::{future::Future, iter, ops::Range, sync::Arc};
 use sum_tree::SumTree;
-use text::{Anchor, Bias, BufferId, OffsetRangeExt, Point};
-use text::{AnchorRangeExt, ToOffset as _};
+use text::{Anchor, Bias, BufferId, OffsetRangeExt, Point, ToOffset as _};
 use util::ResultExt;
 
 pub struct BufferDiff {
@@ -249,18 +248,16 @@ impl BufferDiffInner {
         {
             let preceding_pending_hunks =
                 old_pending_hunks.slice(&buffer_range.start, Bias::Left, buffer);
-
             pending_hunks.append(preceding_pending_hunks, buffer);
 
-            // skip all overlapping old pending hunks
-            while old_pending_hunks
-                .item()
-                .is_some_and(|preceding_pending_hunk_item| {
-                    preceding_pending_hunk_item
-                        .buffer_range
-                        .overlaps(&buffer_range, buffer)
-                })
-            {
+            // Skip all overlapping or adjacent old pending hunks
+            while old_pending_hunks.item().is_some_and(|old_hunk| {
+                old_hunk
+                    .buffer_range
+                    .start
+                    .cmp(&buffer_range.end, buffer)
+                    .is_le()
+            }) {
                 old_pending_hunks.next(buffer);
             }
 
@@ -359,10 +356,8 @@ impl BufferDiffInner {
 
         #[cfg(debug_assertions)] // invariants: non-overlapping and sorted
         {
-            use util::RangeExt;
             for window in edits.windows(2) {
-                let (range_a, range_b) = (window[0].0.clone(), window[1].0.clone());
-                debug_assert!(!range_a.overlaps(&range_b));
+                let (range_a, range_b) = (&window[0].0, &window[1].0);
                 debug_assert!(range_a.end < range_b.start);
             }
         }
@@ -1294,6 +1289,7 @@ mod tests {
 
     use super::*;
     use gpui::TestAppContext;
+    use pretty_assertions::{assert_eq, assert_ne};
     use rand::{rngs::StdRng, Rng as _};
     use text::{Buffer, BufferId, Rope};
     use unindent::Unindent as _;
@@ -1711,6 +1707,69 @@ mod tests {
                 );
             });
         }
+    }
+
+    #[gpui::test]
+    async fn test_stage_and_unstage_hunks(cx: &mut TestAppContext) {
+        let head_text = "
+            one
+            two
+            three
+        "
+        .unindent();
+        let index_text = head_text.clone();
+        let buffer_text = "
+            one
+            three
+        "
+        .unindent();
+
+        let buffer = Buffer::new(0, BufferId::new(1).unwrap(), buffer_text.clone());
+        let unstaged = BufferDiff::build_sync(buffer.clone(), index_text, cx);
+        let uncommitted = BufferDiff::build_sync(buffer.clone(), head_text.clone(), cx);
+        let unstaged_diff = cx.new(|cx| {
+            let mut diff = BufferDiff::new(&buffer, cx);
+            diff.set_state(unstaged, &buffer);
+            diff
+        });
+        let uncommitted_diff = cx.new(|cx| {
+            let mut diff = BufferDiff::new(&buffer, cx);
+            diff.set_state(uncommitted, &buffer);
+            diff.set_secondary_diff(unstaged_diff.clone());
+            diff
+        });
+
+        uncommitted_diff.update(cx, |diff, cx| {
+            let hunk = diff.hunks(&buffer, cx).next().unwrap();
+
+            let new_index_text = diff
+                .stage_or_unstage_hunks(true, &[hunk.clone()], &buffer, true, cx)
+                .unwrap()
+                .to_string();
+            assert_eq!(new_index_text, buffer_text);
+
+            dbg!(unstaged_diff.read(cx).inner.pending_hunks.items(&buffer));
+
+            let hunk = diff.hunks(&buffer, &cx).next().unwrap();
+            assert_eq!(
+                hunk.secondary_status,
+                DiffHunkSecondaryStatus::SecondaryHunkRemovalPending
+            );
+
+            let index_text = diff
+                .stage_or_unstage_hunks(false, &[hunk], &buffer, true, cx)
+                .unwrap()
+                .to_string();
+            assert_eq!(index_text, head_text);
+
+            dbg!(unstaged_diff.read(cx).inner.pending_hunks.items(&buffer));
+
+            let hunk = diff.hunks(&buffer, &cx).next().unwrap();
+            assert_eq!(
+                hunk.secondary_status,
+                DiffHunkSecondaryStatus::HasSecondaryHunk
+            );
+        });
     }
 
     #[gpui::test]
