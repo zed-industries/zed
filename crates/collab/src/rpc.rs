@@ -1461,9 +1461,11 @@ fn notify_rejoined_projects(
                 scan_id: worktree.scan_id,
                 is_last_update: worktree.completed_scan_id == worktree.scan_id,
             };
-            for update in proto::split_worktree_update(message) {
-                session.peer.send(session.connection_id, update.clone())?;
+            for update in proto::split_worktree_update(message.into()) {
+                session.peer.send(session.connection_id, update)?;
             }
+
+            // FIXME stream the repo stuff here too
 
             // Stream this worktree's diagnostics.
             for summary in worktree.diagnostic_summaries {

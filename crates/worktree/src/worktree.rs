@@ -41,7 +41,10 @@ use postage::{
     watch,
 };
 use rpc::{
-    proto::{self, split_worktree_update, FromProto, ToProto},
+    proto::{
+        self, split_worktree_related_message, split_worktree_update, FromProto, ToProto,
+        WorktreeRelatedMessage,
+    },
     AnyProtoClient,
 };
 pub use settings::WorktreeId;
@@ -53,6 +56,7 @@ use std::{
     cmp::Ordering,
     collections::hash_map,
     convert::TryFrom,
+    f32::consts::PI,
     ffi::OsStr,
     fmt,
     future::Future,
@@ -140,18 +144,13 @@ struct ScanRequest {
 
 pub struct RemoteWorktree {
     snapshot: Snapshot,
-    background_snapshot: Arc<Mutex<(Snapshot, Vec<proto::UpdateWorktree>)>>,
+    background_snapshot: Arc<Mutex<(Snapshot, Vec<WorktreeRelatedMessage>)>>,
     project_id: u64,
     client: AnyProtoClient,
     file_scan_inclusions: PathMatcher,
-    updates_tx: Option<UnboundedSender<proto::UpdateWorktree>>,
-    update_observer: Option<
-        mpsc::UnboundedSender<(
-            proto::UpdateWorktree,
-            Vec<proto::UpdateRepository>,
-            Vec<proto::RemoveRepository>,
-        )>,
-    >,
+    // FIXME maybe these should both pick the same one of product vs sum
+    updates_tx: Option<UnboundedSender<WorktreeRelatedMessage>>,
+    update_observer: Option<mpsc::UnboundedSender<WorktreeRelatedMessage>>,
     snapshot_subscriptions: VecDeque<(usize, oneshot::Sender<()>)>,
     replica_id: ReplicaId,
     visible: bool,
@@ -209,13 +208,6 @@ pub struct RepositoryEntry {
     work_directory_abs_path: PathBuf,
     pub(crate) current_branch: Option<Branch>,
     pub current_merge_conflicts: TreeSet<RepoPath>,
-}
-
-#[derive(Debug)]
-pub enum WorktreeRelatedMessage {
-    UpdateWorktree(proto::UpdateWorktree),
-    UpdateRepository(proto::UpdateRepository),
-    RemoveRepository(proto::RemoveRepository),
 }
 
 impl RepositoryEntry {
@@ -837,8 +829,12 @@ impl Worktree {
                 Arc::<Path>::from_proto(worktree.abs_path),
             );
 
-            let background_snapshot = Arc::new(Mutex::new((snapshot.clone(), Vec::new())));
-            let (background_updates_tx, mut background_updates_rx) = mpsc::unbounded();
+            let background_snapshot = Arc::new(Mutex::new((
+                snapshot.clone(),
+                Vec::<WorktreeRelatedMessage>::new(),
+            )));
+            let (background_updates_tx, mut background_updates_rx) =
+                mpsc::unbounded::<WorktreeRelatedMessage>();
             let (mut snapshot_updated_tx, mut snapshot_updated_rx) = watch::channel();
 
             let worktree_id = snapshot.id();
@@ -868,11 +864,17 @@ impl Worktree {
                 while let Some(update) = background_updates_rx.next().await {
                     {
                         let mut lock = background_snapshot.lock();
-                        if let Err(error) = lock
-                            .0
-                            .apply_remote_update(update.clone(), &settings.file_scan_inclusions)
-                        {
-                            log::error!("error applying worktree update: {}", error);
+                        match update.clone() {
+                            WorktreeRelatedMessage::UpdateWorktree(update_worktree) => {
+                                lock.0
+                                    .apply_update_worktree(
+                                        update_worktree,
+                                        &settings.file_scan_inclusions,
+                                    )
+                                    .log_err();
+                            }
+                            WorktreeRelatedMessage::UpdateRepository(update_repository) => todo!(),
+                            WorktreeRelatedMessage::RemoveRepository(remove_repository) => todo!(),
                         }
                         lock.1.push(update);
                     }
@@ -893,14 +895,20 @@ impl Worktree {
                             let mut lock = this.background_snapshot.lock();
                             this.snapshot = lock.0.clone();
                             for update in lock.1.drain(..) {
-                                if !update.updated_entries.is_empty()
-                                    || !update.removed_entries.is_empty()
-                                {
-                                    entries_changed = true;
-                                }
+                                entries_changed |= match &update {
+                                    WorktreeRelatedMessage::UpdateWorktree(update_worktree) => {
+                                        !update_worktree.updated_entries.is_empty()
+                                            || !update_worktree.removed_entries.is_empty()
+                                    }
+                                    _ => false,
+                                };
+                                git_repos_changed |= matches!(
+                                    update,
+                                    WorktreeRelatedMessage::UpdateRepository(_)
+                                        | WorktreeRelatedMessage::RemoveRepository(_)
+                                );
                                 if let Some(tx) = &this.update_observer {
-                                    // FIXME
-                                    tx.unbounded_send((update, Vec::new(), Vec::new())).ok();
+                                    tx.unbounded_send(update).ok();
                                 }
                             }
                         };
@@ -1033,12 +1041,11 @@ impl Worktree {
         Some(File::for_entry(entry.clone(), cx.entity()))
     }
 
-    pub fn observe_updates<F, Fut>(
-        &mut self,
-        project_id: u64,
-        cx: &Context<Worktree>,
-        callback: impl 'static + Send + AsyncFn(WorktreeRelatedMessage) -> bool,
-    ) {
+    pub fn observe_updates<F, Fut>(&mut self, project_id: u64, cx: &Context<Worktree>, callback: F)
+    where
+        F: 'static + Send + Fn(WorktreeRelatedMessage) -> Fut,
+        Fut: 'static + Send + Future<Output = bool>,
+    {
         match self {
             Worktree::Local(this) => this.observe_updates(project_id, cx, callback),
             Worktree::Remote(this) => this.observe_updates(project_id, cx, callback),
@@ -2313,12 +2320,11 @@ impl LocalWorktree {
         })
     }
 
-    fn observe_updates<F, Fut>(
-        &mut self,
-        project_id: u64,
-        cx: &Context<Worktree>,
-        callback: impl 'static + Send + AsyncFn(WorktreeRelatedMessage) -> bool,
-    ) {
+    fn observe_updates<F, Fut>(&mut self, project_id: u64, cx: &Context<Worktree>, callback: F)
+    where
+        F: 'static + Send + Fn(WorktreeRelatedMessage) -> Fut,
+        Fut: 'static + Send + Future<Output = bool>,
+    {
         if let Some(observer) = self.update_observer.as_mut() {
             *observer.resume_updates.borrow_mut() = ();
             return;
@@ -2335,16 +2341,17 @@ impl LocalWorktree {
         let _maintain_remote_snapshot = cx.background_spawn(async move {
             let mut is_first = true;
             while let Some((snapshot, entry_changes, repo_changes)) = snapshots_rx.next().await {
-                let (worktree_update, repo_updates, repo_removals) = if is_first {
+                let updates = if is_first {
                     is_first = false;
-                    let (worktree_update, repo_updates) =
-                        snapshot.build_initial_update(project_id, worktree_id);
-                    (worktree_update, repo_updates, Vec::new())
+                    snapshot.build_initial_update(project_id, worktree_id)
                 } else {
                     snapshot.build_update(project_id, worktree_id, entry_changes, repo_changes)
                 };
 
-                for update in proto::split_worktree_update(update) {
+                for update in updates
+                    .into_iter()
+                    .flat_map(|message| proto::split_worktree_related_message(message))
+                {
                     let _ = resume_updates_rx.try_recv();
                     loop {
                         let result = callback(update.clone());
@@ -2407,7 +2414,7 @@ impl RemoteWorktree {
         self.disconnected = true;
     }
 
-    pub fn update_from_remote(&self, update: proto::UpdateWorktree) {
+    pub fn update_from_remote(&self, update: WorktreeRelatedMessage) {
         if let Some(updates_tx) = &self.updates_tx {
             updates_tx
                 .unbounded_send(update)
@@ -2415,49 +2422,43 @@ impl RemoteWorktree {
         }
     }
 
-    fn observe_updates(
-        &mut self,
-        project_id: u64,
-        cx: &Context<Worktree>,
-        callback: impl 'static + Send + AsyncFn(WorktreeRelatedMessage) -> bool,
-    ) {
+    fn observe_updates<F, Fut>(&mut self, project_id: u64, cx: &Context<Worktree>, callback: F)
+    where
+        F: 'static + Send + Fn(WorktreeRelatedMessage) -> Fut,
+        Fut: 'static + Send + Future<Output = bool>,
+    {
         let (tx, mut rx) = mpsc::unbounded();
-        let initial_update = self
+        let initial_updates = self
             .snapshot
             .build_initial_update(project_id, self.id().to_proto());
         self.update_observer = Some(tx);
         cx.spawn(async move |this, cx| {
-            let mut update = (initial_update.0, initial_update.1, Vec::new());
+            let mut updates = initial_updates;
             'outer: loop {
-                let (worktree_update, repo_updates, repo_removals) = update;
-                // SSH projects use a special project ID of 0, and we need to
-                // remap it to the correct one here.
-                worktree_update.project_id = project_id;
-                repo_updates
-                    .iter_mut()
-                    .for_each(|repo| repo.project_id = project_id);
-                repo_removals
-                    .iter_mut()
-                    .for_each(|repo: &mut proto::RemoveRepository| repo.project_id = project_id);
+                for mut update in updates {
+                    // SSH projects use a special project ID of 0, and we need to
+                    // remap it to the correct one here.
+                    match &mut update {
+                        WorktreeRelatedMessage::UpdateWorktree(update_worktree) => {
+                            update_worktree.project_id = project_id;
+                        }
+                        WorktreeRelatedMessage::UpdateRepository(update_repository) => {
+                            update_repository.project_id = project_id;
+                        }
+                        WorktreeRelatedMessage::RemoveRepository(remove_repository) => {
+                            remove_repository.project_id = project_id;
+                        }
+                    };
 
-                for chunk in split_worktree_update(worktree_update) {
-                    if !callback(WorktreeRelatedMessage::UpdateWorktree(chunk)).await {
-                        break 'outer;
-                    }
-                }
-                for chunk in split_repository_updates(repo_updates) {
-                    if !callback(WorktreeRelatedMessage::UpdateRepository(chunk)).await {
-                        break 'outer;
-                    }
-                }
-                for chunk in repo_removals {
-                    if !callback(WorktreeRelatedMessage::RemoveRepository(chunk)).await {
-                        break 'outer;
+                    for chunk in split_worktree_related_message(update) {
+                        if !callback(chunk).await {
+                            break 'outer;
+                        }
                     }
                 }
 
                 if let Some(next_update) = rx.next().await {
-                    update = next_update;
+                    updates = vec![next_update];
                 } else {
                     break;
                 }
@@ -2621,7 +2622,7 @@ impl Snapshot {
         &self,
         project_id: u64,
         worktree_id: u64,
-    ) -> (proto::UpdateWorktree, Vec<proto::UpdateRepository>) {
+    ) -> Vec<WorktreeRelatedMessage> {
         let mut updated_entries = self
             .entries_by_path
             .iter()
@@ -2629,7 +2630,7 @@ impl Snapshot {
             .collect::<Vec<_>>();
         updated_entries.sort_unstable_by_key(|e| e.id);
 
-        let update_worktree = proto::UpdateWorktree {
+        [proto::UpdateWorktree {
             project_id,
             worktree_id,
             abs_path: self.abs_path().to_proto(),
@@ -2638,14 +2639,15 @@ impl Snapshot {
             removed_entries: Vec::new(),
             scan_id: self.scan_id as u64,
             is_last_update: self.completed_scan_id == self.scan_id,
-        };
-        let update_repositories = self
-            .repositories
-            .iter()
-            .map(|repository| repository.initial_update(project_id, self.scan_id))
-            .collect::<Vec<_>>();
-
-        (update_worktree, update_repositories)
+        }
+        .into()]
+        .into_iter()
+        .chain(
+            self.repositories
+                .iter()
+                .map(|repository| repository.initial_update(project_id, self.scan_id).into()),
+        )
+        .collect()
     }
 
     pub fn absolutize(&self, path: &Path) -> Result<PathBuf> {
@@ -2727,9 +2729,87 @@ impl Snapshot {
         }
     }
 
-    pub(crate) fn apply_remote_update(
+    pub(crate) fn apply_update_repository(&mut self, mut update: proto::UpdateRepository) {
+        // NOTE: this is practically but not semantically correct. For now we're using the
+        // ID field to store the work directory ID, but eventually it will be a different
+        // kind of ID.
+        let work_directory_id = ProjectEntryId::from_proto(update.id);
+        if let Some(work_dir_entry) = self.entry_for_id(work_directory_id) {
+            let conflicted_paths = TreeSet::from_ordered_entries(
+                update
+                    .current_merge_conflicts
+                    .into_iter()
+                    .map(|path| RepoPath(Path::new(&path).into())),
+            );
+
+            if self
+                .repositories
+                .contains(&PathKey(work_dir_entry.path.clone()), &())
+            {
+                let edits = update
+                    .removed_statuses
+                    .into_iter()
+                    .map(|path| Edit::Remove(PathKey(FromProto::from_proto(path))))
+                    .chain(
+                        update
+                            .updated_statuses
+                            .into_iter()
+                            .filter_map(|updated_status| {
+                                Some(Edit::Insert(updated_status.try_into().log_err()?))
+                            }),
+                    )
+                    .collect::<Vec<_>>();
+
+                self.repositories
+                    .update(&PathKey(work_dir_entry.path.clone()), &(), |repo| {
+                        repo.current_branch = update.branch_summary.as_ref().map(proto_to_branch);
+                        repo.statuses_by_path.edit(edits, &());
+                        repo.current_merge_conflicts = conflicted_paths
+                    });
+            } else {
+                let statuses = SumTree::from_iter(
+                    update
+                        .updated_statuses
+                        .into_iter()
+                        .filter_map(|updated_status| updated_status.try_into().log_err()),
+                    &(),
+                );
+
+                self.repositories.insert_or_replace(
+                    RepositoryEntry {
+                        work_directory_id,
+                        // When syncing repository entries from a peer, we don't need
+                        // the location_in_repo field, since git operations don't happen locally
+                        // anyway.
+                        work_directory: WorkDirectory::InProject {
+                            relative_path: work_dir_entry.path.clone(),
+                        },
+                        current_branch: update.branch_summary.as_ref().map(proto_to_branch),
+                        statuses_by_path: statuses,
+                        current_merge_conflicts: conflicted_paths,
+                        work_directory_abs_path: todo!(),
+                    },
+                    &(),
+                );
+            }
+        } else {
+            log::error!("no work directory entry for repository {:?}", update.id)
+        }
+    }
+
+    pub(crate) fn apply_remove_repository(&mut self, update: proto::RemoveRepository) {
+        // NOTE: this is practically but not semantically correct. For now we're using the
+        // ID field to store the work directory ID, but eventually it will be a different
+        // kind of ID.
+        let work_directory_id = ProjectEntryId::from_proto(update.id);
+        self.repositories.retain(&(), |entry: &RepositoryEntry| {
+            entry.work_directory_id != work_directory_id
+        });
+    }
+
+    pub(crate) fn apply_update_worktree(
         &mut self,
-        mut update: proto::UpdateWorktree,
+        update: proto::UpdateWorktree,
         always_included_paths: &PathMatcher,
     ) -> Result<()> {
         log::debug!(
@@ -2775,88 +2855,20 @@ impl Snapshot {
         self.entries_by_path.edit(entries_by_path_edits, &());
         self.entries_by_id.edit(entries_by_id_edits, &());
 
-        update.removed_repositories.sort_unstable();
-        self.repositories.retain(&(), |entry: &RepositoryEntry| {
-            update
-                .removed_repositories
-                .binary_search(&entry.work_directory_id.to_proto())
-                .is_err()
-        });
-
-        for repository in update.updated_repositories {
-            let work_directory_id = ProjectEntryId::from_proto(repository.work_directory_id);
-            if let Some(work_dir_entry) = self.entry_for_id(work_directory_id) {
-                let conflicted_paths = TreeSet::from_ordered_entries(
-                    repository
-                        .current_merge_conflicts
-                        .into_iter()
-                        .map(|path| RepoPath(Path::new(&path).into())),
-                );
-
-                if self
-                    .repositories
-                    .contains(&PathKey(work_dir_entry.path.clone()), &())
-                {
-                    let edits = repository
-                        .removed_statuses
-                        .into_iter()
-                        .map(|path| Edit::Remove(PathKey(FromProto::from_proto(path))))
-                        .chain(repository.updated_statuses.into_iter().filter_map(
-                            |updated_status| {
-                                Some(Edit::Insert(updated_status.try_into().log_err()?))
-                            },
-                        ))
-                        .collect::<Vec<_>>();
-
-                    self.repositories
-                        .update(&PathKey(work_dir_entry.path.clone()), &(), |repo| {
-                            repo.current_branch =
-                                repository.branch_summary.as_ref().map(proto_to_branch);
-                            repo.statuses_by_path.edit(edits, &());
-                            repo.current_merge_conflicts = conflicted_paths
-                        });
-                } else {
-                    let statuses = SumTree::from_iter(
-                        repository
-                            .updated_statuses
-                            .into_iter()
-                            .filter_map(|updated_status| updated_status.try_into().log_err()),
-                        &(),
-                    );
-
-                    self.repositories.insert_or_replace(
-                        RepositoryEntry {
-                            work_directory_id,
-                            // When syncing repository entries from a peer, we don't need
-                            // the location_in_repo field, since git operations don't happen locally
-                            // anyway.
-                            work_directory: WorkDirectory::InProject {
-                                relative_path: work_dir_entry.path.clone(),
-                            },
-                            current_branch: repository.branch_summary.as_ref().map(proto_to_branch),
-                            statuses_by_path: statuses,
-                            current_merge_conflicts: conflicted_paths,
-                            work_directory_abs_path: todo!(
-                                "this will all go away when we handle UpdateRepository"
-                            ),
-                        },
-                        &(),
-                    );
-                }
-            } else {
-                log::error!(
-                    "no work directory entry for repository {:?}",
-                    repository.work_directory_id
-                )
-            }
-        }
-
         self.scan_id = update.scan_id as usize;
         if update.is_last_update {
             self.completed_scan_id = update.scan_id as usize;
         }
 
         Ok(())
+    }
+
+    pub(crate) fn apply_remote_update(
+        &mut self,
+        update: WorktreeRelatedMessage,
+        always_included_paths: &PathMatcher,
+    ) -> Result<()> {
+        todo!()
     }
 
     pub fn entry_count(&self) -> usize {
@@ -3098,15 +3110,10 @@ impl LocalSnapshot {
         worktree_id: u64,
         entry_changes: UpdatedEntriesSet,
         repo_changes: UpdatedGitRepositoriesSet,
-    ) -> (
-        proto::UpdateWorktree,
-        Vec<proto::UpdateRepository>,
-        Vec<proto::RemoveRepository>,
-    ) {
+    ) -> Vec<WorktreeRelatedMessage> {
         let mut updated_entries = Vec::new();
         let mut removed_entries = Vec::new();
-        let mut updated_repositories = Vec::new();
-        let mut removed_repositories = Vec::new();
+        let mut updates = Vec::new();
 
         for (_, entry_id, path_change) in entry_changes.iter() {
             if let PathChange::Removed = path_change {
@@ -3120,20 +3127,23 @@ impl LocalSnapshot {
             let new_repo = self.repositories.get(&PathKey(entry.path.clone()), &());
             match (&change.old_repository, new_repo) {
                 (Some(old_repo), Some(new_repo)) => {
-                    updated_repositories.push(new_repo.build_update(
-                        old_repo,
-                        project_id,
-                        self.scan_id,
-                    ));
+                    updates.push(
+                        new_repo
+                            .build_update(old_repo, project_id, self.scan_id)
+                            .into(),
+                    );
                 }
                 (None, Some(new_repo)) => {
-                    updated_repositories.push(new_repo.initial_update(project_id, self.scan_id));
+                    updates.push(new_repo.initial_update(project_id, self.scan_id).into());
                 }
                 (Some(old_repo), None) => {
-                    removed_repositories.push(proto::RemoveRepository {
-                        project_id,
-                        id: old_repo.work_directory_id.to_proto(),
-                    });
+                    updates.push(
+                        proto::RemoveRepository {
+                            project_id,
+                            id: old_repo.work_directory_id.to_proto(),
+                        }
+                        .into(),
+                    );
                 }
                 _ => {}
             }
@@ -3141,26 +3151,24 @@ impl LocalSnapshot {
 
         removed_entries.sort_unstable();
         updated_entries.sort_unstable_by_key(|e| e.id);
-        removed_repositories.sort_unstable_by_key(|e| e.id);
-        updated_repositories.sort_unstable_by_key(|e| e.id);
 
         // TODO - optimize, knowing that removed_entries are sorted.
         removed_entries.retain(|id| updated_entries.binary_search_by_key(id, |e| e.id).is_err());
 
-        let update_worktree = proto::UpdateWorktree {
-            project_id,
-            worktree_id,
-            abs_path: self.abs_path().to_proto(),
-            root_name: self.root_name().to_string(),
-            updated_entries,
-            removed_entries,
-            scan_id: self.scan_id as u64,
-            is_last_update: self.completed_scan_id == self.scan_id,
-            updated_repositories: Vec::new(),
-            removed_repositories: removed_repositories.iter().map(|repo| repo.id).collect(),
-            updated_repositories: updated_repositories.iter().map(|repo| repo.id).collect(),
-        };
-        (update_worktree, updated_repositories, removed_repositories)
+        updates.push(
+            proto::UpdateWorktree {
+                project_id,
+                worktree_id,
+                abs_path: self.abs_path().to_proto(),
+                root_name: self.root_name().to_string(),
+                updated_entries,
+                removed_entries,
+                scan_id: self.scan_id as u64,
+                is_last_update: self.completed_scan_id == self.scan_id,
+            }
+            .into(),
+        );
+        updates
     }
 
     fn insert_entry(&mut self, mut entry: Entry, fs: &dyn Fs) -> Entry {

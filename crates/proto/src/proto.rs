@@ -445,6 +445,8 @@ messages!(
     (UpdateUserPlan, Foreground),
     (UpdateWorktree, Foreground),
     (UpdateWorktreeSettings, Foreground),
+    (UpdateRepository, Foreground),
+    (RemoveRepository, Foreground),
     (UsersResponse, Foreground),
     (GitReset, Background),
     (GitCheckoutFiles, Background),
@@ -573,6 +575,8 @@ request_messages!(
     (UpdateParticipantLocation, Ack),
     (UpdateProject, Ack),
     (UpdateWorktree, Ack),
+    (UpdateRepository, Ack),
+    (RemoveRepository, Ack),
     (LspExtExpandMacro, LspExtExpandMacroResponse),
     (LspExtOpenDocs, LspExtOpenDocsResponse),
     (SetRoomParticipantRole, Ack),
@@ -619,6 +623,7 @@ request_messages!(
     (ToggleBreakpoint, Ack),
 );
 
+// FIXME should the new repo messages be on here? probably not
 entity_messages!(
     {project_id, ShareProject},
     AddProjectCollaborator,
@@ -783,6 +788,31 @@ pub const MAX_WORKTREE_UPDATE_MAX_CHUNK_SIZE: usize = 2;
 #[cfg(not(any(test, feature = "test-support")))]
 pub const MAX_WORKTREE_UPDATE_MAX_CHUNK_SIZE: usize = 256;
 
+#[derive(Clone, Debug)]
+pub enum WorktreeRelatedMessage {
+    UpdateWorktree(UpdateWorktree),
+    UpdateRepository(UpdateRepository),
+    RemoveRepository(RemoveRepository),
+}
+
+impl From<UpdateWorktree> for WorktreeRelatedMessage {
+    fn from(value: UpdateWorktree) -> Self {
+        Self::UpdateWorktree(value)
+    }
+}
+
+impl From<UpdateRepository> for WorktreeRelatedMessage {
+    fn from(value: UpdateRepository) -> Self {
+        Self::UpdateRepository(value)
+    }
+}
+
+impl From<RemoveRepository> for WorktreeRelatedMessage {
+    fn from(value: RemoveRepository) -> Self {
+        Self::RemoveRepository(value)
+    }
+}
+
 pub fn split_worktree_update(mut message: UpdateWorktree) -> impl Iterator<Item = UpdateWorktree> {
     let mut done = false;
 
@@ -860,6 +890,20 @@ pub fn split_worktree_update(mut message: UpdateWorktree) -> impl Iterator<Item 
         })
     })
 }
+
+pub fn split_worktree_related_message(
+    mut message: WorktreeRelatedMessage,
+) -> impl Iterator<Item = WorktreeRelatedMessage> {
+    // FIXME
+    [message].into_iter()
+}
+
+//pub fn split_repository_updates(
+//    messages: Vec<UpdateRepository>,
+//) -> impl Iterator<Item = UpdateRepository> {
+//    // FIXME
+//    messages.into_iter()
+//}
 
 #[cfg(test)]
 mod tests {

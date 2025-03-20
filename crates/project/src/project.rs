@@ -4274,6 +4274,8 @@ impl Project {
         })?
     }
 
+    // FIXME handlers for new repo related messages
+
     // Collab sends UpdateWorktree protos as messages
     async fn handle_update_worktree(
         this: Entity<Self>,
@@ -4285,7 +4287,7 @@ impl Project {
             if let Some(worktree) = this.worktree_for_id(worktree_id, cx) {
                 worktree.update(cx, |worktree, _| {
                     let worktree = worktree.as_remote_mut().unwrap();
-                    worktree.update_from_remote(envelope.payload);
+                    worktree.update_from_remote(envelope.payload.into());
                 });
             }
             Ok(())
