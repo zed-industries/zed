@@ -274,6 +274,20 @@ impl ToolUseState {
         }
     }
 
+    pub fn confirm_tool_use(
+        &mut self,
+        tool_use_id: LanguageModelToolUseId,
+        ui_text: SharedString,
+        task: Task<()>,
+    ) {
+        if let Some(tool_use) = self.pending_tool_uses_by_id.get_mut(&tool_use_id) {
+            tool_use.ui_text = ui_text.into();
+            tool_use.status = PendingToolUseStatus::NeedsConfirmation {
+                _task: task.shared(),
+            };
+        }
+    }
+
     pub fn insert_tool_output(
         &mut self,
         tool_use_id: LanguageModelToolUseId,
@@ -373,8 +387,8 @@ pub struct PendingToolUse {
 
 #[derive(Debug, Clone)]
 pub enum PendingToolUseStatus {
-    NeedsConfirmation,
     Idle,
+    NeedsConfirmation { _task: Shared<Task<()>> },
     Running { _task: Shared<Task<()>> },
     Error(#[allow(unused)] Arc<str>),
 }
@@ -386,5 +400,9 @@ impl PendingToolUseStatus {
 
     pub fn is_error(&self) -> bool {
         matches!(self, PendingToolUseStatus::Error(_))
+    }
+
+    pub fn needs_confirmation(&self) -> bool {
+        matches!(self, PendingToolUseStatus::NeedsConfirmation)
     }
 }

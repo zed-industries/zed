@@ -976,7 +976,7 @@ impl Thread {
 
         for tool_use in pending_tool_uses.iter() {
             if let Some(tool) = self.tools.tool(&tool_use.name, cx) {
-                let task = tool.run(
+                let run_tool = tool.run(
                     tool_use.input.clone(),
                     &request.messages,
                     self.project.clone(),
@@ -984,12 +984,39 @@ impl Thread {
                     cx,
                 );
 
-                self.insert_tool_output(
-                    tool_use.id.clone(),
-                    tool_use.ui_text.clone().into(),
-                    task,
-                    cx,
-                );
+                let insert_output_task = cx.spawn({
+                    let tool_use_id = tool_use.id.clone();
+                    async move |thread, cx| {
+                        let output = run_tool.await;
+                        thread
+                            .update(cx, |thread, cx| {
+                                let pending_tool_use = thread
+                                    .tool_use
+                                    .insert_tool_output(tool_use_id.clone(), output);
+
+                                cx.emit(ThreadEvent::ToolFinished {
+                                    tool_use_id,
+                                    pending_tool_use,
+                                    canceled: false,
+                                });
+                            })
+                            .ok();
+                    }
+                });
+
+                if tool.needs_confirmation() {
+                    self.tool_use.confirm_tool_use(
+                        tool_use.id.clone(),
+                        tool_use.ui_text.clone().into(),
+                        insert_output_task,
+                    );
+                } else {
+                    self.tool_use.run_pending_tool(
+                        tool_use.id.clone(),
+                        tool_use.ui_text.clone().into(),
+                        insert_output_task,
+                    );
+                }
             }
         }
 
@@ -1037,37 +1064,6 @@ impl Thread {
         pending_tool_uses
             .into_iter()
             .chain(pending_scripting_tool_uses)
-    }
-
-    pub fn insert_tool_output(
-        &mut self,
-        tool_use_id: LanguageModelToolUseId,
-        ui_text: SharedString,
-        output: Task<Result<String>>,
-        cx: &mut Context<Self>,
-    ) {
-        let insert_output_task = cx.spawn({
-            let tool_use_id = tool_use_id.clone();
-            async move |thread, cx| {
-                let output = output.await;
-                thread
-                    .update(cx, |thread, cx| {
-                        let pending_tool_use = thread
-                            .tool_use
-                            .insert_tool_output(tool_use_id.clone(), output);
-
-                        cx.emit(ThreadEvent::ToolFinished {
-                            tool_use_id,
-                            pending_tool_use,
-                            canceled: false,
-                        });
-                    })
-                    .ok();
-            }
-        });
-
-        self.tool_use
-            .run_pending_tool(tool_use_id, ui_text, insert_output_task);
     }
 
     pub fn insert_scripting_tool_output(
