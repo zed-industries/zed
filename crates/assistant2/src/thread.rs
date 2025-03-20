@@ -539,7 +539,7 @@ impl Thread {
             ".cursorrules",
             ".windsurfrules",
             ".clinerules",
-            "claude.md",
+            "CLAUDE.md",
         ];
         let selected_rules_file = RULES_FILE_NAMES
             .into_iter()
