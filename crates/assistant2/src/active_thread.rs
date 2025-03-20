@@ -1,14 +1,16 @@
-use crate::thread::{MessageId, RequestKind, Thread, ThreadError, ThreadEvent};
+use crate::thread::{
+    LastRestoreCheckpoint, MessageId, RequestKind, Thread, ThreadError, ThreadEvent,
+};
 use crate::thread_store::ThreadStore;
 use crate::tool_use::{ToolUse, ToolUseStatus};
 use crate::ui::ContextPill;
 use collections::HashMap;
 use editor::{Editor, MultiBuffer};
 use gpui::{
-    list, percentage, AbsoluteLength, Animation, AnimationExt, AnyElement, App, ClickEvent,
-    DefiniteLength, EdgesRefinement, Empty, Entity, Focusable, Length, ListAlignment, ListOffset,
-    ListState, StyleRefinement, Subscription, Task, TextStyleRefinement, Transformation,
-    UnderlineStyle, WeakEntity,
+    list, percentage, pulsating_between, AbsoluteLength, Animation, AnimationExt, AnyElement, App,
+    ClickEvent, DefiniteLength, EdgesRefinement, Empty, Entity, Focusable, Length, ListAlignment,
+    ListOffset, ListState, StyleRefinement, Subscription, Task, TextStyleRefinement,
+    Transformation, UnderlineStyle, WeakEntity,
 };
 use language::{Buffer, LanguageRegistry};
 use language_model::{LanguageModelRegistry, LanguageModelToolUseId, Role};
@@ -18,7 +20,7 @@ use settings::Settings as _;
 use std::sync::Arc;
 use std::time::Duration;
 use theme::ThemeSettings;
-use ui::{prelude::*, Disclosure, KeyBinding};
+use ui::{prelude::*, Disclosure, KeyBinding, Tooltip};
 use util::ResultExt as _;
 use workspace::{OpenOptions, Workspace};
 
@@ -401,7 +403,6 @@ impl ActiveThread {
                         window,
                         cx,
                     );
-
                     self.render_scripting_tool_use_markdown(
                         tool_use.id.clone(),
                         tool_use.name.as_ref(),
@@ -463,6 +464,7 @@ impl ActiveThread {
                     }
                 }
             }
+            ThreadEvent::CheckpointChanged => cx.notify(),
         }
     }
 
@@ -789,20 +791,62 @@ impl ActiveThread {
         v_flex()
             .when(ix == 0, |parent| parent.child(self.render_rules_item(cx)))
             .when_some(checkpoint, |parent, checkpoint| {
-                parent.child(
-                    h_flex().pl_2().child(
-                        Button::new(("restore-checkpoint", ix), "Restore Checkpoint")
-                            .icon(IconName::Undo)
-                            .size(ButtonSize::Compact)
-                            .on_click(cx.listener(move |this, _, _window, cx| {
-                                this.thread.update(cx, |thread, cx| {
-                                    thread
-                                        .restore_checkpoint(checkpoint.clone(), cx)
-                                        .detach_and_log_err(cx);
-                                });
-                            })),
-                    ),
-                )
+                let mut is_pending = false;
+                let mut error = None;
+                if let Some(last_restore_checkpoint) =
+                    self.thread.read(cx).last_restore_checkpoint()
+                {
+                    if last_restore_checkpoint.message_id() == message_id {
+                        match last_restore_checkpoint {
+                            LastRestoreCheckpoint::Pending { .. } => is_pending = true,
+                            LastRestoreCheckpoint::Error { error: err, .. } => {
+                                error = Some(err.clone());
+                            }
+                        }
+                    }
+                }
+
+                let restore_checkpoint_button =
+                    Button::new(("restore-checkpoint", ix), "Restore Checkpoint")
+                        .icon(if error.is_some() {
+                            IconName::XCircle
+                        } else {
+                            IconName::Undo
+                        })
+                        .size(ButtonSize::Compact)
+                        .disabled(is_pending)
+                        .icon_color(if error.is_some() {
+                            Some(Color::Error)
+                        } else {
+                            None
+                        })
+                        .on_click(cx.listener(move |this, _, _window, cx| {
+                            this.thread.update(cx, |thread, cx| {
+                                thread
+                                    .restore_checkpoint(checkpoint.clone(), cx)
+                                    .detach_and_log_err(cx);
+                            });
+                        }));
+
+                let restore_checkpoint_button = if is_pending {
+                    restore_checkpoint_button
+                        .with_animation(
+                            ("pulsating-restore-checkpoint-button", ix),
+                            Animation::new(Duration::from_secs(2))
+                                .repeat()
+                                .with_easing(pulsating_between(0.6, 1.)),
+                            |label, delta| label.alpha(delta),
+                        )
+                        .into_any_element()
+                } else if let Some(error) = error {
+                    restore_checkpoint_button
+                        .tooltip(Tooltip::text(error.to_string()))
+                        .into_any_element()
+                } else {
+                    restore_checkpoint_button.into_any_element()
+                };
+
+                parent.child(h_flex().pl_2().child(restore_checkpoint_button))
             })
             .child(styled_message)
             .into_any()

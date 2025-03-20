@@ -99,6 +99,25 @@ pub struct ThreadCheckpoint {
     git_checkpoint: GitStoreCheckpoint,
 }
 
+pub enum LastRestoreCheckpoint {
+    Pending {
+        message_id: MessageId,
+    },
+    Error {
+        message_id: MessageId,
+        error: String,
+    },
+}
+
+impl LastRestoreCheckpoint {
+    pub fn message_id(&self) -> MessageId {
+        match self {
+            LastRestoreCheckpoint::Pending { message_id } => *message_id,
+            LastRestoreCheckpoint::Error { message_id, .. } => *message_id,
+        }
+    }
+}
+
 /// A thread of conversation with the LLM.
 pub struct Thread {
     id: ThreadId,
@@ -118,6 +137,7 @@ pub struct Thread {
     tools: Arc<ToolWorkingSet>,
     tool_use: ToolUseState,
     action_log: Entity<ActionLog>,
+    last_restore_checkpoint: Option<LastRestoreCheckpoint>,
     scripting_session: Entity<ScriptingSession>,
     scripting_tool_use: ToolUseState,
     initial_project_snapshot: Shared<Task<Option<Arc<ProjectSnapshot>>>>,
@@ -147,6 +167,7 @@ impl Thread {
             project: project.clone(),
             prompt_builder,
             tools: tools.clone(),
+            last_restore_checkpoint: None,
             tool_use: ToolUseState::new(tools.clone()),
             scripting_session: cx.new(|cx| ScriptingSession::new(project.clone(), cx)),
             scripting_tool_use: ToolUseState::new(tools),
@@ -207,6 +228,7 @@ impl Thread {
             checkpoints_by_message: HashMap::default(),
             completion_count: 0,
             pending_completions: Vec::new(),
+            last_restore_checkpoint: None,
             project,
             prompt_builder,
             tools,
@@ -279,15 +301,36 @@ impl Thread {
         checkpoint: ThreadCheckpoint,
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
+        self.last_restore_checkpoint = Some(LastRestoreCheckpoint::Pending {
+            message_id: checkpoint.message_id,
+        });
+        cx.emit(ThreadEvent::CheckpointChanged);
+
         let project = self.project.read(cx);
         let restore = project
             .git_store()
             .read(cx)
             .restore_checkpoint(checkpoint.git_checkpoint, cx);
         cx.spawn(async move |this, cx| {
-            restore.await?;
-            this.update(cx, |this, cx| this.truncate(checkpoint.message_id, cx))
+            let result = restore.await;
+            this.update(cx, |this, cx| {
+                if let Err(err) = result.as_ref() {
+                    this.last_restore_checkpoint = Some(LastRestoreCheckpoint::Error {
+                        message_id: checkpoint.message_id,
+                        error: err.to_string(),
+                    });
+                } else {
+                    this.last_restore_checkpoint = None;
+                    this.truncate(checkpoint.message_id, cx);
+                }
+                cx.emit(ThreadEvent::CheckpointChanged);
+            })?;
+            result
         })
+    }
+
+    pub fn last_restore_checkpoint(&self) -> Option<&LastRestoreCheckpoint> {
+        self.last_restore_checkpoint.as_ref()
     }
 
     pub fn truncate(&mut self, message_id: MessageId, cx: &mut Context<Self>) {
@@ -1361,6 +1404,7 @@ pub enum ThreadEvent {
         /// Whether the tool was canceled by the user.
         canceled: bool,
     },
+    CheckpointChanged,
 }
 
 impl EventEmitter<ThreadEvent> for Thread {}
