@@ -37,6 +37,7 @@ use core::fmt::{self, Debug, Formatter};
 use http_client::HttpClient;
 use open_ai::{OpenAiEmbeddingModel, OPEN_AI_API_URL};
 use reqwest_client::ReqwestClient;
+use rpc::proto::split_repository_update;
 use sha2::Digest;
 use supermaven_api::{CreateExternalUserRequest, SupermavenAdminApi};
 
@@ -1465,8 +1466,6 @@ fn notify_rejoined_projects(
                 session.peer.send(session.connection_id, update)?;
             }
 
-            // FIXME stream the repo stuff here too
-
             // Stream this worktree's diagnostics.
             for summary in worktree.diagnostic_summaries {
                 session.peer.send(
@@ -1493,21 +1492,23 @@ fn notify_rejoined_projects(
             }
         }
 
-        for language_server in &project.language_servers {
+        for repository in mem::take(&mut project.updated_repositories) {
+            for update in split_repository_update(repository) {
+                session.peer.send(session.connection_id, update)?;
+            }
+        }
+
+        for id in mem::take(&mut project.removed_repositories) {
             session.peer.send(
                 session.connection_id,
-                proto::UpdateLanguageServer {
+                proto::RemoveRepository {
                     project_id: project.id.to_proto(),
-                    language_server_id: language_server.id,
-                    variant: Some(
-                        proto::update_language_server::Variant::DiskBasedDiagnosticsUpdated(
-                            proto::LspDiskBasedDiagnosticsUpdated {},
-                        ),
-                    ),
+                    id,
                 },
             )?;
         }
     }
+
     Ok(())
 }
 
@@ -1921,6 +1922,12 @@ fn join_project_internal(
                     kind: Some(settings_file.kind.to_proto() as i32),
                 },
             )?;
+        }
+    }
+
+    for repository in mem::take(&mut project.repositories) {
+        for update in split_repository_update(repository) {
+            session.peer.send(session.connection_id, update)?;
         }
     }
 

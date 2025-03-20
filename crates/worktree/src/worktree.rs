@@ -144,7 +144,6 @@ pub struct RemoteWorktree {
     project_id: u64,
     client: AnyProtoClient,
     file_scan_inclusions: PathMatcher,
-    // FIXME maybe these should both pick the same one of product vs sum
     updates_tx: Option<UnboundedSender<WorktreeRelatedMessage>>,
     update_observer: Option<mpsc::UnboundedSender<WorktreeRelatedMessage>>,
     snapshot_subscriptions: VecDeque<(usize, oneshot::Sender<()>)>,

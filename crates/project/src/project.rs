@@ -780,6 +780,8 @@ impl Project {
         client.add_entity_message_handler(Self::handle_unshare_project);
         client.add_entity_request_handler(Self::handle_update_buffer);
         client.add_entity_message_handler(Self::handle_update_worktree);
+        client.add_entity_message_handler(Self::handle_update_repository);
+        client.add_entity_message_handler(Self::handle_remove_repository);
         client.add_entity_request_handler(Self::handle_synchronize_buffers);
 
         client.add_entity_request_handler(Self::handle_search_candidate_buffers);
@@ -1118,6 +1120,8 @@ impl Project {
 
             ssh_proto.add_entity_message_handler(Self::handle_create_buffer_for_peer);
             ssh_proto.add_entity_message_handler(Self::handle_update_worktree);
+            ssh_proto.add_entity_message_handler(Self::handle_update_repository);
+            ssh_proto.add_entity_message_handler(Self::handle_remove_repository);
             ssh_proto.add_entity_message_handler(Self::handle_update_project);
             ssh_proto.add_entity_message_handler(Self::handle_toast);
             ssh_proto.add_entity_request_handler(Self::handle_language_server_prompt_request);
@@ -4274,8 +4278,6 @@ impl Project {
         })?
     }
 
-    // FIXME handlers for new repo related messages
-
     // Collab sends UpdateWorktree protos as messages
     async fn handle_update_worktree(
         this: Entity<Self>,
@@ -4284,6 +4286,40 @@ impl Project {
     ) -> Result<()> {
         this.update(&mut cx, |this, cx| {
             let worktree_id = WorktreeId::from_proto(envelope.payload.worktree_id);
+            if let Some(worktree) = this.worktree_for_id(worktree_id, cx) {
+                worktree.update(cx, |worktree, _| {
+                    let worktree = worktree.as_remote_mut().unwrap();
+                    worktree.update_from_remote(envelope.payload.into());
+                });
+            }
+            Ok(())
+        })?
+    }
+
+    async fn handle_update_repository(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::UpdateRepository>,
+        mut cx: AsyncApp,
+    ) -> Result<()> {
+        this.update(&mut cx, |this, cx| {
+            let worktree_id = WorktreeId::from_proto(envelope.payload.id);
+            if let Some(worktree) = this.worktree_for_id(worktree_id, cx) {
+                worktree.update(cx, |worktree, _| {
+                    let worktree = worktree.as_remote_mut().unwrap();
+                    worktree.update_from_remote(envelope.payload.into());
+                });
+            }
+            Ok(())
+        })?
+    }
+
+    async fn handle_remove_repository(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::RemoveRepository>,
+        mut cx: AsyncApp,
+    ) -> Result<()> {
+        this.update(&mut cx, |this, cx| {
+            let worktree_id = WorktreeId::from_proto(envelope.payload.id);
             if let Some(worktree) = this.worktree_for_id(worktree_id, cx) {
                 worktree.update(cx, |worktree, _| {
                     let worktree = worktree.as_remote_mut().unwrap();
