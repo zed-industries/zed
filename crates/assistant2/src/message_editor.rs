@@ -143,18 +143,6 @@ impl MessageEditor {
     ) {
         self.context_picker_menu_handle.toggle(window, cx);
     }
-
-    fn toggle_project_diff(
-        &mut self,
-        _: &git_ui::project_diff::Diff,
-        _window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        cx.defer(|cx| {
-            cx.dispatch_action(&git_ui::project_diff::Diff);
-        });
-    }
-
     pub fn remove_all_context(
         &mut self,
         _: &RemoveAllContext,
@@ -478,8 +466,6 @@ impl Render for MessageEditor {
                                         }),
                                 )
                                 .child(ui::Divider::vertical())
-                                // DL TODO: Keybinding not working here
-                                // DL TODO: Should we use the same bindings that the Git Panel uses?
                                 .child(
                                     Button::new("review", "Review Diff")
                                         .label_size(LabelSize::XSmall)
@@ -495,7 +481,7 @@ impl Render for MessageEditor {
                                         })
                                         .on_click(|_event, _window, cx| {
                                             cx.defer(|cx| {
-                                                cx.dispatch_action(&git_ui::project_diff::Diff);
+                                                cx.dispatch_action(&git_ui::project_diff::Diff)
                                             });
                                         }),
                                 )
@@ -529,8 +515,6 @@ impl Render for MessageEditor {
                     }))
                     .on_action(cx.listener(Self::toggle_context_picker))
                     .on_action(cx.listener(Self::remove_all_context))
-                    // .on_action(cx.listener(Self::toggle_project_diff))
-                    // .on_action(cx.listener(Self::open_commit_editor))
                     .on_action(cx.listener(Self::move_up))
                     .on_action(cx.listener(Self::toggle_chat_mode))
                     .gap_2()

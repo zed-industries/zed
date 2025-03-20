@@ -288,7 +288,7 @@
     "use_key_equivalents": true,
     "bindings": {
       "enter": "assistant2::Chat",
-      "cmd-.": "git::Diff",
+      "cmd-g d": "git::Diff",
       "shift-escape": "git::ExpandCommitEditor"
     }
   },
