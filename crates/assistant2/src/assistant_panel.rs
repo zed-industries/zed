@@ -174,6 +174,7 @@ impl AssistantPanel {
                 thread_store.clone(),
                 language_registry.clone(),
                 message_editor_context_store.clone(),
+                workspace.clone(),
                 window,
                 cx,
             )
@@ -252,6 +253,7 @@ impl AssistantPanel {
                 self.thread_store.clone(),
                 self.language_registry.clone(),
                 message_editor_context_store.clone(),
+                self.workspace.clone(),
                 window,
                 cx,
             )
@@ -389,6 +391,7 @@ impl AssistantPanel {
                         this.thread_store.clone(),
                         this.language_registry.clone(),
                         message_editor_context_store.clone(),
+                        this.workspace.clone(),
                         window,
                         cx,
                     )
