@@ -8,9 +8,10 @@ use collections::HashSet;
 use gpui::{App, AppContext, AsyncApp, Entity, Task};
 use language::{AutoindentMode, Point};
 use language_model::LanguageModelRequestMessage;
-use project::Project;
+use project::{Project, ProjectPath};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use std::fmt::Write;
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "command", rename_all = "snake_case")]
@@ -57,6 +58,18 @@ pub enum TextEditorToolInput {
         /// The path to the file whose last edit should be undone
         path: Arc<Path>,
     },
+}
+
+impl TextEditorToolInput {
+    fn path(&self) -> &Arc<Path> {
+        match self {
+            TextEditorToolInput::View { path, .. } => path,
+            TextEditorToolInput::StrReplace { path, .. } => path,
+            TextEditorToolInput::Create { path, .. } => path,
+            TextEditorToolInput::Insert { path, .. } => path,
+            TextEditorToolInput::UndoEdit { path } => path,
+        }
+    }
 }
 
 pub struct TextEditorTool;
@@ -118,28 +131,74 @@ impl Tool for TextEditorTool {
             Err(err) => return Task::ready(Err(anyhow!(err))),
         };
 
-        cx.spawn(async move |cx| {
-            // Handle each command type
-            let result = match input {
-                TextEditorToolInput::View { view_range, path } => {
-                    let buffer = open_buffer(&project, &path, cx).await?;
+        let path = input.path().clone();
 
-                    buffer.read_with(cx, |buffer, _cx| match view_range {
-                        Some((start_row, end_row)) => {
-                            let start = Point::new(start_row.saturating_sub(1) as u32, 0);
-                            let end = Point::new(end_row as u32, 0);
+        let project_path =
+            // todo! how can we tell the model to not use abs paths
+            if path.is_absolute() {
+                project.read(cx).project_path_for_absolute_path(&path, cx)
+            } else {
+                project.read(cx).find_project_path(&path, cx)
+            };
 
-                            buffer.text_for_range(start..end).collect::<String>()
-                        }
-                        None => buffer.text(),
-                    })?
+        let Some(project_path) = project_path else {
+            return Task::ready(Err(anyhow!("Path {} not found in project", path.display())));
+        };
+
+        match input {
+            TextEditorToolInput::View { view_range, path } => {
+                let Some(worktree) = project
+                    .read(cx)
+                    .worktree_for_id(project_path.worktree_id, cx)
+                else {
+                    return Task::ready(Err(anyhow!("Worktree not found")));
+                };
+
+                let worktree = worktree.read(cx);
+
+                let Some(entry) = worktree.entry_for_path(&project_path.path) else {
+                    return Task::ready(Err(anyhow!("Path not found: {}", path.display())));
+                };
+
+                if entry.is_dir() {
+                    let mut output = String::new();
+
+                    for entry in worktree.child_entries(&project_path.path) {
+                        writeln!(
+                            output,
+                            "{}",
+                            Path::new(worktree.root_name()).join(&entry.path).display(),
+                        )
+                        .unwrap();
+                    }
+
+                    if output.is_empty() {
+                        Task::ready(Ok(format!("{} is empty.", path.display())))
+                    } else {
+                        Task::ready(Ok(output))
+                    }
+                } else {
+                    cx.spawn(async move |cx| {
+                        let buffer = open_buffer(&project, project_path, cx).await?;
+
+                        buffer.read_with(cx, |buffer, _cx| match view_range {
+                            Some((start_row, end_row)) => {
+                                let start = Point::new(start_row.saturating_sub(1) as u32, 0);
+                                let end = Point::new(end_row as u32, 0);
+
+                                buffer.text_for_range(start..end).collect::<String>()
+                            }
+                            None => buffer.text(),
+                        })
+                    })
                 }
-                TextEditorToolInput::StrReplace {
-                    old_str,
-                    new_str,
-                    path,
-                } => {
-                    let buffer = open_buffer(&project, &path, cx).await?;
+            }
+
+            TextEditorToolInput::StrReplace {
+                old_str, new_str, ..
+            } => {
+                cx.spawn(async move |cx| {
+                    let buffer = open_buffer(&project, project_path, cx).await?;
                     let snapshot = buffer.read_with(cx, |buffer, _cx| buffer.snapshot())?;
 
                     // todo! anthropic requires that we fail if >1 match is found
@@ -155,73 +214,60 @@ impl Tool for TextEditorTool {
                             buffer.update(cx, |buffer, cx| buffer.apply_diff(diff, cx))?;
                             save_changed_buffer(project, action_log, buffer, cx).await?;
 
-                            "Replaced!".to_string()
+                            Ok("Replaced!".to_string())
                         }
-                        None => return Err(anyhow!("Failed to match `old_str`")),
+                        None => Err(anyhow!("Failed to match `old_str`")),
                     }
-                }
-                TextEditorToolInput::Create { path, file_text } => {
-                    let buffer = open_buffer(&project, &path, cx).await?;
-                    buffer.update(cx, |buffer, cx| buffer.set_text(file_text, cx))?;
-                    save_changed_buffer(project, action_log, buffer, cx).await?;
+                })
+            }
 
-                    format!("Created `{}`", path.display())
-                }
-                TextEditorToolInput::Insert {
-                    insert_line,
-                    new_str,
-                    path,
-                } => {
-                    let buffer = open_buffer(&project, &path, cx).await?;
+            TextEditorToolInput::Create { file_text, .. } => cx.spawn(async move |cx| {
+                let buffer = open_buffer(&project, project_path, cx).await?;
+                buffer.update(cx, |buffer, cx| buffer.set_text(file_text, cx))?;
+                save_changed_buffer(project, action_log, buffer, cx).await?;
 
-                    let start = Point::new(insert_line.saturating_sub(1) as u32, 0);
+                Ok(format!("Created `{}`", path.display()))
+            }),
 
-                    buffer.update(cx, |buffer, cx| {
-                        buffer.start_transaction();
-                        buffer.edit(
-                            [(start..start, new_str)],
-                            Some(AutoindentMode::EachLine),
-                            cx,
-                        );
-                        buffer.end_transaction(cx);
-                    })?;
+            TextEditorToolInput::Insert {
+                insert_line,
+                new_str,
+                ..
+            } => cx.spawn(async move |cx| {
+                let buffer = open_buffer(&project, project_path, cx).await?;
 
-                    save_changed_buffer(project, action_log, buffer, cx).await?;
+                let start = Point::new(insert_line.saturating_sub(1) as u32, 0);
 
-                    format!("Inserted into `{}`", path.display())
-                }
-                TextEditorToolInput::UndoEdit { .. } => {
-                    // todo!
-                    return Err(anyhow!(format!(
-                        "Undo command not available. Use str_replace to undo."
-                    )));
-                }
-            };
+                buffer.update(cx, |buffer, cx| {
+                    buffer.start_transaction();
+                    buffer.edit(
+                        [(start..start, new_str)],
+                        Some(AutoindentMode::EachLine),
+                        cx,
+                    );
+                    buffer.end_transaction(cx);
+                })?;
 
-            Ok(result)
-        })
+                save_changed_buffer(project, action_log, buffer, cx).await?;
+
+                Ok(format!("Inserted into `{}`", path.display()))
+            }),
+
+            TextEditorToolInput::UndoEdit { .. } => {
+                // todo!
+                return Task::ready(Err(anyhow!(format!(
+                    "Undo command not available. Use str_replace to undo."
+                ))));
+            }
+        }
     }
 }
 
 async fn open_buffer(
     project: &Entity<Project>,
-    path: &Path,
+    project_path: ProjectPath,
     cx: &mut AsyncApp,
 ) -> Result<Entity<language::Buffer>> {
-    let project_path =
-        // todo! how can we tell the model to not use abs paths
-        project.read_with(cx, |project, cx| {
-            if path.is_absolute() {
-                project.project_path_for_absolute_path(&path, cx)
-            } else {
-                project.find_project_path(path, cx)
-            }
-        })?;
-
-    let Some(project_path) = project_path else {
-        return Err(anyhow!("Path {} not found in project", path.display()));
-    };
-
     project
         .update(cx, |project, cx| project.open_buffer(project_path, cx))?
         .await
