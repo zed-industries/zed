@@ -1,6 +1,6 @@
 use crate::thread::{MessageId, RequestKind, Thread, ThreadError, ThreadEvent};
 use crate::thread_store::ThreadStore;
-use crate::tool_use::{ToolUse, ToolUseStatus};
+use crate::tool_use::{PendingToolUseStatus, ToolUse, ToolUseStatus};
 use crate::ui::ContextPill;
 use collections::HashMap;
 use editor::{Editor, MultiBuffer};
@@ -1173,51 +1173,59 @@ impl ActiveThread {
             .into_any()
     }
 
-    fn handle_tool_accept(&mut self, _: &ClickEvent, _window: &mut Window, cx: &mut Context<Self>) {
-        println!("Accept clicked");
-
-        for tool_use in self.thread.read(cx).tool_use.pending_tool_uses() {
-            if let crate::tool_use::PendingToolUseStatus::NeedsConfirmation {
-                tool_use_id,
-                input,
-                ui_text,
-                messages,
-                tool,
-            } = tool_use.status.clone()
-            {
-                self.thread.update(cx, |thread, cx| {
-                    thread.run_tool(tool_use_id, ui_text, input, &messages, tool, cx);
-                });
-                // only find first
-                break;
-            }
-        }
-    }
-
-    fn handle_tool_deny(&mut self, _: &ClickEvent, _window: &mut Window, cx: &mut Context<Self>) {
-        println!("Deny clicked");
-
-        // Get the first tool that needs confirmation
-        let pending_tool = self
+    fn handle_tool_accept(
+        &mut self,
+        tool_use_id: LanguageModelToolUseId,
+        _: &ClickEvent,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(PendingToolUseStatus::NeedsConfirmation {
+            tool_use_id,
+            input,
+            ui_text,
+            messages,
+            tool,
+        }) = self
             .thread
             .read(cx)
             .tool_use
             .pending_tool_uses()
             .into_iter()
-            .find(|t| {
-                matches!(
-                    t.status,
-                    crate::tool_use::PendingToolUseStatus::NeedsConfirmation { .. }
-                )
+            .find_map(|tool_use| {
+                if tool_use.id == tool_use_id {
+                    Some(tool_use.status.clone())
+                } else {
+                    None
+                }
+            })
+        {
+            self.thread.update(cx, |thread, cx| {
+                thread.run_tool(tool_use_id, ui_text, input, &messages, tool, cx);
             });
+        }
+    }
 
-        if let Some(tool_use) = pending_tool {
-            let tool_use_id = tool_use.id.clone();
+    fn handle_tool_deny(
+        &mut self,
+        tool_use_id: LanguageModelToolUseId,
+        _: &ClickEvent,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self
+            .thread
+            .read(cx)
+            .tool_use
+            .pending_tool_uses()
+            .into_iter()
+            .any(|tool_use| tool_use.id == tool_use_id && tool_use.status.needs_confirmation())
+        {
             self.thread.update(cx, |thread, cx| {
                 // Cancel the tool execution
                 thread.tool_use.insert_tool_output(
                     tool_use_id.clone(),
-                    Err(anyhow::anyhow!("Tool execution canceled by user")),
+                    Err(anyhow::anyhow!("Tool execution denied by user")),
                 );
 
                 // Emit the finished event with canceled flag
@@ -1289,14 +1297,32 @@ impl ActiveThread {
                         .child(
                             h_flex()
                                 .gap_1()
-                                .child(
-                                    Button::new("accept-tool", "Accept")
-                                        .on_click(cx.listener(Self::handle_tool_accept)),
-                                )
-                                .child(
-                                    Button::new("deny-tool", "Deny")
-                                        .on_click(cx.listener(Self::handle_tool_deny)),
-                                ),
+                                .child({
+                                    let tool_id = tool_to_confirm.id.clone();
+                                    Button::new("accept-tool", "Accept").on_click(cx.listener(
+                                        move |this, event, window, cx| {
+                                            this.handle_tool_accept(
+                                                tool_id.clone(),
+                                                event,
+                                                window,
+                                                cx,
+                                            )
+                                        },
+                                    ))
+                                })
+                                .child({
+                                    let tool_id = tool_to_confirm.id.clone();
+                                    Button::new("deny-tool", "Deny").on_click(cx.listener(
+                                        move |this, event, window, cx| {
+                                            this.handle_tool_deny(
+                                                tool_id.clone(),
+                                                event,
+                                                window,
+                                                cx,
+                                            )
+                                        },
+                                    ))
+                                }),
                         ),
                 )
                 .into_any(),

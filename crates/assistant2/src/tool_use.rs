@@ -418,4 +418,8 @@ impl PendingToolUseStatus {
     pub fn is_error(&self) -> bool {
         matches!(self, PendingToolUseStatus::Error(_))
     }
+
+    pub fn needs_confirmation(&self) -> bool {
+        matches!(self, PendingToolUseStatus::NeedsConfirmation { .. })
+    }
 }
