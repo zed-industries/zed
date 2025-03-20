@@ -43,7 +43,7 @@ fn email_zed_url(specs: &SystemSpecs) -> String {
 }
 
 fn email_body(specs: &SystemSpecs) -> String {
-    let body = format!("\n\nSystem Information:\n\n{}", specs.to_string());
+    let body = format!("\n\nSystem Information:\n\n{}", specs);
     urlencoding::encode(&body).to_string()
 }
 
