@@ -1123,13 +1123,14 @@ impl GitRepository for RealGitRepository {
             let working_directory = working_directory?;
             let index_file_path = working_directory.join(".git/index.tmp");
 
-            let run_git_command = async |args: &[&str]| {
-                let output = new_smol_command(&git_binary_path)
-                    .current_dir(&working_directory)
-                    .env("GIT_INDEX_FILE", &index_file_path)
-                    .args(args)
-                    .output()
-                    .await?;
+            let run_git_command = async |args: &[&str], use_temp_index: bool| {
+                let mut command = new_smol_command(&git_binary_path);
+                command.current_dir(&working_directory);
+                command.args(args);
+                if use_temp_index {
+                    command.env("GIT_INDEX_FILE", &index_file_path);
+                }
+                let output = command.output().await?;
                 if output.status.success() {
                     anyhow::Ok(String::from_utf8(output.stdout)?.trim_end().to_string())
                 } else {
@@ -1138,21 +1139,24 @@ impl GitRepository for RealGitRepository {
                 }
             };
 
-            run_git_command(&[
-                "restore",
-                "--source",
-                &checkpoint.sha.to_string(),
-                "--worktree",
-                ".",
-            ])
+            run_git_command(
+                &[
+                    "restore",
+                    "--source",
+                    &checkpoint.sha.to_string(),
+                    "--worktree",
+                    ".",
+                ],
+                false,
+            )
             .await?;
-            run_git_command(&["read-tree", &checkpoint.sha.to_string()]).await?;
-            run_git_command(&["clean", "-d", "--force"]).await?;
+            run_git_command(&["read-tree", &checkpoint.sha.to_string()], true).await?;
+            run_git_command(&["clean", "-d", "--force"], true).await?;
 
             if let Some(head_sha) = checkpoint.head_sha {
-                run_git_command(&["update-ref", "HEAD", &head_sha.to_string()]).await?;
+                run_git_command(&["reset", "--mixed", &head_sha.to_string()], false).await?;
             } else {
-                run_git_command(&["update-ref", "-d", "HEAD"]).await?;
+                run_git_command(&["update-ref", "-d", "HEAD"], false).await?;
             }
 
             Ok(())
@@ -1397,6 +1401,7 @@ fn check_path_to_repo_path_errors(relative_file_path: &Path) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::status::FileStatus;
     use gpui::TestAppContext;
 
     #[gpui::test]
@@ -1523,6 +1528,88 @@ mod tests {
                 .await
                 .ok(),
             None
+        );
+    }
+
+    #[gpui::test]
+    async fn test_undoing_commit_via_checkpoint(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+
+        let repo_dir = tempfile::tempdir().unwrap();
+
+        git2::Repository::init(repo_dir.path()).unwrap();
+        let file_path = repo_dir.path().join("file");
+        smol::fs::write(&file_path, "initial").await.unwrap();
+
+        let repo = RealGitRepository::new(&repo_dir.path().join(".git"), None).unwrap();
+        repo.stage_paths(
+            vec![RepoPath::from_str("file")],
+            HashMap::default(),
+            cx.to_async(),
+        )
+        .await
+        .unwrap();
+        repo.commit(
+            "Initial commit".into(),
+            Some(("Test User".into(), "test@example.com".into())),
+            HashMap::default(),
+            cx.to_async(),
+        )
+        .await
+        .unwrap();
+
+        let initial_commit_sha = repo.head_sha().unwrap();
+
+        smol::fs::write(repo_dir.path().join("new_file1"), "content1")
+            .await
+            .unwrap();
+        smol::fs::write(repo_dir.path().join("new_file2"), "content2")
+            .await
+            .unwrap();
+
+        let checkpoint = repo.checkpoint(cx.to_async()).await.unwrap();
+
+        repo.stage_paths(
+            vec![
+                RepoPath::from_str("new_file1"),
+                RepoPath::from_str("new_file2"),
+            ],
+            HashMap::default(),
+            cx.to_async(),
+        )
+        .await
+        .unwrap();
+        repo.commit(
+            "Commit new files".into(),
+            Some(("Test User".into(), "test@example.com".into())),
+            HashMap::default(),
+            cx.to_async(),
+        )
+        .await
+        .unwrap();
+
+        repo.restore_checkpoint(checkpoint, cx.to_async())
+            .await
+            .unwrap();
+        assert_eq!(repo.head_sha().unwrap(), initial_commit_sha);
+        assert_eq!(
+            smol::fs::read_to_string(repo_dir.path().join("new_file1"))
+                .await
+                .unwrap(),
+            "content1"
+        );
+        assert_eq!(
+            smol::fs::read_to_string(repo_dir.path().join("new_file2"))
+                .await
+                .unwrap(),
+            "content2"
+        );
+        assert_eq!(
+            repo.status(&[]).unwrap().entries.as_ref(),
+            &[
+                (RepoPath::from_str("new_file1"), FileStatus::Untracked),
+                (RepoPath::from_str("new_file2"), FileStatus::Untracked)
+            ]
         );
     }
 
