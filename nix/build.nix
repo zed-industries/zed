@@ -38,6 +38,7 @@
   nodejs_22,
 
   withGLES ? false,
+  profile ? "release",
 }:
 
 assert withGLES -> stdenv.hostPlatform.isLinux;
@@ -153,6 +154,9 @@ let
           ]
         }";
         LK_CUSTOM_WEBRTC = livekit-libwebrtc;
+        CARGO_PROFILE = profile;
+        # need to handle some profiles specially https://github.com/rust-lang/cargo/issues/11053
+        TARGET_DIR = "target/" + (if profile == "dev" then "debug" else profile);
       };
 
       # prevent nix from removing the "unused" wayland/gpu-lib rpaths
@@ -228,13 +232,13 @@ craneLib.buildPackage (
           pushd crates/zed
           sed -i "s/package.metadata.bundle-nightly/package.metadata.bundle/" Cargo.toml
           export CARGO_BUNDLE_SKIP_BUILD=true
-          app_path="$(cargo bundle --release | xargs)"
+          app_path="$(cargo bundle --profile $CARGO_PROFILE | xargs)"
           popd
 
           mkdir -p $out/Applications $out/bin
           # Zed expects git next to its own binary
           ln -s ${git}/bin/git "$app_path/Contents/MacOS/git"
-          mv target/release/cli "$app_path/Contents/MacOS/cli"
+          mv $TARGET_DIR/cli "$app_path/Contents/MacOS/cli"
           mv "$app_path" $out/Applications/
 
           # Physical location of the CLI must be inside the app bundle as this is used
@@ -244,21 +248,19 @@ craneLib.buildPackage (
           runHook postInstall
         ''
       else
-        # TODO: icons should probably be named "zed-nightly". fix bundle-linux first
         ''
           runHook preInstall
 
           mkdir -p $out/bin $out/libexec
-          cp target/release/zed $out/libexec/zed-editor
-          cp target/release/cli $out/bin/zed
+          cp $TARGET_DIR/zed $out/libexec/zed-editor
+          cp $TARGET_DIR/cli $out/bin/zed
 
           install -D "crates/zed/resources/app-icon-nightly@2x.png" \
             "$out/share/icons/hicolor/1024x1024@2x/apps/zed.png"
           install -D crates/zed/resources/app-icon-nightly.png \
             $out/share/icons/hicolor/512x512/apps/zed.png
 
-          # extracted from ../script/bundle-linux (envsubst) and
-          # ../script/install.sh (final desktop file name)
+          # TODO: icons should probably be named "zed-nightly"
           (
             export DO_STARTUP_NOTIFY="true"
             export APP_CLI="zed"
