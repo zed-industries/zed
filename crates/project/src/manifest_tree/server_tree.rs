@@ -147,13 +147,6 @@ impl LanguageServerTree {
             languages,
         })
     }
-    /// Memoize calls to attach_kind on LspAdapter (which might be a WASM extension, thus ~expensive to call).
-    fn attach_kind(&mut self, adapter: &AdapterWrapper) -> Attach {
-        *self
-            .attach_kind_cache
-            .entry(adapter.0.name.clone())
-            .or_insert_with(|| adapter.0.attach_kind())
-    }
 
     /// Get all language server root points for a given path and language; the language servers might already be initialized at a given path.
     pub(crate) fn get<'a>(
@@ -185,52 +178,52 @@ impl LanguageServerTree {
         adapters: IndexMap<AdapterWrapper, (LspSettings, BTreeSet<LanguageName>)>,
         delegate: Arc<dyn LspAdapterDelegate>,
         cx: &mut App,
-    ) -> impl Iterator<Item = LanguageServerTreeNode> + 'a {
+    ) -> impl Iterator<Item = LanguageServerTreeNode> {
         let worktree_id = path.worktree_id;
         #[allow(clippy::mutable_key_type)]
-        let mut adapter_to_manifest_name = IndexMap::default();
-        let mut nodes = IndexMap::new();
+        let mut manifest_to_adapters = BTreeMap::default();
+        let mut nodes = BTreeMap::new();
         for adapter in adapters.keys() {
             if let Some(manifest_name) = adapter.0.manifest_name() {
-                adapter_to_manifest_name
+                manifest_to_adapters
                     .entry(manifest_name)
                     .or_insert_with(Vec::default)
                     .push(adapter.clone());
             } else {
+                // Backwards-compat: Fill in any adapters for which we did not detect the root as having the project root at the root of a worktree.
+                nodes.entry(adapter.clone()).or_insert_with(|| ProjectPath {
+                    worktree_id,
+                    path: Arc::from("".as_ref()),
+                });
             }
         }
 
-        for (adapter, manifest_name) in &adapter_to_manifest_name {
-            if manifest_name.is_none() {}
-        }
-        let mut roots = self.manifest_tree.update(cx, |this, cx| {
+        let roots = self.manifest_tree.update(cx, |this, cx| {
             this.root_for_path(
                 path,
-                &mut adapter_to_manifest_name
-                    .values()
-                    .map(|(adapter, _)| adapter.0.manifest_name()),
+                &mut manifest_to_adapters.keys().cloned(),
                 delegate,
                 cx,
             )
         });
-        let mut root_path = None;
-        // Backwards-compat: Fill in any adapters for which we did not detect the root as having the project root at the root of a worktree.
-        for (adapter, _) in adapters.iter() {
-            roots.entry(adapter.clone()).or_insert_with(|| {
-                root_path
-                    .get_or_insert_with(|| ProjectPath {
-                        worktree_id,
-                        path: Arc::from("".as_ref()),
-                    })
-                    .clone()
-            });
-        }
-
         roots
             .into_iter()
+            .flat_map(move |(manifest, root_path)| {
+                let adapter_wrappers = manifest_to_adapters.remove(&manifest);
+
+                let foo = if let Some(wrappers) = adapter_wrappers {
+                    wrappers.into_iter()
+                } else {
+                    std::vec::IntoIter::default()
+                };
+
+                foo.into_iter()
+                    .map(move |adapter| (adapter, root_path.clone()))
+            })
             .filter_map(move |(adapter, root_path)| {
-                let attach = self.attach_kind(&adapter);
+                let attach = adapter.0.attach_kind();
                 let (index, _, (settings, new_languages)) = adapters.get_full(&adapter)?;
+
                 let inner_node = self
                     .instances
                     .entry(root_path.worktree_id)
@@ -239,18 +232,19 @@ impl LanguageServerTree {
                     .entry(root_path.path.clone())
                     .or_default()
                     .entry(adapter.0.name.clone());
-                let (node, languages) = inner_node.or_insert_with(move || {
+                let (node, languages) = inner_node.or_insert_with(|| {
                     (
                         Arc::new(InnerTreeNode::new(
                             adapter.0.name(),
                             attach,
-                            root_path,
+                            root_path.clone(),
                             settings.clone(),
                         )),
                         Default::default(),
                     )
                 });
                 languages.extend(new_languages.iter().cloned());
+
                 Some((index, Arc::downgrade(&node).into()))
             })
             .sorted_by_key(|(index, _)| *index)

@@ -165,6 +165,7 @@ pub struct CachedLspAdapter {
     pub adapter: Arc<dyn LspAdapter>,
     pub reinstall_attempt_count: AtomicU64,
     cached_binary: futures::lock::Mutex<Option<LanguageServerBinary>>,
+    manifest_name: OnceLock<Option<ManifestName>>,
     attach_kind: OnceLock<Attach>,
 }
 
@@ -202,6 +203,7 @@ impl CachedLspAdapter {
             cached_binary: Default::default(),
             reinstall_attempt_count: AtomicU64::new(0),
             attach_kind: Default::default(),
+            manifest_name: Default::default(),
         })
     }
 
@@ -264,7 +266,9 @@ impl CachedLspAdapter {
             .unwrap_or_else(|| language_name.lsp_id())
     }
     pub fn manifest_name(&self) -> Option<ManifestName> {
-        self.adapter.manifest_name()
+        self.manifest_name
+            .get_or_init(|| self.adapter.manifest_name())
+            .clone()
     }
     pub fn attach_kind(&self) -> Attach {
         *self.attach_kind.get_or_init(|| self.adapter.attach_kind())
