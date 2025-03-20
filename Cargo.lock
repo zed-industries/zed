@@ -4927,19 +4927,13 @@ dependencies = [
 name = "feedback"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "client",
  "editor",
- "futures 0.3.31",
  "gpui",
  "human_bytes",
- "language",
- "log",
  "menu",
- "project",
  "release_channel",
  "serde",
- "smol",
  "sysinfo",
  "ui",
  "urlencoding",
