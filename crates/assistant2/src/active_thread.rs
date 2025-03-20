@@ -39,7 +39,6 @@ pub struct ActiveThread {
     editing_message: Option<(MessageId, EditMessageState)>,
     expanded_tool_uses: HashMap<LanguageModelToolUseId, bool>,
     last_error: Option<ThreadError>,
-    feedback_state: HashMap<MessageId, bool>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -83,7 +82,6 @@ impl ActiveThread {
             }),
             editing_message: None,
             last_error: None,
-            feedback_state: HashMap::default(),
             _subscriptions: subscriptions,
         };
 
@@ -593,29 +591,6 @@ impl ActiveThread {
         self.confirm_editing_message(&menu::Confirm, window, cx);
     }
 
-    fn handle_feedback_click(
-        &mut self,
-        is_positive: bool,
-        message_id: MessageId,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let report = self
-            .thread
-            .update(cx, |thread, cx| thread.report_feedback(is_positive, cx));
-
-        let this = cx.entity().downgrade();
-        cx.spawn(async move |_, cx| {
-            report.await?;
-
-            this.update(cx, |this, cx| {
-                this.feedback_state.insert(message_id, is_positive);
-                cx.notify();
-            })
-        })
-        .detach_and_log_err(cx);
-    }
-
     fn render_message(&self, ix: usize, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let message_id = self.messages[ix];
         let Some(message) = self.thread.read(cx).message(message_id) else {
@@ -682,118 +657,6 @@ impl ActiveThread {
                     parent
                 }
             });
-
-        let feedback_container = h_flex().pt_2p5().pb_1p5().gap_2().justify_between();
-        let feedback_state = self.feedback_state.get(&message_id);
-        let feedback_items = match feedback_state {
-            Some(positive) => feedback_container
-                .child(
-                    Label::new(if *positive {
-                        "Thanks for your feedback!"
-                    } else {
-                        "We appreciate your feedback and will use it to improve."
-                    })
-                    .color(Color::Muted)
-                    .size(LabelSize::XSmall),
-                )
-                .child(
-                    h_flex()
-                        .gap_1()
-                        .child(
-                            IconButton::new(
-                                "feedback-thumbs-up",
-                                IconName::ThumbsUp,
-                            )
-                            .icon_size(IconSize::XSmall)
-                            .icon_color(if *positive {
-                                Color::Accent
-                            } else {
-                                Color::Ignored
-                            })
-                            .shape(ui::IconButtonShape::Square)
-                            .tooltip(Tooltip::text("Helpful Response"))
-                            .on_click(cx.listener({
-                                let message_id = message_id;
-                                move |this, _, window, cx| {
-                                    this.handle_feedback_click(
-                                        true, message_id, window, cx,
-                                    );
-                                }
-                            })),
-                        )
-                        .child(
-                            IconButton::new(
-                                "feedback-thumbs-down",
-                                IconName::ThumbsDown,
-                            )
-                            .icon_size(IconSize::XSmall)
-                            .icon_color(if *positive {
-                                Color::Ignored
-                            } else {
-                                Color::Accent
-                            })
-                            .shape(ui::IconButtonShape::Square)
-                            .tooltip(Tooltip::text("Not Helpful"))
-                            .on_click(cx.listener({
-                                let message_id = message_id;
-                                move |this, _, window, cx| {
-                                    this.handle_feedback_click(
-                                        false, message_id, window, cx,
-                                    );
-                                }
-                            })),
-                        ),
-                )
-                .into_any_element(),
-            None => feedback_container
-                .child(
-                    // DL TODO: Text is long but clear? We shouldn't tuck away info that's sensible privacy-wise
-                    Label::new("Rating the thread sends all of your conversation from this point up to the Zed team.")
-                        .color(Color::Muted)
-                        .size(LabelSize::XSmall),
-                )
-                .child(
-                    h_flex()
-                        .gap_1()
-                        .child(
-                            IconButton::new(
-                                "feedback-thumbs-up",
-                                IconName::ThumbsUp,
-                            )
-                            .icon_size(IconSize::XSmall)
-                            .icon_color(Color::Ignored)
-                            .shape(ui::IconButtonShape::Square)
-                            .tooltip(Tooltip::text("Helpful Response"))
-                            .on_click(cx.listener({
-                                let message_id = message_id;
-                                move |this, _, window, cx| {
-                                    this.handle_feedback_click(
-                                        true, message_id, window, cx,
-                                    );
-                                }
-                            })),
-                        )
-                        .child(
-                            IconButton::new(
-                                "feedback-thumbs-down",
-                                IconName::ThumbsDown,
-                            )
-                            .icon_size(IconSize::XSmall)
-                            .icon_color(Color::Ignored)
-                            .shape(ui::IconButtonShape::Square)
-                            .tooltip(Tooltip::text("Not Helpful"))
-                            .on_click(cx.listener({
-                                let message_id = message_id;
-                                move |this, _, window, cx| {
-                                    this.handle_feedback_click(
-                                        false, message_id, window, cx,
-                                    );
-                                }
-                            })),
-                        ),
-                )
-                .into_any_element(),
-        };
 
         let styled_message = match message.role {
             Role::User => v_flex()
@@ -926,35 +789,25 @@ impl ActiveThread {
                         .child(div().p_2().child(message_content)),
                 ),
 
-            Role::Assistant => {
-                v_flex()
-                    .id(("message-container", ix))
-                    .child(
-                        v_flex()
-                            .py_3()
-                            .px_4()
-                            .child(message_content)
-                            // DL TODO: Currently, this is not correct because the feedback container should only appear once per user/assistant turn
-                            // it shouldn't appear on every assistant message
-                            .child(feedback_items),
-                    )
-                    .when(
-                        !tool_uses.is_empty() || !scripting_tool_uses.is_empty(),
-                        |parent| {
-                            parent.child(
-                                v_flex()
-                                    .children(
-                                        tool_uses
-                                            .into_iter()
-                                            .map(|tool_use| self.render_tool_use(tool_use, cx)),
-                                    )
-                                    .children(scripting_tool_uses.into_iter().map(|tool_use| {
-                                        self.render_scripting_tool_use(tool_use, window, cx)
-                                    })),
-                            )
-                        },
-                    )
-            }
+            Role::Assistant => v_flex()
+                .id(("message-container", ix))
+                .child(v_flex().py_3().px_4().child(message_content))
+                .when(
+                    !tool_uses.is_empty() || !scripting_tool_uses.is_empty(),
+                    |parent| {
+                        parent.child(
+                            v_flex()
+                                .children(
+                                    tool_uses
+                                        .into_iter()
+                                        .map(|tool_use| self.render_tool_use(tool_use, cx)),
+                                )
+                                .children(scripting_tool_uses.into_iter().map(|tool_use| {
+                                    self.render_scripting_tool_use(tool_use, window, cx)
+                                })),
+                        )
+                    },
+                ),
 
             Role::System => div().id(("message-container", ix)).py_1().px_2().child(
                 v_flex()
@@ -963,7 +816,6 @@ impl ActiveThread {
                     .child(div().p_4().child(message_content)),
             ),
         };
-
 
         styled_message.into_any()
     }

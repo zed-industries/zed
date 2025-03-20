@@ -99,6 +99,12 @@ pub struct ThreadCheckpoint {
     git_checkpoint: GitStoreCheckpoint,
 }
 
+#[derive(Copy, Clone, Debug)]
+pub enum ThreadFeedback {
+    Positive,
+    Negative,
+}
+
 /// A thread of conversation with the LLM.
 pub struct Thread {
     id: ThreadId,
@@ -122,6 +128,7 @@ pub struct Thread {
     scripting_tool_use: ToolUseState,
     initial_project_snapshot: Shared<Task<Option<Arc<ProjectSnapshot>>>>,
     cumulative_token_usage: TokenUsage,
+    feedback: Option<ThreadFeedback>,
 }
 
 impl Thread {
@@ -158,6 +165,7 @@ impl Thread {
                     .shared()
             },
             cumulative_token_usage: TokenUsage::default(),
+            feedback: None,
         }
     }
 
@@ -217,6 +225,7 @@ impl Thread {
             initial_project_snapshot: Task::ready(serialized.initial_project_snapshot).shared(),
             // TODO: persist token usage?
             cumulative_token_usage: TokenUsage::default(),
+            feedback: None,
         }
     }
 
@@ -1144,12 +1153,23 @@ impl Thread {
         }
     }
 
+    /// Returns the feedback given to the thread, if any.
+    pub fn feedback(&self) -> Option<ThreadFeedback> {
+        self.feedback
+    }
+
     /// Reports feedback about the thread and stores it in our telemetry backend.
-    pub fn report_feedback(&self, is_positive: bool, cx: &mut Context<Self>) -> Task<Result<()>> {
+    pub fn report_feedback(
+        &mut self,
+        feedback: ThreadFeedback,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<()>> {
         let final_project_snapshot = Self::project_snapshot(self.project.clone(), cx);
         let serialized_thread = self.serialize(cx);
         let thread_id = self.id().clone();
         let client = self.project.read(cx).client();
+        self.feedback = Some(feedback);
+        cx.notify();
 
         cx.background_spawn(async move {
             let final_project_snapshot = final_project_snapshot.await;
@@ -1157,7 +1177,10 @@ impl Thread {
             let thread_data =
                 serde_json::to_value(serialized_thread).unwrap_or_else(|_| serde_json::Value::Null);
 
-            let rating = if is_positive { "positive" } else { "negative" };
+            let rating = match feedback {
+                ThreadFeedback::Positive => "positive",
+                ThreadFeedback::Negative => "negative",
+            };
             telemetry::event!(
                 "Assistant Thread Rated",
                 rating,

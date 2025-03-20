@@ -29,7 +29,7 @@ use crate::assistant_model_selector::AssistantModelSelector;
 use crate::context_picker::{ConfirmBehavior, ContextPicker};
 use crate::context_store::{refresh_context_store_text, ContextStore};
 use crate::context_strip::{ContextStrip, ContextStripEvent, SuggestContextKind};
-use crate::thread::{RequestKind, Thread};
+use crate::thread::{RequestKind, Thread, ThreadFeedback};
 use crate::thread_store::ThreadStore;
 use crate::tool_selector::ToolSelector;
 use crate::{Chat, ChatMode, RemoveAllContext, ThreadEvent, ToggleContextPicker};
@@ -290,6 +290,24 @@ impl MessageEditor {
         }
     }
 
+    fn handle_feedback_click(
+        &mut self,
+        feedback: ThreadFeedback,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let report = self
+            .thread
+            .update(cx, |thread, cx| thread.report_feedback(feedback, cx));
+
+        let this = cx.entity().downgrade();
+        cx.spawn(async move |_, cx| {
+            report.await?;
+            this.update(cx, |_this, cx| cx.notify())
+        })
+        .detach_and_log_err(cx);
+    }
+
     fn move_up(&mut self, _: &MoveUp, window: &mut Window, cx: &mut Context<Self>) {
         if self.context_picker_menu_handle.is_deployed()
             || self.inline_context_picker_menu_handle.is_deployed()
@@ -315,6 +333,7 @@ impl Render for MessageEditor {
         let focus_handle = self.editor.focus_handle(cx);
         let inline_context_picker = self.inline_context_picker.clone();
 
+        let empty_thread = self.thread.read(cx).is_empty();
         let is_generating = self.thread.read(cx).is_generating();
         let is_model_selected = self.is_model_selected(cx);
         let is_editor_empty = self.is_editor_empty(cx);
@@ -345,6 +364,104 @@ impl Render for MessageEditor {
         let active_color = cx.theme().colors().element_selected;
         let editor_bg_color = cx.theme().colors().editor_background;
         let bg_edit_files_disclosure = editor_bg_color.blend(active_color.opacity(0.25));
+
+        let feedback_container = h_flex().pt_2p5().pb_1p5().gap_2().justify_between();
+        let feedback_items = match self.thread.read(cx).feedback() {
+            Some(feedback) => feedback_container
+                .child(
+                    Label::new(match feedback {
+                        ThreadFeedback::Positive => "Thanks for your feedback!",
+                        ThreadFeedback::Negative => "We appreciate your feedback and will use it to improve.",
+                    })
+                    .color(Color::Muted)
+                    .size(LabelSize::XSmall),
+                )
+                .child(
+                    h_flex()
+                        .gap_1()
+                        .child(
+                            IconButton::new(
+                                "feedback-thumbs-up",
+                                IconName::ThumbsUp,
+                            )
+                            .icon_size(IconSize::XSmall)
+                            .icon_color( match feedback {
+                                ThreadFeedback::Positive =>  Color::Accent,
+                                ThreadFeedback::Negative =>  Color::Ignored,
+                            })
+                            .shape(ui::IconButtonShape::Square)
+                            .tooltip(Tooltip::text("Helpful Response"))
+                            .on_click(cx.listener(
+                                move |this, _, window, cx| {
+                                    this.handle_feedback_click(
+                                        ThreadFeedback::Positive, window, cx,
+                                    );
+                                }
+                            )),
+                        )
+                        .child(
+                            IconButton::new(
+                                "feedback-thumbs-down",
+                                IconName::ThumbsDown,
+                            )
+                            .icon_size(IconSize::XSmall)
+                            .icon_color(match feedback {
+                                ThreadFeedback::Positive =>  Color::Ignored,
+                                ThreadFeedback::Negative =>  Color::Accent,
+                            })
+                            .shape(ui::IconButtonShape::Square)
+                            .tooltip(Tooltip::text("Not Helpful"))
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                this.handle_feedback_click(
+                                    ThreadFeedback::Negative, window, cx,
+                                );
+                            })),
+                        ),
+                )
+                .into_any_element(),
+            None => feedback_container
+                .child(
+                    // DL TODO: Text is long but clear? We shouldn't tuck away info that's sensible privacy-wise
+                    Label::new("Rating the thread sends all of your conversation from this point up to the Zed team.")
+                        .color(Color::Muted)
+                        .size(LabelSize::XSmall),
+                )
+                .child(
+                    h_flex()
+                        .gap_1()
+                        .child(
+                            IconButton::new(
+                                "feedback-thumbs-up",
+                                IconName::ThumbsUp,
+                            )
+                            .icon_size(IconSize::XSmall)
+                            .icon_color(Color::Ignored)
+                            .shape(ui::IconButtonShape::Square)
+                            .tooltip(Tooltip::text("Helpful Response"))
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                this.handle_feedback_click(
+                                    ThreadFeedback::Positive, window, cx,
+                                );
+                            })),
+                        )
+                        .child(
+                            IconButton::new(
+                                "feedback-thumbs-down",
+                                IconName::ThumbsDown,
+                            )
+                            .icon_size(IconSize::XSmall)
+                            .icon_color(Color::Ignored)
+                            .shape(ui::IconButtonShape::Square)
+                            .tooltip(Tooltip::text("Not Helpful"))
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                this.handle_feedback_click(
+                                    ThreadFeedback::Negative, window, cx,
+                                );
+                            })),
+                        ),
+                )
+                .into_any_element(),
+        };
 
         v_flex()
             .size_full()
@@ -406,105 +523,113 @@ impl Render for MessageEditor {
                     ),
                 )
             })
+            .when(!is_generating && !empty_thread, |parent| {
+                parent.child(feedback_items)
+            })
             // DL TODO: this whole element shouldn't be visible on the active thread's empty state.
             // it should only pop after submitting a message
             // however, given now it's Git, if I changed files, even if those haven't come from LLMs,
             // they woll already show up... We've got to sort this out!
-            .when(changed_files > 0 && !is_generating, |parent| {
-                parent.child(
-                    h_flex()
-                        .mx_2()
-                        .py_1()
-                        .pl_2p5()
-                        .pr_1()
-                        .bg(bg_edit_files_disclosure)
-                        .border_1()
-                        .border_b_0()
-                        .border_color(border_color)
-                        .rounded_t_md()
-                        .justify_between()
-                        .shadow(smallvec::smallvec![gpui::BoxShadow {
-                            color: gpui::black().opacity(0.15),
-                            offset: point(px(1.), px(-1.)),
-                            blur_radius: px(3.),
-                            spread_radius: px(0.),
-                        }])
-                        .child(
-                            h_flex()
-                                .gap_2()
-                                .child(Label::new("Edits").size(LabelSize::XSmall))
-                                .child(div().size_1().rounded_full().bg(border_color))
-                                .child(
-                                    Label::new(format!(
-                                        "{} {}",
-                                        changed_files,
-                                        if changed_files == 1 { "file" } else { "files" }
-                                    ))
-                                    .size(LabelSize::XSmall),
-                                ),
-                        )
-                        .child(
-                            h_flex()
-                                .gap_1()
-                                .child(
-                                    Button::new("panel", "Open Git Panel")
-                                        .label_size(LabelSize::XSmall)
-                                        .key_binding({
-                                            let focus_handle = focus_handle.clone();
-                                            KeyBinding::for_action_in(
-                                                &git_panel::ToggleFocus,
-                                                &focus_handle,
-                                                window,
-                                                cx,
-                                            )
-                                            .map(|kb| kb.size(rems_from_px(10.)))
-                                        })
-                                        .on_click(|_ev, _window, cx| {
-                                            cx.defer(|cx| {
-                                                cx.dispatch_action(&git_panel::ToggleFocus)
-                                            });
-                                        }),
-                                )
-                                .child(ui::Divider::vertical())
-                                .child(
-                                    Button::new("review", "Review Diff")
-                                        .label_size(LabelSize::XSmall)
-                                        .key_binding({
-                                            let focus_handle = focus_handle.clone();
-                                            KeyBinding::for_action_in(
-                                                &git_ui::project_diff::Diff,
-                                                &focus_handle,
-                                                window,
-                                                cx,
-                                            )
-                                            .map(|kb| kb.size(rems_from_px(10.)))
-                                        })
-                                        .on_click(|_event, _window, cx| {
-                                            cx.defer(|cx| {
-                                                cx.dispatch_action(&git_ui::project_diff::Diff)
-                                            });
-                                        }),
-                                )
-                                .child(
-                                    Button::new("commit", "Commit Changes")
-                                        .label_size(LabelSize::XSmall)
-                                        .key_binding({
-                                            let focus_handle = focus_handle.clone();
-                                            KeyBinding::for_action_in(
-                                                &ExpandCommitEditor,
-                                                &focus_handle,
-                                                window,
-                                                cx,
-                                            )
-                                            .map(|kb| kb.size(rems_from_px(10.)))
-                                        })
-                                        .on_click(|_event, _window, cx| {
-                                            cx.defer(|cx| cx.dispatch_action(&ExpandCommitEditor));
-                                        }),
-                                ),
-                        ),
-                )
-            })
+            .when(
+                changed_files > 0 && !is_generating && !empty_thread,
+                |parent| {
+                    parent.child(
+                        h_flex()
+                            .mx_2()
+                            .py_1()
+                            .pl_2p5()
+                            .pr_1()
+                            .bg(bg_edit_files_disclosure)
+                            .border_1()
+                            .border_b_0()
+                            .border_color(border_color)
+                            .rounded_t_md()
+                            .justify_between()
+                            .shadow(smallvec::smallvec![gpui::BoxShadow {
+                                color: gpui::black().opacity(0.15),
+                                offset: point(px(1.), px(-1.)),
+                                blur_radius: px(3.),
+                                spread_radius: px(0.),
+                            }])
+                            .child(
+                                h_flex()
+                                    .gap_2()
+                                    .child(Label::new("Edits").size(LabelSize::XSmall))
+                                    .child(div().size_1().rounded_full().bg(border_color))
+                                    .child(
+                                        Label::new(format!(
+                                            "{} {}",
+                                            changed_files,
+                                            if changed_files == 1 { "file" } else { "files" }
+                                        ))
+                                        .size(LabelSize::XSmall),
+                                    ),
+                            )
+                            .child(
+                                h_flex()
+                                    .gap_1()
+                                    .child(
+                                        Button::new("panel", "Open Git Panel")
+                                            .label_size(LabelSize::XSmall)
+                                            .key_binding({
+                                                let focus_handle = focus_handle.clone();
+                                                KeyBinding::for_action_in(
+                                                    &git_panel::ToggleFocus,
+                                                    &focus_handle,
+                                                    window,
+                                                    cx,
+                                                )
+                                                .map(|kb| kb.size(rems_from_px(10.)))
+                                            })
+                                            .on_click(|_ev, _window, cx| {
+                                                cx.defer(|cx| {
+                                                    cx.dispatch_action(&git_panel::ToggleFocus)
+                                                });
+                                            }),
+                                    )
+                                    .child(ui::Divider::vertical())
+                                    .child(
+                                        Button::new("review", "Review Diff")
+                                            .label_size(LabelSize::XSmall)
+                                            .key_binding({
+                                                let focus_handle = focus_handle.clone();
+                                                KeyBinding::for_action_in(
+                                                    &git_ui::project_diff::Diff,
+                                                    &focus_handle,
+                                                    window,
+                                                    cx,
+                                                )
+                                                .map(|kb| kb.size(rems_from_px(10.)))
+                                            })
+                                            .on_click(|_event, _window, cx| {
+                                                cx.defer(|cx| {
+                                                    cx.dispatch_action(&git_ui::project_diff::Diff)
+                                                });
+                                            }),
+                                    )
+                                    .child(
+                                        Button::new("commit", "Commit Changes")
+                                            .label_size(LabelSize::XSmall)
+                                            .key_binding({
+                                                let focus_handle = focus_handle.clone();
+                                                KeyBinding::for_action_in(
+                                                    &ExpandCommitEditor,
+                                                    &focus_handle,
+                                                    window,
+                                                    cx,
+                                                )
+                                                .map(|kb| kb.size(rems_from_px(10.)))
+                                            })
+                                            .on_click(|_event, _window, cx| {
+                                                cx.defer(|cx| {
+                                                    cx.dispatch_action(&ExpandCommitEditor)
+                                                });
+                                            }),
+                                    ),
+                            ),
+                    )
+                },
+            )
             .child(
                 v_flex()
                     .key_context("MessageEditor")
