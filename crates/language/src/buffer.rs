@@ -4732,16 +4732,14 @@ impl CharClassifier {
         }
 
         if let Some(scope) = &self.scope {
-            if let Some(word_characters) = scope.word_characters() {
-                if word_characters.contains(&c) {
+            let characters = if self.for_completion {
+                scope.completion_query_characters()
+            } else {
+                scope.word_characters()
+            };
+            if let Some(characters) = characters {
+                if characters.contains(&c) {
                     return CharKind::Word;
-                }
-            }
-            if self.for_completion {
-                if let Some(completion_characters) = scope.completion_query_characters() {
-                    if completion_characters.contains(&c) {
-                        return CharKind::Word;
-                    }
                 }
             }
         }
