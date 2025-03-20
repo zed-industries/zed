@@ -1,6 +1,6 @@
 #![allow(clippy::format_collect)]
 
-use crate::{task_inventory::TaskContexts, Event, *};
+use crate::{task_inventory::TaskContexts, task_store::TaskSettingsLocation, Event, *};
 use buffer_diff::{
     assert_hunks, BufferDiffEvent, DiffHunkSecondaryStatus, DiffHunkStatus, DiffHunkStatusKind,
 };
@@ -19,6 +19,7 @@ use lsp::{
     NumberOrString, TextDocumentEdit, WillRenameFiles,
 };
 use parking_lot::Mutex;
+use paths::tasks_file;
 use pretty_assertions::{assert_eq, assert_matches};
 use serde_json::json;
 #[cfg(not(windows))]
@@ -327,7 +328,7 @@ async fn test_managing_project_specific_settings(cx: &mut gpui::TestAppContext) 
             inventory.task_scheduled(topmost_local_task_source_kind.clone(), resolved_task);
             inventory
                 .update_file_based_tasks(
-                    None,
+                    TaskSettingsLocation::Global(tasks_file()),
                     Some(
                         &json!([{
                             "label": "cargo check unstable",
