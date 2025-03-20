@@ -279,18 +279,20 @@ impl ToolUseState {
     pub fn confirm_tool_use(
         &mut self,
         tool_use_id: LanguageModelToolUseId,
+        ui_text: impl Into<Arc<str>>,
         input: serde_json::Value,
-        ui_text: SharedString,
         messages: Arc<Vec<LanguageModelRequestMessage>>,
         tool: Arc<dyn Tool>,
     ) {
         if let Some(tool_use) = self.pending_tool_uses_by_id.get_mut(&tool_use_id) {
-            tool_use.ui_text = ui_text.into();
+            let ui_text = ui_text.into();
+            tool_use.ui_text = ui_text.clone();
             tool_use.status = PendingToolUseStatus::NeedsConfirmation {
                 tool_use_id,
                 input,
                 messages,
                 tool,
+                ui_text,
             };
         }
     }
@@ -398,6 +400,7 @@ pub enum PendingToolUseStatus {
     NeedsConfirmation {
         tool_use_id: LanguageModelToolUseId,
         input: serde_json::Value,
+        ui_text: Arc<str>,
         messages: Arc<Vec<LanguageModelRequestMessage>>,
         tool: Arc<dyn Tool>,
     },

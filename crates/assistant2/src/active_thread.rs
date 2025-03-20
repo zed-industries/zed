@@ -976,25 +976,12 @@ impl ActiveThread {
                                 ),
                                 ToolUseStatus::Pending => container,
                                 ToolUseStatus::NeedsConfirmation => container.child(
-                                    content_container()
-                                        .child(
-                                            Label::new("Confirmation")
-                                                .size(LabelSize::XSmall)
-                                                .color(Color::Muted)
-                                                .buffer_font(cx),
-                                        )
-                                        .child(
-                                            h_flex()
-                                                .gap_1()
-                                                .child(
-                                                    Button::new("accept-tool", "Accept")
-                                                        .on_click(cx.listener(Self::handle_tool_accept)),
-                                                )
-                                                .child(
-                                                    Button::new("deny-tool", "Deny")
-                                                        .on_click(cx.listener(Self::handle_tool_deny)),
-                                                ),
-                                        ),
+                                    content_container().child(
+                                        Label::new("Waiting for confirmation")
+                                            .size(LabelSize::Small)
+                                            .color(Color::Muted)
+                                            .buffer_font(cx),
+                                    ),
                                 ),
                             }),
                     )
@@ -1121,19 +1108,7 @@ impl ActiveThread {
                                         .gap_0p5()
                                         .py_1()
                                         .px_2p5()
-                                        .child(Label::new("Confirmation:"))
-                                        .child(
-                                            h_flex()
-                                                .gap_1()
-                                                .child(
-                                                    Button::new("accept-tool", "Accept")
-                                                        .on_click(cx.listener(Self::handle_tool_accept)),
-                                                )
-                                                .child(
-                                                    Button::new("deny-tool", "Deny")
-                                                        .on_click(cx.listener(Self::handle_tool_deny)),
-                                                ),
-                                        ),
+                                        .child(Label::new("Waiting for confirmation")),
                                 ),
                             }),
                     )
@@ -1198,12 +1173,61 @@ impl ActiveThread {
             .into_any()
     }
 
-    fn handle_tool_accept(&mut self, _: &ClickEvent, _: &mut Window, _: &mut Context<Self>) {
+    fn handle_tool_accept(&mut self, _: &ClickEvent, _window: &mut Window, cx: &mut Context<Self>) {
         println!("Accept clicked");
+
+        for tool_use in self.thread.read(cx).tool_use.pending_tool_uses() {
+            if let crate::tool_use::PendingToolUseStatus::NeedsConfirmation {
+                tool_use_id,
+                input,
+                ui_text,
+                messages,
+                tool,
+            } = tool_use.status.clone()
+            {
+                self.thread.update(cx, |thread, cx| {
+                    thread.run_tool(tool_use_id, ui_text, input, &messages, tool, cx);
+                });
+                // only find first
+                break;
+            }
+        }
     }
 
-    fn handle_tool_deny(&mut self, _: &ClickEvent, _: &mut Window, _: &mut Context<Self>) {
+    fn handle_tool_deny(&mut self, _: &ClickEvent, _window: &mut Window, cx: &mut Context<Self>) {
         println!("Deny clicked");
+
+        // Get the first tool that needs confirmation
+        let pending_tool = self
+            .thread
+            .read(cx)
+            .tool_use
+            .pending_tool_uses()
+            .into_iter()
+            .find(|t| {
+                matches!(
+                    t.status,
+                    crate::tool_use::PendingToolUseStatus::NeedsConfirmation { .. }
+                )
+            });
+
+        if let Some(tool_use) = pending_tool {
+            let tool_use_id = tool_use.id.clone();
+            self.thread.update(cx, |thread, cx| {
+                // Cancel the tool execution
+                thread.tool_use.insert_tool_output(
+                    tool_use_id.clone(),
+                    Err(anyhow::anyhow!("Tool execution canceled by user")),
+                );
+
+                // Emit the finished event with canceled flag
+                cx.emit(ThreadEvent::ToolFinished {
+                    tool_use_id,
+                    pending_tool_use: None,
+                    canceled: true,
+                });
+            });
+        }
     }
 
     fn handle_open_rules(&mut self, _: &ClickEvent, window: &mut Window, cx: &mut Context<Self>) {
@@ -1228,12 +1252,66 @@ impl ActiveThread {
             task.detach();
         }
     }
+
+    fn render_pending_confirmations(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
+        let thread = self.thread.read(cx);
+        let pending_tools = thread.tool_use.pending_tool_uses();
+
+        // Find the first tool that needs confirmation
+        let tool_to_confirm = pending_tools.iter().find(|tool| {
+            matches!(
+                tool.status,
+                crate::tool_use::PendingToolUseStatus::NeedsConfirmation { .. }
+            )
+        })?;
+
+        // Get the tool's UI text to display what needs confirmation
+        Some(
+            div()
+                .p_2()
+                .bg(cx.theme().colors().editor_background)
+                .border_1()
+                .border_color(cx.theme().colors().border)
+                .rounded_lg()
+                .child(
+                    v_flex()
+                        .gap_1()
+                        .child(
+                            v_flex()
+                                .gap_0p5()
+                                .child(Label::new("Confirm Tool Action").color(Color::Muted))
+                                .child(Label::new(&tool_to_confirm.ui_text).size(LabelSize::Small)),
+                        )
+                        .child(
+                            h_flex()
+                                .gap_1()
+                                .child(
+                                    Button::new("accept-tool", "Accept")
+                                        .on_click(cx.listener(Self::handle_tool_accept)),
+                                )
+                                .child(
+                                    Button::new("deny-tool", "Deny")
+                                        .on_click(cx.listener(Self::handle_tool_deny)),
+                                ),
+                        ),
+                )
+                .into_any(),
+        )
+    }
 }
 
 impl Render for ActiveThread {
-    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         v_flex()
             .size_full()
             .child(list(self.list_state.clone()).flex_grow())
+            .when_some(
+                self.render_pending_confirmations(window, cx),
+                |this, elem| this.child(elem),
+            )
     }
 }

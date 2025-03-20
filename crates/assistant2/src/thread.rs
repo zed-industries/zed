@@ -116,7 +116,7 @@ pub struct Thread {
     project: Entity<Project>,
     prompt_builder: Arc<PromptBuilder>,
     tools: Arc<ToolWorkingSet>,
-    tool_use: ToolUseState,
+    pub tool_use: ToolUseState,
     action_log: Entity<ActionLog>,
     scripting_session: Entity<ScriptingSession>,
     scripting_tool_use: ToolUseState,
@@ -980,25 +980,20 @@ impl Thread {
                 if tool.needs_confirmation() {
                     self.tool_use.confirm_tool_use(
                         tool_use.id.clone(),
+                        tool_use.ui_text.clone(),
                         tool_use.input.clone(),
-                        tool_use.ui_text.clone().into(),
                         messages.clone(),
                         tool.clone(),
                     );
                 } else {
-                    let task = self.spawn_tool_use(
+                    self.run_tool(
                         tool_use.id.clone(),
-                        &messages,
+                        tool_use.ui_text.clone(),
                         tool_use.input.clone(),
+                        &messages,
                         tool,
                         cx,
                     );
-
-                    self.tool_use.run_pending_tool(
-                        tool_use.id.clone(),
-                        tool_use.ui_text.clone().into(),
-                        task,
-                    )
                 }
             }
         }
@@ -1015,8 +1010,8 @@ impl Thread {
             if let Some(tool) = self.tools.tool(&scripting_tool_use.name, cx) {
                 self.scripting_tool_use.confirm_tool_use(
                     scripting_tool_use.id.clone(),
+                    scripting_tool_use.ui_text.clone(),
                     scripting_tool_use.input.clone(),
-                    scripting_tool_use.ui_text.clone().into(),
                     messages.clone(),
                     tool,
                 );
@@ -1028,10 +1023,25 @@ impl Thread {
             .chain(pending_scripting_tool_uses)
     }
 
+    pub fn run_tool(
+        &mut self,
+        tool_use_id: LanguageModelToolUseId,
+        ui_text: impl Into<SharedString>,
+        input: serde_json::Value,
+        messages: &[LanguageModelRequestMessage],
+        tool: Arc<dyn Tool>,
+        cx: &mut Context<'_, Thread>,
+    ) {
+        let task = self.spawn_tool_use(tool_use_id.clone(), messages, input, tool, cx);
+
+        self.tool_use
+            .run_pending_tool(tool_use_id, ui_text.into(), task);
+    }
+
     fn spawn_tool_use(
         &mut self,
         tool_use_id: LanguageModelToolUseId,
-        messages: &Vec<LanguageModelRequestMessage>,
+        messages: &[LanguageModelRequestMessage],
         input: serde_json::Value,
         tool: Arc<dyn Tool>,
         cx: &mut Context<'_, Thread>,
