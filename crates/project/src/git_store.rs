@@ -54,6 +54,7 @@ use worktree::{
 pub struct GitStore {
     state: GitStoreState,
     buffer_store: Entity<BufferStore>,
+    worktree_store: Entity<WorktreeStore>,
     repositories: HashMap<ProjectEntryId, Entity<Repository>>,
     active_repo_id: Option<ProjectEntryId>,
     #[allow(clippy::type_complexity)]
@@ -185,7 +186,7 @@ impl GitStore {
         cx: &mut Context<Self>,
     ) -> Self {
         Self::new(
-            worktree_store,
+            worktree_store.clone(),
             buffer_store,
             GitStoreState::Local {
                 downstream_client: None,
@@ -204,7 +205,7 @@ impl GitStore {
         cx: &mut Context<Self>,
     ) -> Self {
         Self::new(
-            worktree_store,
+            worktree_store.clone(),
             buffer_store,
             GitStoreState::Remote {
                 upstream_client,
@@ -222,7 +223,7 @@ impl GitStore {
         cx: &mut Context<Self>,
     ) -> Self {
         Self::new(
-            worktree_store,
+            worktree_store.clone(),
             buffer_store,
             GitStoreState::Ssh {
                 upstream_client,
@@ -235,20 +236,21 @@ impl GitStore {
     }
 
     fn new(
-        worktree_store: &Entity<WorktreeStore>,
+        worktree_store: Entity<WorktreeStore>,
         buffer_store: Entity<BufferStore>,
         state: GitStoreState,
         cx: &mut Context<Self>,
     ) -> Self {
         let update_sender = Self::spawn_git_worker(cx);
         let _subscriptions = [
-            cx.subscribe(worktree_store, Self::on_worktree_store_event),
+            cx.subscribe(&worktree_store, Self::on_worktree_store_event),
             cx.subscribe(&buffer_store, Self::on_buffer_store_event),
         ];
 
         GitStore {
             state,
             buffer_store,
+            worktree_store,
             repositories: HashMap::default(),
             active_repo_id: None,
             update_sender,
@@ -516,6 +518,17 @@ impl GitStore {
     ) -> Option<Entity<BufferDiff>> {
         let diff_state = self.diffs.get(&buffer_id)?;
         diff_state.read(cx).uncommitted_diff.as_ref()?.upgrade()
+    }
+
+    pub fn project_path_git_status(
+        &self,
+        project_path: &ProjectPath,
+        cx: &App,
+    ) -> Option<FileStatus> {
+        self.worktree_store
+            .read(cx)
+            .worktree_for_id(project_path.worktree_id, cx)
+            .and_then(|worktree| worktree.read(cx).status_for_file(&project_path.path))
     }
 
     pub fn checkpoint(&self, cx: &App) -> Task<Result<GitStoreCheckpoint>> {

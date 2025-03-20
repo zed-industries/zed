@@ -2953,13 +2953,6 @@ impl Snapshot {
         self.traverse_from_offset(true, true, include_ignored, start)
     }
 
-    #[cfg(any(feature = "test-support", test))]
-    pub fn git_status(&self, work_dir: &Path) -> Option<Vec<StatusEntry>> {
-        self.repositories
-            .get(&PathKey(work_dir.into()), &())
-            .map(|repo| repo.status().collect())
-    }
-
     pub fn repositories(&self) -> &SumTree<RepositoryEntry> {
         &self.repositories
     }
