@@ -57,7 +57,7 @@ impl LanguageModelSelector {
         });
 
         let subscription = cx.subscribe(&picker, |_, _, _, cx| cx.emit(DismissEvent));
-        
+
         LanguageModelSelector {
             picker,
             update_matches_task: None,
