@@ -312,7 +312,7 @@ impl TaskTemplate {
             env
         };
 
-        Some(ResolvedTask {
+        let mut resolved = ResolvedTask {
             id: id.clone(),
             substituted_variables,
             original_task: self.clone(),
@@ -342,8 +342,16 @@ impl TaskTemplate {
                 show_summary: self.show_summary,
                 show_command: self.show_command,
                 show_rerun: true,
+                debug_config: None,
             }),
-        })
+        };
+
+        let debug_config = resolved.resolved_debug_adapter_config();
+        resolved
+            .resolved
+            .as_mut()
+            .map(|terminal| terminal.debug_config = debug_config);
+        Some(resolved)
     }
 }
 

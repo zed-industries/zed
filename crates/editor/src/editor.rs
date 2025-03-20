@@ -123,7 +123,6 @@ pub use proposed_changes_editor::{
     ProposedChangeLocation, ProposedChangesEditor, ProposedChangesEditorToolbar,
 };
 use smallvec::smallvec;
-use smol::net::resolve;
 use std::iter::Peekable;
 use task::{ResolvedTask, TaskTemplate, TaskVariables};
 
@@ -4705,7 +4704,21 @@ impl Editor {
                         Some(Task::ready(Ok(())))
                     }),
                     task::TaskType::Locator => None,
-                    task::TaskType::Debug(_) => {
+                    task::TaskType::Debug(debug_args) => {
+                        if debug_args.locator.is_some() {
+                            workspace.update(cx, |workspace, cx| {
+                                workspace::tasks::schedule_resolved_task(
+                                    workspace,
+                                    task_source_kind,
+                                    resolved_task,
+                                    false,
+                                    cx,
+                                );
+                            });
+
+                            return Some(Task::ready(Ok(())));
+                        }
+
                         if let Some(project) = self.project.as_ref() {
                             project
                                 .update(cx, |project, cx| {

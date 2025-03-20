@@ -518,30 +518,29 @@ impl PickerDelegate for TasksModalDelegate {
                         omit_history_entry,
                         cx,
                     ),
-                    // TODO: Should create a schedule_resolved_debug_task function
+                    // todo(debugger): Should create a schedule_resolved_debug_task function
                     // This would allow users to access to debug history and other issues
                     TaskType::Debug(debug_args) => {
-                        // if let Some(locator_task) = debug_args.locator.as_ref().and_then(|name| {
-                        //     self.task_store
-                        //         .read(cx)
-                        //         .task_inventory()
-                        //         .and_then(|inventory| {
-                        //             inventory
-                        //                 .read(cx)
-                        //                 .locators
-                        //                 .get(name)
-                        //                 .map(|locator| locator.generate_task_template())
-                        //         })
-                        // }) {};
+                        let Some(debug_config) = task.resolved_debug_adapter_config() else {
+                            // todo(debugger) log an error, this should never happen
+                            return;
+                        };
 
-                        workspace.project().update(cx, |project, cx| {
-                            project
-                                .start_debug_session(
-                                    task.resolved_debug_adapter_config().unwrap(),
-                                    cx,
-                                )
-                                .detach_and_log_err(cx);
-                        })
+                        if debug_args.locator.is_some() {
+                            schedule_resolved_task(
+                                workspace,
+                                task_source_kind,
+                                task,
+                                omit_history_entry,
+                                cx,
+                            );
+                        } else {
+                            workspace.project().update(cx, |project, cx| {
+                                project
+                                    .start_debug_session(debug_config, cx)
+                                    .detach_and_log_err(cx);
+                            })
+                        }
                     }
                     TaskType::Locator => {}
                 };

@@ -42,7 +42,7 @@ use pty_info::PtyProcessInfo;
 use serde::{Deserialize, Serialize};
 use settings::Settings;
 use smol::channel::{Receiver, Sender};
-use task::{HideStrategy, Shell, TaskId};
+use task::{DebugAdapterConfig, HideStrategy, Shell, TaskId};
 use terminal_settings::{AlternateScroll, CursorShape, TerminalSettings};
 use theme::{ActiveTheme, Theme};
 use util::{paths::home_dir, truncate_and_trailoff};
@@ -109,6 +109,7 @@ pub enum Event {
     SelectionsChanged,
     NewNavigationTarget(Option<MaybeNavigationTarget>),
     Open(MaybeNavigationTarget),
+    TaskLocatorReady(DebugAdapterConfig),
 }
 
 #[derive(Clone, Debug)]
@@ -646,6 +647,7 @@ pub struct TaskState {
     pub show_summary: bool,
     pub show_command: bool,
     pub show_rerun: bool,
+    pub debug_config: Option<DebugAdapterConfig>,
 }
 
 /// A status of the current terminal tab's task.
@@ -1860,6 +1862,10 @@ impl Terminal {
             // when Zed task finishes and no more output is made.
             // After the task summary is output once, no more text is appended to the terminal.
             unsafe { append_text_to_term(&mut self.term.lock(), &lines_to_show) };
+        }
+
+        if let Some(debug_config) = task.debug_config.take() {
+            cx.emit(Event::TaskLocatorReady(debug_config));
         }
 
         match task.hide {
