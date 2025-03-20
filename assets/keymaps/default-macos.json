@@ -84,7 +84,7 @@
       "ctrl-w": "editor::DeleteToPreviousWordStart",
       "alt-delete": "editor::DeleteToNextWordEnd",
       "cmd-x": "editor::Cut",
-      "cmd-c": ["editor::Copy", { "strip_leading_indents": false }],
+      "cmd-c": "editor::Copy",
       "cmd-v": "editor::Paste",
       "cmd-z": "editor::Undo",
       "cmd-shift-z": "editor::Redo",

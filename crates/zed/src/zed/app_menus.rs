@@ -94,7 +94,7 @@ pub fn app_menus() -> Vec<Menu> {
                 MenuItem::os_action("Redo", editor::actions::Redo, OsAction::Redo),
                 MenuItem::separator(),
                 MenuItem::os_action("Cut", editor::actions::Cut, OsAction::Cut),
-                MenuItem::os_action("Copy", editor::actions::Copy::default(), OsAction::Copy),
+                MenuItem::os_action("Copy", editor::actions::Copy, OsAction::Copy),
                 MenuItem::os_action("Paste", editor::actions::Paste, OsAction::Paste),
                 MenuItem::separator(),
                 MenuItem::action("Find", search::buffer_search::Deploy::find()),

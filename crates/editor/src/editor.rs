@@ -9429,7 +9429,15 @@ impl Editor {
         self.do_paste(&text, metadata, false, window, cx);
     }
 
-    pub fn copy(&mut self, action: &Copy, _: &mut Window, cx: &mut Context<Self>) {
+    pub fn copy_and_trim(&mut self, _: &CopyAndTrim, _: &mut Window, cx: &mut Context<Self>) {
+        self.do_copy(true, cx);
+    }
+
+    pub fn copy(&mut self, _: &Copy, _: &mut Window, cx: &mut Context<Self>) {
+        self.do_copy(false, cx);
+    }
+
+    fn do_copy(&self, strip_leading_indents: bool, cx: &mut Context<Self>) {
         let selections = self.selections.all::<Point>(cx);
         let buffer = self.buffer.read(cx).read(cx);
         let mut text = String::new();
@@ -9448,7 +9456,7 @@ impl Editor {
                 }
 
                 let mut trimmed_selections = Vec::new();
-                if action.strip_leading_indents && end.row.saturating_sub(start.row) > 0 {
+                if strip_leading_indents && end.row.saturating_sub(start.row) > 0 {
                     let row = MultiBufferRow(start.row);
                     let first_indent = buffer.indent_size_for_line(row);
                     if first_indent.len == 0 || start.column > first_indent.len {

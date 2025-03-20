@@ -4895,7 +4895,7 @@ async fn test_clipboard(cx: &mut TestAppContext) {
         The quick brown
         fox juˇmps over
         the lazy dog"});
-    cx.update_editor(|e, window, cx| e.copy(&Copy::default(), window, cx));
+    cx.update_editor(|e, window, cx| e.copy(&Copy, window, cx));
     assert_eq!(
         cx.read_from_clipboard()
             .and_then(|item| item.text().as_deref().map(str::to_string)),
@@ -4934,7 +4934,7 @@ async fn test_copy_trim(cx: &mut TestAppContext) {
             }
         "#,
     );
-    cx.update_editor(|e, window, cx| e.copy(&Copy::default(), window, cx));
+    cx.update_editor(|e, window, cx| e.copy(&Copy, window, cx));
     assert_eq!(
         cx.read_from_clipboard()
             .and_then(|item| item.text().as_deref().map(str::to_string)),
@@ -4949,15 +4949,7 @@ async fn test_copy_trim(cx: &mut TestAppContext) {
         ),
         "Regular copying preserves all indentation selected",
     );
-    cx.update_editor(|e, window, cx| {
-        e.copy(
-            &Copy {
-                strip_leading_indents: true,
-            },
-            window,
-            cx,
-        )
-    });
+    cx.update_editor(|e, window, cx| e.copy_and_trim(&CopyAndTrim, window, cx));
     assert_eq!(
         cx.read_from_clipboard()
             .and_then(|item| item.text().as_deref().map(str::to_string)),
@@ -4984,7 +4976,7 @@ if is_entire_line {
             }
         "#,
     );
-    cx.update_editor(|e, window, cx| e.copy(&Copy::default(), window, cx));
+    cx.update_editor(|e, window, cx| e.copy(&Copy, window, cx));
     assert_eq!(
         cx.read_from_clipboard()
             .and_then(|item| item.text().as_deref().map(str::to_string)),
@@ -4999,15 +4991,7 @@ if is_entire_line {
         ),
         "Regular copying preserves all indentation selected",
     );
-    cx.update_editor(|e, window, cx| {
-        e.copy(
-            &Copy {
-                strip_leading_indents: true,
-            },
-            window,
-            cx,
-        )
-    });
+    cx.update_editor(|e, window, cx| e.copy_and_trim(&CopyAndTrim, window, cx));
     assert_eq!(
         cx.read_from_clipboard()
             .and_then(|item| item.text().as_deref().map(str::to_string)),
@@ -5034,7 +5018,7 @@ if is_entire_line {
             }
         "#,
     );
-    cx.update_editor(|e, window, cx| e.copy(&Copy::default(), window, cx));
+    cx.update_editor(|e, window, cx| e.copy(&Copy, window, cx));
     assert_eq!(
         cx.read_from_clipboard()
             .and_then(|item| item.text().as_deref().map(str::to_string)),
@@ -5049,15 +5033,7 @@ if is_entire_line {
         ),
         "Regular copying for reverse selection works the same",
     );
-    cx.update_editor(|e, window, cx| {
-        e.copy(
-            &Copy {
-                strip_leading_indents: true,
-            },
-            window,
-            cx,
-        )
-    });
+    cx.update_editor(|e, window, cx| e.copy_and_trim(&CopyAndTrim, window, cx));
     assert_eq!(
         cx.read_from_clipboard()
             .and_then(|item| item.text().as_deref().map(str::to_string)),
@@ -5084,7 +5060,7 @@ if is_entire_line {
             }
         "#,
     );
-    cx.update_editor(|e, window, cx| e.copy(&Copy::default(), window, cx));
+    cx.update_editor(|e, window, cx| e.copy(&Copy, window, cx));
     assert_eq!(
         cx.read_from_clipboard()
             .and_then(|item| item.text().as_deref().map(str::to_string)),
@@ -5099,15 +5075,7 @@ if is_entire_line {
         ),
         "When selecting past the indent, the copying works as usual",
     );
-    cx.update_editor(|e, window, cx| {
-        e.copy(
-            &Copy {
-                strip_leading_indents: true,
-            },
-            window,
-            cx,
-        )
-    });
+    cx.update_editor(|e, window, cx| e.copy_and_trim(&CopyAndTrim, window, cx));
     assert_eq!(
         cx.read_from_clipboard()
             .and_then(|item| item.text().as_deref().map(str::to_string)),
@@ -5243,7 +5211,7 @@ async fn test_paste_multiline(cx: &mut TestAppContext) {
             )ˇ»
         );
     "});
-    cx.update_editor(|e, window, cx| e.copy(&Copy::default(), window, cx));
+    cx.update_editor(|e, window, cx| e.copy(&Copy, window, cx));
 
     // Paste it on a line with a lower indent level
     cx.update_editor(|e, window, cx| e.move_to_end(&Default::default(), window, cx));
