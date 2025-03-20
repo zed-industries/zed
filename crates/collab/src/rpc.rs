@@ -1461,7 +1461,7 @@ fn notify_rejoined_projects(
                 scan_id: worktree.scan_id,
                 is_last_update: worktree.completed_scan_id == worktree.scan_id,
             };
-            for update in proto::split_worktree_update(message.into()) {
+            for update in proto::split_worktree_update(message) {
                 session.peer.send(session.connection_id, update)?;
             }
 
