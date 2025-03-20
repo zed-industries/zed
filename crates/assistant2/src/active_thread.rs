@@ -573,6 +573,9 @@ impl ActiveThread {
             .map(|(_, state)| state.editor.clone());
 
         let colors = cx.theme().colors();
+        let active_color = colors.element_active;
+        let editor_bg_color = colors.editor_background;
+        let bg_user_message_header = editor_bg_color.blend(active_color.opacity(0.25));
 
         let message_content = v_flex()
             .gap_1p5()
@@ -620,7 +623,7 @@ impl ActiveThread {
                                 .py_1()
                                 .pl_2()
                                 .pr_1()
-                                .bg(colors.editor_foreground.opacity(0.05))
+                                .bg(bg_user_message_header)
                                 .border_b_1()
                                 .border_color(colors.border)
                                 .justify_between()

@@ -7,7 +7,7 @@ use fs::Fs;
 use git::ExpandCommitEditor;
 use git_ui::git_panel;
 use gpui::{
-    Animation, AnimationExt, App, DismissEvent, Entity, Focusable, Subscription, TextStyle,
+    point, Animation, AnimationExt, App, DismissEvent, Entity, Focusable, Subscription, TextStyle,
     WeakEntity,
 };
 use language_model::LanguageModelRegistry;
@@ -143,6 +143,28 @@ impl MessageEditor {
         cx: &mut Context<Self>,
     ) {
         self.context_picker_menu_handle.toggle(window, cx);
+    }
+
+    fn toggle_project_diff(
+        &mut self,
+        _: &git_ui::project_diff::Diff,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        cx.defer(|cx| {
+            cx.dispatch_action(&git_ui::project_diff::Diff);
+        });
+    }
+
+    fn open_commit_editor(
+        &mut self,
+        _: &ExpandCommitEditor,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        cx.defer(|cx| {
+            cx.dispatch_action(&ExpandCommitEditor);
+        });
     }
 
     pub fn remove_all_context(
@@ -330,9 +352,10 @@ impl Render for MessageEditor {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let font_size = TextSize::Default.rems(cx);
         let line_height = font_size.to_pixels(window.rem_size()) * 1.5;
+
         let focus_handle = self.editor.focus_handle(cx);
         let inline_context_picker = self.inline_context_picker.clone();
-        let bg_color = cx.theme().colors().editor_background;
+
         let is_generating = self.thread.read(cx).is_generating();
         let is_model_selected = self.is_model_selected(cx);
         let is_editor_empty = self.is_editor_empty(cx);
@@ -359,6 +382,11 @@ impl Render for MessageEditor {
             0
         };
 
+        let border_color = cx.theme().colors().border;
+        let active_color = cx.theme().colors().element_selected;
+        let editor_bg_color = cx.theme().colors().editor_background;
+        let bg_edit_files_disclosure = editor_bg_color.blend(active_color.opacity(0.25));
+
         v_flex()
             .size_full()
             .when(is_generating, |parent| {
@@ -370,7 +398,7 @@ impl Render for MessageEditor {
                             .pl_2()
                             .pr_1()
                             .py_1()
-                            .bg(cx.theme().colors().editor_background)
+                            .bg(editor_bg_color)
                             .border_1()
                             .border_color(cx.theme().colors().border_variant)
                             .rounded_lg()
@@ -419,69 +447,97 @@ impl Render for MessageEditor {
                     ),
                 )
             })
-            .when(changed_files > 0, |parent| {
+            .when(changed_files > 0 && !is_generating, |parent| {
                 parent.child(
-                    v_flex()
+                    h_flex()
                         .mx_2()
-                        .bg(cx.theme().colors().element_background)
+                        .py_1()
+                        .pl_2p5()
+                        .pr_1()
+                        .bg(bg_edit_files_disclosure)
                         .border_1()
                         .border_b_0()
-                        .border_color(cx.theme().colors().border)
+                        .border_color(border_color)
                         .rounded_t_md()
+                        .justify_between()
+                        .shadow(smallvec::smallvec![gpui::BoxShadow {
+                            color: gpui::black().opacity(0.15),
+                            offset: point(px(1.), px(-1.)),
+                            blur_radius: px(3.),
+                            spread_radius: px(0.),
+                        }])
                         .child(
                             h_flex()
-                                .justify_between()
-                                .p_2()
+                                .gap_2()
+                                .child(Label::new("Edits").size(LabelSize::XSmall))
+                                .child(div().size_1().rounded_full().bg(border_color))
                                 .child(
-                                    h_flex()
-                                        .gap_2()
-                                        .child(
-                                            IconButton::new(
-                                                "edits-disclosure",
-                                                IconName::GitBranchSmall,
+                                    Label::new(format!(
+                                        "{} {}",
+                                        changed_files,
+                                        if changed_files == 1 { "file" } else { "files" }
+                                    ))
+                                    .size(LabelSize::XSmall),
+                                ),
+                        )
+                        .child(
+                            h_flex()
+                                .gap_1()
+                                .child(
+                                    Button::new("panel", "Open Git Panel")
+                                        .label_size(LabelSize::XSmall)
+                                        .key_binding({
+                                            let focus_handle = focus_handle.clone();
+                                            KeyBinding::for_action_in(
+                                                &git_panel::ToggleFocus,
+                                                &focus_handle,
+                                                window,
+                                                cx,
                                             )
-                                            .icon_size(IconSize::Small)
-                                            .on_click(
-                                                |_ev, _window, cx| {
-                                                    cx.defer(|cx| {
-                                                        cx.dispatch_action(&git_panel::ToggleFocus)
-                                                    });
-                                                },
-                                            ),
-                                        )
-                                        .child(
-                                            Label::new(format!(
-                                                "{} {} changed",
-                                                changed_files,
-                                                if changed_files == 1 { "file" } else { "files" }
-                                            ))
-                                            .size(LabelSize::XSmall)
-                                            .color(Color::Muted),
-                                        ),
+                                            .map(|kb| kb.size(rems_from_px(10.)))
+                                        })
+                                        .on_click(|_ev, _window, cx| {
+                                            cx.defer(|cx| {
+                                                cx.dispatch_action(&git_panel::ToggleFocus)
+                                            });
+                                        }),
+                                )
+                                .child(ui::Divider::vertical())
+                                .child(
+                                    Button::new("review", "Review Diff")
+                                        .label_size(LabelSize::XSmall)
+                                        .key_binding({
+                                            let focus_handle = focus_handle.clone();
+                                            KeyBinding::for_action_in(
+                                                &git_ui::project_diff::Diff,
+                                                &focus_handle,
+                                                window,
+                                                cx,
+                                            )
+                                            .map(|kb| kb.size(rems_from_px(10.)))
+                                        })
+                                        .on_click(|_event, _window, cx| {
+                                            cx.defer(|cx| {
+                                                cx.dispatch_action(&git_ui::project_diff::Diff);
+                                            });
+                                        }),
                                 )
                                 .child(
-                                    h_flex()
-                                        .gap_2()
-                                        .child(
-                                            Button::new("review", "Review")
-                                                .label_size(LabelSize::XSmall)
-                                                .on_click(|_event, _window, cx| {
-                                                    cx.defer(|cx| {
-                                                        cx.dispatch_action(
-                                                            &git_ui::project_diff::Diff,
-                                                        );
-                                                    });
-                                                }),
-                                        )
-                                        .child(
-                                            Button::new("commit", "Commit")
-                                                .label_size(LabelSize::XSmall)
-                                                .on_click(|_event, _window, cx| {
-                                                    cx.defer(|cx| {
-                                                        cx.dispatch_action(&ExpandCommitEditor)
-                                                    });
-                                                }),
-                                        ),
+                                    Button::new("commit", "Commit Changes")
+                                        .label_size(LabelSize::XSmall)
+                                        .key_binding({
+                                            let focus_handle = focus_handle.clone();
+                                            KeyBinding::for_action_in(
+                                                &ExpandCommitEditor,
+                                                &focus_handle,
+                                                window,
+                                                cx,
+                                            )
+                                            .map(|kb| kb.size(rems_from_px(10.)))
+                                        })
+                                        .on_click(|_event, _window, cx| {
+                                            cx.defer(|cx| cx.dispatch_action(&ExpandCommitEditor));
+                                        }),
                                 ),
                         ),
                 )
@@ -496,11 +552,13 @@ impl Render for MessageEditor {
                     }))
                     .on_action(cx.listener(Self::toggle_context_picker))
                     .on_action(cx.listener(Self::remove_all_context))
+                    .on_action(cx.listener(Self::toggle_project_diff))
+                    .on_action(cx.listener(Self::open_commit_editor))
                     .on_action(cx.listener(Self::move_up))
                     .on_action(cx.listener(Self::toggle_chat_mode))
                     .gap_2()
                     .p_2()
-                    .bg(bg_color)
+                    .bg(editor_bg_color)
                     .border_t_1()
                     .border_color(cx.theme().colors().border)
                     .child(
@@ -561,7 +619,7 @@ impl Render for MessageEditor {
                                 EditorElement::new(
                                     &self.editor,
                                     EditorStyle {
-                                        background: bg_color,
+                                        background: editor_bg_color,
                                         local_player: cx.theme().players().local(),
                                         text: text_style,
                                         ..Default::default()
