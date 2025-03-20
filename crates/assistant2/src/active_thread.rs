@@ -5,10 +5,10 @@ use crate::ui::ContextPill;
 use collections::HashMap;
 use editor::{Editor, MultiBuffer};
 use gpui::{
-    list, percentage, AbsoluteLength, Animation, AnimationExt, AnyElement, App, ClickEvent,
-    DefiniteLength, EdgesRefinement, Empty, Entity, Focusable, Length, ListAlignment, ListOffset,
-    ListState, StyleRefinement, Subscription, Task, TextStyleRefinement, Transformation,
-    UnderlineStyle, WeakEntity,
+    linear_color_stop, linear_gradient, list, percentage, pulsating_between, AbsoluteLength,
+    Animation, AnimationExt, AnyElement, App, ClickEvent, DefiniteLength, EdgesRefinement, Empty,
+    Entity, Focusable, Length, ListAlignment, ListOffset, ListState, StyleRefinement, Subscription,
+    Task, TextStyleRefinement, Transformation, UnderlineStyle, WeakEntity,
 };
 use language::{Buffer, LanguageRegistry};
 use language_model::{LanguageModelRegistry, LanguageModelToolUseId, Role};
@@ -955,6 +955,7 @@ impl ActiveThread {
             .unwrap_or_default();
 
         let lighter_border = cx.theme().colors().border.opacity(0.5);
+        let editor_bg = cx.theme().colors().editor_background;
 
         v_flex()
             .rounded_lg()
@@ -967,35 +968,49 @@ impl ActiveThread {
                     .pl_1()
                     .pr_2()
                     .bg(cx.theme().colors().editor_foreground.opacity(0.025))
-                    .rounded_t_md()
-                    .border_b_1()
-                    .border_color(lighter_border)
+                    .map(|this| {
+                        if is_open {
+                            this.rounded_t_md()
+                                .border_b_1()
+                                .border_color(lighter_border)
+                        } else {
+                            this.rounded_md()
+                        }
+                    })
                     .child(
                         h_flex()
                             .gap_1()
-                            .child(
-                                Disclosure::new("thinking-disclosure", is_open)
-                                    .opened_icon(IconName::ChevronUpDown)
-                                    .closed_icon(IconName::ChevronDownUp)
-                                    .on_click(cx.listener({
-                                        move |this, _event, _window, _cx| {
-                                            let is_open = this
-                                                .expanded_thinking_segments
-                                                .entry((message_id, ix))
-                                                .or_insert(false);
+                            .child(Disclosure::new("thinking-disclosure", is_open).on_click(
+                                cx.listener({
+                                    move |this, _event, _window, _cx| {
+                                        let is_open = this
+                                            .expanded_thinking_segments
+                                            .entry((message_id, ix))
+                                            .or_insert(false);
 
-                                            *is_open = !*is_open;
-                                        }
-                                    })),
-                            )
+                                        *is_open = !*is_open;
+                                    }
+                                }),
+                            ))
                             .child({
-                                Label::new(if pending {
-                                    "Thinking…"
+                                if pending {
+                                    Label::new("Thinking…")
+                                        .size(LabelSize::Small)
+                                        .buffer_font(cx)
+                                        .with_animation(
+                                            "pulsating-label",
+                                            Animation::new(Duration::from_secs(2))
+                                                .repeat()
+                                                .with_easing(pulsating_between(0.4, 0.8)),
+                                            |label, delta| label.alpha(delta),
+                                        )
+                                        .into_any_element()
                                 } else {
-                                    "Thought Process"
-                                })
-                                .size(LabelSize::Small)
-                                .buffer_font(cx)
+                                    Label::new("Thought Process")
+                                        .size(LabelSize::Small)
+                                        .buffer_font(cx)
+                                        .into_any_element()
+                                }
                             }),
                     )
                     .child({
@@ -1021,21 +1036,46 @@ impl ActiveThread {
                         }
                     }),
             )
-            .child(
-                div()
-                    .id(("thinking-content", ix))
-                    .map(|element| {
-                        if is_open {
-                            element.h_full()
-                        } else {
-                            element.max_h_32().overflow_hidden()
-                        }
-                    })
-                    .p_2()
-                    .bg(cx.theme().colors().editor_background)
+            .when(pending && !is_open, |this| {
+                let gradient_overlay = div()
                     .rounded_b_lg()
-                    .child(markdown),
-            )
+                    .h_20()
+                    .absolute()
+                    .w_full()
+                    .bottom_0()
+                    .left_0()
+                    .bg(linear_gradient(
+                        180.,
+                        linear_color_stop(editor_bg, 1.),
+                        linear_color_stop(editor_bg.opacity(0.2), 0.),
+                    ));
+
+                this.child(
+                    div()
+                        .id(("thinking-content", ix))
+                        .relative()
+                        .h_20()
+                        .p_2()
+                        .bg(editor_bg)
+                        .rounded_b_lg()
+                        .text_ui_sm(cx)
+                        .overflow_hidden()
+                        .child(markdown.clone())
+                        .child(gradient_overlay),
+                )
+            })
+            .when(is_open, |this| {
+                this.child(
+                    div()
+                        .id(("thinking-content", ix))
+                        .h_full()
+                        .p_2()
+                        .rounded_b_lg()
+                        .bg(editor_bg)
+                        .text_ui_sm(cx)
+                        .child(markdown.clone()),
+                )
+            })
     }
 
     fn render_tool_use(&self, tool_use: ToolUse, cx: &mut Context<Self>) -> impl IntoElement {
