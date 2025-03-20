@@ -195,11 +195,24 @@ impl Tool for TextEditorTool {
             }
 
             TextEditorToolInput::StrReplace {
-                old_str, new_str, ..
+                old_str,
+                new_str,
+                path,
             } => {
                 cx.spawn(async move |cx| {
                     let buffer = open_buffer(&project, project_path, cx).await?;
                     let snapshot = buffer.read_with(cx, |buffer, _cx| buffer.snapshot())?;
+
+                    if snapshot.is_empty() {
+                        if snapshot
+                            .file()
+                            .map_or(false, |file| file.disk_state().exists())
+                        {
+                            return Err(anyhow!("{} is empty", path.display()));
+                        }
+
+                        return Err(anyhow!("{} does not exist", path.display()));
+                    }
 
                     // todo! anthropic requires that we fail if >1 match is found
                     let diff_result = cx
