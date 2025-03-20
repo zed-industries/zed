@@ -497,6 +497,12 @@ pub fn retrieve_system_shell() -> String {
             .next()
     }
 
+    fn find_pwsh_in_scoop() -> Option<PathBuf> {
+        let pwsh_exe =
+            PathBuf::from(std::env::var_os("USERPROFILE")?).join("scoop\\shims\\pwsh.exe");
+        pwsh_exe.exists().then_some(pwsh_exe)
+    }
+
     static SYSTEM_SHELL: LazyLock<String> = LazyLock::new(|| {
         find_pwsh_in_programfiles(false, false)
             .or_else(|| find_pwsh_in_programfiles(true, false))
@@ -504,6 +510,7 @@ pub fn retrieve_system_shell() -> String {
             .or_else(|| find_pwsh_in_programfiles(false, true))
             .or_else(|| find_pwsh_in_msix(true))
             .or_else(|| find_pwsh_in_programfiles(true, true))
+            .or_else(|| find_pwsh_in_scoop())
             .map(|p| p.to_string_lossy().to_string())
             .unwrap_or("powershell.exe".to_string())
     });
