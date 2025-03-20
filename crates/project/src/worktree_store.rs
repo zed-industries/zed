@@ -570,12 +570,44 @@ impl WorktreeStore {
                                 let client = client.clone();
                                 async move {
                                     if client.is_via_collab() {
-                                        client
-                                            .request(update)
-                                            .map(|result| result.log_err().is_some())
-                                            .await
+                                        match update {
+                                            proto::WorktreeRelatedMessage::UpdateWorktree(
+                                                update,
+                                            ) => {
+                                                client
+                                                    .request(update)
+                                                    .map(|result| result.log_err().is_some())
+                                                    .await
+                                            }
+                                            proto::WorktreeRelatedMessage::UpdateRepository(
+                                                update,
+                                            ) => {
+                                                client
+                                                    .request(update)
+                                                    .map(|result| result.log_err().is_some())
+                                                    .await
+                                            }
+                                            proto::WorktreeRelatedMessage::RemoveRepository(
+                                                update,
+                                            ) => {
+                                                client
+                                                    .request(update)
+                                                    .map(|result| result.log_err().is_some())
+                                                    .await
+                                            }
+                                        }
                                     } else {
-                                        client.send(update).log_err().is_some()
+                                        match update {
+                                            proto::WorktreeRelatedMessage::UpdateWorktree(
+                                                update,
+                                            ) => client.send(update).log_err().is_some(),
+                                            proto::WorktreeRelatedMessage::UpdateRepository(
+                                                update,
+                                            ) => client.send(update).log_err().is_some(),
+                                            proto::WorktreeRelatedMessage::RemoveRepository(
+                                                update,
+                                            ) => client.send(update).log_err().is_some(),
+                                        }
                                     }
                                 }
                             }

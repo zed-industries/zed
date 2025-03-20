@@ -1,7 +1,10 @@
+mod agent_profile;
+
 use std::sync::Arc;
 
 use ::open_ai::Model as OpenAiModel;
 use anthropic::Model as AnthropicModel;
+use collections::HashMap;
 use deepseek::Model as DeepseekModel;
 use feature_flags::FeatureFlagAppExt;
 use gpui::{App, Pixels};
@@ -11,6 +14,8 @@ use ollama::Model as OllamaModel;
 use schemars::{schema::Schema, JsonSchema};
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsSources};
+
+pub use crate::agent_profile::*;
 
 #[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
@@ -66,6 +71,7 @@ pub struct AssistantSettings {
     pub inline_alternatives: Vec<LanguageModelSelection>,
     pub using_outdated_settings_version: bool,
     pub enable_experimental_live_diffs: bool,
+    pub profiles: HashMap<Arc<str>, AgentProfile>,
 }
 
 impl AssistantSettings {
@@ -166,6 +172,7 @@ impl AssistantSettingsContent {
                     editor_model: None,
                     inline_alternatives: None,
                     enable_experimental_live_diffs: None,
+                    profiles: None,
                 },
                 VersionedAssistantSettingsContent::V2(settings) => settings.clone(),
             },
@@ -187,6 +194,7 @@ impl AssistantSettingsContent {
                 editor_model: None,
                 inline_alternatives: None,
                 enable_experimental_live_diffs: None,
+                profiles: None,
             },
         }
     }
@@ -316,6 +324,7 @@ impl Default for VersionedAssistantSettingsContent {
             editor_model: None,
             inline_alternatives: None,
             enable_experimental_live_diffs: None,
+            profiles: None,
         })
     }
 }
@@ -352,6 +361,8 @@ pub struct AssistantSettingsContentV2 {
     ///
     /// Default: false
     enable_experimental_live_diffs: Option<bool>,
+    #[schemars(skip)]
+    profiles: Option<HashMap<Arc<str>, AgentProfileContent>>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
@@ -386,6 +397,12 @@ impl Default for LanguageModelSelection {
             model: "gpt-4".to_string(),
         }
     }
+}
+
+#[derive(Debug, PartialEq, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct AgentProfileContent {
+    pub name: Arc<str>,
+    pub tools: HashMap<Arc<str>, bool>,
 }
 
 #[derive(Clone, Serialize, Deserialize, JsonSchema, Debug)]
@@ -482,6 +499,24 @@ impl Settings for AssistantSettings {
                 &mut settings.enable_experimental_live_diffs,
                 value.enable_experimental_live_diffs,
             );
+            merge(
+                &mut settings.profiles,
+                value.profiles.map(|profiles| {
+                    profiles
+                        .into_iter()
+                        .map(|(id, profile)| {
+                            (
+                                id,
+                                AgentProfile {
+                                    name: profile.name.into(),
+                                    tools: profile.tools,
+                                    context_servers: HashMap::default(),
+                                },
+                            )
+                        })
+                        .collect()
+                }),
+            );
         }
 
         Ok(settings)
@@ -546,6 +581,7 @@ mod tests {
                             default_width: None,
                             default_height: None,
                             enable_experimental_live_diffs: None,
+                            profiles: None,
                         }),
                     )
                 },
