@@ -39,6 +39,13 @@ impl Tool for DeletePathTool {
         serde_json::to_value(&schema).unwrap()
     }
 
+    fn ui_text(&self, input: &serde_json::Value) -> String {
+        match serde_json::from_value::<DeletePathToolInput>(input.clone()) {
+            Ok(input) => format!("Delete “`{}`”", input.path),
+            Err(_) => "Delete path".to_string(),
+        }
+    }
+
     fn run(
         self: Arc<Self>,
         input: serde_json::Value,
@@ -59,13 +66,12 @@ impl Tool for DeletePathTool {
         {
             Some(deletion_task) => cx.background_spawn(async move {
                 match deletion_task.await {
-                    Ok(()) => Ok(format!("Deleted {}", &path_str)),
-                    Err(err) => Err(anyhow!("Failed to delete {}: {}", &path_str, err)),
+                    Ok(()) => Ok(format!("Deleted {path_str}")),
+                    Err(err) => Err(anyhow!("Failed to delete {path_str}: {err}")),
                 }
             }),
             None => Task::ready(Err(anyhow!(
-                "Couldn't delete {} because that path isn't in this project.",
-                path_str
+                "Couldn't delete {path_str} because that path isn't in this project."
             ))),
         }
     }

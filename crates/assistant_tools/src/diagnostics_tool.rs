@@ -46,6 +46,17 @@ impl Tool for DiagnosticsTool {
         serde_json::to_value(&schema).unwrap()
     }
 
+    fn ui_text(&self, input: &serde_json::Value) -> String {
+        if let Some(path) = serde_json::from_value::<DiagnosticsToolInput>(input.clone())
+            .ok()
+            .and_then(|input| input.path)
+        {
+            format!("Check diagnostics for “`{}`”", path.display())
+        } else {
+            "Check project diagnostics".to_string()
+        }
+    }
+
     fn run(
         self: Arc<Self>,
         input: serde_json::Value,
@@ -54,14 +65,15 @@ impl Tool for DiagnosticsTool {
         _action_log: Entity<ActionLog>,
         cx: &mut App,
     ) -> Task<Result<String>> {
-        let input = match serde_json::from_value::<DiagnosticsToolInput>(input) {
-            Ok(input) => input,
-            Err(err) => return Task::ready(Err(anyhow!(err))),
-        };
-
-        if let Some(path) = input.path {
+        if let Some(path) = serde_json::from_value::<DiagnosticsToolInput>(input)
+            .ok()
+            .and_then(|input| input.path)
+        {
             let Some(project_path) = project.read(cx).find_project_path(&path, cx) else {
-                return Task::ready(Err(anyhow!("Could not find path in project")));
+                return Task::ready(Err(anyhow!(
+                    "Could not find path {} in project",
+                    path.display()
+                )));
             };
             let buffer = project.update(cx, |project, cx| project.open_buffer(project_path, cx));
 

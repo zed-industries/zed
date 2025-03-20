@@ -32,6 +32,13 @@ impl Tool for BashTool {
         serde_json::to_value(&schema).unwrap()
     }
 
+    fn ui_text(&self, input: &serde_json::Value) -> String {
+        match serde_json::from_value::<BashToolInput>(input.clone()) {
+            Ok(input) => format!("`$ {}`", input.command),
+            Err(_) => "Run bash command".to_string(),
+        }
+    }
+
     fn run(
         self: Arc<Self>,
         input: serde_json::Value,

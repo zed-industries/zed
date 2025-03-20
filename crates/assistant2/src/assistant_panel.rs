@@ -458,7 +458,7 @@ impl AssistantPanel {
 
             workspace.update_in(cx, |workspace, window, cx| {
                 let thread = thread.read(cx);
-                let markdown = thread.to_markdown()?;
+                let markdown = thread.to_markdown(cx)?;
                 let thread_summary = thread
                     .summary()
                     .map(|summary| summary.to_string())

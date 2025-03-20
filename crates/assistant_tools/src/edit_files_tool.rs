@@ -24,10 +24,7 @@ use util::ResultExt;
 pub struct EditFilesToolInput {
     /// High-level edit instructions. These will be interpreted by a smaller
     /// model, so explain the changes you want that model to make and which
-    /// file paths need changing.
-    ///
-    /// The description should be concise and clear. We will show this
-    /// description to the user as well.
+    /// file paths need changing. The description should be concise and clear.
     ///
     /// WARNING: When specifying which file paths need changing, you MUST
     /// start each path with one of the project's root directories.
@@ -58,6 +55,21 @@ pub struct EditFilesToolInput {
     /// Notice how we never specify code snippets in the instructions!
     /// </example>
     pub edit_instructions: String,
+
+    /// A user-friendly description of what changes are being made.
+    /// This will be shown to the user in the UI to describe the edit operation. The screen real estate for this UI will be extremely
+    /// constrained, so make the description extremely terse.
+    ///
+    /// <example>
+    /// For fixing a broken authentication system:
+    /// "Fix auth bug in login flow"
+    /// </example>
+    ///
+    /// <example>
+    /// For adding unit tests to a module:
+    /// "Add tests for user profile logic"
+    /// </example>
+    pub display_description: String,
 }
 
 pub struct EditFilesTool;
@@ -74,6 +86,13 @@ impl Tool for EditFilesTool {
     fn input_schema(&self) -> serde_json::Value {
         let schema = schemars::schema_for!(EditFilesToolInput);
         serde_json::to_value(&schema).unwrap()
+    }
+
+    fn ui_text(&self, input: &serde_json::Value) -> String {
+        match serde_json::from_value::<EditFilesToolInput>(input.clone()) {
+            Ok(input) => input.display_description,
+            Err(_) => "Edit files".to_string(),
+        }
     }
 
     fn run(
