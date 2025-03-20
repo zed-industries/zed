@@ -12871,7 +12871,7 @@ async fn test_completions_in_languages_with_extra_word_characters(cx: &mut TestA
                 overrides: [(
                     "element".into(),
                     LanguageConfigOverride {
-                        word_characters: Override::Set(['-'].into_iter().collect()),
+                        completion_query_characters: Override::Set(['-'].into_iter().collect()),
                         ..Default::default()
                     },
                 )]
