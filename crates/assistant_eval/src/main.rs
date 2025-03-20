@@ -106,7 +106,7 @@ fn main() {
         let exercise_names = args.exercise_names.clone();
         let all_flag = args.all;
 
-        cx.spawn(move |cx: &mut gpui::AppContext| async move {
+        cx.spawn(async move |cx| {
             // Authenticate all model providers first
             cx.update(|cx| authenticate_model_provider(model_provider_id.clone(), cx))
                 .unwrap()

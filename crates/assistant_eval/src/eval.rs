@@ -83,7 +83,7 @@ impl Eval {
         model: Arc<dyn LanguageModel>,
         cx: &mut App,
     ) -> Task<Result<EvalOutput>> {
-        cx.spawn(move |mut cx: gpui::AppContext| async move {
+        cx.spawn(async move |cx| {
             checkout_repo(&self.repo_path, &self.eval_setup.base_sha).await?;
 
             let (assistant, done_rx) =
