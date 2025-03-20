@@ -420,4 +420,13 @@ impl GitRepository for FakeGitRepository {
     ) -> BoxFuture<Result<()>> {
         unimplemented!()
     }
+
+    fn compare_checkpoints(
+        &self,
+        _left: GitRepositoryCheckpoint,
+        _right: GitRepositoryCheckpoint,
+        _cx: AsyncApp,
+    ) -> BoxFuture<Result<bool>> {
+        unimplemented!()
+    }
 }

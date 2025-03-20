@@ -5,14 +5,14 @@ use collections::HashMap;
 use futures::future::BoxFuture;
 use futures::{select_biased, AsyncWriteExt, FutureExt as _};
 use git2::BranchType;
-use gpui::{AppContext, AsyncApp, SharedString};
+use gpui::{AppContext, AsyncApp, BackgroundExecutor, SharedString};
 use parking_lot::Mutex;
 use rope::Rope;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use std::borrow::Borrow;
 use std::path::Component;
-use std::process::Stdio;
+use std::process::{ExitStatus, Stdio};
 use std::sync::LazyLock;
 use std::{
     cmp::Ordering,
@@ -20,6 +20,7 @@ use std::{
     sync::Arc,
 };
 use sum_tree::MapSeekTarget;
+use thiserror::Error;
 use util::command::new_smol_command;
 use util::ResultExt;
 use uuid::Uuid;
@@ -298,6 +299,14 @@ pub trait GitRepository: Send + Sync {
         checkpoint: GitRepositoryCheckpoint,
         cx: AsyncApp,
     ) -> BoxFuture<Result<()>>;
+
+    /// Compares two checkpoints, returning true if they are equal
+    fn compare_checkpoints(
+        &self,
+        left: GitRepositoryCheckpoint,
+        right: GitRepositoryCheckpoint,
+        cx: AsyncApp,
+    ) -> BoxFuture<Result<bool>>;
 }
 
 pub enum DiffType {
@@ -1049,62 +1058,36 @@ impl GitRepository for RealGitRepository {
         let executor = cx.background_executor().clone();
         cx.background_spawn(async move {
             let working_directory = working_directory?;
-            let index_file_path = working_directory.join(".git/index.tmp");
-
-            let delete_temp_index = util::defer({
-                let index_file_path = index_file_path.clone();
-                || {
-                    executor
-                        .spawn(async move {
-                            smol::fs::remove_file(index_file_path).await.log_err();
-                        })
-                        .detach();
-                }
-            });
-
-            let run_git_command = async |args: &[&str]| {
-                let output = new_smol_command(&git_binary_path)
-                    .current_dir(&working_directory)
-                    .env("GIT_INDEX_FILE", &index_file_path)
-                    .envs(checkpoint_author_envs())
-                    .args(args)
-                    .output()
-                    .await?;
-                if output.status.success() {
-                    anyhow::Ok(String::from_utf8(output.stdout)?.trim_end().to_string())
+            let mut git = GitBinary::new(git_binary_path, working_directory, executor)
+                .envs(checkpoint_author_envs());
+            git.with_temp_index(async |git| {
+                let head_sha = git.run(&["rev-parse", "HEAD"]).await.ok();
+                git.run(&["add", "--all"]).await?;
+                let tree = git.run(&["write-tree"]).await?;
+                let checkpoint_sha = if let Some(head_sha) = head_sha.as_deref() {
+                    git.run(&["commit-tree", &tree, "-p", head_sha, "-m", "Checkpoint"])
+                        .await?
                 } else {
-                    let error = String::from_utf8_lossy(&output.stderr);
-                    Err(anyhow!("Git command failed: {:?}", error))
-                }
-            };
+                    git.run(&["commit-tree", &tree, "-m", "Checkpoint"]).await?
+                };
+                let ref_name = Uuid::new_v4().to_string();
+                git.run(&[
+                    "update-ref",
+                    &format!("refs/zed/{ref_name}"),
+                    &checkpoint_sha,
+                ])
+                .await?;
 
-            let head_sha = run_git_command(&["rev-parse", "HEAD"]).await.ok();
-            run_git_command(&["add", "--all"]).await?;
-            let tree = run_git_command(&["write-tree"]).await?;
-            let checkpoint_sha = if let Some(head_sha) = head_sha.as_deref() {
-                run_git_command(&["commit-tree", &tree, "-p", head_sha, "-m", "Checkpoint"]).await?
-            } else {
-                run_git_command(&["commit-tree", &tree, "-m", "Checkpoint"]).await?
-            };
-            let ref_name = Uuid::new_v4().to_string();
-            run_git_command(&[
-                "update-ref",
-                &format!("refs/zed/{ref_name}"),
-                &checkpoint_sha,
-            ])
-            .await?;
-
-            smol::fs::remove_file(index_file_path).await.ok();
-            delete_temp_index.abort();
-
-            Ok(GitRepositoryCheckpoint {
-                head_sha: if let Some(head_sha) = head_sha {
-                    Some(head_sha.parse()?)
-                } else {
-                    None
-                },
-                sha: checkpoint_sha.parse()?,
+                Ok(GitRepositoryCheckpoint {
+                    head_sha: if let Some(head_sha) = head_sha {
+                        Some(head_sha.parse()?)
+                    } else {
+                        None
+                    },
+                    sha: checkpoint_sha.parse()?,
+                })
             })
+            .await
         })
         .boxed()
     }
@@ -1116,50 +1099,161 @@ impl GitRepository for RealGitRepository {
     ) -> BoxFuture<Result<()>> {
         let working_directory = self.working_directory();
         let git_binary_path = self.git_binary_path.clone();
+
+        let executor = cx.background_executor().clone();
         cx.background_spawn(async move {
             let working_directory = working_directory?;
-            let index_file_path = working_directory.join(".git/index.tmp");
 
-            let run_git_command = async |args: &[&str], use_temp_index: bool| {
-                let mut command = new_smol_command(&git_binary_path);
-                command.current_dir(&working_directory);
-                command.args(args);
-                if use_temp_index {
-                    command.env("GIT_INDEX_FILE", &index_file_path);
-                }
-                let output = command.output().await?;
-                if output.status.success() {
-                    anyhow::Ok(String::from_utf8(output.stdout)?.trim_end().to_string())
-                } else {
-                    let error = String::from_utf8_lossy(&output.stderr);
-                    Err(anyhow!("Git command failed: {:?}", error))
-                }
-            };
-
-            run_git_command(
-                &[
-                    "restore",
-                    "--source",
-                    &checkpoint.sha.to_string(),
-                    "--worktree",
-                    ".",
-                ],
-                false,
-            )
+            let mut git = GitBinary::new(git_binary_path, working_directory, executor);
+            git.run(&[
+                "restore",
+                "--source",
+                &checkpoint.sha.to_string(),
+                "--worktree",
+                ".",
+            ])
             .await?;
-            run_git_command(&["read-tree", &checkpoint.sha.to_string()], true).await?;
-            run_git_command(&["clean", "-d", "--force"], true).await?;
+
+            git.with_temp_index(async move |git| {
+                git.run(&["read-tree", &checkpoint.sha.to_string()]).await?;
+                git.run(&["clean", "-d", "--force"]).await
+            })
+            .await?;
 
             if let Some(head_sha) = checkpoint.head_sha {
-                run_git_command(&["reset", "--mixed", &head_sha.to_string()], false).await?;
+                git.run(&["reset", "--mixed", &head_sha.to_string()])
+                    .await?;
             } else {
-                run_git_command(&["update-ref", "-d", "HEAD"], false).await?;
+                git.run(&["update-ref", "-d", "HEAD"]).await?;
             }
 
             Ok(())
         })
         .boxed()
     }
+
+    fn compare_checkpoints(
+        &self,
+        left: GitRepositoryCheckpoint,
+        right: GitRepositoryCheckpoint,
+        cx: AsyncApp,
+    ) -> BoxFuture<Result<bool>> {
+        let working_directory = self.working_directory();
+        let git_binary_path = self.git_binary_path.clone();
+
+        let executor = cx.background_executor().clone();
+        cx.background_spawn(async move {
+            let working_directory = working_directory?;
+            let git = GitBinary::new(git_binary_path, working_directory, executor);
+            let result = git
+                .run(&[
+                    "diff-tree",
+                    "--quiet",
+                    &left.sha.to_string(),
+                    &right.sha.to_string(),
+                ])
+                .await;
+            match result {
+                Ok(_) => Ok(true),
+                Err(error) => {
+                    if let Some(GitBinaryCommandError { status, .. }) =
+                        error.downcast_ref::<GitBinaryCommandError>()
+                    {
+                        if status.code() == Some(1) {
+                            return Ok(false);
+                        }
+                    }
+
+                    Err(error)
+                }
+            }
+        })
+        .boxed()
+    }
+}
+
+struct GitBinary {
+    git_binary_path: PathBuf,
+    working_directory: PathBuf,
+    executor: BackgroundExecutor,
+    index_file_path: Option<PathBuf>,
+    envs: HashMap<String, String>,
+}
+
+impl GitBinary {
+    fn new(
+        git_binary_path: PathBuf,
+        working_directory: PathBuf,
+        executor: BackgroundExecutor,
+    ) -> Self {
+        Self {
+            git_binary_path,
+            working_directory,
+            executor,
+            index_file_path: None,
+            envs: HashMap::default(),
+        }
+    }
+
+    fn envs(mut self, envs: HashMap<String, String>) -> Self {
+        self.envs = envs;
+        self
+    }
+
+    pub async fn with_temp_index<R>(
+        &mut self,
+        f: impl AsyncFnOnce(&Self) -> Result<R>,
+    ) -> Result<R> {
+        let index_file_path = self.working_directory.join(".git/index.tmp");
+
+        let delete_temp_index = util::defer({
+            let index_file_path = index_file_path.clone();
+            let executor = self.executor.clone();
+            move || {
+                executor
+                    .spawn(async move {
+                        smol::fs::remove_file(index_file_path).await.log_err();
+                    })
+                    .detach();
+            }
+        });
+
+        self.index_file_path = Some(index_file_path.clone());
+        let result = f(self).await;
+        self.index_file_path = None;
+        let result = result?;
+
+        smol::fs::remove_file(index_file_path).await.ok();
+        delete_temp_index.abort();
+
+        Ok(result)
+    }
+
+    pub async fn run(&self, args: &[&str]) -> Result<String> {
+        let mut command = new_smol_command(&self.git_binary_path);
+        command.current_dir(&self.working_directory);
+        command.args(args);
+        if let Some(index_file_path) = self.index_file_path.as_ref() {
+            command.env("GIT_INDEX_FILE", index_file_path);
+        }
+        command.envs(&self.envs);
+        let output = command.output().await?;
+        if output.status.success() {
+            anyhow::Ok(String::from_utf8(output.stdout)?.trim_end().to_string())
+        } else {
+            Err(anyhow!(GitBinaryCommandError {
+                stdout: String::from_utf8_lossy(&output.stdout).to_string(),
+                status: output.status,
+            }))
+        }
+    }
+}
+
+#[derive(Error, Debug)]
+#[error("Git command failed: {stdout}")]
+struct GitBinaryCommandError {
+    stdout: String,
+    status: ExitStatus,
 }
 
 async fn run_remote_command(
