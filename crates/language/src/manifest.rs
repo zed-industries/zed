@@ -4,7 +4,7 @@ use gpui::SharedString;
 
 use crate::LspAdapterDelegate;
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct ManifestName(SharedString);
 
 impl From<SharedString> for ManifestName {

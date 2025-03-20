@@ -8,6 +8,7 @@
 //! ask about suitable language server for each path it interacts with; it can resolve most of the queries locally.
 
 use std::{
+    borrow::Borrow,
     collections::{BTreeMap, BTreeSet},
     path::Path,
     sync::{Arc, Weak},
@@ -17,8 +18,8 @@ use collections::{HashMap, IndexMap};
 use gpui::{App, AppContext as _, Entity, Subscription};
 use itertools::Itertools;
 use language::{
-    language_settings::AllLanguageSettings, Attach, LanguageName, LanguageRegistry,
-    LspAdapterDelegate,
+    language_settings::AllLanguageSettings, Attach, CachedLspAdapter, LanguageName,
+    LanguageRegistry, LspAdapterDelegate,
 };
 use lsp::LanguageServerName;
 use settings::{Settings, SettingsLocation, WorktreeId};
@@ -26,7 +27,7 @@ use std::sync::OnceLock;
 
 use crate::{project_settings::LspSettings, LanguageServerId, ProjectPath};
 
-use super::{AdapterWrapper, ManifestTree, ManifestTreeEvent};
+use super::{ManifestTree, ManifestTreeEvent};
 
 #[derive(Debug, Default)]
 struct ServersForWorktree {
@@ -187,13 +188,27 @@ impl LanguageServerTree {
     ) -> impl Iterator<Item = LanguageServerTreeNode> + 'a {
         let worktree_id = path.worktree_id;
         #[allow(clippy::mutable_key_type)]
+        let mut adapter_to_manifest_name = IndexMap::default();
+        let mut nodes = IndexMap::new();
+        for adapter in adapters.keys() {
+            if let Some(manifest_name) = adapter.0.manifest_name() {
+                adapter_to_manifest_name
+                    .entry(manifest_name)
+                    .or_insert_with(Vec::default)
+                    .push(adapter.clone());
+            } else {
+            }
+        }
+
+        for (adapter, manifest_name) in &adapter_to_manifest_name {
+            if manifest_name.is_none() {}
+        }
         let mut roots = self.manifest_tree.update(cx, |this, cx| {
             this.root_for_path(
                 path,
-                adapters
-                    .iter()
-                    .map(|(adapter, _)| adapter.0.clone())
-                    .collect(),
+                &mut adapter_to_manifest_name
+                    .values()
+                    .map(|(adapter, _)| adapter.0.manifest_name()),
                 delegate,
                 cx,
             )
@@ -432,5 +447,39 @@ impl<'tree> ServerTreeRebase<'tree> {
             .into_iter()
             .filter(|(id, _)| !self.rebased_server_ids.contains(id))
             .collect()
+    }
+}
+
+#[derive(Debug, Clone)]
+struct AdapterWrapper(Arc<CachedLspAdapter>);
+impl PartialEq for AdapterWrapper {
+    fn eq(&self, other: &Self) -> bool {
+        self.0.name.eq(&other.0.name)
+    }
+}
+
+impl Eq for AdapterWrapper {}
+
+impl std::hash::Hash for AdapterWrapper {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.0.name.hash(state);
+    }
+}
+
+impl PartialOrd for AdapterWrapper {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.0.name.cmp(&other.0.name))
+    }
+}
+
+impl Ord for AdapterWrapper {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.0.name.cmp(&other.0.name)
+    }
+}
+
+impl Borrow<LanguageServerName> for AdapterWrapper {
+    fn borrow(&self) -> &LanguageServerName {
+        &self.0.name
     }
 }

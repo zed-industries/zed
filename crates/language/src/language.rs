@@ -34,6 +34,7 @@ pub use highlight_map::HighlightMap;
 use http_client::HttpClient;
 pub use language_registry::{LanguageName, LoadedLanguage};
 use lsp::{CodeActionKind, InitializeParams, LanguageServerBinary, LanguageServerBinaryOptions};
+pub use manifest::{ManifestName, ManifestQuery, ManifestSearcher};
 use parking_lot::Mutex;
 use regex::Regex;
 use schemars::{
@@ -262,7 +263,7 @@ impl CachedLspAdapter {
             .cloned()
             .unwrap_or_else(|| language_name.lsp_id())
     }
-    pub fn manifest_name(&self) -> Option<SharedString> {
+    pub fn manifest_name(&self) -> Option<ManifestName> {
         self.adapter.manifest_name()
     }
     pub fn attach_kind(&self) -> Attach {
@@ -537,10 +538,12 @@ pub trait LspAdapter: 'static + Send + Sync {
     fn prepare_initialize_params(&self, original: InitializeParams) -> Result<InitializeParams> {
         Ok(original)
     }
+
     fn attach_kind(&self) -> Attach {
         Attach::Shared
     }
-    fn manifest_name(&self) -> Option<SharedString> {
+
+    fn manifest_name(&self) -> Option<ManifestName> {
         None
     }
 
