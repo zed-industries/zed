@@ -626,8 +626,6 @@ impl ContextProvider for RustContextProvider {
                     RUST_PACKAGE_TASK_VARIABLE.template_value(),
                     RUST_TEST_NAME_TASK_VARIABLE.template_value(),
                     "--no-run".into(),
-                    "--".into(),
-                    "--nocapture".into(),
                 ],
                 tags: vec!["rust-test".to_owned()],
                 cwd: Some("$ZED_DIRNAME".to_owned()),

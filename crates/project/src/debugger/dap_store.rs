@@ -336,6 +336,7 @@ impl DapStore {
 
         let mut child = Command::new(command)
             .args(args)
+            .arg("--message-format=json")
             .current_dir(cwd)
             .stdout(Stdio::piped())
             .spawn()?;
@@ -402,6 +403,7 @@ impl DapStore {
                 .await?
                 {
                     config.program = Some(executable);
+                    config.args.clear();
                 }
             }
 
