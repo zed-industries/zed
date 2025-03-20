@@ -460,6 +460,7 @@ pub(crate) struct Quad {
     pub content_mask: ContentMask<ScaledPixels>,
     pub background: Background,
     pub border_color: Hsla,
+    pub border_style: BorderStyle,
     pub corner_radii: Corners<ScaledPixels>,
     pub border_widths: Edges<ScaledPixels>,
 }
@@ -503,6 +504,17 @@ impl From<Shadow> for Primitive {
     fn from(shadow: Shadow) -> Self {
         Primitive::Shadow(shadow)
     }
+}
+
+/// The style of a border.
+#[derive(Default, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[repr(C)]
+pub enum BorderStyle {
+    /// A solid border.
+    #[default]
+    Solid = 0,
+    /// A dashed border.
+    Dashed = 1,
 }
 
 /// A data type representing a 2 dimensional transformation that can be applied to an element.
