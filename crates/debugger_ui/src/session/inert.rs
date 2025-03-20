@@ -32,6 +32,15 @@ impl SpawnMode {
     }
 }
 
+impl From<DebugRequestType> for SpawnMode {
+    fn from(request: DebugRequestType) -> Self {
+        match request {
+            DebugRequestType::Launch => SpawnMode::Launch,
+            DebugRequestType::Attach(_) => SpawnMode::Attach,
+        }
+    }
+}
+
 pub(crate) struct InertState {
     focus_handle: FocusHandle,
     selected_debugger: Option<SharedString>,
@@ -46,27 +55,56 @@ impl InertState {
     pub(super) fn new(
         workspace: WeakEntity<Workspace>,
         default_cwd: &str,
+        debug_config: Option<DebugAdapterConfig>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
+        let selected_debugger = debug_config.as_ref().and_then(|config| match config.kind {
+            DebugAdapterKind::Lldb => Some("LLDB".into()),
+            DebugAdapterKind::Go(_) => Some("Delve".into()),
+            DebugAdapterKind::Php(_) => Some("PHP".into()),
+            DebugAdapterKind::Javascript(_) => Some("JavaScript".into()),
+            DebugAdapterKind::Python(_) => Some("Debugpy".into()),
+            _ => None,
+        });
+
+        let spawn_mode = debug_config
+            .as_ref()
+            .map(|config| config.request.clone().into())
+            .unwrap_or_default();
+
+        let program = debug_config
+            .as_ref()
+            .and_then(|config| config.program.to_owned());
+
         let program_editor = cx.new(|cx| {
             let mut editor = Editor::single_line(window, cx);
-            editor.set_placeholder_text("Program path", cx);
+            if let Some(program) = program {
+                editor.insert(&program, window, cx);
+            } else {
+                editor.set_placeholder_text("Program path", cx);
+            }
             editor
         });
+
+        let cwd = debug_config
+            .and_then(|config| config.cwd.map(|cwd| cwd.to_owned()))
+            .unwrap_or_else(|| PathBuf::from(default_cwd));
+
         let cwd_editor = cx.new(|cx| {
             let mut editor = Editor::single_line(window, cx);
-            editor.insert(default_cwd, window, cx);
+            editor.insert(cwd.to_str().unwrap_or_else(|| default_cwd), window, cx);
             editor.set_placeholder_text("Working directory", cx);
             editor
         });
+
         Self {
             workspace,
             cwd_editor,
             program_editor,
-            selected_debugger: None,
+            selected_debugger,
+            spawn_mode,
             focus_handle: cx.focus_handle(),
-            spawn_mode: SpawnMode::default(),
             popover_handle: Default::default(),
         }
     }
