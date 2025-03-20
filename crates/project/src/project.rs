@@ -865,7 +865,6 @@ impl Project {
 
             let task_store = cx.new(|cx| {
                 TaskStore::local(
-                    fs.clone(),
                     buffer_store.downgrade(),
                     worktree_store.clone(),
                     toolchain_store.read(cx).as_language_toolchain_store(),
@@ -997,7 +996,6 @@ impl Project {
                 .new(|cx| ToolchainStore::remote(SSH_PROJECT_ID, ssh.read(cx).proto_client(), cx));
             let task_store = cx.new(|cx| {
                 TaskStore::remote(
-                    fs.clone(),
                     buffer_store.downgrade(),
                     worktree_store.clone(),
                     toolchain_store.read(cx).as_language_toolchain_store(),
@@ -1008,7 +1006,12 @@ impl Project {
             });
 
             let settings_observer = cx.new(|cx| {
-                SettingsObserver::new_remote(worktree_store.clone(), task_store.clone(), cx)
+                SettingsObserver::new_remote(
+                    fs.clone(),
+                    worktree_store.clone(),
+                    task_store.clone(),
+                    cx,
+                )
             });
             cx.subscribe(&settings_observer, Self::on_settings_observer_event)
                 .detach();
@@ -1244,7 +1247,6 @@ impl Project {
         let task_store = cx.new(|cx| {
             if run_tasks {
                 TaskStore::remote(
-                    fs.clone(),
                     buffer_store.downgrade(),
                     worktree_store.clone(),
                     Arc::new(EmptyToolchainStore),
@@ -1258,7 +1260,7 @@ impl Project {
         })?;
 
         let settings_observer = cx.new(|cx| {
-            SettingsObserver::new_remote(worktree_store.clone(), task_store.clone(), cx)
+            SettingsObserver::new_remote(fs.clone(), worktree_store.clone(), task_store.clone(), cx)
         })?;
 
         let git_store = cx.new(|cx| {
@@ -2720,15 +2722,27 @@ impl Project {
         match event {
             SettingsObserverEvent::LocalSettingsUpdated(result) => match result {
                 Err(InvalidSettingsError::LocalSettings { message, path }) => {
-                    let message =
-                        format!("Failed to set local settings in {:?}:\n{}", path, message);
+                    let message = format!("Failed to set local settings in {path:?}:\n{message}");
                     cx.emit(Event::Toast {
-                        notification_id: "local-settings".into(),
+                        notification_id: format!("local-settings-{path:?}").into(),
                         message,
                     });
                 }
-                Ok(_) => cx.emit(Event::HideToast {
-                    notification_id: "local-settings".into(),
+                Ok(path) => cx.emit(Event::HideToast {
+                    notification_id: format!("local-settings-{path:?}").into(),
+                }),
+                Err(_) => {}
+            },
+            SettingsObserverEvent::LocalTasksUpdated(result) => match result {
+                Err(InvalidSettingsError::Tasks { message, path }) => {
+                    let message = format!("Failed to set local tasks in {path:?}:\n{message}");
+                    cx.emit(Event::Toast {
+                        notification_id: format!("local-tasks-{path:?}").into(),
+                        message,
+                    });
+                }
+                Ok(path) => cx.emit(Event::HideToast {
+                    notification_id: format!("local-tasks-{path:?}").into(),
                 }),
                 Err(_) => {}
             },
