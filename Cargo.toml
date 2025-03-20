@@ -131,6 +131,7 @@ members = [
     "crates/session",
     "crates/settings",
     "crates/settings_ui",
+    "crates/shell_parser",
     "crates/snippet",
     "crates/snippet_provider",
     "crates/snippets_ui",
