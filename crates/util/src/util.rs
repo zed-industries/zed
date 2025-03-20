@@ -510,7 +510,7 @@ pub fn retrieve_system_shell() -> String {
             .or_else(|| find_pwsh_in_programfiles(false, true))
             .or_else(|| find_pwsh_in_msix(true))
             .or_else(|| find_pwsh_in_programfiles(true, true))
-            .or_else(|| find_pwsh_in_scoop())
+            .or_else(find_pwsh_in_scoop)
             .map(|p| p.to_string_lossy().to_string())
             .unwrap_or("powershell.exe".to_string())
     });
