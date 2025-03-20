@@ -1,10 +1,10 @@
 CREATE TABLE "project_repositories" (
     "project_id" INTEGER NOT NULL,
     "abs_path" VARCHAR,
-    "id" INTEGER NOT NULL,
+    "id" INT8 NOT NULL,
     "entry_ids" VARCHAR,
     "branch" VARCHAR,
-    "scan_id" INTEGER NOT NULL,
+    "scan_id" INT8 NOT NULL,
     "is_deleted" BOOL NOT NULL,
     "current_merge_conflicts" VARCHAR,
     "branch_summary" VARCHAR,
@@ -15,7 +15,7 @@ CREATE INDEX "index_project_repositories_on_project_id" ON "project_repositories
 
 CREATE TABLE "project_repository_statuses" (
     "project_id" INTEGER NOT NULL,
-    "repository_id" INTEGER NOT NULL,
+    "repository_id" INT8 NOT NULL,
     "repo_path" VARCHAR NOT NULL,
     "status" INT8 NOT NULL,
     "status_kind" INT4 NOT NULL,
