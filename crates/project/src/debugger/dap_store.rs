@@ -770,7 +770,7 @@ impl DapStore {
             return Task::ready(Err(anyhow!("Could not find session: {:?}", session_id)));
         };
 
-        let shutdown_childs = session
+        let shutdown_children = session
             .read(cx)
             .child_session_ids()
             .iter()
@@ -800,8 +800,8 @@ impl DapStore {
         let shutdown_task = session.update(cx, |this, cx| this.shutdown(cx));
 
         cx.background_spawn(async move {
-            if shutdown_childs.len() > 0 {
-                let _ = join_all(shutdown_childs).await;
+            if shutdown_children.len() > 0 {
+                let _ = join_all(shutdown_children).await;
             }
 
             shutdown_task.await;
