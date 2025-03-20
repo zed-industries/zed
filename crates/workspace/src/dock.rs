@@ -53,6 +53,9 @@ pub trait Panel: Focusable + EventEmitter<PanelEvent> + Render + Sized {
         None
     }
     fn activation_priority(&self) -> u32;
+    fn activatable(&self, _cx: &App) -> bool {
+        true
+    }
 }
 
 pub trait PanelHandle: Send + Sync {
@@ -75,6 +78,7 @@ pub trait PanelHandle: Send + Sync {
     fn panel_focus_handle(&self, cx: &App) -> FocusHandle;
     fn to_any(&self) -> AnyView;
     fn activation_priority(&self, cx: &App) -> u32;
+    fn activatable(&self, cx: &App) -> bool;
     fn move_to_next_position(&self, window: &mut Window, cx: &mut App) {
         let current_position = self.position(window, cx);
         let next_position = [
@@ -170,6 +174,10 @@ where
 
     fn activation_priority(&self, cx: &App) -> u32 {
         self.read(cx).activation_priority()
+    }
+
+    fn activatable(&self, cx: &App) -> bool {
+        self.read(cx).activatable(cx)
     }
 }
 
@@ -349,6 +357,20 @@ impl Dock {
         self.panel_entries
             .iter()
             .position(|entry| entry.panel.remote_id() == Some(panel_id))
+    }
+
+    pub fn activate_first_activatable_panel(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(panel_ix) = self
+            .panel_entries
+            .iter()
+            .position(|entry| entry.panel.activatable(cx))
+        {
+            self.activate_panel(panel_ix, window, cx);
+        }
     }
 
     fn active_panel_entry(&self) -> Option<&PanelEntry> {

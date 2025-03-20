@@ -1317,6 +1317,10 @@ impl Panel for AssistantPanel {
     fn activation_priority(&self) -> u32 {
         4
     }
+
+    fn activatable(&self, cx: &App) -> bool {
+        AssistantSettings::get_global(cx).enabled
+    }
 }
 
 impl EventEmitter<PanelEvent> for AssistantPanel {}
