@@ -1,6 +1,6 @@
 mod edit_action;
 pub mod log;
-mod replace;
+pub(crate) mod replace;
 
 use anyhow::{anyhow, Context, Result};
 use assistant_tool::{ActionLog, Tool};

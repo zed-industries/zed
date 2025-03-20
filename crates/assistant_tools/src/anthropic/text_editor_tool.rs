@@ -1,10 +1,11 @@
 use std::path::Path;
 use std::sync::Arc;
 
+use crate::edit_files_tool::replace::replace_exact;
 use anyhow::{anyhow, Result};
 use assistant_tool::{ActionLog, Tool, ToolSource};
 use collections::HashSet;
-use gpui::{App, Entity, Task};
+use gpui::{App, AppContext, Entity, Task};
 use language::Point;
 use language_model::LanguageModelRequestMessage;
 use project::Project;
@@ -165,37 +166,46 @@ impl Tool for TextEditorTool {
                     })?
                 }
                 TextEditorToolInput::StrReplace {
-                    path,
-                    old_str,
-                    new_str,
+                    old_str, new_str, ..
                 } => {
-                    // TODO: Implement replace functionality
-                    format!(
-                        "Replace command not yet implemented for path: {}",
-                        path.display()
-                    )
+                    let snapshot = buffer.read_with(cx, |buffer, _cx| buffer.snapshot())?;
+
+                    // todo! anthropic requires that we fail if >1 match is found
+                    let diff_result = cx
+                        .background_spawn(async move {
+                            replace_exact(&old_str, &new_str, &snapshot).await
+                        })
+                        .await;
+
+                    // todo! look at reference implementation to see what's the best response
+                    match diff_result {
+                        Some(diff) => {
+                            buffer.update(cx, |buffer, cx| buffer.apply_diff(diff, cx))?;
+
+                            "Replaced!".to_string()
+                        }
+                        None => return Err(anyhow!("Failed to match `old_str`")),
+                    }
                 }
                 TextEditorToolInput::Create { path, file_text } => {
                     buffer.update(cx, |buffer, cx| buffer.set_text(file_text, cx))?;
                     format!("Created `{}`", path.display())
                 }
                 TextEditorToolInput::Insert {
-                    path,
-                    insert_line,
-                    new_str,
+                    insert_line: _,
+                    new_str: _,
+                    ..
                 } => {
-                    // TODO: Implement insert functionality
-                    format!(
-                        "Insert command not yet implemented for path: {}",
-                        path.display()
-                    )
+                    // todo!
+                    return Err(anyhow!(format!(
+                        "Insert command not available. Use str_replace to insert."
+                    )));
                 }
-                TextEditorToolInput::UndoEdit { path } => {
-                    // TODO: Implement undo functionality
-                    format!(
-                        "Undo command not yet implemented for path: {}",
-                        path.display()
-                    )
+                TextEditorToolInput::UndoEdit { .. } => {
+                    // todo!
+                    return Err(anyhow!(format!(
+                        "Undo command not available. Use str_replace to undo."
+                    )));
                 }
             };
 
