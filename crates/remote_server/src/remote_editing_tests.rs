@@ -1318,7 +1318,7 @@ async fn test_remote_git_diffs(cx: &mut TestAppContext, server_cx: &mut TestAppC
 async fn test_remote_git_branches(cx: &mut TestAppContext, server_cx: &mut TestAppContext) {
     let fs = FakeFs::new(server_cx.executor());
     fs.insert_tree(
-        "/code",
+        path!("/code"),
         json!({
             "project1": {
                 ".git": {},
@@ -1334,11 +1334,11 @@ async fn test_remote_git_branches(cx: &mut TestAppContext, server_cx: &mut TestA
         .iter()
         .map(ToString::to_string)
         .collect::<HashSet<_>>();
-    fs.insert_branches(Path::new("/code/project1/.git"), &branches);
+    fs.insert_branches(Path::new(path!("/code/project1/.git")), &branches);
 
     let (worktree, _) = project
         .update(cx, |project, cx| {
-            project.find_or_create_worktree("/code/project1", true, cx)
+            project.find_or_create_worktree(path!("/code/project1"), true, cx)
         })
         .await
         .unwrap();

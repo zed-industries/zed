@@ -18,6 +18,7 @@ use parking_lot::Mutex;
 use postage::stream::Stream;
 use pretty_assertions::assert_eq;
 use rand::prelude::*;
+use rpc::proto::WorktreeRelatedMessage;
 use serde_json::json;
 use settings::{Settings, SettingsStore};
 use std::{
@@ -1748,7 +1749,12 @@ async fn test_random_worktree_operations_during_initial_scan(
     for (i, snapshot) in snapshots.into_iter().enumerate().rev() {
         let mut updated_snapshot = snapshot.clone();
         for update in updates.lock().iter() {
-            if update.scan_id >= updated_snapshot.scan_id() as u64 {
+            let scan_id = match update {
+                WorktreeRelatedMessage::UpdateWorktree(update) => update.scan_id,
+                WorktreeRelatedMessage::UpdateRepository(update) => update.scan_id,
+                WorktreeRelatedMessage::RemoveRepository(_) => u64::MAX,
+            };
+            if scan_id >= updated_snapshot.scan_id() as u64 {
                 updated_snapshot
                     .apply_remote_update(update.clone(), &settings.file_scan_inclusions)
                     .unwrap();
@@ -1885,7 +1891,12 @@ async fn test_random_worktree_changes(cx: &mut TestAppContext, mut rng: StdRng) 
 
     for (i, mut prev_snapshot) in snapshots.into_iter().enumerate().rev() {
         for update in updates.lock().iter() {
-            if update.scan_id >= prev_snapshot.scan_id() as u64 {
+            let scan_id = match update {
+                WorktreeRelatedMessage::UpdateWorktree(update) => update.scan_id,
+                WorktreeRelatedMessage::UpdateRepository(update) => update.scan_id,
+                WorktreeRelatedMessage::RemoveRepository(_) => u64::MAX,
+            };
+            if scan_id >= prev_snapshot.scan_id() as u64 {
                 prev_snapshot
                     .apply_remote_update(update.clone(), &settings.file_scan_inclusions)
                     .unwrap();
