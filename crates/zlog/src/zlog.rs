@@ -264,7 +264,7 @@ pub mod scope_map {
         hash::{DefaultHasher, Hasher},
         sync::{
             atomic::{AtomicU64, Ordering},
-            LazyLock, RwLock,
+            RwLock,
         },
     };
 
@@ -272,7 +272,6 @@ pub mod scope_map {
 
     type ScopeMap = HashMap<ScopeAlloc, log_impl::Level>;
     static SCOPE_MAP: RwLock<Option<ScopeMap>> = RwLock::new(None);
-    // LazyLock::new(|| RwLock::new(ScopeMap::default()));
     static SCOPE_MAP_HASH: AtomicU64 = AtomicU64::new(0);
 
     pub fn is_scope_enabled(scope: &Scope, level: log_impl::Level) -> (bool, log_impl::Level) {
