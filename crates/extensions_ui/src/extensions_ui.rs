@@ -612,6 +612,7 @@ impl ExtensionsPage {
             self.buttons_for_entry(extension, &status, has_dev_extension, cx);
         let version = extension.manifest.version.clone();
         let repository_url = extension.manifest.repository.clone();
+        let authors = extension.manifest.authors.clone();
 
         let installed_version = match status {
             ExtensionStatus::Installed(installed_version) => Some(installed_version),
@@ -749,6 +750,7 @@ impl ExtensionsPage {
                                     Some(Self::render_remote_extension_context_menu(
                                         &this,
                                         extension_id.clone(),
+                                        authors.clone(),
                                         window,
                                         cx,
                                     ))
@@ -761,6 +763,7 @@ impl ExtensionsPage {
     fn render_remote_extension_context_menu(
         this: &Entity<Self>,
         extension_id: Arc<str>,
+        authors: Vec<String>,
         window: &mut Window,
         cx: &mut App,
     ) -> Entity<ContextMenu> {
@@ -780,6 +783,12 @@ impl ExtensionsPage {
                     let extension_id = extension_id.clone();
                     move |_, cx| {
                         cx.write_to_clipboard(ClipboardItem::new_string(extension_id.to_string()));
+                    }
+                })
+                .entry("Copy Author Info", None, {
+                    let authors = authors.clone();
+                    move |_, cx| {
+                        cx.write_to_clipboard(ClipboardItem::new_string(authors.join(", ")));
                     }
                 })
         });
