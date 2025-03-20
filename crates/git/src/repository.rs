@@ -1075,8 +1075,7 @@ impl GitRepository for RealGitRepository {
             let tree = run_git_command(&["write-tree"]).await?;
             let commit_sha = run_git_command(&["commit-tree", &tree, "-m", "Checkpoint"]).await?;
             let ref_name = Uuid::new_v4().to_string();
-            run_git_command(&["update-ref", &format!("refs/heads/{ref_name}"), &commit_sha])
-                .await?;
+            run_git_command(&["update-ref", &format!("refs/zed/{ref_name}"), &commit_sha]).await?;
 
             smol::fs::remove_file(index_file_path).await.ok();
             delete_temp_index.abort();
@@ -1368,6 +1367,17 @@ mod tests {
             .await
             .unwrap();
         let checkpoint_sha = repo.checkpoint(cx.to_async()).await.unwrap();
+
+        // Ensure the user can't see any branches after creating a checkpoint.
+        assert_eq!(
+            repo.branches().await.unwrap(),
+            vec![Branch {
+                is_head: true,
+                name: "main".into(),
+                upstream: None,
+                most_recent_commit: None
+            }]
+        );
 
         smol::fs::write(repo_dir.path().join("foo"), "bar")
             .await
