@@ -1188,7 +1188,7 @@ impl LocalLspStore {
             // ensure no transactions created while formatting are
             // grouped with the previous transaction in the history
             // based on the transaction group interval
-            buffer.handle.update(&mut cx, |buffer, cx| {
+            buffer.handle.update(&mut cx, |buffer, _| {
                 buffer.finalize_last_transaction();
             })?;
 
