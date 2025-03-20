@@ -30,7 +30,7 @@ use crate::assistant_model_selector::AssistantModelSelector;
 use crate::context_picker::{ConfirmBehavior, ContextPicker};
 use crate::context_store::{refresh_context_store_text, ContextStore};
 use crate::context_strip::{ContextStrip, ContextStripEvent, SuggestContextKind};
-use crate::thread::{RequestKind, Thread, ThreadError};
+use crate::thread::{RequestKind, Thread};
 use crate::thread_store::ThreadStore;
 use crate::tool_selector::ToolSelector;
 use crate::{Chat, ChatMode, RemoveAllContext, ThreadEvent, ToggleContextPicker};
@@ -214,14 +214,12 @@ impl MessageEditor {
         let checkpoint = git_store.read(cx).checkpoint(cx);
         cx.spawn(async move |_, cx| {
             refresh_task.await;
-            let system_prompt_context = system_prompt_context_task.await;
+            let (system_prompt_context, load_error) = system_prompt_context_task.await;
             thread
-                .update(cx, |thread, cx| match system_prompt_context {
-                    Err(err) => {
-                        todo!()
-                    }
-                    Ok(system_prompt_context) => {
-                        thread.set_system_prompt_context(system_prompt_context)
+                .update(cx, |thread, cx| {
+                    thread.set_system_prompt_context(system_prompt_context);
+                    if let Some(load_error) = load_error {
+                        cx.emit(ThreadEvent::ShowError(load_error));
                     }
                 })
                 .ok();

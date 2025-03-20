@@ -24,7 +24,7 @@ use prompt_store::{
 };
 use scripting_tool::{ScriptingSession, ScriptingTool};
 use serde::{Deserialize, Serialize};
-use util::{post_inc, ResultExt as _, TryFutureExt as _};
+use util::{maybe, post_inc, ResultExt as _, TryFutureExt as _};
 use uuid::Uuid;
 
 use crate::context::{attach_context_to_message, ContextId, ContextSnapshot};
@@ -495,7 +495,7 @@ impl Thread {
     pub fn load_system_prompt_context(
         &self,
         cx: &App,
-    ) -> Task<Result<AssistantSystemPromptContext>> {
+    ) -> Task<(AssistantSystemPromptContext, Option<ThreadError>)> {
         let project = self.project.read(cx);
         let tasks = project
             .visible_worktrees(cx)
@@ -509,12 +509,18 @@ impl Thread {
             .collect::<Vec<_>>();
 
         cx.spawn(async |_cx| {
-            let worktrees = futures::future::join_all(tasks)
-                .await
+            let results = futures::future::join_all(tasks).await;
+            let mut first_err = None;
+            let worktrees = results
                 .into_iter()
-                .collect::<Result<_>>()?;
-
-            Ok(AssistantSystemPromptContext::new(worktrees))
+                .map(|(worktree, err)| {
+                    if first_err.is_none() && err.is_some() {
+                        first_err = err;
+                    }
+                    worktree
+                })
+                .collect::<Vec<_>>();
+            (AssistantSystemPromptContext::new(worktrees), first_err)
         })
     }
 
@@ -522,7 +528,7 @@ impl Thread {
         fs: Arc<dyn Fs>,
         worktree: &Worktree,
         cx: &App,
-    ) -> Task<Result<WorktreeInfoForSystemPrompt>> {
+    ) -> Task<(WorktreeInfoForSystemPrompt, Option<ThreadError>)> {
         let root_name = worktree.root_name().into();
         let abs_path = worktree.abs_path();
 
@@ -535,7 +541,7 @@ impl Thread {
             ".clinerules",
             "claude.md",
         ];
-        if let Some((rel_rules_path, abs_rules_path)) = RULES_FILE_NAMES
+        let selected_rules_file = RULES_FILE_NAMES
             .into_iter()
             .filter_map(|name| {
                 worktree
@@ -543,29 +549,48 @@ impl Thread {
                     .filter(|entry| entry.is_file())
                     .map(|entry| (entry.path.clone(), worktree.absolutize(&entry.path)))
             })
-            .next()
-        {
+            .next();
+
+        if let Some((rel_rules_path, abs_rules_path)) = selected_rules_file {
             cx.spawn(async move |_| {
-                let abs_rules_path = abs_rules_path?;
-                let text = fs.load(&abs_rules_path).await.with_context(|| {
-                    format!("failed to load assistant rules file {:?}", abs_rules_path)
-                })?;
-                Ok(WorktreeInfoForSystemPrompt {
-                    root_name,
-                    abs_path,
-                    rules_file: Some(RulesFile {
+                let rules_file_result = maybe!(async move {
+                    let abs_rules_path = abs_rules_path?;
+                    let text = fs.load(&abs_rules_path).await.with_context(|| {
+                        format!("Failed to load assistant rules file {:?}", abs_rules_path)
+                    })?;
+                    anyhow::Ok(RulesFile {
                         rel_path: rel_rules_path,
                         abs_path: abs_rules_path.into(),
                         text: text.trim().to_string(),
-                    }),
+                    })
                 })
+                .await;
+                let (rules_file, rules_file_error) = match rules_file_result {
+                    Ok(rules_file) => (Some(rules_file), None),
+                    Err(err) => (
+                        None,
+                        Some(ThreadError::Message {
+                            header: "Error loading rules file".into(),
+                            message: format!("{err}").into(),
+                        }),
+                    ),
+                };
+                let worktree_info = WorktreeInfoForSystemPrompt {
+                    root_name,
+                    abs_path,
+                    rules_file,
+                };
+                (worktree_info, rules_file_error)
             })
         } else {
-            Task::ready(Ok(WorktreeInfoForSystemPrompt {
-                root_name,
-                abs_path,
-                rules_file: None,
-            }))
+            Task::ready((
+                WorktreeInfoForSystemPrompt {
+                    root_name,
+                    abs_path,
+                    rules_file: None,
+                },
+                None,
+            ))
         }
     }
 
