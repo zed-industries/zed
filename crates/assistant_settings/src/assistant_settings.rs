@@ -71,7 +71,7 @@ pub struct AssistantSettings {
     pub inline_alternatives: Vec<LanguageModelSelection>,
     pub using_outdated_settings_version: bool,
     pub enable_experimental_live_diffs: bool,
-    pub profiles: Vec<AgentProfile>,
+    pub profiles: HashMap<Arc<str>, AgentProfile>,
 }
 
 impl AssistantSettings {
@@ -362,7 +362,7 @@ pub struct AssistantSettingsContentV2 {
     /// Default: false
     enable_experimental_live_diffs: Option<bool>,
     #[schemars(skip)]
-    profiles: Option<Vec<AgentProfileContent>>,
+    profiles: Option<HashMap<Arc<str>, AgentProfileContent>>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
@@ -504,10 +504,15 @@ impl Settings for AssistantSettings {
                 value.profiles.map(|profiles| {
                     profiles
                         .into_iter()
-                        .map(|profile| AgentProfile {
-                            name: profile.name.into(),
-                            tools: profile.tools,
-                            context_servers: HashMap::default(),
+                        .map(|(id, profile)| {
+                            (
+                                id,
+                                AgentProfile {
+                                    name: profile.name.into(),
+                                    tools: profile.tools,
+                                    context_servers: HashMap::default(),
+                                },
+                            )
                         })
                         .collect()
                 }),

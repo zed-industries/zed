@@ -2,13 +2,14 @@ use std::sync::Arc;
 
 use assistant_settings::{AgentProfile, AssistantSettings};
 use assistant_tool::{ToolSource, ToolWorkingSet};
+use collections::HashMap;
 use gpui::Entity;
 use scripting_tool::ScriptingTool;
 use settings::Settings as _;
 use ui::{prelude::*, ContextMenu, PopoverMenu, Tooltip};
 
 pub struct ToolSelector {
-    profiles: Vec<AgentProfile>,
+    profiles: HashMap<Arc<str>, AgentProfile>,
     tools: Arc<ToolWorkingSet>,
 }
 
@@ -18,19 +19,13 @@ impl ToolSelector {
         let mut profiles = settings.profiles.clone();
 
         let read_only = AgentProfile::read_only();
-        if !profiles
-            .iter()
-            .any(|profile| profile.name == read_only.name)
-        {
-            profiles.insert(0, read_only);
+        if !profiles.contains_key(read_only.name.as_ref()) {
+            profiles.insert(read_only.name.clone().into(), read_only);
         }
 
         let code_writer = AgentProfile::code_writer();
-        if !profiles
-            .iter()
-            .any(|profile| profile.name == code_writer.name)
-        {
-            profiles.insert(0, code_writer);
+        if !profiles.contains_key(code_writer.name.as_ref()) {
+            profiles.insert(code_writer.name.clone().into(), code_writer);
         }
 
         Self { profiles, tools }
@@ -47,7 +42,7 @@ impl ToolSelector {
             let icon_position = IconPosition::End;
 
             menu = menu.header("Profiles");
-            for profile in profiles.clone() {
+            for (_id, profile) in profiles.clone() {
                 menu = menu.toggleable_entry(profile.name.clone(), false, icon_position, None, {
                     let tools = tool_set.clone();
                     move |_window, cx| {
