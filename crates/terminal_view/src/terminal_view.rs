@@ -1112,9 +1112,18 @@ fn possible_open_target(
         })
         .collect_vec();
 
+    // TODO(davewa): Currently if we hard code the main thread worktree search to use
+    // `simple_variants(PathHyperlinkNavigation::Default)`, It prevents custom regexes
+    // which might find a better match (with a position) in the backhground from even
+    // running because any worktree match found here will be returned immediately.
+    // There are few ways to improve the situation. For now, we use
+    // `simple_variants(path_hyperlink_navigation)` so that users who want this behavior
+    // (which runs all regexes on the main thread) can opt-in by setting
+    // `terminal.path_hyperlink_navigation` to "advanced" or higher.
+
     // Outer loops should be maybe path variants and variations so that we stop as soon as
     // a match is found. Variants and variations are ordered by most common to least common.
-    for maybe_path_variant in maybe_path.simple_variants(PathHyperlinkNavigation::Default) {
+    for maybe_path_variant in maybe_path.simple_variants(path_hyperlink_navigation) {
         for worktree in &worktree_candidates {
             // The only work we can not do in the background is read the worktrees, if any.
             // When we get a hit here, just return it and skip any further processing.

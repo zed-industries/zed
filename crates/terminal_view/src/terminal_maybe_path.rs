@@ -115,16 +115,7 @@ impl MaybePath {
         [MaybePathVariant::new(
             &self.line,
             self.word_range.clone(),
-            // TODO(davewa): We (currently) don't include self.path_hyperlink_regexes
-            // here because we don't want to let user settings tank perforamce on the
-            // main thread. But, the experience will be worse, (no hyperlink on remote
-            // workspaces, delayed hyperlink on local workspaces. Also it is a pathological
-            // case--in practice it would be unlikely that a user would add so many regexes
-            // that it adversly affects performance. We perhaps could add a separate
-            // `terminal.path_hyperlink_main_thread_timout` that defaults to a much smaller
-            // number than `terminal.path_hyperlink_timout`?
-            &preapproved_path_hyperlink_regexes().iter().collect_vec(),
-            None,
+            &self.path_hyperlink_regexes(path_hyperlink_navigation),
         )]
         .into_iter()
         .chain(
@@ -183,7 +174,6 @@ impl MaybePath {
                     &self.line,
                     range.clone(),
                     &self.path_hyperlink_regexes(PathHyperlinkNavigation::Exhaustive),
-                    None,
                 )
             })
         })
@@ -199,6 +189,15 @@ impl MaybePath {
                 .chain(preapproved_path_hyperlink_regexes().iter())
                 .collect_vec()
         } else {
+            // TODO(davewa): We (currently) don't include self.path_hyperlink_regexes
+            // here because we don't want to let user settings tank perforamce on the
+            // main thread. But, the experience will be worse, (no hyperlink on remote
+            // workspaces, delayed hyperlink on local workspaces, no line and column
+            // information from user settings provided regexes. Also it is a pathological
+            // case--in practice it would be unlikely that a user would add so many regexes
+            // that it adversly affects performance. We perhaps could add a separate
+            // `terminal.path_hyperlink_main_thread_timout` that defaults to a much smaller
+            // number than `terminal.path_hyperlink_timout`?
             preapproved_path_hyperlink_regexes().iter().collect_vec()
         }
     }
@@ -216,7 +215,6 @@ impl MaybePath {
                     &self.line,
                     surrounding_range.start + 1..surrounding_range.end - 1,
                     &self.path_hyperlink_regexes(path_hyperlink_navigation),
-                    Some(surrounding_range.start..self.line.len()),
                 ));
             }
         }
@@ -243,7 +241,6 @@ impl MaybePath {
                     &self.line,
                     match_.range().start..self.line.len(),
                     &self.path_hyperlink_regexes(path_hyperlink_navigation),
-                    None,
                 )
             })
     }
@@ -312,11 +309,12 @@ pub struct MaybePathVariant<'a> {
 impl<'a> MaybePathVariant<'a> {
     pub fn new(
         line: &'a str,
-        mut path: Range<usize>,
+        maybe_path_range: Range<usize>,
         path_regexes: &Vec<&'a Regex>,
-        stripped_common_symbols_regex_range: Option<Range<usize>>,
     ) -> Self {
         // We add variations from most common to least common
+
+        let mut path = maybe_path_range.clone();
         let mut maybe_path = &line[path.clone()];
         let mut absolutize_home_dir = true;
 
@@ -337,36 +335,32 @@ impl<'a> MaybePathVariant<'a> {
                 // because git diff never adds a position suffix
             }
 
+            // Before running the regexes, if we don't have any surrounding symbols, but we are surrounded
+            // by them, expand to from the opening symbol to the end of the line so that the regex can
+            // grab optional line and column position information.
+            if !has_common_surrounding_symbols(maybe_path)
+                && path.start > 0
+                && path.end < line.len()
+                && has_common_surrounding_symbols(&line[path.start - 1..path.end + 1])
+            {
+                path = path.start - 1..line.len();
+                maybe_path = &line[path.clone()]
+            }
+
             if let Some((range, position)) =
                 path_with_position_regex_match(&maybe_path, path_regexes)
             {
                 path = path.start + range.start..path.start + range.end;
                 maybe_path = &line[path.clone()];
                 if has_common_surrounding_symbols(&maybe_path) {
-                    variations.insert(0, (path.start + 1..path.end - 1, Some(position)));
+                    let stripped = path.start + 1..path.end - 1;
+                    variations.insert(0, (stripped, Some(position)));
                 };
                 variations.insert(0, (path, Some(position)));
-            } else if stripped_common_symbols_regex_range.is_none() {
-                if has_common_surrounding_symbols(&maybe_path) {
-                    variations.insert(0, (path.start + 1..path.end - 1, None));
-                }
-            }
-
-            if let Some(stripped_common_symbols_regex_range) = stripped_common_symbols_regex_range {
-                // In this case, surrounding symbols were stripped already by the caller.
-                if let Some((range, position)) = path_with_position_regex_match(
-                    &line[stripped_common_symbols_regex_range.clone()],
-                    path_regexes,
-                ) {
-                    variations.insert(
-                        0,
-                        (
-                            stripped_common_symbols_regex_range.start + range.start
-                                ..stripped_common_symbols_regex_range.start + range.end,
-                            Some(position),
-                        ),
-                    );
-                }
+            } else if has_common_surrounding_symbols(&line[maybe_path_range.clone()]) {
+                // Only do this if the regexes don't match, it's like a "default" regex
+                // without the line and column
+                variations.insert(0, (path.start + 1..path.end - 1, None));
             }
         }
 
@@ -547,7 +541,7 @@ mod tests {
             for (matched, expected) in maybe_paths.iter().zip(word_expected) {
                 let maybe_path =
                     MaybePath::new(line, matched.clone(), Arc::clone(&custom_path_regexes));
-                println!("\n\nTesting {path_hyperlink_navigation:?}: {maybe_path}");
+                println!("\n\nTesting {path_hyperlink_navigation:?}, {thread:?}: {maybe_path}");
 
                 let variants = match (path_hyperlink_navigation, thread) {
                     (PathHyperlinkNavigation::Default, Thread::Main) => maybe_path
@@ -585,11 +579,28 @@ mod tests {
         let MaybePathWithPosition {
             ref path, position, ..
         } = maybe_path_with_position;
-
-        let path = if rel_or_abs.is_some() {
-            format!("{:?}", path.to_string_lossy(),)
+        let mut components = path.components();
+        if path.is_absolute() {
+            if cfg!(target_os = "windows") {
+                // strip `C:`
+                components.next();
+            }
+            // strip `\` or `/` add `/` back below...
+            components.next();
+        }
+        let mut path_string = components
+            .map(|component| component.as_os_str().to_string_lossy().into_owned())
+            .join("/");
+        if cfg!(target_os = "windows") {
+            path_string = path_string.replace("C:", "");
+        }
+        if path.is_absolute() {
+            path_string = format!("/{path_string}");
+        }
+        let path_string = if rel_or_abs.is_some() {
+            format!("{:?}", path_string,)
         } else {
-            format!("{}", path.to_string_lossy(),)
+            format!("{}", path_string,)
         };
         let position = format!(
             "{}",
@@ -607,9 +618,9 @@ mod tests {
         );
 
         if let Some(rel_or_abs) = rel_or_abs {
-            format!("   [ {rel_or_abs}!({path}) ]{position};")
+            format!("   [ {rel_or_abs}!({path_string}) ]{position};")
         } else {
-            format!("{path}{position}")
+            format!("{path_string}{position}")
         }
     }
 
@@ -889,6 +900,7 @@ mod tests {
     }
 
     // <https://github.com/zed-industries/zed/issues/16004>
+    #[cfg(not(target_os = "windows"))]
     #[gpui::test]
     async fn issue_16004(cx: &mut TestAppContext) {
         let fs = FakeFs::new(cx.executor());
@@ -914,17 +926,17 @@ mod tests {
             Vec::from_iter([
                 expected!{
                     relative![
-                        [ rel!("\"/w/src/3rdparty/zed/bad_py.py\",") ];
-                        [ rel!("\"/w/src/3rdparty/zed/bad_py.py\", line 8, in <module>") ];
-                        [ rel!("File \"/w/src/3rdparty/zed/bad_py.py\", line 8, in <module>") ];
+                        [ rel!("\""), abs!("/w/src/3rdparty/zed/bad_py.py"), "\"," ];
+                        [ rel!("\""), abs!("/w/src/3rdparty/zed/bad_py.py"), "\", line 8, in <module>" ];
+                        [ rel!("File \""), abs!("/w/src/3rdparty/zed/bad_py.py"), "\", line 8, in <module>" ];
                     ],
                     absolutized![
-                        [ abs!("/w/\"/w/src/3rdparty/zed/bad_py.py\",") ];
-                        [ abs!("/Some/cool/place/\"/w/src/3rdparty/zed/bad_py.py\",") ];
-                        [ abs!("/w/\"/w/src/3rdparty/zed/bad_py.py\", line 8, in <module>") ];
-                        [ abs!("/Some/cool/place/\"/w/src/3rdparty/zed/bad_py.py\", line 8, in <module>") ];
-                        [ abs!("/w/File \"/w/src/3rdparty/zed/bad_py.py\", line 8, in <module>") ];
-                        [ abs!("/Some/cool/place/File \"/w/src/3rdparty/zed/bad_py.py\", line 8, in <module>") ];
+                        [ abs!("/w/\""), abs!("/w/src/3rdparty/zed/bad_py.py"), "\"," ];
+                        [ abs!("/Some/cool/place/\""), abs!("/w/src/3rdparty/zed/bad_py.py"), "\"," ];
+                        [ abs!("/w/\""), abs!("/w/src/3rdparty/zed/bad_py.py"), "\", line 8, in <module>" ];
+                        [ abs!("/Some/cool/place/\""), abs!("/w/src/3rdparty/zed/bad_py.py"), "\", line 8, in <module>" ];
+                        [ abs!("/w/File \""), abs!("/w/src/3rdparty/zed/bad_py.py"), "\", line 8, in <module>" ];
+                        [ abs!("/Some/cool/place/File \""), abs!("/w/src/3rdparty/zed/bad_py.py"), "\", line 8, in <module>" ];
                     ]
                 }
             ].into_iter()),
@@ -935,19 +947,19 @@ mod tests {
             Vec::from_iter([
                 expected!{
                     relative![
-                        [ rel!("\"/w/src/3rdparty/zed/bad_py.py\",") ];
-                        [ rel!("\"/w/src/3rdparty/zed/bad_py.py\", line 8, in <module>") ];
-                        [ rel!("File \"/w/src/3rdparty/zed/bad_py.py\", line 8, in <module>") ];
+                        [ rel!("\""), abs!("/w/src/3rdparty/zed/bad_py.py"), "\"," ];
+                        [ rel!("\""), abs!("/w/src/3rdparty/zed/bad_py.py"), "\", line 8, in <module>" ];
+                        [ rel!("File \""), abs!("/w/src/3rdparty/zed/bad_py.py"), "\", line 8, in <module>" ];
                     ],
                     absolutized![
-                        [ abs!("/w/\"/w/src/3rdparty/zed/bad_py.py\",") ];
-                        [ abs!("/Some/cool/place/\"/w/src/3rdparty/zed/bad_py.py\",") ];
+                        [ abs!("/w/\""), abs!("/w/src/3rdparty/zed/bad_py.py"), "\"," ];
+                        [ abs!("/Some/cool/place/\""), abs!("/w/src/3rdparty/zed/bad_py.py"), "\"," ];
                         [ abs!("/w/src/3rdparty/zed/bad_py.py") ], 8, 8;
-                        [ abs!("/w/\"/w/src/3rdparty/zed/bad_py.py\", line 8, in <module>") ];
-                        [ abs!("/Some/cool/place/\"/w/src/3rdparty/zed/bad_py.py\", line 8, in <module>") ];
+                        [ abs!("/w/\""), abs!("/w/src/3rdparty/zed/bad_py.py"), "\", line 8, in <module>" ];
+                        [ abs!("/Some/cool/place/\""), abs!("/w/src/3rdparty/zed/bad_py.py"), "\", line 8, in <module>" ];
                         [ abs!("/w/src/3rdparty/zed/bad_py.py") ], 8, 8;
-                        [ abs!("/w/File \"/w/src/3rdparty/zed/bad_py.py\", line 8, in <module>") ];
-                        [ abs!("/Some/cool/place/File \"/w/src/3rdparty/zed/bad_py.py\", line 8, in <module>") ];
+                        [ abs!("/w/File \""), abs!("/w/src/3rdparty/zed/bad_py.py"), "\", line 8, in <module>" ];
+                        [ abs!("/Some/cool/place/File \""), abs!("/w/src/3rdparty/zed/bad_py.py"), "\", line 8, in <module>" ];
                     ],
                     expected_open_target!("/w/src/3rdparty/zed/bad_py.py", 8, 8)
                 }
@@ -972,44 +984,44 @@ mod tests {
             Vec::from_iter(
                 [expected! {
                     relative![
-                        [ rel!("File \"/w/src/3rdparty/zed/bad_py.py\", line 8, in <module>") ];
-                        [ rel!("File \"/w/src/3rdparty/zed/bad_py.py\", line 8, in") ];
-                        [ rel!("File \"/w/src/3rdparty/zed/bad_py.py\", line 8,") ];
-                        [ rel!("File \"/w/src/3rdparty/zed/bad_py.py\", line") ];
-                        [ rel!("File \"/w/src/3rdparty/zed/bad_py.py\",") ];
-                        [ rel!("\"/w/src/3rdparty/zed/bad_py.py\", line 8, in <module>") ];
-                        [ rel!("\"/w/src/3rdparty/zed/bad_py.py\", line 8, in") ];
-                        [ rel!("\"/w/src/3rdparty/zed/bad_py.py\", line 8,") ];
-                        [ rel!("\"/w/src/3rdparty/zed/bad_py.py\", line") ];
-                        [ rel!("\"/w/src/3rdparty/zed/bad_py.py\",") ];
+                        [ rel!("File \""), abs!("/w/src/3rdparty/zed/bad_py.py"), "\", line 8, in <module>" ];
+                        [ rel!("File \""), abs!("/w/src/3rdparty/zed/bad_py.py"), "\", line 8, in" ];
+                        [ rel!("File \""), abs!("/w/src/3rdparty/zed/bad_py.py"), "\", line 8," ];
+                        [ rel!("File \""), abs!("/w/src/3rdparty/zed/bad_py.py"), "\", line" ];
+                        [ rel!("File \""), abs!("/w/src/3rdparty/zed/bad_py.py"), "\"," ];
+                        [ rel!("\""), abs!("/w/src/3rdparty/zed/bad_py.py"), "\", line 8, in <module>" ];
+                        [ rel!("\""), abs!("/w/src/3rdparty/zed/bad_py.py"), "\", line 8, in" ];
+                        [ rel!("\""), abs!("/w/src/3rdparty/zed/bad_py.py"), "\", line 8," ];
+                        [ rel!("\""), abs!("/w/src/3rdparty/zed/bad_py.py"), "\", line" ];
+                        [ rel!("\""), abs!("/w/src/3rdparty/zed/bad_py.py"), "\"," ];
                     ],
                     absolutized![
                         [ abs!("/w/src/3rdparty/zed/bad_py.py") ], 8, 8;
-                        [ abs!("/w/File \"/w/src/3rdparty/zed/bad_py.py\", line 8, in <module>") ];
-                        [ abs!("/Some/cool/place/File \"/w/src/3rdparty/zed/bad_py.py\", line 8, in <module>") ];
+                        [ abs!("/w/File \""), abs!("/w/src/3rdparty/zed/bad_py.py"), "\", line 8, in <module>" ];
+                        [ abs!("/Some/cool/place/File \""), abs!("/w/src/3rdparty/zed/bad_py.py"), "\", line 8, in <module>" ];
                         [ abs!("/w/src/3rdparty/zed/bad_py.py") ], 8, 8;
-                        [ abs!("/w/File \"/w/src/3rdparty/zed/bad_py.py\", line 8, in") ];
-                        [ abs!("/Some/cool/place/File \"/w/src/3rdparty/zed/bad_py.py\", line 8, in") ];
+                        [ abs!("/w/File \""), abs!("/w/src/3rdparty/zed/bad_py.py"), "\", line 8, in" ];
+                        [ abs!("/Some/cool/place/File \""), abs!("/w/src/3rdparty/zed/bad_py.py"), "\", line 8, in" ];
                         [ abs!("/w/src/3rdparty/zed/bad_py.py") ], 8, 8;
-                        [ abs!("/w/File \"/w/src/3rdparty/zed/bad_py.py\", line 8,") ];
-                        [ abs!("/Some/cool/place/File \"/w/src/3rdparty/zed/bad_py.py\", line 8,") ];
-                        [ abs!("/w/File \"/w/src/3rdparty/zed/bad_py.py\", line") ];
-                        [ abs!("/Some/cool/place/File \"/w/src/3rdparty/zed/bad_py.py\", line") ];
-                        [ abs!("/w/File \"/w/src/3rdparty/zed/bad_py.py\",") ];
-                        [ abs!("/Some/cool/place/File \"/w/src/3rdparty/zed/bad_py.py\",") ];
+                        [ abs!("/w/File \""), abs!("/w/src/3rdparty/zed/bad_py.py"), "\", line 8," ];
+                        [ abs!("/Some/cool/place/File \""), abs!("/w/src/3rdparty/zed/bad_py.py"), "\", line 8," ];
+                        [ abs!("/w/File \""), abs!("/w/src/3rdparty/zed/bad_py.py"), "\", line" ];
+                        [ abs!("/Some/cool/place/File \""), abs!("/w/src/3rdparty/zed/bad_py.py"), "\", line" ];
+                        [ abs!("/w/File \""), abs!("/w/src/3rdparty/zed/bad_py.py"), "\"," ];
+                        [ abs!("/Some/cool/place/File \""), abs!("/w/src/3rdparty/zed/bad_py.py"), "\"," ];
                         [ abs!("/w/src/3rdparty/zed/bad_py.py") ], 8, 8;
-                        [ abs!("/w/\"/w/src/3rdparty/zed/bad_py.py\", line 8, in <module>") ];
-                        [ abs!("/Some/cool/place/\"/w/src/3rdparty/zed/bad_py.py\", line 8, in <module>") ];
+                        [ abs!("/w/\""), abs!("/w/src/3rdparty/zed/bad_py.py"), "\", line 8, in <module>" ];
+                        [ abs!("/Some/cool/place/\""), abs!("/w/src/3rdparty/zed/bad_py.py"), "\", line 8, in <module>" ];
                         [ abs!("/w/src/3rdparty/zed/bad_py.py") ], 8, 8;
-                        [ abs!("/w/\"/w/src/3rdparty/zed/bad_py.py\", line 8, in") ];
-                        [ abs!("/Some/cool/place/\"/w/src/3rdparty/zed/bad_py.py\", line 8, in") ];
+                        [ abs!("/w/\""), abs!("/w/src/3rdparty/zed/bad_py.py"), "\", line 8, in" ];
+                        [ abs!("/Some/cool/place/\""), abs!("/w/src/3rdparty/zed/bad_py.py"), "\", line 8, in" ];
                         [ abs!("/w/src/3rdparty/zed/bad_py.py") ], 8, 8;
-                        [ abs!("/w/\"/w/src/3rdparty/zed/bad_py.py\", line 8,") ];
-                        [ abs!("/Some/cool/place/\"/w/src/3rdparty/zed/bad_py.py\", line 8,") ];
-                        [ abs!("/w/\"/w/src/3rdparty/zed/bad_py.py\", line") ];
-                        [ abs!("/Some/cool/place/\"/w/src/3rdparty/zed/bad_py.py\", line") ];
-                        [ abs!("/w/\"/w/src/3rdparty/zed/bad_py.py\",") ];
-                        [ abs!("/Some/cool/place/\"/w/src/3rdparty/zed/bad_py.py\",") ];
+                        [ abs!("/w/\""), abs!("/w/src/3rdparty/zed/bad_py.py"), "\", line 8," ];
+                        [ abs!("/Some/cool/place/\""), abs!("/w/src/3rdparty/zed/bad_py.py"), "\", line 8," ];
+                        [ abs!("/w/\""), abs!("/w/src/3rdparty/zed/bad_py.py"), "\", line" ];
+                        [ abs!("/Some/cool/place/\""), abs!("/w/src/3rdparty/zed/bad_py.py"), "\", line" ];
+                        [ abs!("/w/\""), abs!("/w/src/3rdparty/zed/bad_py.py"), "\"," ];
+                        [ abs!("/Some/cool/place/\""), abs!("/w/src/3rdparty/zed/bad_py.py"), "\"," ];
                     ],
                     expected_open_target!("/w/src/3rdparty/zed/bad_py.py", 8, 8)
                 }]
@@ -1028,7 +1040,11 @@ mod tests {
             Arc::clone(&fs),
             Arc::clone(&path_regexes),
             &Path::new(abs!("/w")),
-            "  File \"/w/src/3rdparty/zed/bad_py.py\", line 8, in <module>",
+            concat!(
+                "  File \"",
+                abs!("/w/src/3rdparty/zed/bad_py.py"),
+                "\", line 8, in <module>"
+            ),
             Some(1),
             &expected,
         )
@@ -1041,18 +1057,18 @@ mod tests {
             Vec::from_iter([
                 expected!{
                     relative![
-                        [ rel!("\"/w/src/3rdparty/zed/bad") ];
-                        [ rel!("\"/w/src/3rdparty/zed/bad py.py\", line 8, in <module>") ];
-                        [ rel!("File \"/w/src/3rdparty/zed/bad py.py\", line 8, in <module>") ];
+                        [ rel!("\""), abs!("/w/src/3rdparty/zed/bad") ];
+                        [ rel!("\""), abs!("/w/src/3rdparty/zed/bad py.py"), "\", line 8, in <module>" ];
+                        [ rel!("File \""), abs!("/w/src/3rdparty/zed/bad py.py"), "\", line 8, in <module>" ];
                     ],
                     absolutized![
-                        [ abs!("/w/\"/w/src/3rdparty/zed/bad") ];
-                        [ abs!("/Some/cool/place/\"/w/src/3rdparty/zed/bad") ];
+                        [ abs!("/w/\""), abs!("/w/src/3rdparty/zed/bad") ];
+                        [ abs!("/Some/cool/place/\""), abs!("/w/src/3rdparty/zed/bad") ];
                         [ abs!("/w/src/3rdparty/zed/bad py.py") ];
-                        [ abs!("/w/\"/w/src/3rdparty/zed/bad py.py\", line 8, in <module>") ];
-                        [ abs!("/Some/cool/place/\"/w/src/3rdparty/zed/bad py.py\", line 8, in <module>") ];
-                        [ abs!("/w/File \"/w/src/3rdparty/zed/bad py.py\", line 8, in <module>") ];
-                        [ abs!("/Some/cool/place/File \"/w/src/3rdparty/zed/bad py.py\", line 8, in <module>") ];
+                        [ abs!("/w/\""), abs!("/w/src/3rdparty/zed/bad py.py"), "\", line 8, in <module>" ];
+                        [ abs!("/Some/cool/place/\""), abs!("/w/src/3rdparty/zed/bad py.py"), "\", line 8, in <module>" ];
+                        [ abs!("/w/File \""), abs!("/w/src/3rdparty/zed/bad py.py"), "\", line 8, in <module>" ];
+                        [ abs!("/Some/cool/place/File \""), abs!("/w/src/3rdparty/zed/bad py.py"), "\", line 8, in <module>" ];
                     ],
                     expected_open_target!("/w/src/3rdparty/zed/bad py.py")
                 }
@@ -1064,21 +1080,21 @@ mod tests {
             Vec::from_iter([
                 expected!{
                     relative![
-                        [ rel!("\"/w/src/3rdparty/zed/bad") ];
-                        [ rel!("\"/w/src/3rdparty/zed/bad py.py\", line 8, in <module>") ];
-                        [ rel!("File \"/w/src/3rdparty/zed/bad py.py\", line 8, in <module>") ];
+                        [ rel!("\""), abs!("/w/src/3rdparty/zed/bad") ];
+                        [ rel!("\""), abs!("/w/src/3rdparty/zed/bad py.py"), "\", line 8, in <module>" ];
+                        [ rel!("File \""), abs!("/w/src/3rdparty/zed/bad py.py"), "\", line 8, in <module>" ];
                     ],
                     absolutized![
-                        [ abs!("/w/\"/w/src/3rdparty/zed/bad") ];
-                        [ abs!("/Some/cool/place/\"/w/src/3rdparty/zed/bad") ];
+                        [ abs!("/w/\""), abs!("/w/src/3rdparty/zed/bad") ];
+                        [ abs!("/Some/cool/place/\""), abs!("/w/src/3rdparty/zed/bad") ];
                         [ abs!("/w/src/3rdparty/zed/bad py.py") ], 8, 8;
                         [ abs!("/w/src/3rdparty/zed/bad py.py") ];
                         [ abs!("/w/src/3rdparty/zed/bad py.py") ], 8, 8;
-                        [ abs!("/w/\"/w/src/3rdparty/zed/bad py.py\", line 8, in <module>") ];
-                        [ abs!("/Some/cool/place/\"/w/src/3rdparty/zed/bad py.py\", line 8, in <module>") ];
+                        [ abs!("/w/\""), abs!("/w/src/3rdparty/zed/bad py.py"), "\", line 8, in <module>" ];
+                        [ abs!("/Some/cool/place/\""), abs!("/w/src/3rdparty/zed/bad py.py"), "\", line 8, in <module>" ];
                         [ abs!("/w/src/3rdparty/zed/bad py.py") ], 8, 8;
-                        [ abs!("/w/File \"/w/src/3rdparty/zed/bad py.py\", line 8, in <module>") ];
-                        [ abs!("/Some/cool/place/File \"/w/src/3rdparty/zed/bad py.py\", line 8, in <module>") ];
+                        [ abs!("/w/File \""), abs!("/w/src/3rdparty/zed/bad py.py"), "\", line 8, in <module>" ];
+                        [ abs!("/Some/cool/place/File \""), abs!("/w/src/3rdparty/zed/bad py.py"), "\", line 8, in <module>" ];
                     ],
                     expected_open_target!("/w/src/3rdparty/zed/bad py.py", 8, 8)
                 }
@@ -1103,50 +1119,50 @@ mod tests {
             Vec::from_iter(
                 [expected! {
                     relative![
-                        [ rel!("File \"/w/src/3rdparty/zed/bad py.py\", line 8, in <module>") ];
-                        [ rel!("File \"/w/src/3rdparty/zed/bad py.py\", line 8, in") ];
-                        [ rel!("File \"/w/src/3rdparty/zed/bad py.py\", line 8,") ];
-                        [ rel!("File \"/w/src/3rdparty/zed/bad py.py\", line") ];
-                        [ rel!("File \"/w/src/3rdparty/zed/bad py.py\",") ];
-                        [ rel!("File \"/w/src/3rdparty/zed/bad") ];
-                        [ rel!("\"/w/src/3rdparty/zed/bad py.py\", line 8, in <module>") ];
-                        [ rel!("\"/w/src/3rdparty/zed/bad py.py\", line 8, in") ];
-                        [ rel!("\"/w/src/3rdparty/zed/bad py.py\", line 8,") ];
-                        [ rel!("\"/w/src/3rdparty/zed/bad py.py\", line") ];
-                        [ rel!("\"/w/src/3rdparty/zed/bad py.py\",") ];
-                        [ rel!("\"/w/src/3rdparty/zed/bad") ];
+                        [ rel!("File \""), abs!("/w/src/3rdparty/zed/bad py.py"), "\", line 8, in <module>" ];
+                        [ rel!("File \""), abs!("/w/src/3rdparty/zed/bad py.py"), "\", line 8, in" ];
+                        [ rel!("File \""), abs!("/w/src/3rdparty/zed/bad py.py"), "\", line 8," ];
+                        [ rel!("File \""), abs!("/w/src/3rdparty/zed/bad py.py"), "\", line" ];
+                        [ rel!("File \""), abs!("/w/src/3rdparty/zed/bad py.py"), "\"," ];
+                        [ rel!("File \""), abs!("/w/src/3rdparty/zed/bad") ];
+                        [ rel!("\""), abs!("/w/src/3rdparty/zed/bad py.py"), "\", line 8, in <module>" ];
+                        [ rel!("\""), abs!("/w/src/3rdparty/zed/bad py.py"), "\", line 8, in" ];
+                        [ rel!("\""), abs!("/w/src/3rdparty/zed/bad py.py"), "\", line 8," ];
+                        [ rel!("\""), abs!("/w/src/3rdparty/zed/bad py.py"), "\", line" ];
+                        [ rel!("\""), abs!("/w/src/3rdparty/zed/bad py.py"), "\"," ];
+                        [ rel!("\""), abs!("/w/src/3rdparty/zed/bad") ];
                     ],
                     absolutized![
                         [ abs!("/w/src/3rdparty/zed/bad py.py") ], 8, 8;
-                        [ abs!("/w/File \"/w/src/3rdparty/zed/bad py.py\", line 8, in <module>") ];
-                        [ abs!("/Some/cool/place/File \"/w/src/3rdparty/zed/bad py.py\", line 8, in <module>") ];
+                        [ abs!("/w/File \""), abs!("/w/src/3rdparty/zed/bad py.py"), "\", line 8, in <module>" ];
+                        [ abs!("/Some/cool/place/File \""), abs!("/w/src/3rdparty/zed/bad py.py"), "\", line 8, in <module>" ];
                         [ abs!("/w/src/3rdparty/zed/bad py.py") ], 8, 8;
-                        [ abs!("/w/File \"/w/src/3rdparty/zed/bad py.py\", line 8, in") ];
-                        [ abs!("/Some/cool/place/File \"/w/src/3rdparty/zed/bad py.py\", line 8, in") ];
+                        [ abs!("/w/File \""), abs!("/w/src/3rdparty/zed/bad py.py"), "\", line 8, in" ];
+                        [ abs!("/Some/cool/place/File \""), abs!("/w/src/3rdparty/zed/bad py.py"), "\", line 8, in" ];
                         [ abs!("/w/src/3rdparty/zed/bad py.py") ], 8, 8;
-                        [ abs!("/w/File \"/w/src/3rdparty/zed/bad py.py\", line 8,") ];
-                        [ abs!("/Some/cool/place/File \"/w/src/3rdparty/zed/bad py.py\", line 8,") ];
-                        [ abs!("/w/File \"/w/src/3rdparty/zed/bad py.py\", line") ];
-                        [ abs!("/Some/cool/place/File \"/w/src/3rdparty/zed/bad py.py\", line") ];
-                        [ abs!("/w/File \"/w/src/3rdparty/zed/bad py.py\",") ];
-                        [ abs!("/Some/cool/place/File \"/w/src/3rdparty/zed/bad py.py\",") ];
-                        [ abs!("/w/File \"/w/src/3rdparty/zed/bad") ];
-                        [ abs!("/Some/cool/place/File \"/w/src/3rdparty/zed/bad") ];
+                        [ abs!("/w/File \""), abs!("/w/src/3rdparty/zed/bad py.py"), "\", line 8," ];
+                        [ abs!("/Some/cool/place/File \""), abs!("/w/src/3rdparty/zed/bad py.py"), "\", line 8," ];
+                        [ abs!("/w/File \""), abs!("/w/src/3rdparty/zed/bad py.py"), "\", line" ];
+                        [ abs!("/Some/cool/place/File \""), abs!("/w/src/3rdparty/zed/bad py.py"), "\", line" ];
+                        [ abs!("/w/File \""), abs!("/w/src/3rdparty/zed/bad py.py"), "\"," ];
+                        [ abs!("/Some/cool/place/File \""), abs!("/w/src/3rdparty/zed/bad py.py"), "\"," ];
+                        [ abs!("/w/File \""), abs!("/w/src/3rdparty/zed/bad") ];
+                        [ abs!("/Some/cool/place/File \""), abs!("/w/src/3rdparty/zed/bad") ];
                         [ abs!("/w/src/3rdparty/zed/bad py.py") ], 8, 8;
-                        [ abs!("/w/\"/w/src/3rdparty/zed/bad py.py\", line 8, in <module>") ];
-                        [ abs!("/Some/cool/place/\"/w/src/3rdparty/zed/bad py.py\", line 8, in <module>") ];
+                        [ abs!("/w/\""), abs!("/w/src/3rdparty/zed/bad py.py"), "\", line 8, in <module>" ];
+                        [ abs!("/Some/cool/place/\""), abs!("/w/src/3rdparty/zed/bad py.py"), "\", line 8, in <module>" ];
                         [ abs!("/w/src/3rdparty/zed/bad py.py") ], 8, 8;
-                        [ abs!("/w/\"/w/src/3rdparty/zed/bad py.py\", line 8, in") ];
-                        [ abs!("/Some/cool/place/\"/w/src/3rdparty/zed/bad py.py\", line 8, in") ];
+                        [ abs!("/w/\""), abs!("/w/src/3rdparty/zed/bad py.py"), "\", line 8, in" ];
+                        [ abs!("/Some/cool/place/\""), abs!("/w/src/3rdparty/zed/bad py.py"), "\", line 8, in" ];
                         [ abs!("/w/src/3rdparty/zed/bad py.py") ], 8, 8;
-                        [ abs!("/w/\"/w/src/3rdparty/zed/bad py.py\", line 8,") ];
-                        [ abs!("/Some/cool/place/\"/w/src/3rdparty/zed/bad py.py\", line 8,") ];
-                        [ abs!("/w/\"/w/src/3rdparty/zed/bad py.py\", line") ];
-                        [ abs!("/Some/cool/place/\"/w/src/3rdparty/zed/bad py.py\", line") ];
-                        [ abs!("/w/\"/w/src/3rdparty/zed/bad py.py\",") ];
-                        [ abs!("/Some/cool/place/\"/w/src/3rdparty/zed/bad py.py\",") ];
-                        [ abs!("/w/\"/w/src/3rdparty/zed/bad") ];
-                        [ abs!("/Some/cool/place/\"/w/src/3rdparty/zed/bad") ];
+                        [ abs!("/w/\""), abs!("/w/src/3rdparty/zed/bad py.py"), "\", line 8," ];
+                        [ abs!("/Some/cool/place/\""), abs!("/w/src/3rdparty/zed/bad py.py"), "\", line 8," ];
+                        [ abs!("/w/\""), abs!("/w/src/3rdparty/zed/bad py.py"), "\", line" ];
+                        [ abs!("/Some/cool/place/\""), abs!("/w/src/3rdparty/zed/bad py.py"), "\", line" ];
+                        [ abs!("/w/\""), abs!("/w/src/3rdparty/zed/bad py.py"), "\"," ];
+                        [ abs!("/Some/cool/place/\""), abs!("/w/src/3rdparty/zed/bad py.py"), "\"," ];
+                        [ abs!("/w/\""), abs!("/w/src/3rdparty/zed/bad") ];
+                        [ abs!("/Some/cool/place/\""), abs!("/w/src/3rdparty/zed/bad") ];
                     ],
                     expected_open_target!("/w/src/3rdparty/zed/bad py.py", 8, 8)
                 }]
@@ -1158,13 +1174,274 @@ mod tests {
             Arc::clone(&fs),
             Arc::clone(&path_regexes),
             &Path::new(abs!("/w")),
-            "  File \"/w/src/3rdparty/zed/bad py.py\", line 8, in <module>",
+            concat!(
+                rel!("  File \""),
+                abs!("/w/src/3rdparty/zed/bad py.py"),
+                "\", line 8, in <module>"
+            ),
             Some(1),
             &expected,
         )
         .await;
     }
 
+    // <https://github.com/zed-industries/zed/issues/16004>
+    #[cfg(target_os = "windows")]
+    #[gpui::test]
+    async fn issue_16004(cx: &mut TestAppContext) {
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/w"),
+            json!({
+                "src": {
+                    "3rdparty": {
+                        "zed": {
+                            "bad_py.py": "",
+                            "bad py.py": ""
+                        },
+                    },
+                }
+            }),
+        )
+        .await;
+
+        let mut expected = ExpectedMap::from_iter([]);
+
+        expected.insert(
+            (PathHyperlinkNavigation::Default, Thread::Main),
+            Vec::from_iter([
+                expected!{
+                    relative![
+                        [ rel!("File \""), abs!("/w/src/3rdparty/zed/bad_py.py"), "\", line 8, in <module>" ];
+                    ],
+                    absolutized![
+                        [ abs!("/w/src/3rdparty/zed/bad_py.py") ];
+                        [ abs!("/w/src/3rdparty/zed/bad_py.py") ];
+                        [ abs!("/w/src/3rdparty/zed/bad_py.py\", line 8, in <module>") ];
+                        [ abs!("/w/File \""), abs!("/w/src/3rdparty/zed/bad_py.py"), "\", line 8, in <module>" ];
+                        [ abs!("/Some/cool/place/File \""), abs!("/w/src/3rdparty/zed/bad_py.py"), "\", line 8, in <module>" ];
+                    ],
+                    expected_open_target!("/w/src/3rdparty/zed/bad_py.py")
+
+                }
+            ].into_iter()),
+        );
+
+        expected.insert(
+            (PathHyperlinkNavigation::Default, Thread::Background),
+            Vec::from_iter([
+                expected!{
+                    relative![
+                        [ rel!("File \""), abs!("/w/src/3rdparty/zed/bad_py.py"), "\", line 8, in <module>" ];
+                    ],
+                    absolutized![
+                        [ abs!("/w/src/3rdparty/zed/bad_py.py") ], 8, 8;
+                        [ abs!("/w/src/3rdparty/zed/bad_py.py") ];
+                        [ abs!("/w/src/3rdparty/zed/bad_py.py") ], 8, 8;
+                        [ abs!("/w/src/3rdparty/zed/bad_py.py") ];
+                        [ abs!("/w/src/3rdparty/zed/bad_py.py\", line 8, in <module>") ];
+                        [ abs!("/w/src/3rdparty/zed/bad_py.py") ], 8, 8;
+                        [ abs!("/w/File \""), abs!("/w/src/3rdparty/zed/bad_py.py"), "\", line 8, in <module>" ];
+                        [ abs!("/Some/cool/place/File \""), abs!("/w/src/3rdparty/zed/bad_py.py"), "\", line 8, in <module>" ];
+                    ],
+                    expected_open_target!("/w/src/3rdparty/zed/bad_py.py", 8, 8)
+                }
+            ].into_iter()),
+        );
+
+        expected.insert(
+            (PathHyperlinkNavigation::Advanced, Thread::Background),
+            Vec::from_iter(
+                [expected! {
+                    relative![
+                    ],
+                    absolutized![
+                    ]
+                }]
+                .into_iter(),
+            ),
+        );
+
+        expected.insert(
+            (PathHyperlinkNavigation::Exhaustive, Thread::Background),
+            Vec::from_iter(
+                [expected! {
+                    relative![
+                        [ rel!("File \""), abs!("/w/src/3rdparty/zed/bad_py.py"), "\", line 8, in <module" ];
+                        [ rel!("File \""), abs!("/w/src/3rdparty/zed/bad_py.py"), "\", line 8, in" ];
+                        [ rel!("File \""), abs!("/w/src/3rdparty/zed/bad_py.py"), "\", line 8," ];
+                        [ rel!("File \""), abs!("/w/src/3rdparty/zed/bad_py.py"), "\", line" ];
+                        [ rel!("File \""), abs!("/w/src/3rdparty/zed/bad_py.py"), "\"," ];
+                        [ rel!("File \""), abs!("/w/src/3rdparty/zed/bad_py.py") ];
+                    ],
+                    absolutized![
+                        [ abs!("/w/src/3rdparty/zed/bad_py.py") ], 8, 8;
+                        [ abs!("/w/File \""), abs!("/w/src/3rdparty/zed/bad_py.py"), "\", line 8, in <module" ];
+                        [ abs!("/Some/cool/place/File \""), abs!("/w/src/3rdparty/zed/bad_py.py"), "\", line 8, in <module" ];
+                        [ abs!("/w/src/3rdparty/zed/bad_py.py") ], 8, 8;
+                        [ abs!("/w/File \""), abs!("/w/src/3rdparty/zed/bad_py.py"), "\", line 8, in" ];
+                        [ abs!("/Some/cool/place/File \""), abs!("/w/src/3rdparty/zed/bad_py.py"), "\", line 8, in" ];
+                        [ abs!("/w/src/3rdparty/zed/bad_py.py") ], 8, 8;
+                        [ abs!("/w/File \""), abs!("/w/src/3rdparty/zed/bad_py.py"), "\", line 8," ];
+                        [ abs!("/Some/cool/place/File \""), abs!("/w/src/3rdparty/zed/bad_py.py"), "\", line 8," ];
+                        [ abs!("/w/File \""), abs!("/w/src/3rdparty/zed/bad_py.py"), "\", line" ];
+                        [ abs!("/Some/cool/place/File \""), abs!("/w/src/3rdparty/zed/bad_py.py"), "\", line" ];
+                        [ abs!("/w/File \""), abs!("/w/src/3rdparty/zed/bad_py.py"), "\"," ];
+                        [ abs!("/Some/cool/place/File \""), abs!("/w/src/3rdparty/zed/bad_py.py"), "\"," ];
+                        [ abs!("/w/File \""), abs!("/w/src/3rdparty/zed/bad_py.py") ];
+                        [ abs!("/Some/cool/place/File \""), abs!("/w/src/3rdparty/zed/bad_py.py") ];
+                        [ abs!("/w/src/3rdparty/zed/bad_py.py\", line 8, in <module") ];
+                        [ abs!("/w/src/3rdparty/zed/bad_py.py\", line 8, in") ];
+                        [ abs!("/w/src/3rdparty/zed/bad_py.py\", line 8,") ];
+                        [ abs!("/w/src/3rdparty/zed/bad_py.py\", line") ];
+                        [ abs!("/w/src/3rdparty/zed/bad_py.py\",") ];
+                        [ abs!("/w/src/3rdparty/zed/bad_py.py") ], 8, 8;
+                        [ abs!("/w/src/3rdparty/zed/bad_py.py") ];
+                    ],
+                    expected_open_target!("/w/src/3rdparty/zed/bad_py.py", 8, 8)
+                }]
+                .into_iter(),
+            ),
+        );
+
+        const PATH_LINE_COLUMN_REGEX_PYTHON: &str =
+            "\"(?<path>[^,]+)\"((?<suffix>(, line (?<line>[0-9]+))))?";
+
+        let path_regexes = Arc::new(Vec::from_iter([
+            Regex::new(PATH_LINE_COLUMN_REGEX_PYTHON).unwrap()
+        ]));
+
+        test_maybe_paths(
+            Arc::clone(&fs),
+            Arc::clone(&path_regexes),
+            &Path::new(abs!("/w")),
+            concat!(
+                "  File \"",
+                abs!("/w/src/3rdparty/zed/bad_py.py"),
+                "\", line 8, in <module>"
+            ),
+            Some(1),
+            &expected,
+        )
+        .await;
+
+        let mut expected = ExpectedMap::from_iter([]);
+
+        expected.insert(
+            (PathHyperlinkNavigation::Default, Thread::Main),
+            Vec::from_iter([
+                expected!{
+                    relative![
+                        [ rel!("File \""), abs!("/w/src/3rdparty/zed/bad py.py"), "\", line 8, in <module>" ];
+                    ],
+                    absolutized![
+                        [ abs!("/w/src/3rdparty/zed/bad") ];
+                        [ abs!("/w/src/3rdparty/zed/bad py.py") ];
+                        [ abs!("/w/src/3rdparty/zed/bad py.py\", line 8, in <module>") ];
+                        [ abs!("/w/File \""), abs!("/w/src/3rdparty/zed/bad py.py\", line 8, in <module>") ];
+                        [ abs!("/Some/cool/place/File \""), abs!("/w/src/3rdparty/zed/bad py.py\", line 8, in <module>") ];
+                    ],
+                    expected_open_target!("/w/src/3rdparty/zed/bad py.py")
+                }
+            ].into_iter()),
+        );
+
+        expected.insert(
+            (PathHyperlinkNavigation::Default, Thread::Background),
+            Vec::from_iter([
+                expected!{
+                    relative![
+                        [ rel!("File \""), abs!("/w/src/3rdparty/zed/bad py.py"), "\", line 8, in <module>" ];
+                    ],
+                    absolutized![
+                        [ abs!("/w/src/3rdparty/zed/bad") ];
+                        [ abs!("/w/src/3rdparty/zed/bad py.py") ], 8, 8;
+                        [ abs!("/w/src/3rdparty/zed/bad py.py") ];
+                        [ abs!("/w/src/3rdparty/zed/bad py.py\", line 8, in <module>") ];
+                        [ abs!("/w/src/3rdparty/zed/bad py.py") ], 8, 8;
+                        [ abs!("/w/File \""), abs!("/w/src/3rdparty/zed/bad py.py\", line 8, in <module>") ];
+                        [ abs!("/Some/cool/place/File \""), abs!("/w/src/3rdparty/zed/bad py.py\", line 8, in <module>") ];
+                    ],
+                    expected_open_target!("/w/src/3rdparty/zed/bad py.py", 8, 8)
+                }
+            ].into_iter()),
+        );
+
+        expected.insert(
+            (PathHyperlinkNavigation::Advanced, Thread::Background),
+            Vec::from_iter(
+                [expected! {
+                    relative![
+                    ],
+                    absolutized![
+                    ]
+                }]
+                .into_iter(),
+            ),
+        );
+
+        expected.insert(
+            (PathHyperlinkNavigation::Exhaustive, Thread::Background),
+            Vec::from_iter(
+                [expected! {
+                    relative![
+                        [ rel!("File \""), abs!("/w/src/3rdparty/zed/bad py.py"), "\", line 8, in <module" ];
+                        [ rel!("File \""), abs!("/w/src/3rdparty/zed/bad py.py"), "\", line 8, in" ];
+                        [ rel!("File \""), abs!("/w/src/3rdparty/zed/bad py.py"), "\", line 8," ];
+                        [ rel!("File \""), abs!("/w/src/3rdparty/zed/bad py.py"), "\", line" ];
+                        [ rel!("File \""), abs!("/w/src/3rdparty/zed/bad py.py"), "\"," ];
+                        [ rel!("File \""), abs!("/w/src/3rdparty/zed/bad py.py") ];
+                        [ rel!("File \""), abs!("/w/src/3rdparty/zed/bad") ];
+                    ],
+                    absolutized![
+                        [ abs!("/w/src/3rdparty/zed/bad py.py") ], 8, 8;
+                        [ abs!("/w/File \""), abs!("/w/src/3rdparty/zed/bad py.py"), "\", line 8, in <module" ];
+                        [ abs!("/Some/cool/place/File \""), abs!("/w/src/3rdparty/zed/bad py.py"), "\", line 8, in <module" ];
+                        [ abs!("/w/src/3rdparty/zed/bad py.py") ], 8, 8;
+                        [ abs!("/w/File \""), abs!("/w/src/3rdparty/zed/bad py.py"), "\", line 8, in" ];
+                        [ abs!("/Some/cool/place/File \""), abs!("/w/src/3rdparty/zed/bad py.py"), "\", line 8, in" ];
+                        [ abs!("/w/src/3rdparty/zed/bad py.py") ], 8, 8;
+                        [ abs!("/w/File \""), abs!("/w/src/3rdparty/zed/bad py.py"), "\", line 8," ];
+                        [ abs!("/Some/cool/place/File \""), abs!("/w/src/3rdparty/zed/bad py.py"), "\", line 8," ];
+                        [ abs!("/w/File \""), abs!("/w/src/3rdparty/zed/bad py.py"), "\", line" ];
+                        [ abs!("/Some/cool/place/File \""), abs!("/w/src/3rdparty/zed/bad py.py"), "\", line" ];
+                        [ abs!("/w/File \""), abs!("/w/src/3rdparty/zed/bad py.py"), "\"," ];
+                        [ abs!("/Some/cool/place/File \""), abs!("/w/src/3rdparty/zed/bad py.py"), "\"," ];
+                        [ abs!("/w/File \""), abs!("/w/src/3rdparty/zed/bad py.py") ];
+                        [ abs!("/Some/cool/place/File \""), abs!("/w/src/3rdparty/zed/bad py.py") ];
+                        [ abs!("/w/File \""), abs!("/w/src/3rdparty/zed/bad") ];
+                        [ abs!("/Some/cool/place/File \""), abs!("/w/src/3rdparty/zed/bad") ];
+                        [ abs!("/w/src/3rdparty/zed/bad py.py\", line 8, in <module") ];
+                        [ abs!("/w/src/3rdparty/zed/bad py.py\", line 8, in") ];
+                        [ abs!("/w/src/3rdparty/zed/bad py.py\", line 8,") ];
+                        [ abs!("/w/src/3rdparty/zed/bad py.py\", line") ];
+                        [ abs!("/w/src/3rdparty/zed/bad py.py\",") ];
+                        [ abs!("/w/src/3rdparty/zed/bad py.py") ], 8, 8;
+                        [ abs!("/w/src/3rdparty/zed/bad py.py") ];
+                        [ abs!("/w/src/3rdparty/zed/bad") ];
+                    ],
+                    expected_open_target!("/w/src/3rdparty/zed/bad py.py", 8, 8)
+                }]
+                .into_iter(),
+            ),
+        );
+
+        test_maybe_paths(
+            Arc::clone(&fs),
+            Arc::clone(&path_regexes),
+            &Path::new(abs!("/w")),
+            concat!(
+                rel!("  File \""),
+                abs!("/w/src/3rdparty/zed/bad py.py"),
+                "\", line 8, in <module>"
+            ),
+            Some(1),
+            &expected,
+        )
+        .await;
+    }
+
+    // <https://github.com/zed-industries/zed/issues/25086>
     #[gpui::test]
     async fn issue_25086(cx: &mut TestAppContext) {
         let fs = FakeFs::new(cx.executor());
@@ -1277,7 +1554,7 @@ mod tests {
             Arc::clone(&fs),
             Arc::new(Vec::new()),
             &Path::new(abs!("/root")),
-            "# ./app/services/opensearch/contacts/create_service.rb:9:in 'Opensearch::Contacts::CreateService#validate_field_keys'",
+            rel!("# ./app/services/opensearch/contacts/create_service.rb:9:in 'Opensearch::Contacts::CreateService#validate_field_keys'"),
             Some(1),
             &expected,
         )
@@ -1397,7 +1674,7 @@ mod tests {
             Arc::clone(&fs),
             Arc::new(Vec::new()),
             &Path::new(abs!("/root")),
-            "# ./app/services/open search/contacts/create service.rb:9:in 'Opensearch::Contacts::CreateService#validate_field_keys'",
+            rel!("# ./app/services/open search/contacts/create service.rb:9:in 'Opensearch::Contacts::CreateService#validate_field_keys'"),
             Some(2),
             &expected,
         )

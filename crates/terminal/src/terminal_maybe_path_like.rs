@@ -270,7 +270,7 @@ pub fn path_with_position_regex_match<'a>(
 
     for path_regex in path_regexes {
         let Ok(Some(captures)) = path_regex.captures(&maybe_path) else {
-            return None;
+            continue;
         };
 
         // Note: Do NOT use captures["path"] here because it can panic. This is extra
@@ -281,7 +281,7 @@ pub fn path_with_position_regex_match<'a>(
                 "'path' capture not matched in regex: {:#?}",
                 path_regex.as_str()
             );
-            return None;
+            continue;
         };
 
         if let Some(position) = position_from_captures(&captures) {
