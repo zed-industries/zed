@@ -342,6 +342,14 @@ pub fn local_vscode_tasks_file_relative_path() -> &'static Path {
     Path::new(".vscode/tasks.json")
 }
 
+pub fn debug_task_file_name() -> &'static str {
+    "debug.json"
+}
+
+pub fn task_file_name() -> &'static str {
+    "tasks.json"
+}
+
 /// Returns the relative path to a `launch.json` file within a project.
 pub fn local_debug_file_relative_path() -> &'static Path {
     Path::new(".zed/debug.json")
