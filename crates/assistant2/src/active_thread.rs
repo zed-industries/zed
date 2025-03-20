@@ -8,7 +8,7 @@ use gpui::{
     list, percentage, AbsoluteLength, Animation, AnimationExt, AnyElement, App, ClickEvent,
     DefiniteLength, EdgesRefinement, Empty, Entity, Focusable, Length, ListAlignment, ListOffset,
     ListState, StyleRefinement, Subscription, Task, TextStyleRefinement, Transformation,
-    UnderlineStyle,
+    UnderlineStyle, WeakEntity,
 };
 use language::{Buffer, LanguageRegistry};
 use language_model::{LanguageModelRegistry, LanguageModelToolUseId, Role};
@@ -18,9 +18,9 @@ use settings::Settings as _;
 use std::sync::Arc;
 use std::time::Duration;
 use theme::ThemeSettings;
-use ui::Color;
 use ui::{prelude::*, Disclosure, KeyBinding};
 use util::ResultExt as _;
+use workspace::{OpenOptions, Workspace};
 
 use crate::context_store::{refresh_context_store_text, ContextStore};
 
@@ -29,6 +29,7 @@ pub struct ActiveThread {
     thread_store: Entity<ThreadStore>,
     thread: Entity<Thread>,
     context_store: Entity<ContextStore>,
+    workspace: WeakEntity<Workspace>,
     save_thread_task: Option<Task<()>>,
     messages: Vec<MessageId>,
     list_state: ListState,
@@ -50,6 +51,7 @@ impl ActiveThread {
         thread_store: Entity<ThreadStore>,
         language_registry: Arc<LanguageRegistry>,
         context_store: Entity<ContextStore>,
+        workspace: WeakEntity<Workspace>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -63,6 +65,7 @@ impl ActiveThread {
             thread_store,
             thread: thread.clone(),
             context_store,
+            workspace,
             save_thread_task: None,
             messages: Vec::new(),
             rendered_messages_by_id: HashMap::default(),
@@ -736,6 +739,7 @@ impl ActiveThread {
         };
 
         v_flex()
+            .when(ix == 0, |parent| parent.child(self.render_rules_item(cx)))
             .when_some(checkpoint, |parent, checkpoint| {
                 parent.child(
                     h_flex().pl_2().child(
@@ -1041,6 +1045,86 @@ impl ActiveThread {
                     )
                 }),
         )
+    }
+
+    fn render_rules_item(&self, cx: &Context<Self>) -> AnyElement {
+        let Some(system_prompt_context) = self.thread.read(cx).system_prompt_context().as_ref()
+        else {
+            return div().into_any();
+        };
+
+        let rules_files = system_prompt_context
+            .worktrees
+            .iter()
+            .filter_map(|worktree| worktree.rules_file.as_ref())
+            .collect::<Vec<_>>();
+
+        let label_text = match rules_files.as_slice() {
+            &[] => return div().into_any(),
+            &[rules_file] => {
+                format!("Using {:?} file", rules_file.rel_path)
+            }
+            rules_files => {
+                format!("Using {} rules files", rules_files.len())
+            }
+        };
+
+        div()
+            .pt_1()
+            .px_2p5()
+            .child(
+                h_flex()
+                    .group("rules-item")
+                    .w_full()
+                    .gap_2()
+                    .justify_between()
+                    .child(
+                        h_flex()
+                            .gap_1p5()
+                            .child(
+                                Icon::new(IconName::File)
+                                    .size(IconSize::XSmall)
+                                    .color(Color::Disabled),
+                            )
+                            .child(
+                                Label::new(label_text)
+                                    .size(LabelSize::XSmall)
+                                    .color(Color::Muted)
+                                    .buffer_font(cx),
+                            ),
+                    )
+                    .child(
+                        div().visible_on_hover("rules-item").child(
+                            Button::new("open-rules", "Open Rules")
+                                .label_size(LabelSize::XSmall)
+                                .on_click(cx.listener(Self::handle_open_rules)),
+                        ),
+                    ),
+            )
+            .into_any()
+    }
+
+    fn handle_open_rules(&mut self, _: &ClickEvent, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(system_prompt_context) = self.thread.read(cx).system_prompt_context().as_ref()
+        else {
+            return;
+        };
+
+        let abs_paths = system_prompt_context
+            .worktrees
+            .iter()
+            .flat_map(|worktree| worktree.rules_file.as_ref())
+            .map(|rules_file| rules_file.abs_path.to_path_buf())
+            .collect::<Vec<_>>();
+
+        if let Ok(task) = self.workspace.update(cx, move |workspace, cx| {
+            // TODO: Open a multibuffer instead? In some cases this doesn't make the set of rules
+            // files clear. For example, if rules file 1 is already open but rules file 2 is not,
+            // this would open and focus rules file 2 in a tab that is not next to rules file 1.
+            workspace.open_paths(abs_paths, OpenOptions::default(), None, window, cx)
+        }) {
+            task.detach();
+        }
     }
 }
 
