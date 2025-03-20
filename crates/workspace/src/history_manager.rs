@@ -13,14 +13,13 @@ pub fn init(cx: &mut App) {
             DeleteSource::System => {}
             DeleteSource::User => perform_update(cx, manager),
         },
-        _ => {}
     })
     .detach();
     perform_update(cx, manager);
 }
 
 fn perform_update(cx: &mut App, manager: Entity<HistoryManager>) {
-    cx.spawn(|mut cx| async move {
+    cx.spawn(async move |cx| {
         let recent_folders = WORKSPACE_DB
             .recent_workspaces_on_disk()
             .await
@@ -60,7 +59,7 @@ fn perform_update(cx: &mut App, manager: Entity<HistoryManager>) {
                 WORKSPACE_DB.delete_workspace_by_id(*id).await.log_err();
             }
             manager
-                .update(&mut cx, |_, cx| {
+                .update(cx, |_, cx| {
                     cx.emit(HistoryManagerEvent::Delete(DeleteSource::System))
                 })
                 .log_err();

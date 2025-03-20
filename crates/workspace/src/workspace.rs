@@ -4746,10 +4746,10 @@ impl Workspace {
             };
             if update {
                 if let Some(manager) = HistoryManager::global(cx) {
-                    return window.spawn(cx, |mut cx| async move {
+                    return window.spawn(cx, async move |cx| {
                         persistence::DB.save_workspace(serialized_workspace).await;
                         manager
-                            .update(&mut cx, |_, cx| cx.emit(HistoryManagerEvent::Update))
+                            .update(cx, |_, cx| cx.emit(HistoryManagerEvent::Update))
                             .log_err();
                     });
                 }
