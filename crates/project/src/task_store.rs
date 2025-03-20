@@ -5,15 +5,13 @@ use std::{
 
 use anyhow::Context as _;
 use collections::HashMap;
-use fs::Fs;
-use futures::StreamExt as _;
 use gpui::{App, AsyncApp, Context, Entity, EventEmitter, Task, WeakEntity};
 use language::{
     proto::{deserialize_anchor, serialize_anchor},
     ContextProvider as _, LanguageToolchainStore, Location,
 };
 use rpc::{proto, AnyProtoClient, TypedEnvelope};
-use settings::{watch_config_file, SettingsLocation, TaskKind};
+use settings::{InvalidSettingsError, SettingsLocation, TaskKind};
 use task::{TaskContext, TaskVariables, VariableName};
 use text::{BufferId, OffsetRangeExt};
 use util::ResultExt;
@@ -35,7 +33,6 @@ pub struct StoreState {
     buffer_store: WeakEntity<BufferStore>,
     worktree_store: Entity<WorktreeStore>,
     toolchain_store: Arc<dyn LanguageToolchainStore>,
-    _global_task_config_watchers: (Task<()>, Task<()>),
 }
 
 enum StoreMode {
@@ -161,7 +158,6 @@ impl TaskStore {
     }
 
     pub fn local(
-        fs: Arc<dyn Fs>,
         buffer_store: WeakEntity<BufferStore>,
         worktree_store: Entity<WorktreeStore>,
         toolchain_store: Arc<dyn LanguageToolchainStore>,
@@ -177,25 +173,10 @@ impl TaskStore {
             buffer_store,
             toolchain_store,
             worktree_store,
-            _global_task_config_watchers: (
-                Self::subscribe_to_global_task_file_changes(
-                    fs.clone(),
-                    TaskKind::Script,
-                    paths::tasks_file().clone(),
-                    cx,
-                ),
-                Self::subscribe_to_global_task_file_changes(
-                    fs.clone(),
-                    TaskKind::Debug,
-                    paths::debug_tasks_file().clone(),
-                    cx,
-                ),
-            ),
         })
     }
 
     pub fn remote(
-        fs: Arc<dyn Fs>,
         buffer_store: WeakEntity<BufferStore>,
         worktree_store: Entity<WorktreeStore>,
         toolchain_store: Arc<dyn LanguageToolchainStore>,
@@ -212,20 +193,6 @@ impl TaskStore {
             buffer_store,
             toolchain_store,
             worktree_store,
-            _global_task_config_watchers: (
-                Self::subscribe_to_global_task_file_changes(
-                    fs.clone(),
-                    TaskKind::Script,
-                    paths::tasks_file().clone(),
-                    cx,
-                ),
-                Self::subscribe_to_global_task_file_changes(
-                    fs.clone(),
-                    TaskKind::Debug,
-                    paths::debug_tasks_file().clone(),
-                    cx,
-                ),
-            ),
         })
     }
 
@@ -299,7 +266,7 @@ impl TaskStore {
         raw_tasks_json: Option<&str>,
         task_type: TaskKind,
         cx: &mut Context<'_, Self>,
-    ) -> anyhow::Result<()> {
+    ) -> Result<(), InvalidSettingsError> {
         let task_inventory = match self {
             TaskStore::Functional(state) => &state.task_inventory,
             TaskStore::Noop => return Ok(()),
@@ -310,53 +277,6 @@ impl TaskStore {
 
         task_inventory.update(cx, |inventory, _| {
             inventory.update_file_based_tasks(location, raw_tasks_json, task_type)
-        })
-    }
-
-    fn subscribe_to_global_task_file_changes(
-        fs: Arc<dyn Fs>,
-        task_kind: TaskKind,
-        file_path: PathBuf,
-        cx: &mut Context<'_, Self>,
-    ) -> Task<()> {
-        let mut user_tasks_file_rx =
-            watch_config_file(&cx.background_executor(), fs, file_path.clone());
-        let user_tasks_content = cx.background_executor().block(user_tasks_file_rx.next());
-        cx.spawn(async move |task_store, cx| {
-            if let Some(user_tasks_content) = user_tasks_content {
-                let Ok(_) = task_store.update(cx, |task_store, cx| {
-                    task_store
-                        .update_user_tasks(
-                            TaskSettingsLocation::Global(&file_path),
-                            Some(&user_tasks_content),
-                            task_kind,
-                            cx,
-                        )
-                        .log_err();
-                }) else {
-                    return;
-                };
-            }
-            while let Some(user_tasks_content) = user_tasks_file_rx.next().await {
-                let Ok(()) = task_store.update(cx, |task_store, cx| {
-                    let result = task_store.update_user_tasks(
-                        TaskSettingsLocation::Global(&file_path),
-                        Some(&user_tasks_content),
-                        task_kind,
-                        cx,
-                    );
-                    if let Err(err) = &result {
-                        log::error!("Failed to load user {:?} tasks: {err}", task_kind);
-                        cx.emit(crate::Event::Toast {
-                            notification_id: format!("load-user-{:?}-tasks", task_kind).into(),
-                            message: format!("Invalid global {:?} tasks file\n{err}", task_kind),
-                        });
-                    }
-                    cx.refresh_windows();
-                }) else {
-                    break; // App dropped
-                };
-            }
         })
     }
 }

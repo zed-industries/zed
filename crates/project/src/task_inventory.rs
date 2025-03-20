@@ -8,12 +8,12 @@ use std::{
     sync::Arc,
 };
 
-use anyhow::{Context as _, Result};
+use anyhow::Result;
 use collections::{HashMap, HashSet, VecDeque};
 use gpui::{App, AppContext as _, Entity, SharedString, Task};
 use itertools::Itertools;
 use language::{ContextProvider, File, Language, LanguageToolchainStore, Location};
-use settings::{parse_json_with_comments, TaskKind};
+use settings::{parse_json_with_comments, InvalidSettingsError, TaskKind};
 use task::{
     DebugTaskDefinition, ResolvedTask, TaskContext, TaskId, TaskTemplate, TaskTemplates,
     TaskVariables, VariableName,
@@ -378,10 +378,23 @@ impl Inventory {
         location: TaskSettingsLocation<'_>,
         raw_tasks_json: Option<&str>,
         task_kind: TaskKind,
-    ) -> anyhow::Result<()> {
-        let raw_tasks =
-            parse_json_with_comments::<Vec<serde_json::Value>>(raw_tasks_json.unwrap_or("[]"))
-                .context("parsing tasks file content as a JSON array")?;
+    ) -> Result<(), InvalidSettingsError> {
+        let raw_tasks = match parse_json_with_comments::<Vec<serde_json::Value>>(
+            raw_tasks_json.unwrap_or("[]"),
+        ) {
+            Ok(tasks) => tasks,
+            Err(e) => {
+                return Err(InvalidSettingsError::Tasks {
+                    path: match location {
+                        TaskSettingsLocation::Global(path) => path.to_owned(),
+                        TaskSettingsLocation::Worktree(settings_location) => {
+                            task_kind.config_in_dir(settings_location.path)
+                        }
+                    },
+                    message: format!("Failed to parse tasks file content as a JSON array: {e}"),
+                })
+            }
+        };
         let new_templates = raw_tasks
             .into_iter()
             .filter_map(|raw_template| match &task_kind {
