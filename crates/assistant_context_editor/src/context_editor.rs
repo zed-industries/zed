@@ -628,7 +628,7 @@ impl ContextEditor {
                     window,
                     cx,
                 );
-                self.pending_thought_process = Some((creases[0], range.start.clone()));
+                self.pending_thought_process = Some((creases[0], range.start));
             }
             ContextEvent::EndedThoughtProcess(end) => {
                 if let Some((crease_id, start)) = self.pending_thought_process.take() {
@@ -636,7 +636,7 @@ impl ContextEditor {
                         let multi_buffer_snapshot = editor.buffer().read(cx).snapshot(cx);
                         let (excerpt_id, _, _) = multi_buffer_snapshot.as_singleton().unwrap();
                         let start_anchor = multi_buffer_snapshot
-                            .anchor_in_excerpt(*excerpt_id, start.clone())
+                            .anchor_in_excerpt(*excerpt_id, start)
                             .unwrap();
 
                         editor.display_map.update(cx, |display_map, cx| {
@@ -650,9 +650,7 @@ impl ContextEditor {
                     });
                     self.insert_thought_process_output_sections(
                         [(
-                            ThoughtProcessOutputSection {
-                                range: start..end.clone(),
-                            },
+                            ThoughtProcessOutputSection { range: start..*end },
                             ThoughtProcessStatus::Completed,
                         )],
                         window,
@@ -2775,7 +2773,7 @@ fn render_thought_process_fold_icon_button(
 ) -> Arc<dyn Send + Sync + Fn(FoldId, Range<Anchor>, &mut App) -> AnyElement> {
     Arc::new(move |fold_id, fold_range, _cx| {
         let editor = editor.clone();
-        
+
         let button = ButtonLike::new(fold_id).layer(ElevationIndex::ElevatedSurface);
         let button = match status {
             ThoughtProcessStatus::Pending => button

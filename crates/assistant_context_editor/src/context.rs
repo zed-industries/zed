@@ -2373,7 +2373,7 @@ impl AssistantContext {
                                         if thought_process_stack.is_empty() {
                                             let start =
                                                 buffer.anchor_before(message_old_end_offset);
-                                            thought_process_stack.push(start.clone());
+                                            thought_process_stack.push(start);
                                             let chunk =
                                                 format!("{THOUGHT_PROCESS_START_MARKER}{chunk}{THOUGHT_PROCESS_END_MARKER}");
                                             let chunk_len = chunk.len();
@@ -2408,7 +2408,7 @@ impl AssistantContext {
                                                 Some(ContextEvent::EndedThoughtProcess(end));
                                             thought_process_output_section =
                                                 Some(ThoughtProcessOutputSection {
-                                                    range: start..end.clone(),
+                                                    range: start..end,
                                                 });
                                             chunk.insert_str(0, "\n\n");
                                         }
