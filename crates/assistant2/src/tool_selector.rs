@@ -3,18 +3,34 @@ use std::sync::Arc;
 use assistant_settings::{AgentProfile, AssistantSettings};
 use assistant_tool::{ToolSource, ToolWorkingSet};
 use collections::HashMap;
-use gpui::Entity;
+use gpui::{Entity, Subscription};
 use scripting_tool::ScriptingTool;
-use settings::Settings as _;
+use settings::{Settings as _, SettingsStore};
 use ui::{prelude::*, ContextMenu, PopoverMenu, Tooltip};
 
 pub struct ToolSelector {
     profiles: HashMap<Arc<str>, AgentProfile>,
     tools: Arc<ToolWorkingSet>,
+    _subscriptions: Vec<Subscription>,
 }
 
 impl ToolSelector {
     pub fn new(tools: Arc<ToolWorkingSet>, cx: &mut Context<Self>) -> Self {
+        let settings_subscription = cx.observe_global::<SettingsStore>(move |this, cx| {
+            this.refresh_profiles(cx);
+        });
+
+        let mut this = Self {
+            profiles: HashMap::default(),
+            tools,
+            _subscriptions: vec![settings_subscription],
+        };
+        this.refresh_profiles(cx);
+
+        this
+    }
+
+    fn refresh_profiles(&mut self, cx: &mut Context<Self>) {
         let settings = AssistantSettings::get_global(cx);
         let mut profiles = settings.profiles.clone();
 
@@ -28,7 +44,7 @@ impl ToolSelector {
             profiles.insert(code_writer.name.clone().into(), code_writer);
         }
 
-        Self { profiles, tools }
+        self.profiles = profiles;
     }
 
     fn build_context_menu(
