@@ -317,12 +317,12 @@ pub async fn save_eval_results(exercise_path: &Path, results: Vec<EvalResult>) -
         );
 
         // Ensure the exercise entry exists
-        if !eval_data.get(exercise_name).is_some() {
+        if !eval_data.get(exercise_name).is_none() {
             eval_data[exercise_name] = serde_json::json!({});
         }
 
         // Ensure the timestamp entry exists as an object
-        if !eval_data[exercise_name].get(&timestamp).is_some() {
+        if !eval_data[exercise_name].get(&timestamp).is_none() {
             eval_data[exercise_name][&timestamp] = serde_json::json!({});
         }
 

@@ -32,8 +32,6 @@ impl Judge {
 
         let model = self.model.clone();
         let request = request.clone();
-        cx.spawn(async move |cx| {
-            send_language_model_request(model, request, cx).await
-        })
+        cx.spawn(async move |cx| send_language_model_request(model, request, cx).await)
     }
 }

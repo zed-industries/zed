@@ -252,7 +252,7 @@ fn main() {
             // Run exercises concurrently, with each exercise running its templates sequentially
             let all_results = stream::iter(exercise_tasks)
                 .buffer_unordered(args.concurrency)
-                .flat_map(|results| stream::iter(results))
+                .flat_map(stream::iter)
                 .collect::<Vec<_>>()
                 .await;
 
