@@ -4699,19 +4699,6 @@ impl Project {
     }
 }
 
-fn deserialize_code_actions(code_actions: &HashMap<String, bool>) -> Vec<lsp::CodeActionKind> {
-    code_actions
-        .iter()
-        .flat_map(|(kind, enabled)| {
-            if *enabled {
-                Some(kind.clone().into())
-            } else {
-                None
-            }
-        })
-        .collect()
-}
-
 pub struct PathMatchCandidateSet {
     pub snapshot: Snapshot,
     pub include_ignored: bool,
