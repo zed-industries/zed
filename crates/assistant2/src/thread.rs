@@ -3,7 +3,7 @@ use std::io::Write;
 use std::sync::Arc;
 
 use anyhow::{Context as _, Result};
-use assistant_tool::{ActionLog, ToolWorkingSet};
+use assistant_tool::{ActionLog, ToolSource, ToolWorkingSet};
 use chrono::{DateTime, Utc};
 use collections::{BTreeMap, HashMap, HashSet};
 use fs::Fs;
@@ -649,20 +649,30 @@ impl Thread {
             let mut tools = Vec::new();
 
             if self.tools.is_scripting_tool_enabled() {
-                tools.push(LanguageModelRequestTool {
+                tools.push(LanguageModelRequestTool::Custom {
                     name: ScriptingTool::NAME.into(),
                     description: ScriptingTool::DESCRIPTION.into(),
                     input_schema: ScriptingTool::input_schema(),
                 });
             }
 
-            tools.extend(self.tools().enabled_tools(cx).into_iter().map(|tool| {
-                LanguageModelRequestTool {
-                    name: tool.name(),
-                    description: tool.description(),
-                    input_schema: tool.input_schema(),
-                }
-            }));
+            tools.extend(self.tools().enabled_tools(cx).into_iter().map(
+                |tool| match tool.source() {
+                    ToolSource::Native | ToolSource::ContextServer { .. } => {
+                        LanguageModelRequestTool::Custom {
+                            name: tool.name(),
+                            description: tool.description(),
+                            input_schema: tool.input_schema(),
+                        }
+                    }
+                    ToolSource::RefactorMeProviderDefined { tool_type, .. } => {
+                        LanguageModelRequestTool::RefactorMeProviderDefined {
+                            name: tool.name(),
+                            tool_type: tool_type.to_string(),
+                        }
+                    }
+                },
+            ));
 
             tools
         };

@@ -11,7 +11,7 @@ use http_client::HttpClient;
 use language_model::{
     AuthenticateError, LanguageModel, LanguageModelCompletionEvent, LanguageModelId,
     LanguageModelName, LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
-    LanguageModelProviderState, LanguageModelRequest, RateLimiter, Role,
+    LanguageModelProviderState, LanguageModelRequest, LanguageModelRequestTool, RateLimiter, Role,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -485,12 +485,21 @@ pub fn into_deepseek(
         tools: request
             .tools
             .into_iter()
-            .map(|tool| deepseek::ToolDefinition::Function {
-                function: deepseek::FunctionDefinition {
-                    name: tool.name,
-                    description: Some(tool.description),
-                    parameters: Some(tool.input_schema),
-                },
+            .filter_map(|tool| match tool {
+                LanguageModelRequestTool::Custom {
+                    name,
+                    description,
+                    input_schema,
+                } => Some(deepseek::ToolDefinition::Function {
+                    function: deepseek::FunctionDefinition {
+                        name,
+                        description: Some(description),
+                        parameters: Some(input_schema),
+                    },
+                }),
+                LanguageModelRequestTool::RefactorMeProviderDefined { .. } => {
+                    todo!();
+                }
             })
             .collect(),
     }

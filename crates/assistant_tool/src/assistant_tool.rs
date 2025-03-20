@@ -23,6 +23,14 @@ pub enum ToolSource {
     Native,
     /// A tool provided by a context server.
     ContextServer { id: SharedString },
+    /// Provider-specific tool.
+    RefactorMeProviderDefined {
+        // todo! we probably want a different trait for these
+        //       the payload here would vary by provider,
+        //       and these tools don't need description() / input_schema()
+        provider_name: &'static str,
+        tool_type: &'static str,
+    },
 }
 
 /// A tool that can be used by a language model.

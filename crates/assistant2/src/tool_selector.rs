@@ -87,6 +87,10 @@ impl ToolSelector {
 
                 menu = match &source {
                     ToolSource::Native => menu.separator().header("Zed Tools"),
+                    ToolSource::RefactorMeProviderDefined { provider_name, .. } => {
+                        // todo! should only show these tools if compatible with model
+                        menu.separator().header(format!("{} Tools", provider_name))
+                    }
                     ToolSource::ContextServer { id } => {
                         let all_tools_from_source_enabled =
                             tool_set.are_all_tools_from_source_enabled(&source);

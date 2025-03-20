@@ -229,10 +229,19 @@ impl LanguageModelRequestMessage {
 }
 
 #[derive(Debug, PartialEq, Hash, Clone, Serialize, Deserialize)]
-pub struct LanguageModelRequestTool {
-    pub name: String,
-    pub description: String,
-    pub input_schema: serde_json::Value,
+#[serde(untagged)]
+pub enum LanguageModelRequestTool {
+    Custom {
+        name: String,
+        description: String,
+        input_schema: serde_json::Value,
+    },
+    RefactorMeProviderDefined {
+        // todo! this payload would like depend on the provider. should this be a serde_json::Value?
+        #[serde(rename = "type")]
+        tool_type: String,
+        name: String,
+    },
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
