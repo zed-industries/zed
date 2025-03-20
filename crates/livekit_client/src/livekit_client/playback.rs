@@ -1,5 +1,3 @@
-#![cfg_attr(all(target_os = "windows", target_env = "gnu"), allow(unused))]
-
 use anyhow::{anyhow, Context as _, Result};
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait as _};
@@ -9,7 +7,6 @@ use gpui::{
 };
 use livekit::track;
 
-#[cfg(not(all(target_os = "windows", target_env = "gnu")))]
 use livekit::webrtc::{
     audio_frame::AudioFrame,
     audio_source::{native::NativeAudioSource, AudioSourceOptions, RtcAudioSource},
@@ -23,14 +20,8 @@ use std::{borrow::Cow, collections::VecDeque, sync::Arc, thread};
 use util::ResultExt as _;
 
 use crate::RemoteAudioTrack;
-// #[cfg(any(
-//     test,
-//     feature = "test-support",
-//     all(target_os = "windows", target_env = "gnu")
-// ))]
-// use test::track::RemoteAudioTrack;
 
-use crate::remote_video_track_view;
+use super::LocalVideoTrack;
 
 pub enum AudioStream {
     Input {
@@ -42,7 +33,6 @@ pub enum AudioStream {
     },
 }
 
-#[cfg(not(all(target_os = "windows", target_env = "gnu")))]
 pub(crate) async fn capture_local_video_track(
     capture_source: &dyn ScreenCaptureSource,
     cx: &mut gpui::AsyncApp,
@@ -72,7 +62,7 @@ pub(crate) async fn capture_local_video_track(
         .await??;
 
     Ok((
-        crate::LocalVideoTrack(track::LocalVideoTrack::create_video_track(
+        LocalVideoTrack(track::LocalVideoTrack::create_video_track(
             "screen share",
             RtcVideoSource::Native(track_source),
         )),
@@ -80,7 +70,6 @@ pub(crate) async fn capture_local_video_track(
     ))
 }
 
-#[cfg(not(all(target_os = "windows", target_env = "gnu")))]
 pub(crate) fn capture_local_audio_track(
     background_executor: &BackgroundExecutor,
 ) -> Result<Task<(crate::LocalAudioTrack, AudioStream)>> {
@@ -162,7 +151,7 @@ pub(crate) fn capture_local_audio_track(
             );
 
             (
-                crate::LocalAudioTrack(track),
+                super::LocalAudioTrack(track),
                 AudioStream::Input {
                     _thread_handle: thread_handle,
                     _transmit_task: transmit_task,
@@ -172,7 +161,6 @@ pub(crate) fn capture_local_audio_track(
     }))
 }
 
-#[cfg(not(all(target_os = "windows", target_env = "gnu")))]
 pub fn play_remote_audio_track(
     track: &RemoteAudioTrack,
     background_executor: &BackgroundExecutor,
@@ -247,7 +235,6 @@ fn default_device(input: bool) -> anyhow::Result<(cpal::Device, cpal::SupportedS
     Ok((device, config))
 }
 
-#[cfg(not(all(target_os = "windows", target_env = "gnu")))]
 fn get_default_output() -> anyhow::Result<(cpal::Device, cpal::SupportedStreamConfig)> {
     let host = cpal::default_host();
     let output_device = host
@@ -257,7 +244,6 @@ fn get_default_output() -> anyhow::Result<(cpal::Device, cpal::SupportedStreamCo
     Ok((output_device, output_config))
 }
 
-#[cfg(not(all(target_os = "windows", target_env = "gnu")))]
 fn start_output_stream(
     output_config: cpal::SupportedStreamConfig,
     output_device: cpal::Device,
@@ -342,14 +328,6 @@ fn start_output_stream(
     (receive_task, thread)
 }
 
-#[cfg(all(target_os = "windows", target_env = "gnu"))]
-pub fn play_remote_video_track(
-    track: &track::RemoteVideoTrack,
-) -> impl Stream<Item = RemoteVideoFrame> {
-    Ok(futures::stream::empty())
-}
-
-#[cfg(not(all(target_os = "windows", target_env = "gnu")))]
 pub fn play_remote_video_track(
     track: &crate::RemoteVideoTrack,
 ) -> impl Stream<Item = RemoteVideoFrame> {
@@ -486,7 +464,7 @@ fn video_frame_buffer_from_webrtc(
 #[cfg(not(target_os = "macos"))]
 pub type RemoteVideoFrame = Arc<gpui::RenderImage>;
 
-#[cfg(not(any(target_os = "macos", all(target_os = "windows", target_env = "gnu"))))]
+#[cfg(not(target_os = "macos"))]
 fn video_frame_buffer_from_webrtc(buffer: Box<dyn VideoBuffer>) -> Option<RemoteVideoFrame> {
     use gpui::RenderImage;
     use image::{Frame, RgbaImage};
@@ -537,7 +515,7 @@ fn video_frame_buffer_to_webrtc(frame: ScreenCaptureFrame) -> Option<impl AsRef<
     }
 }
 
-#[cfg(not(any(target_os = "macos", all(target_os = "windows", target_env = "gnu"))))]
+#[cfg(not(target_os = "macos"))]
 fn video_frame_buffer_to_webrtc(_frame: ScreenCaptureFrame) -> Option<impl AsRef<dyn VideoBuffer>> {
     None as Option<Box<dyn VideoBuffer>>
 }

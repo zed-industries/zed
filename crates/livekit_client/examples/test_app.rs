@@ -310,7 +310,6 @@ impl LivekitWindow {
     fn toggle_remote_audio_for_participant(
         &mut self,
         identity: &ParticipantIdentity,
-
         cx: &mut Context<Self>,
     ) -> Option<()> {
         let participant = self.remote_participants.iter().find_map(|(id, state)| {

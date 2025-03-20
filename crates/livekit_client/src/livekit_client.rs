@@ -1,5 +1,3 @@
-mod playback;
-
 use std::sync::Arc;
 
 use anyhow::Result;
@@ -8,15 +6,11 @@ use futures::{channel::mpsc, SinkExt};
 use gpui::{App, AsyncApp, ScreenCaptureSource, ScreenCaptureStream, Task};
 use gpui_tokio::Tokio;
 use playback::{capture_local_audio_track, capture_local_video_track};
+
+mod playback;
+
 pub use playback::{play_remote_audio_track, AudioStream};
 pub use remote_video_track_view::{RemoteVideoTrackView, RemoteVideoTrackViewEvent};
-
-mod remote_video_track_view;
-#[cfg(any(test, feature = "test-support",))]
-pub mod test;
-
-#[derive(Clone, Debug, Eq, Hash, PartialEq, PartialOrd, Ord)]
-pub struct ParticipantIdentity(pub String);
 
 #[derive(Clone, Debug)]
 pub struct RemoteVideoTrack(livekit::track::RemoteVideoTrack);
@@ -36,15 +30,15 @@ pub struct LocalTrackPublication(livekit::publication::LocalTrackPublication);
 #[derive(Clone, Debug)]
 pub struct LocalParticipant(livekit::participant::LocalParticipant);
 
-pub type TrackSid = livekit::id::TrackSid;
-pub type TrackKind = livekit::track::TrackKind;
-pub type ConnectionState = livekit::ConnectionState;
-
-#[derive(Debug, Clone)]
-pub enum Participant {
-    Local(LocalParticipant),
-    Remote(RemoteParticipant),
+pub struct Room {
+    room: livekit::Room,
+    _task: Task<()>,
 }
+
+pub type TrackSid = livekit::id::TrackSid;
+pub type ConnectionState = livekit::ConnectionState;
+#[derive(Clone, Debug, Eq, Hash, PartialEq, PartialOrd, Ord)]
+pub struct ParticipantIdentity(pub String);
 
 impl From<livekit::participant::Participant> for Participant {
     fn from(participant: livekit::participant::Participant) -> Self {
@@ -57,11 +51,6 @@ impl From<livekit::participant::Participant> for Participant {
             }
         }
     }
-}
-#[derive(Debug, Clone)]
-pub enum TrackPublication {
-    Local(LocalTrackPublication),
-    Remote(RemoteTrackPublication),
 }
 
 impl From<livekit::publication::TrackPublication> for TrackPublication {
@@ -77,12 +66,6 @@ impl From<livekit::publication::TrackPublication> for TrackPublication {
     }
 }
 
-#[derive(Clone, Debug)]
-pub enum RemoteTrack {
-    Audio(RemoteAudioTrack),
-    Video(RemoteVideoTrack),
-}
-
 impl From<livekit::track::RemoteTrack> for RemoteTrack {
     fn from(track: livekit::track::RemoteTrack) -> Self {
         match track {
@@ -96,12 +79,6 @@ impl From<livekit::track::RemoteTrack> for RemoteTrack {
     }
 }
 
-#[derive(Clone, Debug)]
-pub enum LocalTrack {
-    Audio(LocalAudioTrack),
-    Video(LocalVideoTrack),
-}
-
 impl From<livekit::track::LocalTrack> for LocalTrack {
     fn from(track: livekit::track::LocalTrack) -> Self {
         match track {
@@ -109,11 +86,6 @@ impl From<livekit::track::LocalTrack> for LocalTrack {
             livekit::track::LocalTrack::Video(video) => LocalTrack::Video(LocalVideoTrack(video)),
         }
     }
-}
-
-pub struct Room {
-    room: livekit::Room,
-    _task: Task<()>,
 }
 
 impl Room {
@@ -164,7 +136,7 @@ impl LocalParticipant {
     pub async fn publish_microphone_track(
         &self,
         cx: &mut AsyncApp,
-    ) -> Result<(LocalTrackPublication, AudioStream)> {
+    ) -> Result<(LocalTrackPublication, playback::AudioStream)> {
         let (track, stream) = capture_local_audio_track(cx.background_executor())?.await;
         let publication = self
             .publish_track(
@@ -291,8 +263,8 @@ impl RemoteTrackPublication {
         Some(self.0.track()?.into())
     }
 
-    pub fn kind(&self) -> TrackKind {
-        self.0.kind()
+    pub fn is_audio(&self) -> bool {
+        self.0.kind() == livekit::track::TrackKind::Audio
     }
 
     pub fn set_enabled(&self, enabled: bool, cx: &App) {
@@ -306,13 +278,6 @@ impl RemoteTrackPublication {
 }
 
 impl RemoteTrack {
-    pub fn sid(&self) -> TrackSid {
-        match self {
-            RemoteTrack::Audio(remote_audio_track) => remote_audio_track.sid(),
-            RemoteTrack::Video(remote_video_track) => remote_video_track.sid(),
-        }
-    }
-
     pub fn set_enabled(&self, enabled: bool, cx: &App) {
         let this = self.clone();
         Tokio::spawn(cx, async move {
@@ -341,150 +306,6 @@ impl Participant {
         }
     }
 }
-
-impl TrackPublication {
-    pub fn sid(&self) -> TrackSid {
-        match self {
-            TrackPublication::Local(local) => local.0.sid(),
-            TrackPublication::Remote(remote) => remote.0.sid(),
-        }
-    }
-
-    pub fn is_muted(&self) -> bool {
-        match self {
-            TrackPublication::Local(local) => local.0.is_muted(),
-            TrackPublication::Remote(remote) => remote.0.is_muted(),
-        }
-    }
-}
-
-#[derive(Clone, Debug)]
-#[non_exhaustive]
-pub enum RoomEvent {
-    ParticipantConnected(RemoteParticipant),
-    ParticipantDisconnected(RemoteParticipant),
-    LocalTrackPublished {
-        publication: LocalTrackPublication,
-        track: LocalTrack,
-        participant: LocalParticipant,
-    },
-    LocalTrackUnpublished {
-        publication: LocalTrackPublication,
-        participant: LocalParticipant,
-    },
-    LocalTrackSubscribed {
-        track: LocalTrack,
-    },
-    TrackSubscribed {
-        track: RemoteTrack,
-        publication: RemoteTrackPublication,
-        participant: RemoteParticipant,
-    },
-    TrackUnsubscribed {
-        track: RemoteTrack,
-        publication: RemoteTrackPublication,
-        participant: RemoteParticipant,
-    },
-    TrackSubscriptionFailed {
-        participant: RemoteParticipant,
-        // error: livekit::track::TrackError,
-        track_sid: TrackSid,
-    },
-    TrackPublished {
-        publication: RemoteTrackPublication,
-        participant: RemoteParticipant,
-    },
-    TrackUnpublished {
-        publication: RemoteTrackPublication,
-        participant: RemoteParticipant,
-    },
-    TrackMuted {
-        participant: Participant,
-        publication: TrackPublication,
-    },
-    TrackUnmuted {
-        participant: Participant,
-        publication: TrackPublication,
-    },
-    RoomMetadataChanged {
-        old_metadata: String,
-        metadata: String,
-    },
-    ParticipantMetadataChanged {
-        participant: Participant,
-        old_metadata: String,
-        metadata: String,
-    },
-    ParticipantNameChanged {
-        participant: Participant,
-        old_name: String,
-        name: String,
-    },
-    ParticipantAttributesChanged {
-        participant: Participant,
-        changed_attributes: HashMap<String, String>,
-    },
-    ActiveSpeakersChanged {
-        speakers: Vec<Participant>,
-    },
-    // ConnectionQualityChanged {
-    //     quality: ConnectionQuality,
-    //     participant: Participant,
-    // },
-    // DataReceived {
-    //     payload: Arc<Vec<u8>>,
-    //     topic: Option<String>,
-    //     kind: DataPacketKind,
-    //     participant: Option<RemoteParticipant>,
-    // },
-    // TranscriptionReceived {
-    //     participant: Option<Participant>,
-    //     track_publication: Option<TrackPublication>,
-    //     segments: Vec<TranscriptionSegment>,
-    // },
-    // SipDTMFReceived {
-    //     code: u32,
-    //     digit: Option<String>,
-    //     participant: Option<RemoteParticipant>,
-    // },
-    // ChatMessage {
-    //     message: ChatMessage,
-    //     participant: Option<RemoteParticipant>,
-    // },
-    // StreamHeaderReceived {
-    //     header: proto::data_stream::Header,
-    //     participant_identity: String,
-    // },
-    // StreamChunkReceived {
-    //     chunk: proto::data_stream::Chunk,
-    //     participant_identity: String,
-    // },
-    // StreamTrailerReceived {
-    //     trailer: proto::data_stream::Trailer,
-    //     participant_identity: String,
-    // },
-    // E2eeStateChanged {
-    //     participant: Participant,
-    //     state: EncryptionState,
-    // },
-    ConnectionStateChanged(ConnectionState),
-    Connected {
-        /// Initial participants & their tracks prior to joining the room
-        /// We're not returning this directly inside Room::connect because it is unlikely to be
-        /// used
-        participants_with_tracks: Vec<(RemoteParticipant, Vec<RemoteTrackPublication>)>,
-    },
-    Disconnected {
-        reason: &'static str,
-    },
-    Reconnecting,
-    Reconnected,
-    // DataChannelBufferedAmountLowThresholdChanged {
-    //     kind: DataPacketKind,
-    //     threshold: u64,
-    // },
-}
-
 impl RoomEvent {
     fn from_livekit(event: livekit::RoomEvent) -> Option<Self> {
         let event = match event {

@@ -14,9 +14,7 @@ use futures::{FutureExt, StreamExt};
 use gpui::{App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, Task, WeakEntity};
 use gpui_tokio::Tokio;
 use language::LanguageRegistry;
-use livekit::{
-    play_remote_audio_track, LocalTrackPublication, ParticipantIdentity, RoomEvent, TrackKind,
-};
+use livekit::{play_remote_audio_track, LocalTrackPublication, ParticipantIdentity, RoomEvent};
 use livekit_client as livekit;
 use postage::{sink::Sink, stream::Stream, watch};
 use project::Project;
@@ -1507,7 +1505,7 @@ impl Room {
             cx.notify();
             for (_, participant) in live_kit.room.remote_participants() {
                 for (_, publication) in participant.track_publications() {
-                    if publication.kind() == TrackKind::Audio {
+                    if publication.is_audio() {
                         publication.set_enabled(!deafened, cx);
                     }
                 }
