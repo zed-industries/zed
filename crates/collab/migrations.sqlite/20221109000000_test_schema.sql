@@ -111,6 +111,7 @@ CREATE TABLE "project_repositories" (
     "abs_path" VARCHAR,
     "id" INTEGER NOT NULL,
     "entry_ids" VARCHAR,
+    "legacy_worktree_id" INTEGER,
     "branch" VARCHAR,
     "scan_id" INTEGER NOT NULL,
     "is_deleted" BOOL NOT NULL,

@@ -9,6 +9,7 @@ pub struct Model {
     #[sea_orm(primary_key)]
     pub id: i64,
     pub abs_path: String,
+    pub legacy_worktree_id: Option<i64>,
     // JSON array containing 1 or more integer project entry ids
     pub entry_ids: String,
     pub scan_id: i64,

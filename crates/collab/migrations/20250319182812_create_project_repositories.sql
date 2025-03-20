@@ -2,6 +2,7 @@ CREATE TABLE "project_repositories" (
     "project_id" INTEGER NOT NULL,
     "abs_path" VARCHAR,
     "id" INT8 NOT NULL,
+    "legacy_worktree_id" INT8,
     "entry_ids" VARCHAR,
     "branch" VARCHAR,
     "scan_id" INT8 NOT NULL,

@@ -644,8 +644,8 @@ message UpdateWorktree {
     string root_name = 3;
     repeated Entry updated_entries = 4;
     repeated uint64 removed_entries = 5;
-    reserved 6;
-    reserved 7;
+    repeated RepositoryEntry updated_repositories = 6; // deprecated
+    repeated uint64 removed_repositories = 7; // deprecated
     uint64 scan_id = 8;
     bool is_last_update = 9;
     string abs_path = 10;
@@ -1903,6 +1903,15 @@ message Entry {
     bool is_fifo = 10;
     optional uint64 size = 11;
     optional string canonical_path = 12;
+}
+
+message RepositoryEntry {
+    uint64 work_directory_id = 1;
+    reserved 2;
+    repeated StatusEntry updated_statuses = 3;
+    repeated string removed_statuses = 4;
+    repeated string current_merge_conflicts = 5;
+    optional Branch branch_summary = 6;
 }
 
 message UpdateRepository {

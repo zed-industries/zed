@@ -2628,6 +2628,9 @@ impl Snapshot {
             removed_entries: Vec::new(),
             scan_id: self.scan_id as u64,
             is_last_update: self.completed_scan_id == self.scan_id,
+            // Sent in separate messages.
+            updated_repositories: Vec::new(),
+            removed_repositories: Vec::new(),
         }
         .into()]
         .into_iter()
@@ -3122,7 +3125,6 @@ impl LocalSnapshot {
         entry_changes: UpdatedEntriesSet,
         repo_changes: UpdatedGitRepositoriesSet,
     ) -> Vec<WorktreeRelatedMessage> {
-        dbg!("build update");
         let mut updated_entries = Vec::new();
         let mut removed_entries = Vec::new();
         let mut updates = Vec::new();
@@ -3177,6 +3179,9 @@ impl LocalSnapshot {
                 removed_entries,
                 scan_id: self.scan_id as u64,
                 is_last_update: self.completed_scan_id == self.scan_id,
+                // Sent in separate messages.
+                updated_repositories: Vec::new(),
+                removed_repositories: Vec::new(),
             }
             .into(),
         );

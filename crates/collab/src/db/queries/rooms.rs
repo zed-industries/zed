@@ -758,17 +758,32 @@ impl Database {
                     let entry_ids = serde_json::from_str(&db_repository.entry_ids)
                         .context("failed to deserialize repository's entry ids")?;
 
-                    updated_repositories.push(proto::UpdateRepository {
-                        entry_ids,
-                        updated_statuses,
-                        removed_statuses,
-                        current_merge_conflicts,
-                        branch_summary,
-                        project_id: project_id.to_proto(),
-                        id: db_repository.id as u64,
-                        abs_path: db_repository.abs_path,
-                        scan_id: db_repository.scan_id as u64,
-                    });
+                    if let Some(legacy_worktree_id) = db_repository.legacy_worktree_id {
+                        if let Some(worktree) = worktrees
+                            .iter_mut()
+                            .find(|worktree| worktree.id as i64 == legacy_worktree_id)
+                        {
+                            worktree.updated_repositories.push(proto::RepositoryEntry {
+                                work_directory_id: db_repository.id as u64,
+                                updated_statuses,
+                                removed_statuses,
+                                current_merge_conflicts,
+                                branch_summary,
+                            });
+                        }
+                    } else {
+                        updated_repositories.push(proto::UpdateRepository {
+                            entry_ids,
+                            updated_statuses,
+                            removed_statuses,
+                            current_merge_conflicts,
+                            branch_summary,
+                            project_id: project_id.to_proto(),
+                            id: db_repository.id as u64,
+                            abs_path: db_repository.abs_path,
+                            scan_id: db_repository.scan_id as u64,
+                        });
+                    }
                 }
             }
         }

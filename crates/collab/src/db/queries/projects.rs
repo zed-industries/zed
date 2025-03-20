@@ -324,6 +324,144 @@ impl Database {
                     .await?;
             }
 
+            // Backward-compatibility for old Zed clients.
+            //
+            // Remove this block when Zed 1.80 stable has been out for a week.
+            {
+                if !update.updated_repositories.is_empty() {
+                    project_repository::Entity::insert_many(
+                        update.updated_repositories.iter().map(|repository| {
+                            project_repository::ActiveModel {
+                                project_id: ActiveValue::set(project_id),
+                                legacy_worktree_id: ActiveValue::set(Some(worktree_id)),
+                                id: ActiveValue::set(repository.work_directory_id as i64),
+                                scan_id: ActiveValue::set(update.scan_id as i64),
+                                is_deleted: ActiveValue::set(false),
+                                branch_summary: ActiveValue::Set(
+                                    repository
+                                        .branch_summary
+                                        .as_ref()
+                                        .map(|summary| serde_json::to_string(summary).unwrap()),
+                                ),
+                                current_merge_conflicts: ActiveValue::Set(Some(
+                                    serde_json::to_string(&repository.current_merge_conflicts)
+                                        .unwrap(),
+                                )),
+
+                                // Old clients do not use abs path or entry ids.
+                                abs_path: ActiveValue::set(String::new()),
+                                entry_ids: ActiveValue::set("[]".into()),
+                            }
+                        }),
+                    )
+                    .on_conflict(
+                        OnConflict::columns([
+                            project_repository::Column::ProjectId,
+                            project_repository::Column::Id,
+                        ])
+                        .update_columns([
+                            project_repository::Column::ScanId,
+                            project_repository::Column::BranchSummary,
+                            project_repository::Column::CurrentMergeConflicts,
+                        ])
+                        .to_owned(),
+                    )
+                    .exec(&*tx)
+                    .await?;
+
+                    let has_any_statuses = update
+                        .updated_repositories
+                        .iter()
+                        .any(|repository| !repository.updated_statuses.is_empty());
+
+                    if has_any_statuses {
+                        project_repository_statuses::Entity::insert_many(
+                            update.updated_repositories.iter().flat_map(
+                                |repository: &proto::RepositoryEntry| {
+                                    repository.updated_statuses.iter().map(|status_entry| {
+                                        let (repo_path, status_kind, first_status, second_status) =
+                                            proto_status_to_db(status_entry.clone());
+                                        project_repository_statuses::ActiveModel {
+                                            project_id: ActiveValue::set(project_id),
+                                            repository_id: ActiveValue::set(
+                                                repository.work_directory_id as i64,
+                                            ),
+                                            scan_id: ActiveValue::set(update.scan_id as i64),
+                                            is_deleted: ActiveValue::set(false),
+                                            repo_path: ActiveValue::set(repo_path),
+                                            status: ActiveValue::set(0),
+                                            status_kind: ActiveValue::set(status_kind),
+                                            first_status: ActiveValue::set(first_status),
+                                            second_status: ActiveValue::set(second_status),
+                                        }
+                                    })
+                                },
+                            ),
+                        )
+                        .on_conflict(
+                            OnConflict::columns([
+                                project_repository_statuses::Column::ProjectId,
+                                project_repository_statuses::Column::RepositoryId,
+                                project_repository_statuses::Column::RepoPath,
+                            ])
+                            .update_columns([
+                                project_repository_statuses::Column::ScanId,
+                                project_repository_statuses::Column::StatusKind,
+                                project_repository_statuses::Column::FirstStatus,
+                                project_repository_statuses::Column::SecondStatus,
+                            ])
+                            .to_owned(),
+                        )
+                        .exec(&*tx)
+                        .await?;
+                    }
+
+                    for repo in &update.updated_repositories {
+                        if !repo.removed_statuses.is_empty() {
+                            project_repository_statuses::Entity::update_many()
+                                .filter(
+                                    project_repository_statuses::Column::ProjectId
+                                        .eq(project_id)
+                                        .and(
+                                            project_repository_statuses::Column::RepositoryId
+                                                .eq(repo.work_directory_id),
+                                        )
+                                        .and(
+                                            project_repository_statuses::Column::RepoPath
+                                                .is_in(repo.removed_statuses.iter()),
+                                        ),
+                                )
+                                .set(project_repository_statuses::ActiveModel {
+                                    is_deleted: ActiveValue::Set(true),
+                                    scan_id: ActiveValue::Set(update.scan_id as i64),
+                                    ..Default::default()
+                                })
+                                .exec(&*tx)
+                                .await?;
+                        }
+                    }
+                }
+
+                if !update.removed_repositories.is_empty() {
+                    project_repository::Entity::update_many()
+                        .filter(
+                            project_repository::Column::ProjectId
+                                .eq(project_id)
+                                .and(project_repository::Column::LegacyWorktreeId.eq(worktree_id))
+                                .and(project_repository::Column::Id.is_in(
+                                    update.removed_repositories.iter().map(|id| *id as i64),
+                                )),
+                        )
+                        .set(project_repository::ActiveModel {
+                            is_deleted: ActiveValue::Set(true),
+                            scan_id: ActiveValue::Set(update.scan_id as i64),
+                            ..Default::default()
+                        })
+                        .exec(&*tx)
+                        .await?;
+                }
+            }
+
             let connection_ids = self.project_guest_connection_ids(project_id, &tx).await?;
             Ok(connection_ids)
         })
@@ -341,6 +479,7 @@ impl Database {
             project_repository::Entity::insert(project_repository::ActiveModel {
                 project_id: ActiveValue::set(project_id),
                 id: ActiveValue::set(repository_id),
+                legacy_worktree_id: ActiveValue::set(None),
                 abs_path: ActiveValue::set(update.abs_path.clone()),
                 entry_ids: ActiveValue::Set(serde_json::to_string(&update.entry_ids).unwrap()),
                 scan_id: ActiveValue::set(update.scan_id as i64),
@@ -703,6 +842,7 @@ impl Database {
                         settings_files: Default::default(),
                         scan_id: db_worktree.scan_id as u64,
                         completed_scan_id: db_worktree.completed_scan_id as u64,
+                        legacy_repository_entries: Default::default(),
                     },
                 )
             })
@@ -791,17 +931,32 @@ impl Database {
                 let entry_ids = serde_json::from_str(&db_repository_entry.entry_ids)
                     .context("failed to deserialize repository's entry ids")?;
 
-                repositories.push(proto::UpdateRepository {
-                    project_id: db_repository_entry.project_id.0 as u64,
-                    id: db_repository_entry.id as u64,
-                    abs_path: db_repository_entry.abs_path,
-                    entry_ids,
-                    updated_statuses,
-                    removed_statuses: Vec::new(),
-                    current_merge_conflicts,
-                    branch_summary,
-                    scan_id: db_repository_entry.scan_id as u64,
-                });
+                if let Some(worktree_id) = db_repository_entry.legacy_worktree_id {
+                    if let Some(worktree) = worktrees.get_mut(&(worktree_id as u64)) {
+                        worktree.legacy_repository_entries.insert(
+                            db_repository_entry.id as u64,
+                            proto::RepositoryEntry {
+                                work_directory_id: db_repository_entry.id as u64,
+                                updated_statuses,
+                                removed_statuses: Vec::new(),
+                                current_merge_conflicts,
+                                branch_summary,
+                            },
+                        );
+                    }
+                } else {
+                    repositories.push(proto::UpdateRepository {
+                        project_id: db_repository_entry.project_id.0 as u64,
+                        id: db_repository_entry.id as u64,
+                        abs_path: db_repository_entry.abs_path,
+                        entry_ids,
+                        updated_statuses,
+                        removed_statuses: Vec::new(),
+                        current_merge_conflicts,
+                        branch_summary,
+                        scan_id: db_repository_entry.scan_id as u64,
+                    });
+                }
             }
         }
 
