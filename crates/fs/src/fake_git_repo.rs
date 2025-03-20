@@ -5,8 +5,8 @@ use futures::future::{self, BoxFuture};
 use git::{
     blame::Blame,
     repository::{
-        AskPassSession, Branch, CommitDetails, GitRepository, PushOptions, Remote, RepoPath,
-        ResetMode,
+        AskPassSession, Branch, CommitDetails, GitRepository, GitRepositoryCheckpoint, PushOptions,
+        Remote, RepoPath, ResetMode,
     },
     status::{FileStatus, GitStatus, StatusCode, TrackedStatus, UnmergedStatus},
 };
@@ -409,11 +409,15 @@ impl GitRepository for FakeGitRepository {
         unimplemented!()
     }
 
-    fn checkpoint(&self, _cx: AsyncApp) -> BoxFuture<Result<git::Oid>> {
+    fn checkpoint(&self, _cx: AsyncApp) -> BoxFuture<Result<GitRepositoryCheckpoint>> {
         unimplemented!()
     }
 
-    fn restore_checkpoint(&self, _oid: git::Oid, _cx: AsyncApp) -> BoxFuture<Result<()>> {
+    fn restore_checkpoint(
+        &self,
+        _checkpoint: GitRepositoryCheckpoint,
+        _cx: AsyncApp,
+    ) -> BoxFuture<Result<()>> {
         unimplemented!()
     }
 }
