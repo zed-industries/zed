@@ -665,19 +665,26 @@ impl CompletionsMenu {
                 .collect()
         };
 
-        // Remove all candidates where the query's start does not match the start of any word in the candidate
+        let mut non_first_char_matches = Vec::new();
+        // Deprioritize all candidates where the query's start does not match the start of any word in the candidate
         if let Some(query) = query {
             if let Some(query_start) = query.chars().next() {
-                matches.retain(|string_match| {
+                let (primary, secondary) = matches.into_iter().partition(|string_match| {
                     split_words(&string_match.string).any(|word| {
                         // Check that the first codepoint of the word as lowercase matches the first
                         // codepoint of the query as lowercase
                         word.chars()
                             .flat_map(|codepoint| codepoint.to_lowercase())
                             .zip(query_start.to_lowercase())
-                            .all(|(word_cp, query_cp)| word_cp == query_cp)
+                            .all(|(word_cp, query_cp)| {
+                                let chars_match = word_cp == query_cp;
+                                let is_at_word_start = string_match.positions.first() == Some(&0);
+                                chars_match && is_at_word_start
+                            })
                     })
                 });
+                matches = primary;
+                non_first_char_matches = secondary;
             }
         }
 
@@ -739,6 +746,8 @@ impl CompletionsMenu {
             });
         }
         drop(completions);
+
+        matches.extend(non_first_char_matches);
 
         *self.entries.borrow_mut() = matches;
         self.selected_item = 0;
