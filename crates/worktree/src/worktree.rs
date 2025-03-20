@@ -2337,7 +2337,7 @@ impl LocalWorktree {
 
                 for update in updates
                     .into_iter()
-                    .flat_map(|message| proto::split_worktree_related_message(message))
+                    .flat_map(proto::split_worktree_related_message)
                 {
                     let _ = resume_updates_rx.try_recv();
                     loop {
