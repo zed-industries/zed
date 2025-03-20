@@ -1688,10 +1688,14 @@ impl LocalLspStore {
                 let Some(transaction_id) = transaction_id_format else {
                     return result;
                 };
-                let transaction_id_last = buffer
-                                    .peek_undo_stack()
-                                    .expect("There is a transaction on the undo stack if we have a transaction id for formatting")
-                                    .transaction_id();
+                let Some(transaction_id_last) =
+                    buffer.peek_undo_stack().map(|t| t.transaction_id())
+                else {
+                    // unwrapping should work here, how would we get a transaction id
+                    // with no transaction on the undo stack?
+                    // *but* it occasionally panics. Avoiding panics for now...
+                    return result;
+                };
                 if transaction_id_last != transaction_id {
                     return result;
                 }
