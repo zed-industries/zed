@@ -4934,7 +4934,6 @@ async fn test_copy_trim(cx: &mut TestAppContext) {
             }
         "#,
     );
-
     cx.update_editor(|e, window, cx| e.copy(&Copy::default(), window, cx));
     assert_eq!(
         cx.read_from_clipboard()
@@ -4950,7 +4949,6 @@ async fn test_copy_trim(cx: &mut TestAppContext) {
         ),
         "Regular copying preserves all indentation selected",
     );
-
     cx.update_editor(|e, window, cx| {
         e.copy(
             &Copy {
@@ -4972,7 +4970,157 @@ if is_entire_line {
     start = Point::new(start.row, 0);"
                 .to_string()
         ),
-        "Copying with stripping should normalize the text based on first line's indentation"
+        "Copying with stripping should strip all leading whitespaces"
+    );
+
+    cx.set_state(
+        r#"       «     for selection in selections.iter() {
+            let mut start = selection.start;
+            let mut end = selection.end;
+            let is_entire_line = selection.is_empty() || self.selections.line_mode;
+            if is_entire_line {
+                start = Point::new(start.row, 0);ˇ»
+                end = cmp::min(max_point, Point::new(end.row + 1, 0));
+            }
+        "#,
+    );
+    cx.update_editor(|e, window, cx| e.copy(&Copy::default(), window, cx));
+    assert_eq!(
+        cx.read_from_clipboard()
+            .and_then(|item| item.text().as_deref().map(str::to_string)),
+        Some(
+            "     for selection in selections.iter() {
+            let mut start = selection.start;
+            let mut end = selection.end;
+            let is_entire_line = selection.is_empty() || self.selections.line_mode;
+            if is_entire_line {
+                start = Point::new(start.row, 0);"
+                .to_string()
+        ),
+        "Regular copying preserves all indentation selected",
+    );
+    cx.update_editor(|e, window, cx| {
+        e.copy(
+            &Copy {
+                strip_leading_indents: true,
+            },
+            window,
+            cx,
+        )
+    });
+    assert_eq!(
+        cx.read_from_clipboard()
+            .and_then(|item| item.text().as_deref().map(str::to_string)),
+        Some(
+            "for selection in selections.iter() {
+let mut start = selection.start;
+let mut end = selection.end;
+let is_entire_line = selection.is_empty() || self.selections.line_mode;
+if is_entire_line {
+    start = Point::new(start.row, 0);"
+                .to_string()
+        ),
+        "Copying with stripping should strip all leading whitespaces, even if some of it was selected"
+    );
+
+    cx.set_state(
+        r#"       «ˇ     for selection in selections.iter() {
+            let mut start = selection.start;
+            let mut end = selection.end;
+            let is_entire_line = selection.is_empty() || self.selections.line_mode;
+            if is_entire_line {
+                start = Point::new(start.row, 0);»
+                end = cmp::min(max_point, Point::new(end.row + 1, 0));
+            }
+        "#,
+    );
+    cx.update_editor(|e, window, cx| e.copy(&Copy::default(), window, cx));
+    assert_eq!(
+        cx.read_from_clipboard()
+            .and_then(|item| item.text().as_deref().map(str::to_string)),
+        Some(
+            "     for selection in selections.iter() {
+            let mut start = selection.start;
+            let mut end = selection.end;
+            let is_entire_line = selection.is_empty() || self.selections.line_mode;
+            if is_entire_line {
+                start = Point::new(start.row, 0);"
+                .to_string()
+        ),
+        "Regular copying for reverse selection works the same",
+    );
+    cx.update_editor(|e, window, cx| {
+        e.copy(
+            &Copy {
+                strip_leading_indents: true,
+            },
+            window,
+            cx,
+        )
+    });
+    assert_eq!(
+        cx.read_from_clipboard()
+            .and_then(|item| item.text().as_deref().map(str::to_string)),
+        Some(
+            "for selection in selections.iter() {
+let mut start = selection.start;
+let mut end = selection.end;
+let is_entire_line = selection.is_empty() || self.selections.line_mode;
+if is_entire_line {
+    start = Point::new(start.row, 0);"
+                .to_string()
+        ),
+        "Copying with stripping for reverse selection works the same"
+    );
+
+    cx.set_state(
+        r#"            for selection «in selections.iter() {
+            let mut start = selection.start;
+            let mut end = selection.end;
+            let is_entire_line = selection.is_empty() || self.selections.line_mode;
+            if is_entire_line {
+                start = Point::new(start.row, 0);ˇ»
+                end = cmp::min(max_point, Point::new(end.row + 1, 0));
+            }
+        "#,
+    );
+    cx.update_editor(|e, window, cx| e.copy(&Copy::default(), window, cx));
+    assert_eq!(
+        cx.read_from_clipboard()
+            .and_then(|item| item.text().as_deref().map(str::to_string)),
+        Some(
+            "in selections.iter() {
+            let mut start = selection.start;
+            let mut end = selection.end;
+            let is_entire_line = selection.is_empty() || self.selections.line_mode;
+            if is_entire_line {
+                start = Point::new(start.row, 0);"
+                .to_string()
+        ),
+        "When selecting past the indent, the copying works as usual",
+    );
+    cx.update_editor(|e, window, cx| {
+        e.copy(
+            &Copy {
+                strip_leading_indents: true,
+            },
+            window,
+            cx,
+        )
+    });
+    assert_eq!(
+        cx.read_from_clipboard()
+            .and_then(|item| item.text().as_deref().map(str::to_string)),
+        Some(
+            "in selections.iter() {
+            let mut start = selection.start;
+            let mut end = selection.end;
+            let is_entire_line = selection.is_empty() || self.selections.line_mode;
+            if is_entire_line {
+                start = Point::new(start.row, 0);"
+                .to_string()
+        ),
+        "When selecting past the indent, nothing is trimmed"
     );
 }
 
@@ -5095,7 +5243,7 @@ async fn test_paste_multiline(cx: &mut TestAppContext) {
             )ˇ»
         );
     "});
-    cx.update_editor(|e, window, cx| e.copy(&Copy, window, cx));
+    cx.update_editor(|e, window, cx| e.copy(&Copy::default(), window, cx));
 
     // Paste it on a line with a lower indent level
     cx.update_editor(|e, window, cx| e.move_to_end(&Default::default(), window, cx));
