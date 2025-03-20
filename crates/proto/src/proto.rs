@@ -13,7 +13,7 @@ use std::{
     any::{Any, TypeId},
     cmp,
     fmt::{self, Debug},
-    iter, mem,
+    iter,
     path::{Path, PathBuf},
     sync::Arc,
     time::{Duration, SystemTime, UNIX_EPOCH},
@@ -892,7 +892,7 @@ pub fn split_worktree_update(mut message: UpdateWorktree) -> impl Iterator<Item 
 }
 
 pub fn split_worktree_related_message(
-    mut message: WorktreeRelatedMessage,
+    message: WorktreeRelatedMessage,
 ) -> impl Iterator<Item = WorktreeRelatedMessage> {
     // FIXME
     [message].into_iter()

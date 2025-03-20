@@ -41,10 +41,7 @@ use postage::{
     watch,
 };
 use rpc::{
-    proto::{
-        self, split_worktree_related_message, split_worktree_update, FromProto, ToProto,
-        WorktreeRelatedMessage,
-    },
+    proto::{self, split_worktree_related_message, FromProto, ToProto, WorktreeRelatedMessage},
     AnyProtoClient,
 };
 pub use settings::WorktreeId;
@@ -56,7 +53,6 @@ use std::{
     cmp::Ordering,
     collections::hash_map,
     convert::TryFrom,
-    f32::consts::PI,
     ffi::OsStr,
     fmt,
     future::Future,
@@ -864,18 +860,9 @@ impl Worktree {
                 while let Some(update) = background_updates_rx.next().await {
                     {
                         let mut lock = background_snapshot.lock();
-                        match update.clone() {
-                            WorktreeRelatedMessage::UpdateWorktree(update_worktree) => {
-                                lock.0
-                                    .apply_update_worktree(
-                                        update_worktree,
-                                        &settings.file_scan_inclusions,
-                                    )
-                                    .log_err();
-                            }
-                            WorktreeRelatedMessage::UpdateRepository(update_repository) => todo!(),
-                            WorktreeRelatedMessage::RemoveRepository(remove_repository) => todo!(),
-                        }
+                        lock.0
+                            .apply_remote_update(update.clone(), &settings.file_scan_inclusions)
+                            .log_err();
                         lock.1.push(update);
                     }
                     snapshot_updated_tx.send(()).await.ok();
@@ -2729,7 +2716,10 @@ impl Snapshot {
         }
     }
 
-    pub(crate) fn apply_update_repository(&mut self, mut update: proto::UpdateRepository) {
+    pub(crate) fn apply_update_repository(
+        &mut self,
+        update: proto::UpdateRepository,
+    ) -> Result<()> {
         // NOTE: this is practically but not semantically correct. For now we're using the
         // ID field to store the work directory ID, but eventually it will be a different
         // kind of ID.
@@ -2787,7 +2777,7 @@ impl Snapshot {
                         current_branch: update.branch_summary.as_ref().map(proto_to_branch),
                         statuses_by_path: statuses,
                         current_merge_conflicts: conflicted_paths,
-                        work_directory_abs_path: todo!(),
+                        work_directory_abs_path: update.abs_path.into(),
                     },
                     &(),
                 );
@@ -2795,9 +2785,14 @@ impl Snapshot {
         } else {
             log::error!("no work directory entry for repository {:?}", update.id)
         }
+
+        Ok(())
     }
 
-    pub(crate) fn apply_remove_repository(&mut self, update: proto::RemoveRepository) {
+    pub(crate) fn apply_remove_repository(
+        &mut self,
+        update: proto::RemoveRepository,
+    ) -> Result<()> {
         // NOTE: this is practically but not semantically correct. For now we're using the
         // ID field to store the work directory ID, but eventually it will be a different
         // kind of ID.
@@ -2805,6 +2800,7 @@ impl Snapshot {
         self.repositories.retain(&(), |entry: &RepositoryEntry| {
             entry.work_directory_id != work_directory_id
         });
+        Ok(())
     }
 
     pub(crate) fn apply_update_worktree(
@@ -2868,7 +2864,17 @@ impl Snapshot {
         update: WorktreeRelatedMessage,
         always_included_paths: &PathMatcher,
     ) -> Result<()> {
-        todo!()
+        match update {
+            WorktreeRelatedMessage::UpdateWorktree(update) => {
+                self.apply_update_worktree(update, always_included_paths)
+            }
+            WorktreeRelatedMessage::UpdateRepository(update) => {
+                self.apply_update_repository(update)
+            }
+            WorktreeRelatedMessage::RemoveRepository(update) => {
+                self.apply_remove_repository(update)
+            }
+        }
     }
 
     pub fn entry_count(&self) -> usize {
