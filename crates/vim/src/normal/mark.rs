@@ -147,9 +147,9 @@ impl Vim {
                 cx,
             )
         });
-        cx.spawn_in(window, |this, mut cx| async move {
+        cx.spawn_in(window, async move |this, cx| {
             let editor = task.await?;
-            this.update_in(&mut cx, |_, window, cx| {
+            this.update_in(cx, |_, window, cx| {
                 if let Some(editor) = editor.act_as::<Editor>(cx) {
                     editor.update(cx, |editor, cx| {
                         let map = editor.snapshot(window, cx);

@@ -1,6 +1,6 @@
 mod edit_action;
 pub mod log;
-mod resolve_search_block;
+mod replace;
 
 use anyhow::{anyhow, Context, Result};
 use assistant_tool::{ActionLog, Tool};
@@ -8,13 +8,12 @@ use collections::HashSet;
 use edit_action::{EditAction, EditActionParser};
 use futures::StreamExt;
 use gpui::{App, AsyncApp, Entity, Task};
-use language::OffsetRangeExt;
 use language_model::{
     LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage, MessageContent, Role,
 };
 use log::{EditToolLog, EditToolRequestId};
 use project::Project;
-use resolve_search_block::resolve_search_block;
+use replace::{replace_exact, replace_with_flexible_indent};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::fmt::Write;
@@ -105,7 +104,7 @@ impl Tool for EditFilesTool {
                     cx,
                 );
 
-                cx.spawn(|mut cx| async move {
+                cx.spawn(async move |cx| {
                     let result = task.await;
 
                     let str_result = match &result {
@@ -113,10 +112,8 @@ impl Tool for EditFilesTool {
                         Err(err) => Err(err.to_string()),
                     };
 
-                    log.update(&mut cx, |log, cx| {
-                        log.set_tool_output(req_id, str_result, cx)
-                    })
-                    .log_err();
+                    log.update(cx, |log, cx| log.set_tool_output(req_id, str_result, cx))
+                        .log_err();
 
                     result
                 })
@@ -131,9 +128,22 @@ struct EditToolRequest {
     parser: EditActionParser,
     output: String,
     changed_buffers: HashSet<Entity<language::Buffer>>,
+    bad_searches: Vec<BadSearch>,
     project: Entity<Project>,
     action_log: Entity<ActionLog>,
     tool_log: Option<(Entity<EditToolLog>, EditToolRequestId)>,
+}
+
+#[derive(Debug)]
+enum DiffResult {
+    BadSearch(BadSearch),
+    Diff(language::Diff),
+}
+
+#[derive(Debug)]
+struct BadSearch {
+    file_path: String,
+    search: String,
 }
 
 impl EditToolRequest {
@@ -177,7 +187,7 @@ impl EditToolRequest {
             cache: false,
         });
 
-        cx.spawn(|mut cx| async move {
+        cx.spawn(async move |cx| {
             let llm_request = LanguageModelRequest {
                 messages,
                 tools: vec![],
@@ -193,16 +203,17 @@ impl EditToolRequest {
                 // we start with the success header so we don't need to shift the output in the common case
                 output: Self::SUCCESS_OUTPUT_HEADER.to_string(),
                 changed_buffers: HashSet::default(),
+                bad_searches: Vec::new(),
                 action_log,
                 project,
                 tool_log,
             };
 
             while let Some(chunk) = chunks.stream.next().await {
-                request.process_response_chunk(&chunk?, &mut cx).await?;
+                request.process_response_chunk(&chunk?, cx).await?;
             }
 
-            request.finalize(&mut cx).await
+            request.finalize(cx).await
         })
     }
 
@@ -239,30 +250,36 @@ impl EditToolRequest {
             .update(cx, |project, cx| project.open_buffer(project_path, cx))?
             .await?;
 
-        let diff = match action {
+        let result = match action {
             EditAction::Replace {
                 old,
                 new,
-                file_path: _,
+                file_path,
             } => {
                 let snapshot = buffer.read_with(cx, |buffer, _cx| buffer.snapshot())?;
 
-                let diff = cx
-                    .background_executor()
-                    .spawn(Self::replace_diff(old, new, snapshot))
-                    .await;
-
-                anyhow::Ok(diff)
+                cx.background_executor()
+                    .spawn(Self::replace_diff(old, new, file_path, snapshot))
+                    .await
             }
-            EditAction::Write { content, .. } => Ok(buffer
-                .read_with(cx, |buffer, cx| buffer.diff(content, cx))?
-                .await),
+            EditAction::Write { content, .. } => Ok(DiffResult::Diff(
+                buffer
+                    .read_with(cx, |buffer, cx| buffer.diff(content, cx))?
+                    .await,
+            )),
         }?;
 
-        let _clock = buffer.update(cx, |buffer, cx| buffer.apply_diff(diff, cx))?;
+        match result {
+            DiffResult::BadSearch(invalid_replace) => {
+                self.bad_searches.push(invalid_replace);
+            }
+            DiffResult::Diff(diff) => {
+                let _clock = buffer.update(cx, |buffer, cx| buffer.apply_diff(diff, cx))?;
 
-        write!(&mut self.output, "\n\n{}", source)?;
-        self.changed_buffers.insert(buffer);
+                write!(&mut self.output, "\n\n{}", source)?;
+                self.changed_buffers.insert(buffer);
+            }
+        }
 
         Ok(())
     }
@@ -270,27 +287,24 @@ impl EditToolRequest {
     async fn replace_diff(
         old: String,
         new: String,
+        file_path: std::path::PathBuf,
         snapshot: language::BufferSnapshot,
-    ) -> language::Diff {
-        let edit_range = resolve_search_block(&snapshot, &old).to_offset(&snapshot);
-        let diff = language::text_diff(&old, &new);
+    ) -> Result<DiffResult> {
+        let result =
+            // Try to match exactly
+            replace_exact(&old, &new, &snapshot)
+            .await
+            // If that fails, try being flexible about indentation
+            .or_else(|| replace_with_flexible_indent(&old, &new, &snapshot));
 
-        let edits = diff
-            .into_iter()
-            .map(|(old_range, text)| {
-                let start = edit_range.start + old_range.start;
-                let end = edit_range.start + old_range.end;
-                (start..end, text)
-            })
-            .collect::<Vec<_>>();
-
-        let diff = language::Diff {
-            base_version: snapshot.version().clone(),
-            line_ending: snapshot.line_ending(),
-            edits,
+        let Some(diff) = result else {
+            return anyhow::Ok(DiffResult::BadSearch(BadSearch {
+                search: old,
+                file_path: file_path.display().to_string(),
+            }));
         };
 
-        diff
+        anyhow::Ok(DiffResult::Diff(diff))
     }
 
     const SUCCESS_OUTPUT_HEADER: &str = "Successfully applied. Here's a list of changes:";
@@ -314,7 +328,7 @@ impl EditToolRequest {
 
         let errors = self.parser.errors();
 
-        if errors.is_empty() {
+        if errors.is_empty() && self.bad_searches.is_empty() {
             if changed_buffer_count == 0 {
                 return Err(anyhow!(
                     "The instructions didn't lead to any changes. You might need to consult the file contents first."
@@ -337,10 +351,32 @@ impl EditToolRequest {
                 );
             }
 
+            if !self.bad_searches.is_empty() {
+                writeln!(
+                    &mut output,
+                    "\n\n# {} SEARCH/REPLACE block(s) failed to match:\n",
+                    self.bad_searches.len()
+                )?;
+
+                for replace in self.bad_searches {
+                    writeln!(
+                        &mut output,
+                        "## No exact match in: {}\n```\n{}\n```\n",
+                        replace.file_path, replace.search,
+                    )?;
+                }
+
+                write!(&mut output,
+                    "The SEARCH section must exactly match an existing block of lines including all white \
+                    space, comments, indentation, docstrings, etc."
+                )?;
+            }
+
             if !errors.is_empty() {
                 writeln!(
                     &mut output,
-                    "\n\nThese SEARCH/REPLACE blocks failed to parse:"
+                    "\n\n# {} SEARCH/REPLACE blocks failed to parse:",
+                    errors.len()
                 )?;
 
                 for error in errors {
@@ -348,10 +384,22 @@ impl EditToolRequest {
                 }
             }
 
+            if changed_buffer_count > 0 {
+                writeln!(
+                    &mut output,
+                    "\n\nThe other SEARCH/REPLACE blocks were applied successfully. Do not re-send them!",
+                )?;
+            }
+
             writeln!(
                 &mut output,
-                "\nYou can fix errors by running the tool again. You can include instructions, \
-                but errors are part of the conversation so you don't need to repeat them."
+                "{}You can fix errors by running the tool again. You can include instructions, \
+                but errors are part of the conversation so you don't need to repeat them.",
+                if changed_buffer_count == 0 {
+                    "\n\n"
+                } else {
+                    ""
+                }
             )?;
 
             Err(anyhow!(output))

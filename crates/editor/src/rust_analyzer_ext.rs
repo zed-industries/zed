@@ -66,7 +66,7 @@ pub fn expand_macro_recursively(
             cx,
         )
     });
-    cx.spawn_in(window, |_editor, mut cx| async move {
+    cx.spawn_in(window, async move |_editor, cx| {
         let macro_expansion = expand_macro_task.await.context("expand macro")?;
         if macro_expansion.is_empty() {
             log::info!("Empty macro expansion for position {position:?}");
@@ -74,9 +74,9 @@ pub fn expand_macro_recursively(
         }
 
         let buffer = project
-            .update(&mut cx, |project, cx| project.create_buffer(cx))?
+            .update(cx, |project, cx| project.create_buffer(cx))?
             .await?;
-        workspace.update_in(&mut cx, |workspace, window, cx| {
+        workspace.update_in(cx, |workspace, window, cx| {
             buffer.update(cx, |buffer, cx| {
                 buffer.set_text(macro_expansion.expansion, cx);
                 buffer.set_language(Some(rust_language), cx);
@@ -134,7 +134,7 @@ pub fn open_docs(editor: &mut Editor, _: &OpenDocs, window: &mut Window, cx: &mu
         )
     });
 
-    cx.spawn_in(window, |_editor, mut cx| async move {
+    cx.spawn_in(window, async move |_editor, cx| {
         let docs_urls = open_docs_task.await.context("open docs")?;
         if docs_urls.is_empty() {
             log::debug!("Empty docs urls for position {position:?}");
@@ -143,7 +143,7 @@ pub fn open_docs(editor: &mut Editor, _: &OpenDocs, window: &mut Window, cx: &mu
             log::debug!("{:?}", docs_urls);
         }
 
-        workspace.update(&mut cx, |_workspace, cx| {
+        workspace.update(cx, |_workspace, cx| {
             // Check if the local document exists, otherwise fallback to the online document.
             // Open with the default browser.
             if let Some(local_url) = docs_urls.local {

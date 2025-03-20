@@ -8,7 +8,7 @@ use gpui::{
     list, percentage, AbsoluteLength, Animation, AnimationExt, AnyElement, App, ClickEvent,
     DefiniteLength, EdgesRefinement, Empty, Entity, Focusable, Length, ListAlignment, ListOffset,
     ListState, StyleRefinement, Subscription, Task, TextStyleRefinement, Transformation,
-    UnderlineStyle,
+    UnderlineStyle, WeakEntity,
 };
 use language::{Buffer, LanguageRegistry};
 use language_model::{LanguageModelRegistry, LanguageModelToolUseId, Role};
@@ -18,9 +18,9 @@ use settings::Settings as _;
 use std::sync::Arc;
 use std::time::Duration;
 use theme::ThemeSettings;
-use ui::Color;
 use ui::{prelude::*, Disclosure, KeyBinding};
 use util::ResultExt as _;
+use workspace::{OpenOptions, Workspace};
 
 use crate::context_store::{refresh_context_store_text, ContextStore};
 
@@ -29,6 +29,7 @@ pub struct ActiveThread {
     thread_store: Entity<ThreadStore>,
     thread: Entity<Thread>,
     context_store: Entity<ContextStore>,
+    workspace: WeakEntity<Workspace>,
     save_thread_task: Option<Task<()>>,
     messages: Vec<MessageId>,
     list_state: ListState,
@@ -205,6 +206,7 @@ impl ActiveThread {
         thread_store: Entity<ThreadStore>,
         language_registry: Arc<LanguageRegistry>,
         context_store: Entity<ContextStore>,
+        workspace: WeakEntity<Workspace>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -218,6 +220,7 @@ impl ActiveThread {
             thread_store,
             thread: thread.clone(),
             context_store,
+            workspace,
             save_thread_task: None,
             messages: Vec::new(),
             rendered_messages_by_id: HashMap::default(),
@@ -449,10 +452,10 @@ impl ActiveThread {
                             cx,
                         );
 
-                        cx.spawn(|this, mut cx| async move {
+                        cx.spawn(async move |this, cx| {
                             let updated_context_ids = refresh_task.await;
 
-                            this.update(&mut cx, |this, cx| {
+                            this.update(cx, |this, cx| {
                                 this.context_store.read_with(cx, |context_store, cx| {
                                     context_store
                                         .context()
@@ -471,10 +474,10 @@ impl ActiveThread {
 
                     let model_registry = LanguageModelRegistry::read_global(cx);
                     if let Some(model) = model_registry.active_model() {
-                        cx.spawn(|this, mut cx| async move {
+                        cx.spawn(async move |this, cx| {
                             let updated_context = context_update_task.await?;
 
-                            this.update(&mut cx, |this, cx| {
+                            this.update(cx, |this, cx| {
                                 this.thread.update(cx, |thread, cx| {
                                     thread.attach_tool_results(updated_context, cx);
                                     if !canceled {
@@ -495,9 +498,9 @@ impl ActiveThread {
     /// Only one task to save the thread will be in flight at a time.
     fn save_thread(&mut self, cx: &mut Context<Self>) {
         let thread = self.thread.clone();
-        self.save_thread_task = Some(cx.spawn(|this, mut cx| async move {
+        self.save_thread_task = Some(cx.spawn(async move |this, cx| {
             let task = this
-                .update(&mut cx, |this, cx| {
+                .update(cx, |this, cx| {
                     this.thread_store
                         .update(cx, |thread_store, cx| thread_store.save_thread(&thread, cx))
                 })
@@ -636,6 +639,7 @@ impl ActiveThread {
 
         let thread = self.thread.read(cx);
         // Get all the data we need from thread before we start using it in closures
+        let checkpoint = thread.checkpoint_for_message(message_id);
         let context = thread.context_for_message(message_id);
         let tool_uses = thread.tool_uses_for_message(message_id);
         let scripting_tool_uses = thread.scripting_tool_uses_for_message(message_id);
@@ -669,7 +673,7 @@ impl ActiveThread {
                         .p_2p5()
                         .child(edit_message_editor)
                 } else {
-                    div().p_2p5().text_ui(cx).child(self.render_message_content(
+                    div().text_ui(cx).child(self.render_message_content(
                         message_id,
                         rendered_message,
                         cx,
@@ -693,15 +697,16 @@ impl ActiveThread {
         let styled_message = match message.role {
             Role::User => v_flex()
                 .id(("message-container", ix))
-                .pt_2p5()
-                .px_2p5()
+                .pt_2()
+                .pl_2()
+                .pr_2p5()
                 .child(
                     v_flex()
                         .bg(colors.editor_background)
                         .rounded_lg()
                         .border_1()
                         .border_color(colors.border)
-                        .shadow_sm()
+                        .shadow_md()
                         .child(
                             h_flex()
                                 .py_1()
@@ -792,12 +797,12 @@ impl ActiveThread {
                                     },
                                 ),
                         )
-                        .child(message_content),
+                        .child(div().p_2().child(message_content)),
                 ),
             Role::Assistant => {
                 v_flex()
                     .id(("message-container", ix))
-                    .child(message_content)
+                    .child(div().py_3().px_4().child(message_content))
                     .when(
                         !tool_uses.is_empty() || !scripting_tool_uses.is_empty(),
                         |parent| {
@@ -819,11 +824,30 @@ impl ActiveThread {
                 v_flex()
                     .bg(colors.editor_background)
                     .rounded_sm()
-                    .child(message_content),
+                    .child(div().p_4().child(message_content)),
             ),
         };
 
-        styled_message.into_any()
+        v_flex()
+            .when(ix == 0, |parent| parent.child(self.render_rules_item(cx)))
+            .when_some(checkpoint, |parent, checkpoint| {
+                parent.child(
+                    h_flex().pl_2().child(
+                        Button::new("restore-checkpoint", "Restore Checkpoint")
+                            .icon(IconName::Undo)
+                            .size(ButtonSize::Compact)
+                            .on_click(cx.listener(move |this, _, _window, cx| {
+                                this.thread.update(cx, |thread, cx| {
+                                    thread
+                                        .restore_checkpoint(checkpoint.clone(), cx)
+                                        .detach_and_log_err(cx);
+                                });
+                            })),
+                    ),
+                )
+            })
+            .child(styled_message)
+            .into_any()
     }
 
     fn render_message_content(
@@ -970,7 +994,7 @@ impl ActiveThread {
 
         let lighter_border = cx.theme().colors().border.opacity(0.5);
 
-        div().px_2p5().child(
+        div().px_4().child(
             v_flex()
                 .rounded_lg()
                 .border_1()
@@ -1246,6 +1270,86 @@ impl ActiveThread {
                     )
                 }),
         )
+    }
+
+    fn render_rules_item(&self, cx: &Context<Self>) -> AnyElement {
+        let Some(system_prompt_context) = self.thread.read(cx).system_prompt_context().as_ref()
+        else {
+            return div().into_any();
+        };
+
+        let rules_files = system_prompt_context
+            .worktrees
+            .iter()
+            .filter_map(|worktree| worktree.rules_file.as_ref())
+            .collect::<Vec<_>>();
+
+        let label_text = match rules_files.as_slice() {
+            &[] => return div().into_any(),
+            &[rules_file] => {
+                format!("Using {:?} file", rules_file.rel_path)
+            }
+            rules_files => {
+                format!("Using {} rules files", rules_files.len())
+            }
+        };
+
+        div()
+            .pt_1()
+            .px_2p5()
+            .child(
+                h_flex()
+                    .group("rules-item")
+                    .w_full()
+                    .gap_2()
+                    .justify_between()
+                    .child(
+                        h_flex()
+                            .gap_1p5()
+                            .child(
+                                Icon::new(IconName::File)
+                                    .size(IconSize::XSmall)
+                                    .color(Color::Disabled),
+                            )
+                            .child(
+                                Label::new(label_text)
+                                    .size(LabelSize::XSmall)
+                                    .color(Color::Muted)
+                                    .buffer_font(cx),
+                            ),
+                    )
+                    .child(
+                        div().visible_on_hover("rules-item").child(
+                            Button::new("open-rules", "Open Rules")
+                                .label_size(LabelSize::XSmall)
+                                .on_click(cx.listener(Self::handle_open_rules)),
+                        ),
+                    ),
+            )
+            .into_any()
+    }
+
+    fn handle_open_rules(&mut self, _: &ClickEvent, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(system_prompt_context) = self.thread.read(cx).system_prompt_context().as_ref()
+        else {
+            return;
+        };
+
+        let abs_paths = system_prompt_context
+            .worktrees
+            .iter()
+            .flat_map(|worktree| worktree.rules_file.as_ref())
+            .map(|rules_file| rules_file.abs_path.to_path_buf())
+            .collect::<Vec<_>>();
+
+        if let Ok(task) = self.workspace.update(cx, move |workspace, cx| {
+            // TODO: Open a multibuffer instead? In some cases this doesn't make the set of rules
+            // files clear. For example, if rules file 1 is already open but rules file 2 is not,
+            // this would open and focus rules file 2 in a tab that is not next to rules file 1.
+            workspace.open_paths(abs_paths, OpenOptions::default(), None, window, cx)
+        }) {
+            task.detach();
+        }
     }
 }
 

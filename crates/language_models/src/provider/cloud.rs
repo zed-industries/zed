@@ -132,7 +132,7 @@ impl State {
                 |this, _listener, _event, cx| {
                     let client = this.client.clone();
                     let llm_api_token = this.llm_api_token.clone();
-                    cx.spawn(|_this, _cx| async move {
+                    cx.spawn(async move |_this, _cx| {
                         llm_api_token.refresh(&client).await?;
                         anyhow::Ok(())
                     })
@@ -148,9 +148,9 @@ impl State {
 
     fn authenticate(&self, cx: &mut Context<Self>) -> Task<Result<()>> {
         let client = self.client.clone();
-        cx.spawn(move |this, mut cx| async move {
+        cx.spawn(async move |this, cx| {
             client.authenticate_and_connect(true, &cx).await?;
-            this.update(&mut cx, |_, cx| cx.notify())
+            this.update(cx, |_, cx| cx.notify())
         })
     }
 
@@ -163,11 +163,11 @@ impl State {
 
     fn accept_terms_of_service(&mut self, cx: &mut Context<Self>) {
         let user_store = self.user_store.clone();
-        self.accept_terms = Some(cx.spawn(move |this, mut cx| async move {
+        self.accept_terms = Some(cx.spawn(async move |this, cx| {
             let _ = user_store
-                .update(&mut cx, |store, cx| store.accept_terms_of_service(cx))?
+                .update(cx, |store, cx| store.accept_terms_of_service(cx))?
                 .await;
-            this.update(&mut cx, |this, cx| {
+            this.update(cx, |this, cx| {
                 this.accept_terms = None;
                 cx.notify()
             })
@@ -183,10 +183,10 @@ impl CloudLanguageModelProvider {
         let state = cx.new(|cx| State::new(client.clone(), user_store.clone(), status, cx));
 
         let state_ref = state.downgrade();
-        let maintain_client_status = cx.spawn(|mut cx| async move {
+        let maintain_client_status = cx.spawn(async move |cx| {
             while let Some(status) = status_rx.next().await {
                 if let Some(this) = state_ref.upgrade() {
-                    _ = this.update(&mut cx, |this, cx| {
+                    _ = this.update(cx, |this, cx| {
                         if this.status != status {
                             this.status = status;
                             cx.notify();

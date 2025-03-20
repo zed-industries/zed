@@ -416,9 +416,9 @@ impl CompletionsMenu {
             cx,
         );
 
-        cx.spawn(move |editor, mut cx| async move {
+        cx.spawn(async move |editor, cx| {
             if let Some(true) = resolve_task.await.log_err() {
-                editor.update(&mut cx, |_, cx| cx.notify()).ok();
+                editor.update(cx, |_, cx| cx.notify()).ok();
             }
         })
         .detach();

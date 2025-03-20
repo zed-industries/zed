@@ -1232,9 +1232,9 @@ impl AssistantContext {
 
     fn set_language(&mut self, cx: &mut Context<Self>) {
         let markdown = self.language_registry.language_for_name("Markdown");
-        cx.spawn(|this, mut cx| async move {
+        cx.spawn(async move |this, cx| {
             let markdown = markdown.await?;
-            this.update(&mut cx, |this, cx| {
+            this.update(cx, |this, cx| {
                 this.buffer
                     .update(cx, |buffer, cx| buffer.set_language(Some(markdown), cx));
             })
@@ -1276,7 +1276,7 @@ impl AssistantContext {
             return;
         };
         let debounce = self.token_count.is_some();
-        self.pending_token_count = cx.spawn(|this, mut cx| {
+        self.pending_token_count = cx.spawn(async move |this, cx| {
             async move {
                 if debounce {
                     cx.background_executor()
@@ -1285,13 +1285,14 @@ impl AssistantContext {
                 }
 
                 let token_count = cx.update(|cx| model.count_tokens(request, cx))?.await?;
-                this.update(&mut cx, |this, cx| {
+                this.update(cx, |this, cx| {
                     this.token_count = Some(token_count);
                     this.start_cache_warming(&model, cx);
                     cx.notify()
                 })
             }
             .log_err()
+            .await
         });
     }
 
@@ -1430,7 +1431,7 @@ impl AssistantContext {
         };
 
         let model = Arc::clone(model);
-        self.pending_cache_warming_task = cx.spawn(|this, mut cx| {
+        self.pending_cache_warming_task = cx.spawn(async move |this, cx| {
             async move {
                 match model.stream_completion(request, &cx).await {
                     Ok(mut stream) => {
@@ -1441,13 +1442,14 @@ impl AssistantContext {
                         log::warn!("Cache warming failed: {}", e);
                     }
                 };
-                this.update(&mut cx, |this, cx| {
+                this.update(cx, |this, cx| {
                     this.update_cache_status_for_completion(cx);
                 })
                 .ok();
                 anyhow::Ok(())
             }
             .log_err()
+            .await
         });
     }
 
@@ -2004,7 +2006,7 @@ impl AssistantContext {
             });
         self.reparse(cx);
 
-        let insert_output_task = cx.spawn(|this, mut cx| async move {
+        let insert_output_task = cx.spawn(async move |this, cx| {
             let run_command = async {
                 let mut stream = output.await?;
 
@@ -2021,7 +2023,7 @@ impl AssistantContext {
 
                 while let Some(event) = stream.next().await {
                     let event = event?;
-                    this.update(&mut cx, |this, cx| {
+                    this.update(cx, |this, cx| {
                         this.buffer.update(cx, |buffer, _cx| {
                             buffer.finalize_last_transaction();
                             buffer.start_transaction()
@@ -2122,7 +2124,7 @@ impl AssistantContext {
                     })?;
                 }
 
-                this.update(&mut cx, |this, cx| {
+                this.update(cx, |this, cx| {
                     this.buffer.update(cx, |buffer, cx| {
                         buffer.finalize_last_transaction();
                         buffer.start_transaction();
@@ -2168,7 +2170,7 @@ impl AssistantContext {
 
             let command_result = run_command.await;
 
-            this.update(&mut cx, |this, cx| {
+            this.update(cx, |this, cx| {
                 let version = this.version.clone();
                 let timestamp = this.next_timestamp();
                 let Some(invoked_slash_command) = this.invoked_slash_commands.get_mut(&command_id)
@@ -2327,7 +2329,7 @@ impl AssistantContext {
         let pending_completion_id = post_inc(&mut self.completion_count);
 
         let task = cx.spawn({
-            |this, mut cx| async move {
+            async move |this, cx| {
                 let stream = model.stream_completion(request, &cx);
                 let assistant_message_id = assistant_message.id;
                 let mut response_latency = None;
@@ -2349,7 +2351,7 @@ impl AssistantContext {
                         let mut context_event = None;
                         let mut thought_process_output_section = None;
 
-                        this.update(&mut cx, |this, cx| {
+                        this.update(cx, |this, cx| {
                             let message_ix = this
                                 .message_anchors
                                 .iter()
@@ -2438,7 +2440,7 @@ impl AssistantContext {
                         })?;
                         smol::future::yield_now().await;
                     }
-                    this.update(&mut cx, |this, cx| {
+                    this.update(cx, |this, cx| {
                         this.pending_completions
                             .retain(|completion| completion.id != pending_completion_id);
                         this.summarize(false, cx);
@@ -2450,7 +2452,7 @@ impl AssistantContext {
 
                 let result = stream_completion.await;
 
-                this.update(&mut cx, |this, cx| {
+                this.update(cx, |this, cx| {
                     let error_message = if let Some(error) = result.as_ref().err() {
                         if error.is::<PaymentRequiredError>() {
                             cx.emit(ContextEvent::ShowPaymentRequiredError);
@@ -2960,7 +2962,7 @@ impl AssistantContext {
                 cache: false,
             });
 
-            self.pending_summary = cx.spawn(|this, mut cx| {
+            self.pending_summary = cx.spawn(async move |this, cx| {
                 async move {
                     let stream = model.stream_completion_text(request, &cx);
                     let mut messages = stream.await?;
@@ -2969,7 +2971,7 @@ impl AssistantContext {
                     while let Some(message) = messages.stream.next().await {
                         let text = message?;
                         let mut lines = text.lines();
-                        this.update(&mut cx, |this, cx| {
+                        this.update(cx, |this, cx| {
                             let version = this.version.clone();
                             let timestamp = this.next_timestamp();
                             let summary = this.summary.get_or_insert(ContextSummary::default());
@@ -2993,7 +2995,7 @@ impl AssistantContext {
                         }
                     }
 
-                    this.update(&mut cx, |this, cx| {
+                    this.update(cx, |this, cx| {
                         let version = this.version.clone();
                         let timestamp = this.next_timestamp();
                         if let Some(summary) = this.summary.as_mut() {
@@ -3011,6 +3013,7 @@ impl AssistantContext {
                     anyhow::Ok(())
                 }
                 .log_err()
+                .await
             });
         }
     }
@@ -3117,12 +3120,12 @@ impl AssistantContext {
             return;
         }
 
-        self.pending_save = cx.spawn(|this, mut cx| async move {
+        self.pending_save = cx.spawn(async move |this, cx| {
             if let Some(debounce) = debounce {
                 cx.background_executor().timer(debounce).await;
             }
 
-            let (old_path, summary) = this.read_with(&cx, |this, _| {
+            let (old_path, summary) = this.read_with(cx, |this, _| {
                 let path = this.path.clone();
                 let summary = if let Some(summary) = this.summary.as_ref() {
                     if summary.done {
@@ -3137,7 +3140,7 @@ impl AssistantContext {
             })?;
 
             if let Some(summary) = summary {
-                let context = this.read_with(&cx, |this, cx| this.serialize(cx))?;
+                let context = this.read_with(cx, |this, cx| this.serialize(cx))?;
                 let mut discriminant = 1;
                 let mut new_path;
                 loop {
@@ -3169,7 +3172,7 @@ impl AssistantContext {
                     }
                 }
 
-                this.update(&mut cx, |this, _| this.path = Some(new_path))?;
+                this.update(cx, |this, _| this.path = Some(new_path))?;
             }
 
             Ok(())

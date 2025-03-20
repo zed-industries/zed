@@ -91,12 +91,9 @@ impl ProjectIndex {
             last_status: Status::Idle,
             embedding_provider,
             _subscription: cx.subscribe(&project, Self::handle_project_event),
-            _maintain_status: cx.spawn(|this, mut cx| async move {
+            _maintain_status: cx.spawn(async move |this, cx| {
                 while status_rx.recv().await.is_ok() {
-                    if this
-                        .update(&mut cx, |this, cx| this.update_status(cx))
-                        .is_err()
-                    {
+                    if this.update(cx, |this, cx| this.update_status(cx)).is_err() {
                         break;
                     }
                 }
@@ -163,10 +160,10 @@ impl ProjectIndex {
                     cx,
                 );
 
-                let load_worktree = cx.spawn(|this, mut cx| async move {
+                let load_worktree = cx.spawn(async move |this, cx| {
                     let result = match worktree_index.await {
                         Ok(worktree_index) => {
-                            this.update(&mut cx, |this, _| {
+                            this.update(cx, |this, _| {
                                 this.worktree_indices.insert(
                                     worktree_id,
                                     WorktreeIndexHandle::Loaded {
@@ -177,14 +174,14 @@ impl ProjectIndex {
                             Ok(worktree_index)
                         }
                         Err(error) => {
-                            this.update(&mut cx, |this, _cx| {
+                            this.update(cx, |this, _cx| {
                                 this.worktree_indices.remove(&worktree_id)
                             })?;
                             Err(Arc::new(error))
                         }
                     };
 
-                    this.update(&mut cx, |this, cx| this.update_status(cx))?;
+                    this.update(cx, |this, cx| this.update_status(cx))?;
 
                     result
                 });
@@ -239,7 +236,7 @@ impl ProjectIndex {
         for worktree_index in self.worktree_indices.values() {
             let worktree_index = worktree_index.clone();
             let chunks_tx = chunks_tx.clone();
-            worktree_scan_tasks.push(cx.spawn(|cx| async move {
+            worktree_scan_tasks.push(cx.spawn(async move |cx| {
                 let index = match worktree_index {
                     WorktreeIndexHandle::Loading { index } => {
                         index.clone().await.map_err(|error| anyhow!(error))?
@@ -248,7 +245,7 @@ impl ProjectIndex {
                 };
 
                 index
-                    .read_with(&cx, |index, cx| {
+                    .read_with(cx, |index, cx| {
                         let worktree_id = index.worktree().read(cx).id();
                         let db_connection = index.db_connection().clone();
                         let db = *index.embedding_index().db();
@@ -275,7 +272,7 @@ impl ProjectIndex {
 
         let project = self.project.clone();
         let embedding_provider = self.embedding_provider.clone();
-        cx.spawn(|cx| async move {
+        cx.spawn(async move |cx| {
             #[cfg(debug_assertions)]
             let embedding_query_start = std::time::Instant::now();
             log::info!("Searching for {queries:?}");
@@ -336,7 +333,7 @@ impl ProjectIndex {
                 scan_task.log_err();
             }
 
-            project.read_with(&cx, |project, cx| {
+            project.read_with(cx, |project, cx| {
                 let mut search_results = Vec::with_capacity(results_by_worker.len() * limit);
                 for worker_results in results_by_worker {
                     search_results.extend(worker_results.into_iter().filter_map(|result| {
@@ -419,7 +416,7 @@ impl ProjectIndex {
         for worktree_index in self.worktree_indices.values() {
             let worktree_index = worktree_index.clone();
             let summaries_tx: channel::Sender<(String, String)> = summaries_tx.clone();
-            worktree_scan_tasks.push(cx.spawn(|cx| async move {
+            worktree_scan_tasks.push(cx.spawn(async move |cx| {
                 let index = match worktree_index {
                     WorktreeIndexHandle::Loading { index } => {
                         index.clone().await.map_err(|error| anyhow!(error))?
@@ -428,7 +425,7 @@ impl ProjectIndex {
                 };
 
                 index
-                    .read_with(&cx, |index, cx| {
+                    .read_with(cx, |index, cx| {
                         let db_connection = index.db_connection().clone();
                         let summary_index = index.summary_index();
                         let file_digest_db = summary_index.file_digest_db();
@@ -474,7 +471,7 @@ impl ProjectIndex {
         drop(summaries_tx);
 
         let project = self.project.clone();
-        cx.spawn(|cx| async move {
+        cx.spawn(async move |cx| {
             let mut results_by_worker = Vec::new();
             for _ in 0..cx.background_executor().num_cpus() {
                 results_by_worker.push(Vec::<FileSummary>::new());
@@ -496,7 +493,7 @@ impl ProjectIndex {
                 scan_task.log_err();
             }
 
-            project.read_with(&cx, |_project, _cx| {
+            project.read_with(cx, |_project, _cx| {
                 results_by_worker.into_iter().flatten().collect()
             })
         })
@@ -509,7 +506,7 @@ impl ProjectIndex {
         futures::future::join_all(self.worktree_indices.values().map(|worktree_index| {
             let worktree_index = worktree_index.clone();
 
-            cx.spawn(|cx| async move {
+            cx.spawn(async move |cx| {
                 let index = match worktree_index {
                     WorktreeIndexHandle::Loading { index } => {
                         index.clone().await.map_err(|error| anyhow!(error))?
@@ -520,7 +517,7 @@ impl ProjectIndex {
                     cx.update(|cx| index.read(cx).worktree().read(cx).abs_path())?;
 
                 index
-                    .read_with(&cx, |index, cx| {
+                    .read_with(cx, |index, cx| {
                         cx.background_spawn(
                             index.summary_index().flush_backlog(worktree_abs_path, cx),
                         )

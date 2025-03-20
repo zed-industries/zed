@@ -238,6 +238,7 @@ impl ContextEditor {
             editor.set_show_git_diff_gutter(false, cx);
             editor.set_show_code_actions(false, cx);
             editor.set_show_runnables(false, cx);
+            editor.set_show_breakpoints(false, cx);
             editor.set_show_wrap_guides(false, cx);
             editor.set_show_indent_guides(false, cx);
             editor.set_completion_provider(Some(Box::new(completion_provider)));
@@ -967,7 +968,7 @@ impl ContextEditor {
                         if editor_state.opened_patch != patch {
                             state.update_task = Some({
                                 let this = this.clone();
-                                cx.spawn_in(window, |_, cx| async move {
+                                cx.spawn_in(window, async move |_, cx| {
                                     Self::update_patch_editor(this.clone(), patch, cx)
                                         .await
                                         .log_err();
@@ -1186,10 +1187,9 @@ impl ContextEditor {
                         })
                         .ok();
                 } else {
-                    patch_state.update_task =
-                        Some(cx.spawn_in(window, move |this, cx| async move {
-                            Self::open_patch_editor(this, new_patch, cx).await.log_err();
-                        }));
+                    patch_state.update_task = Some(cx.spawn_in(window, async move |this, cx| {
+                        Self::open_patch_editor(this, new_patch, cx).await.log_err();
+                    }));
                 }
             }
         }
@@ -1219,10 +1219,10 @@ impl ContextEditor {
     async fn open_patch_editor(
         this: WeakEntity<Self>,
         patch: AssistantPatch,
-        mut cx: AsyncWindowContext,
+        cx: &mut AsyncWindowContext,
     ) -> Result<()> {
-        let project = this.read_with(&cx, |this, _| this.project.clone())?;
-        let resolved_patch = patch.resolve(project.clone(), &mut cx).await;
+        let project = this.read_with(cx, |this, _| this.project.clone())?;
+        let resolved_patch = patch.resolve(project.clone(), cx).await;
 
         let editor = cx.new_window_entity(|window, cx| {
             let editor = ProposedChangesEditor::new(
@@ -1246,7 +1246,7 @@ impl ContextEditor {
             editor
         })?;
 
-        this.update(&mut cx, |this, _| {
+        this.update(cx, |this, _| {
             if let Some(patch_state) = this.patches.get_mut(&patch.range) {
                 patch_state.editor = Some(PatchEditorState {
                     editor: editor.downgrade(),
@@ -1255,8 +1255,8 @@ impl ContextEditor {
                 patch_state.update_task.take();
             }
         })?;
-        this.read_with(&cx, |this, _| this.workspace.clone())?
-            .update_in(&mut cx, |workspace, window, cx| {
+        this.read_with(cx, |this, _| this.workspace.clone())?
+            .update_in(cx, |workspace, window, cx| {
                 workspace.add_item_to_active_pane(Box::new(editor.clone()), None, false, window, cx)
             })
             .log_err();
@@ -1267,11 +1267,11 @@ impl ContextEditor {
     async fn update_patch_editor(
         this: WeakEntity<Self>,
         patch: AssistantPatch,
-        mut cx: AsyncWindowContext,
+        cx: &mut AsyncWindowContext,
     ) -> Result<()> {
-        let project = this.update(&mut cx, |this, _| this.project.clone())?;
-        let resolved_patch = patch.resolve(project.clone(), &mut cx).await;
-        this.update_in(&mut cx, |this, window, cx| {
+        let project = this.update(cx, |this, _| this.project.clone())?;
+        let resolved_patch = patch.resolve(project.clone(), cx).await;
+        this.update_in(cx, |this, window, cx| {
             let patch_state = this.patches.get_mut(&patch.range)?;
 
             let locations = resolved_patch
@@ -1741,14 +1741,14 @@ impl ContextEditor {
                     .map(|path| Workspace::project_path_for_path(project.clone(), &path, false, cx))
                     .collect::<Vec<_>>();
 
-                cx.spawn(move |_, cx| async move {
+                cx.spawn(async move |_, cx| {
                     let mut paths = vec![];
                     let mut worktrees = vec![];
 
                     let opened_paths = futures::future::join_all(tasks).await;
                     for (worktree, project_path) in opened_paths.into_iter().flatten() {
                         let Ok(worktree_root_name) =
-                            worktree.read_with(&cx, |worktree, _| worktree.root_name().to_string())
+                            worktree.read_with(cx, |worktree, _| worktree.root_name().to_string())
                         else {
                             continue;
                         };
@@ -1765,12 +1765,12 @@ impl ContextEditor {
         };
 
         window
-            .spawn(cx, |mut cx| async move {
+            .spawn(cx, async move |cx| {
                 let (paths, dragged_file_worktrees) = paths.await;
                 let cmd_name = FileSlashCommand.name();
 
                 context_editor_view
-                    .update_in(&mut cx, |context_editor, window, cx| {
+                    .update_in(cx, |context_editor, window, cx| {
                         let file_argument = paths
                             .into_iter()
                             .map(|path| path.to_string_lossy().to_string())
@@ -2316,9 +2316,9 @@ impl ContextEditor {
                                     .log_err();
 
                                 if let Some(client) = client {
-                                    cx.spawn(|this, mut cx| async move {
-                                        client.authenticate_and_connect(true, &mut cx).await?;
-                                        this.update(&mut cx, |_, cx| cx.notify())
+                                    cx.spawn(async move |this, cx| {
+                                        client.authenticate_and_connect(true, cx).await?;
+                                        this.update(cx, |_, cx| cx.notify())
                                     })
                                     .detach_and_log_err(cx)
                                 }
@@ -3323,10 +3323,10 @@ impl FollowableItem for ContextEditor {
             assistant_panel_delegate.open_remote_context(workspace, context_id, window, cx)
         });
 
-        Some(window.spawn(cx, |mut cx| async move {
+        Some(window.spawn(cx, async move |cx| {
             let context_editor = context_editor_task.await?;
             context_editor
-                .update_in(&mut cx, |context_editor, window, cx| {
+                .update_in(cx, |context_editor, window, cx| {
                     context_editor.remote_id = Some(id);
                     context_editor.editor.update(cx, |editor, cx| {
                         editor.apply_update_proto(

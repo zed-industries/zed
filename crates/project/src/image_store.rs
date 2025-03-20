@@ -191,14 +191,14 @@ impl ImageItem {
         let (tx, rx) = futures::channel::oneshot::channel();
 
         let content = local_file.load_bytes(cx);
-        self.reload_task = Some(cx.spawn(|this, mut cx| async move {
+        self.reload_task = Some(cx.spawn(async move |this, cx| {
             if let Some(image) = content
                 .await
                 .context("Failed to load image content")
                 .and_then(create_gpui_image)
                 .log_err()
             {
-                this.update(&mut cx, |this, cx| {
+                this.update(cx, |this, cx| {
                     this.image = image;
                     cx.emit(ImageItemEvent::Reloaded);
                 })
@@ -238,9 +238,9 @@ impl ProjectItem for ImageItem {
         // Only open the item if it's a binary image (no SVGs, etc.)
         // Since we do not have a way to toggle to an editor
         if Img::extensions().contains(&ext) && !ext.contains("svg") {
-            Some(cx.spawn(|mut cx| async move {
+            Some(cx.spawn(async move |cx| {
                 project
-                    .update(&mut cx, |project, cx| project.open_image(path, cx))?
+                    .update(cx, |project, cx| project.open_image(path, cx))?
                     .await
             }))
         } else {
@@ -389,9 +389,9 @@ impl ImageStore {
                     .state
                     .open_image(project_path.path.clone(), worktree, cx);
 
-                cx.spawn(move |this, mut cx| async move {
+                cx.spawn(async move |this, cx| {
                     let load_result = load_image.await;
-                    *tx.borrow_mut() = Some(this.update(&mut cx, |this, _cx| {
+                    *tx.borrow_mut() = Some(this.update(cx, |this, _cx| {
                         // Record the fact that the image is no longer loading.
                         this.loading_images_by_path.remove(&project_path);
                         let image = load_result.map_err(Arc::new)?;
@@ -480,7 +480,7 @@ impl ImageStoreImpl for Entity<LocalImageStore> {
         let load_file = worktree.update(cx, |worktree, cx| {
             worktree.load_binary_file(path.as_ref(), cx)
         });
-        cx.spawn(move |image_store, mut cx| async move {
+        cx.spawn(async move |image_store, cx| {
             let LoadedBinaryFile { file, content } = load_file.await?;
             let image = create_gpui_image(content)?;
 
@@ -494,7 +494,7 @@ impl ImageStoreImpl for Entity<LocalImageStore> {
 
             let image_id = cx.read_entity(&entity, |model, _| model.id)?;
 
-            this.update(&mut cx, |this, cx| {
+            this.update(cx, |this, cx| {
                 image_store.update(cx, |image_store, cx| {
                     image_store.add_image(entity.clone(), cx)
                 })??;
@@ -522,9 +522,9 @@ impl ImageStoreImpl for Entity<LocalImageStore> {
         images: HashSet<Entity<ImageItem>>,
         cx: &mut Context<ImageStore>,
     ) -> Task<Result<()>> {
-        cx.spawn(move |_, mut cx| async move {
+        cx.spawn(async move |_, cx| {
             for image in images {
-                if let Some(rec) = image.update(&mut cx, |image, cx| image.reload(cx))? {
+                if let Some(rec) = image.update(cx, |image, cx| image.reload(cx))? {
                     rec.await?
                 }
             }
