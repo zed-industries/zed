@@ -842,9 +842,10 @@ impl Thread {
                                     .map(|err| err.to_string())
                                     .collect::<Vec<_>>()
                                     .join("\n");
-                                cx.emit(ThreadEvent::ShowError(ThreadError::Message(
-                                    SharedString::from(error_message.clone()),
-                                )));
+                                cx.emit(ThreadEvent::ShowError(ThreadError::Message {
+                                    header: "Error interacting with language model".into(),
+                                    message: SharedString::from(error_message.clone()),
+                                }));
                             }
 
                             thread.cancel_last_completion(cx);
@@ -1289,7 +1290,10 @@ impl Thread {
 pub enum ThreadError {
     PaymentRequired,
     MaxMonthlySpendReached,
-    Message(SharedString),
+    Message {
+        header: SharedString,
+        message: SharedString,
+    },
 }
 
 #[derive(Debug, Clone)]

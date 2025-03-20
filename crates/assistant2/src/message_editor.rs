@@ -218,10 +218,7 @@ impl MessageEditor {
             thread
                 .update(cx, |thread, cx| match system_prompt_context {
                     Err(err) => {
-                        // todo! Seems wrong to do this here.
-                        cx.emit(ThreadEvent::ShowError(ThreadError::Message(
-                            format!("{err:?}").into(),
-                        )));
+                        todo!()
                     }
                     Ok(system_prompt_context) => {
                         thread.set_system_prompt_context(system_prompt_context)

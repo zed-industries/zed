@@ -922,8 +922,8 @@ impl AssistantPanel {
                     ThreadError::MaxMonthlySpendReached => {
                         self.render_max_monthly_spend_reached_error(cx)
                     }
-                    ThreadError::Message(error_message) => {
-                        self.render_error_message(&error_message, cx)
+                    ThreadError::Message { header, message } => {
+                        self.render_error_message(header, message, cx)
                     }
                 })
                 .into_any(),
@@ -1026,7 +1026,8 @@ impl AssistantPanel {
 
     fn render_error_message(
         &self,
-        error_message: &SharedString,
+        header: SharedString,
+        message: SharedString,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         v_flex()
@@ -1036,17 +1037,14 @@ impl AssistantPanel {
                     .gap_1p5()
                     .items_center()
                     .child(Icon::new(IconName::XCircle).color(Color::Error))
-                    .child(
-                        Label::new("Error interacting with language model")
-                            .weight(FontWeight::MEDIUM),
-                    ),
+                    .child(Label::new(header).weight(FontWeight::MEDIUM)),
             )
             .child(
                 div()
                     .id("error-message")
                     .max_h_32()
                     .overflow_y_scroll()
-                    .child(Label::new(error_message.clone())),
+                    .child(Label::new(message)),
             )
             .child(
                 h_flex()
