@@ -3,6 +3,7 @@ use std::sync::Arc;
 
 use anyhow::{anyhow, Result};
 use assistant_tool::{ActionLog, Tool, ToolSource};
+use collections::HashSet;
 use gpui::{App, Entity, Task};
 use language_model::LanguageModelRequestMessage;
 use project::Project;
@@ -54,6 +55,18 @@ pub enum TextEditorToolInput {
         /// The path to the file whose last edit should be undone
         path: Arc<Path>,
     },
+}
+
+impl TextEditorToolInput {
+    pub fn path(&self) -> &Arc<Path> {
+        match self {
+            TextEditorToolInput::View { path, .. } => path,
+            TextEditorToolInput::StrReplace { path, .. } => path,
+            TextEditorToolInput::Create { path, .. } => path,
+            TextEditorToolInput::Insert { path, .. } => path,
+            TextEditorToolInput::UndoEdit { path } => path,
+        }
+    }
 }
 
 pub struct TextEditorTool;
@@ -115,51 +128,85 @@ impl Tool for TextEditorTool {
             Err(err) => return Task::ready(Err(anyhow!(err))),
         };
 
-        // Handle each command type
-        match input {
-            TextEditorToolInput::View { path, view_range } => {
-                // TODO: Implement view functionality
-                Task::ready(Ok(format!(
-                    "View command not yet implemented for path: {}",
-                    path.display()
-                )))
+        let path = input.path().clone();
+
+        let project_path = if path.is_absolute() {
+            // todo! how can we tell the model to not use abs paths
+            project.read(cx).project_path_for_absolute_path(&path, cx)
+        } else {
+            project.read(cx).find_project_path(&path, cx)
+        };
+
+        let Some(project_path) = project_path else {
+            return Task::ready(Err(anyhow!("Path {} not found in project", path.display())));
+        };
+
+        let mut changed = true;
+
+        cx.spawn(async move |cx| {
+            let buffer = project
+                .update(cx, |project, cx| project.open_buffer(project_path, cx))?
+                .await?;
+
+            // Handle each command type
+            let result = match input {
+                TextEditorToolInput::View { view_range, .. } => {
+                    changed = false;
+
+                    format!(
+                        "View command not yet implemented for path: {}",
+                        path.display()
+                    )
+                }
+                TextEditorToolInput::StrReplace {
+                    path,
+                    old_str,
+                    new_str,
+                } => {
+                    // TODO: Implement replace functionality
+                    format!(
+                        "Replace command not yet implemented for path: {}",
+                        path.display()
+                    )
+                }
+                TextEditorToolInput::Create { path, file_text } => {
+                    buffer.update(cx, |buffer, cx| buffer.set_text(file_text, cx))?;
+                    format!("Created `{}`", path.display())
+                }
+                TextEditorToolInput::Insert {
+                    path,
+                    insert_line,
+                    new_str,
+                } => {
+                    // TODO: Implement insert functionality
+                    format!(
+                        "Insert command not yet implemented for path: {}",
+                        path.display()
+                    )
+                }
+                TextEditorToolInput::UndoEdit { path } => {
+                    // TODO: Implement undo functionality
+                    format!(
+                        "Undo command not yet implemented for path: {}",
+                        path.display()
+                    )
+                }
+            };
+
+            if changed {
+                project
+                    .update(cx, |project, cx| project.save_buffer(buffer.clone(), cx))?
+                    .await?;
+
+                action_log.update(cx, |log, cx| {
+                    let mut changed_buffers = HashSet::default();
+                    changed_buffers.insert(buffer);
+
+                    log.buffer_edited(changed_buffers, cx);
+                })?;
             }
-            TextEditorToolInput::StrReplace {
-                path,
-                old_str,
-                new_str,
-            } => {
-                // TODO: Implement replace functionality
-                Task::ready(Ok(format!(
-                    "Replace command not yet implemented for path: {}",
-                    path.display()
-                )))
-            }
-            TextEditorToolInput::Create { path, file_text } => {
-                // TODO: Implement create functionality
-                Task::ready(Ok(format!(
-                    "Create command not yet implemented for path: {}",
-                    path.display()
-                )))
-            }
-            TextEditorToolInput::Insert {
-                path,
-                insert_line,
-                new_str,
-            } => {
-                // TODO: Implement insert functionality
-                Task::ready(Ok(format!(
-                    "Insert command not yet implemented for path: {}",
-                    path.display()
-                )))
-            }
-            TextEditorToolInput::UndoEdit { path } => {
-                // TODO: Implement undo functionality
-                Task::ready(Ok(format!(
-                    "Undo command not yet implemented for path: {}",
-                    path.display()
-                )))
-            }
-        }
+
+            Ok(result)
+        })
     }
 }
