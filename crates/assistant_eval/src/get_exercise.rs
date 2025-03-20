@@ -17,7 +17,7 @@ pub fn get_exercise_language(exercise_path: &Path) -> Result<String> {
     let parts: Vec<_> = exercise_path.components().collect();
 
     for (i, part) in parts.iter().enumerate() {
-        if i > 0 && part.as_os_str() == "data" {
+        if i > 0 && part.as_os_str() == "eval_code" {
             if i + 1 < parts.len() {
                 return Ok(parts[i + 1].as_os_str().to_string_lossy().to_string());
             }
@@ -41,7 +41,7 @@ pub fn find_exercises(
 
     for language in languages {
         let language_dir = framework_path
-            .join("data")
+            .join("eval_code")
             .join(language)
             .join("exercises")
             .join("practice");

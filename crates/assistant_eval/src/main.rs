@@ -14,10 +14,7 @@ use gpui::Application;
 use headless_assistant::{authenticate_model_provider, find_model};
 use language_model::LanguageModelRegistry;
 use reqwest_client::ReqwestClient;
-use std::{
-    path::PathBuf,
-    sync::Arc,
-};
+use std::{path::PathBuf, sync::Arc};
 use templates_eval::all_templates;
 
 #[derive(Parser, Debug)]
@@ -126,7 +123,6 @@ fn main() {
 
             // Read base SHA from setup.json
             let base_sha = read_base_sha(&framework_path_clone).await.unwrap();
-            println!("Using base SHA: {}", base_sha);
 
             // Find all exercises for the specified languages
             let all_exercises = find_exercises(
@@ -187,7 +183,10 @@ fn main() {
                         let language = match get_exercise_language(&exercise_path) {
                             Ok(lang) => lang,
                             Err(err) => {
-                                println!("Error determining language for {}: {}", exercise_name, err);
+                                println!(
+                                    "Error determining language for {}: {}",
+                                    exercise_name, err
+                                );
                                 return exercise_results;
                             }
                         };
