@@ -1748,8 +1748,6 @@ mod tests {
                 .to_string();
             assert_eq!(new_index_text, buffer_text);
 
-            dbg!(unstaged_diff.read(cx).inner.pending_hunks.items(&buffer));
-
             let hunk = diff.hunks(&buffer, &cx).next().unwrap();
             assert_eq!(
                 hunk.secondary_status,
@@ -1761,8 +1759,6 @@ mod tests {
                 .unwrap()
                 .to_string();
             assert_eq!(index_text, head_text);
-
-            dbg!(unstaged_diff.read(cx).inner.pending_hunks.items(&buffer));
 
             let hunk = diff.hunks(&buffer, &cx).next().unwrap();
             assert_eq!(
