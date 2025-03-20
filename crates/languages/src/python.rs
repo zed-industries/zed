@@ -328,14 +328,9 @@ impl ContextProvider for PythonContextProvider {
         toolchains: Arc<dyn LanguageToolchainStore>,
         cx: &mut gpui::App,
     ) -> Task<Result<task::TaskVariables>> {
-        let test_target = {
-            let test_runner = selected_test_runner(location.buffer.read(cx).file(), cx);
-
-            let runner = match test_runner {
-                TestRunner::UNITTEST => self.build_unittest_target(variables),
-                TestRunner::PYTEST => self.build_pytest_target(variables),
-            };
-            runner
+        let test_target = match selected_test_runner(location.buffer.read(cx).file(), cx) {
+            TestRunner::UNITTEST => self.build_unittest_target(variables),
+            TestRunner::PYTEST => self.build_pytest_target(variables),
         };
 
         let worktree_id = location.buffer.read(cx).file().map(|f| f.worktree_id(cx));
@@ -352,7 +347,9 @@ impl ContextProvider for PythonContextProvider {
                 String::from("python3")
             };
             let toolchain = (PYTHON_ACTIVE_TOOLCHAIN_PATH, active_toolchain);
-            Ok(task::TaskVariables::from_iter([test_target?, toolchain]))
+            Ok(task::TaskVariables::from_iter(
+                test_target.into_iter().chain([toolchain]),
+            ))
         })
     }
 
@@ -464,10 +461,9 @@ impl PythonContextProvider {
     fn build_unittest_target(
         &self,
         variables: &task::TaskVariables,
-    ) -> Result<(VariableName, String)> {
-        let python_module_name = python_module_name_from_relative_path(
-            variables.get(&VariableName::RelativeFile).unwrap_or(""),
-        );
+    ) -> Option<(VariableName, String)> {
+        let python_module_name =
+            python_module_name_from_relative_path(variables.get(&VariableName::RelativeFile)?);
 
         let unittest_class_name =
             variables.get(&VariableName::Custom(Cow::Borrowed("_unittest_class_name")));
@@ -478,28 +474,25 @@ impl PythonContextProvider {
 
         let unittest_target_str = match (unittest_class_name, unittest_method_name) {
             (Some(class_name), Some(method_name)) => {
-                format!("{}.{}.{}", python_module_name, class_name, method_name)
+                format!("{python_module_name}.{class_name}.{method_name}")
             }
-            (Some(class_name), None) => format!("{}.{}", python_module_name, class_name),
+            (Some(class_name), None) => format!("{python_module_name}.{class_name}"),
             (None, None) => python_module_name,
-            (None, Some(_)) => return Ok((VariableName::Custom(Cow::Borrowed("")), String::new())), // should never happen, a TestCase class is the unit of testing
+            // should never happen, a TestCase class is the unit of testing
+            (None, Some(_)) => return None,
         };
 
-        let unittest_target = (
+        Some((
             PYTHON_TEST_TARGET_TASK_VARIABLE.clone(),
             unittest_target_str,
-        );
-
-        Ok(unittest_target)
+        ))
     }
 
     fn build_pytest_target(
         &self,
         variables: &task::TaskVariables,
-    ) -> Result<(VariableName, String)> {
-        let file_path = variables
-            .get(&VariableName::RelativeFile)
-            .ok_or_else(|| anyhow!("No file path given"))?;
+    ) -> Option<(VariableName, String)> {
+        let file_path = variables.get(&VariableName::RelativeFile)?;
 
         let pytest_class_name =
             variables.get(&VariableName::Custom(Cow::Borrowed("_pytest_class_name")));
@@ -509,20 +502,18 @@ impl PythonContextProvider {
 
         let pytest_target_str = match (pytest_class_name, pytest_method_name) {
             (Some(class_name), Some(method_name)) => {
-                format!("{}::{}::{}", file_path, class_name, method_name)
+                format!("{file_path}::{class_name}::{method_name}")
             }
             (Some(class_name), None) => {
-                format!("{}::{}", file_path, class_name)
+                format!("{file_path}::{class_name}")
             }
             (None, Some(method_name)) => {
-                format!("{}::{}", file_path, method_name)
+                format!("{file_path}::{method_name}")
             }
             (None, None) => file_path.to_string(),
         };
 
-        let pytest_target = (PYTHON_TEST_TARGET_TASK_VARIABLE.clone(), pytest_target_str);
-
-        Ok(pytest_target)
+        Some((PYTHON_TEST_TARGET_TASK_VARIABLE.clone(), pytest_target_str))
     }
 }
 
