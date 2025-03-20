@@ -693,6 +693,7 @@ impl ActiveThread {
                 .into_any_element(),
             None => feedback_container
                 .child(
+                    // DL TODO: Text is long but clear? We shouldn't tuck away info that's sensible privacy-wise
                     Label::new("Rating the thread sends all of your conversation from this point up to the Zed team.")
                         .color(Color::Muted)
                         .size(LabelSize::XSmall),
@@ -824,6 +825,7 @@ impl ActiveThread {
                                         )
                                         .when(edit_message_editor.is_none(), |parent| {
                                             parent.when_some(checkpoint, |parent, checkpoint| {
+                                                // DL TODO: Checkpoints and Edit messages? Aren't these overlaping actions?
                                                 parent.child(
                                                     Button::new(
                                                         "restore-checkpoint",
@@ -877,6 +879,8 @@ impl ActiveThread {
                             .py_3()
                             .px_4()
                             .child(message_content)
+                            // DL TODO: Currently, this is not correct because the feedback container should only appear once per user/assistant turn
+                            // it shouldn't appear on every assistant message
                             .child(feedback_items),
                     )
                     .when(

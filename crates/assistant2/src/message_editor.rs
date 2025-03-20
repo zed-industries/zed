@@ -418,6 +418,10 @@ impl Render for MessageEditor {
                     ),
                 )
             })
+            // DL TODO: this whole element shouldn't be visible on the active thread's empty state.
+            // it should only pop after submitting a message
+            // however, given now it's Git, if I changed files, even if those haven't come from LLMs,
+            // they woll already show up... We've got to sort this out!
             .when(changed_files > 0 && !is_generating, |parent| {
                 parent.child(
                     h_flex()
@@ -474,6 +478,8 @@ impl Render for MessageEditor {
                                         }),
                                 )
                                 .child(ui::Divider::vertical())
+                                // DL TODO: Keybinding not working here
+                                // DL TODO: Should we use the same bindings that the Git Panel uses?
                                 .child(
                                     Button::new("review", "Review Diff")
                                         .label_size(LabelSize::XSmall)
@@ -494,6 +500,8 @@ impl Render for MessageEditor {
                                         }),
                                 )
                                 .child(
+                                    // DL TODO: Keybinding not working here
+                                    // DL TODO: Should we use the same bindings that the Git Panel uses?
                                     Button::new("commit", "Commit Changes")
                                         .label_size(LabelSize::XSmall)
                                         .key_binding({
