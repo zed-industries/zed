@@ -345,9 +345,13 @@ impl KeyIcon {
 
 /// Returns a textual representation of the key binding for the given [`Action`].
 pub fn text_for_action(action: &dyn Action, window: &Window, cx: &App) -> Option<String> {
-    let bindings = window.bindings_for_action(action);
-    let key_binding = bindings.last()?;
-    Some(text_for_keystrokes(key_binding.keystrokes(), cx))
+    if KeyBinding::is_vim_mode(cx) {
+        let bindings = window.bindings_for_action(action);
+        let key_binding = bindings.last()?;
+        Some(text_for_keystrokes(key_binding.keystrokes(), cx))
+    } else {
+        Some(window.keystroke_text_for(action))
+    }
 }
 
 pub fn text_for_keystrokes(keystrokes: &[Keystroke], cx: &App) -> String {
