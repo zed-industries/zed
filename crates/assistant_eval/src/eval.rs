@@ -1,6 +1,6 @@
-use crate::headless_assistant::{HeadlessAppState, HeadlessAssistant};
-use crate::{templates_eval::Template, get_exercise_name, get_exercise_language};
 use crate::git_commands::{checkout_repo, query_git, run_git, run_git_command, setup_temp_repo};
+use crate::headless_assistant::{HeadlessAppState, HeadlessAssistant};
+use crate::{get_exercise_language, get_exercise_name, templates_eval::Template};
 use anyhow::{anyhow, Result};
 use assistant2::RequestKind;
 use collections::HashMap;
@@ -61,15 +61,15 @@ impl Eval {
         let setup_path = path.join("setup.json");
         let setup_contents = smol::unblock(|| std::fs::read_to_string(setup_path)).await?;
         let eval_setup = serde_json_lenient::from_str_lenient::<EvalSetup>(&setup_contents)?;
-        
+
         // Move this internal function inside the load method since it's only used here
         fn repo_dir_name(url: &str) -> String {
             url.trim_start_matches("https://")
                 .replace(|c: char| !c.is_alphanumeric(), "_")
         }
-        
+
         let repo_path = repos_dir.join(repo_dir_name(&eval_setup.url));
-        
+
         Ok(Eval {
             repo_path,
             eval_setup,
@@ -83,7 +83,7 @@ impl Eval {
         model: Arc<dyn LanguageModel>,
         cx: &mut App,
     ) -> Task<Result<EvalOutput>> {
-        cx.spawn(move |mut cx| async move {
+        cx.spawn(move |mut cx: gpui::AppContext| async move {
             checkout_repo(&self.repo_path, &self.eval_setup.base_sha).await?;
 
             let (assistant, done_rx) =
@@ -126,15 +126,19 @@ impl Eval {
 
             // Add this section to check untracked files
             println!("Checking for untracked files:");
-            let untracked = query_git(&self.repo_path, &["ls-files", "--others", "--exclude-standard"]).await?;
+            let untracked = query_git(
+                &self.repo_path,
+                &["ls-files", "--others", "--exclude-standard"],
+            )
+            .await?;
             if untracked.is_empty() {
                 println!("No untracked files found");
-            } else {                
+            } else {
                 // Add all files to git so they appear in the diff
                 println!("Adding untracked files to git");
                 run_git(&self.repo_path, &["add", "."]).await?;
             }
-            
+
             // get git status
             let _status = query_git(&self.repo_path, &["status", "--short"]).await?;
 
@@ -152,7 +156,10 @@ impl Eval {
             } else if staged_diff.is_empty() {
                 unstaged_diff
             } else {
-                format!("# Staged changes\n{}\n\n# Unstaged changes\n{}", staged_diff, unstaged_diff)
+                format!(
+                    "# Staged changes\n{}\n\n# Unstaged changes\n{}",
+                    staged_diff, unstaged_diff
+                )
             };
 
             assistant.update(cx, |assistant, cx| {
@@ -181,11 +188,7 @@ impl Eval {
 impl EvalOutput {
     // Keep this method for potential future use, but mark it as intentionally unused
     #[allow(dead_code)]
-    pub fn save_to_directory(
-        &self,
-        output_dir: &Path,
-        eval_output_value: String,
-    ) -> Result<()> {
+    pub fn save_to_directory(&self, output_dir: &Path, eval_output_value: String) -> Result<()> {
         // Create the output directory if it doesn't exist
         fs::create_dir_all(&output_dir)?;
 
