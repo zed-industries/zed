@@ -1,4 +1,4 @@
-mod project_panel_settings;
+pub mod project_panel_settings;
 mod utils;
 
 use anyhow::{anyhow, Context as _, Result};
@@ -27,6 +27,7 @@ use gpui::{
 use indexmap::IndexMap;
 use language::DiagnosticSeverity;
 use menu::{Confirm, SelectFirst, SelectLast, SelectNext, SelectPrevious};
+use project::project_settings::ProjectSettings;
 use project::{
     relativize_path, Entry, EntryKind, Fs, Project, ProjectEntryId, ProjectPath, Worktree,
     WorktreeId,
@@ -55,7 +56,7 @@ use ui::{
     IndentGuideColors, IndentGuideLayout, KeyBinding, Label, ListItem, ListItemSpacing, Scrollbar,
     ScrollbarState, Tooltip,
 };
-use util::{maybe, paths::compare_paths, ResultExt, TakeUntilExt, TryFutureExt};
+use util::{maybe, paths::compare_paths_with_strategy, ResultExt, TakeUntilExt, TryFutureExt};
 use workspace::{
     dock::{DockPosition, Panel, PanelEvent},
     notifications::{DetachAndPromptErr, NotifyTaskExt},
@@ -1545,6 +1546,8 @@ impl ProjectPanel {
             .iter()
             .filter(|e| e.worktree_id == worktree_id)
             .collect::<HashSet<_>>();
+
+        let sort_strategy = ProjectSettings::get_global(cx).file_sorting.strategy;
         let latest_entry = marked_entries_in_worktree
             .iter()
             .max_by(|a, b| {
@@ -1552,9 +1555,11 @@ impl ProjectPanel {
                     worktree.entry_for_id(a.entry_id),
                     worktree.entry_for_id(b.entry_id),
                 ) {
-                    (Some(a), Some(b)) => {
-                        compare_paths((&a.path, a.is_file()), (&b.path, b.is_file()))
-                    }
+                    (Some(a), Some(b)) => compare_paths_with_strategy(
+                        (&a.path, a.is_file()),
+                        (&b.path, b.is_file()),
+                        sort_strategy.into(),
+                    ),
                     _ => cmp::Ordering::Equal,
                 }
             })
@@ -1578,7 +1583,8 @@ impl ProjectPanel {
             .map(|entry| entry.to_owned())
             .collect();
 
-        project::sort_worktree_entries(&mut siblings);
+        let sort_strategy = ProjectSettings::get_global(cx).file_sorting.strategy;
+        project::sort_worktree_entries(&mut siblings, sort_strategy.into());
         let sibling_entry_index = siblings
             .iter()
             .position(|sibling| sibling.id == latest_entry.id)?;
@@ -2785,7 +2791,8 @@ impl ProjectPanel {
                 entry_iter.advance();
             }
 
-            project::sort_worktree_entries(&mut visible_worktree_entries);
+            let sort_strategy = ProjectSettings::get_global(cx).file_sorting.strategy;
+            project::sort_worktree_entries(&mut visible_worktree_entries, sort_strategy.into());
 
             self.visible_entries
                 .push((worktree_id, visible_worktree_entries, OnceCell::new()));
@@ -4826,6 +4833,7 @@ mod tests {
     use serde_json::json;
     use settings::SettingsStore;
     use std::path::{Path, PathBuf};
+    use util::paths::SortStrategy;
     use util::{path, separator};
     use workspace::{
         item::{Item, ProjectItem},
@@ -9678,6 +9686,9 @@ mod tests {
                 store.update_user_settings::<WorktreeSettings>(cx, |worktree_settings| {
                     worktree_settings.file_scan_exclusions = Some(Vec::new());
                 });
+                store.update_user_settings::<ProjectSettings>(cx, |project_settings| {
+                    project_settings.file_sorting.strategy = SortStrategy::Lexicographical.into();
+                });
             });
         });
     }
@@ -9699,6 +9710,9 @@ mod tests {
                 });
                 store.update_user_settings::<WorktreeSettings>(cx, |worktree_settings| {
                     worktree_settings.file_scan_exclusions = Some(Vec::new());
+                });
+                store.update_user_settings::<ProjectSettings>(cx, |project_settings| {
+                    project_settings.file_sorting.strategy = SortStrategy::Lexicographical.into();
                 });
             });
         });
