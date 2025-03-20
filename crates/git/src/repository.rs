@@ -1713,6 +1713,36 @@ mod tests {
         );
     }
 
+    #[gpui::test]
+    async fn test_compare_checkpoints(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+
+        let repo_dir = tempfile::tempdir().unwrap();
+        git2::Repository::init(repo_dir.path()).unwrap();
+        let repo = RealGitRepository::new(&repo_dir.path().join(".git"), None).unwrap();
+
+        smol::fs::write(repo_dir.path().join("file1"), "content1")
+            .await
+            .unwrap();
+        let checkpoint1 = repo.checkpoint(cx.to_async()).await.unwrap();
+
+        smol::fs::write(repo_dir.path().join("file2"), "content2")
+            .await
+            .unwrap();
+        let checkpoint2 = repo.checkpoint(cx.to_async()).await.unwrap();
+
+        assert!(!repo
+            .compare_checkpoints(checkpoint1, checkpoint2, cx.to_async())
+            .await
+            .unwrap());
+
+        let checkpoint3 = repo.checkpoint(cx.to_async()).await.unwrap();
+        assert!(repo
+            .compare_checkpoints(checkpoint2, checkpoint3, cx.to_async())
+            .await
+            .unwrap());
+    }
+
     #[test]
     fn test_branches_parsing() {
         // suppress "help: octal escapes are not supported, `\0` is always null"
