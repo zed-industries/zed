@@ -5,7 +5,7 @@ use crate::edit_files_tool::replace::replace_exact;
 use anyhow::{anyhow, Result};
 use assistant_tool::{ActionLog, Tool, ToolSource};
 use collections::HashSet;
-use gpui::{App, AppContext, Entity, Task};
+use gpui::{App, AppContext, AsyncApp, Entity, Task};
 use language::Point;
 use language_model::LanguageModelRequestMessage;
 use project::Project;
@@ -59,18 +59,6 @@ pub enum TextEditorToolInput {
     },
 }
 
-impl TextEditorToolInput {
-    pub fn path(&self) -> &Arc<Path> {
-        match self {
-            TextEditorToolInput::View { path, .. } => path,
-            TextEditorToolInput::StrReplace { path, .. } => path,
-            TextEditorToolInput::Create { path, .. } => path,
-            TextEditorToolInput::Insert { path, .. } => path,
-            TextEditorToolInput::UndoEdit { path } => path,
-        }
-    }
-}
-
 pub struct TextEditorTool;
 
 impl Tool for TextEditorTool {
@@ -98,7 +86,7 @@ impl Tool for TextEditorTool {
     fn ui_text(&self, input: &serde_json::Value) -> String {
         match serde_json::from_value::<TextEditorToolInput>(input.clone()) {
             Ok(input) => match input {
-                TextEditorToolInput::View { path, .. } => format!("View file `{}`", path.display()),
+                TextEditorToolInput::View { path, .. } => format!("View `{}`", path.display()),
                 TextEditorToolInput::StrReplace { path, .. } => {
                     format!("Edit file `{}`", path.display())
                 }
@@ -130,30 +118,11 @@ impl Tool for TextEditorTool {
             Err(err) => return Task::ready(Err(anyhow!(err))),
         };
 
-        let path = input.path().clone();
-
-        let project_path = if path.is_absolute() {
-            // todo! how can we tell the model to not use abs paths
-            project.read(cx).project_path_for_absolute_path(&path, cx)
-        } else {
-            project.read(cx).find_project_path(&path, cx)
-        };
-
-        let Some(project_path) = project_path else {
-            return Task::ready(Err(anyhow!("Path {} not found in project", path.display())));
-        };
-
-        let mut changed = true;
-
         cx.spawn(async move |cx| {
-            let buffer = project
-                .update(cx, |project, cx| project.open_buffer(project_path, cx))?
-                .await?;
-
             // Handle each command type
             let result = match input {
-                TextEditorToolInput::View { view_range, .. } => {
-                    changed = false;
+                TextEditorToolInput::View { view_range, path } => {
+                    let buffer = open_buffer(&project, &path, cx).await?;
 
                     buffer.read_with(cx, |buffer, _cx| match view_range {
                         Some((start_row, end_row)) => {
@@ -166,8 +135,11 @@ impl Tool for TextEditorTool {
                     })?
                 }
                 TextEditorToolInput::StrReplace {
-                    old_str, new_str, ..
+                    old_str,
+                    new_str,
+                    path,
                 } => {
+                    let buffer = open_buffer(&project, &path, cx).await?;
                     let snapshot = buffer.read_with(cx, |buffer, _cx| buffer.snapshot())?;
 
                     // todo! anthropic requires that we fail if >1 match is found
@@ -181,6 +153,7 @@ impl Tool for TextEditorTool {
                     match diff_result {
                         Some(diff) => {
                             buffer.update(cx, |buffer, cx| buffer.apply_diff(diff, cx))?;
+                            save_changed_buffer(project, action_log, buffer, cx).await?;
 
                             "Replaced!".to_string()
                         }
@@ -188,7 +161,10 @@ impl Tool for TextEditorTool {
                     }
                 }
                 TextEditorToolInput::Create { path, file_text } => {
+                    let buffer = open_buffer(&project, &path, cx).await?;
                     buffer.update(cx, |buffer, cx| buffer.set_text(file_text, cx))?;
+                    save_changed_buffer(project, action_log, buffer, cx).await?;
+
                     format!("Created `{}`", path.display())
                 }
                 TextEditorToolInput::Insert {
@@ -209,20 +185,51 @@ impl Tool for TextEditorTool {
                 }
             };
 
-            if changed {
-                project
-                    .update(cx, |project, cx| project.save_buffer(buffer.clone(), cx))?
-                    .await?;
-
-                action_log.update(cx, |log, cx| {
-                    let mut changed_buffers = HashSet::default();
-                    changed_buffers.insert(buffer);
-
-                    log.buffer_edited(changed_buffers, cx);
-                })?;
-            }
-
             Ok(result)
         })
     }
+}
+
+async fn open_buffer(
+    project: &Entity<Project>,
+    path: &Path,
+    cx: &mut AsyncApp,
+) -> Result<Entity<language::Buffer>> {
+    let project_path =
+        // todo! how can we tell the model to not use abs paths
+        project.read_with(cx, |project, cx| {
+            if path.is_absolute() {
+                project.project_path_for_absolute_path(&path, cx)
+            } else {
+                project.find_project_path(path, cx)
+            }
+        })?;
+
+    let Some(project_path) = project_path else {
+        return Err(anyhow!("Path {} not found in project", path.display()));
+    };
+
+    project
+        .update(cx, |project, cx| project.open_buffer(project_path, cx))?
+        .await
+}
+
+async fn save_changed_buffer(
+    project: Entity<Project>,
+    action_log: Entity<ActionLog>,
+    buffer: Entity<language::Buffer>,
+    cx: &mut AsyncApp,
+) -> Result<()> {
+    project
+        .update(cx, |project, cx| project.save_buffer(buffer.clone(), cx))?
+        .await?;
+
+    action_log.update(cx, |log, cx| {
+        let mut changed_buffers = HashSet::default();
+        changed_buffers.insert(buffer);
+
+        log.buffer_edited(changed_buffers, cx);
+    })?;
+
+    Ok(())
 }
