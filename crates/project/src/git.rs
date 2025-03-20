@@ -14,7 +14,7 @@ use futures::{
     future::{self, OptionFuture, Shared},
     FutureExt as _, StreamExt as _,
 };
-use git::{repository::DiffType, Oid};
+use git::repository::{DiffType, GitRepositoryCheckpoint};
 use git::{
     repository::{
         Branch, CommitDetails, GitRepository, PushOptions, Remote, RemoteCommandOutput, RepoPath,
@@ -119,12 +119,7 @@ enum GitStoreState {
 
 #[derive(Clone)]
 pub struct GitStoreCheckpoint {
-    checkpoints_by_dot_git_abs_path: HashMap<PathBuf, RepositoryCheckpoint>,
-}
-
-#[derive(Copy, Clone)]
-pub struct RepositoryCheckpoint {
-    sha: Oid,
+    checkpoints_by_dot_git_abs_path: HashMap<PathBuf, GitRepositoryCheckpoint>,
 }
 
 pub struct Repository {
@@ -526,7 +521,8 @@ impl GitStore {
         }
 
         cx.background_executor().spawn(async move {
-            let checkpoints: Vec<RepositoryCheckpoint> = future::try_join_all(checkpoints).await?;
+            let checkpoints: Vec<GitRepositoryCheckpoint> =
+                future::try_join_all(checkpoints).await?;
             Ok(GitStoreCheckpoint {
                 checkpoints_by_dot_git_abs_path: dot_git_abs_paths
                     .into_iter()
@@ -2972,13 +2968,10 @@ impl Repository {
         })
     }
 
-    pub fn checkpoint(&self) -> oneshot::Receiver<Result<RepositoryCheckpoint>> {
+    pub fn checkpoint(&self) -> oneshot::Receiver<Result<GitRepositoryCheckpoint>> {
         self.send_job(|repo, cx| async move {
             match repo {
-                GitRepo::Local(git_repository) => {
-                    let sha = git_repository.checkpoint(cx).await?;
-                    Ok(RepositoryCheckpoint { sha })
-                }
+                GitRepo::Local(git_repository) => git_repository.checkpoint(cx).await,
                 GitRepo::Remote { .. } => Err(anyhow!("not implemented yet")),
             }
         })
@@ -2986,12 +2979,12 @@ impl Repository {
 
     pub fn restore_checkpoint(
         &self,
-        checkpoint: RepositoryCheckpoint,
+        checkpoint: GitRepositoryCheckpoint,
     ) -> oneshot::Receiver<Result<()>> {
         self.send_job(move |repo, cx| async move {
             match repo {
                 GitRepo::Local(git_repository) => {
-                    git_repository.restore_checkpoint(checkpoint.sha, cx).await
+                    git_repository.restore_checkpoint(checkpoint, cx).await
                 }
                 GitRepo::Remote { .. } => Err(anyhow!("not implemented yet")),
             }
