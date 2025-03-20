@@ -1066,10 +1066,7 @@ impl GitRepository for RealGitRepository {
                 let output = new_smol_command(&git_binary_path)
                     .current_dir(&working_directory)
                     .env("GIT_INDEX_FILE", &index_file_path)
-                    .env("GIT_AUTHOR_NAME", "Zed")
-                    .env("GIT_AUTHOR_EMAIL", "hi@zed.dev")
-                    .env("GIT_COMMITTER_NAME", "Zed")
-                    .env("GIT_COMMITTER_EMAIL", "hi@zed.dev")
+                    .envs(checkpoint_author_envs())
                     .args(args)
                     .output()
                     .await?;
@@ -1398,6 +1395,15 @@ fn check_path_to_repo_path_errors(relative_file_path: &Path) -> Result<()> {
     }
 }
 
+fn checkpoint_author_envs() -> HashMap<String, String> {
+    HashMap::from_iter([
+        ("GIT_AUTHOR_NAME".to_string(), "Zed".to_string()),
+        ("GIT_AUTHOR_EMAIL".to_string(), "hi@zed.dev".to_string()),
+        ("GIT_COMMITTER_NAME".to_string(), "Zed".to_string()),
+        ("GIT_COMMITTER_EMAIL".to_string(), "hi@zed.dev".to_string()),
+    ])
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1424,8 +1430,8 @@ mod tests {
         .unwrap();
         repo.commit(
             "Initial commit".into(),
-            Some(("Test User".into(), "test@example.com".into())),
-            HashMap::default(),
+            None,
+            checkpoint_author_envs(),
             cx.to_async(),
         )
         .await
@@ -1455,8 +1461,8 @@ mod tests {
         .unwrap();
         repo.commit(
             "Commit after checkpoint".into(),
-            Some(("Test User".into(), "test@example.com".into())),
-            HashMap::default(),
+            None,
+            checkpoint_author_envs(),
             cx.to_async(),
         )
         .await
@@ -1551,8 +1557,8 @@ mod tests {
         .unwrap();
         repo.commit(
             "Initial commit".into(),
-            Some(("Test User".into(), "test@example.com".into())),
-            HashMap::default(),
+            None,
+            checkpoint_author_envs(),
             cx.to_async(),
         )
         .await
@@ -1581,8 +1587,8 @@ mod tests {
         .unwrap();
         repo.commit(
             "Commit new files".into(),
-            Some(("Test User".into(), "test@example.com".into())),
-            HashMap::default(),
+            None,
+            checkpoint_author_envs(),
             cx.to_async(),
         )
         .await
