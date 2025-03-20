@@ -6,7 +6,7 @@ use anyhow::{anyhow, Result};
 use assistant_tool::{ActionLog, Tool, ToolSource};
 use collections::HashSet;
 use gpui::{App, AppContext, AsyncApp, Entity, Task};
-use language::Point;
+use language::{AutoindentMode, Point};
 use language_model::LanguageModelRequestMessage;
 use project::Project;
 use schemars::JsonSchema;
@@ -168,14 +168,27 @@ impl Tool for TextEditorTool {
                     format!("Created `{}`", path.display())
                 }
                 TextEditorToolInput::Insert {
-                    insert_line: _,
-                    new_str: _,
-                    ..
+                    insert_line,
+                    new_str,
+                    path,
                 } => {
-                    // todo!
-                    return Err(anyhow!(format!(
-                        "Insert command not available. Use str_replace to insert."
-                    )));
+                    let buffer = open_buffer(&project, &path, cx).await?;
+
+                    let start = Point::new(insert_line.saturating_sub(1) as u32, 0);
+
+                    buffer.update(cx, |buffer, cx| {
+                        buffer.start_transaction();
+                        buffer.edit(
+                            [(start..start, new_str)],
+                            Some(AutoindentMode::EachLine),
+                            cx,
+                        );
+                        buffer.end_transaction(cx);
+                    })?;
+
+                    save_changed_buffer(project, action_log, buffer, cx).await?;
+
+                    format!("Inserted into `{}`", path.display())
                 }
                 TextEditorToolInput::UndoEdit { .. } => {
                     // todo!
