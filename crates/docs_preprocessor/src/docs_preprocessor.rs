@@ -70,7 +70,6 @@ impl PreprocessorContext {
 fn name_for_action(action_as_str: String) -> String {
     action_as_str
         .split(",")
-        .into_iter()
         .next()
         .map(|name| name.trim_matches('"').to_string())
         .unwrap_or(action_as_str)
