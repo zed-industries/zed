@@ -223,7 +223,15 @@ impl Tool for TextEditorTool {
 
                     // todo! look at reference implementation to see what's the best response
                     match diff_result {
-                        Some(diff) => {
+                        Some((diff, match_count)) => {
+                            if match_count > 1 {
+                                // Anthropic requires that we fail if there's more than one match
+                                return Err(anyhow!(
+                                    "Aborting! Found {} occurrences of `old_str`. Please make it more specific.",
+                                    match_count
+                                ));
+                            }
+
                             buffer.update(cx, |buffer, cx| buffer.apply_diff(diff, cx))?;
                             save_changed_buffer(project, action_log, buffer, cx).await?;
 
