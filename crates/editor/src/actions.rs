@@ -412,6 +412,8 @@ actions!(
         SwitchSourceHeader,
         Tab,
         Backtab,
+        ToggleBreakpoint,
+        EditLogBreakpoint,
         ToggleAutoSignatureHelp,
         ToggleGitBlameInline,
         ToggleIndentGuides,

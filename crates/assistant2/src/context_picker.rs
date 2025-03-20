@@ -281,10 +281,8 @@ impl ContextPicker {
             context_store.add_file_from_path(project_path.clone(), cx)
         });
 
-        cx.spawn_in(window, |_, mut cx| async move {
-            task.await.notify_async_err(&mut cx)
-        })
-        .detach();
+        cx.spawn_in(window, async move |_, cx| task.await.notify_async_err(cx))
+            .detach();
 
         cx.notify();
     }
@@ -307,13 +305,13 @@ impl ContextPicker {
         };
 
         let open_thread_task = thread_store.update(cx, |this, cx| this.open_thread(&thread.id, cx));
-        cx.spawn(|this, mut cx| async move {
+        cx.spawn(async move |this, cx| {
             let thread = open_thread_task.await?;
-            context_store.update(&mut cx, |context_store, cx| {
+            context_store.update(cx, |context_store, cx| {
                 context_store.add_thread(thread, cx);
             })?;
 
-            this.update(&mut cx, |_this, cx| cx.notify())
+            this.update(cx, |_this, cx| cx.notify())
         })
     }
 

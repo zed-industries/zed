@@ -1,7 +1,6 @@
 use crate::status::GitStatus;
-use crate::SHORT_SHA_LENGTH;
+use crate::{Oid, SHORT_SHA_LENGTH};
 use anyhow::{anyhow, Context as _, Result};
-use askpass::{AskPassResult, AskPassSession};
 use collections::HashMap;
 use futures::future::BoxFuture;
 use futures::{select_biased, AsyncWriteExt, FutureExt as _};
@@ -23,6 +22,9 @@ use std::{
 use sum_tree::MapSeekTarget;
 use util::command::new_smol_command;
 use util::ResultExt;
+use uuid::Uuid;
+
+pub use askpass::{AskPassResult, AskPassSession};
 
 pub const REMOTE_CANCELLED_BY_USER: &str = "Operation cancelled by user";
 
@@ -207,7 +209,7 @@ pub trait GitRepository: Send + Sync {
         &self,
         path: RepoPath,
         content: Rope,
-        cx: AsyncApp,
+        cx: &mut AsyncApp,
     ) -> BoxFuture<Result<crate::blame::Blame>>;
 
     /// Returns the absolute path to the repository. For worktrees, this will be the path to the
@@ -286,6 +288,12 @@ pub trait GitRepository: Send + Sync {
 
     /// Run git diff
     fn diff(&self, diff: DiffType, cx: AsyncApp) -> BoxFuture<Result<String>>;
+
+    /// Creates a checkpoint for the repository.
+    fn checkpoint(&self, cx: AsyncApp) -> BoxFuture<Result<Oid>>;
+
+    /// Resets to a previously-created checkpoint.
+    fn restore_checkpoint(&self, oid: Oid, cx: AsyncApp) -> BoxFuture<Result<()>>;
 }
 
 pub enum DiffType {
@@ -311,11 +319,13 @@ pub struct RealGitRepository {
 }
 
 impl RealGitRepository {
-    pub fn new(repository: git2::Repository, git_binary_path: Option<PathBuf>) -> Self {
-        Self {
+    pub fn new(dotgit_path: &Path, git_binary_path: Option<PathBuf>) -> Option<Self> {
+        let workdir_root = dotgit_path.parent()?;
+        let repository = git2::Repository::open(workdir_root).log_err()?;
+        Some(Self {
             repository: Arc::new(Mutex::new(repository)),
             git_binary_path: git_binary_path.unwrap_or_else(|| PathBuf::from("git")),
-        }
+        })
     }
 
     fn working_directory(&self) -> Result<PathBuf> {
@@ -678,7 +688,7 @@ impl GitRepository for RealGitRepository {
         &self,
         path: RepoPath,
         content: Rope,
-        cx: AsyncApp,
+        cx: &mut AsyncApp,
     ) -> BoxFuture<Result<crate::blame::Blame>> {
         let working_directory = self.working_directory();
         let git_binary_path = self.git_binary_path.clone();
@@ -1022,6 +1032,89 @@ impl GitRepository for RealGitRepository {
         })
         .boxed()
     }
+
+    fn checkpoint(&self, cx: AsyncApp) -> BoxFuture<Result<Oid>> {
+        let working_directory = self.working_directory();
+        let git_binary_path = self.git_binary_path.clone();
+        let executor = cx.background_executor().clone();
+        cx.background_spawn(async move {
+            let working_directory = working_directory?;
+            let index_file_path = working_directory.join(".git/index.tmp");
+
+            let delete_temp_index = util::defer({
+                let index_file_path = index_file_path.clone();
+                || {
+                    executor
+                        .spawn(async move {
+                            smol::fs::remove_file(index_file_path).await.log_err();
+                        })
+                        .detach();
+                }
+            });
+
+            let run_git_command = async |args: &[&str]| {
+                let output = new_smol_command(&git_binary_path)
+                    .current_dir(&working_directory)
+                    .env("GIT_INDEX_FILE", &index_file_path)
+                    .env("GIT_AUTHOR_NAME", "Zed")
+                    .env("GIT_AUTHOR_EMAIL", "hi@zed.dev")
+                    .env("GIT_COMMITTER_NAME", "Zed")
+                    .env("GIT_COMMITTER_EMAIL", "hi@zed.dev")
+                    .args(args)
+                    .output()
+                    .await?;
+                if output.status.success() {
+                    anyhow::Ok(String::from_utf8(output.stdout)?.trim_end().to_string())
+                } else {
+                    let error = String::from_utf8_lossy(&output.stderr);
+                    Err(anyhow!("Git command failed: {:?}", error))
+                }
+            };
+
+            run_git_command(&["add", "--all"]).await?;
+            let tree = run_git_command(&["write-tree"]).await?;
+            let commit_sha = run_git_command(&["commit-tree", &tree, "-m", "Checkpoint"]).await?;
+            let ref_name = Uuid::new_v4().to_string();
+            run_git_command(&["update-ref", &format!("refs/heads/{ref_name}"), &commit_sha])
+                .await?;
+
+            smol::fs::remove_file(index_file_path).await.ok();
+            delete_temp_index.abort();
+
+            commit_sha.parse()
+        })
+        .boxed()
+    }
+
+    fn restore_checkpoint(&self, oid: Oid, cx: AsyncApp) -> BoxFuture<Result<()>> {
+        let working_directory = self.working_directory();
+        let git_binary_path = self.git_binary_path.clone();
+        cx.background_spawn(async move {
+            let working_directory = working_directory?;
+            let index_file_path = working_directory.join(".git/index.tmp");
+
+            let run_git_command = async |args: &[&str]| {
+                let output = new_smol_command(&git_binary_path)
+                    .current_dir(&working_directory)
+                    .env("GIT_INDEX_FILE", &index_file_path)
+                    .args(args)
+                    .output()
+                    .await?;
+                if output.status.success() {
+                    anyhow::Ok(String::from_utf8(output.stdout)?.trim_end().to_string())
+                } else {
+                    let error = String::from_utf8_lossy(&output.stderr);
+                    Err(anyhow!("Git command failed: {:?}", error))
+                }
+            };
+
+            run_git_command(&["restore", "--source", &oid.to_string(), "--worktree", "."]).await?;
+            run_git_command(&["read-tree", &oid.to_string()]).await?;
+            run_git_command(&["clean", "-d", "--force"]).await?;
+            Ok(())
+        })
+        .boxed()
+    }
 }
 
 async fn run_remote_command(
@@ -1257,29 +1350,72 @@ fn check_path_to_repo_path_errors(relative_file_path: &Path) -> Result<()> {
     }
 }
 
-#[test]
-fn test_branches_parsing() {
-    // suppress "help: octal escapes are not supported, `\0` is always null"
-    #[allow(clippy::octal_escapes)]
-    let input = "*\0060964da10574cd9bf06463a53bf6e0769c5c45e\0\0refs/heads/zed-patches\0refs/remotes/origin/zed-patches\0\01733187470\0generated protobuf\n";
-    assert_eq!(
-        parse_branch_input(&input).unwrap(),
-        vec![Branch {
-            is_head: true,
-            name: "zed-patches".into(),
-            upstream: Some(Upstream {
-                ref_name: "refs/remotes/origin/zed-patches".into(),
-                tracking: UpstreamTracking::Tracked(UpstreamTrackingStatus {
-                    ahead: 0,
-                    behind: 0
+#[cfg(test)]
+mod tests {
+    use gpui::TestAppContext;
+
+    use super::*;
+
+    #[gpui::test]
+    async fn test_checkpoint(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+
+        let repo_dir = tempfile::tempdir().unwrap();
+        git2::Repository::init(repo_dir.path()).unwrap();
+        let repo = RealGitRepository::new(&repo_dir.path().join(".git"), None).unwrap();
+
+        smol::fs::write(repo_dir.path().join("foo"), "foo")
+            .await
+            .unwrap();
+        let checkpoint_sha = repo.checkpoint(cx.to_async()).await.unwrap();
+
+        smol::fs::write(repo_dir.path().join("foo"), "bar")
+            .await
+            .unwrap();
+        smol::fs::write(repo_dir.path().join("baz"), "qux")
+            .await
+            .unwrap();
+        repo.restore_checkpoint(checkpoint_sha, cx.to_async())
+            .await
+            .unwrap();
+        assert_eq!(
+            smol::fs::read_to_string(repo_dir.path().join("foo"))
+                .await
+                .unwrap(),
+            "foo"
+        );
+        assert_eq!(
+            smol::fs::read_to_string(repo_dir.path().join("baz"))
+                .await
+                .ok(),
+            None
+        );
+    }
+
+    #[test]
+    fn test_branches_parsing() {
+        // suppress "help: octal escapes are not supported, `\0` is always null"
+        #[allow(clippy::octal_escapes)]
+        let input = "*\0060964da10574cd9bf06463a53bf6e0769c5c45e\0\0refs/heads/zed-patches\0refs/remotes/origin/zed-patches\0\01733187470\0generated protobuf\n";
+        assert_eq!(
+            parse_branch_input(&input).unwrap(),
+            vec![Branch {
+                is_head: true,
+                name: "zed-patches".into(),
+                upstream: Some(Upstream {
+                    ref_name: "refs/remotes/origin/zed-patches".into(),
+                    tracking: UpstreamTracking::Tracked(UpstreamTrackingStatus {
+                        ahead: 0,
+                        behind: 0
+                    })
+                }),
+                most_recent_commit: Some(CommitSummary {
+                    sha: "060964da10574cd9bf06463a53bf6e0769c5c45e".into(),
+                    subject: "generated protobuf".into(),
+                    commit_timestamp: 1733187470,
+                    has_parent: false,
                 })
-            }),
-            most_recent_commit: Some(CommitSummary {
-                sha: "060964da10574cd9bf06463a53bf6e0769c5c45e".into(),
-                subject: "generated protobuf".into(),
-                commit_timestamp: 1733187470,
-                has_parent: false,
-            })
-        }]
-    )
+            }]
+        )
+    }
 }

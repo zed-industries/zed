@@ -70,39 +70,30 @@ impl Tool for ReadFileTool {
             return Task::ready(Err(anyhow!("Path not found in project")));
         };
 
-        cx.spawn(|mut cx| async move {
+        cx.spawn(async move |cx| {
             let buffer = cx
                 .update(|cx| {
                     project.update(cx, |project, cx| project.open_buffer(project_path, cx))
                 })?
                 .await?;
 
-            let result = buffer.read_with(&cx, |buffer, _cx| {
-                if buffer
-                    .file()
-                    .map_or(false, |file| file.disk_state().exists())
-                {
-                    let text = buffer.text();
-                    let string = if input.start_line.is_some() || input.end_line.is_some() {
-                        let start = input.start_line.unwrap_or(1);
-                        let lines = text.split('\n').skip(start - 1);
-                        if let Some(end) = input.end_line {
-                            let count = end.saturating_sub(start);
-                            Itertools::intersperse(lines.take(count), "\n").collect()
-                        } else {
-                            Itertools::intersperse(lines, "\n").collect()
-                        }
+            let result = buffer.read_with(cx, |buffer, _cx| {
+                let text = buffer.text();
+                if input.start_line.is_some() || input.end_line.is_some() {
+                    let start = input.start_line.unwrap_or(1);
+                    let lines = text.split('\n').skip(start - 1);
+                    if let Some(end) = input.end_line {
+                        let count = end.saturating_sub(start);
+                        Itertools::intersperse(lines.take(count), "\n").collect()
                     } else {
-                        text
-                    };
-
-                    Ok(string)
+                        Itertools::intersperse(lines, "\n").collect()
+                    }
                 } else {
-                    Err(anyhow!("File does not exist"))
+                    text
                 }
-            })??;
+            })?;
 
-            action_log.update(&mut cx, |log, cx| {
+            action_log.update(cx, |log, cx| {
                 log.buffer_read(buffer, cx);
             })?;
 

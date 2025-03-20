@@ -167,10 +167,10 @@ impl Editor {
         cx: &mut Context<Editor>,
     ) {
         let reveal_task = self.cmd_click_reveal_task(point, modifiers, window, cx);
-        cx.spawn_in(window, |editor, mut cx| async move {
+        cx.spawn_in(window, async move |editor, cx| {
             let definition_revealed = reveal_task.await.log_err().unwrap_or(Navigated::No);
             let find_references = editor
-                .update_in(&mut cx, |editor, window, cx| {
+                .update_in(cx, |editor, window, cx| {
                     if definition_revealed == Navigated::Yes {
                         return None;
                     }
@@ -529,12 +529,12 @@ pub fn show_link_definition(
     let provider = editor.semantics_provider.clone();
 
     let snapshot = snapshot.buffer_snapshot.clone();
-    hovered_link_state.task = Some(cx.spawn_in(window, |this, mut cx| {
+    hovered_link_state.task = Some(cx.spawn_in(window, async move |this, cx| {
         async move {
             let result = match &trigger_point {
                 TriggerPoint::Text(_) => {
                     if let Some((url_range, url)) = find_url(&buffer, buffer_position, cx.clone()) {
-                        this.update(&mut cx, |_, _| {
+                        this.update(cx, |_, _| {
                             let range = maybe!({
                                 let start =
                                     snapshot.anchor_in_excerpt(excerpt_id, url_range.start)?;
@@ -545,7 +545,7 @@ pub fn show_link_definition(
                         })
                         .ok()
                     } else if let Some((filename_range, filename)) =
-                        find_file(&buffer, project.clone(), buffer_position, &mut cx).await
+                        find_file(&buffer, project.clone(), buffer_position, cx).await
                     {
                         let range = maybe!({
                             let start =
@@ -589,7 +589,7 @@ pub fn show_link_definition(
                 )),
             };
 
-            this.update(&mut cx, |editor, cx| {
+            this.update(cx, |editor, cx| {
                 // Clear any existing highlights
                 editor.clear_highlights::<HoveredLinkState>(cx);
                 let Some(hovered_link_state) = editor.hovered_link_state.as_mut() else {
@@ -647,6 +647,7 @@ pub fn show_link_definition(
             Ok::<_, anyhow::Error>(())
         }
         .log_err()
+        .await
     }));
 
     editor.hovered_link_state = Some(hovered_link_state);

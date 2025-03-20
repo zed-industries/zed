@@ -98,9 +98,9 @@ pub fn init(
     AssistantSettings::register(cx);
     SlashCommandSettings::register(cx);
 
-    cx.spawn(|mut cx| {
+    cx.spawn({
         let client = client.clone();
-        async move {
+        async move |cx| {
             let is_search_slash_command_enabled = cx
                 .update(|cx| cx.wait_for_flag::<SearchSlashCommandFeatureFlag>())?
                 .await;
@@ -116,7 +116,7 @@ pub fn init(
             let semantic_index = SemanticDb::new(
                 paths::embeddings_dir().join("semantic-index-db.0.mdb"),
                 Arc::new(embedding_provider),
-                &mut cx,
+                cx,
             )
             .await?;
 

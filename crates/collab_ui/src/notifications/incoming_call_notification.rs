@@ -12,12 +12,12 @@ use workspace::AppState;
 pub fn init(app_state: &Arc<AppState>, cx: &mut App) {
     let app_state = Arc::downgrade(app_state);
     let mut incoming_call = ActiveCall::global(cx).read(cx).incoming();
-    cx.spawn(|mut cx| async move {
+    cx.spawn(async move |cx| {
         let mut notification_windows: Vec<WindowHandle<IncomingCallNotification>> = Vec::new();
         while let Some(incoming_call) = incoming_call.next().await {
             for window in notification_windows.drain(..) {
                 window
-                    .update(&mut cx, |_, window, _| {
+                    .update(cx, |_, window, _| {
                         window.remove_window();
                     })
                     .log_err();
@@ -75,7 +75,7 @@ impl IncomingCallNotificationState {
             let initial_project_id = self.call.initial_project.as_ref().map(|project| project.id);
             let app_state = self.app_state.clone();
             let cx: &mut App = cx;
-            cx.spawn(|cx| async move {
+            cx.spawn(async move |cx| {
                 join.await?;
                 if let Some(project_id) = initial_project_id {
                     cx.update(|cx| {

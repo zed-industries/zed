@@ -691,6 +691,7 @@ impl Element for InteractiveText {
         window: &mut Window,
         cx: &mut App,
     ) {
+        let current_view = window.current_view();
         let text_layout = self.text.layout().clone();
         window.with_element_state::<InteractiveTextState, _>(
             global_id.unwrap(),
@@ -764,7 +765,7 @@ impl Element for InteractiveText {
                                 if let Some(hover_listener) = hover_listener.as_ref() {
                                     hover_listener(updated, event.clone(), window, cx);
                                 }
-                                window.refresh();
+                                cx.notify(current_view);
                             }
                         }
                     }
