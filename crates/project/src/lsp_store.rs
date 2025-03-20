@@ -1110,7 +1110,7 @@ impl LocalLspStore {
                     language_server.server_id(),
                     vec![kind.clone()],
                     buffer,
-                    &mut cx,
+                    cx,
                 )
                 .await?;
                 Self::execute_code_actions_on_server(
@@ -1120,7 +1120,7 @@ impl LocalLspStore {
                     actions,
                     push_to_history,
                     &mut project_transaction,
-                    &mut cx,
+                    cx,
                 )
                 .await?;
             }
@@ -1164,8 +1164,7 @@ impl LocalLspStore {
         let mut project_transaction = ProjectTransaction::default();
 
         for buffer in &buffers {
-            // todo! consider lazily initializing
-            let adapters_and_servers = lsp_store.update(&mut cx, |lsp_store, cx| {
+            let adapters_and_servers = lsp_store.update(cx, |lsp_store, cx| {
                 buffer.handle.update(cx, |buffer, cx| {
                     lsp_store
                         .as_local()
@@ -1176,7 +1175,7 @@ impl LocalLspStore {
                 })
             })?;
 
-            let settings = buffer.handle.read_with(&cx, |buffer, cx| {
+            let settings = buffer.handle.read_with(cx, |buffer, cx| {
                 language_settings(buffer.language().map(|l| l.name()), buffer.file(), cx)
                     .into_owned()
             })?;
@@ -1186,7 +1185,7 @@ impl LocalLspStore {
             // ensure no transactions created while formatting are
             // grouped with the previous transaction in the history
             // based on the transaction group interval
-            buffer.handle.update(&mut cx, |buffer, _| {
+            buffer.handle.update(cx, |buffer, _| {
                 buffer.finalize_last_transaction();
             })?;
 
@@ -1195,9 +1194,9 @@ impl LocalLspStore {
                 if settings.remove_trailing_whitespace_on_save {
                     let diff = buffer
                         .handle
-                        .read_with(&cx, |buffer, cx| buffer.remove_trailing_whitespace(cx))?
+                        .read_with(cx, |buffer, cx| buffer.remove_trailing_whitespace(cx))?
                         .await;
-                    buffer.handle.update(&mut cx, |buffer, cx| {
+                    buffer.handle.update(cx, |buffer, cx| {
                         buffer.start_transaction();
                         buffer.apply_diff(diff, cx);
                         transaction_id_format =
@@ -1209,7 +1208,7 @@ impl LocalLspStore {
                 }
 
                 if settings.ensure_final_newline_on_save {
-                    buffer.handle.update(&mut cx, |buffer, cx| {
+                    buffer.handle.update(cx, |buffer, cx| {
                         buffer.start_transaction();
                         buffer.ensure_final_newline(cx);
                         transaction_id_format =
@@ -1299,16 +1298,13 @@ impl LocalLspStore {
             'formatters: for formatter in formatters {
                 match formatter {
                     Formatter::Prettier => {
-                        let prettier = lsp_store.read_with(&cx, |lsp_store, _cx| {
+                        let prettier = lsp_store.read_with(cx, |lsp_store, _cx| {
                             lsp_store.prettier_store().unwrap().downgrade()
                         })?;
-                        let diff_result = prettier_store::format_with_prettier(
-                            &prettier,
-                            &buffer.handle,
-                            &mut cx,
-                        )
-                        .await
-                        .transpose();
+                        let diff_result =
+                            prettier_store::format_with_prettier(&prettier, &buffer.handle, cx)
+                                .await
+                                .transpose();
                         let Ok(diff) = diff_result else {
                             result = Err(diff_result.unwrap_err());
                             break 'formatters;
@@ -1322,7 +1318,7 @@ impl LocalLspStore {
                             result = Err(err);
                             break 'formatters;
                         }
-                        buffer.handle.update(&mut cx, |buffer, cx| {
+                        buffer.handle.update(cx, |buffer, cx| {
                             buffer.start_transaction();
                             buffer.apply_diff(diff, cx);
                             transaction_id_format =
@@ -1337,7 +1333,7 @@ impl LocalLspStore {
                             buffer,
                             command.as_ref(),
                             arguments.as_deref(),
-                            &mut cx,
+                            cx,
                         )
                         .await
                         .with_context(|| {
@@ -1356,7 +1352,7 @@ impl LocalLspStore {
                             result = Err(err);
                             break 'formatters;
                         }
-                        buffer.handle.update(&mut cx, |buffer, cx| {
+                        buffer.handle.update(cx, |buffer, cx| {
                             buffer.start_transaction();
                             buffer.apply_diff(diff, cx);
                             transaction_id_format =
@@ -1383,7 +1379,7 @@ impl LocalLspStore {
                             }
 
                             // otherwise, fall back to the primary language server for the buffer if one exists
-                            let default_lsp = lsp_store.update(&mut cx, |lsp_store, cx| {
+                            let default_lsp = lsp_store.update(cx, |lsp_store, cx| {
                                 buffer.handle.update(cx, |buffer, cx| {
                                     lsp_store
                                         .as_local()
@@ -1412,7 +1408,7 @@ impl LocalLspStore {
                                 buffer_path_abs,
                                 &language_server,
                                 &settings,
-                                &mut cx,
+                                cx,
                             )
                             .await
                             .context("Failed to format ranges via language server")
@@ -1423,7 +1419,7 @@ impl LocalLspStore {
                                 buffer_path_abs,
                                 &language_server,
                                 &settings,
-                                &mut cx,
+                                cx,
                             )
                             .await
                             .context("failed to format via language server")
@@ -1444,7 +1440,7 @@ impl LocalLspStore {
                             break 'formatters;
                         }
 
-                        buffer.handle.update(&mut cx, |buffer, cx| {
+                        buffer.handle.update(cx, |buffer, cx| {
                             buffer.start_transaction();
                             buffer.edit(edits, None, cx);
                             transaction_id_format =
@@ -1478,7 +1474,7 @@ impl LocalLspStore {
                                         language_server.server_id(),
                                         code_action_kinds.clone(),
                                         &buffer.handle,
-                                        &mut cx,
+                                        cx,
                                     )
                                     .await
                                     .with_context(
@@ -1638,7 +1634,7 @@ impl LocalLspStore {
                                     }
                                 }
                                 let edits_result = lsp_store
-                                        .update(&mut cx, |lsp_store, cx| {
+                                        .update(cx, |lsp_store, cx| {
                                             lsp_store.as_local_mut().unwrap().edits_from_lsp(
                                                 &buffer.handle,
                                                 lsp_edits,
@@ -1667,7 +1663,7 @@ impl LocalLspStore {
                                 result = Err(err);
                                 break 'formatters;
                             }
-                            buffer.handle.update(&mut cx, |buffer, cx| {
+                            buffer.handle.update(cx, |buffer, cx| {
                                 buffer.start_transaction();
                                 buffer.edit(edits, None, cx);
                                 transaction_id_format =
@@ -1682,7 +1678,7 @@ impl LocalLspStore {
             }
 
             let buffer_handle = buffer.handle.clone();
-            buffer.handle.update(&mut cx, |buffer, _| {
+            buffer.handle.update(cx, |buffer, _| {
                 let Some(transaction_id) = transaction_id_format else {
                     return result;
                 };
