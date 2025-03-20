@@ -644,6 +644,8 @@ message UpdateWorktree {
     string root_name = 3;
     repeated Entry updated_entries = 4;
     repeated uint64 removed_entries = 5;
+    reserved 6;
+    reserved 7;
     uint64 scan_id = 8;
     bool is_last_update = 9;
     string abs_path = 10;
