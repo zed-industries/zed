@@ -25,6 +25,7 @@ pub struct ToolUse {
 
 #[derive(Debug, Clone)]
 pub enum ToolUseStatus {
+    NeedsConfirmation,
     Pending,
     Running,
     Finished(SharedString),
@@ -165,6 +166,7 @@ impl ToolUseState {
                 if let Some(pending_tool_use) = self.pending_tool_uses_by_id.get(&tool_use.id) {
                     return match pending_tool_use.status {
                         PendingToolUseStatus::Idle => ToolUseStatus::Pending,
+                        PendingToolUseStatus::NeedsConfirmation => ToolUseStatus::NeedsConfirmation,
                         PendingToolUseStatus::Running { .. } => ToolUseStatus::Running,
                         PendingToolUseStatus::Error(ref err) => {
                             ToolUseStatus::Error(err.clone().into())
@@ -371,6 +373,7 @@ pub struct PendingToolUse {
 
 #[derive(Debug, Clone)]
 pub enum PendingToolUseStatus {
+    NeedsConfirmation,
     Idle,
     Running { _task: Shared<Task<()>> },
     Error(#[allow(unused)] Arc<str>),

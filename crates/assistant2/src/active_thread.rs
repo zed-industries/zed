@@ -860,7 +860,7 @@ impl ActiveThread {
                         )
                         .child({
                             let (icon_name, color, animated) = match &tool_use.status {
-                                ToolUseStatus::Pending => {
+                                ToolUseStatus::Pending | ToolUseStatus::NeedsConfirmation => {
                                     (IconName::Warning, Color::Warning, false)
                                 }
                                 ToolUseStatus::Running => {
@@ -975,6 +975,20 @@ impl ActiveThread {
                                         ),
                                 ),
                                 ToolUseStatus::Pending => container,
+                                ToolUseStatus::NeedsConfirmation => container.child(
+                                    content_container()
+                                        .child(
+                                            Label::new("Confirmation")
+                                                .size(LabelSize::XSmall)
+                                                .color(Color::Muted)
+                                                .buffer_font(cx),
+                                        )
+                                        .child(
+                                            Label::new("Are you sure?")
+                                                .size(LabelSize::Small)
+                                                .buffer_font(cx),
+                                        ),
+                                ),
                             }),
                     )
                 }),
@@ -1043,6 +1057,7 @@ impl ActiveThread {
                                 ToolUseStatus::Running => "Running",
                                 ToolUseStatus::Finished(_) => "Finished",
                                 ToolUseStatus::Error(_) => "Error",
+                                ToolUseStatus::NeedsConfirmation => "Awaiting Confirmation",
                             })
                             .size(LabelSize::XSmall)
                             .buffer_font(cx),
@@ -1094,6 +1109,14 @@ impl ActiveThread {
                                         .child(Label::new(err)),
                                 ),
                                 ToolUseStatus::Pending | ToolUseStatus::Running => parent,
+                                ToolUseStatus::NeedsConfirmation => parent.child(
+                                    v_flex()
+                                        .gap_0p5()
+                                        .py_1()
+                                        .px_2p5()
+                                        .child(Label::new("Confirmation:"))
+                                        .child(Label::new("Are you sure?")),
+                                ),
                             }),
                     )
                 }),
