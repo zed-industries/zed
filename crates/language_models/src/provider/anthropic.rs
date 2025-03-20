@@ -1,6 +1,6 @@
 use crate::ui::InstructionListItem;
 use crate::AllLanguageModelSettings;
-use anthropic::{AnthropicError, ContentDelta, Event, ResponseContent, Usage};
+use anthropic::{AnthropicError, AnthropicModelMode, ContentDelta, Event, ResponseContent, Usage};
 use anyhow::{anyhow, Context as _, Result};
 use collections::{BTreeMap, HashMap};
 use credentials_provider::CredentialsProvider;
@@ -55,6 +55,37 @@ pub struct AvailableModel {
     pub default_temperature: Option<f32>,
     #[serde(default)]
     pub extra_beta_headers: Vec<String>,
+    /// The model's mode (e.g. thinking)
+    pub mode: Option<ModelMode>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "type", rename_all = "lowercase")]
+pub enum ModelMode {
+    #[default]
+    Default,
+    Thinking {
+        /// The maximum number of tokens to use for reasoning. Must be lower than the model's `max_output_tokens`.
+        budget_tokens: Option<u32>,
+    },
+}
+
+impl From<ModelMode> for AnthropicModelMode {
+    fn from(value: ModelMode) -> Self {
+        match value {
+            ModelMode::Default => AnthropicModelMode::Default,
+            ModelMode::Thinking { budget_tokens } => AnthropicModelMode::Thinking { budget_tokens },
+        }
+    }
+}
+
+impl From<AnthropicModelMode> for ModelMode {
+    fn from(value: AnthropicModelMode) -> Self {
+        match value {
+            AnthropicModelMode::Default => ModelMode::Default,
+            AnthropicModelMode::Thinking { budget_tokens } => ModelMode::Thinking { budget_tokens },
+        }
+    }
 }
 
 pub struct AnthropicLanguageModelProvider {
@@ -228,6 +259,7 @@ impl LanguageModelProvider for AnthropicLanguageModelProvider {
                     max_output_tokens: model.max_output_tokens,
                     default_temperature: model.default_temperature,
                     extra_beta_headers: model.extra_beta_headers.clone(),
+                    mode: model.mode.clone().unwrap_or_default().into(),
                 },
             );
         }
@@ -402,8 +434,7 @@ impl LanguageModel for AnthropicModel {
             self.model.request_id().into(),
             self.model.default_temperature(),
             self.model.max_output_tokens(),
-            self.model.enable_thinking(),
-            self.model.budget_tokens(),
+            self.model.mode(),
         );
         let request = self.stream_completion(request, cx);
         let future = self.request_limiter.stream(async move {
@@ -436,8 +467,7 @@ impl LanguageModel for AnthropicModel {
             self.model.tool_model_id().into(),
             self.model.default_temperature(),
             self.model.max_output_tokens(),
-            self.model.enable_thinking(), //TODO: Do we want this for tool calls?
-            self.model.budget_tokens(),
+            self.model.mode(),
         );
         request.tool_choice = Some(anthropic::ToolChoice::Tool {
             name: tool_name.clone(),
@@ -468,8 +498,7 @@ pub fn into_anthropic(
     model: String,
     default_temperature: f32,
     max_output_tokens: u32,
-    enable_thinking: bool,
-    budget_tokens: Option<u32>,
+    mode: AnthropicModelMode,
 ) -> anthropic::Request {
     let mut new_messages: Vec<anthropic::Message> = Vec::new();
     let mut system_message = String::new();
@@ -558,9 +587,11 @@ pub fn into_anthropic(
         messages: new_messages,
         max_tokens: max_output_tokens,
         system: Some(system_message),
-        thinking: enable_thinking.then(|| anthropic::Thinking::Enabled {
-            budget_tokens: budget_tokens.unwrap_or(1024),
-        }),
+        thinking: if let AnthropicModelMode::Thinking { budget_tokens } = mode {
+            Some(anthropic::Thinking::Enabled { budget_tokens })
+        } else {
+            None
+        },
         tools: request
             .tools
             .into_iter()

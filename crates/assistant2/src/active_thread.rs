@@ -921,7 +921,7 @@ impl ActiveThread {
                         h_flex()
                             .gap_1()
                             .child(
-                                Disclosure::new("tool-use-disclosure", is_open)
+                                Disclosure::new("thinking-disclosure", is_open)
                                     .opened_icon(IconName::ChevronUpDown)
                                     .closed_icon(IconName::ChevronDownUp)
                                     .on_click(cx.listener({

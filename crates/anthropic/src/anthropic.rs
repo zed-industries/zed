@@ -25,6 +25,16 @@ pub struct AnthropicModelCacheConfiguration {
 }
 
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+pub enum AnthropicModelMode {
+    #[default]
+    Default,
+    Thinking {
+        budget_tokens: Option<u32>,
+    },
+}
+
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, EnumIter)]
 pub enum Model {
     #[default]
@@ -59,6 +69,8 @@ pub enum Model {
         default_temperature: Option<f32>,
         #[serde(default)]
         extra_beta_headers: Vec<String>,
+        #[serde(default)]
+        mode: AnthropicModelMode,
     },
 }
 
@@ -185,29 +197,18 @@ impl Model {
         }
     }
 
-    pub fn enable_thinking(&self) -> bool {
+    pub fn mode(&self) -> AnthropicModelMode {
         match self {
             Self::Claude3_5Sonnet
             | Self::Claude3_7Sonnet
             | Self::Claude3_5Haiku
             | Self::Claude3Opus
             | Self::Claude3Sonnet
-            | Self::Claude3Haiku => false,
-            Self::Claude3_7SonnetThinking => true,
-            Self::Custom { .. } => false, //TODO
-        }
-    }
-
-    pub fn budget_tokens(&self) -> Option<u32> {
-        match self {
-            Self::Claude3_5Sonnet
-            | Self::Claude3_7Sonnet
-            | Self::Claude3_5Haiku
-            | Self::Claude3Opus
-            | Self::Claude3Sonnet
-            | Self::Claude3Haiku
-            | Self::Custom { .. } => None, //TODO
-            Self::Claude3_7SonnetThinking => Some(4_096),
+            | Self::Claude3Haiku => AnthropicModelMode::Default,
+            Self::Claude3_7SonnetThinking => AnthropicModelMode::Thinking {
+                budget_tokens: Some(4_096),
+            },
+            Self::Custom { mode, .. } => mode.clone(),
         }
     }
 
@@ -581,7 +582,7 @@ pub enum ToolChoice {
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "lowercase")]
 pub enum Thinking {
-    Enabled { budget_tokens: u32 },
+    Enabled { budget_tokens: Option<u32> },
 }
 
 #[derive(Debug, Serialize, Deserialize)]
