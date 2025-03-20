@@ -3,7 +3,7 @@ mod color_extractor;
 pub mod connection_manager;
 pub mod debounced_delay;
 pub mod debugger;
-pub mod git;
+pub mod git_store;
 pub mod image_store;
 pub mod lsp_command;
 pub mod lsp_store;
@@ -24,11 +24,12 @@ mod direnv;
 mod environment;
 use buffer_diff::BufferDiff;
 pub use environment::{EnvironmentErrorMessage, ProjectEnvironmentEvent};
-use git::Repository;
+use git_store::Repository;
 pub mod search_history;
 mod yarn;
 
-use crate::git::GitStore;
+use crate::git_store::GitStore;
+pub use git_store::git_traversal::{ChildEntriesGitIter, GitEntry, GitEntryRef, GitTraversal};
 
 use anyhow::{anyhow, Context as _, Result};
 use buffer_store::{BufferStore, BufferStoreEvent};

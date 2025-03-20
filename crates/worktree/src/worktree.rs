@@ -66,9 +66,7 @@ use std::{
     },
     time::{Duration, Instant},
 };
-use sum_tree::{
-    Bias, Cursor, Edit, KeyedItem, SeekTarget, SumTree, Summary, TreeMap, TreeSet, Unit,
-};
+use sum_tree::{Bias, Edit, KeyedItem, SeekTarget, SumTree, Summary, TreeMap, TreeSet, Unit};
 use text::{LineEnding, Rope};
 use util::{
     paths::{home_dir, PathMatcher, SanitizedPath},
@@ -197,7 +195,7 @@ pub struct RepositoryEntry {
     /// With this setup, this field would contain 2 entries, like so:
     ///     - my_sub_folder_1/project_root/changed_file_1
     ///     - my_sub_folder_2/changed_file_2
-    pub(crate) statuses_by_path: SumTree<StatusEntry>,
+    pub statuses_by_path: SumTree<StatusEntry>,
     work_directory_id: ProjectEntryId,
     pub work_directory: WorkDirectory,
     work_directory_abs_path: PathBuf,
@@ -4087,8 +4085,8 @@ impl TryFrom<proto::StatusEntry> for StatusEntry {
 }
 
 #[derive(Clone, Debug)]
-struct PathProgress<'a> {
-    max_path: &'a Path,
+pub struct PathProgress<'a> {
+    pub max_path: &'a Path,
 }
 
 #[derive(Clone, Debug)]
@@ -6139,171 +6137,6 @@ impl Default for TraversalProgress<'_> {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
-pub struct GitEntryRef<'a> {
-    pub entry: &'a Entry,
-    pub git_summary: GitSummary,
-}
-
-impl GitEntryRef<'_> {
-    pub fn to_owned(&self) -> GitEntry {
-        GitEntry {
-            entry: self.entry.clone(),
-            git_summary: self.git_summary,
-        }
-    }
-}
-
-impl Deref for GitEntryRef<'_> {
-    type Target = Entry;
-
-    fn deref(&self) -> &Self::Target {
-        &self.entry
-    }
-}
-
-impl AsRef<Entry> for GitEntryRef<'_> {
-    fn as_ref(&self) -> &Entry {
-        self.entry
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct GitEntry {
-    pub entry: Entry,
-    pub git_summary: GitSummary,
-}
-
-impl GitEntry {
-    pub fn to_ref(&self) -> GitEntryRef {
-        GitEntryRef {
-            entry: &self.entry,
-            git_summary: self.git_summary,
-        }
-    }
-}
-
-impl Deref for GitEntry {
-    type Target = Entry;
-
-    fn deref(&self) -> &Self::Target {
-        &self.entry
-    }
-}
-
-impl AsRef<Entry> for GitEntry {
-    fn as_ref(&self) -> &Entry {
-        &self.entry
-    }
-}
-
-/// Walks the worktree entries and their associated git statuses.
-pub struct GitTraversal<'a> {
-    traversal: Traversal<'a>,
-    current_entry_summary: Option<GitSummary>,
-    repo_location: Option<(
-        &'a RepositoryEntry,
-        Cursor<'a, StatusEntry, PathProgress<'a>>,
-    )>,
-}
-
-impl<'a> GitTraversal<'a> {
-    fn synchronize_statuses(&mut self, reset: bool) {
-        self.current_entry_summary = None;
-
-        let Some(entry) = self.traversal.cursor.item() else {
-            return;
-        };
-
-        let Some(repo) = self.traversal.snapshot.repository_for_path(&entry.path) else {
-            self.repo_location = None;
-            return;
-        };
-
-        // Update our state if we changed repositories.
-        if reset
-            || self
-                .repo_location
-                .as_ref()
-                .map(|(prev_repo, _)| &prev_repo.work_directory)
-                != Some(&repo.work_directory)
-        {
-            self.repo_location = Some((repo, repo.statuses_by_path.cursor::<PathProgress>(&())));
-        }
-
-        let Some((repo, statuses)) = &mut self.repo_location else {
-            return;
-        };
-
-        let repo_path = repo.relativize(&entry.path).unwrap();
-
-        if entry.is_dir() {
-            let mut statuses = statuses.clone();
-            statuses.seek_forward(&PathTarget::Path(repo_path.as_ref()), Bias::Left, &());
-            let summary =
-                statuses.summary(&PathTarget::Successor(repo_path.as_ref()), Bias::Left, &());
-
-            self.current_entry_summary = Some(summary);
-        } else if entry.is_file() {
-            // For a file entry, park the cursor on the corresponding status
-            if statuses.seek_forward(&PathTarget::Path(repo_path.as_ref()), Bias::Left, &()) {
-                // TODO: Investigate statuses.item() being None here.
-                self.current_entry_summary = statuses.item().map(|item| item.status.into());
-            } else {
-                self.current_entry_summary = Some(GitSummary::UNCHANGED);
-            }
-        }
-    }
-
-    pub fn advance(&mut self) -> bool {
-        self.advance_by(1)
-    }
-
-    pub fn advance_by(&mut self, count: usize) -> bool {
-        let found = self.traversal.advance_by(count);
-        self.synchronize_statuses(false);
-        found
-    }
-
-    pub fn advance_to_sibling(&mut self) -> bool {
-        let found = self.traversal.advance_to_sibling();
-        self.synchronize_statuses(false);
-        found
-    }
-
-    pub fn back_to_parent(&mut self) -> bool {
-        let found = self.traversal.back_to_parent();
-        self.synchronize_statuses(true);
-        found
-    }
-
-    pub fn start_offset(&self) -> usize {
-        self.traversal.start_offset()
-    }
-
-    pub fn end_offset(&self) -> usize {
-        self.traversal.end_offset()
-    }
-
-    pub fn entry(&self) -> Option<GitEntryRef<'a>> {
-        let entry = self.traversal.cursor.item()?;
-        let git_summary = self.current_entry_summary.unwrap_or(GitSummary::UNCHANGED);
-        Some(GitEntryRef { entry, git_summary })
-    }
-}
-
-impl<'a> Iterator for GitTraversal<'a> {
-    type Item = GitEntryRef<'a>;
-    fn next(&mut self) -> Option<Self::Item> {
-        if let Some(item) = self.entry() {
-            self.advance();
-            Some(item)
-        } else {
-            None
-        }
-    }
-}
-
 #[derive(Debug)]
 pub struct Traversal<'a> {
     snapshot: &'a Snapshot,
@@ -6334,16 +6167,6 @@ impl<'a> Traversal<'a> {
             traversal.next();
         }
         traversal
-    }
-
-    pub fn with_git_statuses(self) -> GitTraversal<'a> {
-        let mut this = GitTraversal {
-            traversal: self,
-            current_entry_summary: None,
-            repo_location: None,
-        };
-        this.synchronize_statuses(true);
-        this
     }
 
     pub fn advance(&mut self) -> bool {
@@ -6391,6 +6214,10 @@ impl<'a> Traversal<'a> {
         self.cursor.item()
     }
 
+    pub fn snapshot(&self) -> &'a Snapshot {
+        self.snapshot
+    }
+
     pub fn start_offset(&self) -> usize {
         self.cursor
             .start()
@@ -6418,7 +6245,7 @@ impl<'a> Iterator for Traversal<'a> {
 }
 
 #[derive(Debug, Clone, Copy)]
-enum PathTarget<'a> {
+pub enum PathTarget<'a> {
     Path(&'a Path),
     Successor(&'a Path),
 }
@@ -6517,36 +6344,8 @@ pub struct ChildEntriesIter<'a> {
     traversal: Traversal<'a>,
 }
 
-impl<'a> ChildEntriesIter<'a> {
-    pub fn with_git_statuses(self) -> ChildEntriesGitIter<'a> {
-        ChildEntriesGitIter {
-            parent_path: self.parent_path,
-            traversal: self.traversal.with_git_statuses(),
-        }
-    }
-}
-
-pub struct ChildEntriesGitIter<'a> {
-    parent_path: &'a Path,
-    traversal: GitTraversal<'a>,
-}
-
 impl<'a> Iterator for ChildEntriesIter<'a> {
     type Item = &'a Entry;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        if let Some(item) = self.traversal.entry() {
-            if item.path.starts_with(self.parent_path) {
-                self.traversal.advance_to_sibling();
-                return Some(item);
-            }
-        }
-        None
-    }
-}
-
-impl<'a> Iterator for ChildEntriesGitIter<'a> {
-    type Item = GitEntryRef<'a>;
 
     fn next(&mut self) -> Option<Self::Item> {
         if let Some(item) = self.traversal.entry() {

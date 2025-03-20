@@ -28,8 +28,8 @@ use indexmap::IndexMap;
 use language::DiagnosticSeverity;
 use menu::{Confirm, SelectFirst, SelectLast, SelectNext, SelectPrevious};
 use project::{
-    relativize_path, Entry, EntryKind, Fs, Project, ProjectEntryId, ProjectPath, Worktree,
-    WorktreeId,
+    git_store::git_traversal::ChildEntriesGitIter, relativize_path, Entry, EntryKind, Fs, GitEntry,
+    GitEntryRef, GitTraversal, Project, ProjectEntryId, ProjectPath, Worktree, WorktreeId,
 };
 use project_panel_settings::{
     ProjectPanelDockPosition, ProjectPanelSettings, ShowDiagnostics, ShowIndentGuides,
@@ -62,7 +62,7 @@ use workspace::{
     DraggedSelection, OpenInTerminal, OpenOptions, OpenVisible, PreviewTabsSettings, SelectedEntry,
     Workspace,
 };
-use worktree::{CreatedEntry, GitEntry, GitEntryRef};
+use worktree::CreatedEntry;
 
 const PROJECT_PANEL_KEY: &str = "ProjectPanel";
 const NEW_ENTRY_ID: ProjectEntryId = ProjectEntryId::MAX;
@@ -1564,10 +1564,8 @@ impl ProjectPanel {
         let parent_entry = worktree.entry_for_path(parent_path)?;
 
         // Remove all siblings that are being deleted except the last marked entry
-        let mut siblings: Vec<_> = worktree
-            .snapshot()
-            .child_entries(parent_path)
-            .with_git_statuses()
+        let snapshot = worktree.snapshot();
+        let mut siblings: Vec<_> = ChildEntriesGitIter::new(&snapshot, parent_path)
             .filter(|sibling| {
                 sibling.id == latest_entry.id
                     || !marked_entries_in_worktree.contains(&&SelectedEntry {
@@ -2631,7 +2629,7 @@ impl ProjectPanel {
             }
 
             let mut visible_worktree_entries = Vec::new();
-            let mut entry_iter = snapshot.entries(true, 0).with_git_statuses();
+            let mut entry_iter = GitTraversal::new(snapshot.entries(true, 0));
             let mut auto_folded_ancestors = vec![];
             while let Some(entry) = entry_iter.entry() {
                 if auto_collapse_dirs && entry.kind.is_dir() {
@@ -3284,7 +3282,7 @@ impl ProjectPanel {
         let worktree = self.project.read(cx).worktree_for_id(worktree_id, cx)?;
         worktree.update(cx, |tree, _| {
             utils::ReversibleIterable::new(
-                tree.entries(true, 0usize).with_git_statuses(),
+                GitTraversal::new(tree.entries(true, 0usize)),
                 reverse_search,
             )
             .find_single_ended(|ele| predicate(*ele, worktree_id))
@@ -3318,9 +3316,12 @@ impl ProjectPanel {
                 let root_entry = tree.root_entry()?;
                 let tree_id = tree.id();
 
-                let mut first_iter = tree
-                    .traverse_from_path(true, true, true, entry.path.as_ref())
-                    .with_git_statuses();
+                let mut first_iter = GitTraversal::new(tree.traverse_from_path(
+                    true,
+                    true,
+                    true,
+                    entry.path.as_ref(),
+                ));
 
                 if reverse_search {
                     first_iter.next();
@@ -3333,7 +3334,7 @@ impl ProjectPanel {
                     .find(|ele| predicate(*ele, tree_id))
                     .map(|ele| ele.to_owned());
 
-                let second_iter = tree.entries(true, 0usize).with_git_statuses();
+                let second_iter = GitTraversal::new(tree.entries(true, 0usize));
 
                 let second = if reverse_search {
                     second_iter

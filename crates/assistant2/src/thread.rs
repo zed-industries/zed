@@ -17,7 +17,7 @@ use language_model::{
     LanguageModelToolUseId, MaxMonthlySpendReachedError, MessageContent, PaymentRequiredError,
     Role, StopReason, TokenUsage,
 };
-use project::git::GitStoreCheckpoint;
+use project::git_store::GitStoreCheckpoint;
 use project::{Project, Worktree};
 use prompt_store::{
     AssistantSystemPromptContext, PromptBuilder, RulesFile, WorktreeInfoForSystemPrompt,

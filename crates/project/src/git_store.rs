@@ -1,3 +1,5 @@
+pub mod git_traversal;
+
 use crate::{
     buffer_store::{BufferStore, BufferStoreEvent},
     worktree_store::{WorktreeStore, WorktreeStoreEvent},
@@ -131,15 +133,15 @@ pub struct Repository {
     pub dot_git_abs_path: PathBuf,
     pub worktree_abs_path: Arc<Path>,
     pub is_from_single_file_worktree: bool,
-    pub git_repo: GitRepo,
     pub merge_message: Option<String>,
+    git_repo: RepositoryState,
     job_sender: mpsc::UnboundedSender<GitJob>,
     askpass_delegates: Arc<Mutex<HashMap<u64, AskPassDelegate>>>,
     latest_askpass_id: u64,
 }
 
 #[derive(Clone)]
-pub enum GitRepo {
+enum RepositoryState {
     Local(Arc<dyn GitRepository>),
     Remote {
         project_id: ProjectId,
@@ -611,12 +613,12 @@ impl GitStore {
                             .and_then(|local_worktree| local_worktree.get_local_repo(repo_entry))
                             .map(|local_repo| {
                                 (
-                                    GitRepo::Local(local_repo.repo().clone()),
+                                    RepositoryState::Local(local_repo.repo().clone()),
                                     local_repo.merge_message.clone(),
                                 )
                             })
                             .or_else(|| {
-                                let git_repo = GitRepo::Remote {
+                                let git_repo = RepositoryState::Remote {
                                     project_id: self.project_id()?,
                                     client: self
                                         .upstream_client()
@@ -642,7 +644,7 @@ impl GitStore {
                             let existing_repo = existing_repo.clone();
                             existing_repo.update(cx, |existing_repo, _| {
                                 existing_repo.repository_entry = repo_entry.clone();
-                                if matches!(git_repo, GitRepo::Local { .. }) {
+                                if matches!(git_repo, RepositoryState::Local { .. }) {
                                     existing_repo.merge_message = merge_message;
                                 }
                             });
@@ -2054,7 +2056,7 @@ impl Repository {
 
     fn send_job<F, Fut, R>(&self, job: F) -> oneshot::Receiver<R>
     where
-        F: FnOnce(GitRepo, AsyncApp) -> Fut + 'static,
+        F: FnOnce(RepositoryState, AsyncApp) -> Fut + 'static,
         Fut: Future<Output = R> + 'static,
         R: Send + 'static,
     {
@@ -2063,7 +2065,7 @@ impl Repository {
 
     fn send_keyed_job<F, Fut, R>(&self, key: Option<GitJobKey>, job: F) -> oneshot::Receiver<R>
     where
-        F: FnOnce(GitRepo, AsyncApp) -> Fut + 'static,
+        F: FnOnce(RepositoryState, AsyncApp) -> Fut + 'static,
         Fut: Future<Output = R> + 'static,
         R: Send + 'static,
     {
@@ -2188,7 +2190,7 @@ impl Repository {
             return Task::ready(Ok(buffer));
         }
 
-        if let GitRepo::Remote {
+        if let RepositoryState::Remote {
             project_id,
             client,
             worktree_id,
@@ -2262,8 +2264,8 @@ impl Repository {
 
         self.send_job(|git_repo, _| async move {
             match git_repo {
-                GitRepo::Local(repo) => repo.checkout_files(commit, paths, env.await).await,
-                GitRepo::Remote {
+                RepositoryState::Local(repo) => repo.checkout_files(commit, paths, env.await).await,
+                RepositoryState::Remote {
                     project_id,
                     client,
                     worktree_id,
@@ -2298,11 +2300,11 @@ impl Repository {
         let env = self.worktree_environment(cx);
         self.send_job(|git_repo, _| async move {
             match git_repo {
-                GitRepo::Local(git_repo) => {
+                RepositoryState::Local(git_repo) => {
                     let env = env.await;
                     git_repo.reset(commit, reset_mode, env).await
                 }
-                GitRepo::Remote {
+                RepositoryState::Remote {
                     project_id,
                     client,
                     worktree_id,
@@ -2330,8 +2332,8 @@ impl Repository {
     pub fn show(&self, commit: String) -> oneshot::Receiver<Result<CommitDetails>> {
         self.send_job(|git_repo, cx| async move {
             match git_repo {
-                GitRepo::Local(git_repository) => git_repository.show(commit, cx).await,
-                GitRepo::Remote {
+                RepositoryState::Local(git_repository) => git_repository.show(commit, cx).await,
+                RepositoryState::Remote {
                     project_id,
                     client,
                     worktree_id,
@@ -2402,8 +2404,8 @@ impl Repository {
             this.update(cx, |this, _| {
                 this.send_job(|git_repo, cx| async move {
                     match git_repo {
-                        GitRepo::Local(repo) => repo.stage_paths(entries, env, cx).await,
-                        GitRepo::Remote {
+                        RepositoryState::Local(repo) => repo.stage_paths(entries, env, cx).await,
+                        RepositoryState::Remote {
                             project_id,
                             client,
                             worktree_id,
@@ -2473,8 +2475,8 @@ impl Repository {
             this.update(cx, |this, _| {
                 this.send_job(|git_repo, cx| async move {
                     match git_repo {
-                        GitRepo::Local(repo) => repo.unstage_paths(entries, env, cx).await,
-                        GitRepo::Remote {
+                        RepositoryState::Local(repo) => repo.unstage_paths(entries, env, cx).await,
+                        RepositoryState::Remote {
                             project_id,
                             client,
                             worktree_id,
@@ -2556,11 +2558,11 @@ impl Repository {
         let env = self.worktree_environment(cx);
         self.send_job(|git_repo, cx| async move {
             match git_repo {
-                GitRepo::Local(repo) => {
+                RepositoryState::Local(repo) => {
                     let env = env.await;
                     repo.commit(message, name_and_email, env, cx).await
                 }
-                GitRepo::Remote {
+                RepositoryState::Remote {
                     project_id,
                     client,
                     worktree_id,
@@ -2597,12 +2599,12 @@ impl Repository {
 
         self.send_job(move |git_repo, cx| async move {
             match git_repo {
-                GitRepo::Local(git_repository) => {
+                RepositoryState::Local(git_repository) => {
                     let askpass = AskPassSession::new(&executor, askpass).await?;
                     let env = env.await;
                     git_repository.fetch(askpass, env, cx).await
                 }
-                GitRepo::Remote {
+                RepositoryState::Remote {
                     project_id,
                     client,
                     worktree_id,
@@ -2648,7 +2650,7 @@ impl Repository {
 
         self.send_job(move |git_repo, cx| async move {
             match git_repo {
-                GitRepo::Local(git_repository) => {
+                RepositoryState::Local(git_repository) => {
                     let env = env.await;
                     let askpass = AskPassSession::new(&executor, askpass).await?;
                     git_repository
@@ -2662,7 +2664,7 @@ impl Repository {
                         )
                         .await
                 }
-                GitRepo::Remote {
+                RepositoryState::Remote {
                     project_id,
                     client,
                     worktree_id,
@@ -2712,14 +2714,14 @@ impl Repository {
 
         self.send_job(move |git_repo, cx| async move {
             match git_repo {
-                GitRepo::Local(git_repository) => {
+                RepositoryState::Local(git_repository) => {
                     let askpass = AskPassSession::new(&executor, askpass).await?;
                     let env = env.await;
                     git_repository
                         .pull(branch.to_string(), remote.to_string(), askpass, env, cx)
                         .await
                 }
-                GitRepo::Remote {
+                RepositoryState::Remote {
                     project_id,
                     client,
                     worktree_id,
@@ -2763,8 +2765,10 @@ impl Repository {
             Some(GitJobKey::WriteIndex(path.clone())),
             |git_repo, cx| async {
                 match git_repo {
-                    GitRepo::Local(repo) => repo.set_index_text(path, content, env.await, cx).await,
-                    GitRepo::Remote {
+                    RepositoryState::Local(repo) => {
+                        repo.set_index_text(path, content, env.await, cx).await
+                    }
+                    RepositoryState::Remote {
                         project_id,
                         client,
                         worktree_id,
@@ -2792,8 +2796,10 @@ impl Repository {
     ) -> oneshot::Receiver<Result<Vec<Remote>>> {
         self.send_job(|repo, cx| async move {
             match repo {
-                GitRepo::Local(git_repository) => git_repository.get_remotes(branch_name, cx).await,
-                GitRepo::Remote {
+                RepositoryState::Local(git_repository) => {
+                    git_repository.get_remotes(branch_name, cx).await
+                }
+                RepositoryState::Remote {
                     project_id,
                     client,
                     worktree_id,
@@ -2825,12 +2831,12 @@ impl Repository {
     pub fn branches(&self) -> oneshot::Receiver<Result<Vec<Branch>>> {
         self.send_job(|repo, cx| async move {
             match repo {
-                GitRepo::Local(git_repository) => {
+                RepositoryState::Local(git_repository) => {
                     let git_repository = git_repository.clone();
                     cx.background_spawn(async move { git_repository.branches().await })
                         .await
                 }
-                GitRepo::Remote {
+                RepositoryState::Remote {
                     project_id,
                     client,
                     worktree_id,
@@ -2859,8 +2865,8 @@ impl Repository {
     pub fn diff(&self, diff_type: DiffType, _cx: &App) -> oneshot::Receiver<Result<String>> {
         self.send_job(|repo, cx| async move {
             match repo {
-                GitRepo::Local(git_repository) => git_repository.diff(diff_type, cx).await,
-                GitRepo::Remote {
+                RepositoryState::Local(git_repository) => git_repository.diff(diff_type, cx).await,
+                RepositoryState::Remote {
                     project_id,
                     client,
                     worktree_id,
@@ -2892,10 +2898,10 @@ impl Repository {
     pub fn create_branch(&self, branch_name: String) -> oneshot::Receiver<Result<()>> {
         self.send_job(|repo, cx| async move {
             match repo {
-                GitRepo::Local(git_repository) => {
+                RepositoryState::Local(git_repository) => {
                     git_repository.create_branch(branch_name, cx).await
                 }
-                GitRepo::Remote {
+                RepositoryState::Remote {
                     project_id,
                     client,
                     worktree_id,
@@ -2919,10 +2925,10 @@ impl Repository {
     pub fn change_branch(&self, branch_name: String) -> oneshot::Receiver<Result<()>> {
         self.send_job(|repo, cx| async move {
             match repo {
-                GitRepo::Local(git_repository) => {
+                RepositoryState::Local(git_repository) => {
                     git_repository.change_branch(branch_name, cx).await
                 }
-                GitRepo::Remote {
+                RepositoryState::Remote {
                     project_id,
                     client,
                     worktree_id,
@@ -2946,8 +2952,10 @@ impl Repository {
     pub fn check_for_pushed_commits(&self) -> oneshot::Receiver<Result<Vec<SharedString>>> {
         self.send_job(|repo, cx| async move {
             match repo {
-                GitRepo::Local(git_repository) => git_repository.check_for_pushed_commit(cx).await,
-                GitRepo::Remote {
+                RepositoryState::Local(git_repository) => {
+                    git_repository.check_for_pushed_commit(cx).await
+                }
+                RepositoryState::Remote {
                     project_id,
                     client,
                     worktree_id,
@@ -2972,8 +2980,8 @@ impl Repository {
     pub fn checkpoint(&self) -> oneshot::Receiver<Result<GitRepositoryCheckpoint>> {
         self.send_job(|repo, cx| async move {
             match repo {
-                GitRepo::Local(git_repository) => git_repository.checkpoint(cx).await,
-                GitRepo::Remote { .. } => Err(anyhow!("not implemented yet")),
+                RepositoryState::Local(git_repository) => git_repository.checkpoint(cx).await,
+                RepositoryState::Remote { .. } => Err(anyhow!("not implemented yet")),
             }
         })
     }
@@ -2984,10 +2992,10 @@ impl Repository {
     ) -> oneshot::Receiver<Result<()>> {
         self.send_job(move |repo, cx| async move {
             match repo {
-                GitRepo::Local(git_repository) => {
+                RepositoryState::Local(git_repository) => {
                     git_repository.restore_checkpoint(checkpoint, cx).await
                 }
-                GitRepo::Remote { .. } => Err(anyhow!("not implemented yet")),
+                RepositoryState::Remote { .. } => Err(anyhow!("not implemented yet")),
             }
         })
     }

@@ -40,7 +40,7 @@ use language::{BufferId, BufferSnapshot, OffsetRangeExt, OutlineItem};
 use menu::{Cancel, SelectFirst, SelectLast, SelectNext, SelectPrevious};
 
 use outline_panel_settings::{OutlinePanelDockPosition, OutlinePanelSettings, ShowIndentGuides};
-use project::{File, Fs, Project, ProjectItem};
+use project::{File, Fs, GitEntry, GitTraversal, Project, ProjectItem};
 use search::{BufferSearchBar, ProjectSearchView};
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
@@ -60,7 +60,7 @@ use workspace::{
     },
     OpenInTerminal, WeakItemHandle, Workspace,
 };
-use worktree::{Entry, GitEntry, ProjectEntryId, WorktreeId};
+use worktree::{Entry, ProjectEntryId, WorktreeId};
 
 actions!(
     outline_panel,
@@ -2671,9 +2671,13 @@ impl OutlinePanel {
                                             .unwrap_or_default(),
                                         entry,
                                     };
-                                    let mut traversal = worktree
-                                        .traverse_from_path(true, true, true, entry.path.as_ref())
-                                        .with_git_statuses();
+                                    let mut traversal =
+                                        GitTraversal::new(worktree.traverse_from_path(
+                                            true,
+                                            true,
+                                            true,
+                                            entry.path.as_ref(),
+                                        ));
 
                                     let mut entries_to_add = HashMap::default();
                                     worktree_excerpts
