@@ -4290,13 +4290,10 @@ impl Project {
             if let Some((worktree, _relative_path)) =
                 this.find_worktree(envelope.payload.abs_path.as_ref(), cx)
             {
-                eprintln!("applying update");
                 worktree.update(cx, |worktree, _| {
                     let worktree = worktree.as_remote_mut().unwrap();
                     worktree.update_from_remote(envelope.payload.into());
                 });
-            } else {
-                eprintln!("no worktree found");
             }
             Ok(())
         })?

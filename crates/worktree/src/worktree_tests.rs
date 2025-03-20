@@ -1752,7 +1752,6 @@ async fn test_random_worktree_operations_during_initial_scan(
             let scan_id = match update {
                 WorktreeRelatedMessage::UpdateWorktree(update) => update.scan_id,
                 WorktreeRelatedMessage::UpdateRepository(update) => update.scan_id,
-                // FIXME
                 WorktreeRelatedMessage::RemoveRepository(_) => u64::MAX,
             };
             if scan_id >= updated_snapshot.scan_id() as u64 {
@@ -1895,7 +1894,6 @@ async fn test_random_worktree_changes(cx: &mut TestAppContext, mut rng: StdRng) 
             let scan_id = match update {
                 WorktreeRelatedMessage::UpdateWorktree(update) => update.scan_id,
                 WorktreeRelatedMessage::UpdateRepository(update) => update.scan_id,
-                // FIXME
                 WorktreeRelatedMessage::RemoveRepository(_) => u64::MAX,
             };
             if scan_id >= prev_snapshot.scan_id() as u64 {

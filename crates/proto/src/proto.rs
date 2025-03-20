@@ -893,9 +893,29 @@ pub fn split_worktree_update(mut message: UpdateWorktree) -> impl Iterator<Item 
     })
 }
 
-pub fn split_repository_update(update: UpdateRepository) -> impl Iterator<Item = UpdateRepository> {
-    // todo!()
-    [update].into_iter()
+pub fn split_repository_update(
+    mut update: UpdateRepository,
+) -> impl Iterator<Item = UpdateRepository> {
+    let mut updated_statuses_iter = mem::take(&mut update.updated_statuses).into_iter().fuse();
+    let mut removed_statuses_iter = mem::take(&mut update.removed_statuses).into_iter().fuse();
+    std::iter::from_fn(move || {
+        let updated_statuses = updated_statuses_iter
+            .by_ref()
+            .take(MAX_WORKTREE_UPDATE_MAX_CHUNK_SIZE)
+            .collect::<Vec<_>>();
+        let removed_statuses = removed_statuses_iter
+            .by_ref()
+            .take(MAX_WORKTREE_UPDATE_MAX_CHUNK_SIZE)
+            .collect::<Vec<_>>();
+        if updated_statuses.is_empty() && removed_statuses.is_empty() {
+            return None;
+        }
+        Some(UpdateRepository {
+            updated_statuses,
+            removed_statuses,
+            ..update.clone()
+        })
+    })
 }
 
 pub fn split_worktree_related_message(

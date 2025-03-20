@@ -2338,7 +2338,6 @@ impl LocalWorktree {
                     .into_iter()
                     .flat_map(proto::split_worktree_related_message)
                 {
-                    eprintln!("loop");
                     let _ = resume_updates_rx.try_recv();
                     loop {
                         let result = callback(update.clone());

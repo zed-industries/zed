@@ -1349,6 +1349,7 @@ async fn test_remote_git_branches(cx: &mut TestAppContext, server_cx: &mut TestA
     cx.run_until_parked();
 
     let repository = project.update(cx, |project, cx| project.active_repository(cx).unwrap());
+    // ^ HERE
 
     let remote_branches = repository
         .update(cx, |repository, _| repository.branches())
