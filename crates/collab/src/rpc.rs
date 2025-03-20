@@ -292,6 +292,8 @@ impl Server {
             .add_message_handler(leave_project)
             .add_request_handler(update_project)
             .add_request_handler(update_worktree)
+            .add_request_handler(update_repository)
+            .add_request_handler(remove_repository)
             .add_message_handler(start_language_server)
             .add_message_handler(update_language_server)
             .add_message_handler(update_diagnostic_summary)
@@ -2008,6 +2010,54 @@ async fn update_worktree(
         .db()
         .await
         .update_worktree(&request, session.connection_id)
+        .await?;
+
+    broadcast(
+        Some(session.connection_id),
+        guest_connection_ids.iter().copied(),
+        |connection_id| {
+            session
+                .peer
+                .forward_send(session.connection_id, connection_id, request.clone())
+        },
+    );
+    response.send(proto::Ack {})?;
+    Ok(())
+}
+
+async fn update_repository(
+    request: proto::UpdateRepository,
+    response: Response<proto::UpdateRepository>,
+    session: Session,
+) -> Result<()> {
+    let guest_connection_ids = session
+        .db()
+        .await
+        .update_repository(&request, session.connection_id)
+        .await?;
+
+    broadcast(
+        Some(session.connection_id),
+        guest_connection_ids.iter().copied(),
+        |connection_id| {
+            session
+                .peer
+                .forward_send(session.connection_id, connection_id, request.clone())
+        },
+    );
+    response.send(proto::Ack {})?;
+    Ok(())
+}
+
+async fn remove_repository(
+    request: proto::RemoveRepository,
+    response: Response<proto::RemoveRepository>,
+    session: Session,
+) -> Result<()> {
+    let guest_connection_ids = session
+        .db()
+        .await
+        .remove_repository(&request, session.connection_id)
         .await?;
 
     broadcast(

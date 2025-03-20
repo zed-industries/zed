@@ -342,13 +342,7 @@ impl Database {
                 project_id: ActiveValue::set(project_id),
                 id: ActiveValue::set(repository_id),
                 abs_path: ActiveValue::set(update.abs_path.clone()),
-                entry_ids: ActiveValue::set(
-                    update
-                        .entry_ids
-                        .iter()
-                        .map(|id| *id as i64)
-                        .collect::<Vec<_>>(),
-                ),
+                entry_ids: ActiveValue::Set(serde_json::to_string(&update.entry_ids).unwrap()),
                 scan_id: ActiveValue::set(update.scan_id as i64),
                 is_deleted: ActiveValue::set(false),
                 branch_summary: ActiveValue::Set(
@@ -794,15 +788,14 @@ impl Database {
                     .transpose()?
                     .unwrap_or_default();
 
+                let entry_ids = serde_json::from_str(&db_repository_entry.entry_ids)
+                    .context("failed to deserialize repository's entry ids")?;
+
                 repositories.push(proto::UpdateRepository {
                     project_id: db_repository_entry.project_id.0 as u64,
                     id: db_repository_entry.id as u64,
                     abs_path: db_repository_entry.abs_path,
-                    entry_ids: db_repository_entry
-                        .entry_ids
-                        .iter()
-                        .map(|id| *id as u64)
-                        .collect(),
+                    entry_ids,
                     updated_statuses,
                     removed_statuses: Vec::new(),
                     current_merge_conflicts,

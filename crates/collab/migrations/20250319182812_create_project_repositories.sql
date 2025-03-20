@@ -2,7 +2,7 @@ CREATE TABLE "project_repositories" (
     "project_id" INTEGER NOT NULL,
     "abs_path" VARCHAR,
     "id" INTEGER NOT NULL,
-    "entry_ids" INTEGER ARRAY NOT NULL,
+    "entry_ids" VARCHAR,
     "branch" VARCHAR,
     "scan_id" INTEGER NOT NULL,
     "is_deleted" BOOL NOT NULL,

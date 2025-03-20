@@ -4019,26 +4019,11 @@ impl Project {
     }
 
     pub fn project_path_for_absolute_path(&self, abs_path: &Path, cx: &App) -> Option<ProjectPath> {
-        self.find_local_worktree(abs_path, cx)
+        self.find_worktree(abs_path, cx)
             .map(|(worktree, relative_path)| ProjectPath {
                 worktree_id: worktree.read(cx).id(),
                 path: relative_path.into(),
             })
-    }
-
-    pub fn find_local_worktree(
-        &self,
-        abs_path: &Path,
-        cx: &App,
-    ) -> Option<(Entity<Worktree>, PathBuf)> {
-        let trees = self.worktrees(cx);
-
-        for tree in trees {
-            if let Some(relative_path) = abs_path.strip_prefix(tree.read(cx).abs_path()).ok() {
-                return Some((tree.clone(), relative_path.into()));
-            }
-        }
-        None
     }
 
     pub fn get_workspace_root(&self, project_path: &ProjectPath, cx: &App) -> Option<PathBuf> {
@@ -4301,13 +4286,18 @@ impl Project {
         envelope: TypedEnvelope<proto::UpdateRepository>,
         mut cx: AsyncApp,
     ) -> Result<()> {
+        dbg!(&envelope.payload);
         this.update(&mut cx, |this, cx| {
-            let worktree_id = WorktreeId::from_proto(envelope.payload.id);
-            if let Some(worktree) = this.worktree_for_id(worktree_id, cx) {
+            if let Some((worktree, _relative_path)) =
+                this.find_worktree(envelope.payload.abs_path.as_ref(), cx)
+            {
+                eprintln!("applying update");
                 worktree.update(cx, |worktree, _| {
                     let worktree = worktree.as_remote_mut().unwrap();
                     worktree.update_from_remote(envelope.payload.into());
                 });
+            } else {
+                eprintln!("no worktree found");
             }
             Ok(())
         })?
@@ -4319,8 +4309,9 @@ impl Project {
         mut cx: AsyncApp,
     ) -> Result<()> {
         this.update(&mut cx, |this, cx| {
-            let worktree_id = WorktreeId::from_proto(envelope.payload.id);
-            if let Some(worktree) = this.worktree_for_id(worktree_id, cx) {
+            if let Some(worktree) =
+                this.worktree_for_entry(ProjectEntryId::from_proto(envelope.payload.id), cx)
+            {
                 worktree.update(cx, |worktree, _| {
                     let worktree = worktree.as_remote_mut().unwrap();
                     worktree.update_from_remote(envelope.payload.into());

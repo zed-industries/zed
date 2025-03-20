@@ -1,3 +1,5 @@
+use anyhow::Context as _;
+
 use super::*;
 
 impl Database {
@@ -753,12 +755,11 @@ impl Database {
                         .transpose()?
                         .unwrap_or_default();
 
+                    let entry_ids = serde_json::from_str(&db_repository.entry_ids)
+                        .context("failed to deserialize repository's entry ids")?;
+
                     updated_repositories.push(proto::UpdateRepository {
-                        entry_ids: db_repository
-                            .entry_ids
-                            .into_iter()
-                            .map(|id| id as u64)
-                            .collect(),
+                        entry_ids,
                         updated_statuses,
                         removed_statuses,
                         current_merge_conflicts,
