@@ -67,7 +67,6 @@ impl RenderedMessage {
         if let Some(RenderedMessageSegment::Thinking(markdown)) = self.segments.last_mut() {
             markdown.update(cx, |markdown, cx| {
                 markdown.append(text, cx);
-                markdown.scroll_to_bottom(cx);
             });
         } else {
             self.segments
@@ -947,14 +946,14 @@ impl ActiveThread {
             )
             .child(
                 div()
+                    .id(("thinking-content", ix))
                     .map(|element| {
                         if is_open {
                             element.h_full()
                         } else {
-                            element.max_h_32()
+                            element.max_h_32().overflow_hidden()
                         }
                     })
-                    .overflow_hidden()
                     .p_2()
                     .bg(cx.theme().colors().editor_background)
                     .rounded_b_lg()
