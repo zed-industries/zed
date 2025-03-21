@@ -429,4 +429,12 @@ impl GitRepository for FakeGitRepository {
     ) -> BoxFuture<Result<bool>> {
         unimplemented!()
     }
+
+    fn delete_checkpoint(
+        &self,
+        _checkpoint: GitRepositoryCheckpoint,
+        _cx: AsyncApp,
+    ) -> BoxFuture<Result<()>> {
+        unimplemented!()
+    }
 }
