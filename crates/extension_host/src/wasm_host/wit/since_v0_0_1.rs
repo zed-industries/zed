@@ -2,9 +2,8 @@ use super::latest;
 use crate::wasm_host::wit::since_v0_0_4;
 use crate::wasm_host::WasmState;
 use anyhow::Result;
-use async_trait::async_trait;
 use extension::{ExtensionLanguageServerProxy, WorktreeDelegate};
-use language::LanguageServerBinaryStatus;
+use language::BinaryStatus;
 use semantic_version::SemanticVersion;
 use std::sync::{Arc, OnceLock};
 use wasmtime::component::{Linker, Resource};
@@ -59,7 +58,6 @@ impl From<Command> for latest::Command {
     }
 }
 
-#[async_trait]
 impl HostWorktree for WasmState {
     async fn read_text_file(
         &mut self,
@@ -89,7 +87,6 @@ impl HostWorktree for WasmState {
     }
 }
 
-#[async_trait]
 impl ExtensionImports for WasmState {
     async fn node_binary_path(&mut self) -> wasmtime::Result<Result<String, String>> {
         latest::nodejs::Host::node_binary_path(self).await
@@ -135,17 +132,11 @@ impl ExtensionImports for WasmState {
         status: LanguageServerInstallationStatus,
     ) -> wasmtime::Result<()> {
         let status = match status {
-            LanguageServerInstallationStatus::CheckingForUpdate => {
-                LanguageServerBinaryStatus::CheckingForUpdate
-            }
-            LanguageServerInstallationStatus::Downloading => {
-                LanguageServerBinaryStatus::Downloading
-            }
+            LanguageServerInstallationStatus::CheckingForUpdate => BinaryStatus::CheckingForUpdate,
+            LanguageServerInstallationStatus::Downloading => BinaryStatus::Downloading,
             LanguageServerInstallationStatus::Cached
-            | LanguageServerInstallationStatus::Downloaded => LanguageServerBinaryStatus::None,
-            LanguageServerInstallationStatus::Failed(error) => {
-                LanguageServerBinaryStatus::Failed { error }
-            }
+            | LanguageServerInstallationStatus::Downloaded => BinaryStatus::None,
+            LanguageServerInstallationStatus::Failed(error) => BinaryStatus::Failed { error },
         };
 
         self.host

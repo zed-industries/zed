@@ -42,7 +42,7 @@ The list of remote servers is stored in your settings file {#kb zed::OpenSetting
   "ssh_connections": [
     {
       "host": "192.168.1.10",
-      "projects": ["~/code/zed/zed"]
+      "projects": [{ "paths": ["~/code/zed/zed"] }]
     }
   ]
 }
@@ -55,7 +55,7 @@ Zed shells out to the `ssh` on your path, and so it will inherit any configurati
   "ssh_connections": [
     {
       "host": "192.168.1.10",
-      "projects": ["~/code/zed/zed"],
+      "projects": [{ "paths": ["~/code/zed/zed"] }],
       // any argument to pass to the ssh master process
       "args": ["-i", "~/.ssh/work_id_file"],
       "port": 22, // defaults to 22
@@ -73,7 +73,7 @@ There are two additional Zed-specific options per connection, `upload_binary_ove
   "ssh_connections": [
     {
       "host": "192.168.1.10",
-      "projects": ["~/code/zed/zed"],
+      "projects": [{ "paths": ["~/code/zed/zed"] }],
       // by default Zed will download the server binary from the internet on the remote.
       // When this is true, it'll be downloaded to your laptop and uploaded over SSH.
       // This is useful when your remote server has restricted internet access.
@@ -88,6 +88,61 @@ There are two additional Zed-specific options per connection, `upload_binary_ove
 If you use the command line to open a connection to a host by doing `zed ssh://192.168.1.10/~/.vimrc`, then extra options are read from your settings file by finding the first connection that matches the host/username/port of the URL on the command line.
 
 Additionally it's worth noting that while you can pass a password on the command line `zed ssh://user:password@host/~`, we do not support writing a password to your settings file. If you're connecting repeatedly to the same host, you should configure key-based authentication.
+
+## Port forwarding
+
+If you'd like to be able to connect to ports on your remote server from your local machine, you can configure port forwarding in your settings file. This is particularly useful for developing websites so you can load the site in your browser while working.
+
+```json
+{
+  "ssh_connections": [
+    {
+      "host": "192.168.1.10",
+      "port_forwards": [{ "local_port": 8080, "remote_port": 80 }]
+    }
+  ]
+}
+```
+
+This will cause requests from your local machine to `localhost:8080` to be forwarded to the remote machine's port 80. Under the hood this uses the `-L` argument to ssh.
+
+By default these ports are bound to localhost, so other computers in the same network as your development machine cannot access them. You can set the local_host to bind to a different interface, for example, 0.0.0.0 will bind to all local interfaces.
+
+```json
+{
+  "ssh_connections": [
+    {
+      "host": "192.168.1.10",
+      "port_forwards": [
+        {
+          "local_port": 8080,
+          "remote_port": 80,
+          "local_host": "0.0.0.0"
+        }
+      ]
+    }
+  ]
+}
+```
+
+These ports also default to the `localhost` interface on the remote host. If you need to change this, you can also set the remote host:
+
+```json
+{
+  "ssh_connections": [
+    {
+      "host": "192.168.1.10",
+      "port_forwards": [
+        {
+          "local_port": 8080,
+          "remote_port": 80,
+          "remote_host": "docker-host"
+        }
+      ]
+    }
+  ]
+}
+```
 
 ## Zed settings
 
@@ -140,7 +195,8 @@ Supported options:
 - `-i` - to use a specific key file
 - `-o` - to set custom options
 - `-J` / `-w` - to proxy the SSH connection
-- And also... `-4`, `-6`, `-A`, `-a`, `-C`, `-K`, `-k`, `-X`, `-x`, `-Y`, `-y`, `-B`, `-b`, `-c`, `-D`, `-I`, `-i`, `-J`, `-l`, `-m`, `-o`, `-P`, `-p`, `-w`
+- `-F` for specifying an `ssh_config`
+- And also... `-4`, `-6`, `-A`, `-B`, `-C`, `-D`, `-I`, `-K`, `-P`, `-X`, `-Y`, `-a`, `-b`, `-c`, `-i`, `-k`, `-l`, `-m`, `-o`, `-p`, `-w`, `-x`, `-y`
 
 Note that we deliberately disallow some options (for example `-t` or `-T`) that Zed will set for you.
 
@@ -148,7 +204,6 @@ Note that we deliberately disallow some options (for example `-t` or `-T`) that 
 
 - Zed extensions are not yet supported on remotes, so languages that need them for support do not work.
 - You can't open files from the remote Terminal by typing the `zed` command.
-- Zed does not yet support automatic port-forwarding. You can use `-R` and `-L` in your SSH arguments for now.
 
 ## Feedback
 

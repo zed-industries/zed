@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 use db::kvp::KEY_VALUE_STORE;
-use gpui::{AnyWindowHandle, Context, Subscription, Task, WindowId};
+use gpui::{AnyWindowHandle, AppContext as _, Context, Subscription, Task, WindowId};
 use util::ResultExt;
 use uuid::Uuid;
 
@@ -67,16 +67,14 @@ impl AppSession {
     pub fn new(session: Session, cx: &Context<Self>) -> Self {
         let _subscriptions = vec![cx.on_app_quit(Self::app_will_quit)];
 
-        let _serialization_task = Some(cx.spawn(|_, cx| async move {
-            loop {
-                if let Some(windows) = cx.update(|cx| cx.window_stack()).ok().flatten() {
-                    store_window_stack(windows).await;
-                }
-
-                cx.background_executor()
-                    .timer(Duration::from_millis(100))
-                    .await;
+        let _serialization_task = Some(cx.spawn(async move |_, cx| loop {
+            if let Some(windows) = cx.update(|cx| cx.window_stack()).ok().flatten() {
+                store_window_stack(windows).await;
             }
+
+            cx.background_executor()
+                .timer(Duration::from_millis(100))
+                .await;
         }));
 
         Self {
@@ -88,7 +86,7 @@ impl AppSession {
 
     fn app_will_quit(&mut self, cx: &mut Context<Self>) -> Task<()> {
         if let Some(windows) = cx.window_stack() {
-            cx.background_executor().spawn(store_window_stack(windows))
+            cx.background_spawn(store_window_stack(windows))
         } else {
             Task::ready(())
         }

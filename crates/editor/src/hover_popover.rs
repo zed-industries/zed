@@ -1,7 +1,7 @@
 use crate::{
     display_map::{invisibles::is_invisible, InlayOffset, ToDisplayPoint},
     hover_links::{InlayHighlight, RangeInEditor},
-    scroll::ScrollAmount,
+    scroll::{Autoscroll, ScrollAmount},
     Anchor, AnchorRangeExt, DisplayPoint, DisplayRow, Editor, EditorSettings, EditorSnapshot,
     Hover,
 };
@@ -15,15 +15,17 @@ use itertools::Itertools;
 use language::{DiagnosticEntry, Language, LanguageRegistry};
 use lsp::DiagnosticSeverity;
 use markdown::{Markdown, MarkdownStyle};
-use multi_buffer::ToOffset;
+use multi_buffer::{MultiOrSingleBufferOffsetRange, ToOffset};
 use project::{HoverBlock, HoverBlockKind, InlayHintLabelPart};
 use settings::Settings;
-use std::rc::Rc;
 use std::{borrow::Cow, cell::RefCell};
 use std::{ops::Range, sync::Arc, time::Duration};
+use std::{path::PathBuf, rc::Rc};
 use theme::ThemeSettings;
 use ui::{prelude::*, theme_is_transparent, Scrollbar, ScrollbarState};
+use url::Url;
 use util::TryFutureExt;
+use workspace::{OpenOptions, OpenVisible, Workspace};
 pub const HOVER_REQUEST_DELAY_MILLIS: u64 = 200;
 
 pub const MIN_POPOVER_CHARACTER_WIDTH: f32 = 20.;
@@ -147,18 +149,18 @@ pub fn hover_at_inlay(
 
         let hover_popover_delay = EditorSettings::get_global(cx).hover_popover_delay;
 
-        let task = cx.spawn_in(window, |this, mut cx| {
+        let task = cx.spawn_in(window, async move |this, cx| {
             async move {
                 cx.background_executor()
                     .timer(Duration::from_millis(hover_popover_delay))
                     .await;
-                this.update(&mut cx, |this, _| {
+                this.update(cx, |this, _| {
                     this.hover_state.diagnostic_popover = None;
                 })?;
 
-                let language_registry = project.update(&mut cx, |p, _| p.languages().clone())?;
+                let language_registry = project.update(cx, |p, _| p.languages().clone())?;
                 let blocks = vec![inlay_hover.tooltip];
-                let parsed_content = parse_blocks(&blocks, &language_registry, None, &mut cx).await;
+                let parsed_content = parse_blocks(&blocks, &language_registry, None, cx).await;
 
                 let scroll_handle = ScrollHandle::new();
                 let hover_popover = InfoPopover {
@@ -170,7 +172,7 @@ pub fn hover_at_inlay(
                     anchor: None,
                 };
 
-                this.update(&mut cx, |this, cx| {
+                this.update(cx, |this, cx| {
                     // TODO: no background highlights happen for inlays currently
                     this.hover_state.info_popovers = vec![hover_popover];
                     cx.notify();
@@ -179,6 +181,7 @@ pub fn hover_at_inlay(
                 anyhow::Ok(())
             }
             .log_err()
+            .await
         });
 
         editor.hover_state.info_task = Some(task);
@@ -255,7 +258,7 @@ fn show_hover(
 
     let hover_popover_delay = EditorSettings::get_global(cx).hover_popover_delay;
 
-    let task = cx.spawn_in(window, |this, mut cx| {
+    let task = cx.spawn_in(window, async move |this, cx| {
         async move {
             // If we need to delay, delay a set amount initially before making the lsp request
             let delay = if ignore_timeout {
@@ -337,7 +340,7 @@ fn show_hover(
                         base_text_style.refine(&TextStyleRefinement {
                             font_family: Some(settings.ui_font.family.clone()),
                             font_fallbacks: settings.ui_font.fallbacks.clone(),
-                            font_size: Some(settings.ui_font_size.into()),
+                            font_size: Some(settings.ui_font_size(cx).into()),
                             color: Some(cx.theme().colors().editor_foreground),
                             background_color: Some(gpui::transparent_black()),
 
@@ -356,7 +359,8 @@ fn show_hover(
                             },
                             ..Default::default()
                         };
-                        Markdown::new_text(text, markdown_style.clone(), None, None, window, cx)
+                        Markdown::new_text(SharedString::new(text), markdown_style.clone(), cx)
+                            .open_url(open_markdown_url)
                     })
                     .ok();
 
@@ -372,7 +376,7 @@ fn show_hover(
                 None
             };
 
-            this.update(&mut cx, |this, _| {
+            this.update(cx, |this, _| {
                 this.hover_state.diagnostic_popover = diagnostic_popover;
             })?;
 
@@ -406,7 +410,7 @@ fn show_hover(
             } else {
                 Vec::new()
             };
-            let snapshot = this.update_in(&mut cx, |this, window, cx| this.snapshot(window, cx))?;
+            let snapshot = this.update_in(cx, |this, window, cx| this.snapshot(window, cx))?;
             let mut hover_highlights = Vec::with_capacity(hovers_response.len());
             let mut info_popovers = Vec::with_capacity(
                 hovers_response.len() + if invisible_char.is_some() { 1 } else { 0 },
@@ -417,7 +421,7 @@ fn show_hover(
                     text: format!("Unicode character U+{:02X}", invisible as u32),
                     kind: HoverBlockKind::PlainText,
                 }];
-                let parsed_content = parse_blocks(&blocks, &language_registry, None, &mut cx).await;
+                let parsed_content = parse_blocks(&blocks, &language_registry, None, cx).await;
                 let scroll_handle = ScrollHandle::new();
                 info_popovers.push(InfoPopover {
                     symbol_range: RangeInEditor::Text(range),
@@ -444,18 +448,19 @@ fn show_hover(
                     })
                     .or_else(|| {
                         let snapshot = &snapshot.buffer_snapshot;
-                        let offset_range = snapshot.syntax_ancestor(anchor..anchor)?.1;
-                        Some(
-                            snapshot.anchor_before(offset_range.start)
-                                ..snapshot.anchor_after(offset_range.end),
-                        )
+                        match snapshot.syntax_ancestor(anchor..anchor)?.1 {
+                            MultiOrSingleBufferOffsetRange::Multi(range) => Some(
+                                snapshot.anchor_before(range.start)
+                                    ..snapshot.anchor_after(range.end),
+                            ),
+                            MultiOrSingleBufferOffsetRange::Single(_) => None,
+                        }
                     })
                     .unwrap_or_else(|| anchor..anchor);
 
                 let blocks = hover_result.contents;
                 let language = hover_result.language;
-                let parsed_content =
-                    parse_blocks(&blocks, &language_registry, language, &mut cx).await;
+                let parsed_content = parse_blocks(&blocks, &language_registry, language, cx).await;
                 let scroll_handle = ScrollHandle::new();
                 hover_highlights.push(range.clone());
                 info_popovers.push(InfoPopover {
@@ -468,7 +473,7 @@ fn show_hover(
                 });
             }
 
-            this.update_in(&mut cx, |editor, window, cx| {
+            this.update_in(cx, |editor, window, cx| {
                 if hover_highlights.is_empty() {
                     editor.clear_background_highlights::<HoverState>(cx);
                 } else {
@@ -488,6 +493,7 @@ fn show_hover(
             anyhow::Ok(())
         }
         .log_err()
+        .await
     });
 
     editor.hover_state.info_task = Some(task);
@@ -558,67 +564,126 @@ async fn parse_blocks(
 
     let rendered_block = cx
         .new_window_entity(|window, cx| {
-            let settings = ThemeSettings::get_global(cx);
-            let ui_font_family = settings.ui_font.family.clone();
-            let ui_font_fallbacks = settings.ui_font.fallbacks.clone();
-            let buffer_font_family = settings.buffer_font.family.clone();
-            let buffer_font_fallbacks = settings.buffer_font.fallbacks.clone();
-
-            let mut base_text_style = window.text_style();
-            base_text_style.refine(&TextStyleRefinement {
-                font_family: Some(ui_font_family.clone()),
-                font_fallbacks: ui_font_fallbacks,
-                color: Some(cx.theme().colors().editor_foreground),
-                ..Default::default()
-            });
-
-            let markdown_style = MarkdownStyle {
-                base_text_style,
-                code_block: StyleRefinement::default().my(rems(1.)).font_buffer(cx),
-                inline_code: TextStyleRefinement {
-                    background_color: Some(cx.theme().colors().background),
-                    font_family: Some(buffer_font_family),
-                    font_fallbacks: buffer_font_fallbacks,
-                    ..Default::default()
-                },
-                rule_color: cx.theme().colors().border,
-                block_quote_border_color: Color::Muted.color(cx),
-                block_quote: TextStyleRefinement {
-                    color: Some(Color::Muted.color(cx)),
-                    ..Default::default()
-                },
-                link: TextStyleRefinement {
-                    color: Some(cx.theme().colors().editor_foreground),
-                    underline: Some(gpui::UnderlineStyle {
-                        thickness: px(1.),
-                        color: Some(cx.theme().colors().editor_foreground),
-                        wavy: false,
-                    }),
-                    ..Default::default()
-                },
-                syntax: cx.theme().syntax().clone(),
-                selection_background_color: { cx.theme().players().local().selection },
-
-                heading: StyleRefinement::default()
-                    .font_weight(FontWeight::BOLD)
-                    .text_base()
-                    .mt(rems(1.))
-                    .mb_0(),
-            };
-
             Markdown::new(
-                combined_text,
-                markdown_style.clone(),
+                combined_text.into(),
+                hover_markdown_style(window, cx),
                 Some(language_registry.clone()),
                 fallback_language_name,
-                window,
                 cx,
             )
             .copy_code_block_buttons(false)
+            .open_url(open_markdown_url)
         })
         .ok();
 
     rendered_block
+}
+
+pub fn hover_markdown_style(window: &Window, cx: &App) -> MarkdownStyle {
+    let settings = ThemeSettings::get_global(cx);
+    let ui_font_family = settings.ui_font.family.clone();
+    let ui_font_fallbacks = settings.ui_font.fallbacks.clone();
+    let buffer_font_family = settings.buffer_font.family.clone();
+    let buffer_font_fallbacks = settings.buffer_font.fallbacks.clone();
+
+    let mut base_text_style = window.text_style();
+    base_text_style.refine(&TextStyleRefinement {
+        font_family: Some(ui_font_family.clone()),
+        font_fallbacks: ui_font_fallbacks,
+        color: Some(cx.theme().colors().editor_foreground),
+        ..Default::default()
+    });
+    MarkdownStyle {
+        base_text_style,
+        code_block: StyleRefinement::default().my(rems(1.)).font_buffer(cx),
+        inline_code: TextStyleRefinement {
+            background_color: Some(cx.theme().colors().background),
+            font_family: Some(buffer_font_family),
+            font_fallbacks: buffer_font_fallbacks,
+            ..Default::default()
+        },
+        rule_color: cx.theme().colors().border,
+        block_quote_border_color: Color::Muted.color(cx),
+        block_quote: TextStyleRefinement {
+            color: Some(Color::Muted.color(cx)),
+            ..Default::default()
+        },
+        link: TextStyleRefinement {
+            color: Some(cx.theme().colors().editor_foreground),
+            underline: Some(gpui::UnderlineStyle {
+                thickness: px(1.),
+                color: Some(cx.theme().colors().editor_foreground),
+                wavy: false,
+            }),
+            ..Default::default()
+        },
+        syntax: cx.theme().syntax().clone(),
+        selection_background_color: { cx.theme().players().local().selection },
+        heading: StyleRefinement::default()
+            .font_weight(FontWeight::BOLD)
+            .text_base()
+            .mt(rems(1.))
+            .mb_0(),
+        ..Default::default()
+    }
+}
+
+pub fn open_markdown_url(link: SharedString, window: &mut Window, cx: &mut App) {
+    if let Ok(uri) = Url::parse(&link) {
+        if uri.scheme() == "file" {
+            if let Some(workspace) = window.root::<Workspace>().flatten() {
+                workspace.update(cx, |workspace, cx| {
+                    let task = workspace.open_abs_path(
+                        PathBuf::from(uri.path()),
+                        OpenOptions {
+                            visible: Some(OpenVisible::None),
+                            ..Default::default()
+                        },
+                        window,
+                        cx,
+                    );
+
+                    cx.spawn_in(window, async move |_, cx| {
+                        let item = task.await?;
+                        // Ruby LSP uses URLs with #L1,1-4,4
+                        // we'll just take the first number and assume it's a line number
+                        let Some(fragment) = uri.fragment() else {
+                            return anyhow::Ok(());
+                        };
+                        let mut accum = 0u32;
+                        for c in fragment.chars() {
+                            if c >= '0' && c <= '9' && accum < u32::MAX / 2 {
+                                accum *= 10;
+                                accum += c as u32 - '0' as u32;
+                            } else if accum > 0 {
+                                break;
+                            }
+                        }
+                        if accum == 0 {
+                            return Ok(());
+                        }
+                        let Some(editor) = cx.update(|_, cx| item.act_as::<Editor>(cx))? else {
+                            return Ok(());
+                        };
+                        editor.update_in(cx, |editor, window, cx| {
+                            editor.change_selections(
+                                Some(Autoscroll::fit()),
+                                window,
+                                cx,
+                                |selections| {
+                                    selections.select_ranges([text::Point::new(accum - 1, 0)
+                                        ..text::Point::new(accum - 1, 0)]);
+                                },
+                            );
+                        })
+                    })
+                    .detach_and_log_err(cx);
+                });
+                return;
+            }
+        }
+    }
+    cx.open_url(&link);
 }
 
 #[derive(Default, Debug)]
@@ -1479,6 +1544,7 @@ mod tests {
                 show_parameter_hints: true,
                 show_other_hints: true,
                 show_background: false,
+                toggle_on_modifiers_press: None,
             })
         });
 

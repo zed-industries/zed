@@ -7,6 +7,7 @@ mod context;
 mod context_picker;
 mod context_store;
 mod context_strip;
+mod history_store;
 mod inline_assistant;
 mod inline_prompt_editor;
 mod message_editor;
@@ -15,6 +16,8 @@ mod terminal_inline_assistant;
 mod thread;
 mod thread_history;
 mod thread_store;
+mod tool_selector;
+mod tool_use;
 mod ui;
 
 use std::sync::Arc;
@@ -25,11 +28,14 @@ use command_palette_hooks::CommandPaletteFilter;
 use feature_flags::{Assistant2FeatureFlag, FeatureFlagAppExt};
 use fs::Fs;
 use gpui::{actions, App};
-use prompt_library::PromptBuilder;
+use prompt_store::PromptBuilder;
 use settings::Settings as _;
 
+pub use crate::active_thread::ActiveThread;
 pub use crate::assistant_panel::{AssistantPanel, ConcreteAssistantPanelDelegate};
 pub use crate::inline_assistant::InlineAssistant;
+pub use crate::thread::{Message, RequestKind, Thread, ThreadEvent};
+pub use crate::thread_store::ThreadStore;
 
 actions!(
     assistant2,
@@ -37,10 +43,8 @@ actions!(
         NewThread,
         NewPromptEditor,
         ToggleContextPicker,
-        ToggleModelSelector,
         RemoveAllContext,
         OpenHistory,
-        OpenPromptEditorHistory,
         OpenConfiguration,
         RemoveSelectedThread,
         Chat,
@@ -52,7 +56,8 @@ actions!(
         FocusLeft,
         FocusRight,
         RemoveFocusedContext,
-        AcceptSuggestedContext
+        AcceptSuggestedContext,
+        OpenActiveThreadAsMarkdown
     ]
 );
 
@@ -66,6 +71,7 @@ pub fn init(
     cx: &mut App,
 ) {
     AssistantSettings::register(cx);
+    thread_store::init(cx);
     assistant_panel::init(cx);
 
     inline_assistant::init(

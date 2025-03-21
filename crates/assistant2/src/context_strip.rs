@@ -25,7 +25,7 @@ use crate::{
 
 pub struct ContextStrip {
     context_store: Entity<ContextStore>,
-    pub context_picker: Entity<ContextPicker>,
+    context_picker: Entity<ContextPicker>,
     context_picker_menu_handle: PopoverMenuHandle<ContextPicker>,
     focus_handle: FocusHandle,
     suggest_context_kind: SuggestContextKind,
@@ -36,7 +36,6 @@ pub struct ContextStrip {
 }
 
 impl ContextStrip {
-    #[allow(clippy::too_many_arguments)]
     pub fn new(
         context_store: Entity<ContextStore>,
         workspace: WeakEntity<Workspace>,
@@ -336,12 +335,12 @@ impl ContextStrip {
             context_store.accept_suggested_context(&suggested, cx)
         });
 
-        cx.spawn_in(window, |this, mut cx| async move {
-            match task.await.notify_async_err(&mut cx) {
+        cx.spawn_in(window, async move |this, cx| {
+            match task.await.notify_async_err(cx) {
                 None => {}
                 Some(()) => {
                     if let Some(this) = this.upgrade() {
-                        this.update(&mut cx, |_, cx| cx.notify())?;
+                        this.update(cx, |_, cx| cx.notify())?;
                     }
                 }
             }
@@ -453,6 +452,7 @@ impl Render for ContextStrip {
                                     &ToggleContextPicker,
                                     &focus_handle,
                                     window,
+                                    cx,
                                 )
                                 .map(|binding| binding.into_any_element()),
                             ),

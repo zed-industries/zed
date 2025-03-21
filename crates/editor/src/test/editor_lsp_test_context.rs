@@ -79,6 +79,19 @@ pub(crate) fn rust_lang() -> Arc<Language> {
     .expect("Could not parse queries");
     Arc::new(language)
 }
+
+#[cfg(test)]
+pub(crate) fn git_commit_lang() -> Arc<Language> {
+    Arc::new(Language::new(
+        LanguageConfig {
+            name: "Git Commit".into(),
+            line_comments: vec!["#".into()],
+            ..Default::default()
+        },
+        None,
+    ))
+}
+
 impl EditorLspTestContext {
     pub async fn new(
         language: Language,
@@ -215,6 +228,8 @@ impl EditorLspTestContext {
                 ("[" @open "]" @close)
                 ("{" @open "}" @close)
                 ("<" @open ">" @close)
+                ("'" @open "'" @close)
+                ("`" @open "`" @close)
                 ("\"" @open "\"" @close)"#})),
             indents: Some(Cow::from(indoc! {r#"
                 [
@@ -249,10 +264,10 @@ impl EditorLspTestContext {
                     ..Default::default()
                 },
                 block_comment: Some(("<!-- ".into(), " -->".into())),
-                word_characters: ['-'].into_iter().collect(),
+                completion_query_characters: ['-'].into_iter().collect(),
                 ..Default::default()
             },
-            Some(tree_sitter_html::language()),
+            Some(tree_sitter_html::LANGUAGE.into()),
         )
         .with_queries(LanguageQueries {
             brackets: Some(Cow::from(indoc! {r#"

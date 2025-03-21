@@ -50,12 +50,11 @@
     in
     {
       packages = forAllSystems (pkgs: {
-        zed-editor = pkgs.zed-editor;
         default = pkgs.zed-editor;
       });
 
       devShells = forAllSystems (pkgs: {
-        default = import ./nix/shell.nix { inherit pkgs; };
+        default = pkgs.callPackage ./nix/shell.nix { };
       });
 
       formatter = forAllSystems (pkgs: pkgs.nixfmt-rfc-style);
@@ -64,4 +63,13 @@
         default = nixpkgs.lib.composeManyExtensions (builtins.attrValues overlays);
       };
     };
+
+  nixConfig = {
+    extra-substituters = [
+      "https://zed-industries.cachix.org"
+    ];
+    extra-trusted-public-keys = [
+      "zed-industries.cachix.org-1:QW3RoXK0Lm4ycmU5/3bmYRd3MLf4RbTGPqRulGlX5W0="
+    ];
+  };
 }

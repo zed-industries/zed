@@ -44,7 +44,7 @@ impl FakeServer {
                 let state = Arc::downgrade(&server.state);
                 move |cx| {
                     let state = state.clone();
-                    cx.spawn(move |_| async move {
+                    cx.spawn(async move |_| {
                         let state = state.upgrade().ok_or_else(|| anyhow!("server dropped"))?;
                         let mut state = state.lock();
                         state.auth_count += 1;
@@ -63,7 +63,7 @@ impl FakeServer {
                     let peer = peer.clone();
                     let state = state.clone();
                     let credentials = credentials.clone();
-                    cx.spawn(move |cx| async move {
+                    cx.spawn(async move |cx| {
                         let state = state.upgrade().ok_or_else(|| anyhow!("server dropped"))?;
                         let peer = peer.upgrade().ok_or_else(|| anyhow!("server dropped"))?;
                         if state.lock().forbid_connections {
@@ -85,7 +85,7 @@ impl FakeServer {
                             Connection::in_memory(cx.background_executor().clone());
                         let (connection_id, io, incoming) =
                             peer.add_test_connection(server_conn, cx.background_executor().clone());
-                        cx.background_executor().spawn(io).detach();
+                        cx.background_spawn(io).detach();
                         {
                             let mut state = state.lock();
                             state.connection_id = Some(connection_id);

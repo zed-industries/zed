@@ -120,11 +120,21 @@ impl super::LspAdapter for CLspAdapter {
         completion: &lsp::CompletionItem,
         language: &Arc<Language>,
     ) -> Option<CodeLabel> {
+        let label_detail = match &completion.label_details {
+            Some(label_detail) => match &label_detail.detail {
+                Some(detail) => detail.trim(),
+                None => "",
+            },
+            None => "",
+        };
+
         let label = completion
             .label
             .strip_prefix('•')
             .unwrap_or(&completion.label)
-            .trim();
+            .trim()
+            .to_owned()
+            + label_detail;
 
         match completion.kind {
             Some(lsp::CompletionItemKind::FIELD) if completion.detail.is_some() => {
@@ -263,12 +273,16 @@ impl super::LspAdapter for CLspAdapter {
         &self,
         mut original: InitializeParams,
     ) -> Result<InitializeParams> {
-        // enable clangd's dot-to-arrow feature.
         let experimental = json!({
             "textDocument": {
                 "completion" : {
+                    // enable clangd's dot-to-arrow feature.
                     "editsNearCursor": true
-                }
+                },
+                // TODO: inactiveRegions support needs an implementation in clangd_ext.rs
+                // "inactiveRegionsCapabilities": {
+                //     "inactiveRegions": true,
+                // }
             }
         });
         if let Some(ref mut original_experimental) = original.capabilities.experimental {

@@ -13,8 +13,8 @@ use client::{
 };
 use futures::{channel::mpsc, StreamExt};
 use gpui::{
-    AnyElement, AnyView, App, Context, Entity, EntityId, EventEmitter, FocusHandle, Focusable,
-    Font, HighlightStyle, Pixels, Point, Render, SharedString, Task, WeakEntity, Window,
+    Action, AnyElement, AnyView, App, Context, Entity, EntityId, EventEmitter, FocusHandle,
+    Focusable, Font, HighlightStyle, Pixels, Point, Render, SharedString, Task, WeakEntity, Window,
 };
 use project::{Project, ProjectEntryId, ProjectPath};
 use schemars::JsonSchema;
@@ -42,7 +42,7 @@ pub struct ItemSettings {
     pub activate_on_close: ActivateOnClose,
     pub file_icons: bool,
     pub show_diagnostics: ShowDiagnostics,
-    pub always_show_close_button: bool,
+    pub show_close_button: ShowCloseButton,
 }
 
 #[derive(Deserialize)]
@@ -58,6 +58,15 @@ pub enum ClosePosition {
     Left,
     #[default]
     Right,
+}
+
+#[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum ShowCloseButton {
+    Always,
+    #[default]
+    Hover,
+    Hidden,
 }
 
 #[derive(Copy, Clone, Debug, Default, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
@@ -104,7 +113,7 @@ pub struct ItemSettingsContent {
     /// Whether to always show the close button on tabs.
     ///
     /// Default: false
-    always_show_close_button: Option<bool>,
+    show_close_button: Option<ShowCloseButton>,
 }
 
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
@@ -274,6 +283,9 @@ pub trait Item: Focusable + EventEmitter<Self::Event> + Render + Sized {
         false
     }
     fn can_save(&self, _cx: &App) -> bool {
+        false
+    }
+    fn can_save_as(&self, _: &App) -> bool {
         false
     }
     fn save(
@@ -477,6 +489,7 @@ pub trait ItemHandle: 'static + Send {
     fn has_deleted_file(&self, cx: &App) -> bool;
     fn has_conflict(&self, cx: &App) -> bool;
     fn can_save(&self, cx: &App) -> bool;
+    fn can_save_as(&self, cx: &App) -> bool;
     fn save(
         &self,
         format: bool,
@@ -514,6 +527,7 @@ pub trait ItemHandle: 'static + Send {
     fn workspace_settings<'a>(&self, cx: &'a App) -> &'a WorkspaceSettings;
     fn preserve_preview(&self, cx: &App) -> bool;
     fn include_in_nav_history(&self) -> bool;
+    fn relay_action(&self, action: Box<dyn Action>, window: &mut Window, cx: &mut App);
 }
 
 pub trait WeakItemHandle: Send + Sync {
@@ -704,13 +718,13 @@ impl<T: Item> ItemHandle for Entity<T> {
 
                 send_follower_updates = Some(cx.spawn_in(window, {
                     let pending_update = pending_update.clone();
-                    |workspace, mut cx| async move {
+                    async move |workspace, cx| {
                         while let Some(mut leader_id) = pending_update_rx.next().await {
                             while let Ok(Some(id)) = pending_update_rx.try_next() {
                                 leader_id = id;
                             }
 
-                            workspace.update_in(&mut cx, |workspace, window, cx| {
+                            workspace.update_in(cx, |workspace, window, cx| {
                                 let Some(item) = item.upgrade() else { return };
                                 workspace.update_followers(
                                     is_project_item,
@@ -788,6 +802,7 @@ impl<T: Item> ItemHandle for Entity<T> {
                         }
 
                         ItemEvent::UpdateTab => {
+                            workspace.update_item_dirty_state(item, window, cx);
                             pane.update(cx, |_, cx| {
                                 cx.emit(pane::Event::ChangeItemTitle);
                                 cx.notify();
@@ -837,6 +852,7 @@ impl<T: Item> ItemHandle for Entity<T> {
             .detach();
 
             let item_id = self.item_id();
+            workspace.update_item_dirty_state(self, window, cx);
             cx.observe_release_in(self, window, move |workspace, _, _, _| {
                 workspace.panes_by_item.remove(&item_id);
                 event_subscription.take();
@@ -888,6 +904,10 @@ impl<T: Item> ItemHandle for Entity<T> {
 
     fn can_save(&self, cx: &App) -> bool {
         self.read(cx).can_save(cx)
+    }
+
+    fn can_save_as(&self, cx: &App) -> bool {
+        self.read(cx).can_save_as(cx)
     }
 
     fn save(
@@ -969,6 +989,13 @@ impl<T: Item> ItemHandle for Entity<T> {
 
     fn include_in_nav_history(&self) -> bool {
         T::include_in_nav_history()
+    }
+
+    fn relay_action(&self, action: Box<dyn Action>, window: &mut Window, cx: &mut App) {
+        self.update(cx, |this, cx| {
+            this.focus_handle(cx).focus(window);
+            window.dispatch_action(action, cx);
+        })
     }
 }
 
@@ -1257,6 +1284,19 @@ pub mod test {
                 is_dirty: false,
             })
         }
+
+        pub fn new_dirty(id: u64, path: &str, cx: &mut App) -> Entity<Self> {
+            let entry_id = Some(ProjectEntryId::from_proto(id));
+            let project_path = Some(ProjectPath {
+                worktree_id: WorktreeId::from_usize(0),
+                path: Path::new(path).into(),
+            });
+            cx.new(|_| Self {
+                entry_id,
+                project_path,
+                is_dirty: true,
+            })
+        }
     }
 
     impl TestItem {
@@ -1455,15 +1495,26 @@ pub mod test {
                     .all(|item| item.read(cx).entry_id.is_some())
         }
 
+        fn can_save_as(&self, _cx: &App) -> bool {
+            self.is_singleton
+        }
+
         fn save(
             &mut self,
             _: bool,
             _: Entity<Project>,
             _window: &mut Window,
-            _: &mut Context<Self>,
+            cx: &mut Context<Self>,
         ) -> Task<anyhow::Result<()>> {
             self.save_count += 1;
             self.is_dirty = false;
+            for item in &self.project_items {
+                item.update(cx, |item, _| {
+                    if item.is_dirty {
+                        item.is_dirty = false;
+                    }
+                })
+            }
             Task::ready(Ok(()))
         }
 

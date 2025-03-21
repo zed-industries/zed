@@ -248,7 +248,7 @@ impl Prettier {
         server_id: LanguageServerId,
         prettier_dir: PathBuf,
         node: NodeRuntime,
-        cx: AsyncApp,
+        mut cx: AsyncApp,
     ) -> anyhow::Result<Self> {
         use lsp::{LanguageServerBinary, LanguageServerName};
 
@@ -279,17 +279,18 @@ impl Prettier {
             server_binary,
             &prettier_dir,
             None,
-            cx.clone(),
+            Default::default(),
+            &mut cx,
         )
         .context("prettier server creation")?;
 
-        let initialize_params = None;
-        let configuration = lsp::DidChangeConfigurationParams {
-            settings: Default::default(),
-        };
         let server = cx
             .update(|cx| {
-                executor.spawn(server.initialize(initialize_params, configuration.into(), cx))
+                let params = server.default_initialize_params(cx);
+                let configuration = lsp::DidChangeConfigurationParams {
+                    settings: Default::default(),
+                };
+                executor.spawn(server.initialize(params, configuration.into(), cx))
             })?
             .await
             .context("prettier server initialization")?;

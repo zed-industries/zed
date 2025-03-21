@@ -24,12 +24,12 @@ use gpui::{
     UpdateGlobal, WeakEntity, Window,
 };
 use language::{Buffer, Point, Selection, TransactionId};
-use language_model::LanguageModelRegistry;
-use language_models::report_assistant_event;
+use language_model::{report_assistant_event, LanguageModelRegistry};
 use multi_buffer::MultiBufferRow;
 use parking_lot::Mutex;
+use project::LspAction;
 use project::{CodeAction, ProjectTransaction};
-use prompt_library::PromptBuilder;
+use prompt_store::PromptBuilder;
 use settings::{Settings, SettingsStore};
 use telemetry_events::{AssistantEvent, AssistantKind, AssistantPhase};
 use terminal_view::{terminal_panel::TerminalPanel, TerminalView};
@@ -228,8 +228,12 @@ impl InlineAssistant {
             return;
         }
 
-        let Some(inline_assist_target) = Self::resolve_inline_assist_target(workspace, window, cx)
-        else {
+        let Some(inline_assist_target) = Self::resolve_inline_assist_target(
+            workspace,
+            workspace.panel::<AssistantPanel>(cx),
+            window,
+            cx,
+        ) else {
             return;
         };
 
@@ -272,7 +276,7 @@ impl InlineAssistant {
         if is_authenticated() {
             handle_assist(window, cx);
         } else {
-            cx.spawn_in(window, |_workspace, mut cx| async move {
+            cx.spawn_in(window, async move |_workspace, cx| {
                 let Some(task) = cx.update(|_, cx| {
                     LanguageModelRegistry::read_global(cx)
                         .active_provider()
@@ -476,7 +480,6 @@ impl InlineAssistant {
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub fn suggest_assist(
         &mut self,
         editor: &Entity<Editor>,
@@ -1338,7 +1341,7 @@ impl InlineAssistant {
                     });
 
                     enum DeletedLines {}
-                    let mut editor = Editor::for_multibuffer(multi_buffer, None, true, window, cx);
+                    let mut editor = Editor::for_multibuffer(multi_buffer, None, window, cx);
                     editor.set_soft_wrap_mode(language::language_settings::SoftWrap::None, cx);
                     editor.set_show_wrap_guides(false, cx);
                     editor.set_show_gutter(false, cx);
@@ -1384,6 +1387,7 @@ impl InlineAssistant {
 
     fn resolve_inline_assist_target(
         workspace: &mut Workspace,
+        assistant_panel: Option<Entity<AssistantPanel>>,
         window: &mut Window,
         cx: &mut App,
     ) -> Option<InlineAssistTarget> {
@@ -1403,7 +1407,20 @@ impl InlineAssistant {
             }
         }
 
-        if let Some(workspace_editor) = workspace
+        let context_editor = assistant_panel
+            .and_then(|panel| panel.read(cx).active_context_editor())
+            .and_then(|editor| {
+                let editor = &editor.read(cx).editor().clone();
+                if editor.read(cx).is_focused(window) {
+                    Some(editor.clone())
+                } else {
+                    None
+                }
+            });
+
+        if let Some(context_editor) = context_editor {
+            Some(InlineAssistTarget::Editor(context_editor))
+        } else if let Some(workspace_editor) = workspace
             .active_item(cx)
             .and_then(|item| item.act_as::<Editor>(cx))
         {
@@ -1433,16 +1450,15 @@ struct InlineAssistScrollLock {
 }
 
 impl EditorInlineAssists {
-    #[allow(clippy::too_many_arguments)]
     fn new(editor: &Entity<Editor>, window: &mut Window, cx: &mut App) -> Self {
         let (highlight_updates_tx, mut highlight_updates_rx) = async_watch::channel(());
         Self {
             assist_ids: Vec::new(),
             scroll_lock: None,
             highlight_updates: highlight_updates_tx,
-            _update_highlights: cx.spawn(|cx| {
+            _update_highlights: cx.spawn({
                 let editor = editor.downgrade();
-                async move {
+                async move |cx| {
                     while let Ok(()) = highlight_updates_rx.changed().await {
                         let editor = editor.upgrade().context("editor was dropped")?;
                         cx.update_global(|assistant: &mut InlineAssistant, cx| {
@@ -1545,7 +1561,6 @@ pub struct InlineAssist {
 }
 
 impl InlineAssist {
-    #[allow(clippy::too_many_arguments)]
     fn new(
         assist_id: InlineAssistId,
         group_id: InlineAssistGroupId,
@@ -1710,10 +1725,11 @@ impl CodeActionProvider for AssistantCodeActionProvider {
             Task::ready(Ok(vec![CodeAction {
                 server_id: language::LanguageServerId(0),
                 range: snapshot.anchor_before(range.start)..snapshot.anchor_after(range.end),
-                lsp_action: lsp::CodeAction {
+                lsp_action: LspAction::Action(Box::new(lsp::CodeAction {
                     title: "Fix with Assistant".into(),
                     ..Default::default()
-                },
+                })),
+                resolved: true,
             }]))
         } else {
             Task::ready(Ok(Vec::new()))
@@ -1732,10 +1748,10 @@ impl CodeActionProvider for AssistantCodeActionProvider {
         let editor = self.editor.clone();
         let workspace = self.workspace.clone();
         let thread_store = self.thread_store.clone();
-        window.spawn(cx, |mut cx| async move {
+        window.spawn(cx, async move |cx| {
             let editor = editor.upgrade().context("editor was released")?;
             let range = editor
-                .update(&mut cx, |editor, cx| {
+                .update(cx, |editor, cx| {
                     editor.buffer().update(cx, |multibuffer, cx| {
                         let buffer = buffer.read(cx);
                         let multibuffer_snapshot = multibuffer.read(cx);

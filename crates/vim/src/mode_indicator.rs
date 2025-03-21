@@ -1,5 +1,5 @@
 use gpui::{div, Context, Element, Entity, Render, Subscription, WeakEntity, Window};
-use itertools::Itertools;
+use ui::text_for_keystrokes;
 use workspace::{item::ItemHandle, ui::prelude::*, StatusItemView};
 
 use crate::{Vim, VimEvent, VimGlobals};
@@ -15,7 +15,7 @@ impl ModeIndicator {
     /// Construct a new mode indicator in this window.
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         cx.observe_pending_input(window, |this: &mut Self, window, cx| {
-            this.update_pending_keys(window);
+            this.update_pending_keys(window, cx);
             cx.notify();
         })
         .detach();
@@ -50,13 +50,10 @@ impl ModeIndicator {
         }
     }
 
-    fn update_pending_keys(&mut self, window: &mut Window) {
-        self.pending_keys = window.pending_input_keystrokes().map(|keystrokes| {
-            keystrokes
-                .iter()
-                .map(|keystroke| format!("{}", keystroke))
-                .join(" ")
-        });
+    fn update_pending_keys(&mut self, window: &mut Window, cx: &App) {
+        self.pending_keys = window
+            .pending_input_keystrokes()
+            .map(|keystrokes| text_for_keystrokes(keystrokes, cx));
     }
 
     fn vim(&self) -> Option<Entity<Vim>> {

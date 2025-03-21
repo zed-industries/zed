@@ -132,15 +132,14 @@ impl Cell {
                         let languages = languages.clone();
                         let source = source.clone();
 
-                        cx.spawn_in(window, |this, mut cx| async move {
+                        cx.spawn_in(window, async move |this, cx| {
                             let parsed_markdown = cx
-                                .background_executor()
-                                .spawn(async move {
+                                .background_spawn(async move {
                                     parse_markdown(&source, None, Some(languages)).await
                                 })
                                 .await;
 
-                            this.update(&mut cx, |cell: &mut MarkdownCell, _| {
+                            this.update(cx, |cell: &mut MarkdownCell, _| {
                                 cell.parsed_markdown = Some(parsed_markdown);
                             })
                             .log_err();
@@ -178,7 +177,6 @@ impl Cell {
                         EditorMode::AutoHeight { max_lines: 1024 },
                         multi_buffer,
                         None,
-                        false,
                         window,
                         cx,
                     );
@@ -187,7 +185,7 @@ impl Cell {
 
                     let refinement = TextStyleRefinement {
                         font_family: Some(theme.buffer_font.family.clone()),
-                        font_size: Some(theme.buffer_font_size.into()),
+                        font_size: Some(theme.buffer_font_size(cx).into()),
                         color: Some(cx.theme().colors().editor_foreground),
                         background_color: Some(gpui::transparent_black()),
                         ..Default::default()
@@ -202,10 +200,10 @@ impl Cell {
                 });
 
                 let buffer = buffer.clone();
-                let language_task = cx.spawn_in(window, |this, mut cx| async move {
+                let language_task = cx.spawn_in(window, async move |this, cx| {
                     let language = notebook_language.await;
 
-                    buffer.update(&mut cx, |buffer, cx| {
+                    buffer.update(cx, |buffer, cx| {
                         buffer.set_language(language.clone(), cx);
                     });
                 });
@@ -398,7 +396,7 @@ impl Render for MarkdownCell {
                 h_flex()
                     .w_full()
                     .pr_6()
-                    .rounded_sm()
+                    .rounded_xs()
                     .items_start()
                     .gap(DynamicSpacing::Base08.rems(cx))
                     .bg(self.selected_bg_color(window, cx))
@@ -573,7 +571,7 @@ impl Render for CodeCell {
                 h_flex()
                     .w_full()
                     .pr_6()
-                    .rounded_sm()
+                    .rounded_xs()
                     .items_start()
                     .gap(DynamicSpacing::Base08.rems(cx))
                     .bg(self.selected_bg_color(window, cx))
@@ -599,7 +597,7 @@ impl Render for CodeCell {
                 h_flex()
                     .w_full()
                     .pr_6()
-                    .rounded_sm()
+                    .rounded_xs()
                     .items_start()
                     .gap(DynamicSpacing::Base08.rems(cx))
                     .bg(self.selected_bg_color(window, cx))
@@ -647,7 +645,7 @@ impl Render for CodeCell {
                                             // .w_full()
                                             // .mt_3()
                                             // .p_3()
-                                            // .rounded_md()
+                                            // .rounded_sm()
                                             // .bg(cx.theme().colors().editor_background)
                                             // .border(px(1.))
                                             // .border_color(cx.theme().colors().border)
@@ -719,7 +717,7 @@ impl Render for RawCell {
                 h_flex()
                     .w_full()
                     .pr_2()
-                    .rounded_sm()
+                    .rounded_xs()
                     .items_start()
                     .gap(DynamicSpacing::Base08.rems(cx))
                     .bg(self.selected_bg_color(window, cx))

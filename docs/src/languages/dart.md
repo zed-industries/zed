@@ -2,7 +2,7 @@
 
 Dart support is available through the [Dart extension](https://github.com/zed-extensions/dart).
 
-- Tree Sitter: [UserNobody14/tree-sitter-dart](https://github.com/UserNobody14/tree-sitter-dart)
+- Tree-sitter: [UserNobody14/tree-sitter-dart](https://github.com/UserNobody14/tree-sitter-dart)
 - Language Server: [dart language-server](https://github.com/dart-lang/sdk)
 
 ## Pre-requisites

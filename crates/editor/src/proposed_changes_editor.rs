@@ -62,8 +62,7 @@ impl ProposedChangesEditor {
         let (recalculate_diffs_tx, mut recalculate_diffs_rx) = mpsc::unbounded();
         let mut this = Self {
             editor: cx.new(|cx| {
-                let mut editor =
-                    Editor::for_multibuffer(multibuffer.clone(), project, true, window, cx);
+                let mut editor = Editor::for_multibuffer(multibuffer.clone(), project, window, cx);
                 editor.set_expand_all_diff_hunks(cx);
                 editor.set_completion_provider(None);
                 editor.clear_code_action_providers();
@@ -78,7 +77,7 @@ impl ProposedChangesEditor {
             title: title.into(),
             buffer_entries: Vec::new(),
             recalculate_diffs_tx,
-            _recalculate_diffs_task: cx.spawn_in(window, |this, mut cx| async move {
+            _recalculate_diffs_task: cx.spawn_in(window, async move |this, cx| {
                 let mut buffers_to_diff = HashSet::default();
                 while let Some(mut recalculate_diff) = recalculate_diffs_rx.next().await {
                     buffers_to_diff.insert(recalculate_diff.buffer);
@@ -100,7 +99,7 @@ impl ProposedChangesEditor {
                     }
 
                     let recalculate_diff_futures = this
-                        .update(&mut cx, |this, cx| {
+                        .update(cx, |this, cx| {
                             buffers_to_diff
                                 .drain()
                                 .filter_map(|buffer| {
@@ -185,7 +184,7 @@ impl ProposedChangesEditor {
             } else {
                 branch_buffer = location.buffer.update(cx, |buffer, cx| buffer.branch(cx));
                 new_diffs.push(cx.new(|cx| {
-                    let mut diff = BufferDiff::new(branch_buffer.read(cx));
+                    let mut diff = BufferDiff::new(&branch_buffer.read(cx).snapshot(), cx);
                     let _ = diff.set_base_text(
                         location.buffer.clone(),
                         branch_buffer.read(cx).text_snapshot(),
@@ -387,7 +386,7 @@ impl Render for ProposedChangesEditorToolbar {
             Some(editor) => {
                 let focus_handle = editor.focus_handle(cx);
                 let keybinding =
-                    KeyBinding::for_action_in(&ApplyAllDiffHunks, &focus_handle, window)
+                    KeyBinding::for_action_in(&ApplyAllDiffHunks, &focus_handle, window, cx)
                         .map(|binding| binding.into_any_element());
 
                 button_like.children(keybinding).on_click({
@@ -467,7 +466,7 @@ impl SemanticsProvider for BranchBufferSemanticsProvider {
         self.0.resolve_inlay_hint(hint, buffer, server_id, cx)
     }
 
-    fn supports_inlay_hints(&self, buffer: &Entity<Buffer>, cx: &App) -> bool {
+    fn supports_inlay_hints(&self, buffer: &Entity<Buffer>, cx: &mut App) -> bool {
         if let Some(buffer) = self.to_base(&buffer, &[], cx) {
             self.0.supports_inlay_hints(&buffer, cx)
         } else {

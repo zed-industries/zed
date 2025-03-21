@@ -82,7 +82,7 @@ impl AppCell {
 #[derive(Deref, DerefMut)]
 pub struct AppRef<'a>(Ref<'a, App>);
 
-impl<'a> Drop for AppRef<'a> {
+impl Drop for AppRef<'_> {
     fn drop(&mut self) {
         if option_env!("TRACK_THREAD_BORROWS").is_some() {
             let thread_id = std::thread::current().id();
@@ -95,7 +95,7 @@ impl<'a> Drop for AppRef<'a> {
 #[derive(Deref, DerefMut)]
 pub struct AppRefMut<'a>(RefMut<'a, App>);
 
-impl<'a> Drop for AppRefMut<'a> {
+impl Drop for AppRefMut<'_> {
     fn drop(&mut self) {
         if option_env!("TRACK_THREAD_BORROWS").is_some() {
             let thread_id = std::thread::current().id();
@@ -218,6 +218,7 @@ type Listener = Box<dyn FnMut(&dyn Any, &mut App) -> bool + 'static>;
 pub(crate) type KeystrokeObserver =
     Box<dyn FnMut(&KeystrokeEvent, &mut Window, &mut App) -> bool + 'static>;
 type QuitHandler = Box<dyn FnOnce(&mut App) -> LocalBoxFuture<'static, ()> + 'static>;
+type WindowClosedHandler = Box<dyn FnMut(&mut App)>;
 type ReleaseListener = Box<dyn FnOnce(&mut dyn Any, &mut App) + 'static>;
 type NewEntityListener = Box<dyn FnMut(AnyEntity, &mut Option<&mut Window>, &mut App) + 'static>;
 
@@ -260,6 +261,7 @@ pub struct App {
     pub(crate) release_listeners: SubscriberSet<EntityId, ReleaseListener>,
     pub(crate) global_observers: SubscriberSet<TypeId, Handler>,
     pub(crate) quit_observers: SubscriberSet<(), QuitHandler>,
+    pub(crate) window_closed_observers: SubscriberSet<(), WindowClosedHandler>,
     pub(crate) layout_id_buffer: Vec<LayoutId>, // We recycle this memory across layout requests.
     pub(crate) propagate_event: bool,
     pub(crate) prompt_builder: Option<PromptBuilder>,
@@ -325,6 +327,7 @@ impl App {
                 keyboard_layout_observers: SubscriberSet::new(),
                 global_observers: SubscriberSet::new(),
                 quit_observers: SubscriberSet::new(),
+                window_closed_observers: SubscriberSet::new(),
                 layout_id_buffer: Default::default(),
                 propagate_event: true,
                 prompt_builder: Some(PromptBuilder::Default),
@@ -1008,6 +1011,11 @@ impl App {
             if window.removed {
                 cx.window_handles.remove(&id);
                 cx.windows.remove(id);
+
+                cx.window_closed_observers.clone().retain(&(), |callback| {
+                    callback(cx);
+                    true
+                });
             } else {
                 cx.windows
                     .get_mut(id)
@@ -1038,15 +1046,17 @@ impl App {
         &self.foreground_executor
     }
 
-    /// Spawns the future returned by the given function on the thread pool. The closure will be invoked
+    /// Spawns the future returned by the given function on the main thread. The closure will be invoked
     /// with [AsyncApp], which allows the application state to be accessed across await points.
     #[track_caller]
-    pub fn spawn<Fut, R>(&self, f: impl FnOnce(AsyncApp) -> Fut) -> Task<R>
+    pub fn spawn<AsyncFn, R>(&self, f: AsyncFn) -> Task<R>
     where
-        Fut: Future<Output = R> + 'static,
+        AsyncFn: AsyncFnOnce(&mut AsyncApp) -> R + 'static,
         R: 'static,
     {
-        self.foreground_executor.spawn(f(self.to_async()))
+        let mut cx = self.to_async();
+        self.foreground_executor
+            .spawn(async move { f(&mut cx).await })
     }
 
     /// Schedules the given function to be run at the end of the current effect cycle, allowing entities
@@ -1367,6 +1377,14 @@ impl App {
         subscription
     }
 
+    /// Register a callback to be invoked when a window is closed
+    /// The window is no longer accessible at the point this callback is invoked.
+    pub fn on_window_closed(&self, mut on_closed: impl FnMut(&mut App) + 'static) -> Subscription {
+        let (subscription, activate) = self.window_closed_observers.insert((), Box::new(on_closed));
+        activate();
+        subscription
+    }
+
     pub(crate) fn clear_pending_keystrokes(&mut self) {
         for window in self.windows() {
             window
@@ -1408,6 +1426,11 @@ impl App {
     /// Sets the right click menu for the app icon in the dock
     pub fn set_dock_menu(&self, menus: Vec<MenuItem>) {
         self.platform.set_dock_menu(menus, &self.keymap.borrow());
+    }
+
+    /// Performs the action associated with the given dock menu item, only used on Windows for now.
+    pub fn perform_dock_menu_action(&self, action: usize) {
+        self.platform.perform_dock_menu_action(action);
     }
 
     /// Adds given path to the bottom of the list of recent paths for the application.
@@ -1503,6 +1526,11 @@ impl App {
         self.prompt_builder = Some(PromptBuilder::Custom(Box::new(renderer)))
     }
 
+    /// Reset the prompt builder to the default implementation.
+    pub fn reset_prompt_builder(&mut self) {
+        self.prompt_builder = Some(PromptBuilder::Default);
+    }
+
     /// Remove an asset from GPUI's cache
     pub fn remove_asset<A: Asset>(&mut self, source: &A::Source) {
         let asset_id = (TypeId::of::<A>(), hash(source));
@@ -1562,10 +1590,10 @@ impl App {
             .insert(entity_id, window_invalidators);
     }
 
-    /// Get the name for this App.
+    /// Returns the name for this [`App`].
     #[cfg(any(test, feature = "test-support", debug_assertions))]
-    pub fn get_name(&self) -> &'static str {
-        self.name.as_ref().unwrap()
+    pub fn get_name(&self) -> Option<&'static str> {
+        self.name
     }
 
     /// Returns `true` if the platform file picker supports selecting a mix of files and directories.
@@ -1577,9 +1605,10 @@ impl App {
 impl AppContext for App {
     type Result<T> = T;
 
-    /// Build an entity that is owned by the application. The given function will be invoked with
-    /// a `Context` and must return an object representing the entity. A `Entity` handle will be returned,
-    /// which can be used to access the entity in a context.
+    /// Builds an entity that is owned by the application.
+    ///
+    /// The given function will be invoked with a [`Context`] and must return an object representing the entity. An
+    /// [`Entity`] handle will be returned, which can be used to access the entity in a context.
     fn new<T: 'static>(
         &mut self,
         build_entity: impl FnOnce(&mut Context<'_, T>) -> T,

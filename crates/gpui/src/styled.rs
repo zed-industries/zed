@@ -1,7 +1,7 @@
 use crate::{
     self as gpui, px, relative, rems, AbsoluteLength, AlignItems, CursorStyle, DefiniteLength,
     Fill, FlexDirection, FlexWrap, Font, FontStyle, FontWeight, Hsla, JustifyContent, Length,
-    SharedString, StrikethroughStyle, StyleRefinement, TextOverflow, WhiteSpace,
+    SharedString, StrikethroughStyle, StyleRefinement, TextOverflow, UnderlineStyle, WhiteSpace,
 };
 use crate::{TextAlign, TextStyleRefinement};
 pub use gpui_macros::{
@@ -478,7 +478,7 @@ pub trait Styled: Sized {
     }
 
     /// Sets the font style of the element to normal (not italic).
-    /// [Docs](https://tailwindcss.com/docs/font-style#italicizing-text)
+    /// [Docs](https://tailwindcss.com/docs/font-style#displaying-text-normally)
     fn not_italic(mut self) -> Self {
         self.text_style()
             .get_or_insert_with(Default::default)
@@ -486,8 +486,19 @@ pub trait Styled: Sized {
         self
     }
 
+    /// Sets the text decoration to underline.
+    /// [Docs](https://tailwindcss.com/docs/text-decoration-line#underling-text)
+    fn underline(mut self) -> Self {
+        let style = self.text_style().get_or_insert_with(Default::default);
+        style.underline = Some(UnderlineStyle {
+            thickness: px(1.),
+            ..Default::default()
+        });
+        self
+    }
+
     /// Sets the decoration of the text to have a line through it.
-    /// [Docs](https://tailwindcss.com/docs/text-decoration#setting-the-text-decoration)
+    /// [Docs](https://tailwindcss.com/docs/text-decoration-line#adding-a-line-through-text)
     fn line_through(mut self) -> Self {
         let style = self.text_style().get_or_insert_with(Default::default);
         style.strikethrough = Some(StrikethroughStyle {

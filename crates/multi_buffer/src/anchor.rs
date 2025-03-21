@@ -73,7 +73,7 @@ impl Anchor {
                 if let Some(base_text) = snapshot
                     .diffs
                     .get(&excerpt.buffer_id)
-                    .and_then(|diff| diff.base_text())
+                    .map(|diff| diff.base_text())
                 {
                     let self_anchor = self.diff_base_anchor.filter(|a| base_text.can_resolve(a));
                     let other_anchor = other.diff_base_anchor.filter(|a| base_text.can_resolve(a));
@@ -110,7 +110,7 @@ impl Anchor {
                         if let Some(base_text) = snapshot
                             .diffs
                             .get(&excerpt.buffer_id)
-                            .and_then(|diff| diff.base_text())
+                            .map(|diff| diff.base_text())
                         {
                             if a.buffer_id == Some(base_text.remote_id()) {
                                 return a.bias_left(base_text);
@@ -135,7 +135,7 @@ impl Anchor {
                         if let Some(base_text) = snapshot
                             .diffs
                             .get(&excerpt.buffer_id)
-                            .and_then(|diff| diff.base_text())
+                            .map(|diff| diff.base_text())
                         {
                             if a.buffer_id == Some(base_text.remote_id()) {
                                 return a.bias_right(&base_text);
@@ -189,8 +189,9 @@ impl ToPoint for Anchor {
 }
 
 pub trait AnchorRangeExt {
-    fn cmp(&self, b: &Range<Anchor>, buffer: &MultiBufferSnapshot) -> Ordering;
-    fn overlaps(&self, b: &Range<Anchor>, buffer: &MultiBufferSnapshot) -> bool;
+    fn cmp(&self, other: &Range<Anchor>, buffer: &MultiBufferSnapshot) -> Ordering;
+    fn includes(&self, other: &Range<Anchor>, buffer: &MultiBufferSnapshot) -> bool;
+    fn overlaps(&self, other: &Range<Anchor>, buffer: &MultiBufferSnapshot) -> bool;
     fn to_offset(&self, content: &MultiBufferSnapshot) -> Range<usize>;
     fn to_point(&self, content: &MultiBufferSnapshot) -> Range<Point>;
 }
@@ -201,6 +202,10 @@ impl AnchorRangeExt for Range<Anchor> {
             Ordering::Equal => other.end.cmp(&self.end, buffer),
             ord => ord,
         }
+    }
+
+    fn includes(&self, other: &Range<Anchor>, buffer: &MultiBufferSnapshot) -> bool {
+        self.start.cmp(&other.start, &buffer).is_le() && other.end.cmp(&self.end, &buffer).is_le()
     }
 
     fn overlaps(&self, other: &Range<Anchor>, buffer: &MultiBufferSnapshot) -> bool {

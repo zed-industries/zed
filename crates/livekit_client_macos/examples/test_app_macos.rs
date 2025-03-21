@@ -2,8 +2,8 @@ use std::time::Duration;
 
 use futures::StreamExt;
 use gpui::{actions, KeyBinding, Menu, MenuItem};
+use livekit_api::token::{self, VideoGrant};
 use livekit_client_macos::{LocalAudioTrack, LocalVideoTrack, Room, RoomUpdate};
-use livekit_server::token::{self, VideoGrant};
 use log::LevelFilter;
 use simplelog::SimpleLogger;
 
@@ -37,7 +37,7 @@ fn main() {
         let live_kit_key = std::env::var("LIVE_KIT_KEY").unwrap_or("devkey".into());
         let live_kit_secret = std::env::var("LIVE_KIT_SECRET").unwrap_or("secret".into());
 
-        cx.spawn(|cx| async move {
+        cx.spawn(async move |cx| {
             let user_a_token = token::create(
                 &live_kit_key,
                 &live_kit_secret,

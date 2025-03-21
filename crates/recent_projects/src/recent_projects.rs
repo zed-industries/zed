@@ -62,13 +62,13 @@ impl RecentProjects {
         let _subscription = cx.subscribe(&picker, |_, _, _, cx| cx.emit(DismissEvent));
         // We do not want to block the UI on a potentially lengthy call to DB, so we're gonna swap
         // out workspace locations once the future runs to completion.
-        cx.spawn_in(window, |this, mut cx| async move {
+        cx.spawn_in(window, async move |this, cx| {
             let workspaces = WORKSPACE_DB
                 .recent_workspaces_on_disk()
                 .await
                 .log_err()
                 .unwrap_or_default();
-            this.update_in(&mut cx, move |this, window, cx| {
+            this.update_in(cx, move |this, window, cx| {
                 this.picker.update(cx, move |picker, cx| {
                     picker.delegate.set_workspaces(workspaces);
                     picker.update_matches(picker.query(cx), window, cx)
@@ -281,9 +281,9 @@ impl PickerDelegate for RecentProjectsDelegate {
                             SerializedWorkspaceLocation::Local(paths, _) => {
                                 let paths = paths.paths().to_vec();
                                 if replace_current_window {
-                                    cx.spawn_in(window, move |workspace, mut cx| async move {
+                                    cx.spawn_in(window, async move |workspace, cx| {
                                         let continue_replacing = workspace
-                                            .update_in(&mut cx, |workspace, window, cx| {
+                                            .update_in(cx, |workspace, window, cx| {
                                                 workspace.prepare_to_close(
                                                     CloseIntent::ReplaceWindow,
                                                     window,
@@ -293,7 +293,7 @@ impl PickerDelegate for RecentProjectsDelegate {
                                             .await?;
                                         if continue_replacing {
                                             workspace
-                                                .update_in(&mut cx, |workspace, window, cx| {
+                                                .update_in(cx, |workspace, window, cx| {
                                                     workspace.open_workspace_for_paths(
                                                         true, paths, window, cx,
                                                     )
@@ -330,13 +330,13 @@ impl PickerDelegate for RecentProjectsDelegate {
 
                                 let paths = ssh_project.paths.iter().map(PathBuf::from).collect();
 
-                                cx.spawn_in(window, |_, mut cx| async move {
+                                cx.spawn_in(window, async move |_, cx| {
                                     open_ssh_project(
                                         connection_options,
                                         paths,
                                         app_state,
                                         open_options,
-                                        &mut cx,
+                                        cx,
                                     )
                                     .await
                                 })
@@ -351,12 +351,13 @@ impl PickerDelegate for RecentProjectsDelegate {
 
     fn dismissed(&mut self, _window: &mut Window, _: &mut Context<Picker<Self>>) {}
 
-    fn no_matches_text(&self, _window: &mut Window, _cx: &mut App) -> SharedString {
-        if self.workspaces.is_empty() {
+    fn no_matches_text(&self, _window: &mut Window, _cx: &mut App) -> Option<SharedString> {
+        let text = if self.workspaces.is_empty() {
             "Recently opened projects will show up here".into()
         } else {
             "No matches".into()
-        }
+        };
+        Some(text)
     }
 
     fn render_match(
@@ -465,14 +466,14 @@ impl PickerDelegate for RecentProjectsDelegate {
                 .border_color(cx.theme().colors().border_variant)
                 .child(
                     Button::new("remote", "Open Remote Folder")
-                        .key_binding(KeyBinding::for_action(&OpenRemote, window))
+                        .key_binding(KeyBinding::for_action(&OpenRemote, window, cx))
                         .on_click(|_, window, cx| {
                             window.dispatch_action(OpenRemote.boxed_clone(), cx)
                         }),
                 )
                 .child(
                     Button::new("local", "Open Local Folder")
-                        .key_binding(KeyBinding::for_action(&workspace::Open, window))
+                        .key_binding(KeyBinding::for_action(&workspace::Open, window, cx))
                         .on_click(|_, window, cx| {
                             window.dispatch_action(workspace::Open.boxed_clone(), cx)
                         }),
@@ -540,13 +541,13 @@ impl RecentProjectsDelegate {
     ) {
         if let Some(selected_match) = self.matches.get(ix) {
             let (workspace_id, _) = self.workspaces[selected_match.candidate_id];
-            cx.spawn_in(window, move |this, mut cx| async move {
+            cx.spawn_in(window, async move |this, cx| {
                 let _ = WORKSPACE_DB.delete_workspace_by_id(workspace_id).await;
                 let workspaces = WORKSPACE_DB
                     .recent_workspaces_on_disk()
                     .await
                     .unwrap_or_default();
-                this.update_in(&mut cx, move |picker, window, cx| {
+                this.update_in(cx, move |picker, window, cx| {
                     picker.delegate.set_workspaces(workspaces);
                     picker
                         .delegate
@@ -590,6 +591,7 @@ impl Render for MatchTooltip {
 mod tests {
     use std::path::PathBuf;
 
+    use dap::debugger_settings::DebuggerSettings;
     use editor::Editor;
     use gpui::{TestAppContext, UpdateGlobal, WindowHandle};
     use project::{project_settings::ProjectSettings, Project};
@@ -671,7 +673,7 @@ mod tests {
                     }];
                     delegate.set_workspaces(vec![(
                         WorkspaceId::default(),
-                        SerializedWorkspaceLocation::from_local_paths(vec!["/test/path/"]),
+                        SerializedWorkspaceLocation::from_local_paths(vec![path!("/test/path/")]),
                     )]);
                 });
             })
@@ -694,8 +696,7 @@ mod tests {
             cx.has_pending_prompt(),
             "Dirty workspace should prompt before opening the new recent project"
         );
-        // Cancel
-        cx.simulate_prompt_answer(0);
+        cx.simulate_prompt_answer("Cancel");
         assert!(
             !cx.has_pending_prompt(),
             "Should have no pending prompt after cancelling"
@@ -739,6 +740,7 @@ mod tests {
             crate::init(cx);
             editor::init(cx);
             workspace::init_settings(cx);
+            DebuggerSettings::register(cx);
             Project::init_settings(cx);
             state
         })

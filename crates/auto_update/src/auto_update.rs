@@ -252,11 +252,9 @@ impl AutoUpdater {
     }
 
     pub fn start_polling(&self, cx: &mut Context<Self>) -> Task<Result<()>> {
-        cx.spawn(|this, mut cx| async move {
-            loop {
-                this.update(&mut cx, |this, cx| this.poll(cx))?;
-                cx.background_executor().timer(POLL_INTERVAL).await;
-            }
+        cx.spawn(async move |this, cx| loop {
+            this.update(cx, |this, cx| this.poll(cx))?;
+            cx.background_executor().timer(POLL_INTERVAL).await;
         })
     }
 
@@ -267,9 +265,9 @@ impl AutoUpdater {
 
         cx.notify();
 
-        self.pending_poll = Some(cx.spawn(|this, mut cx| async move {
+        self.pending_poll = Some(cx.spawn(async move |this, cx| {
             let result = Self::update(this.upgrade()?, cx.clone()).await;
-            this.update(&mut cx, |this, cx| {
+            this.update(cx, |this, cx| {
                 this.pending_poll = None;
                 if let Err(error) = result {
                     log::error!("auto-update failed: error:{:?}", error);
@@ -513,7 +511,7 @@ impl AutoUpdater {
         should_show: bool,
         cx: &App,
     ) -> Task<Result<()>> {
-        cx.background_executor().spawn(async move {
+        cx.background_spawn(async move {
             if should_show {
                 KEY_VALUE_STORE
                     .write_kvp(
@@ -531,7 +529,7 @@ impl AutoUpdater {
     }
 
     pub fn should_show_update_notification(&self, cx: &App) -> Task<Result<bool>> {
-        cx.background_executor().spawn(async move {
+        cx.background_spawn(async move {
             Ok(KEY_VALUE_STORE
                 .read_kvp(SHOULD_SHOW_UPDATE_NOTIFICATION_KEY)?
                 .is_some())

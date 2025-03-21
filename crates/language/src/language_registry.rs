@@ -98,7 +98,8 @@ pub struct LanguageRegistry {
     state: RwLock<LanguageRegistryState>,
     language_server_download_dir: Option<Arc<Path>>,
     executor: BackgroundExecutor,
-    lsp_binary_status_tx: LspBinaryStatusSender,
+    lsp_binary_status_tx: BinaryStatusSender,
+    dap_binary_status_tx: BinaryStatusSender,
 }
 
 struct LanguageRegistryState {
@@ -108,6 +109,7 @@ struct LanguageRegistryState {
     available_languages: Vec<AvailableLanguage>,
     grammars: HashMap<Arc<str>, AvailableGrammar>,
     lsp_adapters: HashMap<LanguageName, Vec<Arc<CachedLspAdapter>>>,
+    all_lsp_adapters: HashMap<LanguageServerName, Arc<CachedLspAdapter>>,
     available_lsp_adapters:
         HashMap<LanguageServerName, Arc<dyn Fn() -> Arc<CachedLspAdapter> + 'static + Send + Sync>>,
     loading_languages: HashMap<LanguageId, Vec<oneshot::Sender<Result<Arc<Language>>>>>,
@@ -129,7 +131,7 @@ pub struct FakeLanguageServerEntry {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum LanguageServerBinaryStatus {
+pub enum BinaryStatus {
     None,
     CheckingForUpdate,
     Downloading,
@@ -212,8 +214,8 @@ pub struct LanguageQueries {
 }
 
 #[derive(Clone, Default)]
-struct LspBinaryStatusSender {
-    txs: Arc<Mutex<Vec<mpsc::UnboundedSender<(LanguageServerName, LanguageServerBinaryStatus)>>>>,
+struct BinaryStatusSender {
+    txs: Arc<Mutex<Vec<mpsc::UnboundedSender<(SharedString, BinaryStatus)>>>>,
 }
 
 pub struct LoadedLanguage {
@@ -234,6 +236,7 @@ impl LanguageRegistry {
                 language_settings: Default::default(),
                 loading_languages: Default::default(),
                 lsp_adapters: Default::default(),
+                all_lsp_adapters: Default::default(),
                 available_lsp_adapters: HashMap::default(),
                 subscription: watch::channel(),
                 theme: Default::default(),
@@ -245,6 +248,7 @@ impl LanguageRegistry {
             }),
             language_server_download_dir: None,
             lsp_binary_status_tx: Default::default(),
+            dap_binary_status_tx: Default::default(),
             executor,
         };
         this.add(PLAIN_TEXT.clone());
@@ -356,12 +360,16 @@ impl LanguageRegistry {
         adapter: Arc<dyn LspAdapter>,
     ) -> Arc<CachedLspAdapter> {
         let cached = CachedLspAdapter::new(adapter);
-        self.state
-            .write()
+        let mut state = self.state.write();
+        state
             .lsp_adapters
             .entry(language_name)
             .or_default()
             .push(cached.clone());
+        state
+            .all_lsp_adapters
+            .insert(cached.name.clone(), cached.clone());
+
         cached
     }
 
@@ -401,12 +409,17 @@ impl LanguageRegistry {
         let adapter_name = LanguageServerName(adapter.name.into());
         let capabilities = adapter.capabilities.clone();
         let initializer = adapter.initializer.take();
-        self.state
-            .write()
-            .lsp_adapters
-            .entry(language_name.clone())
-            .or_default()
-            .push(CachedLspAdapter::new(Arc::new(adapter)));
+        let adapter = CachedLspAdapter::new(Arc::new(adapter));
+        {
+            let mut state = self.state.write();
+            state
+                .lsp_adapters
+                .entry(language_name.clone())
+                .or_default()
+                .push(adapter.clone());
+            state.all_lsp_adapters.insert(adapter.name(), adapter);
+        }
+
         self.register_fake_language_server(adapter_name, capabilities, initializer)
     }
 
@@ -419,12 +432,16 @@ impl LanguageRegistry {
         adapter: crate::FakeLspAdapter,
     ) {
         let language_name = language_name.into();
-        self.state
-            .write()
+        let mut state = self.state.write();
+        let cached_adapter = CachedLspAdapter::new(Arc::new(adapter));
+        state
             .lsp_adapters
             .entry(language_name.clone())
             .or_default()
-            .push(CachedLspAdapter::new(Arc::new(adapter)));
+            .push(cached_adapter.clone());
+        state
+            .all_lsp_adapters
+            .insert(cached_adapter.name(), cached_adapter);
     }
 
     /// Register a fake language server (without the adapter)
@@ -895,12 +912,16 @@ impl LanguageRegistry {
             .unwrap_or_default()
     }
 
-    pub fn update_lsp_status(
-        &self,
-        server_name: LanguageServerName,
-        status: LanguageServerBinaryStatus,
-    ) {
-        self.lsp_binary_status_tx.send(server_name, status);
+    pub fn adapter_for_name(&self, name: &LanguageServerName) -> Option<Arc<CachedLspAdapter>> {
+        self.state.read().all_lsp_adapters.get(name).cloned()
+    }
+
+    pub fn update_lsp_status(&self, server_name: LanguageServerName, status: BinaryStatus) {
+        self.lsp_binary_status_tx.send(server_name.0, status);
+    }
+
+    pub fn update_dap_status(&self, server_name: LanguageServerName, status: BinaryStatus) {
+        self.dap_binary_status_tx.send(server_name.0, status);
     }
 
     pub fn next_language_server_id(&self) -> LanguageServerId {
@@ -919,8 +940,10 @@ impl LanguageRegistry {
         server_id: LanguageServerId,
         name: &LanguageServerName,
         binary: lsp::LanguageServerBinary,
-        cx: gpui::AsyncApp,
+        cx: &mut gpui::AsyncApp,
     ) -> Option<lsp::LanguageServer> {
+        use gpui::AppContext as _;
+
         let mut state = self.state.write();
         let fake_entry = state.fake_server_entries.get_mut(&name)?;
         let (server, mut fake_server) = lsp::FakeLanguageServer::new(
@@ -928,7 +951,7 @@ impl LanguageRegistry {
             binary,
             name.0.to_string(),
             fake_entry.capabilities.clone(),
-            cx.clone(),
+            cx,
         );
         fake_entry._server = Some(fake_server.clone());
 
@@ -937,25 +960,30 @@ impl LanguageRegistry {
         }
 
         let tx = fake_entry.tx.clone();
-        cx.background_executor()
-            .spawn(async move {
-                if fake_server
-                    .try_receive_notification::<lsp::notification::Initialized>()
-                    .await
-                    .is_some()
-                {
-                    tx.unbounded_send(fake_server.clone()).ok();
-                }
-            })
-            .detach();
+        cx.background_spawn(async move {
+            if fake_server
+                .try_receive_notification::<lsp::notification::Initialized>()
+                .await
+                .is_some()
+            {
+                tx.unbounded_send(fake_server.clone()).ok();
+            }
+        })
+        .detach();
 
         Some(server)
     }
 
     pub fn language_server_binary_statuses(
         &self,
-    ) -> mpsc::UnboundedReceiver<(LanguageServerName, LanguageServerBinaryStatus)> {
+    ) -> mpsc::UnboundedReceiver<(SharedString, BinaryStatus)> {
         self.lsp_binary_status_tx.subscribe()
+    }
+
+    pub fn dap_server_binary_statuses(
+        &self,
+    ) -> mpsc::UnboundedReceiver<(SharedString, BinaryStatus)> {
+        self.dap_binary_status_tx.subscribe()
     }
 
     pub async fn delete_server_container(&self, name: LanguageServerName) {
@@ -1068,16 +1096,14 @@ impl LanguageRegistryState {
     }
 }
 
-impl LspBinaryStatusSender {
-    fn subscribe(
-        &self,
-    ) -> mpsc::UnboundedReceiver<(LanguageServerName, LanguageServerBinaryStatus)> {
+impl BinaryStatusSender {
+    fn subscribe(&self) -> mpsc::UnboundedReceiver<(SharedString, BinaryStatus)> {
         let (tx, rx) = mpsc::unbounded();
         self.txs.lock().push(tx);
         rx
     }
 
-    fn send(&self, name: LanguageServerName, status: LanguageServerBinaryStatus) {
+    fn send(&self, name: SharedString, status: BinaryStatus) {
         let mut txs = self.txs.lock();
         txs.retain(|tx| tx.unbounded_send((name.clone(), status.clone())).is_ok());
     }

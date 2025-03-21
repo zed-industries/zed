@@ -4,7 +4,7 @@ use std::sync::Arc;
 use anyhow::Result;
 use fs::Fs;
 use gpui::{App, Global, ReadGlobal, SharedString, Task};
-use language::{LanguageMatcher, LanguageName, LanguageServerBinaryStatus, LoadedLanguage};
+use language::{BinaryStatus, LanguageMatcher, LanguageName, LoadedLanguage};
 use lsp::LanguageServerName;
 use parking_lot::RwLock;
 
@@ -96,6 +96,8 @@ impl ExtensionHostProxy {
 }
 
 pub trait ExtensionThemeProxy: Send + Sync + 'static {
+    fn set_extensions_loaded(&self);
+
     fn list_theme_names(&self, theme_path: PathBuf, fs: Arc<dyn Fs>) -> Task<Result<Vec<String>>>;
 
     fn remove_user_themes(&self, themes: Vec<SharedString>);
@@ -123,6 +125,14 @@ pub trait ExtensionThemeProxy: Send + Sync + 'static {
 }
 
 impl ExtensionThemeProxy for ExtensionHostProxy {
+    fn set_extensions_loaded(&self) {
+        let Some(proxy) = self.theme_proxy.read().clone() else {
+            return;
+        };
+
+        proxy.set_extensions_loaded()
+    }
+
     fn list_theme_names(&self, theme_path: PathBuf, fs: Arc<dyn Fs>) -> Task<Result<Vec<String>>> {
         let Some(proxy) = self.theme_proxy.read().clone() else {
             return Task::ready(Ok(Vec::new()));
@@ -274,7 +284,7 @@ pub trait ExtensionLanguageServerProxy: Send + Sync + 'static {
     fn update_language_server_status(
         &self,
         language_server_id: LanguageServerName,
-        status: LanguageServerBinaryStatus,
+        status: BinaryStatus,
     );
 }
 
@@ -307,7 +317,7 @@ impl ExtensionLanguageServerProxy for ExtensionHostProxy {
     fn update_language_server_status(
         &self,
         language_server_id: LanguageServerName,
-        status: LanguageServerBinaryStatus,
+        status: BinaryStatus,
     ) {
         let Some(proxy) = self.language_server_proxy.read().clone() else {
             return;

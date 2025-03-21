@@ -7,6 +7,7 @@
 - [Linux](./linux.md)
 - [Windows](./windows.md)
 - [Telemetry](./telemetry.md)
+- [Workspace Persistence](./workspace-persistence.md)
 - [Additional Learning Materials](./additional-learning-materials.md)
 
 # Configuration
@@ -16,6 +17,7 @@
 - [Key bindings](./key-bindings.md)
 - [Snippets](./snippets.md)
 - [Themes](./themes.md)
+- [Icon Themes](./icon-themes.md)
 - [Vim Mode](./vim.md)
 
 <!-- - [Globs](./globs.md) -->
@@ -45,6 +47,7 @@
 - [Prompts](./assistant/prompting.md)
 - [Context Servers](./assistant/context-servers.md)
   - [Model Context Protocol](./assistant/model-context-protocol.md)
+- [Model Improvement](./model-improvement.md)
 
 # Extensions
 
@@ -72,6 +75,7 @@
 - [CSS](./languages/css.md)
 - [Dart](./languages/dart.md)
 - [Deno](./languages/deno.md)
+- [Diff](./languages/diff.md)
 - [Docker](./languages/docker.md)
 - [Elixir](./languages/elixir.md)
 - [Elm](./languages/elm.md)
@@ -112,6 +116,7 @@
 - [Rust](./languages/rust.md)
 - [Scala](./languages/scala.md)
 - [Scheme](./languages/scheme.md)
+- [Shell Script](./languages/sh.md)
 - [Svelte](./languages/svelte.md)
 - [Swift](./languages/swift.md)
 - [Tailwind CSS](./languages/tailwindcss.md)
@@ -132,5 +137,6 @@
   - [Linux](./development/linux.md)
   - [Windows](./development/windows.md)
   - [Local Collaboration](./development/local-collaboration.md)
+  - [Using Debuggers](./development/debuggers.md)
 - [Release Process](./development/releases.md)
 - [Debugging Crashes](./development/debugging-crashes.md)

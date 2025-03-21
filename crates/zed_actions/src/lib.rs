@@ -35,21 +35,109 @@ actions!(
         Quit,
         OpenKeymap,
         About,
-        Extensions,
         OpenLicenses,
         OpenTelemetryLog,
+    ]
+);
+
+#[derive(PartialEq, Clone, Copy, Debug, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ExtensionCategoryFilter {
+    Themes,
+    IconThemes,
+    Languages,
+    Grammars,
+    LanguageServers,
+    ContextServers,
+    SlashCommands,
+    IndexedDocsProviders,
+    Snippets,
+}
+
+#[derive(PartialEq, Clone, Default, Debug, Deserialize, JsonSchema)]
+pub struct Extensions {
+    /// Filters the extensions page down to extensions that are in the specified category.
+    #[serde(default)]
+    pub category_filter: Option<ExtensionCategoryFilter>,
+}
+
+#[derive(PartialEq, Clone, Default, Debug, Deserialize, JsonSchema)]
+pub struct DecreaseBufferFontSize {
+    #[serde(default)]
+    pub persist: bool,
+}
+
+#[derive(PartialEq, Clone, Default, Debug, Deserialize, JsonSchema)]
+pub struct IncreaseBufferFontSize {
+    #[serde(default)]
+    pub persist: bool,
+}
+
+#[derive(PartialEq, Clone, Default, Debug, Deserialize, JsonSchema)]
+pub struct ResetBufferFontSize {
+    #[serde(default)]
+    pub persist: bool,
+}
+
+#[derive(PartialEq, Clone, Default, Debug, Deserialize, JsonSchema)]
+pub struct DecreaseUiFontSize {
+    #[serde(default)]
+    pub persist: bool,
+}
+
+#[derive(PartialEq, Clone, Default, Debug, Deserialize, JsonSchema)]
+pub struct IncreaseUiFontSize {
+    #[serde(default)]
+    pub persist: bool,
+}
+
+#[derive(PartialEq, Clone, Default, Debug, Deserialize, JsonSchema)]
+pub struct ResetUiFontSize {
+    #[serde(default)]
+    pub persist: bool,
+}
+
+impl_actions!(
+    zed,
+    [
+        Extensions,
         DecreaseBufferFontSize,
         IncreaseBufferFontSize,
         ResetBufferFontSize,
         DecreaseUiFontSize,
         IncreaseUiFontSize,
-        ResetUiFontSize
+        ResetUiFontSize,
     ]
 );
 
-pub mod git {
+pub mod workspace {
     use gpui::action_with_deprecated_aliases;
 
+    action_with_deprecated_aliases!(
+        workspace,
+        CopyPath,
+        [
+            "editor::CopyPath",
+            "outline_panel::CopyPath",
+            "project_panel::CopyPath"
+        ]
+    );
+
+    action_with_deprecated_aliases!(
+        workspace,
+        CopyRelativePath,
+        [
+            "editor::CopyRelativePath",
+            "outline_panel::CopyRelativePath",
+            "project_panel::CopyRelativePath"
+        ]
+    );
+}
+
+pub mod git {
+    use gpui::{action_with_deprecated_aliases, actions};
+
+    actions!(git, [CheckoutBranch, Switch, SelectRepo]);
     action_with_deprecated_aliases!(git, Branch, ["branches::OpenRecent"]);
 }
 
@@ -195,3 +283,4 @@ pub mod outline {
 }
 
 actions!(zed_predict_onboarding, [OpenZedPredictOnboarding]);
+actions!(git_onboarding, [OpenGitIntegrationOnboarding]);

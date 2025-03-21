@@ -8,7 +8,7 @@ extend-exclude = [
     ".mailmap",
 
     # File suffixes aren't typos.
-    "assets/icons/file_icons/file_types.json",
+    "crates/theme/src/icon_theme.rs",
     "crates/extensions_ui/src/extension_suggest.rs",
 
     # Some countries codes are flagged as typos.
@@ -22,7 +22,7 @@ extend-exclude = [
     # Stripe IDs are flagged as typos.
     "crates/collab/src/db/tests/processed_stripe_event_tests.rs",
     # Not our typos.
-    "crates/livekit_server/",
+    "crates/livekit_api/",
     # Vim makes heavy use of partial typing tables.
     "crates/vim/",
     # Editor and file finder rely on partial typing and custom in-string syntax.

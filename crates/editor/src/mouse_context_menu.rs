@@ -137,9 +137,9 @@ pub fn deploy_context_menu(
         menu
     } else {
         // Don't show the context menu if there isn't a project associated with this editor
-        if editor.project.is_none() {
+        let Some(project) = editor.project.clone() else {
             return;
-        }
+        };
 
         let display_map = editor.selections.display_map(cx);
         let buffer = &editor.snapshot(window, cx).buffer_snapshot;
@@ -154,20 +154,18 @@ pub fn deploy_context_menu(
 
         let focus = window.focused(cx);
         let has_reveal_target = editor.target_file(cx).is_some();
-        let reveal_in_finder_label = if cfg!(target_os = "macos") {
-            "Reveal in Finder"
-        } else {
-            "Reveal in File Manager"
-        };
         let has_selections = editor
             .selections
             .all::<PointUtf16>(cx)
             .into_iter()
             .any(|s| !s.is_empty());
-        let has_git_repo = editor.project.as_ref().map_or(false, |project| {
-            project.update(cx, |project, cx| {
-                project.get_first_worktree_root_repo(cx).is_some()
-            })
+        let has_git_repo = anchor.buffer_id.is_some_and(|buffer_id| {
+            project
+                .read(cx)
+                .git_store()
+                .read(cx)
+                .repository_and_path_for_buffer_id(buffer_id, cx)
+                .is_some()
         });
 
         ui::ContextMenu::build(window, cx, |menu, _window, _cx| {
@@ -196,14 +194,22 @@ pub fn deploy_context_menu(
                 .action("Paste", Box::new(Paste))
                 .separator()
                 .map(|builder| {
+                    let reveal_in_finder_label = if cfg!(target_os = "macos") {
+                        "Reveal in Finder"
+                    } else {
+                        "Reveal in File Manager"
+                    };
+                    const OPEN_IN_TERMINAL_LABEL: &str = "Open in Terminal";
                     if has_reveal_target {
-                        builder.action(reveal_in_finder_label, Box::new(RevealInFileManager))
+                        builder
+                            .action(reveal_in_finder_label, Box::new(RevealInFileManager))
+                            .action(OPEN_IN_TERMINAL_LABEL, Box::new(OpenInTerminal))
                     } else {
                         builder
                             .disabled_action(reveal_in_finder_label, Box::new(RevealInFileManager))
+                            .disabled_action(OPEN_IN_TERMINAL_LABEL, Box::new(OpenInTerminal))
                     }
                 })
-                .action("Open in Terminal", Box::new(OpenInTerminal))
                 .map(|builder| {
                     const COPY_PERMALINK_LABEL: &str = "Copy Permalink";
                     if has_git_repo {

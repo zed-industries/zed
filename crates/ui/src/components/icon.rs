@@ -1,5 +1,3 @@
-#![allow(missing_docs)]
-
 mod decorated_icon;
 mod icon_decoration;
 
@@ -127,10 +125,13 @@ impl IconSize {
 pub enum IconName {
     Ai,
     AiAnthropic,
+    AiBedrock,
     AiAnthropicHosted,
     AiDeepSeek,
+    AiEdit,
     AiGoogle,
     AiLmStudio,
+    AiMistral,
     AiOllama,
     AiOpenAi,
     AiZed,
@@ -178,6 +179,19 @@ pub enum IconName {
     CountdownTimer,
     CursorIBeam,
     Dash,
+    DebugBreakpoint,
+    DebugIgnoreBreakpoints,
+    DebugPause,
+    DebugContinue,
+    DebugStepOver,
+    DebugStepInto,
+    DebugStepOut,
+    DebugStepBack,
+    DebugRestart,
+    Debug,
+    DebugStop,
+    DebugDisconnect,
+    DebugLogBreakpoint,
     DatabaseZap,
     Delete,
     Diff,
@@ -191,6 +205,8 @@ pub enum IconName {
     ExpandVertical,
     Exit,
     ExternalLink,
+    ExpandUp,
+    ExpandDown,
     Eye,
     File,
     FileCode,
@@ -218,6 +234,7 @@ pub enum IconName {
     Github,
     Globe,
     GitBranch,
+    GitBranchSmall,
     Hash,
     HistoryRerun,
     Indicator,
@@ -236,6 +253,7 @@ pub enum IconName {
     Menu,
     MessageBubbles,
     MessageCircle,
+    Cloud,
     Mic,
     MicMute,
     Microscope,
@@ -327,6 +345,7 @@ pub enum IconName {
     ZedPredictUp,
     ZedPredictDown,
     ZedPredictDisabled,
+    ZedPredictError,
     ZedXCopilot,
 }
 
@@ -492,7 +511,7 @@ impl RenderOnce for IconWithIndicator {
 
 // View this component preview using `workspace: open component-preview`
 impl ComponentPreview for Icon {
-    fn preview(_window: &mut Window, _cx: &App) -> AnyElement {
+    fn preview(_window: &mut Window, _cx: &mut App) -> AnyElement {
         v_flex()
             .gap_6()
             .children(vec![

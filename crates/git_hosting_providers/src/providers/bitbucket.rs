@@ -7,15 +7,31 @@ use git::{
     RemoteUrl,
 };
 
-pub struct Bitbucket;
+pub struct Bitbucket {
+    name: String,
+    base_url: Url,
+}
+
+impl Bitbucket {
+    pub fn new(name: impl Into<String>, base_url: Url) -> Self {
+        Self {
+            name: name.into(),
+            base_url,
+        }
+    }
+
+    pub fn public_instance() -> Self {
+        Self::new("Bitbucket", Url::parse("https://bitbucket.org").unwrap())
+    }
+}
 
 impl GitHostingProvider for Bitbucket {
     fn name(&self) -> String {
-        "Bitbucket".to_string()
+        self.name.clone()
     }
 
     fn base_url(&self) -> Url {
-        Url::parse("https://bitbucket.org").unwrap()
+        self.base_url.clone()
     }
 
     fn supports_avatars(&self) -> bool {
@@ -90,7 +106,7 @@ mod tests {
 
     #[test]
     fn test_parse_remote_url_given_ssh_url() {
-        let parsed_remote = Bitbucket
+        let parsed_remote = Bitbucket::public_instance()
             .parse_remote_url("git@bitbucket.org:zed-industries/zed.git")
             .unwrap();
 
@@ -105,7 +121,7 @@ mod tests {
 
     #[test]
     fn test_parse_remote_url_given_https_url() {
-        let parsed_remote = Bitbucket
+        let parsed_remote = Bitbucket::public_instance()
             .parse_remote_url("https://bitbucket.org/zed-industries/zed.git")
             .unwrap();
 
@@ -120,7 +136,7 @@ mod tests {
 
     #[test]
     fn test_parse_remote_url_given_https_url_with_username() {
-        let parsed_remote = Bitbucket
+        let parsed_remote = Bitbucket::public_instance()
             .parse_remote_url("https://thorstenballzed@bitbucket.org/zed-industries/zed.git")
             .unwrap();
 
@@ -135,7 +151,7 @@ mod tests {
 
     #[test]
     fn test_build_bitbucket_permalink() {
-        let permalink = Bitbucket.build_permalink(
+        let permalink = Bitbucket::public_instance().build_permalink(
             ParsedGitRemote {
                 owner: "zed-industries".into(),
                 repo: "zed".into(),
@@ -153,7 +169,7 @@ mod tests {
 
     #[test]
     fn test_build_bitbucket_permalink_with_single_line_selection() {
-        let permalink = Bitbucket.build_permalink(
+        let permalink = Bitbucket::public_instance().build_permalink(
             ParsedGitRemote {
                 owner: "zed-industries".into(),
                 repo: "zed".into(),
@@ -171,7 +187,7 @@ mod tests {
 
     #[test]
     fn test_build_bitbucket_permalink_with_multi_line_selection() {
-        let permalink = Bitbucket.build_permalink(
+        let permalink = Bitbucket::public_instance().build_permalink(
             ParsedGitRemote {
                 owner: "zed-industries".into(),
                 repo: "zed".into(),

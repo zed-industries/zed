@@ -506,7 +506,11 @@ async fn test_remote_lsp(cx: &mut TestAppContext, server_cx: &mut TestAppContext
         .unwrap();
 
     assert_eq!(
-        result.into_iter().map(|c| c.label.text).collect::<Vec<_>>(),
+        result
+            .unwrap()
+            .into_iter()
+            .map(|c| c.label.text)
+            .collect::<Vec<_>>(),
         vec!["boop".to_string()]
     );
 
@@ -787,6 +791,7 @@ async fn test_remote_resolve_path_in_buffer(
     server_cx: &mut TestAppContext,
 ) {
     let fs = FakeFs::new(server_cx.executor());
+    // Even though we are not testing anything from project1, it is necessary to test if project2 is picking up correct worktree
     fs.insert_tree(
         path!("/code"),
         json!({
@@ -797,60 +802,75 @@ async fn test_remote_resolve_path_in_buffer(
                     "lib.rs": "fn one() -> usize { 1 }"
                 }
             },
+            "project2": {
+                ".git": {},
+                "README.md": "# project 2",
+                "src": {
+                    "lib.rs": "fn two() -> usize { 2 }"
+                }
+            }
         }),
     )
     .await;
 
     let (project, _headless) = init_test(&fs, cx, server_cx).await;
-    let (worktree, _) = project
+
+    let _ = project
         .update(cx, |project, cx| {
             project.find_or_create_worktree(path!("/code/project1"), true, cx)
         })
         .await
         .unwrap();
 
-    let worktree_id = cx.update(|cx| worktree.read(cx).id());
-
-    let buffer = project
+    let (worktree2, _) = project
         .update(cx, |project, cx| {
-            project.open_buffer((worktree_id, Path::new("src/lib.rs")), cx)
+            project.find_or_create_worktree(path!("/code/project2"), true, cx)
+        })
+        .await
+        .unwrap();
+
+    let worktree2_id = cx.update(|cx| worktree2.read(cx).id());
+
+    let buffer2 = project
+        .update(cx, |project, cx| {
+            project.open_buffer((worktree2_id, Path::new("src/lib.rs")), cx)
         })
         .await
         .unwrap();
 
     let path = project
         .update(cx, |project, cx| {
-            project.resolve_path_in_buffer(path!("/code/project1/README.md"), &buffer, cx)
+            project.resolve_path_in_buffer(path!("/code/project2/README.md"), &buffer2, cx)
         })
         .await
         .unwrap();
     assert!(path.is_file());
     assert_eq!(
         path.abs_path().unwrap().to_string_lossy(),
-        path!("/code/project1/README.md")
+        path!("/code/project2/README.md")
     );
 
     let path = project
         .update(cx, |project, cx| {
-            project.resolve_path_in_buffer("../README.md", &buffer, cx)
+            project.resolve_path_in_buffer("../README.md", &buffer2, cx)
         })
         .await
         .unwrap();
     assert!(path.is_file());
     assert_eq!(
         path.project_path().unwrap().clone(),
-        ProjectPath::from((worktree_id, "README.md"))
+        ProjectPath::from((worktree2_id, "README.md"))
     );
 
     let path = project
         .update(cx, |project, cx| {
-            project.resolve_path_in_buffer("../src", &buffer, cx)
+            project.resolve_path_in_buffer("../src", &buffer2, cx)
         })
         .await
         .unwrap();
     assert_eq!(
         path.project_path().unwrap().clone(),
-        ProjectPath::from((worktree_id, "src"))
+        ProjectPath::from((worktree2_id, "src"))
     );
     assert!(path.is_dir());
 }
@@ -1298,7 +1318,7 @@ async fn test_remote_git_diffs(cx: &mut TestAppContext, server_cx: &mut TestAppC
 async fn test_remote_git_branches(cx: &mut TestAppContext, server_cx: &mut TestAppContext) {
     let fs = FakeFs::new(server_cx.executor());
     fs.insert_tree(
-        "/code",
+        path!("/code"),
         json!({
             "project1": {
                 ".git": {},
@@ -1314,23 +1334,23 @@ async fn test_remote_git_branches(cx: &mut TestAppContext, server_cx: &mut TestA
         .iter()
         .map(ToString::to_string)
         .collect::<HashSet<_>>();
-    fs.insert_branches(Path::new("/code/project1/.git"), &branches);
+    fs.insert_branches(Path::new(path!("/code/project1/.git")), &branches);
 
-    let (worktree, _) = project
+    let (_worktree, _) = project
         .update(cx, |project, cx| {
-            project.find_or_create_worktree("/code/project1", true, cx)
+            project.find_or_create_worktree(path!("/code/project1"), true, cx)
         })
         .await
         .unwrap();
-
-    let worktree_id = cx.update(|cx| worktree.read(cx).id());
-    let root_path = ProjectPath::root_path(worktree_id);
     // Give the worktree a bit of time to index the file system
     cx.run_until_parked();
 
-    let remote_branches = project
-        .update(cx, |project, cx| project.branches(root_path.clone(), cx))
+    let repository = project.update(cx, |project, cx| project.active_repository(cx).unwrap());
+
+    let remote_branches = repository
+        .update(cx, |repository, _| repository.branches())
         .await
+        .unwrap()
         .unwrap();
 
     let new_branch = branches[2];
@@ -1342,25 +1362,26 @@ async fn test_remote_git_branches(cx: &mut TestAppContext, server_cx: &mut TestA
 
     assert_eq!(&remote_branches, &branches_set);
 
-    cx.update(|cx| {
-        project.update(cx, |project, cx| {
-            project.update_or_create_branch(root_path.clone(), new_branch.to_string(), cx)
-        })
-    })
-    .await
-    .unwrap();
+    cx.update(|cx| repository.read(cx).change_branch(new_branch.to_string()))
+        .await
+        .unwrap()
+        .unwrap();
 
     cx.run_until_parked();
 
     let server_branch = server_cx.update(|cx| {
         headless_project.update(cx, |headless_project, cx| {
-            headless_project
-                .worktree_store
-                .update(cx, |worktree_store, cx| {
-                    worktree_store
-                        .current_branch(root_path.clone(), cx)
-                        .unwrap()
-                })
+            headless_project.git_store.update(cx, |git_store, cx| {
+                git_store
+                    .repositories()
+                    .values()
+                    .next()
+                    .unwrap()
+                    .read(cx)
+                    .current_branch()
+                    .unwrap()
+                    .clone()
+            })
         })
     });
 
@@ -1368,22 +1389,38 @@ async fn test_remote_git_branches(cx: &mut TestAppContext, server_cx: &mut TestA
 
     // Also try creating a new branch
     cx.update(|cx| {
-        project.update(cx, |project, cx| {
-            project.update_or_create_branch(root_path.clone(), "totally-new-branch".to_string(), cx)
-        })
+        repository
+            .read(cx)
+            .create_branch("totally-new-branch".to_string())
     })
     .await
+    .unwrap()
+    .unwrap();
+
+    cx.update(|cx| {
+        repository
+            .read(cx)
+            .change_branch("totally-new-branch".to_string())
+    })
+    .await
+    .unwrap()
     .unwrap();
 
     cx.run_until_parked();
 
     let server_branch = server_cx.update(|cx| {
         headless_project.update(cx, |headless_project, cx| {
-            headless_project
-                .worktree_store
-                .update(cx, |worktree_store, cx| {
-                    worktree_store.current_branch(root_path, cx).unwrap()
-                })
+            headless_project.git_store.update(cx, |git_store, cx| {
+                git_store
+                    .repositories()
+                    .values()
+                    .next()
+                    .unwrap()
+                    .read(cx)
+                    .current_branch()
+                    .unwrap()
+                    .clone()
+            })
         })
     });
 

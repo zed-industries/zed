@@ -1,23 +1,30 @@
 use std::sync::Arc;
 
+use collections::HashSet;
 use editor::actions::MoveUp;
 use editor::{Editor, EditorElement, EditorEvent, EditorStyle};
 use fs::Fs;
+use git::ExpandCommitEditor;
+use git_ui::git_panel;
 use gpui::{
-    pulsating_between, Animation, AnimationExt, App, DismissEvent, Entity, Focusable, Subscription,
-    TextStyle, WeakEntity,
+    Animation, AnimationExt, App, DismissEvent, Entity, Focusable, Subscription, TextStyle,
+    WeakEntity,
 };
-use language_model::{LanguageModelRegistry, LanguageModelRequestTool};
-use language_model_selector::LanguageModelSelector;
+use language_model::LanguageModelRegistry;
+use language_model_selector::ToggleModelSelector;
+use project::Project;
 use rope::Point;
 use settings::Settings;
 use std::time::Duration;
 use text::Bias;
 use theme::ThemeSettings;
 use ui::{
-    prelude::*, ButtonLike, KeyBinding, PopoverMenu, PopoverMenuHandle, Switch, TintColor, Tooltip,
+    prelude::*, ButtonLike, KeyBinding, PlatformStyle, PopoverMenu, PopoverMenuHandle, Tooltip,
 };
-use workspace::Workspace;
+use util::ResultExt;
+use vim_mode_setting::VimModeSetting;
+use workspace::notifications::{NotificationId, NotifyTaskExt};
+use workspace::{Toast, Workspace};
 
 use crate::assistant_model_selector::AssistantModelSelector;
 use crate::context_picker::{ConfirmBehavior, ContextPicker};
@@ -25,19 +32,21 @@ use crate::context_store::{refresh_context_store_text, ContextStore};
 use crate::context_strip::{ContextStrip, ContextStripEvent, SuggestContextKind};
 use crate::thread::{RequestKind, Thread};
 use crate::thread_store::ThreadStore;
-use crate::{Chat, ChatMode, RemoveAllContext, ToggleContextPicker, ToggleModelSelector};
+use crate::tool_selector::ToolSelector;
+use crate::{Chat, ChatMode, RemoveAllContext, ThreadEvent, ToggleContextPicker};
 
 pub struct MessageEditor {
     thread: Entity<Thread>,
     editor: Entity<Editor>,
+    workspace: WeakEntity<Workspace>,
+    project: Entity<Project>,
     context_store: Entity<ContextStore>,
     context_strip: Entity<ContextStrip>,
     context_picker_menu_handle: PopoverMenuHandle<ContextPicker>,
     inline_context_picker: Entity<ContextPicker>,
     inline_context_picker_menu_handle: PopoverMenuHandle<ContextPicker>,
     model_selector: Entity<AssistantModelSelector>,
-    model_selector_menu_handle: PopoverMenuHandle<LanguageModelSelector>,
-    use_tools: bool,
+    tool_selector: Entity<ToolSelector>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -45,12 +54,13 @@ impl MessageEditor {
     pub fn new(
         fs: Arc<dyn Fs>,
         workspace: WeakEntity<Workspace>,
+        context_store: Entity<ContextStore>,
         thread_store: WeakEntity<ThreadStore>,
         thread: Entity<Thread>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let context_store = cx.new(|_cx| ContextStore::new(workspace.clone()));
+        let tools = thread.read(cx).tools().clone();
         let context_picker_menu_handle = PopoverMenuHandle::default();
         let inline_context_picker_menu_handle = PopoverMenuHandle::default();
         let model_selector_menu_handle = PopoverMenuHandle::default();
@@ -99,8 +109,10 @@ impl MessageEditor {
         ];
 
         Self {
-            thread,
             editor: editor.clone(),
+            project: thread.read(cx).project().clone(),
+            thread,
+            workspace,
             context_store,
             context_strip,
             context_picker_menu_handle,
@@ -109,29 +121,18 @@ impl MessageEditor {
             model_selector: cx.new(|cx| {
                 AssistantModelSelector::new(
                     fs,
-                    model_selector_menu_handle.clone(),
+                    model_selector_menu_handle,
                     editor.focus_handle(cx),
                     window,
                     cx,
                 )
             }),
-            model_selector_menu_handle,
-            use_tools: false,
+            tool_selector: cx.new(|cx| ToolSelector::new(tools, cx)),
             _subscriptions: subscriptions,
         }
     }
 
-    fn toggle_model_selector(
-        &mut self,
-        _: &ToggleModelSelector,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.model_selector_menu_handle.toggle(window, cx)
-    }
-
     fn toggle_chat_mode(&mut self, _: &ChatMode, _window: &mut Window, cx: &mut Context<Self>) {
-        self.use_tools = !self.use_tools;
         cx.notify();
     }
 
@@ -155,6 +156,14 @@ impl MessageEditor {
     }
 
     fn chat(&mut self, _: &Chat, window: &mut Window, cx: &mut Context<Self>) {
+        if self.is_editor_empty(cx) {
+            return;
+        }
+
+        if self.thread.read(cx).is_generating() {
+            return;
+        }
+
         self.send_to_model(RequestKind::Chat, window, cx);
     }
 
@@ -194,33 +203,32 @@ impl MessageEditor {
             text
         });
 
-        let refresh_task = refresh_context_store_text(self.context_store.clone(), cx);
+        let refresh_task =
+            refresh_context_store_text(self.context_store.clone(), &HashSet::default(), cx);
+
+        let system_prompt_context_task = self.thread.read(cx).load_system_prompt_context(cx);
 
         let thread = self.thread.clone();
         let context_store = self.context_store.clone();
-        let use_tools = self.use_tools;
-        cx.spawn(move |_, mut cx| async move {
+        let git_store = self.project.read(cx).git_store();
+        let checkpoint = git_store.read(cx).checkpoint(cx);
+        cx.spawn(async move |_, cx| {
             refresh_task.await;
+            let (system_prompt_context, load_error) = system_prompt_context_task.await;
             thread
-                .update(&mut cx, |thread, cx| {
-                    let context = context_store.read(cx).snapshot(cx).collect::<Vec<_>>();
-                    thread.insert_user_message(user_message, context, cx);
-                    let mut request = thread.to_completion_request(request_kind, cx);
-
-                    if use_tools {
-                        request.tools = thread
-                            .tools()
-                            .tools(cx)
-                            .into_iter()
-                            .map(|tool| LanguageModelRequestTool {
-                                name: tool.name(),
-                                description: tool.description(),
-                                input_schema: tool.input_schema(),
-                            })
-                            .collect();
+                .update(cx, |thread, cx| {
+                    thread.set_system_prompt_context(system_prompt_context);
+                    if let Some(load_error) = load_error {
+                        cx.emit(ThreadEvent::ShowError(load_error));
                     }
-
-                    thread.stream_completion(request, model, cx)
+                })
+                .ok();
+            let checkpoint = checkpoint.await.log_err();
+            thread
+                .update(cx, |thread, cx| {
+                    let context = context_store.read(cx).snapshot(cx).collect::<Vec<_>>();
+                    thread.insert_user_message(user_message, context, checkpoint, cx);
+                    thread.send_to_model(model, request_kind, cx);
                 })
                 .ok();
         })
@@ -293,6 +301,34 @@ impl MessageEditor {
             self.context_strip.focus_handle(cx).focus(window);
         }
     }
+
+    fn handle_feedback_click(
+        &mut self,
+        is_positive: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let workspace = self.workspace.clone();
+        let report = self
+            .thread
+            .update(cx, |thread, cx| thread.report_feedback(is_positive, cx));
+
+        cx.spawn(async move |_, cx| {
+            report.await?;
+            workspace.update(cx, |workspace, cx| {
+                let message = if is_positive {
+                    "Positive feedback recorded. Thank you!"
+                } else {
+                    "Negative feedback recorded. Thank you for helping us improve!"
+                };
+
+                struct ThreadFeedback;
+                let id = NotificationId::unique::<ThreadFeedback>();
+                workspace.show_toast(Toast::new(id, message).autohide(), cx)
+            })
+        })
+        .detach_and_notify_err(window, cx);
+    }
 }
 
 impl Focusable for MessageEditor {
@@ -308,8 +344,7 @@ impl Render for MessageEditor {
         let focus_handle = self.editor.focus_handle(cx);
         let inline_context_picker = self.inline_context_picker.clone();
         let bg_color = cx.theme().colors().editor_background;
-        let is_streaming_completion = self.thread.read(cx).is_streaming();
-        let button_width = px(64.);
+        let is_generating = self.thread.read(cx).is_generating();
         let is_model_selected = self.is_model_selected(cx);
         let is_editor_empty = self.is_editor_empty(cx);
         let submit_label_color = if is_editor_empty {
@@ -318,159 +353,310 @@ impl Render for MessageEditor {
             Color::Default
         };
 
+        let vim_mode_enabled = VimModeSetting::get_global(cx).0;
+        let platform = PlatformStyle::platform();
+        let linux = platform == PlatformStyle::Linux;
+        let windows = platform == PlatformStyle::Windows;
+        let button_width = if linux || windows || vim_mode_enabled {
+            px(82.)
+        } else {
+            px(64.)
+        };
+
+        let project = self.thread.read(cx).project();
+        let changed_files = if let Some(repository) = project.read(cx).active_repository(cx) {
+            repository.read(cx).status().count()
+        } else {
+            0
+        };
+
         v_flex()
-            .key_context("MessageEditor")
-            .on_action(cx.listener(Self::chat))
-            .on_action(cx.listener(Self::toggle_model_selector))
-            .on_action(cx.listener(Self::toggle_context_picker))
-            .on_action(cx.listener(Self::remove_all_context))
-            .on_action(cx.listener(Self::move_up))
-            .on_action(cx.listener(Self::toggle_chat_mode))
             .size_full()
-            .gap_2()
-            .p_2()
-            .bg(bg_color)
-            .child(self.context_strip.clone())
+            .when(is_generating, |parent| {
+                let focus_handle = self.editor.focus_handle(cx).clone();
+                parent.child(
+                    h_flex().py_3().w_full().justify_center().child(
+                        h_flex()
+                            .flex_none()
+                            .pl_2()
+                            .pr_1()
+                            .py_1()
+                            .bg(cx.theme().colors().editor_background)
+                            .border_1()
+                            .border_color(cx.theme().colors().border_variant)
+                            .rounded_lg()
+                            .shadow_md()
+                            .gap_1()
+                            .child(
+                                Icon::new(IconName::ArrowCircle)
+                                    .size(IconSize::XSmall)
+                                    .color(Color::Muted)
+                                    .with_animation(
+                                        "arrow-circle",
+                                        Animation::new(Duration::from_secs(2)).repeat(),
+                                        |icon, delta| {
+                                            icon.transform(gpui::Transformation::rotate(
+                                                gpui::percentage(delta),
+                                            ))
+                                        },
+                                    ),
+                            )
+                            .child(
+                                Label::new("Generating…")
+                                    .size(LabelSize::XSmall)
+                                    .color(Color::Muted),
+                            )
+                            .child(ui::Divider::vertical())
+                            .child(
+                                Button::new("cancel-generation", "Cancel")
+                                    .label_size(LabelSize::XSmall)
+                                    .key_binding(
+                                        KeyBinding::for_action_in(
+                                            &editor::actions::Cancel,
+                                            &focus_handle,
+                                            window,
+                                            cx,
+                                        )
+                                        .map(|kb| kb.size(rems_from_px(10.))),
+                                    )
+                                    .on_click(move |_event, window, cx| {
+                                        focus_handle.dispatch_action(
+                                            &editor::actions::Cancel,
+                                            window,
+                                            cx,
+                                        );
+                                    }),
+                            ),
+                    ),
+                )
+            })
+            .when(changed_files > 0, |parent| {
+                parent.child(
+                    v_flex()
+                        .mx_2()
+                        .bg(cx.theme().colors().element_background)
+                        .border_1()
+                        .border_b_0()
+                        .border_color(cx.theme().colors().border)
+                        .rounded_t_md()
+                        .child(
+                            h_flex()
+                                .justify_between()
+                                .p_2()
+                                .child(
+                                    h_flex()
+                                        .gap_2()
+                                        .child(
+                                            IconButton::new(
+                                                "edits-disclosure",
+                                                IconName::GitBranchSmall,
+                                            )
+                                            .icon_size(IconSize::Small)
+                                            .on_click(
+                                                |_ev, _window, cx| {
+                                                    cx.defer(|cx| {
+                                                        cx.dispatch_action(&git_panel::ToggleFocus)
+                                                    });
+                                                },
+                                            ),
+                                        )
+                                        .child(
+                                            Label::new(format!(
+                                                "{} {} changed",
+                                                changed_files,
+                                                if changed_files == 1 { "file" } else { "files" }
+                                            ))
+                                            .size(LabelSize::XSmall)
+                                            .color(Color::Muted),
+                                        ),
+                                )
+                                .child(
+                                    h_flex()
+                                        .gap_2()
+                                        .child(
+                                            Button::new("review", "Review")
+                                                .label_size(LabelSize::XSmall)
+                                                .on_click(|_event, _window, cx| {
+                                                    cx.defer(|cx| {
+                                                        cx.dispatch_action(
+                                                            &git_ui::project_diff::Diff,
+                                                        );
+                                                    });
+                                                }),
+                                        )
+                                        .child(
+                                            Button::new("commit", "Commit")
+                                                .label_size(LabelSize::XSmall)
+                                                .on_click(|_event, _window, cx| {
+                                                    cx.defer(|cx| {
+                                                        cx.dispatch_action(&ExpandCommitEditor)
+                                                    });
+                                                }),
+                                        ),
+                                ),
+                        ),
+                )
+            })
             .child(
                 v_flex()
-                    .gap_4()
-                    .child({
-                        let settings = ThemeSettings::get_global(cx);
-                        let text_style = TextStyle {
-                            color: cx.theme().colors().text,
-                            font_family: settings.ui_font.family.clone(),
-                            font_features: settings.ui_font.features.clone(),
-                            font_size: font_size.into(),
-                            font_weight: settings.ui_font.weight,
-                            line_height: line_height.into(),
-                            ..Default::default()
-                        };
-
-                        EditorElement::new(
-                            &self.editor,
-                            EditorStyle {
-                                background: bg_color,
-                                local_player: cx.theme().players().local(),
-                                text: text_style,
-                                ..Default::default()
-                            },
-                        )
-                    })
-                    .child(
-                        PopoverMenu::new("inline-context-picker")
-                            .menu(move |window, cx| {
-                                inline_context_picker.update(cx, |this, cx| {
-                                    this.init(window, cx);
-                                });
-
-                                Some(inline_context_picker.clone())
-                            })
-                            .attach(gpui::Corner::TopLeft)
-                            .anchor(gpui::Corner::BottomLeft)
-                            .offset(gpui::Point {
-                                x: px(0.0),
-                                y: px(-ThemeSettings::clamp_font_size(
-                                    ThemeSettings::get_global(cx).ui_font_size,
-                                )
-                                .0 * 2.0)
-                                    - px(4.0),
-                            })
-                            .with_handle(self.inline_context_picker_menu_handle.clone()),
-                    )
+                    .key_context("MessageEditor")
+                    .on_action(cx.listener(Self::chat))
+                    .on_action(cx.listener(|this, _: &ToggleModelSelector, window, cx| {
+                        this.model_selector
+                            .update(cx, |model_selector, cx| model_selector.toggle(window, cx));
+                    }))
+                    .on_action(cx.listener(Self::toggle_context_picker))
+                    .on_action(cx.listener(Self::remove_all_context))
+                    .on_action(cx.listener(Self::move_up))
+                    .on_action(cx.listener(Self::toggle_chat_mode))
+                    .gap_2()
+                    .p_2()
+                    .bg(bg_color)
+                    .border_t_1()
+                    .border_color(cx.theme().colors().border)
                     .child(
                         h_flex()
                             .justify_between()
-                            .child(
-                                Switch::new("use-tools", self.use_tools.into())
-                                    .label("Tools")
-                                    .on_click(cx.listener(|this, selection, _window, _cx| {
-                                        this.use_tools = match selection {
-                                            ToggleState::Selected => true,
-                                            ToggleState::Unselected
-                                            | ToggleState::Indeterminate => false,
-                                        };
-                                    }))
-                                    .key_binding(KeyBinding::for_action_in(
-                                        &ChatMode,
-                                        &focus_handle,
-                                        window,
-                                    )),
-                            )
-                            .child(h_flex().gap_1().child(self.model_selector.clone()).child(
-                                if is_streaming_completion {
-                                    ButtonLike::new("cancel-generation")
-                                        .width(button_width.into())
-                                        .style(ButtonStyle::Tinted(TintColor::Accent))
+                            .child(self.context_strip.clone())
+                            .when(!self.thread.read(cx).is_empty(), |this| {
+                                this.child(
+                                    h_flex()
+                                        .gap_2()
                                         .child(
-                                            h_flex()
-                                                .w_full()
-                                                .justify_between()
+                                            IconButton::new(
+                                                "feedback-thumbs-up",
+                                                IconName::ThumbsUp,
+                                            )
+                                            .style(ButtonStyle::Subtle)
+                                            .icon_size(IconSize::Small)
+                                            .tooltip(Tooltip::text("Helpful"))
+                                            .on_click(
+                                                cx.listener(|this, _, window, cx| {
+                                                    this.handle_feedback_click(true, window, cx);
+                                                }),
+                                            ),
+                                        )
+                                        .child(
+                                            IconButton::new(
+                                                "feedback-thumbs-down",
+                                                IconName::ThumbsDown,
+                                            )
+                                            .style(ButtonStyle::Subtle)
+                                            .icon_size(IconSize::Small)
+                                            .tooltip(Tooltip::text("Not Helpful"))
+                                            .on_click(
+                                                cx.listener(|this, _, window, cx| {
+                                                    this.handle_feedback_click(false, window, cx);
+                                                }),
+                                            ),
+                                        ),
+                                )
+                            }),
+                    )
+                    .child(
+                        v_flex()
+                            .gap_5()
+                            .child({
+                                let settings = ThemeSettings::get_global(cx);
+                                let text_style = TextStyle {
+                                    color: cx.theme().colors().text,
+                                    font_family: settings.ui_font.family.clone(),
+                                    font_fallbacks: settings.ui_font.fallbacks.clone(),
+                                    font_features: settings.ui_font.features.clone(),
+                                    font_size: font_size.into(),
+                                    font_weight: settings.ui_font.weight,
+                                    line_height: line_height.into(),
+                                    ..Default::default()
+                                };
+
+                                EditorElement::new(
+                                    &self.editor,
+                                    EditorStyle {
+                                        background: bg_color,
+                                        local_player: cx.theme().players().local(),
+                                        text: text_style,
+                                        ..Default::default()
+                                    },
+                                )
+                            })
+                            .child(
+                                PopoverMenu::new("inline-context-picker")
+                                    .menu(move |window, cx| {
+                                        inline_context_picker.update(cx, |this, cx| {
+                                            this.init(window, cx);
+                                        });
+
+                                        Some(inline_context_picker.clone())
+                                    })
+                                    .attach(gpui::Corner::TopLeft)
+                                    .anchor(gpui::Corner::BottomLeft)
+                                    .offset(gpui::Point {
+                                        x: px(0.0),
+                                        y: (-ThemeSettings::get_global(cx).ui_font_size(cx) * 2)
+                                            - px(4.0),
+                                    })
+                                    .with_handle(self.inline_context_picker_menu_handle.clone()),
+                            )
+                            .child(
+                                h_flex()
+                                    .justify_between()
+                                    .child(h_flex().gap_2().child(self.tool_selector.clone()))
+                                    .child(
+                                        h_flex().gap_1().child(self.model_selector.clone()).child(
+                                            ButtonLike::new("submit-message")
+                                                .width(button_width.into())
+                                                .style(ButtonStyle::Filled)
+                                                .disabled(
+                                                    is_editor_empty
+                                                        || !is_model_selected
+                                                        || is_generating,
+                                                )
                                                 .child(
-                                                    Label::new("Cancel")
-                                                        .size(LabelSize::Small)
-                                                        .with_animation(
-                                                            "pulsating-label",
-                                                            Animation::new(Duration::from_secs(2))
-                                                                .repeat()
-                                                                .with_easing(pulsating_between(
-                                                                    0.4, 0.8,
-                                                                )),
-                                                            |label, delta| label.alpha(delta),
+                                                    h_flex()
+                                                        .w_full()
+                                                        .justify_between()
+                                                        .child(
+                                                            Label::new("Submit")
+                                                                .size(LabelSize::Small)
+                                                                .color(submit_label_color),
+                                                        )
+                                                        .children(
+                                                            KeyBinding::for_action_in(
+                                                                &Chat,
+                                                                &focus_handle,
+                                                                window,
+                                                                cx,
+                                                            )
+                                                            .map(|binding| {
+                                                                binding
+                                                                    .when(vim_mode_enabled, |kb| {
+                                                                        kb.size(rems_from_px(12.))
+                                                                    })
+                                                                    .into_any_element()
+                                                            }),
                                                         ),
                                                 )
-                                                .children(
-                                                    KeyBinding::for_action_in(
-                                                        &editor::actions::Cancel,
-                                                        &focus_handle,
-                                                        window,
-                                                    )
-                                                    .map(|binding| binding.into_any_element()),
-                                                ),
-                                        )
-                                        .on_click(move |_event, window, cx| {
-                                            focus_handle.dispatch_action(
-                                                &editor::actions::Cancel,
-                                                window,
-                                                cx,
-                                            );
-                                        })
-                                } else {
-                                    ButtonLike::new("submit-message")
-                                        .width(button_width.into())
-                                        .style(ButtonStyle::Filled)
-                                        .disabled(is_editor_empty || !is_model_selected)
-                                        .child(
-                                            h_flex()
-                                                .w_full()
-                                                .justify_between()
-                                                .child(
-                                                    Label::new("Submit")
-                                                        .size(LabelSize::Small)
-                                                        .color(submit_label_color),
-                                                )
-                                                .children(
-                                                    KeyBinding::for_action_in(
-                                                        &Chat,
-                                                        &focus_handle,
-                                                        window,
-                                                    )
-                                                    .map(|binding| binding.into_any_element()),
-                                                ),
-                                        )
-                                        .on_click(move |_event, window, cx| {
-                                            focus_handle.dispatch_action(&Chat, window, cx);
-                                        })
-                                        .when(is_editor_empty, |button| {
-                                            button
-                                                .tooltip(Tooltip::text("Type a message to submit"))
-                                        })
-                                        .when(!is_model_selected, |button| {
-                                            button.tooltip(Tooltip::text(
-                                                "Select a model to continue",
-                                            ))
-                                        })
-                                },
-                            )),
+                                                .on_click(move |_event, window, cx| {
+                                                    focus_handle.dispatch_action(&Chat, window, cx);
+                                                })
+                                                .when(is_editor_empty, |button| {
+                                                    button.tooltip(Tooltip::text(
+                                                        "Type a message to submit",
+                                                    ))
+                                                })
+                                                .when(is_generating, |button| {
+                                                    button.tooltip(Tooltip::text(
+                                                        "Cancel to submit a new message",
+                                                    ))
+                                                })
+                                                .when(!is_model_selected, |button| {
+                                                    button.tooltip(Tooltip::text(
+                                                        "Select a model to continue",
+                                                    ))
+                                                }),
+                                        ),
+                                    ),
+                            ),
                     ),
             )
     }

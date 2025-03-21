@@ -2,7 +2,7 @@ use anyhow::{anyhow, Result};
 use futures::{future::BoxFuture, stream::BoxStream, FutureExt, StreamExt};
 use gpui::{AnyView, App, AsyncApp, Context, Subscription, Task};
 use http_client::HttpClient;
-use language_model::LanguageModelCompletionEvent;
+use language_model::{AuthenticateError, LanguageModelCompletionEvent};
 use language_model::{
     LanguageModel, LanguageModelId, LanguageModelName, LanguageModelProvider,
     LanguageModelProviderId, LanguageModelProviderName, LanguageModelProviderState,
@@ -67,7 +67,7 @@ impl State {
         let api_url = settings.api_url.clone();
 
         // As a proxy for the server being "authenticated", we'll check if its up by fetching the models
-        cx.spawn(|this, mut cx| async move {
+        cx.spawn(async move |this, cx| {
             let models = get_models(http_client.as_ref(), &api_url, None).await?;
 
             let mut models: Vec<lmstudio::Model> = models
@@ -78,7 +78,7 @@ impl State {
 
             models.sort_by(|a, b| a.name.cmp(&b.name));
 
-            this.update(&mut cx, |this, cx| {
+            this.update(cx, |this, cx| {
                 this.available_models = models;
                 cx.notify();
             })
@@ -90,12 +90,13 @@ impl State {
         self.fetch_model_task.replace(task);
     }
 
-    fn authenticate(&mut self, cx: &mut Context<Self>) -> Task<Result<()>> {
+    fn authenticate(&mut self, cx: &mut Context<Self>) -> Task<Result<(), AuthenticateError>> {
         if self.is_authenticated() {
-            Task::ready(Ok(()))
-        } else {
-            self.fetch_models(cx)
+            return Task::ready(Ok(()));
         }
+
+        let fetch_models_task = self.fetch_models(cx);
+        cx.spawn(async move |_this, _cx| Ok(fetch_models_task.await?))
     }
 }
 
@@ -151,6 +152,10 @@ impl LanguageModelProvider for LmStudioLanguageModelProvider {
         IconName::AiLmStudio
     }
 
+    fn default_model(&self, cx: &App) -> Option<Arc<dyn LanguageModel>> {
+        self.provided_models(cx).into_iter().next()
+    }
+
     fn provided_models(&self, cx: &App) -> Vec<Arc<dyn LanguageModel>> {
         let mut models: BTreeMap<String, lmstudio::Model> = BTreeMap::default();
 
@@ -193,7 +198,7 @@ impl LanguageModelProvider for LmStudioLanguageModelProvider {
         let http_client = self.http_client.clone();
         let api_url = settings.api_url.clone();
         let id = model.id().0.to_string();
-        cx.spawn(|_| async move { preload_model(http_client, &api_url, &id).await })
+        cx.spawn(async move |_| preload_model(http_client, &api_url, &id).await)
             .detach_and_log_err(cx);
     }
 
@@ -201,7 +206,7 @@ impl LanguageModelProvider for LmStudioLanguageModelProvider {
         self.state.read(cx).is_authenticated()
     }
 
-    fn authenticate(&self, cx: &mut App) -> Task<Result<()>> {
+    fn authenticate(&self, cx: &mut App) -> Task<Result<(), AuthenticateError>> {
         self.state.update(cx, |state, cx| state.authenticate(cx))
     }
 
@@ -377,14 +382,14 @@ impl ConfigurationView {
     pub fn new(state: gpui::Entity<State>, cx: &mut Context<Self>) -> Self {
         let loading_models_task = Some(cx.spawn({
             let state = state.clone();
-            |this, mut cx| async move {
+            async move |this, cx| {
                 if let Some(task) = state
-                    .update(&mut cx, |state, cx| state.authenticate(cx))
+                    .update(cx, |state, cx| state.authenticate(cx))
                     .log_err()
                 {
                     task.await.log_err();
                 }
-                this.update(&mut cx, |this, cx| {
+                this.update(cx, |this, cx| {
                     this.loading_models_task = None;
                     cx.notify();
                 })
@@ -436,7 +441,7 @@ impl Render for ConfigurationView {
                                     div()
                                         .bg(inline_code_bg)
                                         .px_1p5()
-                                        .rounded_md()
+                                        .rounded_sm()
                                         .child(Label::new("lms get qwen2.5-coder-7b")),
                                 ),
                         ),
