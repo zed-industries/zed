@@ -6019,7 +6019,9 @@ impl Editor {
                     .breakpoints(&buffer, None, buffer_snapshot.clone(), cx)
             {
                 let point = buffer_snapshot.summary_for_anchor::<Point>(&breakpoint.0);
-                let anchor = multi_buffer_snapshot.anchor_before(point);
+                let mut anchor = multi_buffer_snapshot.anchor_before(point);
+                anchor.text_anchor = breakpoint.0;
+
                 breakpoint_display_points.insert(
                     snapshot
                         .point_to_display_point(
