@@ -237,7 +237,7 @@ impl LocalMode {
                     .on_request::<dap::requests::Initialize, _>(move |_, _| Ok(caps.clone()))
                     .await;
 
-                let paths = cx.update(|cx| session.breakpoint_store.read(cx).breakpoint_paths()).expect("msg");
+                let paths = cx.update(|cx| session.breakpoint_store.read(cx).breakpoint_paths()).expect("Breakpoint store should exist in all tests that start debuggers");
 
                 session.client.on_request::<dap::requests::SetBreakpoints, _>(move |_, args| {
                     let p = Arc::from(Path::new(&args.source.path.unwrap()));

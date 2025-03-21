@@ -424,10 +424,6 @@ impl BreakpointStore {
             .unwrap_or_default()
     }
 
-    pub(crate) fn breakpoint_paths(&self) -> Vec<Arc<Path>> {
-        self.breakpoints.keys().cloned().collect()
-    }
-
     pub fn all_breakpoints(&self, cx: &App) -> BTreeMap<Arc<Path>, Vec<SerializedBreakpoint>> {
         self.breakpoints
             .iter()
@@ -507,6 +503,11 @@ impl BreakpointStore {
         } else {
             Task::ready(Ok(()))
         }
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub(crate) fn breakpoint_paths(&self) -> Vec<Arc<Path>> {
+        self.breakpoints.keys().cloned().collect()
     }
 }
 

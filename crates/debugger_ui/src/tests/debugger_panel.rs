@@ -1359,6 +1359,23 @@ async fn test_unsetting_breakpoints_on_clear_breakpoint_action(
         .on_request::<SetBreakpoints, _>({
             let called_set_breakpoints = called_set_breakpoints.clone();
             move |_, args| {
+                assert!(
+                    args.breakpoints.is_none_or(|bps| bps.is_empty()),
+                    "Send empty breakpoint sets to clear them from DAP servers"
+                );
+
+                match args
+                    .source
+                    .path
+                    .expect("We should alway send a breakpoint's path")
+                    .as_str()
+                {
+                    "/project/main.rs" | "/project/second.rs" => {}
+                    _ => {
+                        panic!("Unset breakpoints for path that doesn't have any")
+                    }
+                }
+
                 called_set_breakpoints.store(true, Ordering::SeqCst);
 
                 Ok(dap::SetBreakpointsResponse {
