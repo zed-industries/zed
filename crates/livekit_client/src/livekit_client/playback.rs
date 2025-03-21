@@ -347,7 +347,7 @@ pub fn play_remote_video_track(
     }
     #[cfg(not(target_os = "macos"))]
     {
-        NativeVideoStream::new(track.rtc_track())
+        NativeVideoStream::new(track.0.rtc_track())
             .filter_map(|frame| async move { video_frame_buffer_from_webrtc(frame.buffer) })
     }
 }
