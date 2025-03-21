@@ -31,7 +31,7 @@ macro_rules! log {
         let logger = $logger;
         let (enabled, level) = $crate::scope_map::is_scope_enabled(&logger.scope, level);
         if enabled {
-            $crate::log_impl::log!(target: &logger.fmt_scope(), level, $($arg)+);
+            $crate::log_impl::log!(level, "[{}]: {}", &logger.fmt_scope(), format!($($arg)+));
         }
     }
 }
