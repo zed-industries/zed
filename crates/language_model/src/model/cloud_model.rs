@@ -75,7 +75,6 @@ impl CloudModel {
                 anthropic::Model::Claude3_5Sonnet
                 | anthropic::Model::Claude3_7Sonnet
                 | anthropic::Model::Claude3_7SonnetThinking => {
-                    //TODO: Should the thinking model be free?
                     LanguageModelAvailability::RequiresPlan(Plan::Free)
                 }
                 anthropic::Model::Claude3Opus

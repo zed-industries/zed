@@ -28,6 +28,14 @@ impl Disclosure {
         }
     }
 
+    pub fn on_toggle(
+        mut self,
+        handler: impl Into<Option<Arc<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>>>,
+    ) -> Self {
+        self.on_toggle = handler.into();
+        self
+    }
+
     pub fn opened_icon(mut self, icon: IconName) -> Self {
         self.opened_icon = icon;
         self
@@ -35,14 +43,6 @@ impl Disclosure {
 
     pub fn closed_icon(mut self, icon: IconName) -> Self {
         self.closed_icon = icon;
-        self
-    }
-
-    pub fn on_toggle(
-        mut self,
-        handler: impl Into<Option<Arc<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>>>,
-    ) -> Self {
-        self.on_toggle = handler.into();
         self
     }
 }
