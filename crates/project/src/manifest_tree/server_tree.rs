@@ -217,14 +217,10 @@ impl LanguageServerTree {
             .flat_map(move |(manifest, root_path)| {
                 let adapter_wrappers = manifest_to_adapters.remove(&manifest);
 
-                let foo = if let Some(wrappers) = adapter_wrappers {
-                    wrappers.into_iter()
-                } else {
-                    std::vec::IntoIter::default()
-                };
+                let iter =
+                    adapter_wrappers.map_or_else(Default::default, |wrappers| wrappers.into_iter());
 
-                foo.into_iter()
-                    .map(move |adapter| (adapter, root_path.clone()))
+                iter.map(move |adapter| (adapter, root_path.clone()))
             })
             .filter_map(move |(adapter, root_path)| {
                 let attach = adapter.attach_kind();
