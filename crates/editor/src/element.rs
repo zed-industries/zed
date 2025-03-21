@@ -13,7 +13,6 @@ use crate::{
         self, hover_at, HOVER_POPOVER_GAP, MIN_POPOVER_CHARACTER_WIDTH, MIN_POPOVER_LINE_HEIGHT,
     },
     inlay_hint_settings,
-    items::BufferSearchHighlights,
     mouse_context_menu::{self, MenuPosition, MouseContextMenu},
     scroll::{axis_pair, scroll_amount::ScrollAmount, AxisPair},
     BlockId, ChunkReplacement, CursorShape, CustomBlockId, DisplayDiffHunk, DisplayPoint,
@@ -21,10 +20,10 @@ use crate::{
     EditorSettings, EditorSnapshot, EditorStyle, FocusedBlock, GoToHunk, GoToPreviousHunk,
     GutterDimensions, HalfPageDown, HalfPageUp, HandleInput, HoveredCursor, InlayHintRefreshReason,
     InlineCompletion, JumpData, LineDown, LineHighlight, LineUp, OpenExcerpts, PageDown, PageUp,
-    Point, RowExt, RowRangeExt, SelectPhase, SelectedTextHighlight, Selection, SoftWrap,
-    StickyHeaderExcerpt, ToPoint, ToggleFold, COLUMNAR_SELECTION_MODIFIERS, CURSORS_VISIBLE_FOR,
-    FILE_HEADER_HEIGHT, GIT_BLAME_MAX_AUTHOR_CHARS_DISPLAYED, MAX_LINE_LEN, MIN_LINE_NUMBER_DIGITS,
-    MULTI_BUFFER_EXCERPT_HEADER_HEIGHT,
+    Point, RowExt, RowRangeExt, SearchResultOrSelectedTextHighlight, SelectPhase, Selection,
+    SoftWrap, StickyHeaderExcerpt, ToPoint, ToggleFold, COLUMNAR_SELECTION_MODIFIERS,
+    CURSORS_VISIBLE_FOR, FILE_HEADER_HEIGHT, GIT_BLAME_MAX_AUTHOR_CHARS_DISPLAYED, MAX_LINE_LEN,
+    MIN_LINE_NUMBER_DIGITS, MULTI_BUFFER_EXCERPT_HEADER_HEIGHT,
 };
 use buffer_diff::{DiffHunkStatus, DiffHunkStatusKind};
 use client::ParticipantIndex;
@@ -1356,11 +1355,8 @@ impl EditorElement {
                     // Git
                     (is_singleton && scrollbar_settings.git_diff && snapshot.buffer_snapshot.has_diff_hunks())
                     ||
-                    // Buffer Search Results
-                    (is_singleton && scrollbar_settings.search_results && editor.has_background_highlights::<BufferSearchHighlights>())
-                    ||
-                    // Selected Text Occurrences
-                    (is_singleton && scrollbar_settings.selected_text && editor.has_background_highlights::<SelectedTextHighlight>())
+                    // Buffer Search Results or Selected Text Occurrences
+                    (is_singleton && scrollbar_settings.search_results && editor.has_background_highlights::<SearchResultOrSelectedTextHighlight>())
                     ||
                     // Selected Symbol Occurrences
                     (is_singleton && scrollbar_settings.selected_symbol && (editor.has_background_highlights::<DocumentHighlightRead>() || editor.has_background_highlights::<DocumentHighlightWrite>()))
@@ -5264,9 +5260,9 @@ impl EditorElement {
                                 background_highlights.iter()
                             {
                                 let is_search_highlights = *background_highlight_id
-                                    == TypeId::of::<BufferSearchHighlights>();
+                                    == TypeId::of::<SearchResultOrSelectedTextHighlight>();
                                 let is_text_highlights = *background_highlight_id
-                                    == TypeId::of::<SelectedTextHighlight>();
+                                    == TypeId::of::<SearchResultOrSelectedTextHighlight>();
                                 let is_symbol_occurrences = *background_highlight_id
                                     == TypeId::of::<DocumentHighlightRead>()
                                     || *background_highlight_id

@@ -248,7 +248,8 @@ pub enum DebugCurrentRowHighlight {}
 enum DocumentHighlightRead {}
 enum DocumentHighlightWrite {}
 enum InputComposition {}
-enum SelectedTextHighlight {}
+// both for selected text and search results, don't highlight twice
+enum SearchResultOrSelectedTextHighlight {}
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum Navigated {
@@ -5071,16 +5072,16 @@ impl Editor {
         }
         self.selection_highlight_task.take();
         if !EditorSettings::get_global(cx).selection_highlight {
-            self.clear_background_highlights::<SelectedTextHighlight>(cx);
+            self.clear_background_highlights::<SearchResultOrSelectedTextHighlight>(cx);
             return;
         }
         if self.selections.count() != 1 || self.selections.line_mode {
-            self.clear_background_highlights::<SelectedTextHighlight>(cx);
+            self.clear_background_highlights::<SearchResultOrSelectedTextHighlight>(cx);
             return;
         }
         let selection = self.selections.newest::<Point>(cx);
         if selection.is_empty() || selection.start.row != selection.end.row {
-            self.clear_background_highlights::<SelectedTextHighlight>(cx);
+            self.clear_background_highlights::<SearchResultOrSelectedTextHighlight>(cx);
             return;
         }
         let debounce = EditorSettings::get_global(cx).selection_highlight_debounce;
@@ -5091,18 +5092,21 @@ impl Editor {
             let Some(Some(matches_task)) = editor
                 .update_in(cx, |editor, _, cx| {
                     if editor.selections.count() != 1 || editor.selections.line_mode {
-                        editor.clear_background_highlights::<SelectedTextHighlight>(cx);
+                        editor
+                            .clear_background_highlights::<SearchResultOrSelectedTextHighlight>(cx);
                         return None;
                     }
                     let selection = editor.selections.newest::<Point>(cx);
                     if selection.is_empty() || selection.start.row != selection.end.row {
-                        editor.clear_background_highlights::<SelectedTextHighlight>(cx);
+                        editor
+                            .clear_background_highlights::<SearchResultOrSelectedTextHighlight>(cx);
                         return None;
                     }
                     let buffer = editor.buffer().read(cx).snapshot(cx);
                     let query = buffer.text_for_range(selection.range()).collect::<String>();
                     if query.trim().is_empty() {
-                        editor.clear_background_highlights::<SelectedTextHighlight>(cx);
+                        editor
+                            .clear_background_highlights::<SearchResultOrSelectedTextHighlight>(cx);
                         return None;
                     }
                     Some(cx.background_spawn(async move {
@@ -5155,13 +5159,13 @@ impl Editor {
             let matches = matches_task.await;
             editor
                 .update_in(cx, |editor, _, cx| {
-                    editor.clear_background_highlights::<SelectedTextHighlight>(cx);
+                    editor.clear_background_highlights::<SearchResultOrSelectedTextHighlight>(cx);
                     if !matches.is_empty() {
-                        editor.highlight_background::<SelectedTextHighlight>(
+                        editor.highlight_background::<SearchResultOrSelectedTextHighlight>(
                             &matches,
                             |theme| theme.editor_document_highlight_bracket_background,
                             cx,
-                        )
+                        );
                     }
                 })
                 .log_err();
@@ -15974,7 +15978,7 @@ impl Editor {
 
         let highlights = self
             .background_highlights
-            .get(&TypeId::of::<items::BufferSearchHighlights>());
+            .get(&TypeId::of::<SearchResultOrSelectedTextHighlight>());
 
         if let Some((_color, ranges)) = highlights {
             ranges
