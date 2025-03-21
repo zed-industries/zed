@@ -9,12 +9,11 @@ use command_palette_hooks::{CommandPaletteFilter, CommandPaletteInterceptor};
 use db::define_connection;
 use db::sqlez_macros::sql;
 use editor::display_map::{is_invisible, replacement};
-use editor::{
-    Anchor, ClipboardSelection, Editor, MultiBuffer, MultiBufferSnapshot, ToPoint as EditorToPoint,
-};
+use editor::{Anchor, ClipboardSelection, Editor, MultiBuffer, ToPoint as EditorToPoint};
 use gpui::{
-    Action, App, AppContext, BorrowAppContext, ClipboardEntry, ClipboardItem, DismissEvent, Entity,
-    EntityId, Global, HighlightStyle, StyledText, Subscription, Task, TextStyle, WeakEntity,
+    Action, App, AppContext, AsyncApp, BorrowAppContext, ClipboardEntry, ClipboardItem,
+    DismissEvent, Entity, EntityId, Global, HighlightStyle, StyledText, Subscription, Task,
+    TextStyle, WeakEntity,
 };
 use language::{Buffer, BufferEvent, BufferId, Point};
 use picker::{Picker, PickerDelegate};
@@ -1240,16 +1239,22 @@ impl RegistersView {
     }
 }
 
+enum MarksMatchInfo {
+    Path(Arc<Path>),
+    Title(String),
+    Content(String),
+}
+
 struct MarksMatch {
     name: char,
     position: Point,
-    path: Option<Arc<Path>>,
+    info: MarksMatchInfo,
 }
 
 pub struct MarksViewDelegate {
     selected_index: usize,
     matches: Vec<MarksMatch>,
-    vim: Option<Entity<Vim>>,
+    workspace: WeakEntity<Workspace>,
 }
 
 impl PickerDelegate for MarksViewDelegate {
@@ -1276,21 +1281,200 @@ impl PickerDelegate for MarksViewDelegate {
         &mut self,
         _: String,
         _: &mut Window,
-        _: &mut Context<Picker<Self>>,
+        cx: &mut Context<Picker<Self>>,
     ) -> gpui::Task<()> {
-        Task::ready(())
+        let Some(workspace) = self.workspace.upgrade().clone() else {
+            return Task::ready(());
+        };
+        cx.spawn(
+            |picker: WeakEntity<Picker<MarksViewDelegate>>, cx: &mut AsyncApp| {
+                let mut cx = cx.clone();
+                async move {
+                    let mut matches = Vec::new();
+                    let _ = cx.update_entity(&workspace, |workspace, cx| {
+                        let entity_id = cx.entity_id();
+                        let Some(editor) = workspace
+                            .active_item(cx)
+                            .and_then(|item| item.act_as::<Editor>(cx))
+                        else {
+                            return;
+                        };
+                        let editor = editor.read(cx);
+                        let mut has_seen = HashSet::new();
+                        let Some(marks_state) = cx.global::<VimGlobals>().marks.get(&entity_id)
+                        else {
+                            return;
+                        };
+                        let marks_state = marks_state.read(cx);
+
+                        if let Some(map) = marks_state
+                            .multibuffer_marks
+                            .get(&editor.buffer().entity_id())
+                        {
+                            for (name, anchors) in map {
+                                let Some(c) = name.chars().next() else {
+                                    continue;
+                                };
+                                if has_seen.contains(&c) {
+                                    continue;
+                                }
+                                has_seen.insert(c);
+                                let Some(anchor) = anchors.first() else {
+                                    continue;
+                                };
+
+                                let snapshot = editor.buffer().read(cx).snapshot(cx);
+                                let position = anchor.to_point(&snapshot);
+                                let info = MarksMatchInfo::Content(
+                                    snapshot
+                                        .text_for_range(
+                                            Point::new(position.row, 0)
+                                                ..Point::new(
+                                                    position.row,
+                                                    snapshot.line_len(
+                                                        multi_buffer::MultiBufferRow(position.row),
+                                                    ),
+                                                ),
+                                        )
+                                        .collect(),
+                                );
+                                matches.push(MarksMatch {
+                                    name: c,
+                                    position,
+                                    info,
+                                })
+                            }
+                        }
+
+                        if let Some(buffer) = editor.buffer().read(cx).as_singleton() {
+                            let buffer = buffer.read(cx);
+                            if let Some(map) = marks_state.buffer_marks.get(&buffer.remote_id()) {
+                                for (name, anchors) in map {
+                                    let Some(c) = name.chars().next() else {
+                                        continue;
+                                    };
+                                    if has_seen.contains(&c) {
+                                        continue;
+                                    }
+                                    has_seen.insert(c);
+                                    let Some(anchor) = anchors.first() else {
+                                        continue;
+                                    };
+                                    let snapshot = buffer.snapshot();
+                                    let position = anchor.to_point(&snapshot);
+                                    let info = MarksMatchInfo::Content(
+                                        snapshot
+                                            .text_for_range(
+                                                Point::new(position.row, 0)
+                                                    ..Point::new(
+                                                        position.row,
+                                                        snapshot.line_len(position.row),
+                                                    ),
+                                            )
+                                            .collect(),
+                                    );
+                                    matches.push(MarksMatch {
+                                        name: c,
+                                        position,
+                                        info,
+                                    })
+                                }
+                            }
+                        }
+
+                        for (name, mark_location) in marks_state.global_marks.iter() {
+                            let Some(c) = name.chars().next() else {
+                                continue;
+                            };
+
+                            if has_seen.contains(&c) {
+                                continue;
+                            }
+                            has_seen.insert(c);
+
+                            match mark_location {
+                                MarkLocation::Buffer(entity_id) => {
+                                    if let Some(&anchor) = marks_state
+                                        .multibuffer_marks
+                                        .get(entity_id)
+                                        .and_then(|map| map.get(name))
+                                        .and_then(|anchors| anchors.first())
+                                    {
+                                        let Some((info, snapshot)) = workspace
+                                            .items(cx)
+                                            .filter_map(|item| item.act_as::<Editor>(cx))
+                                            .map(|entity| entity.read(cx).buffer())
+                                            .find(|buffer| buffer.entity_id().eq(entity_id))
+                                            .map(|buffer| {
+                                                (
+                                                    MarksMatchInfo::Title(
+                                                        buffer.read(cx).title(cx).to_string(),
+                                                    ),
+                                                    buffer.read(cx).snapshot(cx),
+                                                )
+                                            })
+                                        else {
+                                            continue;
+                                        };
+                                        matches.push(MarksMatch {
+                                            name: c,
+                                            position: anchor.to_point(&snapshot),
+                                            info,
+                                        });
+                                    }
+                                }
+                                MarkLocation::Path(path) => {
+                                    if let Some(&position) = marks_state
+                                        .serialized_marks
+                                        .get(path.as_ref())
+                                        .and_then(|map| map.get(name))
+                                        .and_then(|points| points.first())
+                                    {
+                                        let info = MarksMatchInfo::Path(path.clone());
+                                        matches.push(MarksMatch {
+                                            name: c,
+                                            position,
+                                            info,
+                                        });
+                                    }
+                                }
+                            }
+                        }
+                    });
+                    let Some(picker) = picker.upgrade() else {
+                        return;
+                    };
+                    let _ = cx.update_entity(&picker, |picker, _| {
+                        matches.sort_by(|a, b| a.name.cmp(&b.name));
+                        picker.delegate.matches = matches;
+                    });
+                }
+            },
+        )
     }
 
     fn confirm(&mut self, _: bool, window: &mut Window, cx: &mut Context<Picker<Self>>) {
-        let Some(m) = self.matches.get(self.selected_index) else {
+        let Some(vim) = self
+            .workspace
+            .upgrade()
+            .map(|w| w.read(cx))
+            .and_then(|w| w.focused_pane(window, cx).read(cx).active_item())
+            .and_then(|item| item.act_as::<Editor>(cx))
+            .and_then(|editor| editor.read(cx).addon::<VimAddon>().cloned())
+            .map(|addon| addon.entity)
+        else {
             return;
         };
-        let text = Arc::from(m.name.to_string().into_boxed_str());
-        if let Some(vim) = self.vim.clone() {
-            vim.update(cx, |vim, cx| {
-                vim.jump(text, false, false, window, cx);
-            });
-        }
+        let Some(text): Option<Arc<str>> = self
+            .matches
+            .get(self.selected_index)
+            .map(|m| Arc::from(m.name.to_string().into_boxed_str()))
+        else {
+            return;
+        };
+        vim.update(cx, |vim, cx| {
+            vim.jump(text, false, false, window, cx);
+        });
 
         cx.emit(DismissEvent);
     }
@@ -1310,10 +1494,10 @@ impl PickerDelegate for MarksViewDelegate {
             .expect("Invalid matches state: no element for index {ix}");
 
         let mut left_output = String::new();
-        let mut runs = Vec::new();
+        let mut left_runs = Vec::new();
         left_output.push('`');
         left_output.push(mark_match.name);
-        runs.push((
+        left_runs.push((
             0..left_output.len(),
             HighlightStyle::color(cx.theme().colors().text_accent),
         ));
@@ -1322,11 +1506,29 @@ impl PickerDelegate for MarksViewDelegate {
         left_output.push_str(
             format!("{},{}", mark_match.position.row, mark_match.position.column).as_str(),
         );
-        let right_output = mark_match
-            .path
-            .clone()
-            .map(|p| p.to_string_lossy().to_string())
-            .unwrap_or(String::new());
+        let (right_output, right_runs): (String, Vec<_>) = match &mark_match.info {
+            MarksMatchInfo::Path(path) => {
+                let s = path.to_string_lossy().to_string();
+                (
+                    s.clone(),
+                    vec![(0..s.len(), HighlightStyle::color(cx.theme().colors().text))],
+                )
+            }
+            MarksMatchInfo::Title(title) => (
+                title.clone(),
+                vec![(
+                    0..title.len(),
+                    HighlightStyle::color(cx.theme().colors().text_muted),
+                )],
+            ),
+            MarksMatchInfo::Content(content) => (
+                content.clone(),
+                vec![(
+                    0..content.len(),
+                    HighlightStyle::color(cx.theme().colors().text_accent),
+                )],
+            ),
+        };
 
         let theme = ThemeSettings::get_global(cx);
         let text_style = TextStyle {
@@ -1350,8 +1552,10 @@ impl PickerDelegate for MarksViewDelegate {
                 .h(theme.buffer_font_size(cx) * theme.line_height())
                 .px_2()
                 .gap_1()
-                .child(StyledText::new(left_output).with_default_highlights(&text_style, runs))
-                .child(StyledText::new(right_output)),
+                .child(StyledText::new(left_output).with_default_highlights(&text_style, left_runs))
+                .child(
+                    StyledText::new(right_output).with_default_highlights(&text_style, right_runs),
+                ),
         )
     }
 }
@@ -1366,197 +1570,22 @@ impl MarksView {
     }
 
     pub fn toggle(workspace: &mut Workspace, window: &mut Window, cx: &mut Context<Workspace>) {
-        let entity_id = cx.entity_id();
-        let editor = workspace
-            .active_item(cx)
-            .and_then(|item| item.act_as::<Editor>(cx));
-        let vim = workspace
-            .focused_pane(window, cx)
-            .read(cx)
-            .active_item()
-            .and_then(|item| item.act_as::<Editor>(cx))
-            .and_then(|editor| editor.read(cx).addon::<VimAddon>().cloned())
-            .map(|addon| addon.entity);
-        let snapshots_ids: Vec<_> = workspace
-            .items_of_type::<Editor>(cx)
-            .map(|editor| {
-                let buffer = editor.read(cx).buffer();
-                let entity_id = buffer.entity_id();
-                let snapshot = buffer.read(cx).snapshot(cx).clone();
-                (entity_id, snapshot.clone())
-            })
-            .collect();
-        let worktree_roots: Vec<_> = workspace
-            .worktrees(cx)
-            .filter_map(|worktree| worktree.read(cx).root_dir())
-            .collect();
+        let handle = cx.weak_entity();
         workspace.toggle_modal(window, cx, move |window, cx| {
-            MarksView::new(
-                editor,
-                vim,
-                snapshots_ids,
-                worktree_roots,
-                entity_id,
-                window,
-                cx,
-            )
+            MarksView::new(handle, window, cx)
         });
     }
 
     fn new(
-        editor: Option<Entity<Editor>>,
-        vim: Option<Entity<Vim>>,
-        snapshot_ids: Vec<(EntityId, MultiBufferSnapshot)>,
-        worktree_roots: Vec<Arc<Path>>,
-        entity_id: EntityId,
+        workspace: WeakEntity<Workspace>,
         window: &mut Window,
         cx: &mut Context<Picker<MarksViewDelegate>>,
     ) -> Picker<MarksViewDelegate> {
-        let mut matches = Vec::default();
-        let Some(editor) = editor else {
-            let delegate = MarksViewDelegate {
-                selected_index: 0,
-                matches,
-                vim,
-            };
-            return Picker::nonsearchable_uniform_list(delegate, window, cx)
-                .width(rems(36.))
-                .modal(true);
-        };
-        cx.update_global(|globals: &mut VimGlobals, cx| {
-            let mut has_seen = HashSet::new();
-            let Some(marks_state) = globals.marks.get(&entity_id) else {
-                return;
-            };
-
-            marks_state.update(cx, |ms, _| {
-                for (name, mark_location) in ms.global_marks.iter() {
-                    let Some(c) = name.chars().next() else {
-                        continue;
-                    };
-
-                    has_seen.insert(c);
-
-                    match mark_location {
-                        MarkLocation::Buffer(entity_id) => {
-                            let snapshot: Option<MultiBufferSnapshot> =
-                                snapshot_ids.iter().find_map(|(eid, snapshot)| {
-                                    if entity_id == eid {
-                                        Some(snapshot.clone())
-                                    } else {
-                                        None
-                                    }
-                                });
-                            let Some(snapshot) = snapshot else {
-                                return;
-                            };
-
-                            if let Some(&anchor) = ms
-                                .multibuffer_marks
-                                .get(entity_id)
-                                .and_then(|map| map.get(name))
-                                .and_then(|anchors| anchors.first())
-                            {
-                                matches.push(MarksMatch {
-                                    name: c,
-                                    position: anchor.to_point(&snapshot),
-                                    path: None,
-                                });
-                            }
-                        }
-                        MarkLocation::Path(path) => {
-                            if let Some(&position) = ms
-                                .serialized_marks
-                                .get(path.as_ref())
-                                .and_then(|map| map.get(name))
-                                .and_then(|points| points.first())
-                            {
-                                let path_buf = path.to_path_buf();
-                                let stripped = worktree_roots
-                                    .iter()
-                                    .find_map(|root| path_buf.strip_prefix(root).ok())
-                                    .map(|p| Arc::from(p.to_path_buf()))
-                                    .unwrap_or(path.clone());
-                                matches.push(MarksMatch {
-                                    name: c,
-                                    position,
-                                    path: Some(stripped),
-                                });
-                            }
-                        }
-                    }
-                }
-            });
-
-            editor.update(cx, |editor, cx| {
-                let multi_buffer = editor.buffer();
-                let snapshot = multi_buffer.read(cx).snapshot(cx);
-
-                if multi_buffer.read(cx).is_singleton() {
-                    let Some(buffer) = multi_buffer.read(cx).as_singleton() else {
-                        return;
-                    };
-                    let snapshot = buffer.read(cx).snapshot();
-                    let buffer_id = buffer.read(cx).remote_id();
-                    marks_state.update(cx, |ms, cx| {
-                        // let path = ms.path_for_buffer(&buffer, cx);
-                        let path = buffer.read(cx).file().map(|f| f.path().clone());
-                        let Some(map) = ms.buffer_marks.get(&buffer_id) else {
-                            return;
-                        };
-                        for (name, anchors) in map.iter() {
-                            let Some(name) = name.chars().next() else {
-                                continue;
-                            };
-                            let Some(position) =
-                                anchors.first().map(|anchor| anchor.to_point(&snapshot))
-                            else {
-                                continue;
-                            };
-                            if has_seen.contains(&name) {
-                                continue;
-                            }
-                            matches.push(MarksMatch {
-                                name,
-                                position,
-                                path: path.clone(),
-                            });
-                        }
-                    });
-                } else {
-                    marks_state.update(cx, |ms, _| {
-                        let Some(map) = ms.multibuffer_marks.get(&multi_buffer.entity_id()) else {
-                            return;
-                        };
-                        for (name, anchors) in map.iter() {
-                            let Some(name) = name.chars().next() else {
-                                continue;
-                            };
-                            let Some(position) = anchors
-                                .first()
-                                .map(|anchor| EditorToPoint::to_point(anchor, &snapshot))
-                            else {
-                                continue;
-                            };
-                            if has_seen.contains(&name) {
-                                continue;
-                            }
-                            matches.push(MarksMatch {
-                                name,
-                                position,
-                                path: None,
-                            });
-                        }
-                    });
-                }
-            });
-        });
-
-        matches.sort_by(|a, b| a.name.cmp(&b.name));
+        let matches = Vec::default();
         let delegate = MarksViewDelegate {
             selected_index: 0,
             matches,
-            vim,
+            workspace,
         };
         Picker::nonsearchable_uniform_list(delegate, window, cx)
             .width(rems(36.))
