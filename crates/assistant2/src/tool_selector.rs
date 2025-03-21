@@ -2,14 +2,14 @@ use std::sync::Arc;
 
 use assistant_settings::{AgentProfile, AssistantSettings};
 use assistant_tool::{ToolSource, ToolWorkingSet};
-use collections::HashMap;
+use collections::BTreeMap;
 use gpui::{Entity, Subscription};
 use scripting_tool::ScriptingTool;
 use settings::{Settings as _, SettingsStore};
 use ui::{prelude::*, ContextMenu, PopoverMenu, Tooltip};
 
 pub struct ToolSelector {
-    profiles: HashMap<Arc<str>, AgentProfile>,
+    profiles: BTreeMap<Arc<str>, AgentProfile>,
     tools: Arc<ToolWorkingSet>,
     _subscriptions: Vec<Subscription>,
 }
@@ -21,7 +21,7 @@ impl ToolSelector {
         });
 
         let mut this = Self {
-            profiles: HashMap::default(),
+            profiles: BTreeMap::default(),
             tools,
             _subscriptions: vec![settings_subscription],
         };
@@ -32,16 +32,18 @@ impl ToolSelector {
 
     fn refresh_profiles(&mut self, cx: &mut Context<Self>) {
         let settings = AssistantSettings::get_global(cx);
-        let mut profiles = settings.profiles.clone();
+        let mut profiles = BTreeMap::from_iter(settings.profiles.clone());
 
+        const READ_ONLY_ID: &str = "read-only";
         let read_only = AgentProfile::read_only();
-        if !profiles.contains_key(read_only.name.as_ref()) {
-            profiles.insert(read_only.name.clone().into(), read_only);
+        if !profiles.contains_key(READ_ONLY_ID) {
+            profiles.insert(READ_ONLY_ID.into(), read_only);
         }
 
+        const CODE_WRITER_ID: &str = "code-writer";
         let code_writer = AgentProfile::code_writer();
-        if !profiles.contains_key(code_writer.name.as_ref()) {
-            profiles.insert(code_writer.name.clone().into(), code_writer);
+        if !profiles.contains_key(CODE_WRITER_ID) {
+            profiles.insert(CODE_WRITER_ID.into(), code_writer);
         }
 
         self.profiles = profiles;
