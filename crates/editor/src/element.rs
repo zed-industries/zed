@@ -2283,7 +2283,7 @@ impl EditorElement {
                         });
                     })
                     .tooltip(Tooltip::for_action_title(
-                        "Expand excerpt",
+                        "Expand Excerpt",
                         &crate::actions::ExpandExcerpts::default(),
                     ))
                     .into_any_element();
