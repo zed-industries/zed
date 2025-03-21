@@ -109,23 +109,27 @@ fragment float4 quad_fragment(QuadFragmentInput input [[stage_in]],
     return color;
   }
 
-  // Select corner radius based on quadrant
+  // Radius of the nearest corner.
   float corner_radius = pick_corner_radius(center_to_point, quad.corner_radii);
+
+  // Widths of the nearest borders.
+  float vertical_border = (center_to_point.x <= 0.) ? quad.border_widths.left : quad.border_widths.right;
+  float horizontal_border = (center_to_point.y <= 0.) ? quad.border_widths.top : quad.border_widths.bottom;
 
   // Signed distance of the point to the quad's border - positive outside the
   // border, and negative inside.
-  float distance = quad_sdf_impl(center_to_point, half_size, corner_radius);
+  float outer_sdf = quad_sdf_impl(center_to_point, half_size, corner_radius);
 
-  // Border handling
-  float vertical_border = (center_to_point.x <= 0.) ? quad.border_widths.left : quad.border_widths.right;
-  float horizontal_border = (center_to_point.y <= 0.) ? quad.border_widths.top : quad.border_widths.bottom;
-  float2 inset_size = half_size - corner_radius - float2(vertical_border, horizontal_border);
-  float2 point_to_inset_corner = fabs(center_to_point) - inset_size;
-  float border_width = (point_to_inset_corner.x < 0. && point_to_inset_corner.y < 0.) ? 0. :
-                       (point_to_inset_corner.y > point_to_inset_corner.x) ? horizontal_border : vertical_border;
+  // Signed distance of the point to the inside of the quad's border. It is
+  // negative outside this edge, and positive inside.
+  float inner_sdf = quad_sdf_impl(center_to_point,
+                                  half_size - float2(vertical_border, horizontal_border),
+                                  corner_radius);
 
-  if (border_width != 0.) {
-    float inset_distance = distance + border_width;
+  // Negative when inside the border
+  float sdf = max(inner_sdf, outer_sdf);
+
+  if (sdf < 0.5) {
     float4 border_color = input.border_color;
 
     // Dashed border logic when border_style == 1
@@ -167,13 +171,13 @@ fragment float4 quad_fragment(QuadFragmentInput input [[stage_in]],
         t = L_top + L_arc + L_right + L_arc + L_bottom + ((theta - M_PI_F / 2.0) / (M_PI_F / 2.0)) * L_arc;
       } else {
         // Straight regions
-        if (center_to_point.y < -half_size.y + border_width && abs(center_to_point.x) < half_size.x - corner_radius) {
+        if (abs(center_to_point.x) < half_size.x - corner_radius) {
           // Top straight
           t = center_to_point.x + half_size.x - quad.corner_radii.top_left;
-        } else if (center_to_point.x > half_size.x - border_width && abs(center_to_point.y) < half_size.y - corner_radius) {
+        } else if (abs(center_to_point.y) < half_size.y - corner_radius) {
           // Right straight
           t = L_top + L_arc + (center_to_point.y + half_size.y - quad.corner_radii.top_right);
-        } else if (center_to_point.y > half_size.y - border_width && abs(center_to_point.x) < half_size.x - corner_radius) {
+        } else if (abs(center_to_point.x) < half_size.x - corner_radius) {
           // Bottom straight
           t = L_top + L_arc + L_right + L_arc + (half_size.x - center_to_point.x - quad.corner_radii.bottom_right);
         } else {
@@ -191,11 +195,11 @@ fragment float4 quad_fragment(QuadFragmentInput input [[stage_in]],
 
     // Blend border over background
     float4 blended_border = over(color, border_color);
-    color = mix(blended_border, color, saturate(0.5 - inset_distance));
+    color = mix(blended_border, color, saturate(0.5 - inner_sdf));
   }
 
   // Apply outer edge antialiasing
-  return color * float4(1., 1., 1., saturate(0.5 - distance));
+  return color * float4(1., 1., 1., saturate(0.5 - outer_sdf));
 }
 
 struct ShadowVertexOutput {

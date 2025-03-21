@@ -472,29 +472,29 @@ fn fs_quad(input: QuadVarying) -> @location(0) vec4<f32> {
         return blend_color(background_color, 1.0);
     }
 
+    // Radius of the nearest corner.
     let corner_radius = pick_corner_radius(center_to_point, quad.corner_radii);
 
-    // Signed distance of the point to the quad's border. It is positive outside
-    // the border, and negative inside.
-    let distance = quad_sdf_impl(center_to_point, half_size, corner_radius);
-
+    // Width of the nearest borders.
     let vertical_border = select(quad.border_widths.left, quad.border_widths.right, center_to_point.x > 0.0);
     let horizontal_border = select(quad.border_widths.top, quad.border_widths.bottom, center_to_point.y > 0.0);
-    let inset_size = half_size - corner_radius - vec2<f32>(vertical_border, horizontal_border);
-    let point_to_inset_corner = abs(center_to_point) - inset_size;
 
-    var border_width = 0.0;
-    if (point_to_inset_corner.x < 0.0 && point_to_inset_corner.y < 0.0) {
-        border_width = 0.0;
-    } else if (point_to_inset_corner.y > point_to_inset_corner.x) {
-        border_width = horizontal_border;
-    } else {
-        border_width = vertical_border;
-    }
+    // Signed distance of the point to the outside of the quad's border. It is
+    // positive outside this edge, and negative inside.
+    let outer_sdf = quad_sdf_impl(center_to_point, half_size, corner_radius);
+
+    // Signed distance of the point to the inside of the quad's border. It is
+    // negative outside this edge, and positive inside.
+    let inner_sdf = -quad_sdf_impl(
+        center_to_point,
+        half_size - vec2<f32>(vertical_border, horizontal_border),
+        corner_radius);
+
+    // Negative when inside the border
+    let sdf = max(inner_sdf, outer_sdf);
 
     var color = background_color;
-    if (border_width > 0.0) {
-        let inset_distance = distance + border_width;
+    if (sdf < 0.5) {
         var border_color = input.border_color;
 
         // Dashed border logic when border_style == 1
@@ -536,13 +536,13 @@ fn fs_quad(input: QuadVarying) -> @location(0) vec4<f32> {
                 t = L_top + L_arc + L_right + L_arc + L_bottom + ((theta - M_PI_F / 2.0) / (M_PI_F / 2.0)) * L_arc;
             } else {
                 // Straight regions
-                if (center_to_point.y < -half_size.y + border_width && abs(center_to_point.x) < half_size.x - corner_radius) {
+                if (abs(center_to_point.x) < half_size.x - corner_radius) {
                     // Top straight
                     t = center_to_point.x + half_size.x - quad.corner_radii.top_left;
-                } else if (center_to_point.x > half_size.x - border_width && abs(center_to_point.y) < half_size.y - corner_radius) {
+                } else if (abs(center_to_point.y) < half_size.y - corner_radius) {
                     // Right straight
                     t = L_top + L_arc + (center_to_point.y + half_size.y - quad.corner_radii.top_right);
-                } else if (center_to_point.y > half_size.y - border_width && abs(center_to_point.x) < half_size.x - corner_radius) {
+                } else if (abs(center_to_point.x) < half_size.x - corner_radius) {
                     // Bottom straight
                     t = L_top + L_arc + L_right + L_arc + (half_size.x - center_to_point.x - quad.corner_radii.bottom_right);
                 } else {
@@ -561,11 +561,11 @@ fn fs_quad(input: QuadVarying) -> @location(0) vec4<f32> {
         // Blend the border on top of the background and then linearly interpolate
         // between the two as we slide inside the background.
         let blended_border = over(background_color, border_color);
-        color = mix(blended_border, background_color,
-                    saturate(0.5 - inset_distance));
+        color = mix(background_color, blended_border,
+                    saturate(0.5 - inner_sdf));
     }
 
-    return blend_color(color, saturate(0.5 - distance));
+    return blend_color(color, saturate(0.5 - outer_sdf));
 }
 
 // Modulus that is always positive.
