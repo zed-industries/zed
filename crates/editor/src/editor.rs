@@ -4218,8 +4218,14 @@ impl Editor {
 
         let (mut words, provided_completions) = match provider {
             Some(provider) => {
-                let completions =
-                    provider.completions(&buffer, buffer_position, completion_context, window, cx);
+                let completions = provider.completions(
+                    position.excerpt_id,
+                    &buffer,
+                    buffer_position,
+                    completion_context,
+                    window,
+                    cx,
+                );
 
                 let words = match completion_settings.words {
                     WordsCompletionMode::Disabled => Task::ready(HashMap::default()),
@@ -4277,6 +4283,7 @@ impl Editor {
                     old_range: old_range.clone(),
                     new_text: word.clone(),
                     label: CodeLabel::plain(word, None),
+                    icon_path: None,
                     documentation: None,
                     source: CompletionSource::BufferWord {
                         word_range,
@@ -4349,6 +4356,17 @@ impl Editor {
         });
 
         self.completion_tasks.push((id, task));
+    }
+
+    #[cfg(feature = "test-support")]
+    pub fn current_completions(&self) -> Option<Vec<project::Completion>> {
+        let menu = self.context_menu.borrow();
+        if let CodeContextMenu::Completions(menu) = menu.as_ref()? {
+            let completions = menu.completions.borrow();
+            Some(completions.to_vec())
+        } else {
+            None
+        }
     }
 
     pub fn confirm_completion(
@@ -17747,6 +17765,7 @@ pub trait SemanticsProvider {
 pub trait CompletionProvider {
     fn completions(
         &self,
+        excerpt_id: ExcerptId,
         buffer: &Entity<Buffer>,
         buffer_position: text::Anchor,
         trigger: CompletionContext,
@@ -17980,6 +17999,7 @@ fn snippet_completions(
                         runs: Vec::new(),
                         filter_range: 0..matching_prefix.len(),
                     },
+                    icon_path: None,
                     documentation: snippet
                         .description
                         .clone()
@@ -17996,6 +18016,7 @@ fn snippet_completions(
 impl CompletionProvider for Entity<Project> {
     fn completions(
         &self,
+        _excerpt_id: ExcerptId,
         buffer: &Entity<Buffer>,
         buffer_position: text::Anchor,
         options: CompletionContext,

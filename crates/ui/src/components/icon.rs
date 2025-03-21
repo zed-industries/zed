@@ -374,7 +374,7 @@ enum IconSource {
 impl IconSource {
     fn from_path(path: impl Into<SharedString>) -> Self {
         let path = path.into();
-        if path.starts_with("icons/file_icons") {
+        if path.starts_with("icons/") {
             Self::Svg(path)
         } else {
             Self::Image(Arc::from(PathBuf::from(path.as_ref())))

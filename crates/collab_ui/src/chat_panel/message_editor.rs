@@ -2,7 +2,7 @@ use anyhow::{Context as _, Result};
 use channel::{ChannelChat, ChannelStore, MessageParams};
 use client::{UserId, UserStore};
 use collections::HashSet;
-use editor::{AnchorRangeExt, CompletionProvider, Editor, EditorElement, EditorStyle};
+use editor::{AnchorRangeExt, CompletionProvider, Editor, EditorElement, EditorStyle, ExcerptId};
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
     AsyncApp, AsyncWindowContext, Context, Entity, Focusable, FontStyle, FontWeight,
@@ -56,6 +56,7 @@ struct MessageEditorCompletionProvider(WeakEntity<MessageEditor>);
 impl CompletionProvider for MessageEditorCompletionProvider {
     fn completions(
         &self,
+        _excerpt_id: ExcerptId,
         buffer: &Entity<Buffer>,
         buffer_position: language::Anchor,
         _: editor::CompletionContext,
@@ -311,6 +312,7 @@ impl MessageEditor {
                     old_range: range.clone(),
                     new_text,
                     label,
+                    icon_path: None,
                     confirm: None,
                     documentation: None,
                     source: CompletionSource::Custom,

@@ -1,19 +1,29 @@
+mod completion_provider;
 mod fetch_context_picker;
 mod file_context_picker;
 mod thread_context_picker;
 
+use std::ops::Range;
 use std::path::PathBuf;
 use std::sync::Arc;
 
 use anyhow::{anyhow, Result};
-use editor::Editor;
+use editor::actions::FoldAt;
+use editor::display_map::{Crease, FoldId};
+use editor::{Anchor, AnchorRangeExt as _, Editor, ExcerptId, FoldPlaceholder, ToPoint as _};
 use file_context_picker::render_file_context_entry;
-use gpui::{App, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, Task, WeakEntity};
+use gpui::{
+    App, DismissEvent, Empty, Entity, EventEmitter, FocusHandle, Focusable, Task, WeakEntity,
+};
+use multi_buffer::MultiBufferRow;
 use project::ProjectPath;
 use thread_context_picker::{render_thread_context_entry, ThreadContextEntry};
-use ui::{prelude::*, ContextMenu, ContextMenuEntry, ContextMenuItem};
+use ui::{
+    prelude::*, ButtonLike, ContextMenu, ContextMenuEntry, ContextMenuItem, Disclosure, TintColor,
+};
 use workspace::{notifications::NotifyResultExt, Workspace};
 
+pub use crate::context_picker::completion_provider::ContextPickerCompletionProvider;
 use crate::context_picker::fetch_context_picker::FetchContextPicker;
 use crate::context_picker::file_context_picker::FileContextPicker;
 use crate::context_picker::thread_context_picker::ThreadContextPicker;
@@ -34,7 +44,28 @@ enum ContextPickerMode {
     Thread,
 }
 
+impl TryFrom<&str> for ContextPickerMode {
+    type Error = String;
+
+    fn try_from(value: &str) -> Result<Self, Self::Error> {
+        match value {
+            "file" => Ok(Self::File),
+            "fetch" => Ok(Self::Fetch),
+            "thread" => Ok(Self::Thread),
+            _ => Err(format!("Invalid context picker mode: {}", value)),
+        }
+    }
+}
+
 impl ContextPickerMode {
+    pub fn mention_prefix(&self) -> &'static str {
+        match self {
+            Self::File => "file",
+            Self::Fetch => "fetch",
+            Self::Thread => "thread",
+        }
+    }
+
     pub fn label(&self) -> &'static str {
         match self {
             Self::File => "File/Directory",
@@ -109,10 +140,7 @@ impl ContextPicker {
                 .enumerate()
                 .map(|(ix, entry)| self.recent_menu_item(context_picker.clone(), ix, entry));
 
-            let mut modes = vec![ContextPickerMode::File, ContextPickerMode::Fetch];
-            if self.allow_threads() {
-                modes.push(ContextPickerMode::Thread);
-            }
+            let modes = supported_context_picker_modes(&self.thread_store);
 
             let menu = menu
                 .when(has_recent, |menu| {
@@ -328,7 +356,7 @@ impl ContextPicker {
 
         let mut current_files = context_store.file_paths(cx);
 
-        if let Some(active_path) = Self::active_singleton_buffer_path(&workspace, cx) {
+        if let Some(active_path) = active_singleton_buffer_path(&workspace, cx) {
             current_files.insert(active_path);
         }
 
@@ -384,16 +412,6 @@ impl ContextPicker {
 
         recent
     }
-
-    fn active_singleton_buffer_path(workspace: &Workspace, cx: &App) -> Option<PathBuf> {
-        let active_item = workspace.active_item(cx)?;
-
-        let editor = active_item.to_any().downcast::<Editor>().ok()?.read(cx);
-        let buffer = editor.buffer().read(cx).as_singleton()?;
-
-        let path = buffer.read(cx).file()?.path().to_path_buf();
-        Some(path)
-    }
 }
 
 impl EventEmitter<DismissEvent> for ContextPicker {}
@@ -428,4 +446,216 @@ enum RecentEntry {
         path_prefix: Arc<str>,
     },
     Thread(ThreadContextEntry),
+}
+
+fn supported_context_picker_modes(
+    thread_store: &Option<WeakEntity<ThreadStore>>,
+) -> Vec<ContextPickerMode> {
+    let mut modes = vec![ContextPickerMode::File, ContextPickerMode::Fetch];
+    if thread_store.is_some() {
+        modes.push(ContextPickerMode::Thread);
+    }
+    modes
+}
+
+fn active_singleton_buffer_path(workspace: &Workspace, cx: &App) -> Option<PathBuf> {
+    let active_item = workspace.active_item(cx)?;
+
+    let editor = active_item.to_any().downcast::<Editor>().ok()?.read(cx);
+    let buffer = editor.buffer().read(cx).as_singleton()?;
+
+    let path = buffer.read(cx).file()?.path().to_path_buf();
+    Some(path)
+}
+
+fn recent_context_picker_entries(
+    context_store: Entity<ContextStore>,
+    thread_store: Option<WeakEntity<ThreadStore>>,
+    workspace: Entity<Workspace>,
+    cx: &App,
+) -> Vec<RecentEntry> {
+    let mut recent = Vec::with_capacity(6);
+
+    let mut current_files = context_store.read(cx).file_paths(cx);
+
+    let workspace = workspace.read(cx);
+
+    if let Some(active_path) = active_singleton_buffer_path(workspace, cx) {
+        current_files.insert(active_path);
+    }
+
+    let project = workspace.project().read(cx);
+
+    recent.extend(
+        workspace
+            .recent_navigation_history_iter(cx)
+            .filter(|(path, _)| !current_files.contains(&path.path.to_path_buf()))
+            .take(4)
+            .filter_map(|(project_path, _)| {
+                project
+                    .worktree_for_id(project_path.worktree_id, cx)
+                    .map(|worktree| RecentEntry::File {
+                        project_path,
+                        path_prefix: worktree.read(cx).root_name().into(),
+                    })
+            }),
+    );
+
+    let mut current_threads = context_store.read(cx).thread_ids();
+
+    if let Some(active_thread) = workspace
+        .panel::<AssistantPanel>(cx)
+        .map(|panel| panel.read(cx).active_thread(cx))
+    {
+        current_threads.insert(active_thread.read(cx).id().clone());
+    }
+
+    if let Some(thread_store) = thread_store.and_then(|thread_store| thread_store.upgrade()) {
+        recent.extend(
+            thread_store
+                .read(cx)
+                .threads()
+                .into_iter()
+                .filter(|thread| !current_threads.contains(&thread.id))
+                .take(2)
+                .map(|thread| {
+                    RecentEntry::Thread(ThreadContextEntry {
+                        id: thread.id,
+                        summary: thread.summary,
+                    })
+                }),
+        );
+    }
+
+    recent
+}
+
+pub(crate) fn insert_crease_for_mention(
+    excerpt_id: ExcerptId,
+    crease_range: Range<text::Anchor>,
+    crease_label: SharedString,
+    crease_icon_path: SharedString,
+    editor_entity: Entity<Editor>,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    editor_entity.update(cx, |editor, cx| {
+        let snapshot = editor.buffer().read(cx).snapshot(cx);
+
+        let Some((start, end)) = snapshot
+            .anchor_in_excerpt(excerpt_id, crease_range.start)
+            .zip(snapshot.anchor_in_excerpt(excerpt_id, crease_range.end))
+        else {
+            return;
+        };
+
+        let placeholder = FoldPlaceholder {
+            render: render_fold_icon_button(
+                crease_icon_path,
+                crease_label,
+                editor_entity.downgrade(),
+            ),
+            ..Default::default()
+        };
+
+        let render_trailer =
+            move |_row, _unfold, _window: &mut Window, _cx: &mut App| Empty.into_any();
+
+        let buffer = editor.buffer().read(cx).snapshot(cx);
+        let buffer_row = MultiBufferRow(start.to_point(&buffer).row);
+
+        let crease = Crease::inline(
+            start..end,
+            placeholder.clone(),
+            fold_toggle("mention"),
+            render_trailer,
+        );
+
+        editor.insert_creases(vec![crease], cx);
+        editor.fold_at(&FoldAt { buffer_row }, window, cx);
+    });
+}
+
+fn render_fold_icon_button(
+    icon_path: SharedString,
+    label: SharedString,
+    editor: WeakEntity<Editor>,
+) -> Arc<dyn Send + Sync + Fn(FoldId, Range<Anchor>, &mut App) -> AnyElement> {
+    Arc::new({
+        move |fold_id, fold_range, cx| {
+            let is_in_text_selection = editor.upgrade().is_some_and(|editor| {
+                editor.update(cx, |editor, cx| {
+                    let snapshot = editor
+                        .buffer()
+                        .update(cx, |multi_buffer, cx| multi_buffer.snapshot(cx));
+
+                    let is_in_pending_selection = || {
+                        editor
+                            .selections
+                            .pending
+                            .as_ref()
+                            .is_some_and(|pending_selection| {
+                                pending_selection
+                                    .selection
+                                    .range()
+                                    .includes(&fold_range, &snapshot)
+                            })
+                    };
+
+                    let mut is_in_complete_selection = || {
+                        editor
+                            .selections
+                            .disjoint_in_range::<usize>(fold_range.clone(), cx)
+                            .into_iter()
+                            .any(|selection| {
+                                // This is needed to cover a corner case, if we just check for an existing
+                                // selection in the fold range, having a cursor at the start of the fold
+                                // marks it as selected. Non-empty selections don't cause this.
+                                let length = selection.end - selection.start;
+                                length > 0
+                            })
+                    };
+
+                    is_in_pending_selection() || is_in_complete_selection()
+                })
+            });
+
+            ButtonLike::new(fold_id)
+                .style(ButtonStyle::Filled)
+                .selected_style(ButtonStyle::Tinted(TintColor::Accent))
+                .toggle_state(is_in_text_selection)
+                .child(
+                    h_flex()
+                        .gap_1()
+                        .child(
+                            Icon::from_path(icon_path.clone())
+                                .size(IconSize::Small)
+                                .color(Color::Muted),
+                        )
+                        .child(
+                            Label::new(label.clone())
+                                .size(LabelSize::Small)
+                                .single_line(),
+                        ),
+                )
+                .into_any_element()
+        }
+    })
+}
+
+fn fold_toggle(
+    name: &'static str,
+) -> impl Fn(
+    MultiBufferRow,
+    bool,
+    Arc<dyn Fn(bool, &mut Window, &mut App) + Send + Sync>,
+    &mut Window,
+    &mut App,
+) -> AnyElement {
+    move |row, is_folded, fold, _window, _cx| {
+        Disclosure::new((name, row.0 as u64), !is_folded)
+            .toggle_state(is_folded)
+            .on_click(move |_e, window, cx| fold(!is_folded, window, cx))
+            .into_any_element()
+    }
 }
