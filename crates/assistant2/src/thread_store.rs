@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -12,7 +13,7 @@ use futures::FutureExt as _;
 use gpui::{
     prelude::*, App, BackgroundExecutor, Context, Entity, Global, ReadGlobal, SharedString, Task,
 };
-use heed::types::{SerdeBincode, SerdeJson};
+use heed::types::SerdeBincode;
 use heed::Database;
 use language_model::{LanguageModelToolUseId, Role};
 use project::Project;
@@ -270,8 +271,8 @@ pub struct SerializedThread {
 impl SerializedThread {
     pub const VERSION: &'static str = "0.1.0";
 
-    pub fn from_json(json: &str) -> Result<Self> {
-        let saved_thread_json = serde_json::from_str::<serde_json::Value>(json)?;
+    pub fn from_json(json: &[u8]) -> Result<Self> {
+        let saved_thread_json = serde_json::from_slice::<serde_json::Value>(json)?;
         dbg!(&saved_thread_json);
         match saved_thread_json.get("version") {
             Some(serde_json::Value::String(version)) => match version.as_str() {
@@ -385,7 +386,25 @@ impl Global for GlobalThreadsDatabase {}
 pub(crate) struct ThreadsDatabase {
     executor: BackgroundExecutor,
     env: heed::Env,
-    threads: Database<SerdeBincode<ThreadId>, SerdeJson<SerializedThread>>,
+    threads: Database<SerdeBincode<ThreadId>, SerializedThread>,
+}
+
+impl<'a> heed::BytesEncode<'a> for SerializedThread {
+    type EItem = SerializedThread;
+
+    fn bytes_encode(item: &Self::EItem) -> Result<Cow<[u8]>, heed::BoxedError> {
+        serde_json::to_vec(item).map(Cow::Owned).map_err(Into::into)
+    }
+}
+
+impl<'a> heed::BytesDecode<'a> for SerializedThread {
+    type DItem = SerializedThread;
+
+    fn bytes_decode(bytes: &'a [u8]) -> Result<Self::DItem, heed::BoxedError> {
+        // We implement this type manually because we want to call `SerializedThread::from_json`,
+        // instead of the Deserialize trait implementation for `SerializedThread`.
+        SerializedThread::from_json(bytes).map_err(Into::into)
+    }
 }
 
 impl ThreadsDatabase {
