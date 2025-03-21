@@ -744,36 +744,6 @@ impl ActiveThread {
                                                 )
                                             },
                                         )
-                                        .when(edit_message_editor.is_none(), |parent| {
-                                            parent.when_some(
-                                                checkpoint.clone(),
-                                                |parent, checkpoint| {
-                                                    // DL TODO: Checkpoints and Edit messages? Aren't these overlaping actions?
-                                                    parent.child(
-                                                        Button::new(
-                                                            "restore-checkpoint",
-                                                            "Restore Checkpoint",
-                                                        )
-                                                        .label_size(LabelSize::Small)
-                                                        .on_click(cx.listener(
-                                                            move |this, _, _window, cx| {
-                                                                this.thread.update(
-                                                                    cx,
-                                                                    |thread, cx| {
-                                                                        thread
-                                                                            .restore_checkpoint(
-                                                                                checkpoint.clone(),
-                                                                                cx,
-                                                                            )
-                                                                            .detach_and_log_err(cx);
-                                                                    },
-                                                                );
-                                                            },
-                                                        )),
-                                                    )
-                                                },
-                                            )
-                                        })
                                         .when(
                                             edit_message_editor.is_none() && allow_editing_message,
                                             |this| {
