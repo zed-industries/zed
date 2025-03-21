@@ -9,6 +9,7 @@ use anyhow::anyhow;
 use collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use dashmap::DashMap;
 use futures::StreamExt;
+use project_repository_statuses::StatusKind;
 use rand::{prelude::StdRng, Rng, SeedableRng};
 use rpc::ExtensionProvides;
 use rpc::{
@@ -36,7 +37,6 @@ use std::{
 };
 use time::PrimitiveDateTime;
 use tokio::sync::{Mutex, OwnedMutexGuard};
-use worktree_repository_statuses::StatusKind;
 use worktree_settings_file::LocalSettingsKind;
 
 #[cfg(test)]
@@ -658,6 +658,8 @@ pub struct RejoinedProject {
     pub old_connection_id: ConnectionId,
     pub collaborators: Vec<ProjectCollaborator>,
     pub worktrees: Vec<RejoinedWorktree>,
+    pub updated_repositories: Vec<proto::UpdateRepository>,
+    pub removed_repositories: Vec<u64>,
     pub language_servers: Vec<proto::LanguageServer>,
 }
 
@@ -726,6 +728,7 @@ pub struct Project {
     pub role: ChannelRole,
     pub collaborators: Vec<ProjectCollaborator>,
     pub worktrees: BTreeMap<u64, Worktree>,
+    pub repositories: Vec<proto::UpdateRepository>,
     pub language_servers: Vec<proto::LanguageServer>,
 }
 
@@ -760,7 +763,7 @@ pub struct Worktree {
     pub root_name: String,
     pub visible: bool,
     pub entries: Vec<proto::Entry>,
-    pub repository_entries: BTreeMap<u64, proto::RepositoryEntry>,
+    pub legacy_repository_entries: BTreeMap<u64, proto::RepositoryEntry>,
     pub diagnostic_summaries: Vec<proto::DiagnosticSummary>,
     pub settings_files: Vec<WorktreeSettingsFile>,
     pub scan_id: u64,
@@ -810,7 +813,7 @@ impl LocalSettingsKind {
 }
 
 fn db_status_to_proto(
-    entry: worktree_repository_statuses::Model,
+    entry: project_repository_statuses::Model,
 ) -> anyhow::Result<proto::StatusEntry> {
     use proto::git_file_status::{Tracked, Unmerged, Variant};
 

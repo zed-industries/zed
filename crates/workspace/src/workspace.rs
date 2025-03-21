@@ -10,8 +10,11 @@ pub mod shared_screen;
 mod status_bar;
 pub mod tasks;
 mod theme_preview;
+mod toast_layer;
 mod toolbar;
 mod workspace_settings;
+
+pub use toast_layer::{RunAction, ToastAction, ToastLayer, ToastView};
 
 use anyhow::{anyhow, Context as _, Result};
 use call::{call_settings::CallSettings, ActiveCall};
@@ -125,6 +128,23 @@ static ZED_WINDOW_POSITION: LazyLock<Option<Point<Pixels>>> = LazyLock::new(|| {
 actions!(assistant, [ShowConfiguration]);
 
 actions!(
+    debugger,
+    [
+        Start,
+        Continue,
+        Disconnect,
+        Pause,
+        Restart,
+        StepInto,
+        StepOver,
+        StepOut,
+        StepBack,
+        Stop,
+        ToggleIgnoreBreakpoints
+    ]
+);
+
+actions!(
     workspace,
     [
         ActivateNextPane,
@@ -152,6 +172,7 @@ actions!(
         ReloadActiveItem,
         SaveAs,
         SaveWithoutFormat,
+        ShutdownDebugAdapters,
         ToggleBottomDock,
         ToggleCenteredLayout,
         ToggleLeftDock,
@@ -347,8 +368,8 @@ pub fn init_settings(cx: &mut App) {
 
 fn prompt_and_open_paths(app_state: Arc<AppState>, options: PathPromptOptions, cx: &mut App) {
     let paths = cx.prompt_for_paths(options);
-    cx.spawn(|cx| async move {
-        match paths.await.anyhow().and_then(|res| res) {
+    cx.spawn(
+        async move |cx| match paths.await.anyhow().and_then(|res| res) {
             Ok(Some(paths)) => {
                 cx.update(|cx| {
                     open_paths(&paths, app_state, OpenOptions::default(), cx).detach_and_log_err(cx)
@@ -372,8 +393,8 @@ fn prompt_and_open_paths(app_state: Arc<AppState>, options: PathPromptOptions, c
                 })
                 .ok();
             }
-        }
-    })
+        },
+    )
     .detach();
 }
 
@@ -381,6 +402,7 @@ pub fn init(app_state: Arc<AppState>, cx: &mut App) {
     init_settings(cx);
     component::init();
     theme_preview::init(cx);
+    toast_layer::init(cx);
 
     cx.on_action(Workspace::close_global);
     cx.on_action(reload);
@@ -443,10 +465,10 @@ pub fn register_project_item<I: ProjectItem>(cx: &mut App) {
     builders.push(|project, project_path, window, cx| {
         let project_item = <I::Item as project::ProjectItem>::try_open(project, project_path, cx)?;
         let project = project.clone();
-        Some(window.spawn(cx, |cx| async move {
+        Some(window.spawn(cx, async move |cx| {
             let project_item = project_item.await?;
             let project_entry_id: Option<ProjectEntryId> =
-                project_item.read_with(&cx, project::ProjectItem::entry_id)?;
+                project_item.read_with(cx, project::ProjectItem::entry_id)?;
             let build_workspace_item = Box::new(|window: &mut Window, cx: &mut Context<Pane>| {
                 Box::new(cx.new(|cx| I::for_project_item(project, project_item, window, cx)))
                     as Box<dyn ItemHandle>
@@ -719,7 +741,7 @@ impl DelayedDebouncedEditAction {
         self.cancel_channel = Some(sender);
 
         let previous_task = self.task.take();
-        self.task = Some(cx.spawn_in(window, move |workspace, mut cx| async move {
+        self.task = Some(cx.spawn_in(window, async move |workspace, cx| {
             let mut timer = cx.background_executor().timer(delay).fuse();
             if let Some(previous_task) = previous_task {
                 previous_task.await;
@@ -731,9 +753,7 @@ impl DelayedDebouncedEditAction {
             }
 
             if let Some(result) = workspace
-                .update_in(&mut cx, |workspace, window, cx| {
-                    (func)(workspace, window, cx)
-                })
+                .update_in(cx, |workspace, window, cx| (func)(workspace, window, cx))
                 .log_err()
             {
                 result.await.log_err();
@@ -816,12 +836,14 @@ pub struct Workspace {
     last_active_view_id: Option<proto::ViewId>,
     status_bar: Entity<StatusBar>,
     modal_layer: Entity<ModalLayer>,
+    toast_layer: Entity<ToastLayer>,
     titlebar_item: Option<AnyView>,
     notifications: Notifications,
     project: Entity<Project>,
     follower_states: HashMap<PeerId, FollowerState>,
     last_leaders_by_pane: HashMap<WeakEntity<Pane>, PeerId>,
     window_edited: bool,
+    dirty_items: HashMap<EntityId, Subscription>,
     active_call: Option<(Entity<ActiveCall>, Vec<Subscription>)>,
     leader_updates_tx: mpsc::UnboundedSender<(PeerId, proto::UpdateFollowers)>,
     database_id: Option<WorkspaceId>,
@@ -874,8 +896,6 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        cx.observe_in(&project, window, |_, _, _, cx| cx.notify())
-            .detach();
         cx.subscribe_in(&project, window, move |this, _, event, window, cx| {
             match event {
                 project::Event::RemoteIdChanged(_) => {
@@ -989,14 +1009,14 @@ impl Workspace {
 
         let mut current_user = app_state.user_store.read(cx).watch_current_user();
         let mut connection_status = app_state.client.status();
-        let _observe_current_user = cx.spawn_in(window, |this, mut cx| async move {
+        let _observe_current_user = cx.spawn_in(window, async move |this, cx| {
             current_user.next().await;
             connection_status.next().await;
             let mut stream =
                 Stream::map(current_user, drop).merge(Stream::map(connection_status, drop));
 
             while stream.recv().await.is_some() {
-                this.update(&mut cx, |_, cx| cx.notify())?;
+                this.update(cx, |_, cx| cx.notify())?;
             }
             anyhow::Ok(())
         });
@@ -1005,9 +1025,9 @@ impl Workspace {
         // that each asynchronous operation can be run in order.
         let (leader_updates_tx, mut leader_updates_rx) =
             mpsc::unbounded::<(PeerId, proto::UpdateFollowers)>();
-        let _apply_leader_updates = cx.spawn_in(window, |this, mut cx| async move {
+        let _apply_leader_updates = cx.spawn_in(window, async move |this, cx| {
             while let Some((leader_id, update)) = leader_updates_rx.next().await {
-                Self::process_leader_update(&this, leader_id, update, &mut cx)
+                Self::process_leader_update(&this, leader_id, update, cx)
                     .await
                     .log_err();
             }
@@ -1016,10 +1036,12 @@ impl Workspace {
         });
 
         cx.emit(Event::WorkspaceCreated(weak_handle.clone()));
+        let modal_layer = cx.new(|_| ModalLayer::new());
+        let toast_layer = cx.new(|_| ToastLayer::new());
 
-        let left_dock = Dock::new(DockPosition::Left, window, cx);
-        let bottom_dock = Dock::new(DockPosition::Bottom, window, cx);
-        let right_dock = Dock::new(DockPosition::Right, window, cx);
+        let left_dock = Dock::new(DockPosition::Left, modal_layer.clone(), window, cx);
+        let bottom_dock = Dock::new(DockPosition::Bottom, modal_layer.clone(), window, cx);
+        let right_dock = Dock::new(DockPosition::Right, modal_layer.clone(), window, cx);
         let left_dock_buttons = cx.new(|cx| PanelButtons::new(left_dock.clone(), cx));
         let bottom_dock_buttons = cx.new(|cx| PanelButtons::new(bottom_dock.clone(), cx));
         let right_dock_buttons = cx.new(|cx| PanelButtons::new(right_dock.clone(), cx));
@@ -1030,8 +1052,6 @@ impl Workspace {
             status_bar.add_right_item(bottom_dock_buttons, window, cx);
             status_bar
         });
-
-        let modal_layer = cx.new(|_| ModalLayer::new());
 
         let session_id = app_state.session.read(cx).id().to_owned();
 
@@ -1044,8 +1064,8 @@ impl Workspace {
 
         let (serializable_items_tx, serializable_items_rx) =
             mpsc::unbounded::<Box<dyn SerializableItemHandle>>();
-        let _items_serializer = cx.spawn_in(window, |this, mut cx| async move {
-            Self::serialize_items(&this, serializable_items_rx, &mut cx).await
+        let _items_serializer = cx.spawn_in(window, async move |this, cx| {
+            Self::serialize_items(&this, serializable_items_rx, cx).await
         });
 
         let subscriptions = vec![
@@ -1054,30 +1074,29 @@ impl Workspace {
                 if this.bounds_save_task_queued.is_some() {
                     return;
                 }
-                this.bounds_save_task_queued =
-                    Some(cx.spawn_in(window, |this, mut cx| async move {
-                        cx.background_executor()
-                            .timer(Duration::from_millis(100))
-                            .await;
-                        this.update_in(&mut cx, |this, window, cx| {
-                            if let Some(display) = window.display(cx) {
-                                if let Ok(display_uuid) = display.uuid() {
-                                    let window_bounds = window.inner_window_bounds();
-                                    if let Some(database_id) = workspace_id {
-                                        cx.background_executor()
-                                            .spawn(DB.set_window_open_status(
-                                                database_id,
-                                                SerializedWindowBounds(window_bounds),
-                                                display_uuid,
-                                            ))
-                                            .detach_and_log_err(cx);
-                                    }
+                this.bounds_save_task_queued = Some(cx.spawn_in(window, async move |this, cx| {
+                    cx.background_executor()
+                        .timer(Duration::from_millis(100))
+                        .await;
+                    this.update_in(cx, |this, window, cx| {
+                        if let Some(display) = window.display(cx) {
+                            if let Ok(display_uuid) = display.uuid() {
+                                let window_bounds = window.inner_window_bounds();
+                                if let Some(database_id) = workspace_id {
+                                    cx.background_executor()
+                                        .spawn(DB.set_window_open_status(
+                                            database_id,
+                                            SerializedWindowBounds(window_bounds),
+                                            display_uuid,
+                                        ))
+                                        .detach_and_log_err(cx);
                                 }
                             }
-                            this.bounds_save_task_queued.take();
-                        })
-                        .ok();
-                    }));
+                        }
+                        this.bounds_save_task_queued.take();
+                    })
+                    .ok();
+                }));
                 cx.notify();
             }),
             cx.observe_window_appearance(window, |_, window, cx| {
@@ -1112,6 +1131,7 @@ impl Workspace {
             last_active_view_id: None,
             status_bar,
             modal_layer,
+            toast_layer,
             titlebar_item: None,
             notifications: Default::default(),
             left_dock,
@@ -1122,6 +1142,7 @@ impl Workspace {
             last_leaders_by_pane: Default::default(),
             dispatching_keystrokes: Default::default(),
             window_edited: false,
+            dirty_items: Default::default(),
             active_call,
             database_id: workspace_id,
             app_state,
@@ -1167,7 +1188,7 @@ impl Workspace {
             cx,
         );
 
-        cx.spawn(|mut cx| async move {
+        cx.spawn(async move |cx| {
             let mut paths_to_open = Vec::with_capacity(abs_paths.len());
             for path in abs_paths.into_iter() {
                 if let Some(canonical) = app_state.fs.canonicalize(&path).await.ok() {
@@ -1195,7 +1216,7 @@ impl Workspace {
 
                 if order.iter().enumerate().any(|(i, &j)| i != j) {
                     project_handle
-                        .update(&mut cx, |project, cx| {
+                        .update(cx, |project, cx| {
                             project.set_worktrees_reordered(true, cx);
                         })
                         .log_err();
@@ -1205,6 +1226,7 @@ impl Workspace {
             // Get project paths for all of the abs_paths
             let mut project_paths: Vec<(PathBuf, Option<ProjectPath>)> =
                 Vec::with_capacity(paths_to_open.len());
+
             for path in paths_to_open.into_iter() {
                 if let Some((_, project_entry)) = cx
                     .update(|cx| {
@@ -1228,7 +1250,7 @@ impl Workspace {
             let toolchains = DB.toolchains(workspace_id).await?;
             for (toolchain, worktree_id) in toolchains {
                 project_handle
-                    .update(&mut cx, |this, cx| {
+                    .update(cx, |this, cx| {
                         this.activate_toolchain(worktree_id, toolchain, cx)
                     })?
                     .await;
@@ -1293,16 +1315,16 @@ impl Workspace {
                 })?
             };
 
-            notify_if_database_failed(window, &mut cx);
+            notify_if_database_failed(window, cx);
             let opened_items = window
-                .update(&mut cx, |_workspace, window, cx| {
+                .update(cx, |_workspace, window, cx| {
                     open_items(serialized_workspace, project_paths, window, cx)
                 })?
                 .await
                 .unwrap_or_default();
 
             window
-                .update(&mut cx, |_, window, _| window.activate_window())
+                .update(cx, |_, window, _| window.activate_window())
                 .log_err();
             Ok((window, opened_items))
         })
@@ -1488,19 +1510,19 @@ impl Workspace {
             // If the item was no longer present, then load it again from its previous path, first try the local path
             let open_by_project_path = self.load_path(project_path.clone(), window, cx);
 
-            cx.spawn_in(window, |workspace, mut cx| async move {
+            cx.spawn_in(window, async move  |workspace, cx| {
                 let open_by_project_path = open_by_project_path.await;
                 let mut navigated = false;
                 match open_by_project_path
                     .with_context(|| format!("Navigating to {project_path:?}"))
                 {
                     Ok((project_entry_id, build_item)) => {
-                        let prev_active_item_id = pane.update(&mut cx, |pane, _| {
+                        let prev_active_item_id = pane.update(cx, |pane, _| {
                             pane.nav_history_mut().set_mode(mode);
                             pane.active_item().map(|p| p.item_id())
                         })?;
 
-                        pane.update_in(&mut cx, |pane, window, cx| {
+                        pane.update_in(cx, |pane, window, cx| {
                             let item = pane.open_item(
                                 project_entry_id,
                                 true,
@@ -1521,19 +1543,19 @@ impl Workspace {
                         // Fall back to opening by abs path, in case an external file was opened and closed,
                         // and its worktree is now dropped
                         if let Some(abs_path) = abs_path {
-                            let prev_active_item_id = pane.update(&mut cx, |pane, _| {
+                            let prev_active_item_id = pane.update(cx, |pane, _| {
                                 pane.nav_history_mut().set_mode(mode);
                                 pane.active_item().map(|p| p.item_id())
                             })?;
-                            let open_by_abs_path = workspace.update_in(&mut cx, |workspace, window, cx| {
-                                workspace.open_abs_path(abs_path.clone(), false, window, cx)
+                            let open_by_abs_path = workspace.update_in(cx, |workspace, window, cx| {
+                                workspace.open_abs_path(abs_path.clone(), OpenOptions { visible: Some(OpenVisible::None), ..Default::default() }, window, cx)
                             })?;
                             match open_by_abs_path
                                 .await
                                 .with_context(|| format!("Navigating to {abs_path:?}"))
                             {
                                 Ok(item) => {
-                                    pane.update_in(&mut cx, |pane, window, cx| {
+                                    pane.update_in(cx, |pane, window, cx| {
                                         navigated |= Some(item.item_id()) != prev_active_item_id;
                                         pane.nav_history_mut().set_mode(NavigationMode::Normal);
                                         if let Some(data) = entry.data {
@@ -1551,7 +1573,7 @@ impl Workspace {
 
                 if !navigated {
                     workspace
-                        .update_in(&mut cx, |workspace, window, cx| {
+                        .update_in(cx, |workspace, window, cx| {
                             Self::navigate_history(workspace, pane, mode, window, cx)
                         })?
                         .await?;
@@ -1636,7 +1658,7 @@ impl Workspace {
             let (tx, rx) = oneshot::channel();
             let abs_path = cx.prompt_for_paths(path_prompt_options);
 
-            cx.spawn_in(window, |this, mut cx| async move {
+            cx.spawn_in(window, async move |this, cx| {
                 let Ok(result) = abs_path.await else {
                     return Ok(());
                 };
@@ -1646,7 +1668,7 @@ impl Workspace {
                         tx.send(result).log_err();
                     }
                     Err(err) => {
-                        let rx = this.update_in(&mut cx, |this, window, cx| {
+                        let rx = this.update_in(cx, |this, window, cx| {
                             this.show_portal_error(err.to_string(), cx);
                             let prompt = this.on_prompt_for_open_path.take().unwrap();
                             let rx = prompt(this, lister, window, cx);
@@ -1677,63 +1699,70 @@ impl Workspace {
             let prompt = self.on_prompt_for_new_path.take().unwrap();
             let rx = prompt(self, window, cx);
             self.on_prompt_for_new_path = Some(prompt);
-            rx
-        } else {
-            let start_abs_path = self
-                .project
-                .update(cx, |project, cx| {
-                    let worktree = project.visible_worktrees(cx).next()?;
-                    Some(worktree.read(cx).as_local()?.abs_path().to_path_buf())
-                })
-                .unwrap_or_else(|| Path::new("").into());
+            return rx;
+        }
 
-            let (tx, rx) = oneshot::channel();
-            let abs_path = cx.prompt_for_new_path(&start_abs_path);
-            cx.spawn_in(window, |this, mut cx| async move {
-                let abs_path = match abs_path.await? {
-                    Ok(path) => path,
-                    Err(err) => {
-                        let rx = this.update_in(&mut cx, |this, window, cx| {
-                            this.show_portal_error(err.to_string(), cx);
-
-                            let prompt = this.on_prompt_for_new_path.take().unwrap();
-                            let rx = prompt(this, window, cx);
-                            this.on_prompt_for_new_path = Some(prompt);
-                            rx
-                        })?;
-                        if let Ok(path) = rx.await {
-                            tx.send(path).log_err();
-                        }
-                        return anyhow::Ok(());
-                    }
+        let (tx, rx) = oneshot::channel();
+        cx.spawn_in(window, async move |this, cx| {
+            let abs_path = this.update(cx, |this, cx| {
+                let mut relative_to = this
+                    .most_recent_active_path(cx)
+                    .and_then(|p| p.parent().map(|p| p.to_path_buf()));
+                if relative_to.is_none() {
+                    let project = this.project.read(cx);
+                    relative_to = project
+                        .visible_worktrees(cx)
+                        .filter_map(|worktree| {
+                            Some(worktree.read(cx).as_local()?.abs_path().to_path_buf())
+                        })
+                        .next()
                 };
 
-                let project_path = abs_path.and_then(|abs_path| {
-                    this.update(&mut cx, |this, cx| {
-                        this.project.update(cx, |project, cx| {
-                            project.find_or_create_worktree(abs_path, true, cx)
-                        })
-                    })
-                    .ok()
-                });
+                cx.prompt_for_new_path(&relative_to.unwrap_or_else(|| PathBuf::from("")))
+            })?;
+            let abs_path = match abs_path.await? {
+                Ok(path) => path,
+                Err(err) => {
+                    let rx = this.update_in(cx, |this, window, cx| {
+                        this.show_portal_error(err.to_string(), cx);
 
-                if let Some(project_path) = project_path {
-                    let (worktree, path) = project_path.await?;
-                    let worktree_id = worktree.read_with(&cx, |worktree, _| worktree.id())?;
-                    tx.send(Some(ProjectPath {
-                        worktree_id,
-                        path: path.into(),
-                    }))
-                    .ok();
-                } else {
-                    tx.send(None).ok();
+                        let prompt = this.on_prompt_for_new_path.take().unwrap();
+                        let rx = prompt(this, window, cx);
+                        this.on_prompt_for_new_path = Some(prompt);
+                        rx
+                    })?;
+                    if let Ok(path) = rx.await {
+                        tx.send(path).log_err();
+                    }
+                    return anyhow::Ok(());
                 }
-                anyhow::Ok(())
-            })
-            .detach_and_log_err(cx);
+            };
 
-            rx
-        }
+            let project_path = abs_path.and_then(|abs_path| {
+                this.update(cx, |this, cx| {
+                    this.project.update(cx, |project, cx| {
+                        project.find_or_create_worktree(abs_path, true, cx)
+                    })
+                })
+                .ok()
+            });
+
+            if let Some(project_path) = project_path {
+                let (worktree, path) = project_path.await?;
+                let worktree_id = worktree.read_with(cx, |worktree, _| worktree.id())?;
+                tx.send(Some(ProjectPath {
+                    worktree_id,
+                    path: path.into(),
+                }))
+                .ok();
+            } else {
+                tx.send(None).ok();
+            }
+            anyhow::Ok(())
+        })
+        .detach_and_log_err(cx);
+
+        rx
     }
 
     pub fn titlebar_item(&self) -> Option<AnyView> {
@@ -1759,9 +1788,9 @@ impl Workspace {
         } else {
             let env = self.project.read(cx).cli_environment(cx);
             let task = Self::new_local(Vec::new(), self.app_state.clone(), None, env, cx);
-            cx.spawn_in(window, |_vh, mut cx| async move {
+            cx.spawn_in(window, async move |_vh, cx| {
                 let (workspace, _) = task.await?;
-                workspace.update(&mut cx, callback)
+                workspace.update(cx, callback)
             })
         }
     }
@@ -1812,7 +1841,7 @@ impl Workspace {
 
     pub fn close_window(&mut self, _: &CloseWindow, window: &mut Window, cx: &mut Context<Self>) {
         let prepare = self.prepare_to_close(CloseIntent::CloseWindow, window, cx);
-        cx.spawn_in(window, |_, mut cx| async move {
+        cx.spawn_in(window, async move |_, cx| {
             if prepare.await? {
                 cx.update(|window, _cx| window.remove_window())?;
             }
@@ -1858,7 +1887,7 @@ impl Workspace {
             && close_intent != CloseIntent::ReplaceWindow
             && cx.windows().len() == 1;
 
-        cx.spawn_in(window, |this, mut cx| async move {
+        cx.spawn_in(window, async move |this, cx| {
             let workspace_count = cx.update(|_window, cx| {
                 cx.windows()
                     .iter()
@@ -1869,7 +1898,7 @@ impl Workspace {
             if let Some(active_call) = active_call {
                 if close_intent != CloseIntent::Quit
                     && workspace_count == 1
-                    && active_call.read_with(&cx, |call, _| call.room().is_some())?
+                    && active_call.read_with(cx, |call, _| call.room().is_some())?
                 {
                     let answer = cx.update(|window, cx| {
                         window.prompt(
@@ -1885,7 +1914,7 @@ impl Workspace {
                         return anyhow::Ok(false);
                     } else {
                         active_call
-                            .update(&mut cx, |call, cx| call.hang_up(cx))?
+                            .update(cx, |call, cx| call.hang_up(cx))?
                             .await
                             .log_err();
                     }
@@ -1893,7 +1922,7 @@ impl Workspace {
             }
 
             let save_result = this
-                .update_in(&mut cx, |this, window, cx| {
+                .update_in(cx, |this, window, cx| {
                     this.save_all_internal(SaveIntent::Close, window, cx)
                 })?
                 .await;
@@ -1904,10 +1933,8 @@ impl Workspace {
                 && !save_last_workspace
                 && save_result.as_ref().map_or(false, |&res| res)
             {
-                this.update_in(&mut cx, |this, window, cx| {
-                    this.remove_from_session(window, cx)
-                })?
-                .await;
+                this.update_in(cx, |this, window, cx| this.remove_from_session(window, cx))?
+                    .await;
             }
 
             save_result
@@ -1946,7 +1973,7 @@ impl Workspace {
 
         let keystrokes = self.dispatching_keystrokes.clone();
         window
-            .spawn(cx, |mut cx| async move {
+            .spawn(cx, async move |cx| {
                 // limit to 100 keystrokes to avoid infinite recursion.
                 for _ in 0..100 {
                     let Some(keystroke) = keystrokes.borrow_mut().1.pop() else {
@@ -1999,10 +2026,10 @@ impl Workspace {
             .collect::<Vec<_>>();
 
         let project = self.project.clone();
-        cx.spawn_in(window, |workspace, mut cx| async move {
+        cx.spawn_in(window, async move |workspace, cx| {
             let dirty_items = if save_intent == SaveIntent::Close && !dirty_items.is_empty() {
                 let (serialize_tasks, remaining_dirty_items) =
-                    workspace.update_in(&mut cx, |workspace, window, cx| {
+                    workspace.update_in(cx, |workspace, window, cx| {
                         let mut remaining_dirty_items = Vec::new();
                         let mut serialize_tasks = Vec::new();
                         for (pane, item) in dirty_items {
@@ -2021,7 +2048,7 @@ impl Workspace {
                 futures::future::try_join_all(serialize_tasks).await?;
 
                 if remaining_dirty_items.len() > 1 {
-                    let answer = workspace.update_in(&mut cx, |_, window, cx| {
+                    let answer = workspace.update_in(cx, |_, window, cx| {
                         let detail = Pane::file_names_for_prompt(
                             &mut remaining_dirty_items.iter().map(|(_, handle)| handle),
                             cx,
@@ -2051,9 +2078,7 @@ impl Workspace {
                 let (singleton, project_entry_ids) =
                     cx.update(|_, cx| (item.is_singleton(cx), item.project_entry_ids(cx)))?;
                 if singleton || !project_entry_ids.is_empty() {
-                    if !Pane::save_item(project.clone(), &pane, &*item, save_intent, &mut cx)
-                        .await?
-                    {
+                    if !Pane::save_item(project.clone(), &pane, &*item, save_intent, cx).await? {
                         return Ok(false);
                     }
                 }
@@ -2083,7 +2108,7 @@ impl Workspace {
         };
         let app_state = self.app_state.clone();
 
-        cx.spawn(|_, cx| async move {
+        cx.spawn(async move |_, cx| {
             cx.update(|cx| {
                 open_paths(
                     &paths,
@@ -2104,7 +2129,7 @@ impl Workspace {
     pub fn open_paths(
         &mut self,
         mut abs_paths: Vec<PathBuf>,
-        visible: OpenVisible,
+        options: OpenOptions,
         pane: Option<WeakEntity<Pane>>,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -2115,11 +2140,11 @@ impl Workspace {
 
         // Sort the paths to ensure we add worktrees for parents before their children.
         abs_paths.sort_unstable();
-        cx.spawn_in(window, move |this, mut cx| async move {
+        cx.spawn_in(window, async move |this, cx| {
             let mut tasks = Vec::with_capacity(abs_paths.len());
 
             for abs_path in &abs_paths {
-                let visible = match visible {
+                let visible = match options.visible.as_ref().unwrap_or(&OpenVisible::None) {
                     OpenVisible::All => Some(true),
                     OpenVisible::None => Some(false),
                     OpenVisible::OnlyFiles => match fs.metadata(abs_path).await.log_err() {
@@ -2135,7 +2160,7 @@ impl Workspace {
                 };
                 let project_path = match visible {
                     Some(visible) => match this
-                        .update(&mut cx, |this, cx| {
+                        .update(cx, |this, cx| {
                             Workspace::project_path_for_path(
                                 this.project.clone(),
                                 abs_path,
@@ -2155,10 +2180,10 @@ impl Workspace {
                 let abs_path: Arc<Path> = SanitizedPath::from(abs_path.clone()).into();
                 let fs = fs.clone();
                 let pane = pane.clone();
-                let task = cx.spawn(move |mut cx| async move {
+                let task = cx.spawn(async move |cx| {
                     let (worktree, project_path) = project_path?;
                     if fs.is_dir(&abs_path).await {
-                        this.update(&mut cx, |workspace, cx| {
+                        this.update(cx, |workspace, cx| {
                             let worktree = worktree.read(cx);
                             let worktree_abs_path = worktree.abs_path();
                             let entry_id = if abs_path.as_ref() == worktree_abs_path.as_ref() {
@@ -2182,8 +2207,14 @@ impl Workspace {
                         None
                     } else {
                         Some(
-                            this.update_in(&mut cx, |this, window, cx| {
-                                this.open_path(project_path, pane, true, window, cx)
+                            this.update_in(cx, |this, window, cx| {
+                                this.open_path(
+                                    project_path,
+                                    pane,
+                                    options.focus.unwrap_or(true),
+                                    window,
+                                    cx,
+                                )
                             })
                             .log_err()?
                             .await,
@@ -2207,7 +2238,15 @@ impl Workspace {
             ResolvedPath::ProjectPath { project_path, .. } => {
                 self.open_path(project_path, None, true, window, cx)
             }
-            ResolvedPath::AbsPath { path, .. } => self.open_abs_path(path, false, window, cx),
+            ResolvedPath::AbsPath { path, .. } => self.open_abs_path(
+                path,
+                OpenOptions {
+                    visible: Some(OpenVisible::None),
+                    ..Default::default()
+                },
+                window,
+                cx,
+            ),
         }
     }
 
@@ -2247,11 +2286,20 @@ impl Workspace {
             window,
             cx,
         );
-        cx.spawn_in(window, |this, mut cx| async move {
+        cx.spawn_in(window, async move |this, cx| {
             if let Some(paths) = paths.await.log_err().flatten() {
                 let results = this
-                    .update_in(&mut cx, |this, window, cx| {
-                        this.open_paths(paths, OpenVisible::All, None, window, cx)
+                    .update_in(cx, |this, window, cx| {
+                        this.open_paths(
+                            paths,
+                            OpenOptions {
+                                visible: Some(OpenVisible::All),
+                                ..Default::default()
+                            },
+                            None,
+                            window,
+                            cx,
+                        )
                     })?
                     .await;
                 for result in results.into_iter().flatten() {
@@ -2272,9 +2320,9 @@ impl Workspace {
         let entry = project.update(cx, |project, cx| {
             project.find_or_create_worktree(abs_path, visible, cx)
         });
-        cx.spawn(|mut cx| async move {
+        cx.spawn(async move |cx| {
             let (worktree, path) = entry.await?;
-            let worktree_id = worktree.update(&mut cx, |t, _| t.id())?;
+            let worktree_id = worktree.update(cx, |t, _| t.id())?;
             Ok((
                 worktree,
                 ProjectPath {
@@ -2315,6 +2363,22 @@ impl Workspace {
         self.active_item(cx).and_then(|item| item.project_path(cx))
     }
 
+    pub fn most_recent_active_path(&self, cx: &App) -> Option<PathBuf> {
+        self.recent_navigation_history_iter(cx)
+            .filter_map(|(path, abs_path)| {
+                let worktree = self
+                    .project
+                    .read(cx)
+                    .worktree_for_id(path.worktree_id, cx)?;
+                if worktree.read(cx).is_visible() {
+                    abs_path
+                } else {
+                    None
+                }
+            })
+            .next()
+    }
+
     pub fn save_active_item(
         &mut self,
         save_intent: SaveIntent,
@@ -2326,7 +2390,7 @@ impl Workspace {
         let item = pane.read(cx).active_item();
         let pane = pane.downgrade();
 
-        window.spawn(cx, |mut cx| async move {
+        window.spawn(cx, async move |mut cx| {
             if let Some(item) = item {
                 Pane::save_item(project, &pane, item.as_ref(), save_intent, &mut cx)
                     .await
@@ -2417,7 +2481,7 @@ impl Workspace {
         if tasks.is_empty() {
             None
         } else {
-            Some(cx.spawn_in(window, |_, _| async move {
+            Some(cx.spawn_in(window, async move |_, _| {
                 for task in tasks {
                     task.await?
                 }
@@ -2703,7 +2767,6 @@ impl Workspace {
         )
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub fn add_item(
         &mut self,
         pane: Entity<Pane>,
@@ -2744,24 +2807,14 @@ impl Workspace {
     pub fn open_abs_path(
         &mut self,
         abs_path: PathBuf,
-        visible: bool,
+        options: OpenOptions,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<anyhow::Result<Box<dyn ItemHandle>>> {
-        cx.spawn_in(window, |workspace, mut cx| async move {
+        cx.spawn_in(window, async move |workspace, cx| {
             let open_paths_task_result = workspace
-                .update_in(&mut cx, |workspace, window, cx| {
-                    workspace.open_paths(
-                        vec![abs_path.clone()],
-                        if visible {
-                            OpenVisible::All
-                        } else {
-                            OpenVisible::None
-                        },
-                        None,
-                        window,
-                        cx,
-                    )
+                .update_in(cx, |workspace, window, cx| {
+                    workspace.open_paths(vec![abs_path.clone()], options, None, window, cx)
                 })
                 .with_context(|| format!("open abs path {abs_path:?} task spawn"))?
                 .await;
@@ -2791,12 +2844,10 @@ impl Workspace {
     ) -> Task<anyhow::Result<Box<dyn ItemHandle>>> {
         let project_path_task =
             Workspace::project_path_for_path(self.project.clone(), &abs_path, visible, cx);
-        cx.spawn_in(window, |this, mut cx| async move {
+        cx.spawn_in(window, async move |this, cx| {
             let (_, path) = project_path_task.await?;
-            this.update_in(&mut cx, |this, window, cx| {
-                this.split_path(path, window, cx)
-            })?
-            .await
+            this.update_in(cx, |this, window, cx| this.split_path(path, window, cx))?
+                .await
         })
     }
 
@@ -2811,7 +2862,6 @@ impl Workspace {
         self.open_path_preview(path, pane, focus_item, false, true, window, cx)
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub fn open_path_preview(
         &mut self,
         path: impl Into<ProjectPath>,
@@ -2832,9 +2882,9 @@ impl Workspace {
         });
 
         let task = self.load_path(path.into(), window, cx);
-        window.spawn(cx, move |mut cx| async move {
+        window.spawn(cx, async move |cx| {
             let (project_entry_id, build_item) = task.await?;
-            let result = pane.update_in(&mut cx, |pane, window, cx| {
+            let result = pane.update_in(cx, |pane, window, cx| {
                 let result = pane.open_item(
                     project_entry_id,
                     focus_item,
@@ -2883,9 +2933,9 @@ impl Workspace {
         }
 
         let task = self.load_path(path.into(), window, cx);
-        cx.spawn_in(window, |this, mut cx| async move {
+        cx.spawn_in(window, async move |this, cx| {
             let (project_entry_id, build_item) = task.await?;
-            this.update_in(&mut cx, move |this, window, cx| -> Option<_> {
+            this.update_in(cx, move |this, window, cx| -> Option<_> {
                 let pane = pane.upgrade()?;
                 let new_pane = this.split_pane(
                     pane,
@@ -3389,14 +3439,13 @@ impl Workspace {
                 if *pane == self.active_pane {
                     self.active_item_path_changed(window, cx);
                 }
-                self.update_window_edited(window, cx);
                 serialize_workspace = false;
             }
             pane::Event::RemoveItem { .. } => {}
-            pane::Event::RemovedItem { item_id } => {
+            pane::Event::RemovedItem { item } => {
                 cx.emit(Event::ActiveItemChanged);
                 self.update_window_edited(window, cx);
-                if let hash_map::Entry::Occupied(entry) = self.panes_by_item.entry(*item_id) {
+                if let hash_map::Entry::Occupied(entry) = self.panes_by_item.entry(item.item_id()) {
                     if entry.get().entity_id() == pane.entity_id() {
                         entry.remove();
                     }
@@ -3662,9 +3711,9 @@ impl Workspace {
             leader_id: Some(leader_id),
         });
 
-        Some(cx.spawn_in(window, |this, mut cx| async move {
+        Some(cx.spawn_in(window, async move |this, cx| {
             let response = request.await?;
-            this.update(&mut cx, |this, _| {
+            this.update(cx, |this, _| {
                 let state = this
                     .follower_states
                     .get_mut(&leader_id)
@@ -3676,9 +3725,9 @@ impl Workspace {
                 Ok::<_, anyhow::Error>(())
             })??;
             if let Some(view) = response.active_view {
-                Self::add_view_from_leader(this.clone(), leader_id, &view, &mut cx).await?;
+                Self::add_view_from_leader(this.clone(), leader_id, &view, cx).await?;
             }
-            this.update_in(&mut cx, |this, window, cx| {
+            this.update_in(cx, |this, window, cx| {
                 this.leader_updated(leader_id, window, cx)
             })?;
             Ok(())
@@ -3852,13 +3901,44 @@ impl Workspace {
     }
 
     fn update_window_edited(&mut self, window: &mut Window, cx: &mut App) {
-        let is_edited = !self.project.read(cx).is_disconnected(cx)
-            && self
-                .items(cx)
-                .any(|item| item.has_conflict(cx) || item.is_dirty(cx));
+        let is_edited = !self.project.read(cx).is_disconnected(cx) && !self.dirty_items.is_empty();
         if is_edited != self.window_edited {
             self.window_edited = is_edited;
             window.set_window_edited(self.window_edited)
+        }
+    }
+
+    fn update_item_dirty_state(
+        &mut self,
+        item: &dyn ItemHandle,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        let is_dirty = item.is_dirty(cx);
+        let item_id = item.item_id();
+        let was_dirty = self.dirty_items.contains_key(&item_id);
+        if is_dirty == was_dirty {
+            return;
+        }
+        if was_dirty {
+            self.dirty_items.remove(&item_id);
+            self.update_window_edited(window, cx);
+            return;
+        }
+        if let Some(window_handle) = window.window_handle().downcast::<Self>() {
+            let s = item.on_release(
+                cx,
+                Box::new(move |cx| {
+                    window_handle
+                        .update(cx, |this, window, cx| {
+                            this.dirty_items.remove(&item_id);
+                            this.update_window_edited(window, cx)
+                        })
+                        .ok();
+                }),
+            );
+            self.dirty_items.insert(item_id, s);
+            self.update_window_edited(window, cx);
         }
     }
 
@@ -4459,11 +4539,11 @@ impl Workspace {
 
     fn serialize_workspace(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self._schedule_serialize.is_none() {
-            self._schedule_serialize = Some(cx.spawn_in(window, |this, mut cx| async move {
+            self._schedule_serialize = Some(cx.spawn_in(window, async move |this, cx| {
                 cx.background_executor()
                     .timer(Duration::from_millis(100))
                     .await;
-                this.update_in(&mut cx, |this, window, cx| {
+                this.update_in(cx, |this, window, cx| {
                     this.serialize_workspace_internal(window, cx).detach();
                     this._schedule_serialize.take();
                 })
@@ -4598,6 +4678,10 @@ impl Workspace {
         };
 
         if let Some(location) = location {
+            let breakpoints = self.project.update(cx, |project, cx| {
+                project.breakpoint_store().read(cx).all_breakpoints(cx)
+            });
+
             let center_group = build_serialized_pane_group(&self.center.root, window, cx);
             let docks = build_serialized_docks(self, window, cx);
             let window_bounds = Some(SerializedWindowBounds(window.window_bounds()));
@@ -4610,9 +4694,12 @@ impl Workspace {
                 docks,
                 centered_layout: self.centered_layout,
                 session_id: self.session_id.clone(),
+                breakpoints,
                 window_id: Some(window.window_handle().window_id().as_u64()),
             };
-            return window.spawn(cx, |_| persistence::DB.save_workspace(serialized_workspace));
+            return window.spawn(cx, async move |_| {
+                persistence::DB.save_workspace(serialized_workspace).await
+            });
         }
         Task::ready(())
     }
@@ -4669,8 +4756,8 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) -> Task<Result<Vec<Option<Box<dyn ItemHandle>>>>> {
-        cx.spawn_in(window, |workspace, mut cx| async move {
-            let project = workspace.update(&mut cx, |workspace, _| workspace.project().clone())?;
+        cx.spawn_in(window, async move |workspace, cx| {
+            let project = workspace.update(cx, |workspace, _| workspace.project().clone())?;
 
             let mut center_group = None;
             let mut center_items = None;
@@ -4678,12 +4765,7 @@ impl Workspace {
             // Traverse the splits tree and add to things
             if let Some((group, active_pane, items)) = serialized_workspace
                 .center_group
-                .deserialize(
-                    &project,
-                    serialized_workspace.id,
-                    workspace.clone(),
-                    &mut cx,
-                )
+                .deserialize(&project, serialized_workspace.id, workspace.clone(), cx)
                 .await
             {
                 center_items = Some(items);
@@ -4718,7 +4800,7 @@ impl Workspace {
                 .collect::<Vec<_>>();
 
             // Remove old panes from workspace panes list
-            workspace.update_in(&mut cx, |workspace, window, cx| {
+            workspace.update_in(cx, |workspace, window, cx| {
                 if let Some((center_group, active_pane)) = center_group {
                     workspace.remove_panes(workspace.center.root.clone(), window, cx);
 
@@ -4750,12 +4832,23 @@ impl Workspace {
                 cx.notify();
             })?;
 
+            let _ = project
+                .update(cx, |project, cx| {
+                    project
+                        .breakpoint_store()
+                        .update(cx, |breakpoint_store, cx| {
+                            breakpoint_store
+                                .with_serialized_breakpoints(serialized_workspace.breakpoints, cx)
+                        })
+                })?
+                .await;
+
             // Clean up all the items that have _not_ been loaded. Our ItemIds aren't stable. That means
             // after loading the items, we might have different items and in order to avoid
             // the database filling up, we delete items that haven't been loaded now.
             //
             // The items that have been loaded, have been saved after they've been added to the workspace.
-            let clean_up_tasks = workspace.update_in(&mut cx, |_, window, cx| {
+            let clean_up_tasks = workspace.update_in(cx, |_, window, cx| {
                 item_ids_by_kind
                     .into_iter()
                     .map(|(item_kind, loaded_items)| {
@@ -4774,7 +4867,7 @@ impl Workspace {
             futures::future::join_all(clean_up_tasks).await;
 
             workspace
-                .update_in(&mut cx, |workspace, window, cx| {
+                .update_in(cx, |workspace, window, cx| {
                     // Serialize ourself to make sure our timestamps and any pane / item changes are replicated
                     workspace.serialize_workspace_internal(window, cx).detach();
 
@@ -4971,6 +5064,11 @@ impl Workspace {
         })
     }
 
+    pub fn toggle_status_toast<V: ToastView>(&mut self, entity: Entity<V>, cx: &mut App) {
+        self.toast_layer
+            .update(cx, |toast_layer, cx| toast_layer.toggle_toast(cx, entity))
+    }
+
     pub fn toggle_centered_layout(
         &mut self,
         _: &ToggleCenteredLayout,
@@ -5126,7 +5224,7 @@ fn open_items(
         )
     });
 
-    cx.spawn_in(window, |workspace, mut cx| async move {
+    cx.spawn_in(window, async move |workspace, cx| {
         let mut opened_items = Vec::with_capacity(project_paths_to_open.len());
 
         if let Some(restored_items) = restored_items {
@@ -5167,9 +5265,9 @@ fn open_items(
                 .enumerate()
                 .map(|(ix, (abs_path, project_path))| {
                     let workspace = workspace.clone();
-                    cx.spawn(|mut cx| async move {
+                    cx.spawn(async move |cx| {
                         let file_project_path = project_path?;
-                        let abs_path_task = workspace.update(&mut cx, |workspace, cx| {
+                        let abs_path_task = workspace.update(cx, |workspace, cx| {
                             workspace.project().update(cx, |project, cx| {
                                 project.resolve_abs_path(abs_path.to_string_lossy().as_ref(), cx)
                             })
@@ -5183,7 +5281,7 @@ fn open_items(
                                 return Some((
                                     ix,
                                     workspace
-                                        .update_in(&mut cx, |workspace, window, cx| {
+                                        .update_in(cx, |workspace, window, cx| {
                                             workspace.open_path(
                                                 file_project_path,
                                                 None,
@@ -5485,7 +5583,8 @@ impl Render for Workspace {
                                 .children(self.render_notifications(window, cx)),
                         )
                         .child(self.status_bar.clone())
-                        .child(self.modal_layer.clone()),
+                        .child(self.modal_layer.clone())
+                        .child(self.toast_layer.clone()),
                 ),
             window,
             cx,
@@ -5805,8 +5904,8 @@ async fn join_channel_internal(
                     }
                 });
                 if let Ok(Some(project)) = project {
-                    return Some(cx.spawn(|room, mut cx| async move {
-                        room.update(&mut cx, |room, cx| room.share_project(project, cx))?
+                    return Some(cx.spawn(async move |room, cx| {
+                        room.update(cx, |room, cx| room.share_project(project, cx))?
                             .await?;
                         Ok(())
                     }));
@@ -5830,13 +5929,13 @@ pub fn join_channel(
     cx: &mut App,
 ) -> Task<Result<()>> {
     let active_call = ActiveCall::global(cx);
-    cx.spawn(|mut cx| async move {
+    cx.spawn(async move |cx| {
         let result = join_channel_internal(
             channel_id,
             &app_state,
             requesting_window,
             &active_call,
-            &mut cx,
+             cx,
         )
             .await;
 
@@ -5847,7 +5946,7 @@ pub fn join_channel(
 
         // find an existing workspace to focus and show call controls
         let mut active_window =
-            requesting_window.or_else(|| activate_any_workspace_window(&mut cx));
+            requesting_window.or_else(|| activate_any_workspace_window( cx));
         if active_window.is_none() {
             // no open workspaces, make one to show the error in (blergh)
             let (window_handle, _) = cx
@@ -5869,7 +5968,7 @@ pub fn join_channel(
             log::error!("failed to join channel: {}", err);
             if let Some(active_window) = active_window {
                 active_window
-                    .update(&mut cx, |_, window, cx| {
+                    .update(cx, |_, window, cx| {
                         let detail: SharedString = match err.error_code() {
                             ErrorCode::SignedOut => {
                                 "Please sign in to continue.".into()
@@ -5953,10 +6052,13 @@ pub fn local_workspace_windows(cx: &App) -> Vec<WindowHandle<Workspace>> {
 
 #[derive(Default)]
 pub struct OpenOptions {
+    pub visible: Option<OpenVisible>,
+    pub focus: Option<bool>,
     pub open_new_workspace: Option<bool>,
     pub replace_window: Option<WindowHandle<Workspace>>,
     pub env: Option<HashMap<String, String>>,
 }
+
 #[allow(clippy::type_complexity)]
 pub fn open_paths(
     abs_paths: &[PathBuf],
@@ -5974,7 +6076,7 @@ pub fn open_paths(
     let mut best_match = None;
     let mut open_visible = OpenVisible::All;
 
-    cx.spawn(move |mut cx| async move {
+    cx.spawn(async move |cx| {
         if open_options.open_new_workspace != Some(true) {
             let all_paths = abs_paths.iter().map(|path| app_state.fs.metadata(path));
             let all_metadatas = futures::future::join_all(all_paths)
@@ -6038,13 +6140,22 @@ pub fn open_paths(
 
         if let Some(existing) = existing {
             let open_task = existing
-                .update(&mut cx, |workspace, window, cx| {
+                .update(cx, |workspace, window, cx| {
                     window.activate_window();
-                    workspace.open_paths(abs_paths, open_visible, None, window, cx)
+                    workspace.open_paths(
+                        abs_paths,
+                        OpenOptions {
+                            visible: Some(open_visible),
+                            ..Default::default()
+                        },
+                        None,
+                        window,
+                        cx,
+                    )
                 })?
                 .await;
 
-            _ = existing.update(&mut cx, |workspace, _, cx| {
+            _ = existing.update(cx, |workspace, _, cx| {
                 for item in open_task.iter().flatten() {
                     if let Err(e) = item {
                         workspace.show_error(&e, cx);
@@ -6075,9 +6186,9 @@ pub fn open_new(
     init: impl FnOnce(&mut Workspace, &mut Window, &mut Context<Workspace>) + 'static + Send,
 ) -> Task<anyhow::Result<()>> {
     let task = Workspace::new_local(Vec::new(), app_state, None, open_options.env, cx);
-    cx.spawn(|mut cx| async move {
+    cx.spawn(async move |cx| {
         let (workspace, opened_paths) = task.await?;
-        workspace.update(&mut cx, |workspace, window, cx| {
+        workspace.update(cx, |workspace, window, cx| {
             if opened_paths.is_empty() {
                 init(workspace, window, cx)
             }
@@ -6092,8 +6203,8 @@ pub fn create_and_open_local_file(
     cx: &mut Context<Workspace>,
     default_content: impl 'static + Send + FnOnce() -> Rope,
 ) -> Task<Result<Box<dyn ItemHandle>>> {
-    cx.spawn_in(window, |workspace, mut cx| async move {
-        let fs = workspace.update(&mut cx, |workspace, _| workspace.app_state().fs.clone())?;
+    cx.spawn_in(window, async move |workspace, cx| {
+        let fs = workspace.update(cx, |workspace, _| workspace.app_state().fs.clone())?;
         if !fs.is_file(path).await {
             fs.create_file(path, Default::default()).await?;
             fs.save(path, &default_content(), Default::default())
@@ -6101,11 +6212,14 @@ pub fn create_and_open_local_file(
         }
 
         let mut items = workspace
-            .update_in(&mut cx, |workspace, window, cx| {
+            .update_in(cx, |workspace, window, cx| {
                 workspace.with_local_workspace(window, cx, |workspace, window, cx| {
                     workspace.open_paths(
                         vec![path.to_path_buf()],
-                        OpenVisible::None,
+                        OpenOptions {
+                            visible: Some(OpenVisible::None),
+                            ..Default::default()
+                        },
                         None,
                         window,
                         cx,
@@ -6129,7 +6243,7 @@ pub fn open_ssh_project(
     paths: Vec<PathBuf>,
     cx: &mut App,
 ) -> Task<Result<()>> {
-    cx.spawn(|mut cx| async move {
+    cx.spawn(async move |cx| {
         let (serialized_ssh_project, workspace_id, serialized_workspace) =
             serialize_ssh_project(connection_options.clone(), paths.clone(), &cx).await?;
 
@@ -6164,7 +6278,7 @@ pub fn open_ssh_project(
         let toolchains = DB.toolchains(workspace_id).await?;
         for (toolchain, worktree_id) in toolchains {
             project
-                .update(&mut cx, |this, cx| {
+                .update(cx, |this, cx| {
                     this.activate_toolchain(worktree_id, toolchain, cx)
                 })?
                 .await;
@@ -6204,14 +6318,14 @@ pub fn open_ssh_project(
         })?;
 
         window
-            .update(&mut cx, |_, window, cx| {
+            .update(cx, |_, window, cx| {
                 window.activate_window();
 
                 open_items(serialized_workspace, project_paths_to_open, window, cx)
             })?
             .await?;
 
-        window.update(&mut cx, |workspace, _, cx| {
+        window.update(cx, |workspace, _, cx| {
             for error in project_path_errors {
                 if error.error_code() == proto::ErrorCode::DevServerProjectPathDoesNotExist {
                     if let Some(path) = error.error_tag("path") {
@@ -6271,13 +6385,13 @@ pub fn join_in_room_project(
     cx: &mut App,
 ) -> Task<Result<()>> {
     let windows = cx.windows();
-    cx.spawn(|mut cx| async move {
+    cx.spawn(async move |cx| {
         let existing_workspace = windows.into_iter().find_map(|window_handle| {
             window_handle
                 .downcast::<Workspace>()
                 .and_then(|window_handle| {
                     window_handle
-                        .update(&mut cx, |workspace, _window, cx| {
+                        .update(cx, |workspace, _window, cx| {
                             if workspace.project().read(cx).remote_id() == Some(project_id) {
                                 Some(window_handle)
                             } else {
@@ -6293,10 +6407,10 @@ pub fn join_in_room_project(
         } else {
             let active_call = cx.update(|cx| ActiveCall::global(cx))?;
             let room = active_call
-                .read_with(&cx, |call, _| call.room().cloned())?
+                .read_with(cx, |call, _| call.room().cloned())?
                 .ok_or_else(|| anyhow!("not in a call"))?;
             let project = room
-                .update(&mut cx, |room, cx| {
+                .update(cx, |room, cx| {
                     room.join_project(
                         project_id,
                         app_state.languages.clone(),
@@ -6318,7 +6432,7 @@ pub fn join_in_room_project(
             })??
         };
 
-        workspace.update(&mut cx, |workspace, window, cx| {
+        workspace.update(cx, |workspace, window, cx| {
             cx.activate(true);
             window.activate_window();
 
@@ -6378,7 +6492,7 @@ pub fn reload(reload: &Reload, cx: &mut App) {
     }
 
     let binary_path = reload.binary_path.clone();
-    cx.spawn(|mut cx| async move {
+    cx.spawn(async move |cx| {
         if let Some(prompt) = prompt {
             let answer = prompt.await?;
             if answer != 0 {
@@ -6388,7 +6502,7 @@ pub fn reload(reload: &Reload, cx: &mut App) {
 
         // If the user cancels any save prompt, then keep the app open.
         for window in workspace_windows {
-            if let Ok(should_close) = window.update(&mut cx, |workspace, window, cx| {
+            if let Ok(should_close) = window.update(cx, |workspace, window, cx| {
                 workspace.prepare_to_close(CloseIntent::Quit, window, cx)
             }) {
                 if !should_close.await? {
@@ -8536,7 +8650,7 @@ mod tests {
                 cx: &mut App,
             ) -> Option<Task<gpui::Result<Entity<Self>>>> {
                 if path.path.extension().unwrap() == "png" {
-                    Some(cx.spawn(|mut cx| async move { cx.new(|_| TestPngItem {}) }))
+                    Some(cx.spawn(async move |cx| cx.new(|_| TestPngItem {})))
                 } else {
                     None
                 }
@@ -8607,7 +8721,7 @@ mod tests {
                 cx: &mut App,
             ) -> Option<Task<gpui::Result<Entity<Self>>>> {
                 if path.path.extension().unwrap() == "ipynb" {
-                    Some(cx.spawn(|mut cx| async move { cx.new(|_| TestIpynbItem {}) }))
+                    Some(cx.spawn(async move |cx| cx.new(|_| TestIpynbItem {})))
                 } else {
                     None
                 }

@@ -22,6 +22,8 @@ pub enum Color {
     ///
     /// A custom color specified by an HSLA value.
     Custom(Hsla),
+    /// A color used for all debugger UI elements.
+    Debugger,
     /// A color used to indicate a deleted item, such as a file removed from version control.
     Deleted,
     /// A color used for disabled UI elements or text, like a disabled button or menu item.
@@ -56,6 +58,16 @@ pub enum Color {
     Selected,
     /// A color used to indicate a successful operation or status.
     Success,
+    /// A version control color used to indicate a newly added file or content in version control.
+    VersionControlAdded,
+    /// A version control color used to indicate conflicting changes that need resolution.
+    VersionControlConflict,
+    /// A version control color used to indicate a file or content that has been deleted in version control.
+    VersionControlDeleted,
+    /// A version control color used to indicate files or content that is being ignored by version control.
+    VersionControlIgnored,
+    /// A version control color used to indicate modified files or content in version control.
+    VersionControlModified,
     /// A color used to indicate a warning condition.
     Warning,
 }
@@ -70,6 +82,7 @@ impl Color {
             Color::Modified => cx.theme().status().modified,
             Color::Conflict => cx.theme().status().conflict,
             Color::Ignored => cx.theme().status().ignored,
+            Color::Debugger => cx.theme().colors().debugger_accent,
             Color::Deleted => cx.theme().status().deleted,
             Color::Disabled => cx.theme().colors().text_disabled,
             Color::Hidden => cx.theme().status().hidden,
@@ -81,6 +94,11 @@ impl Color {
             Color::Error => cx.theme().status().error,
             Color::Selected => cx.theme().colors().text_accent,
             Color::Success => cx.theme().status().success,
+            Color::VersionControlAdded => cx.theme().colors().version_control_added,
+            Color::VersionControlConflict => cx.theme().colors().version_control_conflict,
+            Color::VersionControlDeleted => cx.theme().colors().version_control_deleted,
+            Color::VersionControlIgnored => cx.theme().colors().version_control_ignored,
+            Color::VersionControlModified => cx.theme().colors().version_control_modified,
             Color::Warning => cx.theme().status().warning,
             Color::Custom(color) => *color,
         }

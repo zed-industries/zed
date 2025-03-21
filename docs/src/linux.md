@@ -89,13 +89,11 @@ Linux works on a large variety of systems configured in many different ways. We 
 
 If you see an error like "/lib64/libc.so.6: version 'GLIBC_2.29' not found" it means that your distribution's version of glibc is too old. You can either upgrade your system, or [install Zed from source](./development/linux.md).
 
+### Graphics issues
+
 ### Zed fails to open windows
 
-### Zed is very slow
-
 Zed requires a GPU to run effectively. Under the hood, we use [Vulkan](https://www.vulkan.org/) to communicate with your GPU. If you are seeing problems with performance, or Zed fails to load, it is possible that Vulkan is the culprit.
-
-If you're using an AMD GPU, you might get a 'Broken Pipe' error. Try using the RADV or Mesa drivers. (See the following GitHub issue for more details: [#13880](https://github.com/zed-industries/zed/issues/13880)).
 
 If you see a notification saying `Zed failed to open a window: NoSupportedDeviceFound` this means that Vulkan cannot find a compatible GPU. You can begin troubleshooting Vulkan by installing the `vulkan-tools` package and running:
 
@@ -105,21 +103,24 @@ vkcube
 
 This should output a line describing your current graphics setup and show a rotating cube. If this does not work, you should be able to fix it by installing Vulkan compatible GPU drivers, however in some cases (for example running Linux on an Arm-based MacBook) there is no Vulkan support yet.
 
-If you see errors like `ERROR_INITIALIZATION_FAILED` or `GPU Crashed` or `ERROR_SURFACE_LOST_KHR` then you may be able to work around this by installing different drivers for your GPU, or by selecting a different GPU to run on. (See the following GitHub issue for more details: [#14225](https://github.com/zed-industries/zed/issues/14225))
+You can find out which graphics card Zed is using by looking in the Zed log (`~/.local/share/zed/logs/Zed.log`) for `Using GPU: ...`.
 
-As of Zed v0.146.x we log the selected GPU driver and you should see `Using GPU: ...` in the Zed log (`~/.local/share/zed/logs/Zed.log`).
+If you see errors like `ERROR_INITIALIZATION_FAILED` or `GPU Crashed` or `ERROR_SURFACE_LOST_KHR` then you may be able to work around this by installing different drivers for your GPU, or by selecting a different GPU to run on. (See [#14225](https://github.com/zed-industries/zed/issues/14225))
 
-If Zed is selecting your integrated GPU instead of your discrete GPU, you can fix this by exporting the environment variable `DRI_PRIME=1` before running Zed.
+On some systems the file `/etc/prime-discrete` can be used to enforce the use of a discrete GPU using [PRIME](https://wiki.archlinux.org/title/PRIME). Depending on the details of your setup, you may need to change the contents of this file to "on" (to force discrete graphics) or "off" (to force integrated graphics).
+
+On others, you may be able to the environment variable `DRI_PRIME=1` when running Zed to force the use of the discrete GPU.
+
+If you're using an AMD GPU and Zed crashes when selecting long lines, try setting the `ZED_PATH_SAMPLE_COUNT=0` environment variable. (See [#26143](https://github.com/zed-industries/zed/issues/26143))
+If you're using an AMD GPU, you might get a 'Broken Pipe' error. Try using the RADV or Mesa drivers. (See [#13880](https://github.com/zed-industries/zed/issues/13880))
 
 If you are using Mesa, and want more control over which GPU is selected you can run `MESA_VK_DEVICE_SELECT=list zed --foreground` to get a list of available GPUs and then export `MESA_VK_DEVICE_SELECT=xxxx:yyyy` to choose a specific device.
 
-If you are using `amdvlk` you may find that zed only opens when run with `sudo $(which zed)`. To fix this, remove the `amdvlk` and `lib32-amdvlk` packages and install mesa/vulkan instead. ([#14141](https://github.com/zed-industries/zed/issues/14141).
-
-If you have a discrete GPU and you are using [PRIME](https://wiki.archlinux.org/title/PRIME) (e.g. Pop_OS 24.04, ArchLinux, etc) you may be able to configure Zed to work by switching `/etc/prime-discrete` from 'off' to 'on' (or the reverse).
+If you are using `amdvlk` you may find that zed only opens when run with `sudo $(which zed)`. To fix this, remove the `amdvlk` and `lib32-amdvlk` packages and install mesa/vulkan instead. ([#14141](https://github.com/zed-industries/zed/issues/14141)).
 
 For more information, the [Arch guide to Vulkan](https://wiki.archlinux.org/title/Vulkan) has some good steps that translate well to most distributions.
 
-If Vulkan is configured correctly, and Zed is still slow for you, please [file an issue](https://github.com/zed-industries/zed) with as much information as possible.
+If Vulkan is configured correctly, and Zed is still not working for you, please [file an issue](https://github.com/zed-industries/zed) with as much information as possible.
 
 ### I can't open any files
 
@@ -153,20 +154,3 @@ If you are seeing "too many open files" then first try `sysctl fs.inotify`.
 - You should see that `max_user_watches` is 8000 or higher (you can change the limit with `sudo sysctl fs.inotify.max_user_watches=64000`). Zed needs one watch per directory in all your open projects + one per git repository + a handful more for settings, themes, keymaps, extensions.
 
 It is also possible that you are running out of file descriptors. You can check the limits with `ulimit` and update them by editing `/etc/security/limits.conf`.
-
-### FIPS Mode OpenSSL internal error {#fips}
-
-If your machine is running in FIPS mode (`cat /proc/sys/crypto/fips_enabled` is set to `1`) Zed may fail to start and output the following when launched with `zed --foreground`:
-
-```
-crypto/fips/fips.c:154: OpenSSL internal error: FATAL FIPS SELFTEST FAILURE
-```
-
-As a workaround, remove the bundled `libssl` and `libcrypto` libraries from the `zed.app/lib` directory:
-
-```
-rm ~/.local/zed.app/lib/libssl.so.1.1
-rm ~/.local/zed.app/lib/libcrypto.so.1.1
-```
-
-This will force zed to fallback to the system `libssl` and `libcrypto` libraries.

@@ -7,9 +7,46 @@ use handlebars::{Handlebars, RenderError};
 use language::{BufferSnapshot, LanguageName, Point};
 use parking_lot::Mutex;
 use serde::Serialize;
-use std::{ops::Range, path::PathBuf, sync::Arc, time::Duration};
+use std::{
+    ops::Range,
+    path::{Path, PathBuf},
+    sync::Arc,
+    time::Duration,
+};
 use text::LineEnding;
 use util::ResultExt;
+
+#[derive(Serialize)]
+pub struct AssistantSystemPromptContext {
+    pub worktrees: Vec<WorktreeInfoForSystemPrompt>,
+    pub has_rules: bool,
+}
+
+impl AssistantSystemPromptContext {
+    pub fn new(worktrees: Vec<WorktreeInfoForSystemPrompt>) -> Self {
+        let has_rules = worktrees
+            .iter()
+            .any(|worktree| worktree.rules_file.is_some());
+        Self {
+            worktrees,
+            has_rules,
+        }
+    }
+}
+
+#[derive(Serialize)]
+pub struct WorktreeInfoForSystemPrompt {
+    pub root_name: String,
+    pub abs_path: Arc<Path>,
+    pub rules_file: Option<RulesFile>,
+}
+
+#[derive(Serialize)]
+pub struct RulesFile {
+    pub rel_path: Arc<Path>,
+    pub abs_path: Arc<Path>,
+    pub text: String,
+}
 
 #[derive(Serialize)]
 pub struct ContentPromptDiagnosticContext {
@@ -214,6 +251,15 @@ impl PromptBuilder {
         }
 
         Ok(())
+    }
+
+    pub fn generate_assistant_system_prompt(
+        &self,
+        context: &AssistantSystemPromptContext,
+    ) -> Result<String, RenderError> {
+        self.handlebars
+            .lock()
+            .render("assistant_system_prompt", context)
     }
 
     pub fn generate_inline_transformation_prompt(

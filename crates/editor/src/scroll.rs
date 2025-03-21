@@ -223,7 +223,6 @@ impl ScrollManager {
         self.anchor.scroll_position(snapshot)
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn set_scroll_position(
         &mut self,
         scroll_position: gpui::Point<f32>,
@@ -298,7 +297,6 @@ impl ScrollManager {
         );
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn set_anchor(
         &mut self,
         anchor: ScrollAnchor,
@@ -343,12 +341,12 @@ impl ScrollManager {
         }
 
         if cx.default_global::<ScrollbarAutoHide>().0 {
-            self.hide_scrollbar_task = Some(cx.spawn_in(window, |editor, mut cx| async move {
+            self.hide_scrollbar_task = Some(cx.spawn_in(window, async move |editor, cx| {
                 cx.background_executor()
                     .timer(SCROLLBAR_SHOW_INTERVAL)
                     .await;
                 editor
-                    .update(&mut cx, |editor, cx| {
+                    .update(cx, |editor, cx| {
                         editor.scroll_manager.show_scrollbars = false;
                         cx.notify();
                     })
@@ -427,9 +425,9 @@ impl Editor {
         let opened_first_time = self.scroll_manager.visible_line_count.is_none();
         self.scroll_manager.visible_line_count = Some(lines);
         if opened_first_time {
-            cx.spawn_in(window, |editor, mut cx| async move {
+            cx.spawn_in(window, async move |editor, cx| {
                 editor
-                    .update(&mut cx, |editor, cx| {
+                    .update(cx, |editor, cx| {
                         editor.refresh_inlay_hints(InlayHintRefreshReason::NewLinesShown, cx)
                     })
                     .ok()

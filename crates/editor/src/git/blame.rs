@@ -363,14 +363,13 @@ impl GitBlame {
         let blame = self.project.read(cx).blame_buffer(&self.buffer, None, cx);
         let provider_registry = GitHostingProviderRegistry::default_global(cx);
 
-        self.task = cx.spawn(|this, mut cx| async move {
+        self.task = cx.spawn(async move |this, cx| {
             let result = cx
                 .background_spawn({
                     let snapshot = snapshot.clone();
                     async move {
                         let Some(Blame {
                             entries,
-                            permalinks,
                             messages,
                             remote_url,
                         }) = blame.await?
@@ -379,20 +378,15 @@ impl GitBlame {
                         };
 
                         let entries = build_blame_entry_sum_tree(entries, snapshot.max_point().row);
-                        let commit_details = parse_commit_messages(
-                            messages,
-                            remote_url,
-                            &permalinks,
-                            provider_registry,
-                        )
-                        .await;
+                        let commit_details =
+                            parse_commit_messages(messages, remote_url, provider_registry).await;
 
                         anyhow::Ok(Some((entries, commit_details)))
                     }
                 })
                 .await;
 
-            this.update(&mut cx, |this, cx| match result {
+            this.update(cx, |this, cx| match result {
                 Ok(None) => {
                     // Nothing to do, e.g. no repository found
                 }
@@ -423,12 +417,12 @@ impl GitBlame {
     }
 
     fn regenerate_on_edit(&mut self, cx: &mut Context<Self>) {
-        self.regenerate_on_edit_task = cx.spawn(|this, mut cx| async move {
+        self.regenerate_on_edit_task = cx.spawn(async move |this, cx| {
             cx.background_executor()
                 .timer(REGENERATE_ON_EDIT_DEBOUNCE_INTERVAL)
                 .await;
 
-            this.update(&mut cx, |this, cx| {
+            this.update(cx, |this, cx| {
                 this.generate(cx);
             })
         })
@@ -477,7 +471,6 @@ fn build_blame_entry_sum_tree(entries: Vec<BlameEntry>, max_row: u32) -> SumTree
 async fn parse_commit_messages(
     messages: impl IntoIterator<Item = (Oid, String)>,
     remote_url: Option<String>,
-    deprecated_permalinks: &HashMap<Oid, Url>,
     provider_registry: Arc<GitHostingProviderRegistry>,
 ) -> HashMap<Oid, ParsedCommitMessage> {
     let mut commit_details = HashMap::default();
@@ -495,11 +488,7 @@ async fn parse_commit_messages(
                 },
             ))
         } else {
-            // DEPRECATED (18 Apr 24): Sending permalinks over the wire is deprecated. Clients
-            // now do the parsing. This is here for backwards compatibility, so that
-            // when an old peer sends a client no `parsed_remote_url` but `deprecated_permalinks`,
-            // we fall back to that.
-            deprecated_permalinks.get(&oid).cloned()
+            None
         };
 
         let remote = parsed_remote_url

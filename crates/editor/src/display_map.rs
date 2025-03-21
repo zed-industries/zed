@@ -113,16 +113,13 @@ pub struct DisplayMap {
 }
 
 impl DisplayMap {
-    #[allow(clippy::too_many_arguments)]
     pub fn new(
         buffer: Entity<MultiBuffer>,
         font: Font,
         font_size: Pixels,
         wrap_width: Option<Pixels>,
-        show_excerpt_controls: bool,
         buffer_header_height: u32,
         excerpt_header_height: u32,
-        excerpt_footer_height: u32,
         fold_placeholder: FoldPlaceholder,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -135,13 +132,7 @@ impl DisplayMap {
         let (fold_map, snapshot) = FoldMap::new(snapshot);
         let (tab_map, snapshot) = TabMap::new(snapshot, tab_size);
         let (wrap_map, snapshot) = WrapMap::new(snapshot, font, font_size, wrap_width, cx);
-        let block_map = BlockMap::new(
-            snapshot,
-            show_excerpt_controls,
-            buffer_header_height,
-            excerpt_header_height,
-            excerpt_footer_height,
-        );
+        let block_map = BlockMap::new(snapshot, buffer_header_height, excerpt_header_height);
 
         cx.observe(&wrap_map, |_, _, cx| cx.notify()).detach();
 
@@ -555,10 +546,6 @@ impl DisplayMap {
     #[cfg(test)]
     pub fn is_rewrapping(&self, cx: &gpui::App) -> bool {
         self.wrap_map.read(cx).is_rewrapping()
-    }
-
-    pub fn show_excerpt_controls(&self) -> bool {
-        self.block_map.show_excerpt_controls()
     }
 }
 
@@ -1103,8 +1090,8 @@ impl DisplaySnapshot {
             .map(|(row, block)| (DisplayRow(row), block))
     }
 
-    pub fn sticky_header_excerpt(&self, row: DisplayRow) -> Option<StickyHeaderExcerpt<'_>> {
-        self.block_snapshot.sticky_header_excerpt(row.0)
+    pub fn sticky_header_excerpt(&self, row: f32) -> Option<StickyHeaderExcerpt<'_>> {
+        self.block_snapshot.sticky_header_excerpt(row)
     }
 
     pub fn block_for_id(&self, id: BlockId) -> Option<Block> {
@@ -1300,10 +1287,6 @@ impl DisplaySnapshot {
 
     pub fn buffer_header_height(&self) -> u32 {
         self.block_snapshot.buffer_header_height
-    }
-
-    pub fn excerpt_footer_height(&self) -> u32 {
-        self.block_snapshot.excerpt_footer_height
     }
 
     pub fn excerpt_header_height(&self) -> u32 {
@@ -1515,10 +1498,8 @@ pub mod tests {
                 font,
                 font_size,
                 wrap_width,
-                true,
                 buffer_start_excerpt_header_height,
                 excerpt_header_height,
-                0,
                 FoldPlaceholder::test(),
                 cx,
             )
@@ -1765,10 +1746,8 @@ pub mod tests {
                     font("Helvetica"),
                     font_size,
                     wrap_width,
-                    true,
                     1,
                     1,
-                    0,
                     FoldPlaceholder::test(),
                     cx,
                 )
@@ -1876,10 +1855,8 @@ pub mod tests {
                 font("Helvetica"),
                 font_size,
                 None,
-                true,
                 1,
                 1,
-                0,
                 FoldPlaceholder::test(),
                 cx,
             )
@@ -1939,8 +1916,6 @@ pub mod tests {
                 font("Helvetica"),
                 font_size,
                 None,
-                true,
-                1,
                 1,
                 1,
                 FoldPlaceholder::test(),
@@ -2033,8 +2008,6 @@ pub mod tests {
                 font("Helvetica"),
                 font_size,
                 None,
-                true,
-                1,
                 1,
                 1,
                 FoldPlaceholder::test(),
@@ -2135,10 +2108,8 @@ pub mod tests {
                 font("Courier"),
                 px(16.0),
                 None,
-                true,
                 1,
                 1,
-                0,
                 FoldPlaceholder::test(),
                 cx,
             )
@@ -2240,10 +2211,8 @@ pub mod tests {
                 font("Courier"),
                 px(16.0),
                 None,
-                true,
                 1,
                 1,
-                0,
                 FoldPlaceholder::test(),
                 cx,
             )
@@ -2329,10 +2298,8 @@ pub mod tests {
                 font("Courier"),
                 px(16.0),
                 None,
-                true,
                 1,
                 1,
-                0,
                 FoldPlaceholder::test(),
                 cx,
             )
@@ -2473,10 +2440,8 @@ pub mod tests {
                 font("Courier"),
                 font_size,
                 Some(px(40.0)),
-                true,
                 1,
                 1,
-                0,
                 FoldPlaceholder::test(),
                 cx,
             )
@@ -2557,8 +2522,6 @@ pub mod tests {
                 font("Courier"),
                 font_size,
                 None,
-                true,
-                1,
                 1,
                 1,
                 FoldPlaceholder::test(),
@@ -2683,10 +2646,8 @@ pub mod tests {
                 font("Helvetica"),
                 font_size,
                 None,
-                true,
                 1,
                 1,
-                0,
                 FoldPlaceholder::test(),
                 cx,
             );
@@ -2722,10 +2683,8 @@ pub mod tests {
                 font("Helvetica"),
                 font_size,
                 None,
-                true,
                 1,
                 1,
-                0,
                 FoldPlaceholder::test(),
                 cx,
             )
@@ -2799,10 +2758,8 @@ pub mod tests {
                 font("Helvetica"),
                 font_size,
                 None,
-                true,
                 1,
                 1,
-                0,
                 FoldPlaceholder::test(),
                 cx,
             )

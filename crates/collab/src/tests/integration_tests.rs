@@ -14,8 +14,6 @@ use client::{User, RECEIVE_TIMEOUT};
 use collections::{HashMap, HashSet};
 use fs::{FakeFs, Fs as _, RemoveOptions};
 use futures::{channel::mpsc, StreamExt as _};
-use prompt_store::PromptBuilder;
-
 use git::status::{FileStatus, StatusCode, TrackedStatus, UnmergedStatus, UnmergedStatusCode};
 use gpui::{
     px, size, App, BackgroundExecutor, Entity, Modifiers, MouseButton, MouseDownEvent,
@@ -30,11 +28,13 @@ use language::{
 };
 use lsp::LanguageServerId;
 use parking_lot::Mutex;
+use pretty_assertions::assert_eq;
 use project::{
     lsp_store::{FormatTrigger, LspFormatTarget},
     search::{SearchQuery, SearchResult},
     DiagnosticSummary, HoverBlockKind, Project, ProjectPath,
 };
+use prompt_store::PromptBuilder;
 use rand::prelude::*;
 use serde_json::json;
 use settings::SettingsStore;
@@ -983,7 +983,7 @@ async fn test_server_restarts(
     server.reset().await;
 
     // Users A and B reconnect to the call. User C has troubles reconnecting, so it leaves the room.
-    client_c.override_establish_connection(|_, cx| cx.spawn(|_| future::pending()));
+    client_c.override_establish_connection(|_, cx| cx.spawn(async |_| future::pending().await));
     executor.advance_clock(RECONNECT_TIMEOUT);
     assert_eq!(
         room_participants(&room_a, cx_a),
@@ -1156,9 +1156,9 @@ async fn test_server_restarts(
     server.reset().await;
 
     // Users A and B have troubles reconnecting, so they leave the room.
-    client_a.override_establish_connection(|_, cx| cx.spawn(|_| future::pending()));
-    client_b.override_establish_connection(|_, cx| cx.spawn(|_| future::pending()));
-    client_c.override_establish_connection(|_, cx| cx.spawn(|_| future::pending()));
+    client_a.override_establish_connection(|_, cx| cx.spawn(async |_| future::pending().await));
+    client_b.override_establish_connection(|_, cx| cx.spawn(async |_| future::pending().await));
+    client_c.override_establish_connection(|_, cx| cx.spawn(async |_| future::pending().await));
     executor.advance_clock(RECONNECT_TIMEOUT);
     assert_eq!(
         room_participants(&room_a, cx_a),
@@ -2623,13 +2623,13 @@ async fn test_git_diff_base_change(
     });
 
     // Create remote buffer
-    let buffer_remote_a = project_remote
+    let remote_buffer_a = project_remote
         .update(cx_b, |p, cx| p.open_buffer((worktree_id, "a.txt"), cx))
         .await
         .unwrap();
     let remote_unstaged_diff_a = project_remote
         .update(cx_b, |p, cx| {
-            p.open_unstaged_diff(buffer_remote_a.clone(), cx)
+            p.open_unstaged_diff(remote_buffer_a.clone(), cx)
         })
         .await
         .unwrap();
@@ -2637,7 +2637,7 @@ async fn test_git_diff_base_change(
     // Wait remote buffer to catch up to the new diff
     executor.run_until_parked();
     remote_unstaged_diff_a.read_with(cx_b, |diff, cx| {
-        let buffer = buffer_remote_a.read(cx);
+        let buffer = remote_buffer_a.read(cx);
         assert_eq!(
             diff.base_text_string().as_deref(),
             Some(staged_text.as_str())
@@ -2653,13 +2653,13 @@ async fn test_git_diff_base_change(
     // Open uncommitted changes on the guest, without opening them on the host first
     let remote_uncommitted_diff_a = project_remote
         .update(cx_b, |p, cx| {
-            p.open_uncommitted_diff(buffer_remote_a.clone(), cx)
+            p.open_uncommitted_diff(remote_buffer_a.clone(), cx)
         })
         .await
         .unwrap();
     executor.run_until_parked();
     remote_uncommitted_diff_a.read_with(cx_b, |diff, cx| {
-        let buffer = buffer_remote_a.read(cx);
+        let buffer = remote_buffer_a.read(cx);
         assert_eq!(
             diff.base_text_string().as_deref(),
             Some(committed_text.as_str())
@@ -2703,8 +2703,9 @@ async fn test_git_diff_base_change(
         );
     });
 
+    // Guest receives index text update
     remote_unstaged_diff_a.read_with(cx_b, |diff, cx| {
-        let buffer = buffer_remote_a.read(cx);
+        let buffer = remote_buffer_a.read(cx);
         assert_eq!(
             diff.base_text_string().as_deref(),
             Some(new_staged_text.as_str())
@@ -2718,7 +2719,7 @@ async fn test_git_diff_base_change(
     });
 
     remote_uncommitted_diff_a.read_with(cx_b, |diff, cx| {
-        let buffer = buffer_remote_a.read(cx);
+        let buffer = remote_buffer_a.read(cx);
         assert_eq!(
             diff.base_text_string().as_deref(),
             Some(new_committed_text.as_str())
@@ -2783,20 +2784,20 @@ async fn test_git_diff_base_change(
     });
 
     // Create remote buffer
-    let buffer_remote_b = project_remote
+    let remote_buffer_b = project_remote
         .update(cx_b, |p, cx| p.open_buffer((worktree_id, "sub/b.txt"), cx))
         .await
         .unwrap();
     let remote_unstaged_diff_b = project_remote
         .update(cx_b, |p, cx| {
-            p.open_unstaged_diff(buffer_remote_b.clone(), cx)
+            p.open_unstaged_diff(remote_buffer_b.clone(), cx)
         })
         .await
         .unwrap();
 
     executor.run_until_parked();
     remote_unstaged_diff_b.read_with(cx_b, |diff, cx| {
-        let buffer = buffer_remote_b.read(cx);
+        let buffer = remote_buffer_b.read(cx);
         assert_eq!(
             diff.base_text_string().as_deref(),
             Some(staged_text.as_str())
@@ -2832,7 +2833,7 @@ async fn test_git_diff_base_change(
     });
 
     remote_unstaged_diff_b.read_with(cx_b, |diff, cx| {
-        let buffer = buffer_remote_b.read(cx);
+        let buffer = remote_buffer_b.read(cx);
         assert_eq!(
             diff.base_text_string().as_deref(),
             Some(new_staged_text.as_str())
@@ -2846,7 +2847,7 @@ async fn test_git_diff_base_change(
     });
 }
 
-#[gpui::test]
+#[gpui::test(iterations = 10)]
 async fn test_git_branch_name(
     executor: BackgroundExecutor,
     cx_a: &mut TestAppContext,
@@ -2894,9 +2895,10 @@ async fn test_git_branch_name(
         let worktrees = project.visible_worktrees(cx).collect::<Vec<_>>();
         assert_eq!(worktrees.len(), 1);
         let worktree = worktrees[0].clone();
-        let root_entry = worktree.read(cx).snapshot().root_git_entry().unwrap();
+        let snapshot = worktree.read(cx).snapshot();
+        let repo = snapshot.repositories().first().unwrap();
         assert_eq!(
-            root_entry.branch().map(|branch| branch.name.to_string()),
+            repo.branch().map(|branch| branch.name.to_string()),
             branch_name
         );
     }
@@ -2957,15 +2959,38 @@ async fn test_git_status_sync(
         .insert_tree(
             "/dir",
             json!({
-            ".git": {},
-            "a.txt": "a",
-            "b.txt": "b",
+                ".git": {},
+                "a.txt": "a",
+                "b.txt": "b",
+                "c.txt": "c",
             }),
         )
         .await;
 
-    const A_TXT: &str = "a.txt";
-    const B_TXT: &str = "b.txt";
+    // Initially, a.txt is uncommitted, but present in the index,
+    // and b.txt is unmerged.
+    client_a.fs().set_head_for_repo(
+        "/dir/.git".as_ref(),
+        &[("b.txt".into(), "B".into()), ("c.txt".into(), "c".into())],
+    );
+    client_a.fs().set_index_for_repo(
+        "/dir/.git".as_ref(),
+        &[
+            ("a.txt".into(), "".into()),
+            ("b.txt".into(), "B".into()),
+            ("c.txt".into(), "c".into()),
+        ],
+    );
+    client_a.fs().set_unmerged_paths_for_repo(
+        "/dir/.git".as_ref(),
+        &[(
+            "b.txt".into(),
+            UnmergedStatus {
+                first_head: UnmergedStatusCode::Updated,
+                second_head: UnmergedStatusCode::Deleted,
+            },
+        )],
+    );
 
     const A_STATUS_START: FileStatus = FileStatus::Tracked(TrackedStatus {
         index_status: StatusCode::Added,
@@ -2975,14 +3000,6 @@ async fn test_git_status_sync(
         first_head: UnmergedStatusCode::Updated,
         second_head: UnmergedStatusCode::Deleted,
     });
-
-    client_a.fs().set_status_for_repo_via_git_operation(
-        Path::new("/dir/.git"),
-        &[
-            (Path::new(A_TXT), A_STATUS_START),
-            (Path::new(B_TXT), B_STATUS_START),
-        ],
-    );
 
     let (project_local, _worktree_id) = client_a.build_local_project("/dir", cx_a).await;
     let project_id = active_call_a
@@ -2999,7 +3016,7 @@ async fn test_git_status_sync(
 
     #[track_caller]
     fn assert_status(
-        file: &impl AsRef<Path>,
+        file: impl AsRef<Path>,
         status: Option<FileStatus>,
         project: &Project,
         cx: &App,
@@ -3013,13 +3030,15 @@ async fn test_git_status_sync(
     }
 
     project_local.read_with(cx_a, |project, cx| {
-        assert_status(&Path::new(A_TXT), Some(A_STATUS_START), project, cx);
-        assert_status(&Path::new(B_TXT), Some(B_STATUS_START), project, cx);
+        assert_status("a.txt", Some(A_STATUS_START), project, cx);
+        assert_status("b.txt", Some(B_STATUS_START), project, cx);
+        assert_status("c.txt", None, project, cx);
     });
 
     project_remote.read_with(cx_b, |project, cx| {
-        assert_status(&Path::new(A_TXT), Some(A_STATUS_START), project, cx);
-        assert_status(&Path::new(B_TXT), Some(B_STATUS_START), project, cx);
+        assert_status("a.txt", Some(A_STATUS_START), project, cx);
+        assert_status("b.txt", Some(B_STATUS_START), project, cx);
+        assert_status("c.txt", None, project, cx);
     });
 
     const A_STATUS_END: FileStatus = FileStatus::Tracked(TrackedStatus {
@@ -3028,30 +3047,42 @@ async fn test_git_status_sync(
     });
     const B_STATUS_END: FileStatus = FileStatus::Tracked(TrackedStatus {
         index_status: StatusCode::Deleted,
-        worktree_status: StatusCode::Unmodified,
+        worktree_status: StatusCode::Added,
+    });
+    const C_STATUS_END: FileStatus = FileStatus::Tracked(TrackedStatus {
+        index_status: StatusCode::Unmodified,
+        worktree_status: StatusCode::Modified,
     });
 
-    client_a.fs().set_status_for_repo_via_working_copy_change(
-        Path::new("/dir/.git"),
-        &[
-            (Path::new(A_TXT), A_STATUS_END),
-            (Path::new(B_TXT), B_STATUS_END),
-        ],
+    // Delete b.txt from the index, mark conflict as resolved,
+    // and modify c.txt in the working copy.
+    client_a.fs().set_index_for_repo(
+        "/dir/.git".as_ref(),
+        &[("a.txt".into(), "a".into()), ("c.txt".into(), "c".into())],
     );
+    client_a
+        .fs()
+        .set_unmerged_paths_for_repo("/dir/.git".as_ref(), &[]);
+    client_a
+        .fs()
+        .atomic_write("/dir/c.txt".into(), "CC".into())
+        .await
+        .unwrap();
 
     // Wait for buffer_local_a to receive it
     executor.run_until_parked();
 
     // Smoke test status reading
-
     project_local.read_with(cx_a, |project, cx| {
-        assert_status(&Path::new(A_TXT), Some(A_STATUS_END), project, cx);
-        assert_status(&Path::new(B_TXT), Some(B_STATUS_END), project, cx);
+        assert_status("a.txt", Some(A_STATUS_END), project, cx);
+        assert_status("b.txt", Some(B_STATUS_END), project, cx);
+        assert_status("c.txt", Some(C_STATUS_END), project, cx);
     });
 
     project_remote.read_with(cx_b, |project, cx| {
-        assert_status(&Path::new(A_TXT), Some(A_STATUS_END), project, cx);
-        assert_status(&Path::new(B_TXT), Some(B_STATUS_END), project, cx);
+        assert_status("a.txt", Some(A_STATUS_END), project, cx);
+        assert_status("b.txt", Some(B_STATUS_END), project, cx);
+        assert_status("c.txt", Some(C_STATUS_END), project, cx);
     });
 
     // And synchronization while joining
@@ -3059,8 +3090,9 @@ async fn test_git_status_sync(
     executor.run_until_parked();
 
     project_remote_c.read_with(cx_c, |project, cx| {
-        assert_status(&Path::new(A_TXT), Some(A_STATUS_END), project, cx);
-        assert_status(&Path::new(B_TXT), Some(B_STATUS_END), project, cx);
+        assert_status("a.txt", Some(A_STATUS_END), project, cx);
+        assert_status("b.txt", Some(B_STATUS_END), project, cx);
+        assert_status("c.txt", Some(C_STATUS_END), project, cx);
     });
 }
 
@@ -6740,7 +6772,7 @@ async fn test_remote_git_branches(
         .map(ToString::to_string)
         .collect::<HashSet<_>>();
 
-    let (project_a, worktree_id) = client_a.build_local_project("/project", cx_a).await;
+    let (project_a, _) = client_a.build_local_project("/project", cx_a).await;
 
     let project_id = active_call_a
         .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
@@ -6752,8 +6784,6 @@ async fn test_remote_git_branches(
     executor.run_until_parked();
 
     let repo_b = cx_b.update(|cx| project_b.read(cx).active_repository(cx).unwrap());
-
-    let root_path = ProjectPath::root_path(worktree_id);
 
     let branches_b = cx_b
         .update(|cx| repo_b.update(cx, |repository, _| repository.branches()))
@@ -6779,11 +6809,15 @@ async fn test_remote_git_branches(
 
     let host_branch = cx_a.update(|cx| {
         project_a.update(cx, |project, cx| {
-            project.worktree_store().update(cx, |worktree_store, cx| {
-                worktree_store
-                    .current_branch(root_path.clone(), cx)
-                    .unwrap()
-            })
+            project
+                .repositories(cx)
+                .values()
+                .next()
+                .unwrap()
+                .read(cx)
+                .current_branch()
+                .unwrap()
+                .clone()
         })
     });
 
@@ -6812,9 +6846,15 @@ async fn test_remote_git_branches(
 
     let host_branch = cx_a.update(|cx| {
         project_a.update(cx, |project, cx| {
-            project.worktree_store().update(cx, |worktree_store, cx| {
-                worktree_store.current_branch(root_path, cx).unwrap()
-            })
+            project
+                .repositories(cx)
+                .values()
+                .next()
+                .unwrap()
+                .read(cx)
+                .current_branch()
+                .unwrap()
+                .clone()
         })
     });
 

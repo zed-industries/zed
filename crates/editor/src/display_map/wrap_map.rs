@@ -198,9 +198,9 @@ impl WrapMap {
                     self.edits_since_sync = self.edits_since_sync.compose(&edits);
                 }
                 Err(wrap_task) => {
-                    self.background_task = Some(cx.spawn(|this, mut cx| async move {
+                    self.background_task = Some(cx.spawn(async move |this, cx| {
                         let (snapshot, edits) = wrap_task.await;
-                        this.update(&mut cx, |this, cx| {
+                        this.update(cx, |this, cx| {
                             this.snapshot = snapshot;
                             this.edits_since_sync = this
                                 .edits_since_sync
@@ -276,9 +276,9 @@ impl WrapMap {
                         self.edits_since_sync = self.edits_since_sync.compose(&output_edits);
                     }
                     Err(update_task) => {
-                        self.background_task = Some(cx.spawn(|this, mut cx| async move {
+                        self.background_task = Some(cx.spawn(async move |this, cx| {
                             let (snapshot, edits) = update_task.await;
-                            this.update(&mut cx, |this, cx| {
+                            this.update(cx, |this, cx| {
                                 this.snapshot = snapshot;
                                 this.edits_since_sync = this
                                     .edits_since_sync
@@ -983,6 +983,7 @@ impl Iterator for WrapRows<'_> {
                 buffer_row: None,
                 multibuffer_row: None,
                 diff_status,
+                expand_info: None,
             }
         } else {
             buffer_row

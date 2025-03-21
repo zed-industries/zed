@@ -8,9 +8,9 @@ use collections::BTreeMap;
 use extension::ExtensionHostProxy;
 use fs::{FakeFs, Fs, RealFs};
 use futures::{io::BufReader, AsyncReadExt, StreamExt};
-use gpui::{AppContext as _, SemanticVersion, TestAppContext};
+use gpui::{AppContext as _, SemanticVersion, SharedString, TestAppContext};
 use http_client::{FakeHttpClient, Response};
-use language::{LanguageMatcher, LanguageRegistry, LanguageServerBinaryStatus};
+use language::{BinaryStatus, LanguageMatcher, LanguageRegistry};
 use lsp::LanguageServerName;
 use node_runtime::NodeRuntime;
 use parking_lot::Mutex;
@@ -163,6 +163,7 @@ async fn test_extension_store(cx: &mut TestAppContext) {
                         slash_commands: BTreeMap::default(),
                         indexed_docs_providers: BTreeMap::default(),
                         snippets: None,
+                        capabilities: Vec::new(),
                     }),
                     dev: false,
                 },
@@ -191,6 +192,7 @@ async fn test_extension_store(cx: &mut TestAppContext) {
                         slash_commands: BTreeMap::default(),
                         indexed_docs_providers: BTreeMap::default(),
                         snippets: None,
+                        capabilities: Vec::new(),
                     }),
                     dev: false,
                 },
@@ -356,6 +358,7 @@ async fn test_extension_store(cx: &mut TestAppContext) {
                 slash_commands: BTreeMap::default(),
                 indexed_docs_providers: BTreeMap::default(),
                 snippets: None,
+                capabilities: Vec::new(),
             }),
             dev: false,
         },
@@ -660,18 +663,9 @@ async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
             status_updates.next().await.unwrap(),
         ],
         [
-            (
-                LanguageServerName("gleam".into()),
-                LanguageServerBinaryStatus::CheckingForUpdate
-            ),
-            (
-                LanguageServerName("gleam".into()),
-                LanguageServerBinaryStatus::Downloading
-            ),
-            (
-                LanguageServerName("gleam".into()),
-                LanguageServerBinaryStatus::None
-            )
+            (SharedString::new("gleam"), BinaryStatus::CheckingForUpdate),
+            (SharedString::new("gleam"), BinaryStatus::Downloading),
+            (SharedString::new("gleam"), BinaryStatus::None)
         ]
     );
 
@@ -710,6 +704,7 @@ async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
             project.completions(&buffer, 0, DEFAULT_COMPLETION_CONTEXT, cx)
         })
         .await
+        .unwrap()
         .unwrap()
         .into_iter()
         .map(|c| c.label.text)
@@ -777,6 +772,7 @@ fn init_test(cx: &mut TestAppContext) {
         let store = SettingsStore::test(cx);
         cx.set_global(store);
         release_channel::init(SemanticVersion::default(), cx);
+        extension::init(cx);
         theme::init(theme::LoadThemes::JustBase, cx);
         Project::init_settings(cx);
         ExtensionSettings::register(cx);

@@ -231,10 +231,10 @@ impl Markdown {
         });
 
         self.should_reparse = false;
-        self.pending_parse = Some(cx.spawn(|this, mut cx| {
+        self.pending_parse = Some(cx.spawn(async move |this, cx| {
             async move {
                 let parsed = parsed.await?;
-                this.update(&mut cx, |this, cx| {
+                this.update(cx, |this, cx| {
                     this.parsed_markdown = parsed;
                     this.pending_parse.take();
                     if this.should_reparse {
@@ -246,6 +246,7 @@ impl Markdown {
                 anyhow::Ok(())
             }
             .log_err()
+            .await
         }));
     }
 
@@ -690,7 +691,7 @@ impl Element for MarkdownElement {
                                     .flex()
                                     .border_1()
                                     .border_color(cx.theme().colors().border)
-                                    .rounded_md()
+                                    .rounded_sm()
                                     .when(self.style.table_overflow_x_scroll, |mut table| {
                                         table.style().restrict_scroll_to_axis = Some(true);
                                         table.overflow_x_scroll()
@@ -736,7 +737,7 @@ impl Element for MarkdownElement {
                                 markdown_end,
                             );
                         }
-                        _ => log::error!("unsupported markdown tag {:?}", tag),
+                        _ => log::debug!("unsupported markdown tag {:?}", tag),
                     }
                 }
                 MarkdownEvent::End(tag) => match tag {
@@ -795,7 +796,7 @@ impl Element for MarkdownElement {
                                                     code.clone(),
                                                 ));
 
-                                                cx.spawn(|this, cx| async move {
+                                                cx.spawn(async move |this, cx| {
                                                     cx.background_executor()
                                                         .timer(Duration::from_secs(2))
                                                         .await;
@@ -853,7 +854,7 @@ impl Element for MarkdownElement {
                     MarkdownTagEnd::TableCell => {
                         builder.pop_div();
                     }
-                    _ => log::error!("unsupported markdown tag end: {:?}", tag),
+                    _ => log::debug!("unsupported markdown tag end: {:?}", tag),
                 },
                 MarkdownEvent::Text(parsed) => {
                     builder.push_text(parsed, range.start);

@@ -77,8 +77,8 @@ impl SlashCommand for AutoCommand {
 
         let cx: &mut App = cx;
 
-        cx.spawn(|cx: gpui::AsyncApp| async move {
-            let task = project_index.read_with(&cx, |project_index, cx| {
+        cx.spawn(async move |cx| {
+            let task = project_index.read_with(cx, |project_index, cx| {
                 project_index.flush_summary_backlogs(cx)
             })?;
 
@@ -117,9 +117,9 @@ impl SlashCommand for AutoCommand {
             return Task::ready(Err(anyhow!("no project indexer")));
         };
 
-        let task = window.spawn(cx, |cx| async move {
+        let task = window.spawn(cx, async move |cx| {
             let summaries = project_index
-                .read_with(&cx, |project_index, cx| project_index.all_summaries(cx))?
+                .read_with(cx, |project_index, cx| project_index.all_summaries(cx))?
                 .await?;
 
             commands_for_summaries(&summaries, &original_prompt, &cx).await

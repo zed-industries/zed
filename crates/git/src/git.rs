@@ -5,22 +5,18 @@ mod remote;
 pub mod repository;
 pub mod status;
 
+pub use crate::hosting_provider::*;
+pub use crate::remote::*;
 use anyhow::{anyhow, Context as _, Result};
+pub use git2 as libgit;
 use gpui::action_with_deprecated_aliases;
 use gpui::actions;
-use gpui::impl_actions;
-use repository::PushOptions;
-use schemars::JsonSchema;
+pub use repository::WORK_DIRECTORY_REPO_PATH;
 use serde::{Deserialize, Serialize};
 use std::ffi::OsStr;
 use std::fmt;
 use std::str::FromStr;
 use std::sync::LazyLock;
-
-pub use crate::hosting_provider::*;
-pub use crate::remote::*;
-pub use git2 as libgit;
-pub use repository::WORK_DIRECTORY_REPO_PATH;
 
 pub static DOT_GIT: LazyLock<&'static OsStr> = LazyLock::new(|| OsStr::new(".git"));
 pub static GITIGNORE: LazyLock<&'static OsStr> = LazyLock::new(|| OsStr::new(".gitignore"));
@@ -30,13 +26,6 @@ pub static LFS_DIR: LazyLock<&'static OsStr> = LazyLock::new(|| OsStr::new("lfs"
 pub static COMMIT_MESSAGE: LazyLock<&'static OsStr> =
     LazyLock::new(|| OsStr::new("COMMIT_EDITMSG"));
 pub static INDEX_LOCK: LazyLock<&'static OsStr> = LazyLock::new(|| OsStr::new("index.lock"));
-
-#[derive(Debug, Copy, Clone, PartialEq, Deserialize, JsonSchema)]
-pub struct Push {
-    pub options: Option<PushOptions>,
-}
-
-impl_actions!(git, [Push]);
 
 actions!(
     git,
@@ -54,14 +43,20 @@ actions!(
         RestoreTrackedFiles,
         TrashUntrackedFiles,
         Uncommit,
+        Push,
+        ForcePush,
         Pull,
         Fetch,
         Commit,
-        ShowCommitEditor,
+        ExpandCommitEditor,
+        GenerateCommitMessage,
+        Init,
     ]
 );
+
 action_with_deprecated_aliases!(git, RestoreFile, ["editor::RevertFile"]);
 action_with_deprecated_aliases!(git, Restore, ["editor::RevertSelectedHunks"]);
+action_with_deprecated_aliases!(git, Blame, ["editor::ToggleGitBlame"]);
 
 /// The length of a Git short SHA.
 pub const SHORT_SHA_LENGTH: usize = 7;
