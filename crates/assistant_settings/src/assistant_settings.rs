@@ -4,10 +4,10 @@ use std::sync::Arc;
 
 use ::open_ai::Model as OpenAiModel;
 use anthropic::Model as AnthropicModel;
-use collections::HashMap;
 use deepseek::Model as DeepseekModel;
 use feature_flags::FeatureFlagAppExt;
 use gpui::{App, Pixels};
+use indexmap::IndexMap;
 use language_model::{CloudModel, LanguageModel};
 use lmstudio::Model as LmStudioModel;
 use ollama::Model as OllamaModel;
@@ -71,7 +71,7 @@ pub struct AssistantSettings {
     pub inline_alternatives: Vec<LanguageModelSelection>,
     pub using_outdated_settings_version: bool,
     pub enable_experimental_live_diffs: bool,
-    pub profiles: HashMap<Arc<str>, AgentProfile>,
+    pub profiles: IndexMap<Arc<str>, AgentProfile>,
 }
 
 impl AssistantSettings {
@@ -362,7 +362,7 @@ pub struct AssistantSettingsContentV2 {
     /// Default: false
     enable_experimental_live_diffs: Option<bool>,
     #[schemars(skip)]
-    profiles: Option<HashMap<Arc<str>, AgentProfileContent>>,
+    profiles: Option<IndexMap<Arc<str>, AgentProfileContent>>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
@@ -402,7 +402,7 @@ impl Default for LanguageModelSelection {
 #[derive(Debug, PartialEq, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct AgentProfileContent {
     pub name: Arc<str>,
-    pub tools: HashMap<Arc<str>, bool>,
+    pub tools: IndexMap<Arc<str>, bool>,
 }
 
 #[derive(Clone, Serialize, Deserialize, JsonSchema, Debug)]
@@ -509,7 +509,7 @@ impl Settings for AssistantSettings {
                             AgentProfile {
                                 name: profile.name.into(),
                                 tools: profile.tools,
-                                context_servers: HashMap::default(),
+                                context_servers: IndexMap::default(),
                             },
                         )
                     }));

@@ -2,14 +2,14 @@ use std::sync::Arc;
 
 use assistant_settings::{AgentProfile, AssistantSettings};
 use assistant_tool::{ToolSource, ToolWorkingSet};
-use collections::BTreeMap;
 use gpui::{Entity, Subscription};
+use indexmap::IndexMap;
 use scripting_tool::ScriptingTool;
 use settings::{Settings as _, SettingsStore};
 use ui::{prelude::*, ContextMenu, PopoverMenu, Tooltip};
 
 pub struct ToolSelector {
-    profiles: BTreeMap<Arc<str>, AgentProfile>,
+    profiles: IndexMap<Arc<str>, AgentProfile>,
     tools: Arc<ToolWorkingSet>,
     _subscriptions: Vec<Subscription>,
 }
@@ -21,7 +21,7 @@ impl ToolSelector {
         });
 
         let mut this = Self {
-            profiles: BTreeMap::default(),
+            profiles: IndexMap::default(),
             tools,
             _subscriptions: vec![settings_subscription],
         };
@@ -33,7 +33,7 @@ impl ToolSelector {
     fn refresh_profiles(&mut self, cx: &mut Context<Self>) {
         let settings = AssistantSettings::get_global(cx);
 
-        self.profiles = BTreeMap::from_iter(settings.profiles.clone());
+        self.profiles = settings.profiles.clone();
     }
 
     fn build_context_menu(
