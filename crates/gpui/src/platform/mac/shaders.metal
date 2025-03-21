@@ -18,8 +18,10 @@ float2 to_tile_position(float2 unit_vertex, AtlasTile tile,
                         constant Size_DevicePixels *atlas_size);
 float4 distance_from_clip_rect(float2 unit_vertex, Bounds_ScaledPixels bounds,
                                Bounds_ScaledPixels clip_bounds);
+float pick_corner_radius(float2 center_to_point, Corners_ScaledPixels corner_radii);
 float quad_sdf(float2 point, Bounds_ScaledPixels bounds,
                Corners_ScaledPixels corner_radii);
+float quad_sdf_impl(float2 center_to_point, float2 half_size, float corner_radius);
 float gaussian(float x, float sigma);
 float2 erf(float2 x);
 float blur_along_x(float x, float y, float sigma, float corner,
@@ -108,17 +110,11 @@ fragment float4 quad_fragment(QuadFragmentInput input [[stage_in]],
   }
 
   // Select corner radius based on quadrant
-  float corner_radius;
-  if (center_to_point.x < 0.) {
-    corner_radius = (center_to_point.y < 0.) ? quad.corner_radii.top_left : quad.corner_radii.bottom_left;
-  } else {
-    corner_radius = (center_to_point.y < 0.) ? quad.corner_radii.top_right : quad.corner_radii.bottom_right;
-  }
+  float corner_radius = pick_corner_radius(center_to_point, quad.corner_radii);
 
-  // Compute distance to outer edge
-  float2 rounded_edge_to_point = fabs(center_to_point) - half_size + corner_radius;
-  float distance = length(max(0., rounded_edge_to_point)) +
-                   min(0., max(rounded_edge_to_point.x, rounded_edge_to_point.y)) - corner_radius;
+  // Signed distance of the point to the quad's border - positive outside the
+  // border, and negative inside.
+  float distance = quad_sdf_impl(center_to_point, half_size, corner_radius);
 
   // Border handling
   float vertical_border = (center_to_point.x <= 0.) ? quad.border_widths.left : quad.border_widths.right;
@@ -764,34 +760,50 @@ float2 to_tile_position(float2 unit_vertex, AtlasTile tile,
          float2((float)atlas_size->width, (float)atlas_size->height);
 }
 
+// Selects corner radius based on quadrant.
+float pick_corner_radius(float2 center_to_point, Corners_ScaledPixels corner_radii) {
+  if (center_to_point.x < 0.) {
+    if (center_to_point.y < 0.) {
+      return corner_radii.top_left;
+    } else {
+      return corner_radii.bottom_left;
+    }
+  } else {
+    if (center_to_point.y < 0.) {
+      return corner_radii.top_right;
+    } else {
+      return corner_radii.bottom_right;
+    }
+  }
+}
+
+// Signed distance of the point to the quad's border - positive outside the
+// border, and negative inside.
 float quad_sdf(float2 point, Bounds_ScaledPixels bounds,
                Corners_ScaledPixels corner_radii) {
   float2 half_size = float2(bounds.size.width, bounds.size.height) / 2.;
   float2 center = float2(bounds.origin.x, bounds.origin.y) + half_size;
   float2 center_to_point = point - center;
-  float corner_radius;
-  if (center_to_point.x < 0.) {
-    if (center_to_point.y < 0.) {
-      corner_radius = corner_radii.top_left;
-    } else {
-      corner_radius = corner_radii.bottom_left;
-    }
-  } else {
-    if (center_to_point.y < 0.) {
-      corner_radius = corner_radii.top_right;
-    } else {
-      corner_radius = corner_radii.bottom_right;
-    }
-  }
+  float corner_radius = pick_corner_radius(center_to_point, corner_radii);
+  return quad_sdf_impl(center_to_point, half_size, corner_radius);
+}
 
-  float2 rounded_edge_to_point =
-      abs(center_to_point) - half_size + corner_radius;
-  float distance =
-      length(max(0., rounded_edge_to_point)) +
-      min(0., max(rounded_edge_to_point.x, rounded_edge_to_point.y)) -
-      corner_radius;
+float quad_sdf_impl(float2 center_to_point, float2 half_size, float corner_radius) {
+  // Vector from the point to the center of the rounded corner's circle, after
+  // mirroring this into the bottom right quadrant. This mirroring causes both
+  // x and y to be positive when the nearest point on the border is part of a
+  // rounded corner.
+  float2 arc_center_to_point = fabs(center_to_point) - half_size + corner_radius;
 
-  return distance;
+  // Signed distance of the point from a quad that is inset by corner_radius.
+  // It is negative inside this quad, and positive outside.
+  float signed_distance_to_radius_inset_quad =
+    // 0 inside the inset quad, and positive outside.
+    length(max(0., arc_center_to_point)) +
+    // 0 outside the inset quad, and negative inside.
+    min(0., max(arc_center_to_point.x, arc_center_to_point.y));
+
+  return signed_distance_to_radius_inset_quad - corner_radius;
 }
 
 // A standard gaussian function, used for weighting samples
