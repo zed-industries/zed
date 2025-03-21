@@ -1102,7 +1102,12 @@ impl Thread {
         tool: Arc<dyn Tool>,
         cx: &mut Context<'_, Thread>,
     ) {
-        let task = self.spawn_tool_use(tool_use_id.clone(), messages, input, tool, cx);
+        let task = if tool.name() == ScriptingTool::NAME {
+            let todo = (); // self.spawn_scripting_tool_use(tool_use_id.clone(), messages, input, tool, cx)
+            self.spawn_tool_use(tool_use_id.clone(), messages, input, tool, cx)
+        } else {
+            self.spawn_tool_use(tool_use_id.clone(), messages, input, tool, cx)
+        };
 
         self.tool_use
             .run_pending_tool(tool_use_id, ui_text.into(), task);
