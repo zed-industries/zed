@@ -2847,7 +2847,7 @@ async fn test_git_diff_base_change(
     });
 }
 
-#[gpui::test]
+#[gpui::test(iterations = 10)]
 async fn test_git_branch_name(
     executor: BackgroundExecutor,
     cx_a: &mut TestAppContext,

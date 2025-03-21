@@ -1590,10 +1590,10 @@ impl App {
             .insert(entity_id, window_invalidators);
     }
 
-    /// Get the name for this App.
+    /// Returns the name for this [`App`].
     #[cfg(any(test, feature = "test-support", debug_assertions))]
-    pub fn get_name(&self) -> &'static str {
-        self.name.as_ref().unwrap()
+    pub fn get_name(&self) -> Option<&'static str> {
+        self.name
     }
 
     /// Returns `true` if the platform file picker supports selecting a mix of files and directories.
