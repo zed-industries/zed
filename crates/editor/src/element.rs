@@ -57,7 +57,7 @@ use multi_buffer::{
     MultiBufferRow, RowInfo,
 };
 use project::{
-    debugger::breakpoint_store::{Breakpoint, BreakpointKind},
+    debugger::breakpoint_store::{Breakpoint, BreakpointKind, BreakpointState},
     project_settings::{self, GitGutterSetting, GitHunkStyleSetting, ProjectSettings},
 };
 use settings::Settings;
@@ -2093,7 +2093,7 @@ impl EditorElement {
                         return None;
                     }
 
-                    let button = editor.render_breakpoint(text_anchor, display_row, &bp.kind, cx);
+                    let button = editor.render_breakpoint(text_anchor, display_row, &bp, cx);
 
                     let button = prepaint_gutter_button(
                         button,
@@ -7039,6 +7039,7 @@ impl Element for EditorElement {
                                     );
                                     let breakpoint = Breakpoint {
                                         kind: BreakpointKind::Standard,
+                                        state: BreakpointState::Enabled,
                                     };
 
                                     (position, breakpoint)
