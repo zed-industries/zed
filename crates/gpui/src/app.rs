@@ -203,7 +203,7 @@ impl Application {
     }
 
     /// Returns a reference to the [`TextSystem`] associated with this app.
-    pub fn text_system(&self) -> Arc<TextSystem> {
+    pub fn text_system(&self) -> Rc<TextSystem> {
         self.0.borrow().text_system.clone()
     }
 
@@ -228,7 +228,7 @@ type NewEntityListener = Box<dyn FnMut(AnyEntity, &mut Option<&mut Window>, &mut
 pub struct App {
     pub(crate) this: Weak<AppCell>,
     pub(crate) platform: Rc<dyn Platform>,
-    text_system: Arc<TextSystem>,
+    text_system: Rc<TextSystem>,
     flushing_effects: bool,
     pending_updates: usize,
     pub(crate) actions: Rc<ActionRegistry>,
@@ -286,7 +286,7 @@ impl App {
             "must construct App on main thread"
         );
 
-        let text_system = Arc::new(TextSystem::new(platform.text_system()));
+        let text_system = Rc::new(TextSystem::new(platform.text_system()));
         let entities = EntityMap::new();
         let keyboard_layout = SharedString::from(platform.keyboard_layout());
 
@@ -1073,7 +1073,7 @@ impl App {
     }
 
     /// Accessor for the text system.
-    pub fn text_system(&self) -> &Arc<TextSystem> {
+    pub fn text_system(&self) -> &Rc<TextSystem> {
         &self.text_system
     }
 

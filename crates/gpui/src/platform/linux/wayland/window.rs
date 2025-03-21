@@ -3,7 +3,6 @@ use std::{
     ffi::c_void,
     ptr::NonNull,
     rc::Rc,
-    sync::Arc,
 };
 
 use blade_graphics as gpu;
@@ -960,7 +959,7 @@ impl PlatformWindow for WaylandWindow {
         state.surface.commit();
     }
 
-    fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas> {
+    fn sprite_atlas(&self) -> Rc<dyn PlatformAtlas> {
         let state = self.borrow();
         state.renderer.sprite_atlas().clone()
     }

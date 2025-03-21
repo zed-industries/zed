@@ -29,6 +29,7 @@ use std::{
     fmt::{Debug, Display, Formatter},
     hash::{Hash, Hasher},
     ops::Range,
+    rc::Rc,
     sync::Arc,
 };
 
@@ -295,11 +296,11 @@ impl TextSystem {
 pub struct WindowTextSystem {
     line_layout_cache: LineLayoutCache,
     #[deref]
-    text_system: Arc<TextSystem>,
+    text_system: Rc<TextSystem>,
 }
 
 impl WindowTextSystem {
-    pub(crate) fn new(text_system: Arc<TextSystem>) -> Self {
+    pub(crate) fn new(text_system: Rc<TextSystem>) -> Self {
         Self {
             line_layout_cache: LineLayoutCache::new(text_system.platform_text_system.clone()),
             text_system,

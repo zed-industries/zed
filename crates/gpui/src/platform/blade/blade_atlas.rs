@@ -7,12 +7,11 @@ use blade_graphics as gpu;
 use blade_util::{BufferBelt, BufferBeltDescriptor};
 use collections::FxHashMap;
 use etagere::BucketedAtlasAllocator;
-use parking_lot::Mutex;
-use std::{borrow::Cow, ops, sync::Arc};
+use std::{borrow::Cow, cell::RefCell, ops, sync::Arc};
 
 pub(crate) const PATH_TEXTURE_FORMAT: gpu::TextureFormat = gpu::TextureFormat::R16Float;
 
-pub(crate) struct BladeAtlas(Mutex<BladeAtlasState>);
+pub(crate) struct BladeAtlas(RefCell<BladeAtlasState>);
 
 struct PendingUpload {
     id: AtlasTextureId,
@@ -48,7 +47,7 @@ pub struct BladeTextureInfo {
 
 impl BladeAtlas {
     pub(crate) fn new(gpu: &Arc<gpu::Context>, path_sample_count: u32) -> Self {
-        BladeAtlas(Mutex::new(BladeAtlasState {
+        BladeAtlas(RefCell::new(BladeAtlasState {
             gpu: Arc::clone(gpu),
             upload_belt: BufferBelt::new(BufferBeltDescriptor {
                 memory: gpu::Memory::Upload,
@@ -64,12 +63,12 @@ impl BladeAtlas {
     }
 
     pub(crate) fn destroy(&self) {
-        self.0.lock().destroy();
+        self.0.borrow_mut().destroy();
     }
 
     pub(crate) fn clear_textures(&self, texture_kind: AtlasTextureKind) {
-        let mut lock = self.0.lock();
-        let textures = &mut lock.storage[texture_kind];
+        let mut blade_atlas = self.0.borrow_mut();
+        let textures = &mut blade_atlas.storage[texture_kind];
         for texture in textures.iter_mut() {
             texture.clear();
         }
@@ -82,25 +81,25 @@ impl BladeAtlas {
         texture_kind: AtlasTextureKind,
         gpu_encoder: &mut gpu::CommandEncoder,
     ) -> AtlasTile {
-        let mut lock = self.0.lock();
-        let tile = lock.allocate(size, texture_kind);
-        lock.flush_initializations(gpu_encoder);
+        let mut blade_atlas = self.0.borrow_mut();
+        let tile = blade_atlas.allocate(size, texture_kind);
+        blade_atlas.flush_initializations(gpu_encoder);
         tile
     }
 
     pub fn before_frame(&self, gpu_encoder: &mut gpu::CommandEncoder) {
-        let mut lock = self.0.lock();
-        lock.flush(gpu_encoder);
+        let mut blade_atlas = self.0.borrow_mut();
+        blade_atlas.flush(gpu_encoder);
     }
 
     pub fn after_frame(&self, sync_point: &gpu::SyncPoint) {
-        let mut lock = self.0.lock();
-        lock.upload_belt.flush(sync_point);
+        let mut blade_atlas = self.0.borrow_mut();
+        blade_atlas.upload_belt.flush(sync_point);
     }
 
     pub fn get_texture_info(&self, id: AtlasTextureId) -> BladeTextureInfo {
-        let lock = self.0.lock();
-        let texture = &lock.storage[id];
+        let blade_atlas = self.0.borrow_mut();
+        let texture = &blade_atlas.storage[id];
         let size = texture.allocator.size();
         BladeTextureInfo {
             size: gpu::Extent {
@@ -120,39 +119,46 @@ impl PlatformAtlas for BladeAtlas {
         key: &AtlasKey,
         build: &mut dyn FnMut() -> Result<Option<(Size<DevicePixels>, Cow<'a, [u8]>)>>,
     ) -> Result<Option<AtlasTile>> {
-        let mut lock = self.0.lock();
-        if let Some(tile) = lock.tiles_by_key.get(key) {
+        let mut blade_atlas = self.0.borrow_mut();
+        if let Some(tile) = blade_atlas.tiles_by_key.get(key) {
             Ok(Some(tile.clone()))
         } else {
             profiling::scope!("new tile");
             let Some((size, bytes)) = build()? else {
                 return Ok(None);
             };
-            let tile = lock.allocate(size, key.texture_kind());
-            lock.upload_texture(tile.texture_id, tile.bounds, &bytes);
-            lock.tiles_by_key.insert(key.clone(), tile.clone());
+            let tile = blade_atlas.allocate(size, key.texture_kind());
+            blade_atlas.upload_texture(tile.texture_id, tile.bounds, &bytes);
+            blade_atlas.tiles_by_key.insert(key.clone(), tile.clone());
             Ok(Some(tile))
         }
     }
 
     fn remove(&self, key: &AtlasKey) {
-        let mut lock = self.0.lock();
+        let mut blade_atlas = self.0.borrow_mut();
 
-        let Some(id) = lock.tiles_by_key.remove(key).map(|tile| tile.texture_id) else {
+        let Some(id) = blade_atlas
+            .tiles_by_key
+            .remove(key)
+            .map(|tile| tile.texture_id)
+        else {
             return;
         };
 
-        let Some(texture_slot) = lock.storage[id.kind].textures.get_mut(id.index as usize) else {
+        let Some(texture_slot) = blade_atlas.storage[id.kind]
+            .textures
+            .get_mut(id.index as usize)
+        else {
             return;
         };
 
         if let Some(mut texture) = texture_slot.take() {
             texture.decrement_ref_count();
             if texture.is_unreferenced() {
-                lock.storage[id.kind]
+                blade_atlas.storage[id.kind]
                     .free_list
                     .push(texture.id.index as usize);
-                texture.destroy(&lock.gpu);
+                texture.destroy(&blade_atlas.gpu);
             } else {
                 *texture_slot = Some(texture);
             }

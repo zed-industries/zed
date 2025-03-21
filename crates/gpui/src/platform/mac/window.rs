@@ -1117,7 +1117,7 @@ impl PlatformWindow for MacWindow {
         this.renderer.draw(scene);
     }
 
-    fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas> {
+    fn sprite_atlas(&self) -> Rc<dyn PlatformAtlas> {
         self.0.lock().renderer.sprite_atlas().clone()
     }
 

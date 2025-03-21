@@ -24,7 +24,7 @@ pub struct TestAppContext {
     #[doc(hidden)]
     pub dispatcher: TestDispatcher,
     test_platform: Rc<TestPlatform>,
-    text_system: Arc<TextSystem>,
+    text_system: Rc<TextSystem>,
     fn_name: Option<&'static str>,
     on_quit: Rc<RefCell<Vec<Box<dyn FnOnce() + 'static>>>>,
 }
@@ -120,7 +120,7 @@ impl TestAppContext {
         let platform = TestPlatform::new(background_executor.clone(), foreground_executor.clone());
         let asset_source = Arc::new(());
         let http_client = http_client::FakeHttpClient::with_404_response();
-        let text_system = Arc::new(TextSystem::new(platform.text_system()));
+        let text_system = Rc::new(TextSystem::new(platform.text_system()));
 
         Self {
             app: App::new_app(platform.clone(), asset_source, http_client),
@@ -262,7 +262,7 @@ impl TestAppContext {
     }
 
     /// returns the TextSystem
-    pub fn text_system(&self) -> &Arc<TextSystem> {
+    pub fn text_system(&self) -> &Rc<TextSystem> {
         &self.text_system
     }
 

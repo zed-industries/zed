@@ -412,7 +412,7 @@ pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn on_appearance_changed(&self, callback: Box<dyn FnMut()>);
     fn draw(&self, scene: &Scene);
     fn completed_frame(&self) {}
-    fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas>;
+    fn sprite_atlas(&self) -> Rc<dyn PlatformAtlas>;
 
     // macOS specific methods
     fn set_edited(&mut self, _edited: bool) {}
@@ -590,7 +590,7 @@ impl From<RenderImageParams> for AtlasKey {
     }
 }
 
-pub(crate) trait PlatformAtlas: Send + Sync {
+pub(crate) trait PlatformAtlas {
     fn get_or_insert_with<'a>(
         &self,
         key: &AtlasKey,
