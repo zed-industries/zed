@@ -112,7 +112,6 @@ impl ManifestTree {
         delegate: Arc<dyn LspAdapterDelegate>,
         cx: &mut App,
     ) -> BTreeMap<ManifestName, ProjectPath> {
-        dbg!(&path);
         debug_assert_eq!(delegate.worktree_id(), worktree_id);
         #[allow(clippy::mutable_key_type)]
         let mut roots = BTreeMap::from_iter(
@@ -155,7 +154,6 @@ impl ManifestTree {
                 continue;
             }
 
-            dbg!(&root_path);
             let depth = root_path
                 .as_ref()
                 .map(|root_path| {
@@ -167,7 +165,6 @@ impl ManifestTree {
                 .unwrap_or_else(|| path.components().count() + 1);
 
             if depth > 0 {
-                dbg!(manifest_name.as_ref());
                 let Some(provider) = ManifestProviders::global(cx).get(manifest_name.borrow())
                 else {
                     log::warn!("Manifest provider `{}` not found", manifest_name.as_ref());

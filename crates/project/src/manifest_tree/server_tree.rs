@@ -172,8 +172,8 @@ impl LanguageServerTree {
         self.get_with_adapters(path, adapters, delegate, cx)
     }
 
-    fn get_with_adapters<'a>(
-        &'a mut self,
+    fn get_with_adapters(
+        &mut self,
         path: ProjectPath,
         adapters: IndexMap<AdapterWrapper, (LspSettings, BTreeSet<LanguageName>)>,
         delegate: Arc<dyn LspAdapterDelegate>,
