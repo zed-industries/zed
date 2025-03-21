@@ -881,7 +881,14 @@ impl ActiveThread {
         let styled_message = match message.role {
             Role::User => v_flex()
                 .id(("message-container", ix))
-                .py_2()
+                .map(|this| {
+                    if first_message {
+                        this.pt_2()
+                    } else {
+                        this.pt_4()
+                    }
+                })
+                .pb_4()
                 .pl_2()
                 .pr_2p5()
                 .child(
@@ -991,7 +998,11 @@ impl ActiveThread {
                 ),
             Role::Assistant => v_flex()
                 .id(("message-container", ix))
-                .child(v_flex().py_2().px_4().child(message_content))
+                .ml_2()
+                .pl_2()
+                .border_l_1()
+                .border_color(cx.theme().colors().border_variant)
+                .child(message_content)
                 .when(
                     !tool_uses.is_empty() || !scripting_tool_uses.is_empty(),
                     |parent| {
@@ -1131,7 +1142,7 @@ impl ActiveThread {
                             )
                             .into_any_element(),
                         RenderedMessageSegment::Text(markdown) => {
-                            div().p_2p5().child(markdown.clone()).into_any_element()
+                            div().child(markdown.clone()).into_any_element()
                         }
                     },
                 ),
@@ -1305,7 +1316,7 @@ impl ActiveThread {
             _ => IconName::Terminal,
         };
 
-        div().px_4().child(
+        div().py_2().pr_4().child(
             v_flex()
                 .rounded_lg()
                 .border_1()
