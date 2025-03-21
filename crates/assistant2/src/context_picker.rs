@@ -568,7 +568,6 @@ fn render_fold_icon_button(
     editor: WeakEntity<Editor>,
 ) -> Arc<dyn Send + Sync + Fn(FoldId, Range<Anchor>, &mut App) -> AnyElement> {
     Arc::new({
-        let icon = icon.clone();
         move |fold_id, fold_range, cx| {
             let is_in_text_selection = editor.upgrade().is_some_and(|editor| {
                 editor.update(cx, |editor, cx| {
@@ -614,11 +613,7 @@ fn render_fold_icon_button(
                 .child(
                     h_flex()
                         .gap_1()
-                        .child(
-                            Icon::new(icon.clone())
-                                .size(IconSize::Small)
-                                .color(Color::Muted),
-                        )
+                        .child(Icon::new(icon).size(IconSize::Small).color(Color::Muted))
                         .child(
                             Label::new(label.clone())
                                 .size(LabelSize::Small)

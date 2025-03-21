@@ -10,7 +10,7 @@ use editor::{CompletionProvider, Editor, ExcerptId};
 use gpui::{App, Entity, Task, WeakEntity};
 use language::{Buffer, CodeLabel, HighlightId};
 use lsp::CompletionContext;
-use project::{Completion, CompletionIntent, WorktreeId};
+use project::{Completion, CompletionIntent, ProjectPath, WorktreeId};
 use rope::Point;
 use text::{Anchor, ToPoint};
 use ui::prelude::*;
@@ -236,7 +236,7 @@ impl CompletionProvider for ContextPickerCompletionProvider {
             let line_start = Point::new(position.row, 0);
             let mut lines = buffer.text_for_range(line_start..position).lines();
             let line = lines.next()?;
-            Some(MentionCompletion::try_parse(line)?)
+            MentionCompletion::try_parse(line)
         });
         let Some(state) = state else {
             return Task::ready(Ok(None));
@@ -394,12 +394,12 @@ fn insert_crease_callback(
                     let snapshot = editor.read(cx).buffer().read(cx).snapshot(cx);
 
                     if let Some((start, end)) = snapshot
-                        .anchor_in_excerpt(excerpt_id, range_to_replace.start.clone())
-                        .zip(snapshot.anchor_in_excerpt(excerpt_id, range_to_replace.end.clone()))
+                        .anchor_in_excerpt(excerpt_id, range_to_replace.start)
+                        .zip(snapshot.anchor_in_excerpt(excerpt_id, range_to_replace.end))
                     {
                         crate::context_picker::insert_crease_for_mention(
                             crease_text.clone(),
-                            crease_icon.clone(),
+                            crease_icon,
                             start..end,
                             editor.clone(),
                             window,
