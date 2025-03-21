@@ -499,24 +499,21 @@ impl Settings for AssistantSettings {
                 &mut settings.enable_experimental_live_diffs,
                 value.enable_experimental_live_diffs,
             );
-            merge(
-                &mut settings.profiles,
-                value.profiles.map(|profiles| {
-                    profiles
-                        .into_iter()
-                        .map(|(id, profile)| {
-                            (
-                                id,
-                                AgentProfile {
-                                    name: profile.name.into(),
-                                    tools: profile.tools,
-                                    context_servers: HashMap::default(),
-                                },
-                            )
-                        })
-                        .collect()
-                }),
-            );
+
+            if let Some(profiles) = value.profiles {
+                settings
+                    .profiles
+                    .extend(profiles.into_iter().map(|(id, profile)| {
+                        (
+                            id,
+                            AgentProfile {
+                                name: profile.name.into(),
+                                tools: profile.tools,
+                                context_servers: HashMap::default(),
+                            },
+                        )
+                    }));
+            }
         }
 
         Ok(settings)

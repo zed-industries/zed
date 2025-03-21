@@ -32,21 +32,8 @@ impl ToolSelector {
 
     fn refresh_profiles(&mut self, cx: &mut Context<Self>) {
         let settings = AssistantSettings::get_global(cx);
-        let mut profiles = BTreeMap::from_iter(settings.profiles.clone());
 
-        const READ_ONLY_ID: &str = "read-only";
-        let read_only = AgentProfile::read_only();
-        if !profiles.contains_key(READ_ONLY_ID) {
-            profiles.insert(READ_ONLY_ID.into(), read_only);
-        }
-
-        const CODE_WRITER_ID: &str = "code-writer";
-        let code_writer = AgentProfile::code_writer();
-        if !profiles.contains_key(CODE_WRITER_ID) {
-            profiles.insert(CODE_WRITER_ID.into(), code_writer);
-        }
-
-        self.profiles = profiles;
+        self.profiles = BTreeMap::from_iter(settings.profiles.clone());
     }
 
     fn build_context_menu(
