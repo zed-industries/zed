@@ -887,6 +887,12 @@ pub struct BracketPairConfig {
     pub disabled_scopes_by_bracket_ix: Vec<Vec<String>>,
 }
 
+impl BracketPairConfig {
+    pub fn is_closing_brace(&self, c: char) -> bool {
+        self.pairs.iter().any(|pair| pair.end.starts_with(c))
+    }
+}
+
 fn bracket_pair_config_json_schema(gen: &mut SchemaGenerator) -> Schema {
     Option::<Vec<BracketPairContent>>::json_schema(gen)
 }
