@@ -536,13 +536,13 @@ fn fs_quad(input: QuadVarying) -> @location(0) vec4<f32> {
                 t = L_top + L_arc + L_right + L_arc + L_bottom + ((theta - M_PI_F / 2.0) / (M_PI_F / 2.0)) * L_arc;
             } else {
                 // Straight regions
-                if (abs(center_to_point.x) < half_size.x - corner_radius) {
+                if (center_to_point.y < -half_size.y + quad.border_widths.top && abs(center_to_point.x) < half_size.x - corner_radius) {
                     // Top straight
                     t = center_to_point.x + half_size.x - quad.corner_radii.top_left;
-                } else if (abs(center_to_point.y) < half_size.y - corner_radius) {
+                } else if (center_to_point.x > half_size.x - quad.border_widths.right && abs(center_to_point.y) < half_size.y - corner_radius) {
                     // Right straight
                     t = L_top + L_arc + (center_to_point.y + half_size.y - quad.corner_radii.top_right);
-                } else if (abs(center_to_point.x) < half_size.x - corner_radius) {
+                } else if (center_to_point.y > half_size.y - quad.border_widths.bottom && abs(center_to_point.x) < half_size.x - corner_radius) {
                     // Bottom straight
                     t = L_top + L_arc + L_right + L_arc + (half_size.x - center_to_point.x - quad.corner_radii.bottom_right);
                 } else {
