@@ -1368,7 +1368,8 @@ impl ActiveThread {
                                 )
                                 .child({
                                     let (icon_name, color, animated) = match &tool_use.status {
-                                        ToolUseStatus::Pending => {
+                                        ToolUseStatus::Pending
+                                        | ToolUseStatus::NeedsConfirmation => {
                                             (IconName::Warning, Color::Warning, false)
                                         }
                                         ToolUseStatus::Running => {
@@ -1720,13 +1721,7 @@ impl ActiveThread {
         cx: &mut Context<Self>,
     ) {
         self.thread.update(cx, |thread, cx| {
-            thread.deny_tool_use(tool_use_id.clone());
-
-            cx.emit(ThreadEvent::ToolFinished {
-                tool_use_id,
-                pending_tool_use: None,
-                canceled: true,
-            });
+            thread.deny_tool_use(tool_use_id, cx);
         });
     }
 

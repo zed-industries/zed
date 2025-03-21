@@ -1562,13 +1562,19 @@ impl Thread {
         self.cumulative_token_usage.clone()
     }
 
-    pub fn deny_tool_use(&mut self, tool_use_id: LanguageModelToolUseId) {
+    pub fn deny_tool_use(&mut self, tool_use_id: LanguageModelToolUseId, cx: &mut Context<Self>) {
         self.tool_use.insert_tool_output(
-            tool_use_id,
+            tool_use_id.clone(),
             Err(anyhow::anyhow!(
                 "Permission to run tool action denied by user"
             )),
         );
+
+        cx.emit(ThreadEvent::ToolFinished {
+            tool_use_id,
+            pending_tool_use: None,
+            canceled: true,
+        });
     }
 }
 
