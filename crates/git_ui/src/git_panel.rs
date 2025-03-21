@@ -1767,8 +1767,7 @@ impl GitPanel {
                         return Ok(());
                     }
                 };
-                let fetch =
-                    repo.update(cx, |repo, cx| repo.fetch(fetch_options, askpass, cx))?;
+                let fetch = repo.update(cx, |repo, cx| repo.fetch(fetch_options, askpass, cx))?;
 
                 let remote_message = fetch.await?;
                 drop(guard);
@@ -1804,9 +1803,8 @@ impl GitPanel {
         let this = cx.weak_entity();
         window
             .spawn(cx, async move |cx| {
-                let fetch = repo.update(cx, |repo, cx| {
-                    repo.fetch(FetchOptions::All, askpass, cx)
-                })?;
+                let fetch =
+                    repo.update(cx, |repo, cx| repo.fetch(FetchOptions::All, askpass, cx))?;
 
                 let remote_message = fetch.await?;
                 drop(guard);

@@ -20,8 +20,8 @@ use git::{
     blame::Blame,
     parse_git_remote_url,
     repository::{
-        Branch, CommitDetails, DiffType, FetchOptions, GitRepository, GitRepositoryCheckpoint, PushOptions,
-        Remote, RemoteCommandOutput, RepoPath, ResetMode,
+        Branch, CommitDetails, DiffType, FetchOptions, GitRepository, GitRepositoryCheckpoint,
+        PushOptions, Remote, RemoteCommandOutput, RepoPath, ResetMode,
     },
     status::FileStatus,
     BuildPermalinkParams, GitHostingProviderRegistry,
