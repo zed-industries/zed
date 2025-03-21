@@ -1233,16 +1233,8 @@ impl ActiveThread {
         }) = self
             .thread
             .read(cx)
-            .tool_use
-            .pending_tool_uses()
-            .into_iter()
-            .find_map(|tool_use| {
-                if tool_use.id == tool_use_id {
-                    Some(tool_use.status.clone())
-                } else {
-                    None
-                }
-            })
+            .pending_tool(&tool_use_id)
+            .map(|tool_use| tool_use.status.clone())
         {
             self.thread.update(cx, |thread, cx| {
                 thread.run_tool(tool_use_id, ui_text, input, &messages, tool, cx);
@@ -1257,27 +1249,15 @@ impl ActiveThread {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self
-            .thread
-            .read(cx)
-            .tool_use
-            .pending_tool_uses()
-            .into_iter()
-            .any(|tool_use| tool_use.id == tool_use_id && tool_use.status.needs_confirmation())
-        {
-            self.thread.update(cx, |thread, cx| {
-                thread.tool_use.insert_tool_output(
-                    tool_use_id.clone(),
-                    Err(anyhow::anyhow!("Tool execution denied by user")),
-                );
+        self.thread.update(cx, |thread, cx| {
+            thread.deny_tool_use(tool_use_id.clone());
 
-                cx.emit(ThreadEvent::ToolFinished {
-                    tool_use_id,
-                    pending_tool_use: None,
-                    canceled: true,
-                });
+            cx.emit(ThreadEvent::ToolFinished {
+                tool_use_id,
+                pending_tool_use: None,
+                canceled: true,
             });
-        }
+        });
     }
 
     fn handle_open_rules(&mut self, _: &ClickEvent, window: &mut Window, cx: &mut Context<Self>) {
@@ -1308,64 +1288,60 @@ impl ActiveThread {
         cx: &'a mut Context<Self>,
     ) -> impl Iterator<Item = AnyElement> + 'a {
         let thread = self.thread.read(cx);
-        let pending_tools = thread.tool_use.pending_tool_uses();
 
-        pending_tools
-            .into_iter()
-            .filter(|tool| tool.status.needs_confirmation())
-            .map(|tool| {
-                div()
-                    .m_3()
-                    .p_2()
-                    .bg(cx.theme().colors().editor_background)
-                    .border_1()
-                    .border_color(cx.theme().colors().border)
-                    .rounded_lg()
-                    .child(
-                        v_flex()
-                            .gap_1()
-                            .child(
-                                v_flex()
-                                    .gap_0p5()
-                                    .child(
-                                        Label::new("The agent wants to run this action:")
-                                            .color(Color::Muted),
-                                    )
-                                    .child(div().p_3().child(Label::new(&tool.ui_text))),
-                            )
-                            .child(
-                                h_flex()
-                                    .gap_1()
-                                    .child({
-                                        let tool_id = tool.id.clone();
-                                        Button::new("allow-tool-action", "Allow").on_click(
-                                            cx.listener(move |this, event, window, cx| {
-                                                this.handle_allow_tool(
-                                                    tool_id.clone(),
-                                                    event,
-                                                    window,
-                                                    cx,
-                                                )
-                                            }),
-                                        )
-                                    })
-                                    .child({
-                                        let tool_id = tool.id.clone();
-                                        Button::new("deny-tool", "Deny").on_click(cx.listener(
-                                            move |this, event, window, cx| {
-                                                this.handle_deny_tool(
-                                                    tool_id.clone(),
-                                                    event,
-                                                    window,
-                                                    cx,
-                                                )
-                                            },
-                                        ))
-                                    }),
-                            ),
-                    )
-                    .into_any()
-            })
+        thread.tools_needing_confirmation().map(|tool| {
+            div()
+                .m_3()
+                .p_2()
+                .bg(cx.theme().colors().editor_background)
+                .border_1()
+                .border_color(cx.theme().colors().border)
+                .rounded_lg()
+                .child(
+                    v_flex()
+                        .gap_1()
+                        .child(
+                            v_flex()
+                                .gap_0p5()
+                                .child(
+                                    Label::new("The agent wants to run this action:")
+                                        .color(Color::Muted),
+                                )
+                                .child(div().p_3().child(Label::new(&tool.ui_text))),
+                        )
+                        .child(
+                            h_flex()
+                                .gap_1()
+                                .child({
+                                    let tool_id = tool.id.clone();
+                                    Button::new("allow-tool-action", "Allow").on_click(cx.listener(
+                                        move |this, event, window, cx| {
+                                            this.handle_allow_tool(
+                                                tool_id.clone(),
+                                                event,
+                                                window,
+                                                cx,
+                                            )
+                                        },
+                                    ))
+                                })
+                                .child({
+                                    let tool_id = tool.id.clone();
+                                    Button::new("deny-tool", "Deny").on_click(cx.listener(
+                                        move |this, event, window, cx| {
+                                            this.handle_deny_tool(
+                                                tool_id.clone(),
+                                                event,
+                                                window,
+                                                cx,
+                                            )
+                                        },
+                                    ))
+                                }),
+                        ),
+                )
+                .into_any()
+        })
     }
 }
 

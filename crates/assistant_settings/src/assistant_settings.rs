@@ -26,19 +26,6 @@ pub enum AssistantDockPosition {
     Bottom,
 }
 
-#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
-#[serde(rename_all = "snake_case")]
-pub enum RunDestructiveTools {
-    Always,
-    Ask,
-}
-
-impl Default for RunDestructiveTools {
-    fn default() -> Self {
-        RunDestructiveTools::Ask
-    }
-}
-
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
 #[serde(tag = "name", rename_all = "snake_case")]
 pub enum AssistantProviderContentV1 {
@@ -85,7 +72,7 @@ pub struct AssistantSettings {
     pub using_outdated_settings_version: bool,
     pub enable_experimental_live_diffs: bool,
     pub profiles: HashMap<Arc<str>, AgentProfile>,
-    pub run_destructive_tools: RunDestructiveTools,
+    pub always_allow_tool_actions: bool,
 }
 
 impl AssistantSettings {
@@ -187,7 +174,7 @@ impl AssistantSettingsContent {
                     inline_alternatives: None,
                     enable_experimental_live_diffs: None,
                     profiles: None,
-                    run_destructive_tools: None,
+                    always_allow_tool_actions: None,
                 },
                 VersionedAssistantSettingsContent::V2(settings) => settings.clone(),
             },
@@ -210,7 +197,7 @@ impl AssistantSettingsContent {
                 inline_alternatives: None,
                 enable_experimental_live_diffs: None,
                 profiles: None,
-                run_destructive_tools: None,
+                always_allow_tool_actions: None,
             },
         }
     }
@@ -341,7 +328,7 @@ impl Default for VersionedAssistantSettingsContent {
             inline_alternatives: None,
             enable_experimental_live_diffs: None,
             profiles: None,
-            run_destructive_tools: None,
+            always_allow_tool_actions: None,
         })
     }
 }
@@ -380,13 +367,11 @@ pub struct AssistantSettingsContentV2 {
     enable_experimental_live_diffs: Option<bool>,
     #[schemars(skip)]
     profiles: Option<HashMap<Arc<str>, AgentProfileContent>>,
-    /// Controls when tools are allowed to run if they might make
-    /// destructive changes such as writing to the filesystem.
-    /// - "always": Always allow tools to run (without needing confirmation)
-    /// - "ask": Pause and ask for confirmation before running tools that might make destructive changes
+    /// Whenever a tool action would normally wait for your confirmation
+    /// that you allow it, always choose to allow it.
     ///
-    /// Default: "ask"
-    run_destructive_tools: Option<RunDestructiveTools>,
+    /// Default: false
+    always_allow_tool_actions: Option<bool>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
@@ -542,8 +527,8 @@ impl Settings for AssistantSettings {
                 }),
             );
             merge(
-                &mut settings.run_destructive_tools,
-                value.run_destructive_tools,
+                &mut settings.always_allow_tool_actions,
+                value.always_allow_tool_actions,
             );
         }
 

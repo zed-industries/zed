@@ -3,7 +3,7 @@ use std::io::Write;
 use std::sync::Arc;
 
 use anyhow::{Context as _, Result};
-use assistant_settings::{AssistantSettings, RunDestructiveTools};
+use assistant_settings::AssistantSettings;
 use assistant_tool::{ActionLog, Tool, ToolWorkingSet};
 use chrono::{DateTime, Utc};
 use collections::{BTreeMap, HashMap, HashSet};
@@ -137,7 +137,7 @@ pub struct Thread {
     project: Entity<Project>,
     prompt_builder: Arc<PromptBuilder>,
     tools: Arc<ToolWorkingSet>,
-    pub tool_use: ToolUseState,
+    tool_use: ToolUseState,
     action_log: Entity<ActionLog>,
     last_restore_checkpoint: Option<LastRestoreCheckpoint>,
     scripting_session: Entity<ScriptingSession>,
@@ -288,6 +288,20 @@ impl Thread {
 
     pub fn tools(&self) -> &Arc<ToolWorkingSet> {
         &self.tools
+    }
+
+    pub fn pending_tool(&self, id: &LanguageModelToolUseId) -> Option<&PendingToolUse> {
+        self.tool_use
+            .pending_tool_uses()
+            .into_iter()
+            .find(|tool_use| &tool_use.id == id)
+    }
+
+    pub fn tools_needing_confirmation(&self) -> impl Iterator<Item = &PendingToolUse> {
+        self.tool_use
+            .pending_tool_uses()
+            .into_iter()
+            .filter(|tool| tool.status.needs_confirmation())
     }
 
     pub fn checkpoint_for_message(&self, id: MessageId) -> Option<ThreadCheckpoint> {
@@ -1022,29 +1036,25 @@ impl Thread {
 
         for tool_use in pending_tool_uses.iter() {
             if let Some(tool) = self.tools.tool(&tool_use.name, cx) {
-                let settings = AssistantSettings::get_global(cx);
-                match settings.run_destructive_tools {
-                    RunDestructiveTools::Ask if tool.needs_confirmation() => {
-                        self.tool_use.confirm_tool_use(
-                            tool_use.id.clone(),
-                            tool_use.ui_text.clone(),
-                            tool_use.input.clone(),
-                            messages.clone(),
-                            tool.clone(),
-                        );
-                    }
-                    // This is essentially `_ =>` but with exhaustive patterns so
-                    // we can know to revisit this if more variants ever get added.
-                    RunDestructiveTools::Always | RunDestructiveTools::Ask => {
-                        self.run_tool(
-                            tool_use.id.clone(),
-                            tool_use.ui_text.clone(),
-                            tool_use.input.clone(),
-                            &messages,
-                            tool,
-                            cx,
-                        );
-                    }
+                if tool.needs_confirmation()
+                    && !AssistantSettings::get_global(cx).always_allow_tool_actions
+                {
+                    self.tool_use.confirm_tool_use(
+                        tool_use.id.clone(),
+                        tool_use.ui_text.clone(),
+                        tool_use.input.clone(),
+                        messages.clone(),
+                        tool.clone(),
+                    );
+                } else {
+                    self.run_tool(
+                        tool_use.id.clone(),
+                        tool_use.ui_text.clone(),
+                        tool_use.input.clone(),
+                        &messages,
+                        tool,
+                        cx,
+                    );
                 }
             } else if let Some(tool) = self.tools.tool(&tool_use.name, cx) {
                 self.run_tool(
@@ -1363,6 +1373,15 @@ impl Thread {
 
     pub fn cumulative_token_usage(&self) -> TokenUsage {
         self.cumulative_token_usage.clone()
+    }
+
+    pub fn deny_tool_use(&mut self, tool_use_id: LanguageModelToolUseId) {
+        self.tool_use.insert_tool_output(
+            tool_use_id,
+            Err(anyhow::anyhow!(
+                "Permission to run tool action denied by user"
+            )),
+        );
     }
 }
 
