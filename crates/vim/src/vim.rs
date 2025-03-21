@@ -1571,7 +1571,7 @@ impl Vim {
                 }
                 _ => self.clear_operator(window, cx),
             },
-            Some(Operator::Mark) => self.create_mark(text, window, cx),
+            Some(Operator::Mark) => self.create_mark(text, true, window, cx),
             Some(Operator::RecordRegister) => {
                 self.record_register(text.chars().next().unwrap(), window, cx)
             }

@@ -19,7 +19,13 @@ use crate::{
 };
 
 impl Vim {
-    pub fn create_mark(&mut self, text: Arc<str>, window: &mut Window, cx: &mut Context<Self>) {
+    pub fn create_mark(
+        &mut self,
+        text: Arc<str>,
+        should_clear_operator: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         self.update_editor(window, cx, |vim, editor, window, cx| {
             let anchors = editor
                 .selections
@@ -29,7 +35,9 @@ impl Vim {
                 .collect::<Vec<_>>();
             vim.set_mark(text.to_string(), anchors, editor.buffer(), window, cx);
         });
-        self.clear_operator(window, cx);
+        if should_clear_operator {
+            self.clear_operator(window, cx);
+        }
     }
 
     // When handling an action, you must create visual marks if you will switch to normal
@@ -192,6 +200,7 @@ impl Vim {
                 vim.get_mark(&text, editor, window, cx)
             })
             .flatten();
+        self.create_mark("'".into(), false, window, cx);
         let anchors = match mark {
             None => None,
             Some(Mark::Local(anchors)) => Some(anchors),
