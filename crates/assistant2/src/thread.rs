@@ -1259,15 +1259,15 @@ impl Thread {
         tool: Arc<dyn Tool>,
         cx: &mut Context<'_, Thread>,
     ) {
-        let task = if tool.name() == ScriptingTool::NAME {
-            let todo = (); // self.spawn_scripting_tool_use(tool_use_id.clone(), messages, input, tool, cx)
-            self.spawn_tool_use(tool_use_id.clone(), messages, input, tool, cx)
+        if tool.name() == ScriptingTool::NAME {
+            let task = self.spawn_scripting_tool_use(tool_use_id.clone(), input, cx);
+            self.scripting_tool_use
+                .run_pending_tool(tool_use_id, ui_text.into(), task);
         } else {
-            self.spawn_tool_use(tool_use_id.clone(), messages, input, tool, cx)
-        };
-
-        self.tool_use
-            .run_pending_tool(tool_use_id, ui_text.into(), task);
+            let task = self.spawn_tool_use(tool_use_id.clone(), messages, input, tool, cx);
+            self.tool_use
+                .run_pending_tool(tool_use_id, ui_text.into(), task);
+        }
     }
 
     fn spawn_tool_use(
@@ -1294,6 +1294,60 @@ impl Thread {
                     .update(cx, |thread, cx| {
                         let pending_tool_use = thread
                             .tool_use
+                            .insert_tool_output(tool_use_id.clone(), output);
+
+                        cx.emit(ThreadEvent::ToolFinished {
+                            tool_use_id,
+                            pending_tool_use,
+                            canceled: false,
+                        });
+                    })
+                    .ok();
+            }
+        })
+    }
+
+    fn spawn_scripting_tool_use(
+        &mut self,
+        tool_use_id: LanguageModelToolUseId,
+        input: serde_json::Value,
+        cx: &mut Context<'_, Thread>,
+    ) -> Task<()> {
+        let task = match ScriptingTool::deserialize_input(input) {
+            Err(err) => Task::ready(Err(err.into())),
+            Ok(input) => {
+                let (script_id, script_task) =
+                    self.scripting_session.update(cx, move |session, cx| {
+                        session.run_script(input.lua_script, cx)
+                    });
+
+                let session = self.scripting_session.clone();
+                cx.spawn(async move |_, cx| {
+                    script_task.await;
+
+                    let message = session.read_with(cx, |session, _cx| {
+                        // Using a id to get the script output seems impractical.
+                        // Why not just include it in the Task result?
+                        // This is because we'll later report the script state as it runs,
+                        session
+                            .get(script_id)
+                            .output_message_for_llm()
+                            .expect("Script shouldn't still be running")
+                    })?;
+
+                    Ok(message)
+                })
+            }
+        };
+
+        cx.spawn({
+            let tool_use_id = tool_use_id.clone();
+            async move |thread, cx| {
+                let output = task.await;
+                thread
+                    .update(cx, |thread, cx| {
+                        let pending_tool_use = thread
+                            .scripting_tool_use
                             .insert_tool_output(tool_use_id.clone(), output);
 
                         cx.emit(ThreadEvent::ToolFinished {
