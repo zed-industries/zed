@@ -5999,10 +5999,6 @@ impl Editor {
     ) -> HashMap<DisplayRow, (Anchor, Breakpoint)> {
         let mut breakpoint_display_points = HashMap::default();
 
-        
-        
-        
-        
         let Some(breakpoint_store) = self.breakpoint_store.clone() else {
             return breakpoint_display_points;
         };
