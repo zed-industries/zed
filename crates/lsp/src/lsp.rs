@@ -1275,9 +1275,9 @@ impl LanguageServer {
                 name: String::default(),
             })
             .collect();
+        *workspace_folders = folders;
         let should_notify = !added.is_empty() || !removed.is_empty();
         if should_notify {
-            *workspace_folders = folders;
             drop(workspace_folders);
             let params = DidChangeWorkspaceFoldersParams {
                 event: WorkspaceFoldersChangeEvent { added, removed },
