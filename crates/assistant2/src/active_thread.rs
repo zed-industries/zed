@@ -471,8 +471,15 @@ impl ActiveThread {
 
                 for tool_use in tool_uses {
                     self.render_tool_use_label_markdown(
-                        tool_use.id,
+                        tool_use.id.clone(),
                         tool_use.ui_text.clone(),
+                        window,
+                        cx,
+                    );
+                    self.render_scripting_tool_use_markdown(
+                        tool_use.id,
+                        tool_use.name.as_ref(),
+                        tool_use.input.clone(),
                         window,
                         cx,
                     );
@@ -488,13 +495,6 @@ impl ActiveThread {
                     self.render_tool_use_label_markdown(
                         tool_use.id.clone(),
                         SharedString::from(tool_use.ui_text.clone()),
-                        window,
-                        cx,
-                    );
-                    self.render_scripting_tool_use_markdown(
-                        tool_use.id.clone(),
-                        tool_use.name.as_ref(),
-                        tool_use.input.clone(),
                         window,
                         cx,
                     );
