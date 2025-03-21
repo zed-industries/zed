@@ -1,9 +1,11 @@
+pub mod git_traversal;
+
 use crate::{
     buffer_store::{BufferStore, BufferStoreEvent},
     worktree_store::{WorktreeStore, WorktreeStoreEvent},
     Project, ProjectEnvironment, ProjectItem, ProjectPath,
 };
-use anyhow::{anyhow, Context as _, Result};
+use anyhow::{anyhow, bail, Context as _, Result};
 use askpass::{AskPassDelegate, AskPassSession};
 use buffer_diff::{BufferDiff, BufferDiffEvent};
 use client::ProjectId;
@@ -14,28 +16,35 @@ use futures::{
     future::{self, OptionFuture, Shared},
     FutureExt as _, StreamExt as _,
 };
-use git::repository::{DiffType, GitRepositoryCheckpoint};
 use git::{
+    blame::Blame,
+    parse_git_remote_url,
     repository::{
-        Branch, CommitDetails, GitRepository, PushOptions, Remote, RemoteCommandOutput, RepoPath,
-        ResetMode,
+        Branch, CommitDetails, DiffType, GitRepository, GitRepositoryCheckpoint, PushOptions,
+        Remote, RemoteCommandOutput, RepoPath, ResetMode,
     },
     status::FileStatus,
+    BuildPermalinkParams, GitHostingProviderRegistry,
 };
 use gpui::{
     App, AppContext, AsyncApp, Context, Entity, EventEmitter, SharedString, Subscription, Task,
     WeakEntity,
 };
-use language::{Buffer, BufferEvent, Language, LanguageRegistry};
+use language::{
+    proto::{deserialize_version, serialize_version},
+    Buffer, BufferEvent, Language, LanguageRegistry,
+};
 use parking_lot::Mutex;
 use rpc::{
     proto::{self, git_reset, ToProto, SSH_PROJECT_ID},
     AnyProtoClient, TypedEnvelope,
 };
+use serde::Deserialize;
 use settings::WorktreeId;
 use std::{
     collections::{hash_map, VecDeque},
     future::Future,
+    ops::Range,
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -49,6 +58,7 @@ use worktree::{
 pub struct GitStore {
     state: GitStoreState,
     buffer_store: Entity<BufferStore>,
+    _worktree_store: Entity<WorktreeStore>,
     repositories: HashMap<ProjectEntryId, Entity<Repository>>,
     active_repo_id: Option<ProjectEntryId>,
     #[allow(clippy::type_complexity)]
@@ -131,15 +141,16 @@ pub struct Repository {
     pub dot_git_abs_path: PathBuf,
     pub worktree_abs_path: Arc<Path>,
     pub is_from_single_file_worktree: bool,
-    pub git_repo: GitRepo,
     pub merge_message: Option<String>,
+    pub completed_scan_id: usize,
+    git_repo: RepositoryState,
     job_sender: mpsc::UnboundedSender<GitJob>,
     askpass_delegates: Arc<Mutex<HashMap<u64, AskPassDelegate>>>,
     latest_askpass_id: u64,
 }
 
 #[derive(Clone)]
-pub enum GitRepo {
+enum RepositoryState {
     Local(Arc<dyn GitRepository>),
     Remote {
         project_id: ProjectId,
@@ -179,7 +190,7 @@ impl GitStore {
         cx: &mut Context<Self>,
     ) -> Self {
         Self::new(
-            worktree_store,
+            worktree_store.clone(),
             buffer_store,
             GitStoreState::Local {
                 downstream_client: None,
@@ -198,7 +209,7 @@ impl GitStore {
         cx: &mut Context<Self>,
     ) -> Self {
         Self::new(
-            worktree_store,
+            worktree_store.clone(),
             buffer_store,
             GitStoreState::Remote {
                 upstream_client,
@@ -216,7 +227,7 @@ impl GitStore {
         cx: &mut Context<Self>,
     ) -> Self {
         Self::new(
-            worktree_store,
+            worktree_store.clone(),
             buffer_store,
             GitStoreState::Ssh {
                 upstream_client,
@@ -229,20 +240,21 @@ impl GitStore {
     }
 
     fn new(
-        worktree_store: &Entity<WorktreeStore>,
+        worktree_store: Entity<WorktreeStore>,
         buffer_store: Entity<BufferStore>,
         state: GitStoreState,
         cx: &mut Context<Self>,
     ) -> Self {
         let update_sender = Self::spawn_git_worker(cx);
         let _subscriptions = [
-            cx.subscribe(worktree_store, Self::on_worktree_store_event),
+            cx.subscribe(&worktree_store, Self::on_worktree_store_event),
             cx.subscribe(&buffer_store, Self::on_buffer_store_event),
         ];
 
         GitStore {
             state,
             buffer_store,
+            _worktree_store: worktree_store,
             repositories: HashMap::default(),
             active_repo_id: None,
             update_sender,
@@ -276,6 +288,8 @@ impl GitStore {
         client.add_entity_request_handler(Self::handle_open_unstaged_diff);
         client.add_entity_request_handler(Self::handle_open_uncommitted_diff);
         client.add_entity_message_handler(Self::handle_update_diff_bases);
+        client.add_entity_request_handler(Self::handle_get_permalink_to_line);
+        client.add_entity_request_handler(Self::handle_blame_buffer);
     }
 
     pub fn is_local(&self) -> bool {
@@ -511,6 +525,20 @@ impl GitStore {
         diff_state.read(cx).uncommitted_diff.as_ref()?.upgrade()
     }
 
+    pub fn project_path_git_status(
+        &self,
+        project_path: &ProjectPath,
+        cx: &App,
+    ) -> Option<FileStatus> {
+        let (repo, repo_path) = self.repository_and_path_for_project_path(project_path, cx)?;
+        Some(
+            repo.read(cx)
+                .repository_entry
+                .status_for_path(&repo_path)?
+                .status,
+        )
+    }
+
     pub fn checkpoint(&self, cx: &App) -> Task<Result<GitStoreCheckpoint>> {
         let mut dot_git_abs_paths = Vec::new();
         let mut checkpoints = Vec::new();
@@ -550,6 +578,172 @@ impl GitStore {
             future::try_join_all(tasks).await?;
             Ok(())
         })
+    }
+
+    pub fn blame_buffer(
+        &self,
+        buffer: &Entity<Buffer>,
+        version: Option<clock::Global>,
+        cx: &App,
+    ) -> Task<Result<Option<Blame>>> {
+        let buffer = buffer.read(cx);
+        let Some(file) = File::from_dyn(buffer.file()) else {
+            return Task::ready(Err(anyhow!("buffer has no file")));
+        };
+
+        match file.worktree.clone().read(cx) {
+            Worktree::Local(worktree) => {
+                let worktree = worktree.snapshot();
+                let blame_params = maybe!({
+                    let local_repo = match worktree.local_repo_for_path(&file.path) {
+                        Some(repo_for_path) => repo_for_path,
+                        None => return Ok(None),
+                    };
+
+                    let relative_path = local_repo
+                        .relativize(&file.path)
+                        .context("failed to relativize buffer path")?;
+
+                    let repo = local_repo.repo().clone();
+
+                    let content = match version {
+                        Some(version) => buffer.rope_for_version(&version).clone(),
+                        None => buffer.as_rope().clone(),
+                    };
+
+                    anyhow::Ok(Some((repo, relative_path, content)))
+                });
+
+                cx.spawn(async move |cx| {
+                    let Some((repo, relative_path, content)) = blame_params? else {
+                        return Ok(None);
+                    };
+                    repo.blame(relative_path.clone(), content, cx)
+                        .await
+                        .with_context(|| format!("Failed to blame {:?}", relative_path.0))
+                        .map(Some)
+                })
+            }
+            Worktree::Remote(worktree) => {
+                let buffer_id = buffer.remote_id();
+                let version = buffer.version();
+                let project_id = worktree.project_id();
+                let client = worktree.client();
+                cx.spawn(async move |_| {
+                    let response = client
+                        .request(proto::BlameBuffer {
+                            project_id,
+                            buffer_id: buffer_id.into(),
+                            version: serialize_version(&version),
+                        })
+                        .await?;
+                    Ok(deserialize_blame_buffer_response(response))
+                })
+            }
+        }
+    }
+
+    pub fn get_permalink_to_line(
+        &self,
+        buffer: &Entity<Buffer>,
+        selection: Range<u32>,
+        cx: &App,
+    ) -> Task<Result<url::Url>> {
+        let buffer = buffer.read(cx);
+        let Some(file) = File::from_dyn(buffer.file()) else {
+            return Task::ready(Err(anyhow!("buffer has no file")));
+        };
+
+        match file.worktree.read(cx) {
+            Worktree::Local(worktree) => {
+                let worktree_path = worktree.abs_path().clone();
+                let Some((repo_entry, repo)) =
+                    worktree.repository_for_path(&file.path).and_then(|entry| {
+                        let repo = worktree.get_local_repo(&entry)?.repo().clone();
+                        Some((entry, repo))
+                    })
+                else {
+                    // If we're not in a Git repo, check whether this is a Rust source
+                    // file in the Cargo registry (presumably opened with go-to-definition
+                    // from a normal Rust file). If so, we can put together a permalink
+                    // using crate metadata.
+                    if buffer
+                        .language()
+                        .is_none_or(|lang| lang.name() != "Rust".into())
+                    {
+                        return Task::ready(Err(anyhow!("no permalink available")));
+                    }
+                    let file_path = worktree_path.join(&file.path);
+                    return cx.spawn(async move |cx| {
+                        let provider_registry =
+                            cx.update(GitHostingProviderRegistry::default_global)?;
+                        get_permalink_in_rust_registry_src(provider_registry, file_path, selection)
+                            .map_err(|_| anyhow!("no permalink available"))
+                    });
+                };
+
+                let path = match repo_entry.relativize(&file.path) {
+                    Ok(RepoPath(path)) => path,
+                    Err(e) => return Task::ready(Err(e)),
+                };
+
+                let remote = repo_entry
+                    .branch()
+                    .and_then(|b| b.upstream.as_ref())
+                    .and_then(|b| b.remote_name())
+                    .unwrap_or("origin")
+                    .to_string();
+
+                cx.spawn(async move |cx| {
+                    let origin_url = repo
+                        .remote_url(&remote)
+                        .ok_or_else(|| anyhow!("remote \"{remote}\" not found"))?;
+
+                    let sha = repo
+                        .head_sha()
+                        .ok_or_else(|| anyhow!("failed to read HEAD SHA"))?;
+
+                    let provider_registry =
+                        cx.update(GitHostingProviderRegistry::default_global)?;
+
+                    let (provider, remote) =
+                        parse_git_remote_url(provider_registry, &origin_url)
+                            .ok_or_else(|| anyhow!("failed to parse Git remote URL"))?;
+
+                    let path = path
+                        .to_str()
+                        .ok_or_else(|| anyhow!("failed to convert path to string"))?;
+
+                    Ok(provider.build_permalink(
+                        remote,
+                        BuildPermalinkParams {
+                            sha: &sha,
+                            path,
+                            selection: Some(selection),
+                        },
+                    ))
+                })
+            }
+            Worktree::Remote(worktree) => {
+                let buffer_id = buffer.remote_id();
+                let project_id = worktree.project_id();
+                let client = worktree.client();
+                cx.spawn(async move |_| {
+                    let response = client
+                        .request(proto::GetPermalinkToLine {
+                            project_id,
+                            buffer_id: buffer_id.into(),
+                            selection: Some(proto::Range {
+                                start: selection.start as u64,
+                                end: selection.end as u64,
+                            }),
+                        })
+                        .await?;
+
+                    url::Url::parse(&response.permalink).context("failed to parse permalink")
+                })
+            }
+        }
     }
 
     fn downstream_client(&self) -> Option<(AnyProtoClient, ProjectId)> {
@@ -611,12 +805,12 @@ impl GitStore {
                             .and_then(|local_worktree| local_worktree.get_local_repo(repo_entry))
                             .map(|local_repo| {
                                 (
-                                    GitRepo::Local(local_repo.repo().clone()),
+                                    RepositoryState::Local(local_repo.repo().clone()),
                                     local_repo.merge_message.clone(),
                                 )
                             })
                             .or_else(|| {
-                                let git_repo = GitRepo::Remote {
+                                let git_repo = RepositoryState::Remote {
                                     project_id: self.project_id()?,
                                     client: self
                                         .upstream_client()
@@ -642,8 +836,9 @@ impl GitStore {
                             let existing_repo = existing_repo.clone();
                             existing_repo.update(cx, |existing_repo, _| {
                                 existing_repo.repository_entry = repo_entry.clone();
-                                if matches!(git_repo, GitRepo::Local { .. }) {
+                                if matches!(git_repo, RepositoryState::Local { .. }) {
                                     existing_repo.merge_message = merge_message;
+                                    existing_repo.completed_scan_id = worktree.completed_scan_id();
                                 }
                             });
                             existing_repo
@@ -666,6 +861,7 @@ impl GitStore {
                                 job_sender: self.update_sender.clone(),
                                 merge_message,
                                 commit_message_buffer: None,
+                                completed_scan_id: worktree.completed_scan_id(),
                             })
                         };
                         new_repositories.insert(repo_entry.work_directory_id(), repo);
@@ -992,13 +1188,21 @@ impl GitStore {
         Some(status.status)
     }
 
-    fn repository_and_path_for_buffer_id(
+    pub fn repository_and_path_for_buffer_id(
         &self,
         buffer_id: BufferId,
         cx: &App,
     ) -> Option<(Entity<Repository>, RepoPath)> {
         let buffer = self.buffer_store.read(cx).get(buffer_id)?;
-        let path = buffer.read(cx).project_path(cx)?;
+        let project_path = buffer.read(cx).project_path(cx)?;
+        self.repository_and_path_for_project_path(&project_path, cx)
+    }
+
+    pub fn repository_and_path_for_project_path(
+        &self,
+        path: &ProjectPath,
+        cx: &App,
+    ) -> Option<(Entity<Repository>, RepoPath)> {
         let mut result: Option<(Entity<Repository>, RepoPath)> = None;
         for repo_handle in self.repositories.values() {
             let repo = repo_handle.read(cx);
@@ -1572,7 +1776,7 @@ impl GitStore {
         Ok(proto::GitDiffResponse { diff })
     }
 
-    pub async fn handle_open_unstaged_diff(
+    async fn handle_open_unstaged_diff(
         this: Entity<Self>,
         request: TypedEnvelope<proto::OpenUnstagedDiff>,
         mut cx: AsyncApp,
@@ -1596,7 +1800,7 @@ impl GitStore {
         Ok(proto::OpenUnstagedDiffResponse { staged_text })
     }
 
-    pub async fn handle_open_uncommitted_diff(
+    async fn handle_open_uncommitted_diff(
         this: Entity<Self>,
         request: TypedEnvelope<proto::OpenUncommittedDiff>,
         mut cx: AsyncApp,
@@ -1657,7 +1861,7 @@ impl GitStore {
         })
     }
 
-    pub async fn handle_update_diff_bases(
+    async fn handle_update_diff_bases(
         this: Entity<Self>,
         request: TypedEnvelope<proto::UpdateDiffBases>,
         mut cx: AsyncApp,
@@ -1672,6 +1876,56 @@ impl GitStore {
                     })
                 }
             }
+        })
+    }
+
+    async fn handle_blame_buffer(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::BlameBuffer>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::BlameBufferResponse> {
+        let buffer_id = BufferId::new(envelope.payload.buffer_id)?;
+        let version = deserialize_version(&envelope.payload.version);
+        let buffer = this.read_with(&cx, |this, cx| {
+            this.buffer_store.read(cx).get_existing(buffer_id)
+        })??;
+        buffer
+            .update(&mut cx, |buffer, _| {
+                buffer.wait_for_version(version.clone())
+            })?
+            .await?;
+        let blame = this
+            .update(&mut cx, |this, cx| {
+                this.blame_buffer(&buffer, Some(version), cx)
+            })?
+            .await?;
+        Ok(serialize_blame_buffer_response(blame))
+    }
+
+    async fn handle_get_permalink_to_line(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::GetPermalinkToLine>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::GetPermalinkToLineResponse> {
+        let buffer_id = BufferId::new(envelope.payload.buffer_id)?;
+        // let version = deserialize_version(&envelope.payload.version);
+        let selection = {
+            let proto_selection = envelope
+                .payload
+                .selection
+                .context("no selection to get permalink for defined")?;
+            proto_selection.start as u32..proto_selection.end as u32
+        };
+        let buffer = this.read_with(&cx, |this, cx| {
+            this.buffer_store.read(cx).get_existing(buffer_id)
+        })??;
+        let permalink = this
+            .update(&mut cx, |this, cx| {
+                this.get_permalink_to_line(&buffer, selection, cx)
+            })?
+            .await?;
+        Ok(proto::GetPermalinkToLineResponse {
+            permalink: permalink.to_string(),
         })
     }
 
@@ -2052,9 +2306,13 @@ impl Repository {
         self.repository_entry.branch()
     }
 
+    pub fn status_for_path(&self, path: &RepoPath) -> Option<StatusEntry> {
+        self.repository_entry.status_for_path(path)
+    }
+
     fn send_job<F, Fut, R>(&self, job: F) -> oneshot::Receiver<R>
     where
-        F: FnOnce(GitRepo, AsyncApp) -> Fut + 'static,
+        F: FnOnce(RepositoryState, AsyncApp) -> Fut + 'static,
         Fut: Future<Output = R> + 'static,
         R: Send + 'static,
     {
@@ -2063,7 +2321,7 @@ impl Repository {
 
     fn send_keyed_job<F, Fut, R>(&self, key: Option<GitJobKey>, job: F) -> oneshot::Receiver<R>
     where
-        F: FnOnce(GitRepo, AsyncApp) -> Fut + 'static,
+        F: FnOnce(RepositoryState, AsyncApp) -> Fut + 'static,
         Fut: Future<Output = R> + 'static,
         R: Send + 'static,
     {
@@ -2178,6 +2436,13 @@ impl Repository {
         self.repository_entry.relativize(path).log_err()
     }
 
+    pub fn local_repository(&self) -> Option<Arc<dyn GitRepository>> {
+        match &self.git_repo {
+            RepositoryState::Local(git_repository) => Some(git_repository.clone()),
+            RepositoryState::Remote { .. } => None,
+        }
+    }
+
     pub fn open_commit_buffer(
         &mut self,
         languages: Option<Arc<LanguageRegistry>>,
@@ -2188,7 +2453,7 @@ impl Repository {
             return Task::ready(Ok(buffer));
         }
 
-        if let GitRepo::Remote {
+        if let RepositoryState::Remote {
             project_id,
             client,
             worktree_id,
@@ -2262,8 +2527,8 @@ impl Repository {
 
         self.send_job(|git_repo, _| async move {
             match git_repo {
-                GitRepo::Local(repo) => repo.checkout_files(commit, paths, env.await).await,
-                GitRepo::Remote {
+                RepositoryState::Local(repo) => repo.checkout_files(commit, paths, env.await).await,
+                RepositoryState::Remote {
                     project_id,
                     client,
                     worktree_id,
@@ -2298,11 +2563,11 @@ impl Repository {
         let env = self.worktree_environment(cx);
         self.send_job(|git_repo, _| async move {
             match git_repo {
-                GitRepo::Local(git_repo) => {
+                RepositoryState::Local(git_repo) => {
                     let env = env.await;
                     git_repo.reset(commit, reset_mode, env).await
                 }
-                GitRepo::Remote {
+                RepositoryState::Remote {
                     project_id,
                     client,
                     worktree_id,
@@ -2330,8 +2595,8 @@ impl Repository {
     pub fn show(&self, commit: String) -> oneshot::Receiver<Result<CommitDetails>> {
         self.send_job(|git_repo, cx| async move {
             match git_repo {
-                GitRepo::Local(git_repository) => git_repository.show(commit, cx).await,
-                GitRepo::Remote {
+                RepositoryState::Local(git_repository) => git_repository.show(commit, cx).await,
+                RepositoryState::Remote {
                     project_id,
                     client,
                     worktree_id,
@@ -2402,8 +2667,8 @@ impl Repository {
             this.update(cx, |this, _| {
                 this.send_job(|git_repo, cx| async move {
                     match git_repo {
-                        GitRepo::Local(repo) => repo.stage_paths(entries, env, cx).await,
-                        GitRepo::Remote {
+                        RepositoryState::Local(repo) => repo.stage_paths(entries, env, cx).await,
+                        RepositoryState::Remote {
                             project_id,
                             client,
                             worktree_id,
@@ -2473,8 +2738,8 @@ impl Repository {
             this.update(cx, |this, _| {
                 this.send_job(|git_repo, cx| async move {
                     match git_repo {
-                        GitRepo::Local(repo) => repo.unstage_paths(entries, env, cx).await,
-                        GitRepo::Remote {
+                        RepositoryState::Local(repo) => repo.unstage_paths(entries, env, cx).await,
+                        RepositoryState::Remote {
                             project_id,
                             client,
                             worktree_id,
@@ -2556,11 +2821,11 @@ impl Repository {
         let env = self.worktree_environment(cx);
         self.send_job(|git_repo, cx| async move {
             match git_repo {
-                GitRepo::Local(repo) => {
+                RepositoryState::Local(repo) => {
                     let env = env.await;
                     repo.commit(message, name_and_email, env, cx).await
                 }
-                GitRepo::Remote {
+                RepositoryState::Remote {
                     project_id,
                     client,
                     worktree_id,
@@ -2597,12 +2862,12 @@ impl Repository {
 
         self.send_job(move |git_repo, cx| async move {
             match git_repo {
-                GitRepo::Local(git_repository) => {
+                RepositoryState::Local(git_repository) => {
                     let askpass = AskPassSession::new(&executor, askpass).await?;
                     let env = env.await;
                     git_repository.fetch(askpass, env, cx).await
                 }
-                GitRepo::Remote {
+                RepositoryState::Remote {
                     project_id,
                     client,
                     worktree_id,
@@ -2648,7 +2913,7 @@ impl Repository {
 
         self.send_job(move |git_repo, cx| async move {
             match git_repo {
-                GitRepo::Local(git_repository) => {
+                RepositoryState::Local(git_repository) => {
                     let env = env.await;
                     let askpass = AskPassSession::new(&executor, askpass).await?;
                     git_repository
@@ -2662,7 +2927,7 @@ impl Repository {
                         )
                         .await
                 }
-                GitRepo::Remote {
+                RepositoryState::Remote {
                     project_id,
                     client,
                     worktree_id,
@@ -2712,14 +2977,14 @@ impl Repository {
 
         self.send_job(move |git_repo, cx| async move {
             match git_repo {
-                GitRepo::Local(git_repository) => {
+                RepositoryState::Local(git_repository) => {
                     let askpass = AskPassSession::new(&executor, askpass).await?;
                     let env = env.await;
                     git_repository
                         .pull(branch.to_string(), remote.to_string(), askpass, env, cx)
                         .await
                 }
-                GitRepo::Remote {
+                RepositoryState::Remote {
                     project_id,
                     client,
                     worktree_id,
@@ -2763,8 +3028,10 @@ impl Repository {
             Some(GitJobKey::WriteIndex(path.clone())),
             |git_repo, cx| async {
                 match git_repo {
-                    GitRepo::Local(repo) => repo.set_index_text(path, content, env.await, cx).await,
-                    GitRepo::Remote {
+                    RepositoryState::Local(repo) => {
+                        repo.set_index_text(path, content, env.await, cx).await
+                    }
+                    RepositoryState::Remote {
                         project_id,
                         client,
                         worktree_id,
@@ -2792,8 +3059,10 @@ impl Repository {
     ) -> oneshot::Receiver<Result<Vec<Remote>>> {
         self.send_job(|repo, cx| async move {
             match repo {
-                GitRepo::Local(git_repository) => git_repository.get_remotes(branch_name, cx).await,
-                GitRepo::Remote {
+                RepositoryState::Local(git_repository) => {
+                    git_repository.get_remotes(branch_name, cx).await
+                }
+                RepositoryState::Remote {
                     project_id,
                     client,
                     worktree_id,
@@ -2822,15 +3091,19 @@ impl Repository {
         })
     }
 
+    pub fn branch(&self) -> Option<&Branch> {
+        self.repository_entry.branch()
+    }
+
     pub fn branches(&self) -> oneshot::Receiver<Result<Vec<Branch>>> {
         self.send_job(|repo, cx| async move {
             match repo {
-                GitRepo::Local(git_repository) => {
+                RepositoryState::Local(git_repository) => {
                     let git_repository = git_repository.clone();
                     cx.background_spawn(async move { git_repository.branches().await })
                         .await
                 }
-                GitRepo::Remote {
+                RepositoryState::Remote {
                     project_id,
                     client,
                     worktree_id,
@@ -2859,8 +3132,8 @@ impl Repository {
     pub fn diff(&self, diff_type: DiffType, _cx: &App) -> oneshot::Receiver<Result<String>> {
         self.send_job(|repo, cx| async move {
             match repo {
-                GitRepo::Local(git_repository) => git_repository.diff(diff_type, cx).await,
-                GitRepo::Remote {
+                RepositoryState::Local(git_repository) => git_repository.diff(diff_type, cx).await,
+                RepositoryState::Remote {
                     project_id,
                     client,
                     worktree_id,
@@ -2892,10 +3165,10 @@ impl Repository {
     pub fn create_branch(&self, branch_name: String) -> oneshot::Receiver<Result<()>> {
         self.send_job(|repo, cx| async move {
             match repo {
-                GitRepo::Local(git_repository) => {
+                RepositoryState::Local(git_repository) => {
                     git_repository.create_branch(branch_name, cx).await
                 }
-                GitRepo::Remote {
+                RepositoryState::Remote {
                     project_id,
                     client,
                     worktree_id,
@@ -2919,10 +3192,10 @@ impl Repository {
     pub fn change_branch(&self, branch_name: String) -> oneshot::Receiver<Result<()>> {
         self.send_job(|repo, cx| async move {
             match repo {
-                GitRepo::Local(git_repository) => {
+                RepositoryState::Local(git_repository) => {
                     git_repository.change_branch(branch_name, cx).await
                 }
-                GitRepo::Remote {
+                RepositoryState::Remote {
                     project_id,
                     client,
                     worktree_id,
@@ -2946,8 +3219,10 @@ impl Repository {
     pub fn check_for_pushed_commits(&self) -> oneshot::Receiver<Result<Vec<SharedString>>> {
         self.send_job(|repo, cx| async move {
             match repo {
-                GitRepo::Local(git_repository) => git_repository.check_for_pushed_commit(cx).await,
-                GitRepo::Remote {
+                RepositoryState::Local(git_repository) => {
+                    git_repository.check_for_pushed_commit(cx).await
+                }
+                RepositoryState::Remote {
                     project_id,
                     client,
                     worktree_id,
@@ -2972,8 +3247,8 @@ impl Repository {
     pub fn checkpoint(&self) -> oneshot::Receiver<Result<GitRepositoryCheckpoint>> {
         self.send_job(|repo, cx| async move {
             match repo {
-                GitRepo::Local(git_repository) => git_repository.checkpoint(cx).await,
-                GitRepo::Remote { .. } => Err(anyhow!("not implemented yet")),
+                RepositoryState::Local(git_repository) => git_repository.checkpoint(cx).await,
+                RepositoryState::Remote { .. } => Err(anyhow!("not implemented yet")),
             }
         })
     }
@@ -2984,11 +3259,147 @@ impl Repository {
     ) -> oneshot::Receiver<Result<()>> {
         self.send_job(move |repo, cx| async move {
             match repo {
-                GitRepo::Local(git_repository) => {
+                RepositoryState::Local(git_repository) => {
                     git_repository.restore_checkpoint(checkpoint, cx).await
                 }
-                GitRepo::Remote { .. } => Err(anyhow!("not implemented yet")),
+                RepositoryState::Remote { .. } => Err(anyhow!("not implemented yet")),
             }
         })
     }
+}
+
+fn get_permalink_in_rust_registry_src(
+    provider_registry: Arc<GitHostingProviderRegistry>,
+    path: PathBuf,
+    selection: Range<u32>,
+) -> Result<url::Url> {
+    #[derive(Deserialize)]
+    struct CargoVcsGit {
+        sha1: String,
+    }
+
+    #[derive(Deserialize)]
+    struct CargoVcsInfo {
+        git: CargoVcsGit,
+        path_in_vcs: String,
+    }
+
+    #[derive(Deserialize)]
+    struct CargoPackage {
+        repository: String,
+    }
+
+    #[derive(Deserialize)]
+    struct CargoToml {
+        package: CargoPackage,
+    }
+
+    let Some((dir, cargo_vcs_info_json)) = path.ancestors().skip(1).find_map(|dir| {
+        let json = std::fs::read_to_string(dir.join(".cargo_vcs_info.json")).ok()?;
+        Some((dir, json))
+    }) else {
+        bail!("No .cargo_vcs_info.json found in parent directories")
+    };
+    let cargo_vcs_info = serde_json::from_str::<CargoVcsInfo>(&cargo_vcs_info_json)?;
+    let cargo_toml = std::fs::read_to_string(dir.join("Cargo.toml"))?;
+    let manifest = toml::from_str::<CargoToml>(&cargo_toml)?;
+    let (provider, remote) = parse_git_remote_url(provider_registry, &manifest.package.repository)
+        .ok_or_else(|| anyhow!("Failed to parse package.repository field of manifest"))?;
+    let path = PathBuf::from(cargo_vcs_info.path_in_vcs).join(path.strip_prefix(dir).unwrap());
+    let permalink = provider.build_permalink(
+        remote,
+        BuildPermalinkParams {
+            sha: &cargo_vcs_info.git.sha1,
+            path: &path.to_string_lossy(),
+            selection: Some(selection),
+        },
+    );
+    Ok(permalink)
+}
+
+fn serialize_blame_buffer_response(blame: Option<git::blame::Blame>) -> proto::BlameBufferResponse {
+    let Some(blame) = blame else {
+        return proto::BlameBufferResponse {
+            blame_response: None,
+        };
+    };
+
+    let entries = blame
+        .entries
+        .into_iter()
+        .map(|entry| proto::BlameEntry {
+            sha: entry.sha.as_bytes().into(),
+            start_line: entry.range.start,
+            end_line: entry.range.end,
+            original_line_number: entry.original_line_number,
+            author: entry.author.clone(),
+            author_mail: entry.author_mail.clone(),
+            author_time: entry.author_time,
+            author_tz: entry.author_tz.clone(),
+            committer: entry.committer_name.clone(),
+            committer_mail: entry.committer_email.clone(),
+            committer_time: entry.committer_time,
+            committer_tz: entry.committer_tz.clone(),
+            summary: entry.summary.clone(),
+            previous: entry.previous.clone(),
+            filename: entry.filename.clone(),
+        })
+        .collect::<Vec<_>>();
+
+    let messages = blame
+        .messages
+        .into_iter()
+        .map(|(oid, message)| proto::CommitMessage {
+            oid: oid.as_bytes().into(),
+            message,
+        })
+        .collect::<Vec<_>>();
+
+    proto::BlameBufferResponse {
+        blame_response: Some(proto::blame_buffer_response::BlameResponse {
+            entries,
+            messages,
+            remote_url: blame.remote_url,
+        }),
+    }
+}
+
+fn deserialize_blame_buffer_response(
+    response: proto::BlameBufferResponse,
+) -> Option<git::blame::Blame> {
+    let response = response.blame_response?;
+    let entries = response
+        .entries
+        .into_iter()
+        .filter_map(|entry| {
+            Some(git::blame::BlameEntry {
+                sha: git::Oid::from_bytes(&entry.sha).ok()?,
+                range: entry.start_line..entry.end_line,
+                original_line_number: entry.original_line_number,
+                committer_name: entry.committer,
+                committer_time: entry.committer_time,
+                committer_tz: entry.committer_tz,
+                committer_email: entry.committer_mail,
+                author: entry.author,
+                author_mail: entry.author_mail,
+                author_time: entry.author_time,
+                author_tz: entry.author_tz,
+                summary: entry.summary,
+                previous: entry.previous,
+                filename: entry.filename,
+            })
+        })
+        .collect::<Vec<_>>();
+
+    let messages = response
+        .messages
+        .into_iter()
+        .filter_map(|message| Some((git::Oid::from_bytes(&message.oid).ok()?, message.message)))
+        .collect::<HashMap<_, _>>();
+
+    Some(Blame {
+        entries,
+        messages,
+        remote_url: response.remote_url,
+    })
 }

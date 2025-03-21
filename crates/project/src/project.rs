@@ -3,7 +3,7 @@ mod color_extractor;
 pub mod connection_manager;
 pub mod debounced_delay;
 pub mod debugger;
-pub mod git;
+pub mod git_store;
 pub mod image_store;
 pub mod lsp_command;
 pub mod lsp_store;
@@ -24,11 +24,12 @@ mod direnv;
 mod environment;
 use buffer_diff::BufferDiff;
 pub use environment::{EnvironmentErrorMessage, ProjectEnvironmentEvent};
-use git::Repository;
+use git_store::Repository;
 pub mod search_history;
 mod yarn;
 
-use crate::git::GitStore;
+use crate::git_store::GitStore;
+pub use git_store::git_traversal::{ChildEntriesGitIter, GitEntry, GitEntryRef, GitTraversal};
 
 use anyhow::{anyhow, Context as _, Result};
 use buffer_store::{BufferStore, BufferStoreEvent};
@@ -55,7 +56,7 @@ use futures::{
 pub use image_store::{ImageItem, ImageStore};
 use image_store::{ImageItemEvent, ImageStoreEvent};
 
-use ::git::{blame::Blame, repository::GitRepository, status::FileStatus};
+use ::git::{blame::Blame, status::FileStatus};
 use gpui::{
     AnyEntity, App, AppContext, AsyncApp, BorrowAppContext, Context, Entity, EventEmitter, Hsla,
     SharedString, Task, WeakEntity, Window,
@@ -1768,8 +1769,9 @@ impl Project {
         project_path: &ProjectPath,
         cx: &App,
     ) -> Option<FileStatus> {
-        self.worktree_for_id(project_path.worktree_id, cx)
-            .and_then(|worktree| worktree.read(cx).status_for_file(&project_path.path))
+        self.git_store
+            .read(cx)
+            .project_path_git_status(project_path, cx)
     }
 
     pub fn visibility_for_paths(
@@ -4049,19 +4051,13 @@ impl Project {
         )
     }
 
-    pub fn get_first_worktree_root_repo(&self, cx: &App) -> Option<Arc<dyn GitRepository>> {
-        let worktree = self.visible_worktrees(cx).next()?.read(cx).as_local()?;
-        let root_entry = worktree.root_git_entry()?;
-        worktree.get_local_repo(&root_entry)?.repo().clone().into()
-    }
-
     pub fn blame_buffer(
         &self,
         buffer: &Entity<Buffer>,
         version: Option<clock::Global>,
         cx: &App,
     ) -> Task<Result<Option<Blame>>> {
-        self.buffer_store.read(cx).blame_buffer(buffer, version, cx)
+        self.git_store.read(cx).blame_buffer(buffer, version, cx)
     }
 
     pub fn get_permalink_to_line(
@@ -4070,7 +4066,7 @@ impl Project {
         selection: Range<u32>,
         cx: &App,
     ) -> Task<Result<url::Url>> {
-        self.buffer_store
+        self.git_store
             .read(cx)
             .get_permalink_to_line(buffer, selection, cx)
     }

@@ -12,7 +12,6 @@ use futures::{
     future::{BoxFuture, Shared},
     FutureExt, SinkExt,
 };
-use git::repository::Branch;
 use gpui::{
     App, AppContext as _, AsyncApp, Context, Entity, EntityId, EventEmitter, Task, WeakEntity,
 };
@@ -132,14 +131,6 @@ impl WorktreeStore {
     pub fn worktree_for_id(&self, id: WorktreeId, cx: &App) -> Option<Entity<Worktree>> {
         self.worktrees()
             .find(|worktree| worktree.read(cx).id() == id)
-    }
-
-    pub fn current_branch(&self, repository: ProjectPath, cx: &App) -> Option<Branch> {
-        self.worktree_for_id(repository.worktree_id, cx)?
-            .read(cx)
-            .git_entry(repository.path)?
-            .branch()
-            .cloned()
     }
 
     pub fn worktree_for_entry(
