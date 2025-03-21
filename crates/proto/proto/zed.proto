@@ -2503,6 +2503,10 @@ message SlashCommandOutputSection {
     optional string metadata = 4;
 }
 
+message ThoughtProcessOutputSection {
+    AnchorRange range = 1;
+}
+
 message ContextOperation {
     oneof variant {
         InsertMessage insert_message = 1;
@@ -2512,6 +2516,7 @@ message ContextOperation {
         SlashCommandStarted slash_command_started = 6;
         SlashCommandOutputSectionAdded slash_command_output_section_added = 7;
         SlashCommandCompleted slash_command_completed = 8;
+        ThoughtProcessOutputSectionAdded thought_process_output_section_added = 9;
     }
 
     reserved 4;
@@ -2554,6 +2559,12 @@ message ContextOperation {
         LamportTimestamp timestamp = 3;
         optional string error_message = 4;
         repeated VectorClockEntry version = 5;
+    }
+
+    message ThoughtProcessOutputSectionAdded {
+        LamportTimestamp timestamp = 1;
+        ThoughtProcessOutputSection section = 2;
+        repeated VectorClockEntry version = 3;
     }
 
     message BufferOperation {
