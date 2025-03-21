@@ -2786,7 +2786,7 @@ impl GitPanel {
                     panel_button(change_string)
                         .color(Color::Muted)
                         .tooltip(Tooltip::for_action_title_in(
-                            "Open diff",
+                            "Open Diff",
                             &Diff,
                             &self.focus_handle,
                         ))
