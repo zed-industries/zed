@@ -4057,7 +4057,7 @@ impl Project {
         version: Option<clock::Global>,
         cx: &App,
     ) -> Task<Result<Option<Blame>>> {
-        self.buffer_store.read(cx).blame_buffer(buffer, version, cx)
+        self.git_store.read(cx).blame_buffer(buffer, version, cx)
     }
 
     pub fn get_permalink_to_line(

@@ -17,6 +17,7 @@ use futures::{
     FutureExt as _, StreamExt as _,
 };
 use git::{
+    blame::Blame,
     parse_git_remote_url,
     repository::{
         Branch, CommitDetails, DiffType, GitRepository, GitRepositoryCheckpoint, PushOptions,
@@ -29,7 +30,10 @@ use gpui::{
     App, AppContext, AsyncApp, Context, Entity, EventEmitter, SharedString, Subscription, Task,
     WeakEntity,
 };
-use language::{Buffer, BufferEvent, Language, LanguageRegistry};
+use language::{
+    proto::{deserialize_version, serialize_version},
+    Buffer, BufferEvent, Language, LanguageRegistry,
+};
 use parking_lot::Mutex;
 use rpc::{
     proto::{self, git_reset, ToProto, SSH_PROJECT_ID},
@@ -285,6 +289,7 @@ impl GitStore {
         client.add_entity_request_handler(Self::handle_open_uncommitted_diff);
         client.add_entity_message_handler(Self::handle_update_diff_bases);
         client.add_entity_request_handler(Self::handle_get_permalink_to_line);
+        client.add_entity_request_handler(Self::handle_blame_buffer);
     }
 
     pub fn is_local(&self) -> bool {
@@ -573,6 +578,69 @@ impl GitStore {
             future::try_join_all(tasks).await?;
             Ok(())
         })
+    }
+
+    pub fn blame_buffer(
+        &self,
+        buffer: &Entity<Buffer>,
+        version: Option<clock::Global>,
+        cx: &App,
+    ) -> Task<Result<Option<Blame>>> {
+        let buffer = buffer.read(cx);
+        let Some(file) = File::from_dyn(buffer.file()) else {
+            return Task::ready(Err(anyhow!("buffer has no file")));
+        };
+
+        match file.worktree.clone().read(cx) {
+            Worktree::Local(worktree) => {
+                let worktree = worktree.snapshot();
+                let blame_params = maybe!({
+                    let local_repo = match worktree.local_repo_for_path(&file.path) {
+                        Some(repo_for_path) => repo_for_path,
+                        None => return Ok(None),
+                    };
+
+                    let relative_path = local_repo
+                        .relativize(&file.path)
+                        .context("failed to relativize buffer path")?;
+
+                    let repo = local_repo.repo().clone();
+
+                    let content = match version {
+                        Some(version) => buffer.rope_for_version(&version).clone(),
+                        None => buffer.as_rope().clone(),
+                    };
+
+                    anyhow::Ok(Some((repo, relative_path, content)))
+                });
+
+                cx.spawn(async move |cx| {
+                    let Some((repo, relative_path, content)) = blame_params? else {
+                        return Ok(None);
+                    };
+                    repo.blame(relative_path.clone(), content, cx)
+                        .await
+                        .with_context(|| format!("Failed to blame {:?}", relative_path.0))
+                        .map(Some)
+                })
+            }
+            Worktree::Remote(worktree) => {
+                let buffer_id = buffer.remote_id();
+                let version = buffer.version();
+                let project_id = worktree.project_id();
+                let client = worktree.client();
+                cx.spawn(async move |_| {
+                    let response = client
+                        .request(proto::BlameBuffer {
+                            project_id,
+                            buffer_id: buffer_id.into(),
+                            version: serialize_version(&version),
+                        })
+                        .await?;
+                    Ok(deserialize_blame_buffer_response(response))
+                })
+            }
+        }
     }
 
     pub fn get_permalink_to_line(
@@ -1708,7 +1776,7 @@ impl GitStore {
         Ok(proto::GitDiffResponse { diff })
     }
 
-    pub async fn handle_open_unstaged_diff(
+    async fn handle_open_unstaged_diff(
         this: Entity<Self>,
         request: TypedEnvelope<proto::OpenUnstagedDiff>,
         mut cx: AsyncApp,
@@ -1732,7 +1800,7 @@ impl GitStore {
         Ok(proto::OpenUnstagedDiffResponse { staged_text })
     }
 
-    pub async fn handle_open_uncommitted_diff(
+    async fn handle_open_uncommitted_diff(
         this: Entity<Self>,
         request: TypedEnvelope<proto::OpenUncommittedDiff>,
         mut cx: AsyncApp,
@@ -1793,7 +1861,7 @@ impl GitStore {
         })
     }
 
-    pub async fn handle_update_diff_bases(
+    async fn handle_update_diff_bases(
         this: Entity<Self>,
         request: TypedEnvelope<proto::UpdateDiffBases>,
         mut cx: AsyncApp,
@@ -1811,7 +1879,30 @@ impl GitStore {
         })
     }
 
-    pub async fn handle_get_permalink_to_line(
+    async fn handle_blame_buffer(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::BlameBuffer>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::BlameBufferResponse> {
+        let buffer_id = BufferId::new(envelope.payload.buffer_id)?;
+        let version = deserialize_version(&envelope.payload.version);
+        let buffer = this.read_with(&cx, |this, cx| {
+            this.buffer_store.read(cx).get_existing(buffer_id)
+        })??;
+        buffer
+            .update(&mut cx, |buffer, _| {
+                buffer.wait_for_version(version.clone())
+            })?
+            .await?;
+        let blame = this
+            .update(&mut cx, |this, cx| {
+                this.blame_buffer(&buffer, Some(version), cx)
+            })?
+            .await?;
+        Ok(serialize_blame_buffer_response(blame))
+    }
+
+    async fn handle_get_permalink_to_line(
         this: Entity<Self>,
         envelope: TypedEnvelope<proto::GetPermalinkToLine>,
         mut cx: AsyncApp,
@@ -3213,4 +3304,91 @@ fn get_permalink_in_rust_registry_src(
         },
     );
     Ok(permalink)
+}
+
+fn serialize_blame_buffer_response(blame: Option<git::blame::Blame>) -> proto::BlameBufferResponse {
+    let Some(blame) = blame else {
+        return proto::BlameBufferResponse {
+            blame_response: None,
+        };
+    };
+
+    let entries = blame
+        .entries
+        .into_iter()
+        .map(|entry| proto::BlameEntry {
+            sha: entry.sha.as_bytes().into(),
+            start_line: entry.range.start,
+            end_line: entry.range.end,
+            original_line_number: entry.original_line_number,
+            author: entry.author.clone(),
+            author_mail: entry.author_mail.clone(),
+            author_time: entry.author_time,
+            author_tz: entry.author_tz.clone(),
+            committer: entry.committer_name.clone(),
+            committer_mail: entry.committer_email.clone(),
+            committer_time: entry.committer_time,
+            committer_tz: entry.committer_tz.clone(),
+            summary: entry.summary.clone(),
+            previous: entry.previous.clone(),
+            filename: entry.filename.clone(),
+        })
+        .collect::<Vec<_>>();
+
+    let messages = blame
+        .messages
+        .into_iter()
+        .map(|(oid, message)| proto::CommitMessage {
+            oid: oid.as_bytes().into(),
+            message,
+        })
+        .collect::<Vec<_>>();
+
+    proto::BlameBufferResponse {
+        blame_response: Some(proto::blame_buffer_response::BlameResponse {
+            entries,
+            messages,
+            remote_url: blame.remote_url,
+        }),
+    }
+}
+
+fn deserialize_blame_buffer_response(
+    response: proto::BlameBufferResponse,
+) -> Option<git::blame::Blame> {
+    let response = response.blame_response?;
+    let entries = response
+        .entries
+        .into_iter()
+        .filter_map(|entry| {
+            Some(git::blame::BlameEntry {
+                sha: git::Oid::from_bytes(&entry.sha).ok()?,
+                range: entry.start_line..entry.end_line,
+                original_line_number: entry.original_line_number,
+                committer_name: entry.committer,
+                committer_time: entry.committer_time,
+                committer_tz: entry.committer_tz,
+                committer_email: entry.committer_mail,
+                author: entry.author,
+                author_mail: entry.author_mail,
+                author_time: entry.author_time,
+                author_tz: entry.author_tz,
+                summary: entry.summary,
+                previous: entry.previous,
+                filename: entry.filename,
+            })
+        })
+        .collect::<Vec<_>>();
+
+    let messages = response
+        .messages
+        .into_iter()
+        .filter_map(|message| Some((git::Oid::from_bytes(&message.oid).ok()?, message.message)))
+        .collect::<HashMap<_, _>>();
+
+    Some(Blame {
+        entries,
+        messages,
+        remote_url: response.remote_url,
+    })
 }
