@@ -9429,7 +9429,15 @@ impl Editor {
         self.do_paste(&text, metadata, false, window, cx);
     }
 
+    pub fn copy_and_trim(&mut self, _: &CopyAndTrim, _: &mut Window, cx: &mut Context<Self>) {
+        self.do_copy(true, cx);
+    }
+
     pub fn copy(&mut self, _: &Copy, _: &mut Window, cx: &mut Context<Self>) {
+        self.do_copy(false, cx);
+    }
+
+    fn do_copy(&self, strip_leading_indents: bool, cx: &mut Context<Self>) {
         let selections = self.selections.all::<Point>(cx);
         let buffer = self.buffer.read(cx).read(cx);
         let mut text = String::new();
@@ -9438,7 +9446,7 @@ impl Editor {
         {
             let max_point = buffer.max_point();
             let mut is_first = true;
-            for selection in selections.iter() {
+            for selection in &selections {
                 let mut start = selection.start;
                 let mut end = selection.end;
                 let is_entire_line = selection.is_empty() || self.selections.line_mode;
@@ -9446,21 +9454,55 @@ impl Editor {
                     start = Point::new(start.row, 0);
                     end = cmp::min(max_point, Point::new(end.row + 1, 0));
                 }
-                if is_first {
-                    is_first = false;
+
+                let mut trimmed_selections = Vec::new();
+                if strip_leading_indents && end.row.saturating_sub(start.row) > 0 {
+                    let row = MultiBufferRow(start.row);
+                    let first_indent = buffer.indent_size_for_line(row);
+                    if first_indent.len == 0 || start.column > first_indent.len {
+                        trimmed_selections.push(start..end);
+                    } else {
+                        trimmed_selections.push(
+                            Point::new(row.0, first_indent.len)
+                                ..Point::new(row.0, buffer.line_len(row)),
+                        );
+                        for row in start.row + 1..=end.row {
+                            let row_indent_size = buffer.indent_size_for_line(MultiBufferRow(row));
+                            if row_indent_size.len >= first_indent.len {
+                                trimmed_selections.push(
+                                    Point::new(row, first_indent.len)
+                                        ..Point::new(row, buffer.line_len(MultiBufferRow(row))),
+                                );
+                            } else {
+                                trimmed_selections.clear();
+                                trimmed_selections.push(start..end);
+                                break;
+                            }
+                        }
+                    }
                 } else {
-                    text += "\n";
+                    trimmed_selections.push(start..end);
                 }
-                let mut len = 0;
-                for chunk in buffer.text_for_range(start..end) {
-                    text.push_str(chunk);
-                    len += chunk.len();
+
+                for trimmed_range in trimmed_selections {
+                    if is_first {
+                        is_first = false;
+                    } else {
+                        text += "\n";
+                    }
+                    let mut len = 0;
+                    for chunk in buffer.text_for_range(trimmed_range.start..trimmed_range.end) {
+                        text.push_str(chunk);
+                        len += chunk.len();
+                    }
+                    clipboard_selections.push(ClipboardSelection {
+                        len,
+                        is_entire_line,
+                        first_line_indent: buffer
+                            .indent_size_for_line(MultiBufferRow(trimmed_range.start.row))
+                            .len,
+                    });
                 }
-                clipboard_selections.push(ClipboardSelection {
-                    len,
-                    is_entire_line,
-                    first_line_indent: buffer.indent_size_for_line(MultiBufferRow(start.row)).len,
-                });
             }
         }
 

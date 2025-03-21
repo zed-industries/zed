@@ -244,6 +244,7 @@ impl EditorElement {
         register_action(editor, window, Editor::kill_ring_cut);
         register_action(editor, window, Editor::kill_ring_yank);
         register_action(editor, window, Editor::copy);
+        register_action(editor, window, Editor::copy_and_trim);
         register_action(editor, window, Editor::paste);
         register_action(editor, window, Editor::undo);
         register_action(editor, window, Editor::redo);

@@ -1,5 +1,5 @@
 use crate::thread::{
-    LastRestoreCheckpoint, MessageId, RequestKind, Thread, ThreadError, ThreadEvent,
+    LastRestoreCheckpoint, MessageId, RequestKind, Thread, ThreadError, ThreadEvent, ThreadFeedback,
 };
 use crate::thread_store::ThreadStore;
 use crate::tool_use::{ToolUse, ToolUseStatus};
@@ -20,7 +20,7 @@ use settings::Settings as _;
 use std::sync::Arc;
 use std::time::Duration;
 use theme::ThemeSettings;
-use ui::{prelude::*, Disclosure, KeyBinding, Tooltip};
+use ui::{prelude::*, Disclosure, IconButton, KeyBinding, Tooltip};
 use util::ResultExt as _;
 use workspace::{OpenOptions, Workspace};
 
@@ -593,6 +593,24 @@ impl ActiveThread {
         self.confirm_editing_message(&menu::Confirm, window, cx);
     }
 
+    fn handle_feedback_click(
+        &mut self,
+        feedback: ThreadFeedback,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let report = self
+            .thread
+            .update(cx, |thread, cx| thread.report_feedback(feedback, cx));
+
+        let this = cx.entity().downgrade();
+        cx.spawn(async move |_, cx| {
+            report.await?;
+            this.update(cx, |_this, cx| cx.notify())
+        })
+        .detach_and_log_err(cx);
+    }
+
     fn render_message(&self, ix: usize, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let message_id = self.messages[ix];
         let Some(message) = self.thread.read(cx).message(message_id) else {
@@ -627,25 +645,127 @@ impl ActiveThread {
             .filter(|(id, _)| *id == message_id)
             .map(|(_, state)| state.editor.clone());
 
+        let first_message = ix == 0;
+        let is_last_message = ix == self.messages.len() - 1;
+
         let colors = cx.theme().colors();
+        let active_color = colors.element_active;
+        let editor_bg_color = colors.editor_background;
+        let bg_user_message_header = editor_bg_color.blend(active_color.opacity(0.25));
+
+        let feedback_container = h_flex().pb_4().px_4().gap_1().justify_between();
+        let feedback_items = match self.thread.read(cx).feedback() {
+            Some(feedback) => feedback_container
+                .child(
+                    Label::new(match feedback {
+                        ThreadFeedback::Positive => "Thanks for your feedback!",
+                        ThreadFeedback::Negative => {
+                            "We appreciate your feedback and will use it to improve."
+                        }
+                    })
+                    .color(Color::Muted)
+                    .size(LabelSize::XSmall),
+                )
+                .child(
+                    h_flex()
+                        .gap_1()
+                        .child(
+                            IconButton::new("feedback-thumbs-up", IconName::ThumbsUp)
+                                .icon_size(IconSize::XSmall)
+                                .icon_color(match feedback {
+                                    ThreadFeedback::Positive => Color::Accent,
+                                    ThreadFeedback::Negative => Color::Ignored,
+                                })
+                                .shape(ui::IconButtonShape::Square)
+                                .tooltip(Tooltip::text("Helpful Response"))
+                                .on_click(cx.listener(move |this, _, window, cx| {
+                                    this.handle_feedback_click(
+                                        ThreadFeedback::Positive,
+                                        window,
+                                        cx,
+                                    );
+                                })),
+                        )
+                        .child(
+                            IconButton::new("feedback-thumbs-down", IconName::ThumbsDown)
+                                .icon_size(IconSize::XSmall)
+                                .icon_color(match feedback {
+                                    ThreadFeedback::Positive => Color::Ignored,
+                                    ThreadFeedback::Negative => Color::Accent,
+                                })
+                                .shape(ui::IconButtonShape::Square)
+                                .tooltip(Tooltip::text("Not Helpful"))
+                                .on_click(cx.listener(move |this, _, window, cx| {
+                                    this.handle_feedback_click(
+                                        ThreadFeedback::Negative,
+                                        window,
+                                        cx,
+                                    );
+                                })),
+                        ),
+                )
+                .into_any_element(),
+            None => feedback_container
+                .child(
+                    Label::new(
+                        "Rating the thread sends all of your current conversation to the Zed team.",
+                    )
+                    .color(Color::Muted)
+                    .size(LabelSize::XSmall),
+                )
+                .child(
+                    h_flex()
+                        .gap_1()
+                        .child(
+                            IconButton::new("feedback-thumbs-up", IconName::ThumbsUp)
+                                .icon_size(IconSize::XSmall)
+                                .icon_color(Color::Ignored)
+                                .shape(ui::IconButtonShape::Square)
+                                .tooltip(Tooltip::text("Helpful Response"))
+                                .on_click(cx.listener(move |this, _, window, cx| {
+                                    this.handle_feedback_click(
+                                        ThreadFeedback::Positive,
+                                        window,
+                                        cx,
+                                    );
+                                })),
+                        )
+                        .child(
+                            IconButton::new("feedback-thumbs-down", IconName::ThumbsDown)
+                                .icon_size(IconSize::XSmall)
+                                .icon_color(Color::Ignored)
+                                .shape(ui::IconButtonShape::Square)
+                                .tooltip(Tooltip::text("Not Helpful"))
+                                .on_click(cx.listener(move |this, _, window, cx| {
+                                    this.handle_feedback_click(
+                                        ThreadFeedback::Negative,
+                                        window,
+                                        cx,
+                                    );
+                                })),
+                        ),
+                )
+                .into_any_element(),
+        };
 
         let message_content = v_flex()
+            .gap_1p5()
             .child(
                 if let Some(edit_message_editor) = edit_message_editor.clone() {
                     div()
                         .key_context("EditMessageEditor")
                         .on_action(cx.listener(Self::cancel_editing_message))
                         .on_action(cx.listener(Self::confirm_editing_message))
-                        .p_2p5()
+                        .min_h_6()
                         .child(edit_message_editor)
                 } else {
-                    div().text_ui(cx).child(markdown.clone())
+                    div().min_h_6().text_ui(cx).child(markdown.clone())
                 },
             )
             .when_some(context, |parent, context| {
                 if !context.is_empty() {
                     parent.child(
-                        h_flex().flex_wrap().gap_1().px_1p5().pb_1p5().children(
+                        h_flex().flex_wrap().gap_1().children(
                             context
                                 .into_iter()
                                 .map(|context| ContextPill::added(context, false, false, None)),
@@ -659,7 +779,7 @@ impl ActiveThread {
         let styled_message = match message.role {
             Role::User => v_flex()
                 .id(("message-container", ix))
-                .pt_2()
+                .py_2()
                 .pl_2()
                 .pr_2p5()
                 .child(
@@ -674,11 +794,11 @@ impl ActiveThread {
                                 .py_1()
                                 .pl_2()
                                 .pr_1()
-                                .bg(colors.editor_foreground.opacity(0.05))
+                                .bg(bg_user_message_header)
                                 .border_b_1()
                                 .border_color(colors.border)
                                 .justify_between()
-                                .rounded_t(px(6.))
+                                .rounded_t_md()
                                 .child(
                                     h_flex()
                                         .gap_1p5()
@@ -693,14 +813,19 @@ impl ActiveThread {
                                                 .color(Color::Muted),
                                         ),
                                 )
-                                .when_some(
-                                    edit_message_editor.clone(),
-                                    |this, edit_message_editor| {
-                                        let focus_handle = edit_message_editor.focus_handle(cx);
-                                        this.child(
-                                            h_flex()
-                                                .gap_1()
-                                                .child(
+                                .child(
+                                    h_flex()
+                                        // DL: To double-check whether we want to fully remove
+                                        // the editing feature from meassages. Checkpoint sort of
+                                        // solve the same problem.
+                                        .invisible()
+                                        .gap_1()
+                                        .when_some(
+                                            edit_message_editor.clone(),
+                                            |this, edit_message_editor| {
+                                                let focus_handle =
+                                                    edit_message_editor.focus_handle(cx);
+                                                this.child(
                                                     Button::new("cancel-edit-message", "Cancel")
                                                         .label_size(LabelSize::Small)
                                                         .key_binding(
@@ -734,36 +859,36 @@ impl ActiveThread {
                                                     .on_click(
                                                         cx.listener(Self::handle_regenerate_click),
                                                     ),
-                                                ),
+                                                )
+                                            },
                                         )
-                                    },
-                                )
-                                .when(
-                                    edit_message_editor.is_none() && allow_editing_message,
-                                    |this| {
-                                        this.child(
-                                            Button::new("edit-message", "Edit")
-                                                .label_size(LabelSize::Small)
-                                                .on_click(cx.listener({
-                                                    let message_text = message.text.clone();
-                                                    move |this, _, window, cx| {
-                                                        this.start_editing_message(
-                                                            message_id,
-                                                            message_text.clone(),
-                                                            window,
-                                                            cx,
-                                                        );
-                                                    }
-                                                })),
-                                        )
-                                    },
+                                        .when(
+                                            edit_message_editor.is_none() && allow_editing_message,
+                                            |this| {
+                                                this.child(
+                                                    Button::new("edit-message", "Edit")
+                                                        .label_size(LabelSize::Small)
+                                                        .on_click(cx.listener({
+                                                            let message_text = message.text.clone();
+                                                            move |this, _, window, cx| {
+                                                                this.start_editing_message(
+                                                                    message_id,
+                                                                    message_text.clone(),
+                                                                    window,
+                                                                    cx,
+                                                                );
+                                                            }
+                                                        })),
+                                                )
+                                            },
+                                        ),
                                 ),
                         )
                         .child(div().p_2().child(message_content)),
                 ),
             Role::Assistant => v_flex()
                 .id(("message-container", ix))
-                .child(div().py_3().px_4().child(message_content))
+                .child(v_flex().py_2().px_4().child(message_content))
                 .when(
                     !tool_uses.is_empty() || !scripting_tool_uses.is_empty(),
                     |parent| {
@@ -789,8 +914,12 @@ impl ActiveThread {
         };
 
         v_flex()
-            .when(ix == 0, |parent| parent.child(self.render_rules_item(cx)))
-            .when_some(checkpoint, |parent, checkpoint| {
+            .w_full()
+            .when(first_message, |parent| {
+                parent.child(self.render_rules_item(cx))
+            })
+            .when(!first_message && checkpoint.is_some(), |parent| {
+                let checkpoint = checkpoint.clone().unwrap();
                 let mut is_pending = false;
                 let mut error = None;
                 if let Some(last_restore_checkpoint) =
@@ -813,13 +942,15 @@ impl ActiveThread {
                         } else {
                             IconName::Undo
                         })
-                        .size(ButtonSize::Compact)
-                        .disabled(is_pending)
+                        .icon_size(IconSize::XSmall)
+                        .icon_position(IconPosition::Start)
                         .icon_color(if error.is_some() {
                             Some(Color::Error)
                         } else {
                             None
                         })
+                        .label_size(LabelSize::XSmall)
+                        .disabled(is_pending)
                         .on_click(cx.listener(move |this, _, _window, cx| {
                             this.thread.update(cx, |thread, cx| {
                                 thread
@@ -846,9 +977,21 @@ impl ActiveThread {
                     restore_checkpoint_button.into_any_element()
                 };
 
-                parent.child(h_flex().pl_2().child(restore_checkpoint_button))
+                parent.child(
+                    h_flex()
+                        .px_2p5()
+                        .w_full()
+                        .gap_1()
+                        .child(ui::Divider::horizontal())
+                        .child(restore_checkpoint_button)
+                        .child(ui::Divider::horizontal()),
+                )
             })
             .child(styled_message)
+            .when(
+                is_last_message && !self.thread.read(cx).is_generating(),
+                |parent| parent.child(feedback_items),
+            )
             .into_any()
     }
 
@@ -861,17 +1004,33 @@ impl ActiveThread {
 
         let lighter_border = cx.theme().colors().border.opacity(0.5);
 
+        let tool_icon = match tool_use.name.as_ref() {
+            "bash" => IconName::Terminal,
+            "delete-path" => IconName::Trash,
+            "diagnostics" => IconName::Warning,
+            "edit-files" => IconName::Pencil,
+            "fetch" => IconName::Globe,
+            "list-directory" => IconName::Folder,
+            "now" => IconName::Info,
+            "path-search" => IconName::SearchCode,
+            "read-file" => IconName::Eye,
+            "regex-search" => IconName::Regex,
+            "thinking" => IconName::Brain,
+            _ => IconName::Terminal,
+        };
+
         div().px_4().child(
             v_flex()
                 .rounded_lg()
                 .border_1()
                 .border_color(lighter_border)
+                .overflow_hidden()
                 .child(
                     h_flex()
+                        .group("disclosure-header")
                         .justify_between()
                         .py_1()
-                        .pl_1()
-                        .pr_2()
+                        .px_2()
                         .bg(cx.theme().colors().editor_foreground.opacity(0.025))
                         .map(|element| {
                             if is_open {
@@ -883,54 +1042,79 @@ impl ActiveThread {
                         .border_color(lighter_border)
                         .child(
                             h_flex()
-                                .gap_1()
-                                .child(Disclosure::new("tool-use-disclosure", is_open).on_click(
-                                    cx.listener({
-                                        let tool_use_id = tool_use.id.clone();
-                                        move |this, _event, _window, _cx| {
-                                            let is_open = this
-                                                .expanded_tool_uses
-                                                .entry(tool_use_id.clone())
-                                                .or_insert(false);
-
-                                            *is_open = !*is_open;
-                                        }
-                                    }),
-                                ))
-                                .child(div().text_ui_sm(cx).children(
-                                    self.rendered_tool_use_labels.get(&tool_use.id).cloned(),
-                                ))
-                                .truncate(),
-                        )
-                        .child({
-                            let (icon_name, color, animated) = match &tool_use.status {
-                                ToolUseStatus::Pending => {
-                                    (IconName::Warning, Color::Warning, false)
-                                }
-                                ToolUseStatus::Running => {
-                                    (IconName::ArrowCircle, Color::Accent, true)
-                                }
-                                ToolUseStatus::Finished(_) => {
-                                    (IconName::Check, Color::Success, false)
-                                }
-                                ToolUseStatus::Error(_) => (IconName::Close, Color::Error, false),
-                            };
-
-                            let icon = Icon::new(icon_name).color(color).size(IconSize::Small);
-
-                            if animated {
-                                icon.with_animation(
-                                    "arrow-circle",
-                                    Animation::new(Duration::from_secs(2)).repeat(),
-                                    |icon, delta| {
-                                        icon.transform(Transformation::rotate(percentage(delta)))
-                                    },
+                                .gap_1p5()
+                                .child(
+                                    Icon::new(tool_icon)
+                                        .size(IconSize::XSmall)
+                                        .color(Color::Muted),
                                 )
-                                .into_any_element()
-                            } else {
-                                icon.into_any_element()
-                            }
-                        }),
+                                .child(
+                                    div()
+                                        .text_ui_sm(cx)
+                                        .children(
+                                            self.rendered_tool_use_labels
+                                                .get(&tool_use.id)
+                                                .cloned(),
+                                        )
+                                        .truncate(),
+                                ),
+                        )
+                        .child(
+                            h_flex()
+                                .gap_1()
+                                .child(
+                                    div().visible_on_hover("disclosure-header").child(
+                                        Disclosure::new("tool-use-disclosure", is_open)
+                                            .opened_icon(IconName::ChevronUp)
+                                            .closed_icon(IconName::ChevronDown)
+                                            .on_click(cx.listener({
+                                                let tool_use_id = tool_use.id.clone();
+                                                move |this, _event, _window, _cx| {
+                                                    let is_open = this
+                                                        .expanded_tool_uses
+                                                        .entry(tool_use_id.clone())
+                                                        .or_insert(false);
+
+                                                    *is_open = !*is_open;
+                                                }
+                                            })),
+                                    ),
+                                )
+                                .child({
+                                    let (icon_name, color, animated) = match &tool_use.status {
+                                        ToolUseStatus::Pending => {
+                                            (IconName::Warning, Color::Warning, false)
+                                        }
+                                        ToolUseStatus::Running => {
+                                            (IconName::ArrowCircle, Color::Accent, true)
+                                        }
+                                        ToolUseStatus::Finished(_) => {
+                                            (IconName::Check, Color::Success, false)
+                                        }
+                                        ToolUseStatus::Error(_) => {
+                                            (IconName::Close, Color::Error, false)
+                                        }
+                                    };
+
+                                    let icon =
+                                        Icon::new(icon_name).color(color).size(IconSize::Small);
+
+                                    if animated {
+                                        icon.with_animation(
+                                            "arrow-circle",
+                                            Animation::new(Duration::from_secs(2)).repeat(),
+                                            |icon, delta| {
+                                                icon.transform(Transformation::rotate(percentage(
+                                                    delta,
+                                                )))
+                                            },
+                                        )
+                                        .into_any_element()
+                                    } else {
+                                        icon.into_any_element()
+                                    }
+                                }),
+                        ),
                 )
                 .map(|parent| {
                     if !is_open {
@@ -1171,10 +1355,8 @@ impl ActiveThread {
             .px_2p5()
             .child(
                 h_flex()
-                    .group("rules-item")
                     .w_full()
-                    .gap_2()
-                    .justify_between()
+                    .gap_0p5()
                     .child(
                         h_flex()
                             .gap_1p5()
@@ -1191,11 +1373,12 @@ impl ActiveThread {
                             ),
                     )
                     .child(
-                        div().visible_on_hover("rules-item").child(
-                            Button::new("open-rules", "Open Rules")
-                                .label_size(LabelSize::XSmall)
-                                .on_click(cx.listener(Self::handle_open_rules)),
-                        ),
+                        IconButton::new("open-rule", IconName::ArrowUpRightAlt)
+                            .shape(ui::IconButtonShape::Square)
+                            .icon_size(IconSize::XSmall)
+                            .icon_color(Color::Ignored)
+                            .on_click(cx.listener(Self::handle_open_rules))
+                            .tooltip(Tooltip::text("View Rules")),
                     ),
             )
             .into_any()
