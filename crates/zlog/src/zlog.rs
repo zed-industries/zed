@@ -223,7 +223,7 @@ impl Drop for Timer {
 }
 
 impl Timer {
-    #[must_use = "Timer will stop when dropped, the result of this function should be saved in a variable prefixed with `_` if it should stop when droppped"]
+    #[must_use = "Timer will stop when dropped, the result of this function should be saved in a variable prefixed with `_` if it should stop when dropped"]
     pub fn new(logger: Logger, name: &'static str) -> Self {
         return Self {
             logger,
