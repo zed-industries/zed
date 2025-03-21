@@ -307,7 +307,21 @@ pub mod scope_map {
             // if no scopes are enabled, default to enabled detection done by `log` crate
             return (true, level);
         }
-        let Some(level_enabled) = map.get(&private::scope_to_alloc(scope)) else {
+        let mut scope_alloc = private::scope_to_alloc(scope);
+        let mut level_enabled = map.get(&scope_alloc);
+        if level_enabled.is_none() {
+            for i in (0..SCOPE_DEPTH_MAX).rev() {
+                if scope_alloc[i] == "" {
+                    continue;
+                }
+                scope_alloc[i].clear();
+                if let Some(level) = map.get(&scope_alloc) {
+                    level_enabled = Some(level);
+                    break;
+                }
+            }
+        }
+        let Some(level_enabled) = level_enabled else {
             // if this scope isn't configured, default to enabled detection done by `log` crate
             return (true, level);
         };
