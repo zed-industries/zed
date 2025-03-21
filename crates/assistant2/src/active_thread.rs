@@ -596,7 +596,7 @@ impl ActiveThread {
     fn handle_feedback_click(
         &mut self,
         feedback: ThreadFeedback,
-        window: &mut Window,
+        _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         let report = self
