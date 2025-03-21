@@ -35,7 +35,7 @@ use crate::thread_store::{
     SerializedMessage, SerializedMessageSegment, SerializedThread, SerializedToolResult,
     SerializedToolUse,
 };
-use crate::tool_use::{PendingToolUse, ToolUse, ToolUseState};
+use crate::tool_use::{PendingToolUse, PendingToolUseStatus, ToolType, ToolUse, ToolUseState};
 
 #[derive(Debug, Clone, Copy)]
 pub enum RequestKind {
@@ -361,13 +361,38 @@ impl Thread {
             .pending_tool_uses()
             .into_iter()
             .find(|tool_use| &tool_use.id == id)
+            .or_else(|| {
+                self.scripting_tool_use
+                    .pending_tool_uses()
+                    .into_iter()
+                    .find(|tool_use| &tool_use.id == id)
+            })
     }
 
-    pub fn tools_needing_confirmation(&self) -> impl Iterator<Item = &PendingToolUse> {
+    pub fn tools_needing_confirmation(&self) -> impl Iterator<Item = (ToolType, &PendingToolUse)> {
         self.tool_use
             .pending_tool_uses()
             .into_iter()
-            .filter(|tool| tool.status.needs_confirmation())
+            .filter_map(|tool_use| {
+                if let PendingToolUseStatus::NeedsConfirmation { tool_type, .. } = &tool_use.status
+                {
+                    Some((tool_type.clone(), tool_use))
+                } else {
+                    None
+                }
+            })
+            .chain(
+                self.scripting_tool_use
+                    .pending_tool_uses()
+                    .into_iter()
+                    .filter_map(|tool_use| {
+                        if tool_use.status.needs_confirmation() {
+                            Some((ToolType::ScriptingTool, tool_use))
+                        } else {
+                            None
+                        }
+                    }),
+            )
     }
 
     pub fn checkpoint_for_message(&self, id: MessageId) -> Option<ThreadCheckpoint> {
@@ -1201,7 +1226,7 @@ impl Thread {
                         tool_use.ui_text.clone(),
                         tool_use.input.clone(),
                         messages.clone(),
-                        tool.clone(),
+                        ToolType::NonScriptingTool(tool),
                     );
                 } else {
                     self.run_tool(
@@ -1209,7 +1234,7 @@ impl Thread {
                         tool_use.ui_text.clone(),
                         tool_use.input.clone(),
                         &messages,
-                        tool,
+                        ToolType::NonScriptingTool(tool),
                         cx,
                     );
                 }
@@ -1219,7 +1244,7 @@ impl Thread {
                     tool_use.ui_text.clone(),
                     tool_use.input.clone(),
                     &messages,
-                    tool,
+                    ToolType::NonScriptingTool(tool),
                     cx,
                 );
             }
@@ -1234,15 +1259,13 @@ impl Thread {
             .collect::<Vec<_>>();
 
         for scripting_tool_use in pending_scripting_tool_uses.iter() {
-            if let Some(tool) = self.tools.tool(&scripting_tool_use.name, cx) {
-                self.scripting_tool_use.confirm_tool_use(
-                    scripting_tool_use.id.clone(),
-                    scripting_tool_use.ui_text.clone(),
-                    scripting_tool_use.input.clone(),
-                    messages.clone(),
-                    tool,
-                );
-            }
+            self.scripting_tool_use.confirm_tool_use(
+                scripting_tool_use.id.clone(),
+                scripting_tool_use.ui_text.clone(),
+                scripting_tool_use.input.clone(),
+                messages.clone(),
+                ToolType::ScriptingTool,
+            );
         }
 
         pending_tool_uses
@@ -1256,17 +1279,20 @@ impl Thread {
         ui_text: impl Into<SharedString>,
         input: serde_json::Value,
         messages: &[LanguageModelRequestMessage],
-        tool: Arc<dyn Tool>,
+        tool_type: ToolType,
         cx: &mut Context<'_, Thread>,
     ) {
-        if tool.name() == ScriptingTool::NAME {
-            let task = self.spawn_scripting_tool_use(tool_use_id.clone(), input, cx);
-            self.scripting_tool_use
-                .run_pending_tool(tool_use_id, ui_text.into(), task);
-        } else {
-            let task = self.spawn_tool_use(tool_use_id.clone(), messages, input, tool, cx);
-            self.tool_use
-                .run_pending_tool(tool_use_id, ui_text.into(), task);
+        match tool_type {
+            ToolType::ScriptingTool => {
+                let task = self.spawn_scripting_tool_use(tool_use_id.clone(), input, cx);
+                self.scripting_tool_use
+                    .run_pending_tool(tool_use_id, ui_text.into(), task);
+            }
+            ToolType::NonScriptingTool(tool) => {
+                let task = self.spawn_tool_use(tool_use_id.clone(), messages, input, tool, cx);
+                self.tool_use
+                    .run_pending_tool(tool_use_id, ui_text.into(), task);
+            }
         }
     }
 
@@ -1276,7 +1302,7 @@ impl Thread {
         messages: &[LanguageModelRequestMessage],
         input: serde_json::Value,
         tool: Arc<dyn Tool>,
-        cx: &mut Context<'_, Thread>,
+        cx: &mut Context<Thread>,
     ) -> Task<()> {
         let run_tool = tool.run(
             input,
@@ -1311,7 +1337,7 @@ impl Thread {
         &mut self,
         tool_use_id: LanguageModelToolUseId,
         input: serde_json::Value,
-        cx: &mut Context<'_, Thread>,
+        cx: &mut Context<Thread>,
     ) -> Task<()> {
         let task = match ScriptingTool::deserialize_input(input) {
             Err(err) => Task::ready(Err(err.into())),
@@ -1616,13 +1642,22 @@ impl Thread {
         self.cumulative_token_usage.clone()
     }
 
-    pub fn deny_tool_use(&mut self, tool_use_id: LanguageModelToolUseId, cx: &mut Context<Self>) {
-        self.tool_use.insert_tool_output(
-            tool_use_id.clone(),
-            Err(anyhow::anyhow!(
-                "Permission to run tool action denied by user"
-            )),
-        );
+    pub fn deny_tool_use(
+        &mut self,
+        tool_use_id: LanguageModelToolUseId,
+        tool_type: ToolType,
+        cx: &mut Context<Self>,
+    ) {
+        let err = Err(anyhow::anyhow!(
+            "Permission to run tool action denied by user"
+        ));
+
+        if let ToolType::ScriptingTool = tool_type {
+            self.scripting_tool_use
+                .insert_tool_output(tool_use_id.clone(), err);
+        } else {
+            self.tool_use.insert_tool_output(tool_use_id.clone(), err);
+        }
 
         cx.emit(ThreadEvent::ToolFinished {
             tool_use_id,

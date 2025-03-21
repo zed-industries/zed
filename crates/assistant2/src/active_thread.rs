@@ -3,7 +3,7 @@ use crate::thread::{
     ThreadEvent, ThreadFeedback,
 };
 use crate::thread_store::ThreadStore;
-use crate::tool_use::{PendingToolUseStatus, ToolUse, ToolUseStatus};
+use crate::tool_use::{PendingToolUseStatus, ToolType, ToolUse, ToolUseStatus};
 use crate::ui::ContextPill;
 use collections::HashMap;
 use editor::{Editor, MultiBuffer};
@@ -989,25 +989,27 @@ impl ActiveThread {
                         )
                         .child(div().p_2().child(message_content)),
                 ),
-            Role::Assistant => v_flex()
-                .id(("message-container", ix))
-                .child(v_flex().py_2().px_4().child(message_content))
-                .when(
-                    !tool_uses.is_empty() || !scripting_tool_uses.is_empty(),
-                    |parent| {
-                        parent.child(
-                            v_flex()
-                                .children(
-                                    tool_uses
-                                        .into_iter()
-                                        .map(|tool_use| self.render_tool_use(tool_use, cx)),
-                                )
-                                .children(scripting_tool_uses.into_iter().map(|tool_use| {
-                                    self.render_scripting_tool_use(tool_use, window, cx)
-                                })),
-                        )
-                    },
-                ),
+            Role::Assistant => {
+                v_flex()
+                    .id(("message-container", ix))
+                    .child(v_flex().py_2().px_4().child(message_content))
+                    .when(
+                        !tool_uses.is_empty() || !scripting_tool_uses.is_empty(),
+                        |parent| {
+                            parent.child(
+                                v_flex()
+                                    .children(
+                                        tool_uses
+                                            .into_iter()
+                                            .map(|tool_use| self.render_tool_use(tool_use, cx)),
+                                    )
+                                    .children(scripting_tool_uses.into_iter().map(|tool_use| {
+                                        self.render_scripting_tool_use(tool_use, cx)
+                                    })),
+                            )
+                        },
+                    )
+            }
             Role::System => div().id(("message-container", ix)).py_1().px_2().child(
                 v_flex()
                     .bg(colors.editor_background)
@@ -1507,7 +1509,6 @@ impl ActiveThread {
     fn render_scripting_tool_use(
         &self,
         tool_use: ToolUse,
-        window: &Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let is_open = self
@@ -1553,13 +1554,25 @@ impl ActiveThread {
                                         }
                                     }),
                                 ))
-                                .child(div().text_ui_sm(cx).child(render_markdown(
-                                    tool_use.ui_text.clone(),
-                                    self.language_registry.clone(),
-                                    window,
-                                    cx,
-                                )))
-                                .truncate(),
+                                .child(
+                                    h_flex()
+                                        .gap_1p5()
+                                        .child(
+                                            Icon::new(IconName::Terminal)
+                                                .size(IconSize::XSmall)
+                                                .color(Color::Muted),
+                                        )
+                                        .child(
+                                            div()
+                                                .text_ui_sm(cx)
+                                                .children(
+                                                    self.rendered_tool_use_labels
+                                                        .get(&tool_use.id)
+                                                        .cloned(),
+                                                )
+                                                .truncate(),
+                                        ),
+                                ),
                         )
                         .child(
                             Label::new(match tool_use.status {
@@ -1700,7 +1713,7 @@ impl ActiveThread {
             input,
             ui_text,
             messages,
-            tool,
+            tool_type,
         }) = self
             .thread
             .read(cx)
@@ -1708,7 +1721,7 @@ impl ActiveThread {
             .map(|tool_use| tool_use.status.clone())
         {
             self.thread.update(cx, |thread, cx| {
-                thread.run_tool(tool_use_id, ui_text, input, &messages, tool, cx);
+                thread.run_tool(tool_use_id, ui_text, input, &messages, tool_type, cx);
             });
         }
     }
@@ -1716,12 +1729,13 @@ impl ActiveThread {
     fn handle_deny_tool(
         &mut self,
         tool_use_id: LanguageModelToolUseId,
+        tool_type: ToolType,
         _: &ClickEvent,
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         self.thread.update(cx, |thread, cx| {
-            thread.deny_tool_use(tool_use_id, cx);
+            thread.deny_tool_use(tool_use_id, tool_type, cx);
         });
     }
 
@@ -1754,59 +1768,62 @@ impl ActiveThread {
     ) -> impl Iterator<Item = AnyElement> + 'a {
         let thread = self.thread.read(cx);
 
-        thread.tools_needing_confirmation().map(|tool| {
-            div()
-                .m_3()
-                .p_2()
-                .bg(cx.theme().colors().editor_background)
-                .border_1()
-                .border_color(cx.theme().colors().border)
-                .rounded_lg()
-                .child(
-                    v_flex()
-                        .gap_1()
-                        .child(
-                            v_flex()
-                                .gap_0p5()
-                                .child(
-                                    Label::new("The agent wants to run this action:")
-                                        .color(Color::Muted),
-                                )
-                                .child(div().p_3().child(Label::new(&tool.ui_text))),
-                        )
-                        .child(
-                            h_flex()
-                                .gap_1()
-                                .child({
-                                    let tool_id = tool.id.clone();
-                                    Button::new("allow-tool-action", "Allow").on_click(cx.listener(
-                                        move |this, event, window, cx| {
-                                            this.handle_allow_tool(
-                                                tool_id.clone(),
-                                                event,
-                                                window,
-                                                cx,
-                                            )
-                                        },
-                                    ))
-                                })
-                                .child({
-                                    let tool_id = tool.id.clone();
-                                    Button::new("deny-tool", "Deny").on_click(cx.listener(
-                                        move |this, event, window, cx| {
-                                            this.handle_deny_tool(
-                                                tool_id.clone(),
-                                                event,
-                                                window,
-                                                cx,
-                                            )
-                                        },
-                                    ))
-                                }),
-                        ),
-                )
-                .into_any()
-        })
+        thread
+            .tools_needing_confirmation()
+            .map(|(tool_type, tool)| {
+                div()
+                    .m_3()
+                    .p_2()
+                    .bg(cx.theme().colors().editor_background)
+                    .border_1()
+                    .border_color(cx.theme().colors().border)
+                    .rounded_lg()
+                    .child(
+                        v_flex()
+                            .gap_1()
+                            .child(
+                                v_flex()
+                                    .gap_0p5()
+                                    .child(
+                                        Label::new("The agent wants to run this action:")
+                                            .color(Color::Muted),
+                                    )
+                                    .child(div().p_3().child(Label::new(&tool.ui_text))),
+                            )
+                            .child(
+                                h_flex()
+                                    .gap_1()
+                                    .child({
+                                        let tool_id = tool.id.clone();
+                                        Button::new("allow-tool-action", "Allow").on_click(
+                                            cx.listener(move |this, event, window, cx| {
+                                                this.handle_allow_tool(
+                                                    tool_id.clone(),
+                                                    event,
+                                                    window,
+                                                    cx,
+                                                )
+                                            }),
+                                        )
+                                    })
+                                    .child({
+                                        let tool_id = tool.id.clone();
+                                        Button::new("deny-tool", "Deny").on_click(cx.listener(
+                                            move |this, event, window, cx| {
+                                                this.handle_deny_tool(
+                                                    tool_id.clone(),
+                                                    tool_type.clone(),
+                                                    event,
+                                                    window,
+                                                    cx,
+                                                )
+                                            },
+                                        ))
+                                    }),
+                            ),
+                    )
+                    .into_any()
+            })
     }
 }
 

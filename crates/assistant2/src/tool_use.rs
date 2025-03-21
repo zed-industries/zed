@@ -10,6 +10,7 @@ use language_model::{
     LanguageModelRequestMessage, LanguageModelToolResult, LanguageModelToolUse,
     LanguageModelToolUseId, MessageContent, Role,
 };
+use scripting_tool::ScriptingTool;
 
 use crate::thread::MessageId;
 use crate::thread_store::SerializedMessage;
@@ -199,6 +200,8 @@ impl ToolUseState {
     ) -> SharedString {
         if let Some(tool) = self.tools.tool(tool_name, cx) {
             tool.ui_text(input).into()
+        } else if tool_name == ScriptingTool::NAME {
+            "Run Lua Script".into()
         } else {
             "Unknown tool".into()
         }
@@ -282,7 +285,7 @@ impl ToolUseState {
         ui_text: impl Into<Arc<str>>,
         input: serde_json::Value,
         messages: Arc<Vec<LanguageModelRequestMessage>>,
-        tool: Arc<dyn Tool>,
+        tool_type: ToolType,
     ) {
         if let Some(tool_use) = self.pending_tool_uses_by_id.get_mut(&tool_use_id) {
             let ui_text = ui_text.into();
@@ -291,7 +294,7 @@ impl ToolUseState {
                 tool_use_id,
                 input,
                 messages,
-                tool,
+                tool_type,
                 ui_text,
             };
         }
@@ -395,6 +398,12 @@ pub struct PendingToolUse {
 }
 
 #[derive(Debug, Clone)]
+pub enum ToolType {
+    ScriptingTool,
+    NonScriptingTool(Arc<dyn Tool>),
+}
+
+#[derive(Debug, Clone)]
 pub enum PendingToolUseStatus {
     Idle,
     NeedsConfirmation {
@@ -402,7 +411,7 @@ pub enum PendingToolUseStatus {
         input: serde_json::Value,
         ui_text: Arc<str>,
         messages: Arc<Vec<LanguageModelRequestMessage>>,
-        tool: Arc<dyn Tool>,
+        tool_type: ToolType,
     },
     Running {
         _task: Shared<Task<()>>,
