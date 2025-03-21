@@ -273,7 +273,6 @@ impl SerializedThread {
 
     pub fn from_json(json: &[u8]) -> Result<Self> {
         let saved_thread_json = serde_json::from_slice::<serde_json::Value>(json)?;
-        dbg!(&saved_thread_json);
         match saved_thread_json.get("version") {
             Some(serde_json::Value::String(version)) => match version.as_str() {
                 SerializedThread::VERSION => Ok(serde_json::from_value::<SerializedThread>(
@@ -285,7 +284,6 @@ impl SerializedThread {
                 )),
             },
             None => {
-                dbg!("Loading legacy");
                 let saved_thread =
                     serde_json::from_value::<LegacySerializedThread>(saved_thread_json)?;
                 Ok(saved_thread.upgrade())
