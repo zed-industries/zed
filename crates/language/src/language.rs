@@ -11,6 +11,7 @@ mod diagnostic_set;
 mod highlight_map;
 mod language_registry;
 pub mod language_settings;
+mod manifest;
 mod outline;
 pub mod proto;
 mod syntax_map;
@@ -33,6 +34,7 @@ pub use highlight_map::HighlightMap;
 use http_client::HttpClient;
 pub use language_registry::{LanguageName, LoadedLanguage};
 use lsp::{CodeActionKind, InitializeParams, LanguageServerBinary, LanguageServerBinaryOptions};
+pub use manifest::{ManifestName, ManifestProvider, ManifestQuery};
 use parking_lot::Mutex;
 use regex::Regex;
 use schemars::{
@@ -163,6 +165,7 @@ pub struct CachedLspAdapter {
     pub adapter: Arc<dyn LspAdapter>,
     pub reinstall_attempt_count: AtomicU64,
     cached_binary: futures::lock::Mutex<Option<LanguageServerBinary>>,
+    manifest_name: OnceLock<Option<ManifestName>>,
     attach_kind: OnceLock<Attach>,
 }
 
@@ -200,6 +203,7 @@ impl CachedLspAdapter {
             cached_binary: Default::default(),
             reinstall_attempt_count: AtomicU64::new(0),
             attach_kind: Default::default(),
+            manifest_name: Default::default(),
         })
     }
 
@@ -261,14 +265,10 @@ impl CachedLspAdapter {
             .cloned()
             .unwrap_or_else(|| language_name.lsp_id())
     }
-    pub fn find_project_root(
-        &self,
-        path: &Path,
-        ancestor_depth: usize,
-        delegate: &Arc<dyn LspAdapterDelegate>,
-    ) -> Option<Arc<Path>> {
-        self.adapter
-            .find_project_root(path, ancestor_depth, delegate)
+    pub fn manifest_name(&self) -> Option<ManifestName> {
+        self.manifest_name
+            .get_or_init(|| self.adapter.manifest_name())
+            .clone()
     }
     pub fn attach_kind(&self) -> Attach {
         *self.attach_kind.get_or_init(|| self.adapter.attach_kind())
@@ -542,18 +542,13 @@ pub trait LspAdapter: 'static + Send + Sync {
     fn prepare_initialize_params(&self, original: InitializeParams) -> Result<InitializeParams> {
         Ok(original)
     }
+
     fn attach_kind(&self) -> Attach {
         Attach::Shared
     }
-    fn find_project_root(
-        &self,
 
-        _path: &Path,
-        _ancestor_depth: usize,
-        _: &Arc<dyn LspAdapterDelegate>,
-    ) -> Option<Arc<Path>> {
-        // By default all language servers are rooted at the root of the worktree.
-        Some(Arc::from("".as_ref()))
+    fn manifest_name(&self) -> Option<ManifestName> {
+        None
     }
 
     /// Method only implemented by the default JSON language server adapter.

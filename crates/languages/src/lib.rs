@@ -2,6 +2,7 @@ use anyhow::Context as _;
 use gpui::{App, UpdateGlobal};
 use json::json_task_context;
 use node_runtime::NodeRuntime;
+use rust::CargoManifestProvider;
 use rust_embed::RustEmbed;
 use settings::SettingsStore;
 use smol::stream::StreamExt;
@@ -301,6 +302,7 @@ pub fn init(languages: Arc<LanguageRegistry>, node: NodeRuntime, cx: &mut App) {
         anyhow::Ok(())
     })
     .detach();
+    project::ManifestProviders::global(cx).register(Arc::from(CargoManifestProvider));
 }
 
 #[derive(Default)]

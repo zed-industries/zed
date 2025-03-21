@@ -6,7 +6,7 @@ use std::{
     sync::Arc,
 };
 
-/// [RootPathTrie] is a workhorse of [super::ProjectTree]. It is responsible for determining the closest known project root for a given path.
+/// [RootPathTrie] is a workhorse of [super::ManifestTree]. It is responsible for determining the closest known project root for a given path.
 /// It also determines how much of a given path is unexplored, thus letting callers fill in that gap if needed.
 /// Conceptually, it allows one to annotate Worktree entries with arbitrary extra metadata and run closest-ancestor searches.
 ///

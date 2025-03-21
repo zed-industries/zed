@@ -7,9 +7,9 @@ pub mod git_store;
 pub mod image_store;
 pub mod lsp_command;
 pub mod lsp_store;
+mod manifest_tree;
 pub mod prettier_store;
 pub mod project_settings;
-mod project_tree;
 pub mod search;
 mod task_inventory;
 pub mod task_store;
@@ -73,6 +73,7 @@ use lsp::{
 };
 use lsp_command::*;
 use lsp_store::{CompletionDocumentation, LspFormatTarget, OpenLspBufferHandle};
+pub use manifest_tree::ManifestProviders;
 use node_runtime::NodeRuntime;
 use parking_lot::Mutex;
 pub use prettier_store::PrettierStore;
