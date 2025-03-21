@@ -403,7 +403,12 @@ define_connection! {
             DROP TABLE terminals;
 
             ALTER TABLE terminals2 RENAME TO terminals;
-        )];
+        ),
+        sql! (
+            ALTER TABLE terminals ADD COLUMN working_directory_path TEXT;
+            UPDATE terminals SET working_directory_path = CAST(working_directory AS TEXT);
+        ),
+    ];
 }
 
 impl TerminalDb {
@@ -419,15 +424,30 @@ impl TerminalDb {
         }
     }
 
-    query! {
-        pub async fn save_working_directory(
-            item_id: ItemId,
-            workspace_id: WorkspaceId,
-            working_directory: PathBuf
-        ) -> Result<()> {
-            INSERT OR REPLACE INTO terminals(item_id, workspace_id, working_directory)
-            VALUES (?, ?, ?)
-        }
+    pub async fn save_working_directory(
+        &self,
+        item_id: ItemId,
+        workspace_id: WorkspaceId,
+        working_directory: PathBuf,
+    ) -> Result<()> {
+        let query =
+            "INSERT INTO terminals(item_id, workspace_id, working_directory, working_directory_path)
+            VALUES (?1, ?2, ?3, ?4)
+            ON CONFLICT DO UPDATE SET
+                item_id = ?1,
+                workspace_id = ?2,
+                working_directory = ?3,
+                working_directory_path = ?4"
+        ;
+        self.write(move |conn| {
+            let mut statement = Statement::prepare(conn, query)?;
+            let mut next_index = statement.bind(&item_id, 1)?;
+            next_index = statement.bind(&workspace_id, next_index)?;
+            next_index = statement.bind(&working_directory, next_index)?;
+            statement.bind(&working_directory.to_string_lossy().to_string(), next_index)?;
+            statement.exec()
+        })
+        .await
     }
 
     query! {
