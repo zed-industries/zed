@@ -609,7 +609,6 @@ version = "0.1.0"
 dependencies = [
  "anthropic",
  "anyhow",
- "collections",
  "deepseek",
  "feature_flags",
  "fs",
