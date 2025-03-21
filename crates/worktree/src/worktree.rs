@@ -2698,6 +2698,7 @@ impl Snapshot {
         Some(removed_entry.path)
     }
 
+    #[cfg(any(test, feature = "test-support"))]
     pub fn status_for_file(&self, path: impl AsRef<Path>) -> Option<FileStatus> {
         let path = path.as_ref();
         self.repository_for_path(path).and_then(|repo| {

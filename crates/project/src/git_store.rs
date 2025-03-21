@@ -54,7 +54,7 @@ use worktree::{
 pub struct GitStore {
     state: GitStoreState,
     buffer_store: Entity<BufferStore>,
-    worktree_store: Entity<WorktreeStore>,
+    _worktree_store: Entity<WorktreeStore>,
     repositories: HashMap<ProjectEntryId, Entity<Repository>>,
     active_repo_id: Option<ProjectEntryId>,
     #[allow(clippy::type_complexity)]
@@ -250,7 +250,7 @@ impl GitStore {
         GitStore {
             state,
             buffer_store,
-            worktree_store,
+            _worktree_store: worktree_store,
             repositories: HashMap::default(),
             active_repo_id: None,
             update_sender,
@@ -525,10 +525,13 @@ impl GitStore {
         project_path: &ProjectPath,
         cx: &App,
     ) -> Option<FileStatus> {
-        self.worktree_store
-            .read(cx)
-            .worktree_for_id(project_path.worktree_id, cx)
-            .and_then(|worktree| worktree.read(cx).status_for_file(&project_path.path))
+        let (repo, repo_path) = self.repository_and_path_for_project_path(project_path, cx)?;
+        Some(
+            repo.read(cx)
+                .repository_entry
+                .status_for_path(&repo_path)?
+                .status,
+        )
     }
 
     pub fn checkpoint(&self, cx: &App) -> Task<Result<GitStoreCheckpoint>> {
@@ -1123,7 +1126,15 @@ impl GitStore {
         cx: &App,
     ) -> Option<(Entity<Repository>, RepoPath)> {
         let buffer = self.buffer_store.read(cx).get(buffer_id)?;
-        let path = buffer.read(cx).project_path(cx)?;
+        let project_path = buffer.read(cx).project_path(cx)?;
+        self.repository_and_path_for_project_path(&project_path, cx)
+    }
+
+    pub fn repository_and_path_for_project_path(
+        &self,
+        path: &ProjectPath,
+        cx: &App,
+    ) -> Option<(Entity<Repository>, RepoPath)> {
         let mut result: Option<(Entity<Repository>, RepoPath)> = None;
         for repo_handle in self.repositories.values() {
             let repo = repo_handle.read(cx);
@@ -2202,6 +2213,10 @@ impl Repository {
 
     pub fn current_branch(&self) -> Option<&Branch> {
         self.repository_entry.branch()
+    }
+
+    pub fn status_for_path(&self, path: &RepoPath) -> Option<StatusEntry> {
+        self.repository_entry.status_for_path(path)
     }
 
     fn send_job<F, Fut, R>(&self, job: F) -> oneshot::Receiver<R>
