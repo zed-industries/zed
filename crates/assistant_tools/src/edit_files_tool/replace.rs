@@ -5,7 +5,11 @@ use util::{paths::PathMatcher, ResultExt as _};
 /// Performs an exact string replacement in a buffer, requiring precise character-for-character matching.
 /// Uses the search functionality to locate the first occurrence of the exact string.
 /// Returns None if no exact match is found in the buffer.
-pub async fn replace_exact(old: &str, new: &str, snapshot: &BufferSnapshot) -> Option<Diff> {
+pub async fn replace_exact(
+    old: &str,
+    new: &str,
+    snapshot: &BufferSnapshot,
+) -> Option<(Diff, usize)> {
     let query = SearchQuery::text(
         old,
         false,
@@ -41,7 +45,7 @@ pub async fn replace_exact(old: &str, new: &str, snapshot: &BufferSnapshot) -> O
         edits,
     };
 
-    Some(diff)
+    Some((diff, matches.len()))
 }
 
 /// Performs a replacement that's indentation-aware - matches text content ignoring leading whitespace differences.

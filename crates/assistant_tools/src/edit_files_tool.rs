@@ -1,6 +1,6 @@
 mod edit_action;
 pub mod log;
-mod replace;
+pub(crate) mod replace;
 
 use anyhow::{anyhow, Context, Result};
 use assistant_tool::{ActionLog, Tool};
@@ -320,6 +320,7 @@ impl EditToolRequest {
                             // Try to match exactly
                             replace_exact(&old, &new, &snapshot)
                             .await
+                            .map(|(diff, _)| diff)
                             // If that fails, try being flexible about indentation
                             .or_else(|| replace_with_flexible_indent(&old, &new, &snapshot));
 

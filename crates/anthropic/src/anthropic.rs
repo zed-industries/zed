@@ -157,7 +157,11 @@ impl Model {
         }
     }
 
-    pub const DEFAULT_BETA_HEADERS: &[&str] = &["prompt-caching-2024-07-31"];
+    pub const DEFAULT_BETA_HEADERS: &[&str] = &[
+        "prompt-caching-2024-07-31",
+        // todo! add this based on enabled tools?
+        "computer-use-2025-01-24",
+    ];
 
     pub fn beta_headers(&self) -> String {
         let mut headers = Self::DEFAULT_BETA_HEADERS
@@ -504,10 +508,18 @@ pub struct ImageSource {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct Tool {
-    pub name: String,
-    pub description: String,
-    pub input_schema: serde_json::Value,
+#[serde(untagged)]
+pub enum Tool {
+    Custom {
+        name: String,
+        description: String,
+        input_schema: serde_json::Value,
+    },
+    Anthropic {
+        #[serde(rename = "type")]
+        tool_type: String,
+        name: String,
+    },
 }
 
 #[derive(Debug, Serialize, Deserialize)]

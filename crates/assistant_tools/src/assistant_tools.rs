@@ -1,3 +1,4 @@
+mod anthropic;
 mod bash_tool;
 mod delete_path_tool;
 mod diagnostics_tool;
@@ -36,12 +37,18 @@ pub fn init(http_client: Arc<HttpClientWithUrl>, cx: &mut App) {
     registry.register_tool(BashTool);
     registry.register_tool(DeletePathTool);
     registry.register_tool(DiagnosticsTool);
-    registry.register_tool(EditFilesTool);
     registry.register_tool(ListDirectoryTool);
     registry.register_tool(NowTool);
     registry.register_tool(PathSearchTool);
     registry.register_tool(ReadFileTool);
     registry.register_tool(RegexSearchTool);
+
+    if std::env::var("USE_ANTHROPIC_TEXT_EDITOR").is_ok() {
+        registry.register_tool(anthropic::TextEditorTool);
+    } else {
+        registry.register_tool(EditFilesTool);
+    }
+
     registry.register_tool(ThinkingTool);
     registry.register_tool(FetchTool::new(http_client));
 }

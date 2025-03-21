@@ -10,7 +10,7 @@ use http_client::HttpClient;
 use language_model::{
     AuthenticateError, LanguageModel, LanguageModelCompletionEvent, LanguageModelId,
     LanguageModelName, LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
-    LanguageModelProviderState, LanguageModelRequest, RateLimiter, Role,
+    LanguageModelProviderState, LanguageModelRequest, LanguageModelRequestTool, RateLimiter, Role,
 };
 
 use futures::stream::BoxStream;
@@ -450,12 +450,21 @@ pub fn into_mistral(
         tools: request
             .tools
             .into_iter()
-            .map(|tool| mistral::ToolDefinition::Function {
-                function: mistral::FunctionDefinition {
-                    name: tool.name,
-                    description: Some(tool.description),
-                    parameters: Some(tool.input_schema),
+            .map(|tool| match tool {
+                LanguageModelRequestTool::Custom {
+                    name,
+                    description,
+                    input_schema,
+                } => mistral::ToolDefinition::Function {
+                    function: mistral::FunctionDefinition {
+                        name,
+                        description: Some(description),
+                        parameters: Some(input_schema),
+                    },
                 },
+                LanguageModelRequestTool::RefactorMeProviderDefined { .. } => {
+                    todo!()
+                }
             })
             .collect(),
     }

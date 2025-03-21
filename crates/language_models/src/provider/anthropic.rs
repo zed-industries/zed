@@ -14,7 +14,8 @@ use http_client::HttpClient;
 use language_model::{
     AuthenticateError, LanguageModel, LanguageModelCacheConfiguration, LanguageModelId,
     LanguageModelName, LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
-    LanguageModelProviderState, LanguageModelRequest, MessageContent, RateLimiter, Role,
+    LanguageModelProviderState, LanguageModelRequest, LanguageModelRequestTool, MessageContent,
+    RateLimiter, Role,
 };
 use language_model::{LanguageModelCompletionEvent, LanguageModelToolUse, StopReason};
 use schemars::JsonSchema;
@@ -438,7 +439,7 @@ impl LanguageModel for AnthropicModel {
         request.tool_choice = Some(anthropic::ToolChoice::Tool {
             name: tool_name.clone(),
         });
-        request.tools = vec![anthropic::Tool {
+        request.tools = vec![anthropic::Tool::Custom {
             name: tool_name.clone(),
             description: tool_description,
             input_schema,
@@ -552,21 +553,30 @@ pub fn into_anthropic(
         messages: new_messages,
         max_tokens: max_output_tokens,
         system: Some(system_message),
-        tools: request
-            .tools
-            .into_iter()
-            .map(|tool| anthropic::Tool {
-                name: tool.name,
-                description: tool.description,
-                input_schema: tool.input_schema,
-            })
-            .collect(),
+        tools: request.tools.into_iter().map(into_anthropic_tool).collect(),
         tool_choice: None,
         metadata: None,
         stop_sequences: Vec::new(),
         temperature: request.temperature.or(Some(default_temperature)),
         top_k: None,
         top_p: None,
+    }
+}
+
+pub fn into_anthropic_tool(tool: LanguageModelRequestTool) -> anthropic::Tool {
+    match tool {
+        LanguageModelRequestTool::Custom {
+            name,
+            description,
+            input_schema,
+        } => anthropic::Tool::Custom {
+            name,
+            description,
+            input_schema,
+        },
+        LanguageModelRequestTool::RefactorMeProviderDefined { tool_type, name } => {
+            anthropic::Tool::Anthropic { tool_type, name }
+        }
     }
 }
 

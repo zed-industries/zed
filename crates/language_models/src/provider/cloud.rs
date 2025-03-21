@@ -573,6 +573,7 @@ impl LanguageModel for CloudLanguageModel {
                 );
                 let client = self.client.clone();
                 let llm_api_token = self.llm_api_token.clone();
+                // todo! collab doesn't support provider-specific tools
                 let future = self.request_limiter.stream(async move {
                     let response = Self::perform_llm_completion(
                         client.clone(),
@@ -673,7 +674,7 @@ impl LanguageModel for CloudLanguageModel {
                 request.tool_choice = Some(anthropic::ToolChoice::Tool {
                     name: tool_name.clone(),
                 });
-                request.tools = vec![anthropic::Tool {
+                request.tools = vec![anthropic::Tool::Custom {
                     name: tool_name.clone(),
                     description: tool_description,
                     input_schema,
