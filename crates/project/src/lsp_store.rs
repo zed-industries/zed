@@ -1571,7 +1571,7 @@ impl LocalLspStore {
                                     action.lsp_action.title()
                                 )
                             };
-                            
+
                             zlog::trace!(logger => "Executing {}", describe_code_action(&action));
 
                             // NOTE: code below duplicated from `Self::deserialize_workspace_edit`
