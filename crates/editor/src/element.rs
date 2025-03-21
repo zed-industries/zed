@@ -5259,16 +5259,15 @@ impl EditorElement {
                             for (background_highlight_id, (_, background_ranges)) in
                                 background_highlights.iter()
                             {
-                                let is_search_highlights = *background_highlight_id
-                                    == TypeId::of::<SearchResultOrSelectedTextHighlight>();
-                                let is_text_highlights = *background_highlight_id
+                                let is_search_or_text_highlights = *background_highlight_id
                                     == TypeId::of::<SearchResultOrSelectedTextHighlight>();
                                 let is_symbol_occurrences = *background_highlight_id
                                     == TypeId::of::<DocumentHighlightRead>()
                                     || *background_highlight_id
                                         == TypeId::of::<DocumentHighlightWrite>();
-                                if (is_search_highlights && scrollbar_settings.search_results)
-                                    || (is_text_highlights && scrollbar_settings.selected_text)
+                                if (is_search_or_text_highlights
+                                    && (scrollbar_settings.search_results
+                                        || scrollbar_settings.selected_text))
                                     || (is_symbol_occurrences && scrollbar_settings.selected_symbol)
                                 {
                                     let mut color = theme.status().info;
