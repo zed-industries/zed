@@ -1820,6 +1820,11 @@ impl ActiveThread {
                                             },
                                         ))
                                     }),
+                            )
+                            .child(
+                                Label::new("Note: A future release will introduce a way to remember your answers to these. In the meantime, you can avoid these prompts by adding \"assistant\": { \"always_allow_tool_actions\": true } to your settings.json.")
+                                    .color(Color::Muted)
+                                    .size(LabelSize::Small),
                             ),
                     )
                     .into_any()
