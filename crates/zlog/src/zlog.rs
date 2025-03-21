@@ -314,7 +314,9 @@ pub mod scope_map {
 
     fn hash_scope_map_settings(map: &HashMap<String, String>) -> u64 {
         let mut hasher = DefaultHasher::new();
-        for (key, value) in map {
+        let mut items = map.iter().collect::<Vec<_>>();
+        items.sort();
+        for (key, value) in items {
             Hasher::write(&mut hasher, key.as_bytes());
             Hasher::write(&mut hasher, value.as_bytes());
         }
@@ -359,14 +361,18 @@ pub mod scope_map {
             map_new.insert(scope, level);
         }
 
-        {
+        if let Ok(_) = SCOPE_MAP_HASH.compare_exchange(
+            hash_old,
+            hash_new,
+            Ordering::Release,
+            Ordering::Relaxed,
+        ) {
             let mut map = SCOPE_MAP.write().unwrap_or_else(|err| {
                 SCOPE_MAP.clear_poison();
                 err.into_inner()
             });
             *map = Some(map_new.clone());
             // note: hash update done here to ensure consistency with scope map
-            SCOPE_MAP_HASH.store(hash_new, Ordering::Release);
         }
         eprintln!("Updated log scope settings :: map = {:?}", map_new);
     }
