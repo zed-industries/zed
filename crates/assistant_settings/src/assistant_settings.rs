@@ -21,6 +21,20 @@ pub enum AssistantDockPosition {
     Bottom,
 }
 
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum RunDestructiveTools {
+    Always,
+    Never,
+    Ask,
+}
+
+impl Default for RunDestructiveTools {
+    fn default() -> Self {
+        RunDestructiveTools::Ask
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
 #[serde(tag = "name", rename_all = "snake_case")]
 pub enum AssistantProviderContentV1 {
@@ -66,6 +80,7 @@ pub struct AssistantSettings {
     pub inline_alternatives: Vec<LanguageModelSelection>,
     pub using_outdated_settings_version: bool,
     pub enable_experimental_live_diffs: bool,
+    pub run_destructive_tools: RunDestructiveTools,
 }
 
 impl AssistantSettings {
@@ -166,6 +181,7 @@ impl AssistantSettingsContent {
                     editor_model: None,
                     inline_alternatives: None,
                     enable_experimental_live_diffs: None,
+                    run_destructive_tools: None,
                 },
                 VersionedAssistantSettingsContent::V2(settings) => settings.clone(),
             },
@@ -187,6 +203,7 @@ impl AssistantSettingsContent {
                 editor_model: None,
                 inline_alternatives: None,
                 enable_experimental_live_diffs: None,
+                run_destructive_tools: None,
             },
         }
     }
@@ -316,6 +333,7 @@ impl Default for VersionedAssistantSettingsContent {
             editor_model: None,
             inline_alternatives: None,
             enable_experimental_live_diffs: None,
+            run_destructive_tools: None,
         })
     }
 }
@@ -352,6 +370,15 @@ pub struct AssistantSettingsContentV2 {
     ///
     /// Default: false
     enable_experimental_live_diffs: Option<bool>,
+
+    /// Controls when tools are allowed to run if they might make
+    /// destructive changes such as writing to the filesystem.
+    /// - "always": Always allow tools to run (without needing confirmation)
+    /// - "never": Never run tools that might make destructive changes
+    /// - "ask": Stop and ask for confirmation before running tools that might make destructive changes
+    ///
+    /// Default: "ask"
+    run_destructive_tools: Option<RunDestructiveTools>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
@@ -481,6 +508,10 @@ impl Settings for AssistantSettings {
             merge(
                 &mut settings.enable_experimental_live_diffs,
                 value.enable_experimental_live_diffs,
+            );
+            merge(
+                &mut settings.run_destructive_tools,
+                value.run_destructive_tools,
             );
         }
 

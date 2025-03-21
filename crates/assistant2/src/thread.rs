@@ -4,6 +4,8 @@ use std::sync::Arc;
 
 use anyhow::{Context as _, Result};
 use assistant_tool::{ActionLog, Tool, ToolWorkingSet};
+use assistant_settings::{AssistantSettings, RunDestructiveTools};
+use settings::Settings;
 use chrono::{DateTime, Utc};
 use collections::{BTreeMap, HashMap, HashSet};
 use fs::Fs;
@@ -977,24 +979,48 @@ impl Thread {
 
         for tool_use in pending_tool_uses.iter() {
             if let Some(tool) = self.tools.tool(&tool_use.name, cx) {
-                if tool.needs_confirmation() {
-                    self.tool_use.confirm_tool_use(
-                        tool_use.id.clone(),
-                        tool_use.ui_text.clone(),
-                        tool_use.input.clone(),
-                        messages.clone(),
-                        tool.clone(),
-                    );
-                } else {
-                    self.run_tool(
-                        tool_use.id.clone(),
-                        tool_use.ui_text.clone(),
-                        tool_use.input.clone(),
-                        &messages,
-                        tool,
-                        cx,
-                    );
+                let settings = AssistantSettings::get_global(cx);
+                match settings.run_destructive_tools {
+                    RunDestructiveTools::Never if tool.needs_confirmation() => {
+                        self.tool_use.insert_tool_output(
+                            tool_use.id.clone(),
+                            Err(anyhow::anyhow!("Tool execution blocked by your \"run_destructive_tools\" setting (under \"assistant\" in settings.json).")),
+                        );
+                    }
+                    RunDestructiveTools::Ask if tool.needs_confirmation() => {
+                        self.tool_use.confirm_tool_use(
+                            tool_use.id.clone(),
+                            tool_use.ui_text.clone(),
+                            tool_use.input.clone(),
+                            messages.clone(),
+                            tool.clone(),
+                        );
+                    }
+                    // This is essentially `_ =>` but with exhaustive patterns so
+                    // we can know to revisit this if more variants ever get added.
+                    RunDestructiveTools::Always
+                    | RunDestructiveTools::Never
+                    | RunDestructiveTools::Ask
+                    => {
+                        self.run_tool(
+                            tool_use.id.clone(),
+                            tool_use.ui_text.clone(),
+                            tool_use.input.clone(),
+                            &messages,
+                            tool,
+                            cx,
+                        );
+                    }
                 }
+            } else if let Some(tool) = self.tools.tool(&tool_use.name, cx) {
+                self.run_tool(
+                    tool_use.id.clone(),
+                    tool_use.ui_text.clone(),
+                    tool_use.input.clone(),
+                    &messages,
+                    tool,
+                    cx,
+                );
             }
         }
 
