@@ -34,3 +34,5 @@ xcuserdata/
 
 # Don't commit any secrets to the repo.
 .env.secret.toml
+
+*.log

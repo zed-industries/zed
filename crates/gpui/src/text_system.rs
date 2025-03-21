@@ -21,14 +21,14 @@ use collections::FxHashMap;
 use core::fmt;
 use derive_more::Deref;
 use itertools::Itertools;
-use parking_lot::{Mutex, RwLock, RwLockUpgradableReadGuard};
 use smallvec::{smallvec, SmallVec};
 use std::{
     borrow::Cow,
+    cell::RefCell,
     cmp,
     fmt::{Debug, Display, Formatter},
     hash::{Hash, Hasher},
-    ops::{Deref, DerefMut, Range},
+    ops::Range,
     sync::Arc,
 };
 
@@ -46,11 +46,10 @@ pub(crate) const SUBPIXEL_VARIANTS: u8 = 4;
 /// The GPUI text rendering sub system.
 pub struct TextSystem {
     platform_text_system: Arc<dyn PlatformTextSystem>,
-    font_ids_by_font: RwLock<FxHashMap<Font, Result<FontId>>>,
-    font_metrics: RwLock<FxHashMap<FontId, FontMetrics>>,
-    raster_bounds: RwLock<FxHashMap<RenderGlyphParams, Bounds<DevicePixels>>>,
-    wrapper_pool: Mutex<FxHashMap<FontIdWithSize, Vec<LineWrapper>>>,
-    font_runs_pool: Mutex<Vec<Vec<FontRun>>>,
+    font_ids_by_font: RefCell<FxHashMap<Font, Result<FontId>>>,
+    font_metrics: RefCell<FxHashMap<FontId, FontMetrics>>,
+    raster_bounds: RefCell<FxHashMap<RenderGlyphParams, Bounds<DevicePixels>>>,
+    font_runs_pool: RefCell<Vec<Vec<FontRun>>>,
     fallback_font_stack: SmallVec<[Font; 2]>,
 }
 
@@ -58,11 +57,10 @@ impl TextSystem {
     pub(crate) fn new(platform_text_system: Arc<dyn PlatformTextSystem>) -> Self {
         TextSystem {
             platform_text_system,
-            font_metrics: RwLock::default(),
-            raster_bounds: RwLock::default(),
-            font_ids_by_font: RwLock::default(),
-            wrapper_pool: Mutex::default(),
-            font_runs_pool: Mutex::default(),
+            font_metrics: RefCell::default(),
+            raster_bounds: RefCell::default(),
+            font_ids_by_font: RefCell::default(),
+            font_runs_pool: RefCell::default(),
             fallback_font_stack: smallvec![
                 // TODO: Remove this when Linux have implemented setting fallbacks.
                 font("Zed Plex Mono"),
@@ -106,7 +104,7 @@ impl TextSystem {
 
         let font_id = self
             .font_ids_by_font
-            .read()
+            .borrow()
             .get(font)
             .map(clone_font_id_result);
         if let Some(font_id) = font_id {
@@ -114,7 +112,7 @@ impl TextSystem {
         } else {
             let font_id = self.platform_text_system.font_id(font);
             self.font_ids_by_font
-                .write()
+                .borrow_mut()
                 .insert(font.clone(), clone_font_id_result(&font_id));
             font_id
         }
@@ -122,8 +120,9 @@ impl TextSystem {
 
     /// Get the Font for the Font Id.
     pub fn get_font_for_id(&self, id: FontId) -> Option<Font> {
-        let lock = self.font_ids_by_font.read();
-        lock.iter()
+        let font_ids_by_font = self.font_ids_by_font.borrow();
+        font_ids_by_font
+            .iter()
             .filter_map(|(font, result)| match result {
                 Ok(font_id) if *font_id == id => Some(font.clone()),
                 _ => None,
@@ -251,13 +250,12 @@ impl TextSystem {
     }
 
     fn read_metrics<T>(&self, font_id: FontId, read: impl FnOnce(&FontMetrics) -> T) -> T {
-        let lock = self.font_metrics.upgradable_read();
+        let mut font_metrics = self.font_metrics.borrow_mut();
 
-        if let Some(metrics) = lock.get(&font_id) {
+        if let Some(metrics) = font_metrics.get(&font_id) {
             read(metrics)
         } else {
-            let mut lock = RwLockUpgradableReadGuard::upgrade(lock);
-            let metrics = lock
+            let metrics = font_metrics
                 .entry(font_id)
                 .or_insert_with(|| self.platform_text_system.font_metrics(font_id));
             read(metrics)
@@ -265,29 +263,17 @@ impl TextSystem {
     }
 
     /// Returns a handle to a line wrapper, for the given font and font size.
-    pub fn line_wrapper(self: &Arc<Self>, font: Font, font_size: Pixels) -> LineWrapperHandle {
-        let lock = &mut self.wrapper_pool.lock();
+    pub fn line_wrapper(&self, font: &Font, font_size: Pixels) -> LineWrapper {
         let font_id = self.resolve_font(&font);
-        let wrappers = lock
-            .entry(FontIdWithSize { font_id, font_size })
-            .or_default();
-        let wrapper = wrappers.pop().unwrap_or_else(|| {
-            LineWrapper::new(font_id, font_size, self.platform_text_system.clone())
-        });
-
-        LineWrapperHandle {
-            wrapper: Some(wrapper),
-            text_system: self.clone(),
-        }
+        LineWrapper::new(font_id, font_size, self.platform_text_system.clone())
     }
 
     /// Get the rasterized size and location of a specific, rendered glyph.
     pub(crate) fn raster_bounds(&self, params: &RenderGlyphParams) -> Result<Bounds<DevicePixels>> {
-        let raster_bounds = self.raster_bounds.upgradable_read();
+        let mut raster_bounds = self.raster_bounds.borrow_mut();
         if let Some(bounds) = raster_bounds.get(params) {
             Ok(*bounds)
         } else {
-            let mut raster_bounds = RwLockUpgradableReadGuard::upgrade(raster_bounds);
             let bounds = self.platform_text_system.glyph_raster_bounds(params)?;
             raster_bounds.insert(params.clone(), bounds);
             Ok(bounds)
@@ -391,7 +377,7 @@ impl WindowTextSystem {
         line_clamp: Option<usize>,
     ) -> Result<SmallVec<[WrappedLine; 1]>> {
         let mut runs = runs.iter().filter(|run| run.len > 0).cloned().peekable();
-        let mut font_runs = self.font_runs_pool.lock().pop().unwrap_or_default();
+        let mut font_runs = self.font_runs_pool.borrow_mut().pop().unwrap_or_default();
 
         let mut lines = SmallVec::new();
         let mut line_start = 0;
@@ -492,7 +478,7 @@ impl WindowTextSystem {
             process_line(text);
         }
 
-        self.font_runs_pool.lock().push(font_runs);
+        self.font_runs_pool.borrow_mut().push(font_runs);
 
         Ok(lines)
     }
@@ -515,7 +501,7 @@ impl WindowTextSystem {
         Text: AsRef<str>,
         SharedString: From<Text>,
     {
-        let mut font_runs = self.font_runs_pool.lock().pop().unwrap_or_default();
+        let mut font_runs = self.font_runs_pool.borrow_mut().pop().unwrap_or_default();
         for run in runs.iter() {
             let font_id = self.resolve_font(&run.font);
             if let Some(last_run) = font_runs.last_mut() {
@@ -535,49 +521,9 @@ impl WindowTextSystem {
             .layout_line(text, font_size, &font_runs);
 
         font_runs.clear();
-        self.font_runs_pool.lock().push(font_runs);
+        self.font_runs_pool.borrow_mut().push(font_runs);
 
         Ok(layout)
-    }
-}
-
-#[derive(Hash, Eq, PartialEq)]
-struct FontIdWithSize {
-    font_id: FontId,
-    font_size: Pixels,
-}
-
-/// A handle into the text system, which can be used to compute the wrapped layout of text
-pub struct LineWrapperHandle {
-    wrapper: Option<LineWrapper>,
-    text_system: Arc<TextSystem>,
-}
-
-impl Drop for LineWrapperHandle {
-    fn drop(&mut self) {
-        let mut state = self.text_system.wrapper_pool.lock();
-        let wrapper = self.wrapper.take().unwrap();
-        state
-            .get_mut(&FontIdWithSize {
-                font_id: wrapper.font_id,
-                font_size: wrapper.font_size,
-            })
-            .unwrap()
-            .push(wrapper);
-    }
-}
-
-impl Deref for LineWrapperHandle {
-    type Target = LineWrapper;
-
-    fn deref(&self) -> &Self::Target {
-        self.wrapper.as_ref().unwrap()
-    }
-}
-
-impl DerefMut for LineWrapperHandle {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        self.wrapper.as_mut().unwrap()
     }
 }
 
