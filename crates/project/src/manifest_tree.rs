@@ -3,6 +3,7 @@
 //! A Manifest Tree is responsible for determining where the manifests for subprojects are located in a project.
 //! This then is used to provide those locations to language servers & determine locations eligible for toolchain selection.
 
+mod manifest_store;
 mod path_trie;
 mod server_tree;
 
