@@ -8,7 +8,6 @@
 //! ask about suitable language server for each path it interacts with; it can resolve most of the queries locally.
 
 use std::{
-    borrow::Borrow,
     collections::{BTreeMap, BTreeSet},
     path::Path,
     sync::{Arc, Weak},
@@ -164,10 +163,14 @@ impl LanguageServerTree {
             AdapterQuery::Language(language_name) => {
                 self.adapters_for_language(settings_location, language_name, cx)
             }
-            AdapterQuery::Adapter(language_server_name) => IndexMap::from_iter(
-                self.adapter_for_name(language_server_name)
-                    .map(|adapter| (adapter, (LspSettings::default(), BTreeSet::new()))),
-            ),
+            AdapterQuery::Adapter(language_server_name) => {
+                IndexMap::from_iter(self.adapter_for_name(language_server_name).map(|adapter| {
+                    (
+                        adapter.name(),
+                        (LspSettings::default(), BTreeSet::new(), adapter),
+                    )
+                }))
+            }
         };
         self.get_with_adapters(path, adapters, delegate, cx)
     }
@@ -175,23 +178,26 @@ impl LanguageServerTree {
     fn get_with_adapters(
         &mut self,
         path: ProjectPath,
-        adapters: IndexMap<AdapterWrapper, (LspSettings, BTreeSet<LanguageName>)>,
+        adapters: IndexMap<
+            LanguageServerName,
+            (LspSettings, BTreeSet<LanguageName>, Arc<CachedLspAdapter>),
+        >,
         delegate: Arc<dyn LspAdapterDelegate>,
         cx: &mut App,
     ) -> impl Iterator<Item = LanguageServerTreeNode> {
         let worktree_id = path.worktree_id;
-        #[allow(clippy::mutable_key_type)]
+
         let mut manifest_to_adapters = BTreeMap::default();
         let mut nodes = BTreeMap::new();
-        for adapter in adapters.keys() {
-            if let Some(manifest_name) = adapter.0.manifest_name() {
+        for (_, _, adapter) in adapters.values() {
+            if let Some(manifest_name) = adapter.manifest_name() {
                 manifest_to_adapters
                     .entry(manifest_name)
                     .or_insert_with(Vec::default)
                     .push(adapter.clone());
             } else {
                 // Backwards-compat: Fill in any adapters for which we did not detect the root as having the project root at the root of a worktree.
-                nodes.entry(adapter.clone()).or_insert_with(|| ProjectPath {
+                nodes.entry(adapter.name()).or_insert_with(|| ProjectPath {
                     worktree_id,
                     path: Arc::from("".as_ref()),
                 });
@@ -221,8 +227,8 @@ impl LanguageServerTree {
                     .map(move |adapter| (adapter, root_path.clone()))
             })
             .filter_map(move |(adapter, root_path)| {
-                let attach = adapter.0.attach_kind();
-                let (index, _, (settings, new_languages)) = adapters.get_full(&adapter)?;
+                let attach = adapter.attach_kind();
+                let (index, _, (settings, new_languages, _)) = adapters.get_full(&adapter.name)?;
 
                 let inner_node = self
                     .instances
@@ -231,11 +237,11 @@ impl LanguageServerTree {
                     .roots
                     .entry(root_path.path.clone())
                     .or_default()
-                    .entry(adapter.0.name.clone());
+                    .entry(adapter.name());
                 let (node, languages) = inner_node.or_insert_with(|| {
                     (
                         Arc::new(InnerTreeNode::new(
-                            adapter.0.name(),
+                            adapter.name(),
                             attach,
                             root_path.clone(),
                             settings.clone(),
@@ -251,8 +257,8 @@ impl LanguageServerTree {
             .map(|(_, node)| node)
     }
 
-    fn adapter_for_name(&self, name: &LanguageServerName) -> Option<AdapterWrapper> {
-        self.languages.adapter_for_name(name).map(AdapterWrapper)
+    fn adapter_for_name(&self, name: &LanguageServerName) -> Option<Arc<CachedLspAdapter>> {
+        self.languages.adapter_for_name(name)
     }
 
     fn adapters_for_language(
@@ -260,7 +266,8 @@ impl LanguageServerTree {
         settings_location: SettingsLocation,
         language_name: &LanguageName,
         cx: &App,
-    ) -> IndexMap<AdapterWrapper, (LspSettings, BTreeSet<LanguageName>)> {
+    ) -> IndexMap<LanguageServerName, (LspSettings, BTreeSet<LanguageName>, Arc<CachedLspAdapter>)>
+    {
         let settings = AllLanguageSettings::get(Some(settings_location), cx).language(
             Some(settings_location),
             Some(language_name),
@@ -302,10 +309,11 @@ impl LanguageServerTree {
                 .cloned()
                 .unwrap_or_default();
                 Some((
-                    AdapterWrapper(adapter),
+                    adapter.name(),
                     (
                         adapter_settings,
                         BTreeSet::from_iter([language_name.clone()]),
+                        adapter,
                     ),
                 ))
             })
@@ -319,8 +327,8 @@ impl LanguageServerTree {
         self.languages.reorder_language_servers(
             &language_name,
             adapters_with_settings
-                .keys()
-                .map(|wrapper| wrapper.0.clone())
+                .values()
+                .map(|(_, _, adapter)| adapter.clone())
                 .collect(),
         );
 
@@ -397,11 +405,16 @@ impl<'tree> ServerTreeRebase<'tree> {
                 self.new_tree
                     .adapters_for_language(settings_location, language_name, cx)
             }
-            AdapterQuery::Adapter(language_server_name) => IndexMap::from_iter(
-                self.new_tree
-                    .adapter_for_name(language_server_name)
-                    .map(|adapter| (adapter, (LspSettings::default(), BTreeSet::new()))),
-            ),
+            AdapterQuery::Adapter(language_server_name) => {
+                IndexMap::from_iter(self.new_tree.adapter_for_name(language_server_name).map(
+                    |adapter| {
+                        (
+                            adapter.name(),
+                            (LspSettings::default(), BTreeSet::new(), adapter),
+                        )
+                    },
+                ))
+            }
         };
 
         self.new_tree
@@ -441,39 +454,5 @@ impl<'tree> ServerTreeRebase<'tree> {
             .into_iter()
             .filter(|(id, _)| !self.rebased_server_ids.contains(id))
             .collect()
-    }
-}
-
-#[derive(Debug, Clone)]
-struct AdapterWrapper(Arc<CachedLspAdapter>);
-impl PartialEq for AdapterWrapper {
-    fn eq(&self, other: &Self) -> bool {
-        self.0.name.eq(&other.0.name)
-    }
-}
-
-impl Eq for AdapterWrapper {}
-
-impl std::hash::Hash for AdapterWrapper {
-    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        self.0.name.hash(state);
-    }
-}
-
-impl PartialOrd for AdapterWrapper {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(self.0.name.cmp(&other.0.name))
-    }
-}
-
-impl Ord for AdapterWrapper {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.0.name.cmp(&other.0.name)
-    }
-}
-
-impl Borrow<LanguageServerName> for AdapterWrapper {
-    fn borrow(&self) -> &LanguageServerName {
-        &self.0.name
     }
 }
