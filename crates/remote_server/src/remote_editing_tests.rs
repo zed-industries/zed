@@ -1336,6 +1336,12 @@ async fn test_remote_git_branches(cx: &mut TestAppContext, server_cx: &mut TestA
         .collect::<HashSet<_>>();
     fs.insert_branches(Path::new(path!("/code/project1/.git")), &branches);
 
+    let (_worktree, _) = project
+        .update(cx, |project, cx| {
+            project.find_or_create_worktree(path!("/code/project1"), true, cx)
+        })
+        .await
+        .unwrap();
     // Give the worktree a bit of time to index the file system
     cx.run_until_parked();
 
