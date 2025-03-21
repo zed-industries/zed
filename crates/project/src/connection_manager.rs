@@ -88,18 +88,18 @@ impl Manager {
                         projects.insert(project_id, handle.clone());
                         let mut worktrees = Vec::new();
                         let mut repositories = Vec::new();
+                        for (id, repository) in project.repositories(cx) {
+                            repositories.push(proto::RejoinRepository {
+                                id: id.to_proto(),
+                                scan_id: repository.read(cx).completed_scan_id as u64,
+                            });
+                        }
                         for worktree in project.worktrees(cx) {
                             let worktree = worktree.read(cx);
                             worktrees.push(proto::RejoinWorktree {
                                 id: worktree.id().to_proto(),
                                 scan_id: worktree.completed_scan_id() as u64,
                             });
-                            for repository in worktree.repositories().iter() {
-                                repositories.push(proto::RejoinRepository {
-                                    id: repository.work_directory_id().to_proto(),
-                                    scan_id: worktree.completed_scan_id() as u64,
-                                });
-                            }
                         }
                         Some(proto::RejoinProject {
                             id: project_id,

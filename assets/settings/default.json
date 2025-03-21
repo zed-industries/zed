@@ -1228,7 +1228,7 @@
       "format_on_save": "off",
       "use_on_type_format": false,
       "allow_rewrap": "anywhere",
-      "soft_wrap": "bounded",
+      "soft_wrap": "editor_width",
       "prettier": {
         "allowed": true
       }

@@ -6,9 +6,9 @@ use crate::{
     buffer_store::{BufferStore, BufferStoreEvent},
     environment::ProjectEnvironment,
     lsp_command::{self, *},
+    manifest_tree::{AdapterQuery, LanguageServerTree, LaunchDisposition, ManifestTree},
     prettier_store::{self, PrettierStore, PrettierStoreEvent},
     project_settings::{LspSettings, ProjectSettings},
-    project_tree::{AdapterQuery, LanguageServerTree, LaunchDisposition, ProjectTree},
     relativize_path, resolve_path,
     toolchain_store::{EmptyToolchainStore, ToolchainStoreEvent},
     worktree_store::{WorktreeStore, WorktreeStoreEvent},
@@ -382,10 +382,14 @@ impl LocalLspStore {
 
         if settings.as_ref().is_some_and(|b| b.path.is_some()) {
             let settings = settings.unwrap();
+
             return cx.spawn(async move |_| {
+                let mut env = delegate.shell_env().await;
+                env.extend(settings.env.unwrap_or_default());
+
                 Ok(LanguageServerBinary {
                     path: PathBuf::from(&settings.path.unwrap()),
-                    env: Some(delegate.shell_env().await),
+                    env: Some(env),
                     arguments: settings
                         .arguments
                         .unwrap_or_default()
@@ -412,12 +416,17 @@ impl LocalLspStore {
             delegate.update_status(adapter.name.clone(), BinaryStatus::None);
 
             let mut binary = binary_result?;
-            if let Some(arguments) = settings.and_then(|b| b.arguments) {
-                binary.arguments = arguments.into_iter().map(Into::into).collect();
+            let mut shell_env = delegate.shell_env().await;
+
+            if let Some(settings) = settings {
+                if let Some(arguments) = settings.arguments {
+                    binary.arguments = arguments.into_iter().map(Into::into).collect();
+                }
+                if let Some(env) = settings.env {
+                    shell_env.extend(env);
+                }
             }
 
-            let mut shell_env = delegate.shell_env().await;
-            shell_env.extend(binary.env.unwrap_or_default());
             binary.env = Some(shell_env);
             Ok(binary)
         })
@@ -3340,7 +3349,7 @@ impl LspStore {
                 sender,
             )
         };
-        let project_tree = ProjectTree::new(worktree_store.clone(), cx);
+        let manifest_tree = ManifestTree::new(worktree_store.clone(), cx);
         Self {
             mode: LspStoreMode::Local(LocalLspStore {
                 weak: cx.weak_entity(),
@@ -3366,7 +3375,7 @@ impl LspStore {
                 _subscription: cx.on_app_quit(|this, cx| {
                     this.as_local_mut().unwrap().shutdown_language_servers(cx)
                 }),
-                lsp_tree: LanguageServerTree::new(project_tree, languages.clone(), cx),
+                lsp_tree: LanguageServerTree::new(manifest_tree, languages.clone(), cx),
                 registered_buffers: Default::default(),
             }),
             last_formatting_failure: None,

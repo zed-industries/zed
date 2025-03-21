@@ -65,6 +65,7 @@ scripting_tool.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 settings.workspace = true
+smallvec.workspace = true
 smol.workspace = true
 streaming_diff.workspace = true
 telemetry.workspace = true
