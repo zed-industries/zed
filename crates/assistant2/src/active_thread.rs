@@ -627,6 +627,8 @@ impl ActiveThread {
             .filter(|(id, _)| *id == message_id)
             .map(|(_, state)| state.editor.clone());
 
+        let first_message = ix == 0;
+
         let colors = cx.theme().colors();
         let active_color = colors.element_active;
         let editor_bg_color = colors.editor_background;
@@ -824,8 +826,11 @@ impl ActiveThread {
         };
 
         v_flex()
-            .when(ix == 0, |parent| parent.child(self.render_rules_item(cx)))
-            .when_some(checkpoint.clone(), |parent, checkpoint| {
+            .when(first_message, |parent| {
+                parent.child(self.render_rules_item(cx))
+            })
+            .when(!first_message && checkpoint.is_some(), |parent| {
+                let checkpoint = checkpoint.clone().unwrap();
                 let mut is_pending = false;
                 let mut error = None;
                 if let Some(last_restore_checkpoint) =
