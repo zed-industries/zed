@@ -1261,83 +1261,77 @@ impl ActiveThread {
         }
     }
 
-    fn render_pending_confirmations(
-        &mut self,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Option<AnyElement> {
+    fn render_confirmations<'a>(
+        &'a mut self,
+        cx: &'a mut Context<Self>,
+    ) -> impl Iterator<Item = AnyElement> + 'a {
         let thread = self.thread.read(cx);
         let pending_tools = thread.tool_use.pending_tool_uses();
 
-        // Find the first tool that needs confirmation
-        let tool_to_confirm = pending_tools.iter().find(|tool| {
-            matches!(
-                tool.status,
-                crate::tool_use::PendingToolUseStatus::NeedsConfirmation { .. }
-            )
-        })?;
-
-        // Get the tool's UI text to display what needs confirmation
-        Some(
-            div()
-                .p_2()
-                .bg(cx.theme().colors().editor_background)
-                .border_1()
-                .border_color(cx.theme().colors().border)
-                .rounded_lg()
-                .child(
-                    v_flex()
-                        .gap_1()
-                        .child(
-                            v_flex()
-                                .gap_0p5()
-                                .child(Label::new("Confirm Tool Action").color(Color::Muted))
-                                .child(Label::new(&tool_to_confirm.ui_text).size(LabelSize::Small)),
-                        )
-                        .child(
-                            h_flex()
-                                .gap_1()
-                                .child({
-                                    let tool_id = tool_to_confirm.id.clone();
-                                    Button::new("accept-tool", "Accept").on_click(cx.listener(
-                                        move |this, event, window, cx| {
-                                            this.handle_tool_accept(
-                                                tool_id.clone(),
-                                                event,
-                                                window,
-                                                cx,
-                                            )
-                                        },
-                                    ))
-                                })
-                                .child({
-                                    let tool_id = tool_to_confirm.id.clone();
-                                    Button::new("deny-tool", "Deny").on_click(cx.listener(
-                                        move |this, event, window, cx| {
-                                            this.handle_tool_deny(
-                                                tool_id.clone(),
-                                                event,
-                                                window,
-                                                cx,
-                                            )
-                                        },
-                                    ))
-                                }),
-                        ),
-                )
-                .into_any(),
-        )
+        pending_tools
+            .into_iter()
+            .filter(|tool| tool.status.needs_confirmation())
+            .map(|tool| {
+                div()
+                    .m_3()
+                    .p_2()
+                    .bg(cx.theme().colors().editor_background)
+                    .border_1()
+                    .border_color(cx.theme().colors().border)
+                    .rounded_lg()
+                    .child(
+                        v_flex()
+                            .gap_1()
+                            .child(
+                                v_flex()
+                                    .gap_0p5()
+                                    .child(
+                                        Label::new("The agent wants to run this action:")
+                                            .color(Color::Muted),
+                                    )
+                                    .child(div().p_3().child(Label::new(&tool.ui_text))),
+                            )
+                            .child(
+                                h_flex()
+                                    .gap_1()
+                                    .child({
+                                        let tool_id = tool.id.clone();
+                                        Button::new("accept-tool", "Allow").on_click(cx.listener(
+                                            move |this, event, window, cx| {
+                                                this.handle_tool_accept(
+                                                    tool_id.clone(),
+                                                    event,
+                                                    window,
+                                                    cx,
+                                                )
+                                            },
+                                        ))
+                                    })
+                                    .child({
+                                        let tool_id = tool.id.clone();
+                                        Button::new("deny-tool", "Deny").on_click(cx.listener(
+                                            move |this, event, window, cx| {
+                                                this.handle_tool_deny(
+                                                    tool_id.clone(),
+                                                    event,
+                                                    window,
+                                                    cx,
+                                                )
+                                            },
+                                        ))
+                                    }),
+                            ),
+                    )
+                    .into_any()
+            })
     }
 }
 
 impl Render for ActiveThread {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         v_flex()
             .size_full()
             .child(list(self.list_state.clone()).flex_grow())
-            .when_some(
-                self.render_pending_confirmations(window, cx),
-                |this, elem| this.child(elem),
-            )
+            .children(self.render_confirmations(cx))
     }
 }
