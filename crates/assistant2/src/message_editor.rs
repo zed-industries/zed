@@ -345,7 +345,20 @@ impl Render for MessageEditor {
         let border_color = cx.theme().colors().border;
         let active_color = cx.theme().colors().element_selected;
         let editor_bg_color = cx.theme().colors().editor_background;
-        let bg_edit_files_disclosure = editor_bg_color.blend(active_color.opacity(0.25));
+        let bg_edit_files_disclosure = editor_bg_color.blend(active_color.opacity(0.3));
+
+        let edit_files_container = || {
+            h_flex()
+                .mx_2()
+                .py_1()
+                .pl_2p5()
+                .pr_1()
+                .bg(bg_edit_files_disclosure)
+                .border_1()
+                .border_color(border_color)
+                .justify_between()
+                .flex_wrap()
+        };
 
         v_flex()
             .size_full()
@@ -407,25 +420,13 @@ impl Render for MessageEditor {
                     ),
                 )
             })
-            // DL TODO: this whole element shouldn't be visible on the active thread's empty state.
-            // it should only pop after submitting a message
-            // however, given now it's Git, if I changed files, even if those haven't come from LLMs,
-            // they woll already show up... We've got to sort this out!
             .when(
                 changed_files > 0 && !is_generating && !empty_thread,
                 |parent| {
                     parent.child(
-                        h_flex()
-                            .mx_2()
-                            .py_1()
-                            .pl_2p5()
-                            .pr_1()
-                            .bg(bg_edit_files_disclosure)
-                            .border_1()
+                        edit_files_container()
                             .border_b_0()
-                            .border_color(border_color)
                             .rounded_t_md()
-                            .justify_between()
                             .shadow(smallvec::smallvec![gpui::BoxShadow {
                                 color: gpui::black().opacity(0.15),
                                 offset: point(px(1.), px(-1.)),
@@ -468,6 +469,72 @@ impl Render for MessageEditor {
                                                 });
                                             }),
                                     )
+                                    .child(
+                                        Button::new("review", "Review Diff")
+                                            .label_size(LabelSize::XSmall)
+                                            .key_binding({
+                                                let focus_handle = focus_handle.clone();
+                                                KeyBinding::for_action_in(
+                                                    &git_ui::project_diff::Diff,
+                                                    &focus_handle,
+                                                    window,
+                                                    cx,
+                                                )
+                                                .map(|kb| kb.size(rems_from_px(10.)))
+                                            })
+                                            .on_click(|_event, _window, cx| {
+                                                cx.defer(|cx| {
+                                                    cx.dispatch_action(&git_ui::project_diff::Diff)
+                                                });
+                                            }),
+                                    )
+                                    .child(
+                                        Button::new("commit", "Commit Changes")
+                                            .label_size(LabelSize::XSmall)
+                                            .key_binding({
+                                                let focus_handle = focus_handle.clone();
+                                                KeyBinding::for_action_in(
+                                                    &ExpandCommitEditor,
+                                                    &focus_handle,
+                                                    window,
+                                                    cx,
+                                                )
+                                                .map(|kb| kb.size(rems_from_px(10.)))
+                                            })
+                                            .on_click(|_event, _window, cx| {
+                                                cx.defer(|cx| {
+                                                    cx.dispatch_action(&ExpandCommitEditor)
+                                                });
+                                            }),
+                                    ),
+                            ),
+                    )
+                },
+            )
+            .when(
+                changed_files > 0 && !is_generating && empty_thread,
+                |parent| {
+                    parent.child(
+                        edit_files_container()
+                            .mb_2()
+                            .rounded_md()
+                            .child(
+                                h_flex()
+                                    .gap_2()
+                                    .child(Label::new("Consider committing your changes before starting a fresh thread").size(LabelSize::XSmall))
+                                    .child(div().size_1().rounded_full().bg(border_color))
+                                    .child(
+                                        Label::new(format!(
+                                            "{} {}",
+                                            changed_files,
+                                            if changed_files == 1 { "file" } else { "files" }
+                                        ))
+                                        .size(LabelSize::XSmall),
+                                    ),
+                            )
+                            .child(
+                                h_flex()
+                                    .gap_1()
                                     .child(
                                         Button::new("review", "Review Diff")
                                             .label_size(LabelSize::XSmall)
