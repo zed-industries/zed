@@ -17,7 +17,7 @@ use language_model::{
     LanguageModelToolUseId, MaxMonthlySpendReachedError, MessageContent, PaymentRequiredError,
     Role, StopReason, TokenUsage,
 };
-use project::git::GitStoreCheckpoint;
+use project::git_store::{GitStore, GitStoreCheckpoint};
 use project::{Project, Worktree};
 use prompt_store::{
     AssistantSystemPromptContext, PromptBuilder, RulesFile, WorktreeInfoForSystemPrompt,
@@ -1219,10 +1219,11 @@ impl Thread {
         project: Entity<Project>,
         cx: &mut Context<Self>,
     ) -> Task<Arc<ProjectSnapshot>> {
+        let git_store = project.read(cx).git_store().clone();
         let worktree_snapshots: Vec<_> = project
             .read(cx)
             .visible_worktrees(cx)
-            .map(|worktree| Self::worktree_snapshot(worktree, cx))
+            .map(|worktree| Self::worktree_snapshot(worktree, git_store.clone(), cx))
             .collect();
 
         cx.spawn(async move |_, cx| {
@@ -1251,7 +1252,11 @@ impl Thread {
         })
     }
 
-    fn worktree_snapshot(worktree: Entity<project::Worktree>, cx: &App) -> Task<WorktreeSnapshot> {
+    fn worktree_snapshot(
+        worktree: Entity<project::Worktree>,
+        git_store: Entity<GitStore>,
+        cx: &App,
+    ) -> Task<WorktreeSnapshot> {
         cx.spawn(async move |cx| {
             // Get worktree path and snapshot
             let worktree_info = cx.update(|app_cx| {
@@ -1268,42 +1273,40 @@ impl Thread {
                 };
             };
 
+            let repo_info = git_store
+                .update(cx, |git_store, cx| {
+                    git_store
+                        .repositories()
+                        .values()
+                        .find(|repo| repo.read(cx).worktree_id == snapshot.id())
+                        .and_then(|repo| {
+                            let repo = repo.read(cx);
+                            Some((repo.branch().cloned(), repo.local_repository()?))
+                        })
+                })
+                .ok()
+                .flatten();
+
             // Extract git information
-            let git_state = match snapshot.repositories().first() {
+            let git_state = match repo_info {
                 None => None,
-                Some(repo_entry) => {
-                    // Get branch information
-                    let current_branch = repo_entry.branch().map(|branch| branch.name.to_string());
+                Some((branch, repo)) => {
+                    let current_branch = branch.map(|branch| branch.name.to_string());
+                    let remote_url = repo.remote_url("origin");
+                    let head_sha = repo.head_sha();
 
-                    // Get repository info
-                    let repo_result = worktree.read_with(cx, |worktree, _cx| {
-                        if let project::Worktree::Local(local_worktree) = &worktree {
-                            local_worktree.get_local_repo(repo_entry).map(|local_repo| {
-                                let repo = local_repo.repo();
-                                (repo.remote_url("origin"), repo.head_sha(), repo.clone())
-                            })
-                        } else {
-                            None
-                        }
-                    });
+                    // Get diff asynchronously
+                    let diff = repo
+                        .diff(git::repository::DiffType::HeadToWorktree, cx.clone())
+                        .await
+                        .ok();
 
-                    match repo_result {
-                        Ok(Some((remote_url, head_sha, repository))) => {
-                            // Get diff asynchronously
-                            let diff = repository
-                                .diff(git::repository::DiffType::HeadToWorktree, cx.clone())
-                                .await
-                                .ok();
-
-                            Some(GitState {
-                                remote_url,
-                                head_sha,
-                                current_branch,
-                                diff,
-                            })
-                        }
-                        Err(_) | Ok(None) => None,
-                    }
+                    Some(GitState {
+                        remote_url,
+                        head_sha,
+                        current_branch,
+                        diff,
+                    })
                 }
             };
 

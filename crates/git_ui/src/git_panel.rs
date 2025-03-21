@@ -46,7 +46,7 @@ use panel::{
     panel_icon_button, PanelHeader,
 };
 use project::{
-    git::{GitEvent, Repository},
+    git_store::{GitEvent, Repository},
     Fs, Project, ProjectPath,
 };
 use serde::{Deserialize, Serialize};

@@ -40,7 +40,7 @@ use language::{BufferId, BufferSnapshot, OffsetRangeExt, OutlineItem};
 use menu::{Cancel, SelectFirst, SelectLast, SelectNext, SelectPrevious};
 
 use outline_panel_settings::{OutlinePanelDockPosition, OutlinePanelSettings, ShowIndentGuides};
-use project::{File, Fs, Project, ProjectItem};
+use project::{File, Fs, GitEntry, GitTraversal, Project, ProjectItem};
 use search::{BufferSearchBar, ProjectSearchView};
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
@@ -60,7 +60,7 @@ use workspace::{
     },
     OpenInTerminal, WeakItemHandle, Workspace,
 };
-use worktree::{Entry, GitEntry, ProjectEntryId, WorktreeId};
+use worktree::{Entry, ProjectEntryId, WorktreeId};
 
 actions!(
     outline_panel,
@@ -2566,6 +2566,7 @@ impl OutlinePanel {
             let mut root_entries = HashSet::default();
             let mut new_excerpts = HashMap::<BufferId, HashMap<ExcerptId, Excerpt>>::default();
             let Ok(buffer_excerpts) = outline_panel.update(cx, |outline_panel, cx| {
+                let git_store = outline_panel.project.read(cx).git_store().clone();
                 new_collapsed_entries = outline_panel.collapsed_entries.clone();
                 new_unfolded_dirs = outline_panel.unfolded_dirs.clone();
                 let multi_buffer_snapshot = active_multi_buffer.read(cx).snapshot(cx);
@@ -2579,9 +2580,17 @@ impl OutlinePanel {
                         let is_new = new_entries.contains(&excerpt_id)
                             || !outline_panel.excerpts.contains_key(&buffer_id);
                         let is_folded = active_editor.read(cx).is_buffer_folded(buffer_id, cx);
+                        let status = git_store
+                            .read(cx)
+                            .repository_and_path_for_buffer_id(buffer_id, cx)
+                            .and_then(|(repo, path)| {
+                                Some(repo.read(cx).status_for_path(&path)?.status)
+                            });
                         buffer_excerpts
                             .entry(buffer_id)
-                            .or_insert_with(|| (is_new, is_folded, Vec::new(), entry_id, worktree))
+                            .or_insert_with(|| {
+                                (is_new, is_folded, Vec::new(), entry_id, worktree, status)
+                            })
                             .2
                             .push(excerpt_id);
 
@@ -2631,7 +2640,7 @@ impl OutlinePanel {
                     >::default();
                     let mut external_excerpts = HashMap::default();
 
-                    for (buffer_id, (is_new, is_folded, excerpts, entry_id, worktree)) in
+                    for (buffer_id, (is_new, is_folded, excerpts, entry_id, worktree, status)) in
                         buffer_excerpts
                     {
                         if is_folded {
@@ -2665,15 +2674,18 @@ impl OutlinePanel {
                             match entry_id.and_then(|id| worktree.entry_for_id(id)).cloned() {
                                 Some(entry) => {
                                     let entry = GitEntry {
-                                        git_summary: worktree
-                                            .status_for_file(&entry.path)
+                                        git_summary: status
                                             .map(|status| status.summary())
                                             .unwrap_or_default(),
                                         entry,
                                     };
-                                    let mut traversal = worktree
-                                        .traverse_from_path(true, true, true, entry.path.as_ref())
-                                        .with_git_statuses();
+                                    let mut traversal =
+                                        GitTraversal::new(worktree.traverse_from_path(
+                                            true,
+                                            true,
+                                            true,
+                                            entry.path.as_ref(),
+                                        ));
 
                                     let mut entries_to_add = HashMap::default();
                                     worktree_excerpts
