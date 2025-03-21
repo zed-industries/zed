@@ -754,9 +754,8 @@
       "escape": "git_panel::ToggleFocus",
       "ctrl-enter": "git::Commit",
       "alt-enter": "menu::SecondaryConfirm",
-      "delete": "git::RestoreFile",
       "shift-delete": "git::RestoreFile",
-      "backspace": "git::RestoreFile"
+      "ctrl-delete": "git::RestoreFile"
     }
   },
   {
