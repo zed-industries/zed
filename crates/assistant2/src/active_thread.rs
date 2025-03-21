@@ -1021,8 +1021,7 @@ impl ActiveThread {
             .when(first_message, |parent| {
                 parent.child(self.render_rules_item(cx))
             })
-            .when(!first_message && checkpoint.is_some(), |parent| {
-                let checkpoint = checkpoint.clone().unwrap();
+            .when_some(checkpoint, |parent, checkpoint| {
                 let mut is_pending = false;
                 let mut error = None;
                 if let Some(last_restore_checkpoint) =

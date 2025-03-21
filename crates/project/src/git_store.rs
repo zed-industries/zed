@@ -580,6 +580,44 @@ impl GitStore {
         })
     }
 
+    /// Compares two checkpoints, returning true if they are equal.
+    pub fn compare_checkpoints(
+        &self,
+        left: GitStoreCheckpoint,
+        mut right: GitStoreCheckpoint,
+        cx: &App,
+    ) -> Task<Result<bool>> {
+        let repositories_by_dot_git_abs_path = self
+            .repositories
+            .values()
+            .map(|repo| (repo.read(cx).dot_git_abs_path.clone(), repo))
+            .collect::<HashMap<_, _>>();
+
+        let mut tasks = Vec::new();
+        for (dot_git_abs_path, left_checkpoint) in left.checkpoints_by_dot_git_abs_path {
+            if let Some(right_checkpoint) = right
+                .checkpoints_by_dot_git_abs_path
+                .remove(&dot_git_abs_path)
+            {
+                if let Some(repository) = repositories_by_dot_git_abs_path.get(&dot_git_abs_path) {
+                    let compare = repository
+                        .read(cx)
+                        .compare_checkpoints(left_checkpoint, right_checkpoint);
+                    tasks.push(async move { compare.await? });
+                }
+            } else {
+                return Task::ready(Ok(false));
+            }
+        }
+        cx.background_spawn(async move {
+            Ok(future::try_join_all(tasks)
+                .await?
+                .into_iter()
+                .all(|result| result))
+        })
+    }
+
+    /// Blames a buffer.
     pub fn blame_buffer(
         &self,
         buffer: &Entity<Buffer>,
@@ -3261,6 +3299,21 @@ impl Repository {
             match repo {
                 RepositoryState::Local(git_repository) => {
                     git_repository.restore_checkpoint(checkpoint, cx).await
+                }
+                RepositoryState::Remote { .. } => Err(anyhow!("not implemented yet")),
+            }
+        })
+    }
+
+    pub fn compare_checkpoints(
+        &self,
+        left: GitRepositoryCheckpoint,
+        right: GitRepositoryCheckpoint,
+    ) -> oneshot::Receiver<Result<bool>> {
+        self.send_job(move |repo, cx| async move {
+            match repo {
+                RepositoryState::Local(git_repository) => {
+                    git_repository.compare_checkpoints(left, right, cx).await
                 }
                 RepositoryState::Remote { .. } => Err(anyhow!("not implemented yet")),
             }

@@ -10,7 +10,7 @@ use editor::{CompletionProvider, Editor, ExcerptId};
 use gpui::{App, Entity, Task, WeakEntity};
 use language::{Buffer, CodeLabel, HighlightId};
 use lsp::CompletionContext;
-use project::{Completion, CompletionIntent, ProjectPath, WorktreeId};
+use project::{Completion, CompletionIntent, WorktreeId};
 use rope::Point;
 use text::{Anchor, ToPoint};
 use ui::prelude::*;
