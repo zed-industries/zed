@@ -2,16 +2,17 @@ use crate::db::ProjectId;
 use sea_orm::entity::prelude::*;
 
 #[derive(Clone, Debug, PartialEq, Eq, DeriveEntityModel)]
-#[sea_orm(table_name = "worktree_repositories")]
+#[sea_orm(table_name = "project_repositories")]
 pub struct Model {
     #[sea_orm(primary_key)]
     pub project_id: ProjectId,
     #[sea_orm(primary_key)]
-    pub worktree_id: i64,
-    #[sea_orm(primary_key)]
-    pub work_directory_id: i64,
+    pub id: i64,
+    pub abs_path: String,
+    pub legacy_worktree_id: Option<i64>,
+    // JSON array containing 1 or more integer project entry ids
+    pub entry_ids: String,
     pub scan_id: i64,
-    pub branch: Option<String>,
     pub is_deleted: bool,
     // JSON array typed string
     pub current_merge_conflicts: Option<String>,
@@ -20,6 +21,19 @@ pub struct Model {
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
-pub enum Relation {}
+pub enum Relation {
+    #[sea_orm(
+        belongs_to = "super::project::Entity",
+        from = "Column::ProjectId",
+        to = "super::project::Column::Id"
+    )]
+    Project,
+}
+
+impl Related<super::project::Entity> for Entity {
+    fn to() -> RelationDef {
+        Relation::Project.def()
+    }
+}
 
 impl ActiveModelBehavior for ActiveModel {}

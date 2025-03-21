@@ -276,7 +276,7 @@ impl InlineAssistant {
         if is_authenticated() {
             handle_assist(window, cx);
         } else {
-            cx.spawn_in(window, |_workspace, mut cx| async move {
+            cx.spawn_in(window, async move |_workspace, cx| {
                 let Some(task) = cx.update(|_, cx| {
                     LanguageModelRegistry::read_global(cx)
                         .active_provider()
@@ -1456,9 +1456,9 @@ impl EditorInlineAssists {
             assist_ids: Vec::new(),
             scroll_lock: None,
             highlight_updates: highlight_updates_tx,
-            _update_highlights: cx.spawn(|cx| {
+            _update_highlights: cx.spawn({
                 let editor = editor.downgrade();
-                async move {
+                async move |cx| {
                     while let Ok(()) = highlight_updates_rx.changed().await {
                         let editor = editor.upgrade().context("editor was dropped")?;
                         cx.update_global(|assistant: &mut InlineAssistant, cx| {
@@ -1748,10 +1748,10 @@ impl CodeActionProvider for AssistantCodeActionProvider {
         let editor = self.editor.clone();
         let workspace = self.workspace.clone();
         let thread_store = self.thread_store.clone();
-        window.spawn(cx, |mut cx| async move {
+        window.spawn(cx, async move |cx| {
             let editor = editor.upgrade().context("editor was released")?;
             let range = editor
-                .update(&mut cx, |editor, cx| {
+                .update(cx, |editor, cx| {
                     editor.buffer().update(cx, |multibuffer, cx| {
                         let buffer = buffer.read(cx);
                         let multibuffer_snapshot = multibuffer.read(cx);

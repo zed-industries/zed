@@ -37,6 +37,10 @@ members = [
     "crates/context_server_settings",
     "crates/copilot",
     "crates/credentials_provider",
+    "crates/dap",
+    "crates/dap_adapters",
+    "crates/debugger_tools",
+    "crates/debugger_ui",
     "crates/db",
     "crates/deepseek",
     "crates/diagnostics",
@@ -156,6 +160,7 @@ members = [
     "crates/ui",
     "crates/ui_input",
     "crates/ui_macros",
+    "crates/ui_prompt",
     "crates/util",
     "crates/util_macros",
     "crates/vim",
@@ -236,7 +241,11 @@ context_server = { path = "crates/context_server" }
 context_server_settings = { path = "crates/context_server_settings" }
 copilot = { path = "crates/copilot" }
 credentials_provider = { path = "crates/credentials_provider" }
+dap = { path = "crates/dap" }
+dap_adapters = { path = "crates/dap_adapters" }
 db = { path = "crates/db" }
+debugger_ui = { path = "crates/debugger_ui" }
+debugger_tools = { path = "crates/debugger_tools" }
 deepseek = { path = "crates/deepseek" }
 diagnostics = { path = "crates/diagnostics" }
 buffer_diff = { path = "crates/buffer_diff" }
@@ -354,6 +363,7 @@ toolchain_selector = { path = "crates/toolchain_selector" }
 ui = { path = "crates/ui" }
 ui_input = { path = "crates/ui_input" }
 ui_macros = { path = "crates/ui_macros" }
+ui_prompt = { path = "crates/ui_prompt" }
 util = { path = "crates/util" }
 util_macros = { path = "crates/util_macros" }
 vim = { path = "crates/vim" }
@@ -402,6 +412,7 @@ bytes = "1.0"
 cargo_metadata = "0.19"
 cargo_toml = "0.21"
 chrono = { version = "0.4", features = ["serde"] }
+circular-buffer = "1.0"
 clap = { version = "4.4", features = ["derive"] }
 cocoa = "0.26"
 cocoa-foundation = "0.2.0"
@@ -410,6 +421,7 @@ core-foundation = "0.9.3"
 core-foundation-sys = "0.8.6"
 ctor = "0.4.0"
 dashmap = "6.0"
+dap-types = { git = "https://github.com/zed-industries/dap-types", rev = "bfd4af0" }
 derive_more = "0.99.17"
 dirs = "4.0"
 ec4rs = "1.1"
@@ -421,8 +433,7 @@ fork = "0.2.0"
 futures = "0.3"
 futures-batch = "0.6.1"
 futures-lite = "1.13"
-# TODO: get back to regular versions when https://github.com/rust-lang/git2-rs/pull/1120 is released
-git2 = { git = "https://github.com/rust-lang/git2-rs", rev = "a3b90cb3756c1bb63e2317bf9cfa57838178de5c", default-features = false }
+git2 = { version = "0.20.1", default-features = false }
 globset = "0.4"
 handlebars = "4.3"
 heed = { version = "0.21.0", features = ["read-txn-no-tls"] }
@@ -524,7 +535,7 @@ sys-locale = "0.3.1"
 sysinfo = "0.31.0"
 take-until = "0.2.0"
 tempfile = "3.9.0"
-thiserror = "1.0.29"
+thiserror = "2.0.12"
 tiktoken-rs = "0.6.0"
 time = { version = "0.3", features = [
     "macros",

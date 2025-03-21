@@ -50,6 +50,13 @@ impl Tool for ListDirectoryTool {
         serde_json::to_value(&schema).unwrap()
     }
 
+    fn ui_text(&self, input: &serde_json::Value) -> String {
+        match serde_json::from_value::<ListDirectoryToolInput>(input.clone()) {
+            Ok(input) => format!("List the `{}` directory's contents", input.path.display()),
+            Err(_) => "List directory".to_string(),
+        }
+    }
+
     fn run(
         self: Arc<Self>,
         input: serde_json::Value,
@@ -64,7 +71,10 @@ impl Tool for ListDirectoryTool {
         };
 
         let Some(project_path) = project.read(cx).find_project_path(&input.path, cx) else {
-            return Task::ready(Err(anyhow!("Path not found in project")));
+            return Task::ready(Err(anyhow!(
+                "Path {} not found in project",
+                input.path.display()
+            )));
         };
         let Some(worktree) = project
             .read(cx)
@@ -79,7 +89,7 @@ impl Tool for ListDirectoryTool {
         };
 
         if !entry.is_dir() {
-            return Task::ready(Err(anyhow!("{} is a file.", input.path.display())));
+            return Task::ready(Err(anyhow!("{} is not a directory.", input.path.display())));
         }
 
         let mut output = String::new();

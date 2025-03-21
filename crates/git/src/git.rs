@@ -5,12 +5,6 @@ mod remote;
 pub mod repository;
 pub mod status;
 
-#[cfg(any(test, feature = "test-support"))]
-mod fake_repository;
-
-#[cfg(any(test, feature = "test-support"))]
-pub use fake_repository::*;
-
 pub use crate::hosting_provider::*;
 pub use crate::remote::*;
 use anyhow::{anyhow, Context as _, Result};

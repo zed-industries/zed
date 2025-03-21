@@ -23,7 +23,14 @@ pub struct PathSearchToolInput {
     /// You can get back the first two paths by providing a glob of "*thing*.txt"
     /// </example>
     pub glob: String,
+
+    /// Optional starting position for paginated results (0-based).
+    /// When not provided, starts from the beginning.
+    #[serde(default)]
+    pub offset: Option<usize>,
 }
+
+const RESULTS_PER_PAGE: usize = 50;
 
 pub struct PathSearchTool;
 
@@ -41,6 +48,13 @@ impl Tool for PathSearchTool {
         serde_json::to_value(&schema).unwrap()
     }
 
+    fn ui_text(&self, input: &serde_json::Value) -> String {
+        match serde_json::from_value::<PathSearchToolInput>(input.clone()) {
+            Ok(input) => format!("Find paths matching “`{}`”", input.glob),
+            Err(_) => "Search paths".to_string(),
+        }
+    }
+
     fn run(
         self: Arc<Self>,
         input: serde_json::Value,
@@ -49,13 +63,13 @@ impl Tool for PathSearchTool {
         _action_log: Entity<ActionLog>,
         cx: &mut App,
     ) -> Task<Result<String>> {
-        let glob = match serde_json::from_value::<PathSearchToolInput>(input) {
-            Ok(input) => input.glob,
+        let (offset, glob) = match serde_json::from_value::<PathSearchToolInput>(input) {
+            Ok(input) => (input.offset.unwrap_or(0), input.glob),
             Err(err) => return Task::ready(Err(anyhow!(err))),
         };
         let path_matcher = match PathMatcher::new(&[glob.clone()]) {
             Ok(matcher) => matcher,
-            Err(err) => return Task::ready(Err(anyhow!("Invalid glob: {}", err))),
+            Err(err) => return Task::ready(Err(anyhow!("Invalid glob: {err}"))),
         };
         let snapshots: Vec<Snapshot> = project
             .read(cx)
@@ -87,7 +101,27 @@ impl Tool for PathSearchTool {
             } else {
                 // Sort to group entries in the same directory together.
                 matches.sort();
-                Ok(matches.join("\n"))
+
+                let total_matches = matches.len();
+                let response = if total_matches > offset + RESULTS_PER_PAGE {
+                  let paginated_matches: Vec<_> = matches
+                      .into_iter()
+                      .skip(offset)
+                      .take(RESULTS_PER_PAGE)
+                      .collect();
+
+                    format!(
+                        "Found {} total matches. Showing results {}-{} (provide 'offset' parameter for more results):\n\n{}",
+                        total_matches,
+                        offset + 1,
+                        offset + paginated_matches.len(),
+                        paginated_matches.join("\n")
+                    )
+                } else {
+                    matches.join("\n")
+                };
+
+                Ok(response)
             }
         })
     }
