@@ -68,21 +68,23 @@ impl RustLspAdapter {
     }
 }
 
-struct CargoManifestProvider;
+pub(crate) struct CargoManifestProvider;
 
 impl ManifestProvider for CargoManifestProvider {
-    fn name(&self) -> gpui::SharedString {
-        SharedString::new_static("Cargo.toml")
+    fn name(&self) -> ManifestName {
+        SharedString::new_static("Cargo.toml").into()
     }
 
-    fn manifest_path(
+    fn search(
         &self,
-        _path: &Path,
-        _ancestor_depth: usize,
-        _: &Arc<dyn LspAdapterDelegate>,
+        ManifestQuery {
+            path,
+            depth,
+            delegate,
+        }: ManifestQuery,
     ) -> Option<Arc<Path>> {
         let mut outermost_cargo_toml = None;
-        for path in path.ancestors().take(ancestor_depth) {
+        for path in path.ancestors().take(depth) {
             let p = path.join("Cargo.toml");
             if delegate.exists(&p, Some(false)) {
                 outermost_cargo_toml = Some(Arc::from(path));
@@ -99,8 +101,8 @@ impl LspAdapter for RustLspAdapter {
         Self::SERVER_NAME.clone()
     }
 
-    fn manifest_name(&self) -> Option<SharedString> {
-        Some(SharedString::new_static("Cargo.toml"))
+    fn manifest_name(&self) -> Option<ManifestName> {
+        Some(SharedString::new_static("Cargo.toml").into())
     }
 
     async fn check_if_user_installed(

@@ -62,6 +62,7 @@ use lsp::{
 };
 use lsp_command::*;
 use lsp_store::{CompletionDocumentation, LspFormatTarget, OpenLspBufferHandle};
+pub use manifest_tree::ManifestProviders;
 use node_runtime::NodeRuntime;
 use parking_lot::Mutex;
 pub use prettier_store::PrettierStore;

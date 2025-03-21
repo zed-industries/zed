@@ -34,7 +34,7 @@ pub use highlight_map::HighlightMap;
 use http_client::HttpClient;
 pub use language_registry::{LanguageName, LoadedLanguage};
 use lsp::{CodeActionKind, InitializeParams, LanguageServerBinary, LanguageServerBinaryOptions};
-pub use manifest::{ManifestName, ManifestQuery, ManifestSearcher};
+pub use manifest::{ManifestName, ManifestProvider, ManifestQuery};
 use parking_lot::Mutex;
 use regex::Regex;
 use schemars::{
@@ -76,7 +76,7 @@ pub use buffer::*;
 pub use diagnostic_set::{DiagnosticEntry, DiagnosticGroup};
 pub use language_registry::{
     AvailableLanguage, LanguageNotFound, LanguageQueries, LanguageRegistry,
-    LanguageServerBinaryStatus, ManifestProvider, QUERY_FILENAME_PREFIXES,
+    LanguageServerBinaryStatus, QUERY_FILENAME_PREFIXES,
 };
 pub use lsp::{LanguageServerId, LanguageServerName};
 pub use outline::*;

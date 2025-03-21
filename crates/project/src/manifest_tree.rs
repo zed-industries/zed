@@ -8,6 +8,7 @@ mod path_trie;
 mod server_tree;
 
 use std::{
+    borrow::Borrow,
     collections::{hash_map::Entry, BTreeMap},
     ops::ControlFlow,
     sync::Arc,
@@ -15,7 +16,8 @@ use std::{
 
 use collections::HashMap;
 use gpui::{App, AppContext as _, Context, Entity, EventEmitter, Subscription};
-use language::{LspAdapterDelegate, ManifestName};
+use language::{LspAdapterDelegate, ManifestName, ManifestQuery};
+pub use manifest_store::ManifestProviders;
 use path_trie::{LabelPresence, RootPathTrie, TriePath};
 use settings::{SettingsStore, WorktreeId};
 use worktree::{Event as WorktreeEvent, Worktree};
@@ -110,6 +112,7 @@ impl ManifestTree {
         delegate: Arc<dyn LspAdapterDelegate>,
         cx: &mut App,
     ) -> BTreeMap<ManifestName, ProjectPath> {
+        dbg!(&path);
         debug_assert_eq!(delegate.worktree_id(), worktree_id);
         #[allow(clippy::mutable_key_type)]
         let mut roots = BTreeMap::from_iter(
@@ -146,11 +149,13 @@ impl ManifestTree {
                 ControlFlow::Continue(())
             });
         });
+
         for (manifest_name, (root_path, presence)) in &mut roots {
             if *presence == LabelPresence::Present {
                 continue;
             }
 
+            dbg!(&root_path);
             let depth = root_path
                 .as_ref()
                 .map(|root_path| {
@@ -162,12 +167,23 @@ impl ManifestTree {
                 .unwrap_or_else(|| path.components().count() + 1);
 
             if depth > 0 {
-                let root = manifest_name.0.manifest_name();
+                dbg!(manifest_name.as_ref());
+                let Some(provider) = ManifestProviders::global(cx).get(manifest_name.borrow())
+                else {
+                    log::warn!("Manifest provider `{}` not found", manifest_name.as_ref());
+                    continue;
+                };
+
+                let root = provider.search(ManifestQuery {
+                    path: path.clone(),
+                    depth,
+                    delegate: delegate.clone(),
+                });
                 match root {
                     Some(known_root) => worktree_roots.update(cx, |this, _| {
                         let root = TriePath::from(&*known_root);
                         this.roots
-                            .insert(&root, manifest_name.0.name(), LabelPresence::Present);
+                            .insert(&root, manifest_name.clone(), LabelPresence::Present);
                         *presence = LabelPresence::Present;
                         *root_path = Some(ProjectPath {
                             worktree_id,
@@ -176,7 +192,7 @@ impl ManifestTree {
                     }),
                     None => worktree_roots.update(cx, |this, _| {
                         this.roots
-                            .insert(&key, manifest_name.0.name(), LabelPresence::KnownAbsent);
+                            .insert(&key, manifest_name.clone(), LabelPresence::KnownAbsent);
                     }),
                 }
             }
