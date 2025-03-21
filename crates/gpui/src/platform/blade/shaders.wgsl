@@ -257,6 +257,15 @@ fn pick_corner_radius(center_to_point: vec2<f32>, radii: Corners) -> f32 {
     }
 }
 
+// Vector from the point to the center of the rounded corner's circle, after
+// mirroring this into the bottom right quadrant. This mirroring causes both
+// x and y to be positive when the nearest point on the border is part of a
+// rounded corner.
+fn corner_center_to_point(center_to_point: vec2<f32>, half_size: vec2<f32>, corner_radius: f32) -> vec2<f32> {
+    return abs(center_to_point) - half_size + corner_radius;
+
+}
+
 // Signed distance of the point to the quad's border - positive outside the
 // border, and negative inside.
 fn quad_sdf(point: vec2<f32>, bounds: Bounds, corner_radii: Corners) -> f32 {
@@ -264,23 +273,17 @@ fn quad_sdf(point: vec2<f32>, bounds: Bounds, corner_radii: Corners) -> f32 {
     let center = bounds.origin + half_size;
     let center_to_point = point - center;
     let corner_radius = pick_corner_radius(center_to_point, corner_radii);
-    return quad_sdf_impl(center_to_point, half_size, corner_radius);
+    return quad_sdf_impl(corner_center_to_point(center_to_point, half_size, corner_radius), corner_radius);
 }
 
-fn quad_sdf_impl(center_to_point: vec2<f32>, half_size: vec2<f32>, corner_radius: f32) -> f32 {
-    // Vector from the point to the center of the rounded corner's circle, after
-    // mirroring this into the bottom right quadrant. This mirroring causes both
-    // x and y to be positive when the nearest point on the border is part of a
-    // rounded corner.
-    let arc_center_to_point = abs(center_to_point) - half_size + corner_radius;
-
+fn quad_sdf_impl(corner_center_to_point: vec2<f32>, corner_radius: f32) -> f32 {
     // Signed distance of the point from a quad that is inset by corner_radius.
     // It is negative inside this quad, and positive outside.
     let signed_distance_to_radius_inset_quad =
         // 0 inside the inset quad, and positive outside.
-        length(max(vec2<f32>(0.0), arc_center_to_point)) +
+        length(max(vec2<f32>(0.0), corner_center_to_point)) +
         // 0 outside the inset quad, and negative inside.
-        min(0.0, max(arc_center_to_point.x, arc_center_to_point.y));
+        min(0.0, max(corner_center_to_point.x, corner_center_to_point.y));
 
     return signed_distance_to_radius_inset_quad - corner_radius;
 }
@@ -479,16 +482,23 @@ fn fs_quad(input: QuadVarying) -> @location(0) vec4<f32> {
     let vertical_border = select(quad.border_widths.left, quad.border_widths.right, center_to_point.x > 0.0);
     let horizontal_border = select(quad.border_widths.top, quad.border_widths.bottom, center_to_point.y > 0.0);
 
-    // Signed distance of the point to the outside of the quad's border. It is
-    // positive outside this edge, and negative inside.
-    let outer_sdf = quad_sdf_impl(center_to_point, half_size, corner_radius);
-
-    // Signed distance of the point to the inside of the quad's border. It is
-    // negative outside this edge, and positive inside.
-    let inner_sdf = -quad_sdf_impl(
+    // Note that these vectors are computed after mirroring the point into the bottom right quadrant.
+    let outer_corner_center_to_point = corner_center_to_point(
+        center_to_point,
+        half_size,
+        corner_radius);
+    let inner_corner_center_to_point = corner_center_to_point(
         center_to_point,
         half_size - vec2<f32>(vertical_border, horizontal_border),
         corner_radius);
+
+    // Signed distance of the point to the outside of the quad's border. It is
+    // positive outside this edge, and negative inside.
+    let outer_sdf = quad_sdf_impl(outer_corner_center_to_point, corner_radius);
+
+    // Signed distance of the point to the inside of the quad's border. It is
+    // negative outside this edge, and positive inside.
+    let inner_sdf = -quad_sdf_impl(inner_corner_center_to_point, corner_radius);
 
     // Negative when inside the border
     let sdf = max(inner_sdf, outer_sdf);
@@ -499,61 +509,63 @@ fn fs_quad(input: QuadVarying) -> @location(0) vec4<f32> {
 
         // Dashed border logic when border_style == 1
         if (quad.border_style == 1) {
-            // Define segment lengths (assume uniform corner radii for simplicity; adjust as needed)
-            let avg_corner_radius = (quad.corner_radii.top_left + quad.corner_radii.top_right +
-                                    quad.corner_radii.bottom_left + quad.corner_radii.bottom_right) / 4.0;
-            let L_top = quad.bounds.size.x - quad.corner_radii.top_left - quad.corner_radii.top_right;
-            let L_right = quad.bounds.size.y - quad.corner_radii.top_right - quad.corner_radii.bottom_right;
-            let L_bottom = quad.bounds.size.x - quad.corner_radii.bottom_left - quad.corner_radii.bottom_right;
-            let L_left = quad.bounds.size.y - quad.corner_radii.top_left - quad.corner_radii.bottom_left;
-            let L_arc = (M_PI_F / 2.0) * avg_corner_radius;
-
-            // Compute perimeter parameter t
+            var perimeter = 0.0;
             var t = 0.0;
-            if (center_to_point.y < -half_size.y + quad.corner_radii.top_left &&
-                center_to_point.x < -half_size.x + quad.corner_radii.top_left) {
-                // Top-left corner
-                let corner_center = vec2<f32>(-half_size.x + quad.corner_radii.top_left, -half_size.y + quad.corner_radii.top_left);
-                let theta = atan2(center_to_point.y - corner_center.y, center_to_point.x - corner_center.x);
-                t = L_top + L_arc + L_right + L_arc + L_bottom + L_arc + ((theta - M_PI_F) / (M_PI_F / 2.0)) * L_arc;
-            } else if (center_to_point.y < -half_size.y + quad.corner_radii.top_right &&
-                      center_to_point.x > half_size.x - quad.corner_radii.top_right) {
-                // Top-right corner
-                let corner_center = vec2<f32>(half_size.x - quad.corner_radii.top_right, -half_size.y + quad.corner_radii.top_right);
-                let theta = atan2(center_to_point.y - corner_center.y, center_to_point.x - corner_center.x);
-                t = L_top + ((theta + M_PI_F / 2.0) / (M_PI_F / 2.0)) * L_arc;
-            } else if (center_to_point.y > half_size.y - quad.corner_radii.bottom_right &&
-                      center_to_point.x > half_size.x - quad.corner_radii.bottom_right) {
-                // Bottom-right corner
-                let corner_center = vec2<f32>(half_size.x - quad.corner_radii.bottom_right, half_size.y - quad.corner_radii.bottom_right);
-                let theta = atan2(center_to_point.y - corner_center.y, center_to_point.x - corner_center.x);
-                t = L_top + L_arc + L_right + ((theta) / (M_PI_F / 2.0)) * L_arc;
-            } else if (center_to_point.y > half_size.y - quad.corner_radii.bottom_left &&
-                      center_to_point.x < -half_size.x + quad.corner_radii.bottom_left) {
-                // Bottom-left corner
-                let corner_center = vec2<f32>(-half_size.x + quad.corner_radii.bottom_left, half_size.y - quad.corner_radii.bottom_left);
-                let theta = atan2(center_to_point.y - corner_center.y, center_to_point.x - corner_center.x);
-                t = L_top + L_arc + L_right + L_arc + L_bottom + ((theta - M_PI_F / 2.0) / (M_PI_F / 2.0)) * L_arc;
+            if inner_corner_center_to_point.x >= 0.0 && inner_corner_center_to_point.y >= 0.0 {
+                perimeter = (M_PI_F / 2.0) * corner_radius;
+                let theta = atan2(inner_corner_center_to_point.y, inner_corner_center_to_point.x);
+                t = theta * corner_radius;
             } else {
-                // Straight regions
-                if (center_to_point.y < -half_size.y + quad.border_widths.top && abs(center_to_point.x) < half_size.x - corner_radius) {
-                    // Top straight
-                    t = center_to_point.x + half_size.x - quad.corner_radii.top_left;
-                } else if (center_to_point.x > half_size.x - quad.border_widths.right && abs(center_to_point.y) < half_size.y - corner_radius) {
-                    // Right straight
-                    t = L_top + L_arc + (center_to_point.y + half_size.y - quad.corner_radii.top_right);
-                } else if (center_to_point.y > half_size.y - quad.border_widths.bottom && abs(center_to_point.x) < half_size.x - corner_radius) {
-                    // Bottom straight
-                    t = L_top + L_arc + L_right + L_arc + (half_size.x - center_to_point.x - quad.corner_radii.bottom_right);
-                } else {
-                    // Left straight
-                    t = L_top + L_arc + L_right + L_arc + L_bottom + L_arc + (half_size.y - center_to_point.y - quad.corner_radii.bottom_left);
-                }
+                let is_horizontal = inner_corner_center_to_point.x < 0.0;
+
+                let y_borders = quad.border_widths.top + quad.border_widths.bottom;
+                let x_borders = quad.border_widths.left + quad.border_widths.right;
+                perimeter = max(0.0, select(
+                    quad.bounds.size.y - y_borders -
+                    select(
+                        quad.corner_radii.top_right + quad.corner_radii.bottom_left,
+                        quad.corner_radii.top_left + quad.corner_radii.bottom_left,
+                        center_to_point.x < 0.0,
+                    ),
+                    quad.bounds.size.x - x_borders -
+                    select(
+                        quad.corner_radii.bottom_left + quad.corner_radii.bottom_right,
+                        quad.corner_radii.top_left + quad.corner_radii.top_right,
+                        center_to_point.y < 0.0,
+                    ),
+                    is_horizontal));
+
+                let point = input.position.xy - quad.bounds.origin;
+                t = select(
+                    point.y - quad.border_widths.top -
+                    select(
+                        quad.corner_radii.top_right,
+                        quad.corner_radii.top_left,
+                        center_to_point.x < 0.0,
+                    ),
+                    point.x - quad.border_widths.left -
+                    select(
+                        quad.corner_radii.bottom_left,
+                        quad.corner_radii.top_left,
+                        center_to_point.y < 0.0,
+                    ),
+                    is_horizontal);
             }
 
             // Dash pattern: 4 pixels dash, 4 pixels gap
-            let dash_period = 8.0;
-            let dash_length = 4.0;
+            let desired_dash_period = 8.0;
+            let dash_length_multiplier = 0.5;
+
+            // Adjust dash period and length to evenly divide this portion of
+            // the perimeter.
+            let dash_count = trunc(perimeter / desired_dash_period);
+            let dash_period = perimeter / dash_count;
+            let dash_length = dash_period * dash_length_multiplier;
+
+            // Offset such that the dashes make nice corners when the corners
+            // aren't rounded - half a dash on each side of the corner.
+            t += dash_period + dash_length / 2;
+
             let dash_alpha = step(fmod(t, dash_period), dash_length);
             border_color.a *= dash_alpha;
         }
@@ -568,7 +580,8 @@ fn fs_quad(input: QuadVarying) -> @location(0) vec4<f32> {
     return blend_color(color, saturate(0.5 - outer_sdf));
 }
 
-// Modulus that is always positive.
+
+// Modulus that has the same sign as `a`.
 fn fmod(a: f32, b: f32) -> f32 {
     return a - b * trunc(a / b);
 }
