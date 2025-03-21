@@ -86,13 +86,23 @@ macro_rules! error {
     };
 }
 
+/// Creates a timer that logs the duration it was active for either when
+/// it is dropped, or when explicitly stopped using the `end` method.
+/// Logs at the `trace` level.
+/// Note that it will include time spent across await points
+/// (i.e. should not be used to measure the performance of async code)
+/// However, this is a feature not a bug, as it allows for a more accurate
+/// understanding of how long the action actually took to complete, including
+/// interruptions, which can help explain why something may have timed out,
+/// why it took longer to complete than it would had the await points resolved
+/// immediately, etc.
 #[macro_export]
 macro_rules! time {
     ($logger:expr => $name:expr) => {
         $crate::Timer::new($logger, $name)
     };
     ($name:expr) => {
-        time!($crate::default_logger!(), $name)
+        time!($crate::default_logger!() => $name)
     };
 }
 
@@ -211,7 +221,7 @@ impl Drop for Timer {
 }
 
 impl Timer {
-    #[must_use]
+    #[must_use = "Timer will stop when dropped, the result of this function should be saved in a variable prefixed with `_` if it should stop when droppped"]
     pub fn new(logger: Logger, name: &'static str) -> Self {
         return Self {
             logger,
