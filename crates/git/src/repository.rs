@@ -11,6 +11,7 @@ use rope::Rope;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use std::borrow::Borrow;
+use std::future;
 use std::path::Component;
 use std::process::{ExitStatus, Stdio};
 use std::sync::LazyLock;
@@ -1138,6 +1139,10 @@ impl GitRepository for RealGitRepository {
         right: GitRepositoryCheckpoint,
         cx: AsyncApp,
     ) -> BoxFuture<Result<bool>> {
+        if left.head_sha != right.head_sha {
+            return future::ready(Ok(false)).boxed();
+        }
+
         let working_directory = self.working_directory();
         let git_binary_path = self.git_binary_path.clone();
 
