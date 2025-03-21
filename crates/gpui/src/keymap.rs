@@ -202,10 +202,16 @@ impl Keymap {
     /// couple times. The decision as of now is to pick a side and leave it
     /// as is, until we have a better way to decide which binding to display
     /// that is consistent and not confusing.
-    pub fn binding_to_display_from_bindings<'a>(
-        bindings: impl IntoIterator<Item = &'a KeyBinding>,
+    pub fn binding_to_display_from_bindings(mut bindings: Vec<KeyBinding>) -> Option<KeyBinding> {
+        bindings.pop()
+    }
+
+    /// Like `bindings_to_display_from_bindings` but takes a `DoubleEndedIterator` and returns a
+    /// reference.
+    pub fn binding_to_display_from_bindings_iterator<'a>(
+        mut bindings: impl DoubleEndedIterator<Item = &'a KeyBinding>,
     ) -> Option<&'a KeyBinding> {
-        return bindings.into_iter().last();
+        bindings.next_back()
     }
 }
 

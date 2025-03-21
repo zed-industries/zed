@@ -241,7 +241,7 @@ impl CopilotChat {
         let config_paths: HashSet<PathBuf> = copilot_chat_config_paths().into_iter().collect();
         let dir_path = copilot_chat_config_dir();
 
-        cx.spawn(|cx| async move {
+        cx.spawn(async move |cx| {
             let mut parent_watch_rx = watch_config_dir(
                 cx.background_executor(),
                 fs.clone(),

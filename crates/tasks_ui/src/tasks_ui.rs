@@ -3,12 +3,13 @@ use std::path::Path;
 
 use ::settings::Settings;
 use editor::Editor;
+use feature_flags::{Debugger, FeatureFlagViewExt};
 use gpui::{App, AppContext as _, Context, Entity, Task, Window};
 use modal::{TaskOverrides, TasksModal};
 use project::{Location, TaskContexts, Worktree};
-use task::{RevealTarget, TaskContext, TaskId, TaskVariables, VariableName};
+use task::{RevealTarget, TaskContext, TaskId, TaskModal, TaskVariables, VariableName};
 use workspace::tasks::schedule_task;
-use workspace::{tasks::schedule_resolved_task, Workspace};
+use workspace::{tasks::schedule_resolved_task, Start, Workspace};
 
 mod modal;
 mod settings;
@@ -18,7 +19,7 @@ pub use modal::{Rerun, Spawn};
 pub fn init(cx: &mut App) {
     settings::TaskSettings::register(cx);
     cx.observe_new(
-        |workspace: &mut Workspace, _window: Option<&mut Window>, _: &mut Context<Workspace>| {
+        |workspace: &mut Workspace, window: Option<&mut Window>, cx: &mut Context<Workspace>| {
             workspace
                 .register_action(spawn_task_or_modal)
                 .register_action(move |workspace, action: &modal::Rerun, window, cx| {
@@ -47,11 +48,11 @@ pub fn init(cx: &mut App) {
                                 original_task.use_new_terminal = use_new_terminal;
                             }
                             let task_contexts = task_contexts(workspace, window, cx);
-                            cx.spawn_in(window, |workspace, mut cx| async move {
+                            cx.spawn_in(window, async move |workspace, cx| {
                                 let task_contexts = task_contexts.await;
                                 let default_context = TaskContext::default();
                                 workspace
-                                    .update_in(&mut cx, |workspace, _, cx| {
+                                    .update_in(cx, |workspace, _, cx| {
                                         schedule_task(
                                             workspace,
                                             task_source_kind,
@@ -85,9 +86,20 @@ pub fn init(cx: &mut App) {
                             );
                         }
                     } else {
-                        toggle_modal(workspace, None, window, cx).detach();
+                        toggle_modal(workspace, None, TaskModal::ScriptModal, window, cx).detach();
                     };
                 });
+
+            let Some(window) = window else {
+                return;
+            };
+
+            cx.when_flag_enabled::<Debugger>(window, |workspace, _, _| {
+                workspace.register_action(|workspace: &mut Workspace, _: &Start, window, cx| {
+                    crate::toggle_modal(workspace, None, task::TaskModal::DebugModal, window, cx)
+                        .detach();
+                });
+            });
         },
     )
     .detach();
@@ -109,15 +121,21 @@ fn spawn_task_or_modal(
             });
             spawn_task_with_name(task_name.clone(), overrides, window, cx).detach_and_log_err(cx)
         }
-        Spawn::ViaModal { reveal_target } => {
-            toggle_modal(workspace, *reveal_target, window, cx).detach()
-        }
+        Spawn::ViaModal { reveal_target } => toggle_modal(
+            workspace,
+            *reveal_target,
+            TaskModal::ScriptModal,
+            window,
+            cx,
+        )
+        .detach(),
     }
 }
 
-fn toggle_modal(
+pub fn toggle_modal(
     workspace: &mut Workspace,
     reveal_target: Option<RevealTarget>,
+    task_type: TaskModal,
     window: &mut Window,
     cx: &mut Context<Workspace>,
 ) -> Task<()> {
@@ -128,10 +146,10 @@ fn toggle_modal(
     });
     if can_open_modal {
         let task_contexts = task_contexts(workspace, window, cx);
-        cx.spawn_in(window, |workspace, mut cx| async move {
+        cx.spawn_in(window, async move |workspace, cx| {
             let task_contexts = task_contexts.await;
             workspace
-                .update_in(&mut cx, |workspace, window, cx| {
+                .update_in(cx, |workspace, window, cx| {
                     workspace.toggle_modal(window, cx, |window, cx| {
                         TasksModal::new(
                             task_store.clone(),
@@ -140,6 +158,7 @@ fn toggle_modal(
                                 reveal_target: Some(target),
                             }),
                             workspace_handle,
+                            task_type,
                             window,
                             cx,
                         )
@@ -158,12 +177,12 @@ fn spawn_task_with_name(
     window: &mut Window,
     cx: &mut Context<Workspace>,
 ) -> Task<anyhow::Result<()>> {
-    cx.spawn_in(window, |workspace, mut cx| async move {
-        let task_contexts = workspace.update_in(&mut cx, |workspace, window, cx| {
+    cx.spawn_in(window, async move |workspace, cx| {
+        let task_contexts = workspace.update_in(cx, |workspace, window, cx| {
             task_contexts(workspace, window, cx)
         })?;
         let task_contexts = task_contexts.await;
-        let tasks = workspace.update(&mut cx, |workspace, cx| {
+        let tasks = workspace.update(cx, |workspace, cx| {
             let Some(task_inventory) = workspace
                 .project()
                 .read(cx)
@@ -190,7 +209,7 @@ fn spawn_task_with_name(
         })?;
 
         let did_spawn = workspace
-            .update(&mut cx, |workspace, cx| {
+            .update(cx, |workspace, cx| {
                 let (task_source_kind, mut target_task) =
                     tasks.into_iter().find(|(_, task)| task.label == name)?;
                 if let Some(overrides) = &overrides {
@@ -213,7 +232,7 @@ fn spawn_task_with_name(
             .is_some();
         if !did_spawn {
             workspace
-                .update_in(&mut cx, |workspace, window, cx| {
+                .update_in(cx, |workspace, window, cx| {
                     spawn_task_or_modal(
                         workspace,
                         &Spawn::ViaModal {

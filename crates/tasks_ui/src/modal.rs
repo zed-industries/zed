@@ -9,7 +9,9 @@ use gpui::{
 };
 use picker::{highlighted_match_with_paths::HighlightedMatch, Picker, PickerDelegate};
 use project::{task_store::TaskStore, TaskSourceKind};
-use task::{ResolvedTask, RevealTarget, TaskContext, TaskTemplate};
+use task::{
+    DebugRequestType, ResolvedTask, RevealTarget, TaskContext, TaskModal, TaskTemplate, TaskType,
+};
 use ui::{
     div, h_flex, v_flex, ActiveTheme, Button, ButtonCommon, ButtonSize, Clickable, Color,
     FluentBuilder as _, Icon, IconButton, IconButtonShape, IconName, IconSize, IntoElement,
@@ -32,6 +34,8 @@ pub(crate) struct TasksModalDelegate {
     prompt: String,
     task_contexts: TaskContexts,
     placeholder_text: Arc<str>,
+    /// If this delegate is responsible for running a scripting task or a debugger
+    task_modal_type: TaskModal,
 }
 
 /// Task template amendments to do before resolving the context.
@@ -46,6 +50,7 @@ impl TasksModalDelegate {
         task_store: Entity<TaskStore>,
         task_contexts: TaskContexts,
         task_overrides: Option<TaskOverrides>,
+        task_modal_type: TaskModal,
         workspace: WeakEntity<Workspace>,
     ) -> Self {
         let placeholder_text = if let Some(TaskOverrides {
@@ -66,6 +71,7 @@ impl TasksModalDelegate {
             selected_index: 0,
             prompt: String::default(),
             task_contexts,
+            task_modal_type,
             task_overrides,
             placeholder_text,
         }
@@ -130,12 +136,19 @@ impl TasksModal {
         task_contexts: TaskContexts,
         task_overrides: Option<TaskOverrides>,
         workspace: WeakEntity<Workspace>,
+        task_modal_type: TaskModal,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
         let picker = cx.new(|cx| {
             Picker::uniform_list(
-                TasksModalDelegate::new(task_store, task_contexts, task_overrides, workspace),
+                TasksModalDelegate::new(
+                    task_store,
+                    task_contexts,
+                    task_overrides,
+                    task_modal_type,
+                    workspace,
+                ),
                 window,
                 cx,
             )
@@ -203,39 +216,37 @@ impl PickerDelegate for TasksModalDelegate {
         window: &mut Window,
         cx: &mut Context<picker::Picker<Self>>,
     ) -> Task<()> {
-        cx.spawn_in(window, move |picker, mut cx| async move {
+        let task_type = self.task_modal_type.clone();
+        cx.spawn_in(window, async move |picker, cx| {
             let Some(candidates) = picker
-                .update(&mut cx, |picker, cx| {
-                    match &mut picker.delegate.candidates {
-                        Some(candidates) => string_match_candidates(candidates.iter()),
-                        None => {
-                            let Some(task_inventory) = picker
-                                .delegate
-                                .task_store
-                                .read(cx)
-                                .task_inventory()
-                                .cloned()
-                            else {
-                                return Vec::new();
-                            };
+                .update(cx, |picker, cx| match &mut picker.delegate.candidates {
+                    Some(candidates) => string_match_candidates(candidates.iter(), task_type),
+                    None => {
+                        let Some(task_inventory) = picker
+                            .delegate
+                            .task_store
+                            .read(cx)
+                            .task_inventory()
+                            .cloned()
+                        else {
+                            return Vec::new();
+                        };
 
-                            let (used, current) =
-                                task_inventory.read(cx).used_and_current_resolved_tasks(
-                                    &picker.delegate.task_contexts,
-                                    cx,
-                                );
-                            picker.delegate.last_used_candidate_index = if used.is_empty() {
-                                None
-                            } else {
-                                Some(used.len() - 1)
-                            };
+                        let (used, current) = task_inventory
+                            .read(cx)
+                            .used_and_current_resolved_tasks(&picker.delegate.task_contexts, cx);
+                        picker.delegate.last_used_candidate_index = if used.is_empty() {
+                            None
+                        } else {
+                            Some(used.len() - 1)
+                        };
 
-                            let mut new_candidates = used;
-                            new_candidates.extend(current);
-                            let match_candidates = string_match_candidates(new_candidates.iter());
-                            let _ = picker.delegate.candidates.insert(new_candidates);
-                            match_candidates
-                        }
+                        let mut new_candidates = used;
+                        new_candidates.extend(current);
+                        let match_candidates =
+                            string_match_candidates(new_candidates.iter(), task_type);
+                        let _ = picker.delegate.candidates.insert(new_candidates);
+                        match_candidates
                     }
                 })
                 .ok()
@@ -252,7 +263,7 @@ impl PickerDelegate for TasksModalDelegate {
             )
             .await;
             picker
-                .update(&mut cx, |picker, _| {
+                .update(cx, |picker, _| {
                     let delegate = &mut picker.delegate;
                     delegate.matches = matches;
                     if let Some(index) = delegate.last_used_candidate_index {
@@ -281,7 +292,7 @@ impl PickerDelegate for TasksModalDelegate {
     fn confirm(
         &mut self,
         omit_history_entry: bool,
-        _: &mut Window,
+        window: &mut Window,
         cx: &mut Context<picker::Picker<Self>>,
     ) {
         let current_match_index = self.selected_index();
@@ -308,7 +319,43 @@ impl PickerDelegate for TasksModalDelegate {
 
         self.workspace
             .update(cx, |workspace, cx| {
-                schedule_resolved_task(workspace, task_source_kind, task, omit_history_entry, cx);
+                match task.task_type() {
+                    TaskType::Script => schedule_resolved_task(
+                        workspace,
+                        task_source_kind,
+                        task,
+                        omit_history_entry,
+                        cx,
+                    ),
+                    TaskType::Debug(_) => {
+                        let Some(config) = task.resolved_debug_adapter_config() else {
+                            return;
+                        };
+                        let project = workspace.project().clone();
+
+                        match &config.request {
+                            DebugRequestType::Attach(attach_config)
+                                if attach_config.process_id.is_none() =>
+                            {
+                                workspace.toggle_modal(window, cx, |window, cx| {
+                                    debugger_ui::attach_modal::AttachModal::new(
+                                        project,
+                                        config.clone(),
+                                        window,
+                                        cx,
+                                    )
+                                });
+                            }
+                            _ => {
+                                project.update(cx, |project, cx| {
+                                    project
+                                        .start_debug_session(config, cx)
+                                        .detach_and_log_err(cx);
+                                });
+                            }
+                        }
+                    }
+                };
             })
             .ok();
         cx.emit(DismissEvent);
@@ -462,7 +509,22 @@ impl PickerDelegate for TasksModalDelegate {
         }
         self.workspace
             .update(cx, |workspace, cx| {
-                schedule_resolved_task(workspace, task_source_kind, task, omit_history_entry, cx);
+                match task.task_type() {
+                    TaskType::Script => schedule_resolved_task(
+                        workspace,
+                        task_source_kind,
+                        task,
+                        omit_history_entry,
+                        cx,
+                    ),
+                    // TODO: Should create a schedule_resolved_debug_task function
+                    // This would allow users to access to debug history and other issues
+                    TaskType::Debug(_) => workspace.project().update(cx, |project, cx| {
+                        project
+                            .start_debug_session(task.resolved_debug_adapter_config().unwrap(), cx)
+                            .detach_and_log_err(cx);
+                    }),
+                };
             })
             .ok();
         cx.emit(DismissEvent);
@@ -584,9 +646,14 @@ impl PickerDelegate for TasksModalDelegate {
 
 fn string_match_candidates<'a>(
     candidates: impl Iterator<Item = &'a (TaskSourceKind, ResolvedTask)> + 'a,
+    task_modal_type: TaskModal,
 ) -> Vec<StringMatchCandidate> {
     candidates
         .enumerate()
+        .filter(|(_, (_, candidate))| match candidate.task_type() {
+            TaskType::Script => task_modal_type == TaskModal::ScriptModal,
+            TaskType::Debug(_) => task_modal_type == TaskModal::DebugModal,
+        })
         .map(|(index, (_, candidate))| StringMatchCandidate::new(index, candidate.display_label()))
         .collect()
 }

@@ -206,12 +206,12 @@ impl PickerDelegate for FetchContextPickerDelegate {
         let http_client = workspace.read(cx).client().http_client().clone();
         let url = self.url.clone();
         let confirm_behavior = self.confirm_behavior;
-        cx.spawn_in(window, |this, mut cx| async move {
+        cx.spawn_in(window, async move |this, cx| {
             let text = cx
                 .background_spawn(Self::build_message(http_client, url.clone()))
                 .await?;
 
-            this.update_in(&mut cx, |this, window, cx| {
+            this.update_in(cx, |this, window, cx| {
                 this.delegate
                     .context_store
                     .update(cx, |context_store, _cx| {

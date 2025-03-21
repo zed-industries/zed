@@ -59,7 +59,7 @@ impl SlashCommandCompletionProvider {
         let command_name = command_name.to_string();
         let editor = self.editor.clone();
         let workspace = self.workspace.clone();
-        window.spawn(cx, |mut cx| async move {
+        window.spawn(cx, async move |cx| {
             let matches = match_strings(
                 &candidates,
                 &command_name,

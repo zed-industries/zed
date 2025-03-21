@@ -31,6 +31,10 @@ impl Tool for ThinkingTool {
         serde_json::to_value(&schema).unwrap()
     }
 
+    fn ui_text(&self, _input: &serde_json::Value) -> String {
+        "Thinking".to_string()
+    }
+
     fn run(
         self: Arc<Self>,
         input: serde_json::Value,

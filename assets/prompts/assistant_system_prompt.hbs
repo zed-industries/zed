@@ -14,5 +14,19 @@ Be concise and direct in your responses.
 The user has opened a project that contains the following root directories/files:
 
 {{#each worktrees}}
-- {{root_name}} (absolute path: {{abs_path}})
+- `{{root_name}}` (absolute path: `{{abs_path}}`)
 {{/each}}
+{{#if has_rules}}
+
+There are rules that apply to these root directories:
+{{#each worktrees}}
+{{#if rules_file}}
+
+`{{root_name}}/{{rules_file.rel_path}}`:
+
+``````
+{{{rules_file.text}}}
+``````
+{{/if}}
+{{/each}}
+{{/if}}

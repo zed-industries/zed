@@ -13,7 +13,7 @@ use extension::{
 };
 use futures::{io::BufReader, FutureExt as _};
 use futures::{lock::Mutex, AsyncReadExt};
-use language::{language_settings::AllLanguageSettings, LanguageName, LanguageServerBinaryStatus};
+use language::{language_settings::AllLanguageSettings, BinaryStatus, LanguageName};
 use project::project_settings::ProjectSettings;
 use semantic_version::SemanticVersion;
 use std::{
@@ -651,7 +651,7 @@ impl ExtensionImports for WasmState {
                             binary: settings.binary.map(|binary| settings::CommandSettings {
                                 path: binary.path,
                                 arguments: binary.arguments,
-                                env: None,
+                                env: binary.env,
                             }),
                             settings: settings.settings,
                             initialization_options: settings.initialization_options,
@@ -692,16 +692,10 @@ impl ExtensionImports for WasmState {
         status: LanguageServerInstallationStatus,
     ) -> wasmtime::Result<()> {
         let status = match status {
-            LanguageServerInstallationStatus::CheckingForUpdate => {
-                LanguageServerBinaryStatus::CheckingForUpdate
-            }
-            LanguageServerInstallationStatus::Downloading => {
-                LanguageServerBinaryStatus::Downloading
-            }
-            LanguageServerInstallationStatus::None => LanguageServerBinaryStatus::None,
-            LanguageServerInstallationStatus::Failed(error) => {
-                LanguageServerBinaryStatus::Failed { error }
-            }
+            LanguageServerInstallationStatus::CheckingForUpdate => BinaryStatus::CheckingForUpdate,
+            LanguageServerInstallationStatus::Downloading => BinaryStatus::Downloading,
+            LanguageServerInstallationStatus::None => BinaryStatus::None,
+            LanguageServerInstallationStatus::Failed(error) => BinaryStatus::Failed { error },
         };
 
         self.host
