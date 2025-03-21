@@ -2896,7 +2896,7 @@ async fn test_git_branch_name(
         assert_eq!(worktrees.len(), 1);
         let worktree = worktrees[0].clone();
         let snapshot = worktree.read(cx).snapshot();
-        let repo = snapshot.repositories().first().clone().unwrap();
+        let repo = snapshot.repositories().first().unwrap();
         assert_eq!(
             repo.branch().map(|branch| branch.name.to_string()),
             branch_name
