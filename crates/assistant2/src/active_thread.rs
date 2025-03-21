@@ -701,6 +701,10 @@ impl ActiveThread {
                                 )
                                 .child(
                                     h_flex()
+                                        // DL: To double-check whether we want to fully remove
+                                        // the editing feature from meassages. Checkpoint sort of
+                                        // solve the same problem.
+                                        .invisible()
                                         .gap_1()
                                         .when_some(
                                             edit_message_editor.clone(),
