@@ -699,7 +699,7 @@ impl WorkspaceDb {
         match breakpoints {
             Ok(bp) => {
                 if bp.is_empty() {
-                    log::error!("Breakpoints are empty after querying database for them");
+                    log::debug!("Breakpoints are empty after querying database for them");
                 }
 
                 let mut map: BTreeMap<Arc<Path>, Vec<SerializedBreakpoint>> = Default::default();
