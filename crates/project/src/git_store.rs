@@ -2436,6 +2436,13 @@ impl Repository {
         self.repository_entry.relativize(path).log_err()
     }
 
+    pub fn local_repository(&self) -> Option<Arc<dyn GitRepository>> {
+        match &self.git_repo {
+            RepositoryState::Local(git_repository) => Some(git_repository.clone()),
+            RepositoryState::Remote { .. } => None,
+        }
+    }
+
     pub fn open_commit_buffer(
         &mut self,
         languages: Option<Arc<LanguageRegistry>>,
@@ -3082,6 +3089,10 @@ impl Repository {
                 }
             }
         })
+    }
+
+    pub fn branch(&self) -> Option<&Branch> {
+        self.repository_entry.branch()
     }
 
     pub fn branches(&self) -> oneshot::Receiver<Result<Vec<Branch>>> {

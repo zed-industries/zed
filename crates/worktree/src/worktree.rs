@@ -2959,7 +2959,7 @@ impl Snapshot {
     }
 
     /// Get the repository whose work directory corresponds to the given path.
-    pub(crate) fn repository(&self, work_directory: PathKey) -> Option<RepositoryEntry> {
+    fn repository(&self, work_directory: PathKey) -> Option<RepositoryEntry> {
         self.repositories.get(&work_directory, &()).cloned()
     }
 
