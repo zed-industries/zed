@@ -1756,7 +1756,7 @@ impl GitPanel {
         let this = cx.weak_entity();
         let fetch_options = self.get_fetch_options(window, cx);
         window
-            .spawn(cx, |mut cx| async move {
+            .spawn(cx, async move |cx| {
                 let fetch_options = match fetch_options.await {
                     Ok(Some(fetch_options)) => fetch_options,
                     Ok(None) => {
@@ -1768,11 +1768,11 @@ impl GitPanel {
                     }
                 };
                 let fetch =
-                    repo.update(&mut cx, |repo, cx| repo.fetch(fetch_options, askpass, cx))?;
+                    repo.update(cx, |repo, cx| repo.fetch(fetch_options, askpass, cx))?;
 
                 let remote_message = fetch.await?;
                 drop(guard);
-                this.update(&mut cx, |this, cx| {
+                this.update(cx, |this, cx| {
                     let action = RemoteAction::Fetch;
                     match remote_message {
                         Ok(remote_message) => this.show_remote_output(action, remote_message, cx),
@@ -1803,8 +1803,8 @@ impl GitPanel {
         let askpass = self.askpass_delegate("git fetch", window, cx);
         let this = cx.weak_entity();
         window
-            .spawn(cx, |mut cx| async move {
-                let fetch = repo.update(&mut cx, |repo, cx| {
+            .spawn(cx, async move |cx| {
+                let fetch = repo.update(cx, |repo, cx| {
                     repo.fetch(FetchOptions::All, askpass, cx)
                 })?;
 
