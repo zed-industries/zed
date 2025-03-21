@@ -800,6 +800,7 @@ impl ActiveThread {
         };
 
         v_flex()
+            .w_full()
             .when(first_message, |parent| {
                 parent.child(self.render_rules_item(cx))
             })
@@ -827,13 +828,15 @@ impl ActiveThread {
                         } else {
                             IconName::Undo
                         })
-                        .size(ButtonSize::Compact)
-                        .disabled(is_pending)
+                        .icon_size(IconSize::XSmall)
+                        .icon_position(IconPosition::Start)
                         .icon_color(if error.is_some() {
                             Some(Color::Error)
                         } else {
                             None
                         })
+                        .label_size(LabelSize::XSmall)
+                        .disabled(is_pending)
                         .on_click(cx.listener(move |this, _, _window, cx| {
                             this.thread.update(cx, |thread, cx| {
                                 thread
@@ -860,7 +863,16 @@ impl ActiveThread {
                     restore_checkpoint_button.into_any_element()
                 };
 
-                parent.child(h_flex().pl_2().child(restore_checkpoint_button))
+                parent.child(
+                    h_flex()
+                        .pt_1p5()
+                        .px_2p5()
+                        .w_full()
+                        .gap_1()
+                        .justify_end()
+                        .child(ui::Divider::horizontal())
+                        .child(restore_checkpoint_button),
+                )
             })
             .child(styled_message)
             .into_any()
