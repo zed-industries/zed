@@ -256,7 +256,7 @@ impl CompletionProvider for ContextPickerCompletionProvider {
         let thread_store = self.thread_store.clone();
         let editor = self.editor.clone();
 
-        cx.spawn(|_, cx| async move {
+        cx.spawn(async move |_, cx| {
             let mut completions = Vec::new();
 
             let MentionCompletion {
