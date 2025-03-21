@@ -28,8 +28,13 @@ pub fn play_remote_audio_track(
     Ok(AudioStream {})
 }
 
+#[cfg(not(target_os = "macos"))]
+pub type RemoteVideoFrame = std::sync::Arc<gpui::RenderImage>;
+
+#[cfg(target_os = "macos")]
 #[derive(Clone)]
 pub(crate) struct RemoteVideoFrame {}
+#[cfg(target_os = "macos")]
 impl Into<gpui::SurfaceSource> for RemoteVideoFrame {
     fn into(self) -> gpui::SurfaceSource {
         unimplemented!()
