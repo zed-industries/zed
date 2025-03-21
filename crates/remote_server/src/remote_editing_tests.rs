@@ -1336,15 +1336,12 @@ async fn test_remote_git_branches(cx: &mut TestAppContext, server_cx: &mut TestA
         .collect::<HashSet<_>>();
     fs.insert_branches(Path::new(path!("/code/project1/.git")), &branches);
 
-    let (worktree, _) = project
+    let (_worktree, _) = project
         .update(cx, |project, cx| {
             project.find_or_create_worktree(path!("/code/project1"), true, cx)
         })
         .await
         .unwrap();
-
-    let worktree_id = cx.update(|cx| worktree.read(cx).id());
-    let root_path = ProjectPath::root_path(worktree_id);
     // Give the worktree a bit of time to index the file system
     cx.run_until_parked();
 
@@ -1374,13 +1371,17 @@ async fn test_remote_git_branches(cx: &mut TestAppContext, server_cx: &mut TestA
 
     let server_branch = server_cx.update(|cx| {
         headless_project.update(cx, |headless_project, cx| {
-            headless_project
-                .worktree_store
-                .update(cx, |worktree_store, cx| {
-                    worktree_store
-                        .current_branch(root_path.clone(), cx)
-                        .unwrap()
-                })
+            headless_project.git_store.update(cx, |git_store, cx| {
+                git_store
+                    .repositories()
+                    .values()
+                    .next()
+                    .unwrap()
+                    .read(cx)
+                    .current_branch()
+                    .unwrap()
+                    .clone()
+            })
         })
     });
 
@@ -1409,11 +1410,17 @@ async fn test_remote_git_branches(cx: &mut TestAppContext, server_cx: &mut TestA
 
     let server_branch = server_cx.update(|cx| {
         headless_project.update(cx, |headless_project, cx| {
-            headless_project
-                .worktree_store
-                .update(cx, |worktree_store, cx| {
-                    worktree_store.current_branch(root_path, cx).unwrap()
-                })
+            headless_project.git_store.update(cx, |git_store, cx| {
+                git_store
+                    .repositories()
+                    .values()
+                    .next()
+                    .unwrap()
+                    .read(cx)
+                    .current_branch()
+                    .unwrap()
+                    .clone()
+            })
         })
     });
 
