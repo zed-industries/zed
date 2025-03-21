@@ -485,18 +485,18 @@ pub fn into_deepseek(
         tools: request
             .tools
             .into_iter()
-            .filter_map(|tool| match tool {
+            .map(|tool| match tool {
                 LanguageModelRequestTool::Custom {
                     name,
                     description,
                     input_schema,
-                } => Some(deepseek::ToolDefinition::Function {
+                } => deepseek::ToolDefinition::Function {
                     function: deepseek::FunctionDefinition {
                         name,
                         description: Some(description),
                         parameters: Some(input_schema),
                     },
-                }),
+                },
                 LanguageModelRequestTool::RefactorMeProviderDefined { .. } => {
                     todo!();
                 }
