@@ -1,5 +1,5 @@
 use crate::thread::{
-    LastRestoreCheckpoint, MessageId, RequestKind, Thread, ThreadError, ThreadEvent,
+    LastRestoreCheckpoint, MessageId, RequestKind, Thread, ThreadError, ThreadEvent, ThreadFeedback,
 };
 use crate::thread_store::ThreadStore;
 use crate::tool_use::{ToolUse, ToolUseStatus};
@@ -593,6 +593,24 @@ impl ActiveThread {
         self.confirm_editing_message(&menu::Confirm, window, cx);
     }
 
+    fn handle_feedback_click(
+        &mut self,
+        feedback: ThreadFeedback,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let report = self
+            .thread
+            .update(cx, |thread, cx| thread.report_feedback(feedback, cx));
+
+        let this = cx.entity().downgrade();
+        cx.spawn(async move |_, cx| {
+            report.await?;
+            this.update(cx, |_this, cx| cx.notify())
+        })
+        .detach_and_log_err(cx);
+    }
+
     fn render_message(&self, ix: usize, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let message_id = self.messages[ix];
         let Some(message) = self.thread.read(cx).message(message_id) else {
@@ -628,11 +646,107 @@ impl ActiveThread {
             .map(|(_, state)| state.editor.clone());
 
         let first_message = ix == 0;
+        let is_last_message = ix == self.messages.len() - 1;
 
         let colors = cx.theme().colors();
         let active_color = colors.element_active;
         let editor_bg_color = colors.editor_background;
         let bg_user_message_header = editor_bg_color.blend(active_color.opacity(0.25));
+
+        let feedback_container = h_flex().pb_4().px_4().gap_1().justify_between();
+        let feedback_items = match self.thread.read(cx).feedback() {
+            Some(feedback) => feedback_container
+                .child(
+                    Label::new(match feedback {
+                        ThreadFeedback::Positive => "Thanks for your feedback!",
+                        ThreadFeedback::Negative => {
+                            "We appreciate your feedback and will use it to improve."
+                        }
+                    })
+                    .color(Color::Muted)
+                    .size(LabelSize::XSmall),
+                )
+                .child(
+                    h_flex()
+                        .gap_1()
+                        .child(
+                            IconButton::new("feedback-thumbs-up", IconName::ThumbsUp)
+                                .icon_size(IconSize::XSmall)
+                                .icon_color(match feedback {
+                                    ThreadFeedback::Positive => Color::Accent,
+                                    ThreadFeedback::Negative => Color::Ignored,
+                                })
+                                .shape(ui::IconButtonShape::Square)
+                                .tooltip(Tooltip::text("Helpful Response"))
+                                .on_click(cx.listener(move |this, _, window, cx| {
+                                    this.handle_feedback_click(
+                                        ThreadFeedback::Positive,
+                                        window,
+                                        cx,
+                                    );
+                                })),
+                        )
+                        .child(
+                            IconButton::new("feedback-thumbs-down", IconName::ThumbsDown)
+                                .icon_size(IconSize::XSmall)
+                                .icon_color(match feedback {
+                                    ThreadFeedback::Positive => Color::Ignored,
+                                    ThreadFeedback::Negative => Color::Accent,
+                                })
+                                .shape(ui::IconButtonShape::Square)
+                                .tooltip(Tooltip::text("Not Helpful"))
+                                .on_click(cx.listener(move |this, _, window, cx| {
+                                    this.handle_feedback_click(
+                                        ThreadFeedback::Negative,
+                                        window,
+                                        cx,
+                                    );
+                                })),
+                        ),
+                )
+                .into_any_element(),
+            None => feedback_container
+                .child(
+                    Label::new(
+                        "Rating the thread sends all of your current conversation to the Zed team.",
+                    )
+                    .color(Color::Muted)
+                    .size(LabelSize::XSmall),
+                )
+                .child(
+                    h_flex()
+                        .gap_1()
+                        .child(
+                            IconButton::new("feedback-thumbs-up", IconName::ThumbsUp)
+                                .icon_size(IconSize::XSmall)
+                                .icon_color(Color::Ignored)
+                                .shape(ui::IconButtonShape::Square)
+                                .tooltip(Tooltip::text("Helpful Response"))
+                                .on_click(cx.listener(move |this, _, window, cx| {
+                                    this.handle_feedback_click(
+                                        ThreadFeedback::Positive,
+                                        window,
+                                        cx,
+                                    );
+                                })),
+                        )
+                        .child(
+                            IconButton::new("feedback-thumbs-down", IconName::ThumbsDown)
+                                .icon_size(IconSize::XSmall)
+                                .icon_color(Color::Ignored)
+                                .shape(ui::IconButtonShape::Square)
+                                .tooltip(Tooltip::text("Not Helpful"))
+                                .on_click(cx.listener(move |this, _, window, cx| {
+                                    this.handle_feedback_click(
+                                        ThreadFeedback::Negative,
+                                        window,
+                                        cx,
+                                    );
+                                })),
+                        ),
+                )
+                .into_any_element(),
+        };
 
         let message_content = v_flex()
             .gap_1p5()
@@ -665,7 +779,7 @@ impl ActiveThread {
         let styled_message = match message.role {
             Role::User => v_flex()
                 .id(("message-container", ix))
-                .pt_2()
+                .py_2()
                 .pl_2()
                 .pr_2p5()
                 .child(
@@ -774,7 +888,7 @@ impl ActiveThread {
                 ),
             Role::Assistant => v_flex()
                 .id(("message-container", ix))
-                .child(v_flex().py_3().px_4().child(message_content))
+                .child(v_flex().py_2().px_4().child(message_content))
                 .when(
                     !tool_uses.is_empty() || !scripting_tool_uses.is_empty(),
                     |parent| {
@@ -865,19 +979,20 @@ impl ActiveThread {
 
                 parent.child(
                     h_flex()
-                        .pt_1p5()
                         .px_2p5()
                         .w_full()
                         .gap_1()
-                        .justify_end()
                         .child(ui::Divider::horizontal())
-                        .child(restore_checkpoint_button),
+                        .child(restore_checkpoint_button)
+                        .child(ui::Divider::horizontal()),
                 )
             })
             .child(styled_message)
+            .when(
+                is_last_message && !self.thread.read(cx).is_generating(),
+                |parent| parent.child(feedback_items),
+            )
             .into_any()
-
-        // styled_message.into_any()
     }
 
     fn render_tool_use(&self, tool_use: ToolUse, cx: &mut Context<Self>) -> impl IntoElement {

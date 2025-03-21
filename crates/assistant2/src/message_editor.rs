@@ -29,7 +29,7 @@ use crate::assistant_model_selector::AssistantModelSelector;
 use crate::context_picker::{ConfirmBehavior, ContextPicker};
 use crate::context_store::{refresh_context_store_text, ContextStore};
 use crate::context_strip::{ContextStrip, ContextStripEvent, SuggestContextKind};
-use crate::thread::{RequestKind, Thread, ThreadFeedback};
+use crate::thread::{RequestKind, Thread};
 use crate::thread_store::ThreadStore;
 use crate::tool_selector::ToolSelector;
 use crate::{Chat, ChatMode, RemoveAllContext, ThreadEvent, ToggleContextPicker};
@@ -290,24 +290,6 @@ impl MessageEditor {
         }
     }
 
-    fn handle_feedback_click(
-        &mut self,
-        feedback: ThreadFeedback,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let report = self
-            .thread
-            .update(cx, |thread, cx| thread.report_feedback(feedback, cx));
-
-        let this = cx.entity().downgrade();
-        cx.spawn(async move |_, cx| {
-            report.await?;
-            this.update(cx, |_this, cx| cx.notify())
-        })
-        .detach_and_log_err(cx);
-    }
-
     fn move_up(&mut self, _: &MoveUp, window: &mut Window, cx: &mut Context<Self>) {
         if self.context_picker_menu_handle.is_deployed()
             || self.inline_context_picker_menu_handle.is_deployed()
@@ -364,104 +346,6 @@ impl Render for MessageEditor {
         let active_color = cx.theme().colors().element_selected;
         let editor_bg_color = cx.theme().colors().editor_background;
         let bg_edit_files_disclosure = editor_bg_color.blend(active_color.opacity(0.25));
-
-        let feedback_container = h_flex().pt_2p5().pb_1p5().gap_2().justify_between();
-        let feedback_items = match self.thread.read(cx).feedback() {
-            Some(feedback) => feedback_container
-                .child(
-                    Label::new(match feedback {
-                        ThreadFeedback::Positive => "Thanks for your feedback!",
-                        ThreadFeedback::Negative => "We appreciate your feedback and will use it to improve.",
-                    })
-                    .color(Color::Muted)
-                    .size(LabelSize::XSmall),
-                )
-                .child(
-                    h_flex()
-                        .gap_1()
-                        .child(
-                            IconButton::new(
-                                "feedback-thumbs-up",
-                                IconName::ThumbsUp,
-                            )
-                            .icon_size(IconSize::XSmall)
-                            .icon_color( match feedback {
-                                ThreadFeedback::Positive =>  Color::Accent,
-                                ThreadFeedback::Negative =>  Color::Ignored,
-                            })
-                            .shape(ui::IconButtonShape::Square)
-                            .tooltip(Tooltip::text("Helpful Response"))
-                            .on_click(cx.listener(
-                                move |this, _, window, cx| {
-                                    this.handle_feedback_click(
-                                        ThreadFeedback::Positive, window, cx,
-                                    );
-                                }
-                            )),
-                        )
-                        .child(
-                            IconButton::new(
-                                "feedback-thumbs-down",
-                                IconName::ThumbsDown,
-                            )
-                            .icon_size(IconSize::XSmall)
-                            .icon_color(match feedback {
-                                ThreadFeedback::Positive =>  Color::Ignored,
-                                ThreadFeedback::Negative =>  Color::Accent,
-                            })
-                            .shape(ui::IconButtonShape::Square)
-                            .tooltip(Tooltip::text("Not Helpful"))
-                            .on_click(cx.listener(move |this, _, window, cx| {
-                                this.handle_feedback_click(
-                                    ThreadFeedback::Negative, window, cx,
-                                );
-                            })),
-                        ),
-                )
-                .into_any_element(),
-            None => feedback_container
-                .child(
-                    // DL TODO: Text is long but clear? We shouldn't tuck away info that's sensible privacy-wise
-                    Label::new("Rating the thread sends all of your conversation from this point up to the Zed team.")
-                        .color(Color::Muted)
-                        .size(LabelSize::XSmall),
-                )
-                .child(
-                    h_flex()
-                        .gap_1()
-                        .child(
-                            IconButton::new(
-                                "feedback-thumbs-up",
-                                IconName::ThumbsUp,
-                            )
-                            .icon_size(IconSize::XSmall)
-                            .icon_color(Color::Ignored)
-                            .shape(ui::IconButtonShape::Square)
-                            .tooltip(Tooltip::text("Helpful Response"))
-                            .on_click(cx.listener(move |this, _, window, cx| {
-                                this.handle_feedback_click(
-                                    ThreadFeedback::Positive, window, cx,
-                                );
-                            })),
-                        )
-                        .child(
-                            IconButton::new(
-                                "feedback-thumbs-down",
-                                IconName::ThumbsDown,
-                            )
-                            .icon_size(IconSize::XSmall)
-                            .icon_color(Color::Ignored)
-                            .shape(ui::IconButtonShape::Square)
-                            .tooltip(Tooltip::text("Not Helpful"))
-                            .on_click(cx.listener(move |this, _, window, cx| {
-                                this.handle_feedback_click(
-                                    ThreadFeedback::Negative, window, cx,
-                                );
-                            })),
-                        ),
-                )
-                .into_any_element(),
-        };
 
         v_flex()
             .size_full()
@@ -522,9 +406,6 @@ impl Render for MessageEditor {
                             ),
                     ),
                 )
-            })
-            .when(!is_generating && !empty_thread, |parent| {
-                parent.child(feedback_items)
             })
             // DL TODO: this whole element shouldn't be visible on the active thread's empty state.
             // it should only pop after submitting a message
@@ -587,7 +468,6 @@ impl Render for MessageEditor {
                                                 });
                                             }),
                                     )
-                                    .child(ui::Divider::vertical())
                                     .child(
                                         Button::new("review", "Review Diff")
                                             .label_size(LabelSize::XSmall)
