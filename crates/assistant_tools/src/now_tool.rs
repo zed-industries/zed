@@ -40,6 +40,10 @@ impl Tool for NowTool {
         serde_json::to_value(&schema).unwrap()
     }
 
+    fn ui_text(&self, _input: &serde_json::Value) -> String {
+        "Get current time".to_string()
+    }
+
     fn run(
         self: Arc<Self>,
         input: serde_json::Value,

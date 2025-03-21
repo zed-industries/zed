@@ -1,3 +1,5 @@
+use anyhow::Context as _;
+
 use super::*;
 
 impl Database {
@@ -606,6 +608,11 @@ impl Database {
 
         let mut worktrees = Vec::new();
         let db_worktrees = project.find_related(worktree::Entity).all(tx).await?;
+        let db_repos = project
+            .find_related(project_repository::Entity)
+            .all(tx)
+            .await?;
+
         for db_worktree in db_worktrees {
             let mut worktree = RejoinedWorktree {
                 id: db_worktree.id as u64,
@@ -673,96 +680,112 @@ impl Database {
                 }
             }
 
-            // Repository Entries
-            {
-                let repository_entry_filter = if let Some(rejoined_worktree) = rejoined_worktree {
-                    worktree_repository::Column::ScanId.gt(rejoined_worktree.scan_id)
+            worktrees.push(worktree);
+        }
+
+        let mut removed_repositories = Vec::new();
+        let mut updated_repositories = Vec::new();
+        for db_repo in db_repos {
+            let rejoined_repository = rejoined_project
+                .repositories
+                .iter()
+                .find(|repo| repo.id == db_repo.id as u64);
+
+            let repository_filter = if let Some(rejoined_repository) = rejoined_repository {
+                project_repository::Column::ScanId.gt(rejoined_repository.scan_id)
+            } else {
+                project_repository::Column::IsDeleted.eq(false)
+            };
+
+            let db_repositories = project_repository::Entity::find()
+                .filter(
+                    Condition::all()
+                        .add(project_repository::Column::ProjectId.eq(project.id))
+                        .add(repository_filter),
+                )
+                .all(tx)
+                .await?;
+
+            for db_repository in db_repositories.into_iter() {
+                if db_repository.is_deleted {
+                    removed_repositories.push(db_repository.id as u64);
                 } else {
-                    worktree_repository::Column::IsDeleted.eq(false)
-                };
-
-                let db_repositories = worktree_repository::Entity::find()
-                    .filter(
-                        Condition::all()
-                            .add(worktree_repository::Column::ProjectId.eq(project.id))
-                            .add(worktree_repository::Column::WorktreeId.eq(worktree.id))
-                            .add(repository_entry_filter),
-                    )
-                    .all(tx)
-                    .await?;
-
-                for db_repository in db_repositories.into_iter() {
-                    if db_repository.is_deleted {
-                        worktree
-                            .removed_repositories
-                            .push(db_repository.work_directory_id as u64);
+                    let status_entry_filter = if let Some(rejoined_repository) = rejoined_repository
+                    {
+                        project_repository_statuses::Column::ScanId.gt(rejoined_repository.scan_id)
                     } else {
-                        let status_entry_filter = if let Some(rejoined_worktree) = rejoined_worktree
-                        {
-                            worktree_repository_statuses::Column::ScanId
-                                .gt(rejoined_worktree.scan_id)
+                        project_repository_statuses::Column::IsDeleted.eq(false)
+                    };
+
+                    let mut db_statuses = project_repository_statuses::Entity::find()
+                        .filter(
+                            Condition::all()
+                                .add(project_repository_statuses::Column::ProjectId.eq(project.id))
+                                .add(
+                                    project_repository_statuses::Column::RepositoryId
+                                        .eq(db_repository.id),
+                                )
+                                .add(status_entry_filter),
+                        )
+                        .stream(tx)
+                        .await?;
+                    let mut removed_statuses = Vec::new();
+                    let mut updated_statuses = Vec::new();
+
+                    while let Some(db_status) = db_statuses.next().await {
+                        let db_status: project_repository_statuses::Model = db_status?;
+                        if db_status.is_deleted {
+                            removed_statuses.push(db_status.repo_path);
                         } else {
-                            worktree_repository_statuses::Column::IsDeleted.eq(false)
-                        };
-
-                        let mut db_statuses = worktree_repository_statuses::Entity::find()
-                            .filter(
-                                Condition::all()
-                                    .add(
-                                        worktree_repository_statuses::Column::ProjectId
-                                            .eq(project.id),
-                                    )
-                                    .add(
-                                        worktree_repository_statuses::Column::WorktreeId
-                                            .eq(worktree.id),
-                                    )
-                                    .add(
-                                        worktree_repository_statuses::Column::WorkDirectoryId
-                                            .eq(db_repository.work_directory_id),
-                                    )
-                                    .add(status_entry_filter),
-                            )
-                            .stream(tx)
-                            .await?;
-                        let mut removed_statuses = Vec::new();
-                        let mut updated_statuses = Vec::new();
-
-                        while let Some(db_status) = db_statuses.next().await {
-                            let db_status: worktree_repository_statuses::Model = db_status?;
-                            if db_status.is_deleted {
-                                removed_statuses.push(db_status.repo_path);
-                            } else {
-                                updated_statuses.push(db_status_to_proto(db_status)?);
-                            }
+                            updated_statuses.push(db_status_to_proto(db_status)?);
                         }
+                    }
 
-                        let current_merge_conflicts = db_repository
-                            .current_merge_conflicts
-                            .as_ref()
-                            .map(|conflicts| serde_json::from_str(&conflicts))
-                            .transpose()?
-                            .unwrap_or_default();
+                    let current_merge_conflicts = db_repository
+                        .current_merge_conflicts
+                        .as_ref()
+                        .map(|conflicts| serde_json::from_str(&conflicts))
+                        .transpose()?
+                        .unwrap_or_default();
 
-                        let branch_summary = db_repository
-                            .branch_summary
-                            .as_ref()
-                            .map(|branch_summary| serde_json::from_str(&branch_summary))
-                            .transpose()?
-                            .unwrap_or_default();
+                    let branch_summary = db_repository
+                        .branch_summary
+                        .as_ref()
+                        .map(|branch_summary| serde_json::from_str(&branch_summary))
+                        .transpose()?
+                        .unwrap_or_default();
 
-                        worktree.updated_repositories.push(proto::RepositoryEntry {
-                            work_directory_id: db_repository.work_directory_id as u64,
-                            branch: db_repository.branch,
+                    let entry_ids = serde_json::from_str(&db_repository.entry_ids)
+                        .context("failed to deserialize repository's entry ids")?;
+
+                    if let Some(legacy_worktree_id) = db_repository.legacy_worktree_id {
+                        if let Some(worktree) = worktrees
+                            .iter_mut()
+                            .find(|worktree| worktree.id as i64 == legacy_worktree_id)
+                        {
+                            worktree.updated_repositories.push(proto::RepositoryEntry {
+                                work_directory_id: db_repository.id as u64,
+                                updated_statuses,
+                                removed_statuses,
+                                current_merge_conflicts,
+                                branch_summary,
+                            });
+                        }
+                    } else {
+                        updated_repositories.push(proto::UpdateRepository {
+                            entry_ids,
                             updated_statuses,
                             removed_statuses,
                             current_merge_conflicts,
                             branch_summary,
+                            project_id: project_id.to_proto(),
+                            id: db_repository.id as u64,
+                            abs_path: db_repository.abs_path,
+                            scan_id: db_repository.scan_id as u64,
                         });
                     }
                 }
             }
-
-            worktrees.push(worktree);
         }
 
         let language_servers = project
@@ -832,6 +855,8 @@ impl Database {
             id: project_id,
             old_connection_id,
             collaborators,
+            updated_repositories,
+            removed_repositories,
             worktrees,
             language_servers,
         }))

@@ -33,7 +33,7 @@ use crate::context_strip::{ContextStrip, ContextStripEvent, SuggestContextKind};
 use crate::thread::{RequestKind, Thread};
 use crate::thread_store::ThreadStore;
 use crate::tool_selector::ToolSelector;
-use crate::{Chat, ChatMode, RemoveAllContext, ToggleContextPicker};
+use crate::{Chat, ChatMode, RemoveAllContext, ThreadEvent, ToggleContextPicker};
 
 pub struct MessageEditor {
     thread: Entity<Thread>,
@@ -206,12 +206,23 @@ impl MessageEditor {
         let refresh_task =
             refresh_context_store_text(self.context_store.clone(), &HashSet::default(), cx);
 
+        let system_prompt_context_task = self.thread.read(cx).load_system_prompt_context(cx);
+
         let thread = self.thread.clone();
         let context_store = self.context_store.clone();
         let git_store = self.project.read(cx).git_store();
         let checkpoint = git_store.read(cx).checkpoint(cx);
         cx.spawn(async move |_, cx| {
             refresh_task.await;
+            let (system_prompt_context, load_error) = system_prompt_context_task.await;
+            thread
+                .update(cx, |thread, cx| {
+                    thread.set_system_prompt_context(system_prompt_context);
+                    if let Some(load_error) = load_error {
+                        cx.emit(ThreadEvent::ShowError(load_error));
+                    }
+                })
+                .ok();
             let checkpoint = checkpoint.await.log_err();
             thread
                 .update(cx, |thread, cx| {

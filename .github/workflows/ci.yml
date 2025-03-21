@@ -235,7 +235,7 @@ jobs:
           clean: false
 
       - name: Cache dependencies
-        uses: swatinem/rust-cache@f0deed1e0edfc6a9be95417288c0e1099b1eeec3 # v2
+        uses: swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}
           cache-provider: "buildjet"
@@ -287,7 +287,7 @@ jobs:
           clean: false
 
       - name: Cache dependencies
-        uses: swatinem/rust-cache@f0deed1e0edfc6a9be95417288c0e1099b1eeec3 # v2
+        uses: swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}
           cache-provider: "buildjet"
@@ -334,7 +334,7 @@ jobs:
           Copy-Item -Path "${{ github.workspace }}" -Destination "${{ env.ZED_WORKSPACE }}" -Recurse
 
       - name: Cache dependencies
-        uses: swatinem/rust-cache@f0deed1e0edfc6a9be95417288c0e1099b1eeec3 # v2
+        uses: swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}
           workspaces: ${{ env.ZED_WORKSPACE }}
@@ -393,7 +393,7 @@ jobs:
           Copy-Item -Path "${{ github.workspace }}" -Destination "${{ env.ZED_WORKSPACE }}" -Recurse
 
       - name: Cache dependencies
-        uses: swatinem/rust-cache@f0deed1e0edfc6a9be95417288c0e1099b1eeec3 # v2
+        uses: swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}
           workspaces: ${{ env.ZED_WORKSPACE }}

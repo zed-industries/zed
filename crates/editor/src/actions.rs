@@ -275,6 +275,7 @@ actions!(
         ConvertToUpperCamelCase,
         ConvertToUpperCase,
         Copy,
+        CopyAndTrim,
         CopyFileLocation,
         CopyHighlightJson,
         CopyFileName,

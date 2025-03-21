@@ -5,8 +5,7 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use collections::{HashMap, HashSet};
-use gpui::Context;
-use gpui::{App, Entity, SharedString, Task};
+use gpui::{App, Context, Entity, SharedString, Task};
 use language::Buffer;
 use language_model::LanguageModelRequestMessage;
 use project::Project;
@@ -43,6 +42,9 @@ pub trait Tool: 'static + Send + Sync {
     fn input_schema(&self) -> serde_json::Value {
         serde_json::Value::Object(serde_json::Map::default())
     }
+
+    /// Returns markdown to be displayed in the UI for this tool.
+    fn ui_text(&self, input: &serde_json::Value) -> String;
 
     /// Runs the tool with the provided input.
     fn run(
