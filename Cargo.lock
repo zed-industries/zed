@@ -5594,6 +5594,7 @@ dependencies = [
  "sum_tree",
  "tempfile",
  "text",
+ "thiserror 2.0.12",
  "time",
  "unindent",
  "url",
