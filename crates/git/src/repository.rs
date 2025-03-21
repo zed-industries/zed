@@ -358,7 +358,7 @@ impl RealGitRepository {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct GitRepositoryCheckpoint {
     ref_name: String,
     head_sha: Option<Oid>,

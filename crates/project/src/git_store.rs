@@ -549,8 +549,7 @@ impl GitStore {
         }
 
         cx.background_executor().spawn(async move {
-            let checkpoints: Vec<GitRepositoryCheckpoint> =
-                future::try_join_all(checkpoints).await?;
+            let checkpoints = future::try_join_all(checkpoints).await?;
             Ok(GitStoreCheckpoint {
                 checkpoints_by_dot_git_abs_path: dot_git_abs_paths
                     .into_iter()
@@ -614,6 +613,26 @@ impl GitStore {
                 .await?
                 .into_iter()
                 .all(|result| result))
+        })
+    }
+
+    pub fn delete_checkpoint(&self, checkpoint: GitStoreCheckpoint, cx: &App) -> Task<Result<()>> {
+        let repositories_by_dot_git_abs_path = self
+            .repositories
+            .values()
+            .map(|repo| (repo.read(cx).dot_git_abs_path.clone(), repo))
+            .collect::<HashMap<_, _>>();
+
+        let mut tasks = Vec::new();
+        for (dot_git_abs_path, checkpoint) in checkpoint.checkpoints_by_dot_git_abs_path {
+            if let Some(repository) = repositories_by_dot_git_abs_path.get(&dot_git_abs_path) {
+                let delete = repository.read(cx).delete_checkpoint(checkpoint);
+                tasks.push(async move { delete.await? });
+            }
+        }
+        cx.background_spawn(async move {
+            future::try_join_all(tasks).await?;
+            Ok(())
         })
     }
 
@@ -3314,6 +3333,20 @@ impl Repository {
             match repo {
                 RepositoryState::Local(git_repository) => {
                     git_repository.compare_checkpoints(left, right, cx).await
+                }
+                RepositoryState::Remote { .. } => Err(anyhow!("not implemented yet")),
+            }
+        })
+    }
+
+    pub fn delete_checkpoint(
+        &self,
+        checkpoint: GitRepositoryCheckpoint,
+    ) -> oneshot::Receiver<Result<()>> {
+        self.send_job(move |repo, cx| async move {
+            match repo {
+                RepositoryState::Local(git_repository) => {
+                    git_repository.delete_checkpoint(checkpoint, cx).await
                 }
                 RepositoryState::Remote { .. } => Err(anyhow!("not implemented yet")),
             }

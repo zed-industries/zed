@@ -96,7 +96,7 @@ impl Eval {
             assistant.update(cx, |assistant, cx| {
                 assistant.thread.update(cx, |thread, cx| {
                     let context = vec![];
-                    thread.insert_user_message(self.user_prompt.clone(), context, cx);
+                    thread.insert_user_message(self.user_prompt.clone(), context, None, cx);
                     thread.set_system_prompt_context(system_prompt_context);
                     thread.send_to_model(model, RequestKind::Chat, cx);
                 });
