@@ -15,7 +15,6 @@ use std::{
 
 use collections::{HashMap, IndexMap};
 use gpui::{App, AppContext as _, Entity, Subscription};
-use itertools::Itertools;
 use language::{
     language_settings::AllLanguageSettings, Attach, CachedLspAdapter, LanguageName,
     LanguageRegistry, LspAdapterDelegate,
@@ -175,8 +174,8 @@ impl LanguageServerTree {
         self.get_with_adapters(path, adapters, delegate, cx)
     }
 
-    fn get_with_adapters(
-        &mut self,
+    fn get_with_adapters<'a>(
+        &'a mut self,
         path: ProjectPath,
         adapters: IndexMap<
             LanguageServerName,
@@ -184,23 +183,16 @@ impl LanguageServerTree {
         >,
         delegate: Arc<dyn LspAdapterDelegate>,
         cx: &mut App,
-    ) -> impl Iterator<Item = LanguageServerTreeNode> {
+    ) -> impl Iterator<Item = LanguageServerTreeNode> + 'a {
         let worktree_id = path.worktree_id;
 
         let mut manifest_to_adapters = BTreeMap::default();
-        let mut nodes = BTreeMap::new();
         for (_, _, adapter) in adapters.values() {
             if let Some(manifest_name) = adapter.manifest_name() {
                 manifest_to_adapters
                     .entry(manifest_name)
                     .or_insert_with(Vec::default)
                     .push(adapter.clone());
-            } else {
-                // Backwards-compat: Fill in any adapters for which we did not detect the root as having the project root at the root of a worktree.
-                nodes.entry(adapter.name()).or_insert_with(|| ProjectPath {
-                    worktree_id,
-                    path: Arc::from("".as_ref()),
-                });
             }
         }
 
@@ -212,19 +204,20 @@ impl LanguageServerTree {
                 cx,
             )
         });
-        roots
+        let root_path = std::cell::LazyCell::new(move || ProjectPath {
+            worktree_id,
+            path: Arc::from("".as_ref()),
+        });
+        adapters
             .into_iter()
-            .flat_map(move |(manifest, root_path)| {
-                let adapter_wrappers = manifest_to_adapters.remove(&manifest);
-
-                let iter =
-                    adapter_wrappers.map_or_else(Default::default, |wrappers| wrappers.into_iter());
-
-                iter.map(move |adapter| (adapter, root_path.clone()))
-            })
-            .filter_map(move |(adapter, root_path)| {
+            .map(move |(_, (settings, new_languages, adapter))| {
+                // Backwards-compat: Fill in any adapters for which we did not detect the root as having the project root at the root of a worktree.
+                let root_path = adapter
+                    .manifest_name()
+                    .and_then(|name| roots.get(&name))
+                    .cloned()
+                    .unwrap_or_else(|| root_path.clone());
                 let attach = adapter.attach_kind();
-                let (index, _, (settings, new_languages, _)) = adapters.get_full(&adapter.name)?;
 
                 let inner_node = self
                     .instances
@@ -246,11 +239,8 @@ impl LanguageServerTree {
                     )
                 });
                 languages.extend(new_languages.iter().cloned());
-
-                Some((index, Arc::downgrade(&node).into()))
+                Arc::downgrade(&node).into()
             })
-            .sorted_by_key(|(index, _)| *index)
-            .map(|(_, node)| node)
     }
 
     fn adapter_for_name(&self, name: &LanguageServerName) -> Option<Arc<CachedLspAdapter>> {
