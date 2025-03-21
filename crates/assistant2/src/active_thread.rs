@@ -1015,7 +1015,7 @@ impl ActiveThread {
             "path-search" => IconName::SearchCode,
             "read-file" => IconName::Eye,
             "regex-search" => IconName::Regex,
-            "thinking" => IconName::BellRing, // placeholder for now
+            "thinking" => IconName::Brain,
             _ => IconName::Terminal,
         };
 
