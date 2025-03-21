@@ -25,7 +25,6 @@ pub enum AssistantDockPosition {
 #[serde(rename_all = "snake_case")]
 pub enum RunDestructiveTools {
     Always,
-    Never,
     Ask,
 }
 
@@ -374,8 +373,7 @@ pub struct AssistantSettingsContentV2 {
     /// Controls when tools are allowed to run if they might make
     /// destructive changes such as writing to the filesystem.
     /// - "always": Always allow tools to run (without needing confirmation)
-    /// - "never": Never run tools that might make destructive changes
-    /// - "ask": Stop and ask for confirmation before running tools that might make destructive changes
+    /// - "ask": Pause and ask for confirmation before running tools that might make destructive changes
     ///
     /// Default: "ask"
     run_destructive_tools: Option<RunDestructiveTools>,

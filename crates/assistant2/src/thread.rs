@@ -3,9 +3,8 @@ use std::io::Write;
 use std::sync::Arc;
 
 use anyhow::{Context as _, Result};
-use assistant_tool::{ActionLog, Tool, ToolWorkingSet};
 use assistant_settings::{AssistantSettings, RunDestructiveTools};
-use settings::Settings;
+use assistant_tool::{ActionLog, Tool, ToolWorkingSet};
 use chrono::{DateTime, Utc};
 use collections::{BTreeMap, HashMap, HashSet};
 use fs::Fs;
@@ -26,6 +25,7 @@ use prompt_store::{
 };
 use scripting_tool::{ScriptingSession, ScriptingTool};
 use serde::{Deserialize, Serialize};
+use settings::Settings;
 use util::{maybe, post_inc, ResultExt as _, TryFutureExt as _};
 use uuid::Uuid;
 
@@ -981,12 +981,6 @@ impl Thread {
             if let Some(tool) = self.tools.tool(&tool_use.name, cx) {
                 let settings = AssistantSettings::get_global(cx);
                 match settings.run_destructive_tools {
-                    RunDestructiveTools::Never if tool.needs_confirmation() => {
-                        self.tool_use.insert_tool_output(
-                            tool_use.id.clone(),
-                            Err(anyhow::anyhow!("Tool execution blocked by your \"run_destructive_tools\" setting (under \"assistant\" in settings.json).")),
-                        );
-                    }
                     RunDestructiveTools::Ask if tool.needs_confirmation() => {
                         self.tool_use.confirm_tool_use(
                             tool_use.id.clone(),
@@ -998,10 +992,7 @@ impl Thread {
                     }
                     // This is essentially `_ =>` but with exhaustive patterns so
                     // we can know to revisit this if more variants ever get added.
-                    RunDestructiveTools::Always
-                    | RunDestructiveTools::Never
-                    | RunDestructiveTools::Ask
-                    => {
+                    RunDestructiveTools::Always | RunDestructiveTools::Ask => {
                         self.run_tool(
                             tool_use.id.clone(),
                             tool_use.ui_text.clone(),
