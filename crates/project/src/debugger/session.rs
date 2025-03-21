@@ -11,7 +11,7 @@ use super::dap_command::{
 };
 use super::dap_store::DapAdapterDelegate;
 use anyhow::{anyhow, Result};
-use collections::{HashMap, IndexMap, IndexSet};
+use collections::{HashMap, HashSet, IndexMap, IndexSet};
 use dap::adapters::{DebugAdapter, DebugAdapterBinary};
 use dap::messages::Response;
 use dap::OutputEventCategory;
@@ -522,6 +522,11 @@ impl ThreadStates {
         self.known_thread_states.clear();
     }
 
+    fn exit_all_threads(&mut self) {
+        self.global_state = Some(ThreadStatus::Exited);
+        self.known_thread_states.clear();
+    }
+
     fn continue_all_threads(&mut self) {
         self.global_state = Some(ThreadStatus::Running);
         self.known_thread_states.clear();
@@ -577,6 +582,7 @@ pub struct Session {
     mode: Mode,
     pub(super) capabilities: Capabilities,
     id: SessionId,
+    child_session_ids: HashSet<SessionId>,
     parent_id: Option<SessionId>,
     ignore_breakpoints: bool,
     modules: Vec<dap::Module>,
@@ -753,6 +759,7 @@ impl Session {
                 Self {
                     mode: Mode::Local(mode),
                     id: session_id,
+                    child_session_ids: HashSet::default(),
                     parent_id: parent_session.map(|session| session.read(cx).id),
                     variables: Default::default(),
                     capabilities,
@@ -785,13 +792,13 @@ impl Session {
                 _upstream_project_id: upstream_project_id,
             }),
             id: session_id,
+            child_session_ids: HashSet::default(),
             parent_id: None,
             capabilities: Capabilities::default(),
             ignore_breakpoints,
             variables: Default::default(),
             stack_frames: Default::default(),
             thread_states: ThreadStates::default(),
-
             output_token: OutputToken(0),
             output: circular_buffer::CircularBuffer::boxed(),
             requests: HashMap::default(),
@@ -806,6 +813,18 @@ impl Session {
 
     pub fn session_id(&self) -> SessionId {
         self.id
+    }
+
+    pub fn child_session_ids(&self) -> HashSet<SessionId> {
+        self.child_session_ids.clone()
+    }
+
+    pub fn add_child_session_id(&mut self, session_id: SessionId) {
+        self.child_session_ids.insert(session_id);
+    }
+
+    pub fn remove_child_session_id(&mut self, session_id: SessionId) {
+        self.child_session_ids.remove(&session_id);
     }
 
     pub fn parent_id(&self) -> Option<SessionId> {
@@ -1051,6 +1070,7 @@ impl Session {
 
         if !self.thread_states.any_stopped_thread()
             && request.type_id() != TypeId::of::<ThreadsCommand>()
+            || self.is_session_terminated
         {
             return;
         }
@@ -1331,6 +1351,10 @@ impl Session {
     }
 
     pub fn shutdown(&mut self, cx: &mut Context<Self>) -> Task<()> {
+        self.is_session_terminated = true;
+        self.thread_states.exit_all_threads();
+        cx.notify();
+
         let task = if self
             .capabilities
             .supports_terminate_request

@@ -51,9 +51,13 @@ impl ExtensionContextServerProxy for ContextServerFactoryRegistryProxy {
                                     })
                                 })?;
 
-                                let command = extension
+                                let mut command = extension
                                     .context_server_command(id.clone(), extension_project)
                                     .await?;
+                                command.command = extension
+                                    .path_from_extension(command.command.as_ref())
+                                    .to_string_lossy()
+                                    .to_string();
 
                                 log::info!("loaded command for context server {id}: {command:?}");
 
