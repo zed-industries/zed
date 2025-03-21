@@ -14,7 +14,6 @@ use ::util::ResultExt;
 use anyhow::{Context as _, Result};
 use async_task::Runnable;
 use futures::channel::oneshot::{self, Receiver};
-use itertools::Itertools;
 use raw_window_handle as rwh;
 use smallvec::SmallVec;
 use windows::{
@@ -49,7 +48,7 @@ pub struct WindowsWindowState {
 
     pub click_state: ClickState,
     pub system_settings: WindowsSystemSettings,
-    pub current_cursor: Option<HCURSOR>,
+    pub current_cursor: HCURSOR,
     pub nc_button_pressed: Option<u32>,
 
     pub display: WindowsDisplay,
@@ -77,7 +76,7 @@ impl WindowsWindowState {
         hwnd: HWND,
         transparent: bool,
         cs: &CREATESTRUCTW,
-        current_cursor: Option<HCURSOR>,
+        current_cursor: HCURSOR,
         display: WindowsDisplay,
         gpu_context: &BladeContext,
     ) -> Result<Self> {
@@ -297,7 +296,7 @@ impl WindowsWindowStatePtr {
                 unsafe {
                     SetWindowPos(
                         state_ptr.hwnd,
-                        HWND::default(),
+                        None,
                         x,
                         y,
                         cx,
@@ -352,7 +351,7 @@ struct WindowCreateContext<'a> {
     transparent: bool,
     is_movable: bool,
     executor: ForegroundExecutor,
-    current_cursor: Option<HCURSOR>,
+    current_cursor: HCURSOR,
     windows_version: WindowsVersion,
     validation_number: usize,
     main_receiver: flume::Receiver<Runnable>,
@@ -434,7 +433,7 @@ impl WindowsWindow {
                 CW_USEDEFAULT,
                 None,
                 None,
-                hinstance,
+                Some(hinstance.into()),
                 lpparam,
             )
         };
@@ -577,8 +576,7 @@ impl PlatformWindow for WindowsWindow {
             .executor
             .spawn(async move {
                 unsafe {
-                    let mut config;
-                    config = std::mem::zeroed::<TASKDIALOGCONFIG>();
+                    let mut config = TASKDIALOGCONFIG::default();
                     config.cbSize = std::mem::size_of::<TASKDIALOGCONFIG>() as _;
                     config.hwndParent = handle;
                     let title;
@@ -599,19 +597,26 @@ impl PlatformWindow for WindowsWindow {
                     };
                     config.pszWindowTitle = title;
                     config.Anonymous1.pszMainIcon = main_icon;
-                    let instruction = msg.encode_utf16().chain(Some(0)).collect_vec();
+                    let instruction = HSTRING::from(msg);
                     config.pszMainInstruction = PCWSTR::from_raw(instruction.as_ptr());
                     let hints_encoded;
                     if let Some(ref hints) = detail_string {
-                        hints_encoded = hints.encode_utf16().chain(Some(0)).collect_vec();
+                        hints_encoded = HSTRING::from(hints);
                         config.pszContent = PCWSTR::from_raw(hints_encoded.as_ptr());
                     };
+                    let mut button_id_map = Vec::with_capacity(answers.len());
                     let mut buttons = Vec::new();
                     let mut btn_encoded = Vec::new();
                     for (index, btn_string) in answers.iter().enumerate() {
-                        let encoded = btn_string.encode_utf16().chain(Some(0)).collect_vec();
+                        let encoded = HSTRING::from(btn_string);
+                        let button_id = if btn_string == "Cancel" {
+                            IDCANCEL.0
+                        } else {
+                            index as i32 - 100
+                        };
+                        button_id_map.push(button_id);
                         buttons.push(TASKDIALOG_BUTTON {
-                            nButtonID: index as _,
+                            nButtonID: button_id,
                             pszButtonText: PCWSTR::from_raw(encoded.as_ptr()),
                         });
                         btn_encoded.push(encoded);
@@ -622,9 +627,14 @@ impl PlatformWindow for WindowsWindow {
                     config.pfCallback = None;
                     let mut res = std::mem::zeroed();
                     let _ = TaskDialogIndirect(&config, Some(&mut res), None, None)
-                        .inspect_err(|e| log::error!("unable to create task dialog: {}", e));
+                        .context("unable to create task dialog")
+                        .log_err();
 
-                    let _ = done_tx.send(res as usize);
+                    let clicked = button_id_map
+                        .iter()
+                        .position(|&button_id| button_id == res)
+                        .unwrap();
+                    let _ = done_tx.send(clicked);
                 }
             })
             .detach();
@@ -640,7 +650,7 @@ impl PlatformWindow for WindowsWindow {
             .spawn(async move {
                 this.set_window_placement().log_err();
                 unsafe { SetActiveWindow(hwnd).log_err() };
-                unsafe { SetFocus(hwnd).log_err() };
+                unsafe { SetFocus(Some(hwnd)).log_err() };
                 // todo(windows)
                 // crate `windows 0.56` reports true as Err
                 unsafe { SetForegroundWindow(hwnd).as_bool() };
@@ -807,16 +817,13 @@ impl WindowsDragDropHandler {
 impl IDropTarget_Impl for WindowsDragDropHandler_Impl {
     fn DragEnter(
         &self,
-        pdataobj: Option<&IDataObject>,
+        pdataobj: windows::core::Ref<IDataObject>,
         _grfkeystate: MODIFIERKEYS_FLAGS,
         pt: &POINTL,
         pdweffect: *mut DROPEFFECT,
     ) -> windows::core::Result<()> {
         unsafe {
-            let Some(idata_obj) = pdataobj else {
-                log::info!("no dragging file or directory detected");
-                return Ok(());
-            };
+            let idata_obj = pdataobj.ok()?;
             let config = FORMATETC {
                 cfFormat: CF_HDROP.0,
                 ptd: std::ptr::null_mut() as _,
@@ -895,7 +902,7 @@ impl IDropTarget_Impl for WindowsDragDropHandler_Impl {
 
     fn Drop(
         &self,
-        _pdataobj: Option<&IDataObject>,
+        _pdataobj: windows::core::Ref<IDataObject>,
         _grfkeystate: MODIFIERKEYS_FLAGS,
         pt: &POINTL,
         _pdweffect: *mut DROPEFFECT,
@@ -1211,10 +1218,10 @@ fn set_window_composition_attribute(hwnd: HWND, color: Option<Color>, state: u32
     unsafe {
         type SetWindowCompositionAttributeType =
             unsafe extern "system" fn(HWND, *mut WINDOWCOMPOSITIONATTRIBDATA) -> BOOL;
-        let module_name = PCSTR::from_raw("user32.dll\0".as_ptr());
+        let module_name = PCSTR::from_raw(c"user32.dll".as_ptr() as *const u8);
         let user32 = GetModuleHandleA(module_name);
         if user32.is_ok() {
-            let func_name = PCSTR::from_raw("SetWindowCompositionAttribute\0".as_ptr());
+            let func_name = PCSTR::from_raw(c"SetWindowCompositionAttribute".as_ptr() as *const u8);
             let set_window_composition_attribute: SetWindowCompositionAttributeType =
                 std::mem::transmute(GetProcAddress(user32.unwrap(), func_name));
             let mut color = color.unwrap_or_default();
@@ -1228,7 +1235,7 @@ fn set_window_composition_attribute(hwnd: HWND, color: Option<Color>, state: u32
                 gradient_color: (color.0 as u32)
                     | ((color.1 as u32) << 8)
                     | ((color.2 as u32) << 16)
-                    | (color.3 as u32) << 24,
+                    | ((color.3 as u32) << 24),
                 animation_id: 0,
             };
             let mut data = WINDOWCOMPOSITIONATTRIBDATA {

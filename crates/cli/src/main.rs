@@ -198,6 +198,8 @@ fn main() -> Result<()> {
     let mut paths = vec![];
     let mut urls = vec![];
     let mut stdin_tmp_file: Option<fs::File> = None;
+    let mut anonymous_fd_tmp_files = vec![];
+
     for path in args.paths_with_position.iter() {
         if path.starts_with("zed://")
             || path.starts_with("http://")
@@ -211,6 +213,11 @@ fn main() -> Result<()> {
             paths.push(file.path().to_string_lossy().to_string());
             let (file, _) = file.keep()?;
             stdin_tmp_file = Some(file);
+        } else if let Some(file) = anonymous_fd(path) {
+            let tmp_file = NamedTempFile::new()?;
+            paths.push(tmp_file.path().to_string_lossy().to_string());
+            let (tmp_file, _) = tmp_file.keep()?;
+            anonymous_fd_tmp_files.push((file, tmp_file));
         } else {
             paths.push(parse_path_with_position(path)?)
         }
@@ -252,37 +259,97 @@ fn main() -> Result<()> {
         }
     });
 
-    let pipe_handle: JoinHandle<anyhow::Result<()>> = thread::spawn(move || {
-        if let Some(mut tmp_file) = stdin_tmp_file {
-            let mut stdin = std::io::stdin().lock();
-            if io::IsTerminal::is_terminal(&stdin) {
-                return Ok(());
-            }
-            let mut buffer = [0; 8 * 1024];
-            loop {
-                let bytes_read = io::Read::read(&mut stdin, &mut buffer)?;
-                if bytes_read == 0 {
-                    break;
+    let stdin_pipe_handle: Option<JoinHandle<anyhow::Result<()>>> =
+        stdin_tmp_file.map(|tmp_file| {
+            thread::spawn(move || {
+                let stdin = std::io::stdin().lock();
+                if io::IsTerminal::is_terminal(&stdin) {
+                    return Ok(());
                 }
-                io::Write::write(&mut tmp_file, &buffer[..bytes_read])?;
-            }
-            io::Write::flush(&mut tmp_file)?;
-        }
-        Ok(())
-    });
+                return pipe_to_tmp(stdin, tmp_file);
+            })
+        });
+
+    let anonymous_fd_pipe_handles: Vec<JoinHandle<anyhow::Result<()>>> = anonymous_fd_tmp_files
+        .into_iter()
+        .map(|(file, tmp_file)| thread::spawn(move || pipe_to_tmp(file, tmp_file)))
+        .collect();
 
     if args.foreground {
         app.run_foreground(url)?;
     } else {
         app.launch(url)?;
         sender.join().unwrap()?;
-        pipe_handle.join().unwrap()?;
+        if let Some(handle) = stdin_pipe_handle {
+            handle.join().unwrap()?;
+        }
+        for handle in anonymous_fd_pipe_handles {
+            handle.join().unwrap()?;
+        }
     }
 
     if let Some(exit_status) = exit_status.lock().take() {
         std::process::exit(exit_status);
     }
     Ok(())
+}
+
+fn pipe_to_tmp(mut src: impl io::Read, mut dest: fs::File) -> Result<()> {
+    let mut buffer = [0; 8 * 1024];
+    loop {
+        let bytes_read = match src.read(&mut buffer) {
+            Err(err) if err.kind() == io::ErrorKind::Interrupted => continue,
+            res => res?,
+        };
+        if bytes_read == 0 {
+            break;
+        }
+        io::Write::write_all(&mut dest, &buffer[..bytes_read])?;
+    }
+    io::Write::flush(&mut dest)?;
+    Ok(())
+}
+
+fn anonymous_fd(path: &str) -> Option<fs::File> {
+    #[cfg(target_os = "linux")]
+    {
+        use std::os::fd::{self, FromRawFd};
+
+        let fd_str = path.strip_prefix("/proc/self/fd/")?;
+
+        let link = fs::read_link(path).ok()?;
+        if !link.starts_with("memfd:") {
+            return None;
+        }
+
+        let fd: fd::RawFd = fd_str.parse().ok()?;
+        let file = unsafe { fs::File::from_raw_fd(fd) };
+        return Some(file);
+    }
+    #[cfg(target_os = "macos")]
+    {
+        use std::os::{
+            fd::{self, FromRawFd},
+            unix::fs::FileTypeExt,
+        };
+
+        let fd_str = path.strip_prefix("/dev/fd/")?;
+
+        let metadata = fs::metadata(path).ok()?;
+        let file_type = metadata.file_type();
+        if !file_type.is_fifo() && !file_type.is_socket() {
+            return None;
+        }
+        let fd: fd::RawFd = fd_str.parse().ok()?;
+        let file = unsafe { fs::File::from_raw_fd(fd) };
+        return Some(file);
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+    {
+        _ = path;
+        // not implemented for bsd, windows. Could be, but isn't yet
+        return None;
+    }
 }
 
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
@@ -521,30 +588,115 @@ mod flatpak {
     }
 }
 
-// todo("windows")
 #[cfg(target_os = "windows")]
 mod windows {
+    use anyhow::Context;
+    use release_channel::app_identifier;
+    use windows::{
+        core::HSTRING,
+        Win32::{
+            Foundation::{CloseHandle, GetLastError, ERROR_ALREADY_EXISTS, GENERIC_WRITE},
+            Storage::FileSystem::{
+                CreateFileW, WriteFile, FILE_FLAGS_AND_ATTRIBUTES, FILE_SHARE_MODE, OPEN_EXISTING,
+            },
+            System::Threading::CreateMutexW,
+        },
+    };
+
     use crate::{Detect, InstalledApp};
     use std::io;
-    use std::path::Path;
+    use std::path::{Path, PathBuf};
     use std::process::ExitStatus;
 
-    struct App;
+    fn check_single_instance() -> bool {
+        let mutex = unsafe {
+            CreateMutexW(
+                None,
+                false,
+                &HSTRING::from(format!("{}-Instance-Mutex", app_identifier())),
+            )
+            .expect("Unable to create instance sync event")
+        };
+        let last_err = unsafe { GetLastError() };
+        let _ = unsafe { CloseHandle(mutex) };
+        last_err != ERROR_ALREADY_EXISTS
+    }
+
+    struct App(PathBuf);
+
     impl InstalledApp for App {
         fn zed_version_string(&self) -> String {
-            unimplemented!()
+            format!(
+                "Zed {}{}{} – {}",
+                if *release_channel::RELEASE_CHANNEL_NAME == "stable" {
+                    "".to_string()
+                } else {
+                    format!("{} ", *release_channel::RELEASE_CHANNEL_NAME)
+                },
+                option_env!("RELEASE_VERSION").unwrap_or_default(),
+                match option_env!("ZED_COMMIT_SHA") {
+                    Some(commit_sha) => format!(" {commit_sha} "),
+                    None => "".to_string(),
+                },
+                self.0.display(),
+            )
         }
-        fn launch(&self, _ipc_url: String) -> anyhow::Result<()> {
-            unimplemented!()
+
+        fn launch(&self, ipc_url: String) -> anyhow::Result<()> {
+            if check_single_instance() {
+                std::process::Command::new(self.0.clone())
+                    .arg(ipc_url)
+                    .spawn()?;
+            } else {
+                unsafe {
+                    let pipe = CreateFileW(
+                        &HSTRING::from(format!("\\\\.\\pipe\\{}-Named-Pipe", app_identifier())),
+                        GENERIC_WRITE.0,
+                        FILE_SHARE_MODE::default(),
+                        None,
+                        OPEN_EXISTING,
+                        FILE_FLAGS_AND_ATTRIBUTES::default(),
+                        None,
+                    )?;
+                    let message = ipc_url.as_bytes();
+                    let mut bytes_written = 0;
+                    WriteFile(pipe, Some(message), Some(&mut bytes_written), None)?;
+                    CloseHandle(pipe)?;
+                }
+            }
+            Ok(())
         }
-        fn run_foreground(&self, _ipc_url: String) -> io::Result<ExitStatus> {
-            unimplemented!()
+
+        fn run_foreground(&self, ipc_url: String) -> io::Result<ExitStatus> {
+            std::process::Command::new(self.0.clone())
+                .arg(ipc_url)
+                .arg("--foreground")
+                .spawn()?
+                .wait()
         }
     }
 
     impl Detect {
-        pub fn detect(_path: Option<&Path>) -> anyhow::Result<impl InstalledApp> {
-            Ok(App)
+        pub fn detect(path: Option<&Path>) -> anyhow::Result<impl InstalledApp> {
+            let path = if let Some(path) = path {
+                path.to_path_buf().canonicalize()?
+            } else {
+                let cli = std::env::current_exe()?;
+                let dir = cli.parent().context("no parent path for cli")?;
+
+                // ../Zed.exe is the standard, lib/zed is for MSYS2, ./zed.exe is for the target
+                // directory in development builds.
+                let possible_locations = ["../Zed.exe", "../lib/zed/zed-editor.exe", "./zed.exe"];
+                possible_locations
+                    .iter()
+                    .find_map(|p| dir.join(p).canonicalize().ok().filter(|path| path != &cli))
+                    .context(format!(
+                        "could not find any of: {}",
+                        possible_locations.join(", ")
+                    ))?
+            };
+
+            Ok(App(path))
         }
     }
 }

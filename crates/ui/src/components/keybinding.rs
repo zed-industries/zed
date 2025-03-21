@@ -1,4 +1,3 @@
-#![allow(missing_docs)]
 use crate::PlatformStyle;
 use crate::{h_flex, prelude::*, Icon, IconName, IconSize};
 use gpui::{
@@ -30,9 +29,11 @@ impl KeyBinding {
     /// Returns the highest precedence keybinding for an action. This is the last binding added to
     /// the keymap. User bindings are added after built-in bindings so that they take precedence.
     pub fn for_action(action: &dyn Action, window: &mut Window, cx: &App) -> Option<Self> {
+        if let Some(focused) = window.focused(cx) {
+            return Self::for_action_in(action, &focused, window, cx);
+        }
         let key_binding =
-            gpui::Keymap::binding_to_display_from_bindings(&window.bindings_for_action(action))
-                .cloned()?;
+            gpui::Keymap::binding_to_display_from_bindings(window.bindings_for_action(action))?;
         Some(Self::new(key_binding, cx))
     }
 
@@ -44,9 +45,8 @@ impl KeyBinding {
         cx: &App,
     ) -> Option<Self> {
         let key_binding = gpui::Keymap::binding_to_display_from_bindings(
-            &window.bindings_for_action_in(action, focus),
-        )
-        .cloned()?;
+            window.bindings_for_action_in(action, focus),
+        )?;
         Some(Self::new(key_binding, cx))
     }
 
@@ -121,7 +121,7 @@ impl RenderOnce for KeyBinding {
                 h_flex()
                     .flex_none()
                     .py_0p5()
-                    .rounded_sm()
+                    .rounded_xs()
                     .text_color(cx.theme().colors().text_muted)
                     .when(use_text, |el| {
                         el.child(

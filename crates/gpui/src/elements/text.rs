@@ -6,7 +6,6 @@ use crate::{
     WrappedLineLayout,
 };
 use anyhow::anyhow;
-use parking_lot::{Mutex, MutexGuard};
 use smallvec::SmallVec;
 use std::{
     cell::{Cell, RefCell},
@@ -137,6 +136,7 @@ impl IntoElement for SharedString {
 pub struct StyledText {
     text: SharedString,
     runs: Option<Vec<TextRun>>,
+    delayed_highlights: Option<Vec<(Range<usize>, HighlightStyle)>>,
     layout: TextLayout,
 }
 
@@ -146,6 +146,7 @@ impl StyledText {
         StyledText {
             text: text.into(),
             runs: None,
+            delayed_highlights: None,
             layout: TextLayout::default(),
         }
     }
@@ -157,11 +158,39 @@ impl StyledText {
 
     /// Set the styling attributes for the given text, as well as
     /// as any ranges of text that have had their style customized.
-    pub fn with_highlights(
+    pub fn with_default_highlights(
         mut self,
         default_style: &TextStyle,
         highlights: impl IntoIterator<Item = (Range<usize>, HighlightStyle)>,
     ) -> Self {
+        debug_assert!(
+            self.delayed_highlights.is_none(),
+            "Can't use `with_default_highlights` and `with_highlights`"
+        );
+        let runs = Self::compute_runs(&self.text, default_style, highlights);
+        self.runs = Some(runs);
+        self
+    }
+
+    /// Set the styling attributes for the given text, as well as
+    /// as any ranges of text that have had their style customized.
+    pub fn with_highlights(
+        mut self,
+        highlights: impl IntoIterator<Item = (Range<usize>, HighlightStyle)>,
+    ) -> Self {
+        debug_assert!(
+            self.runs.is_none(),
+            "Can't use `with_highlights` and `with_default_highlights`"
+        );
+        self.delayed_highlights = Some(highlights.into_iter().collect::<Vec<_>>());
+        self
+    }
+
+    fn compute_runs(
+        text: &str,
+        default_style: &TextStyle,
+        highlights: impl IntoIterator<Item = (Range<usize>, HighlightStyle)>,
+    ) -> Vec<TextRun> {
         let mut runs = Vec::new();
         let mut ix = 0;
         for (range, highlight) in highlights {
@@ -176,11 +205,10 @@ impl StyledText {
             );
             ix = range.end;
         }
-        if ix < self.text.len() {
-            runs.push(default_style.to_run(self.text.len() - ix));
+        if ix < text.len() {
+            runs.push(default_style.to_run(text.len() - ix));
         }
-        self.runs = Some(runs);
-        self
+        runs
     }
 
     /// Set the text runs for this piece of text.
@@ -200,15 +228,17 @@ impl Element for StyledText {
 
     fn request_layout(
         &mut self,
-
         _id: Option<&GlobalElementId>,
-
         window: &mut Window,
         cx: &mut App,
     ) -> (LayoutId, Self::RequestLayoutState) {
-        let layout_id = self
-            .layout
-            .layout(self.text.clone(), self.runs.take(), window, cx);
+        let runs = self.runs.take().or_else(|| {
+            self.delayed_highlights.take().map(|delayed_highlights| {
+                Self::compute_runs(&self.text, &window.text_style(), delayed_highlights)
+            })
+        });
+
+        let layout_id = self.layout.layout(self.text.clone(), runs, window, cx);
         (layout_id, ())
     }
 
@@ -246,7 +276,7 @@ impl IntoElement for StyledText {
 
 /// The Layout for TextElement. This can be used to map indices to pixels and vice versa.
 #[derive(Default, Clone)]
-pub struct TextLayout(Arc<Mutex<Option<TextLayoutInner>>>);
+pub struct TextLayout(Rc<RefCell<Option<TextLayoutInner>>>);
 
 struct TextLayoutInner {
     lines: SmallVec<[WrappedLine; 1]>,
@@ -257,10 +287,6 @@ struct TextLayoutInner {
 }
 
 impl TextLayout {
-    fn lock(&self) -> MutexGuard<Option<TextLayoutInner>> {
-        self.0.lock()
-    }
-
     fn layout(
         &self,
         text: SharedString,
@@ -310,7 +336,7 @@ impl TextLayout {
                         (None, None)
                     };
 
-                if let Some(text_layout) = element_state.0.lock().as_ref() {
+                if let Some(text_layout) = element_state.0.borrow().as_ref() {
                     if text_layout.size.is_some()
                         && (wrap_width.is_none() || wrap_width == text_layout.wrap_width)
                     {
@@ -336,7 +362,7 @@ impl TextLayout {
                     )
                     .log_err()
                 else {
-                    element_state.lock().replace(TextLayoutInner {
+                    element_state.0.borrow_mut().replace(TextLayoutInner {
                         lines: Default::default(),
                         line_height,
                         wrap_width,
@@ -353,7 +379,7 @@ impl TextLayout {
                     size.width = size.width.max(line_size.width).ceil();
                 }
 
-                element_state.lock().replace(TextLayoutInner {
+                element_state.0.borrow_mut().replace(TextLayoutInner {
                     lines,
                     line_height,
                     wrap_width,
@@ -369,7 +395,7 @@ impl TextLayout {
     }
 
     fn prepaint(&self, bounds: Bounds<Pixels>, text: &str) {
-        let mut element_state = self.lock();
+        let mut element_state = self.0.borrow_mut();
         let element_state = element_state
             .as_mut()
             .ok_or_else(|| anyhow!("measurement has not been performed on {}", text))
@@ -378,7 +404,7 @@ impl TextLayout {
     }
 
     fn paint(&self, text: &str, window: &mut Window, cx: &mut App) {
-        let element_state = self.lock();
+        let element_state = self.0.borrow();
         let element_state = element_state
             .as_ref()
             .ok_or_else(|| anyhow!("measurement has not been performed on {}", text))
@@ -407,7 +433,7 @@ impl TextLayout {
 
     /// Get the byte index into the input of the pixel position.
     pub fn index_for_position(&self, mut position: Point<Pixels>) -> Result<usize, usize> {
-        let element_state = self.lock();
+        let element_state = self.0.borrow();
         let element_state = element_state
             .as_ref()
             .expect("measurement has not been performed");
@@ -441,7 +467,7 @@ impl TextLayout {
 
     /// Get the pixel position for the given byte index.
     pub fn position_for_index(&self, index: usize) -> Option<Point<Pixels>> {
-        let element_state = self.lock();
+        let element_state = self.0.borrow();
         let element_state = element_state
             .as_ref()
             .expect("measurement has not been performed");
@@ -472,7 +498,7 @@ impl TextLayout {
 
     /// Retrieve the layout for the line containing the given byte index.
     pub fn line_layout_for_index(&self, index: usize) -> Option<Arc<WrappedLineLayout>> {
-        let element_state = self.lock();
+        let element_state = self.0.borrow();
         let element_state = element_state
             .as_ref()
             .expect("measurement has not been performed");
@@ -502,18 +528,18 @@ impl TextLayout {
 
     /// The bounds of this layout.
     pub fn bounds(&self) -> Bounds<Pixels> {
-        self.0.lock().as_ref().unwrap().bounds.unwrap()
+        self.0.borrow().as_ref().unwrap().bounds.unwrap()
     }
 
     /// The line height for this layout.
     pub fn line_height(&self) -> Pixels {
-        self.0.lock().as_ref().unwrap().line_height
+        self.0.borrow().as_ref().unwrap().line_height
     }
 
     /// The text for this layout.
     pub fn text(&self) -> String {
         self.0
-            .lock()
+            .borrow()
             .as_ref()
             .unwrap()
             .lines
@@ -660,6 +686,7 @@ impl Element for InteractiveText {
         window: &mut Window,
         cx: &mut App,
     ) {
+        let current_view = window.current_view();
         let text_layout = self.text.layout().clone();
         window.with_element_state::<InteractiveTextState, _>(
             global_id.unwrap(),
@@ -733,7 +760,7 @@ impl Element for InteractiveText {
                                 if let Some(hover_listener) = hover_listener.as_ref() {
                                     hover_listener(updated, event.clone(), window, cx);
                                 }
-                                window.refresh();
+                                cx.notify(current_view);
                             }
                         }
                     }

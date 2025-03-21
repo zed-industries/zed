@@ -1,3 +1,5 @@
+mod agent_profile;
+
 use std::sync::Arc;
 
 use ::open_ai::Model as OpenAiModel;
@@ -5,12 +7,15 @@ use anthropic::Model as AnthropicModel;
 use deepseek::Model as DeepseekModel;
 use feature_flags::FeatureFlagAppExt;
 use gpui::{App, Pixels};
+use indexmap::IndexMap;
 use language_model::{CloudModel, LanguageModel};
 use lmstudio::Model as LmStudioModel;
 use ollama::Model as OllamaModel;
 use schemars::{schema::Schema, JsonSchema};
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsSources};
+
+pub use crate::agent_profile::*;
 
 #[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
@@ -62,9 +67,11 @@ pub struct AssistantSettings {
     pub default_width: Pixels,
     pub default_height: Pixels,
     pub default_model: LanguageModelSelection,
+    pub editor_model: LanguageModelSelection,
     pub inline_alternatives: Vec<LanguageModelSelection>,
     pub using_outdated_settings_version: bool,
     pub enable_experimental_live_diffs: bool,
+    pub profiles: IndexMap<Arc<str>, AgentProfile>,
 }
 
 impl AssistantSettings {
@@ -162,8 +169,10 @@ impl AssistantSettingsContent {
                                 })
                             }
                         }),
+                    editor_model: None,
                     inline_alternatives: None,
                     enable_experimental_live_diffs: None,
+                    profiles: None,
                 },
                 VersionedAssistantSettingsContent::V2(settings) => settings.clone(),
             },
@@ -182,8 +191,10 @@ impl AssistantSettingsContent {
                         .id()
                         .to_string(),
                 }),
+                editor_model: None,
                 inline_alternatives: None,
                 enable_experimental_live_diffs: None,
+                profiles: None,
             },
         }
     }
@@ -310,8 +321,10 @@ impl Default for VersionedAssistantSettingsContent {
             default_width: None,
             default_height: None,
             default_model: None,
+            editor_model: None,
             inline_alternatives: None,
             enable_experimental_live_diffs: None,
+            profiles: None,
         })
     }
 }
@@ -340,12 +353,16 @@ pub struct AssistantSettingsContentV2 {
     default_height: Option<f32>,
     /// The default model to use when creating new chats.
     default_model: Option<LanguageModelSelection>,
+    /// The model to use when applying edits from the assistant.
+    editor_model: Option<LanguageModelSelection>,
     /// Additional models with which to generate alternatives when performing inline assists.
     inline_alternatives: Option<Vec<LanguageModelSelection>>,
     /// Enable experimental live diffs in the assistant panel.
     ///
     /// Default: false
     enable_experimental_live_diffs: Option<bool>,
+    #[schemars(skip)]
+    profiles: Option<IndexMap<Arc<str>, AgentProfileContent>>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
@@ -359,6 +376,7 @@ fn providers_schema(_: &mut schemars::gen::SchemaGenerator) -> schemars::schema:
     schemars::schema::SchemaObject {
         enum_values: Some(vec![
             "anthropic".into(),
+            "bedrock".into(),
             "google".into(),
             "lmstudio".into(),
             "ollama".into(),
@@ -379,6 +397,12 @@ impl Default for LanguageModelSelection {
             model: "gpt-4".to_string(),
         }
     }
+}
+
+#[derive(Debug, PartialEq, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct AgentProfileContent {
+    pub name: Arc<str>,
+    pub tools: IndexMap<Arc<str>, bool>,
 }
 
 #[derive(Clone, Serialize, Deserialize, JsonSchema, Debug)]
@@ -469,11 +493,27 @@ impl Settings for AssistantSettings {
                 value.default_height.map(Into::into),
             );
             merge(&mut settings.default_model, value.default_model);
+            merge(&mut settings.editor_model, value.editor_model);
             merge(&mut settings.inline_alternatives, value.inline_alternatives);
             merge(
                 &mut settings.enable_experimental_live_diffs,
                 value.enable_experimental_live_diffs,
             );
+
+            if let Some(profiles) = value.profiles {
+                settings
+                    .profiles
+                    .extend(profiles.into_iter().map(|(id, profile)| {
+                        (
+                            id,
+                            AgentProfile {
+                                name: profile.name.into(),
+                                tools: profile.tools,
+                                context_servers: IndexMap::default(),
+                            },
+                        )
+                    }));
+            }
         }
 
         Ok(settings)
@@ -512,7 +552,7 @@ mod tests {
                 AssistantSettings::get_global(cx).default_model,
                 LanguageModelSelection {
                     provider: "zed.dev".into(),
-                    model: "claude-3-5-sonnet".into(),
+                    model: "claude-3-5-sonnet-latest".into(),
                 }
             );
         });
@@ -527,6 +567,10 @@ mod tests {
                                 provider: "test-provider".into(),
                                 model: "gpt-99".into(),
                             }),
+                            editor_model: Some(LanguageModelSelection {
+                                provider: "test-provider".into(),
+                                model: "gpt-99".into(),
+                            }),
                             inline_alternatives: None,
                             enabled: None,
                             button: None,
@@ -534,6 +578,7 @@ mod tests {
                             default_width: None,
                             default_height: None,
                             enable_experimental_live_diffs: None,
+                            profiles: None,
                         }),
                     )
                 },

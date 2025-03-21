@@ -34,6 +34,7 @@ pub struct OpenRequest {
     pub open_channel_notes: Vec<(u64, Option<String>)>,
     pub join_channel: Option<u64>,
     pub ssh_connection: Option<SshConnectionOptions>,
+    pub dock_menu_action: Option<usize>,
 }
 
 impl OpenRequest {
@@ -42,6 +43,8 @@ impl OpenRequest {
         for url in urls {
             if let Some(server_name) = url.strip_prefix("zed-cli://") {
                 this.cli_connection = Some(connect_to_cli(server_name)?);
+            } else if let Some(action_index) = url.strip_prefix("zed-dock-action://") {
+                this.dock_menu_action = Some(action_index.parse()?);
             } else if let Some(file) = url.strip_prefix("file://") {
                 this.parse_file_path(file)
             } else if let Some(file) = url.strip_prefix("zed://file") {
@@ -248,7 +251,7 @@ pub async fn open_paths_with_positions(
 pub async fn handle_cli_connection(
     (mut requests, responses): (mpsc::Receiver<CliRequest>, IpcSender<CliResponse>),
     app_state: Arc<AppState>,
-    mut cx: AsyncApp,
+    cx: &mut AsyncApp,
 ) {
     if let Some(request) = requests.next().await {
         match request {
@@ -287,7 +290,7 @@ pub async fn handle_cli_connection(
                     wait,
                     app_state.clone(),
                     env,
-                    &mut cx,
+                    cx,
                 )
                 .await;
 
@@ -376,7 +379,7 @@ async fn open_workspaces(
                             .connection_options_for(ssh.host, ssh.port, ssh.user)
                     });
                     if let Ok(connection_options) = connection_options {
-                        cx.spawn(|mut cx| async move {
+                        cx.spawn(async move |mut cx| {
                             open_ssh_project(
                                 connection_options,
                                 ssh.paths.into_iter().map(PathBuf::from).collect(),

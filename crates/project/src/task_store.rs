@@ -1,16 +1,17 @@
-use std::{path::PathBuf, sync::Arc};
+use std::{
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 
 use anyhow::Context as _;
 use collections::HashMap;
-use fs::Fs;
-use futures::StreamExt as _;
 use gpui::{App, AsyncApp, Context, Entity, EventEmitter, Task, WeakEntity};
 use language::{
     proto::{deserialize_anchor, serialize_anchor},
     ContextProvider as _, LanguageToolchainStore, Location,
 };
 use rpc::{proto, AnyProtoClient, TypedEnvelope};
-use settings::{watch_config_file, SettingsLocation};
+use settings::{InvalidSettingsError, SettingsLocation, TaskKind};
 use task::{TaskContext, TaskVariables, VariableName};
 use text::{BufferId, OffsetRangeExt};
 use util::ResultExt;
@@ -32,7 +33,6 @@ pub struct StoreState {
     buffer_store: WeakEntity<BufferStore>,
     worktree_store: Entity<WorktreeStore>,
     toolchain_store: Arc<dyn LanguageToolchainStore>,
-    _global_task_config_watcher: Task<()>,
 }
 
 enum StoreMode {
@@ -47,6 +47,12 @@ enum StoreMode {
 }
 
 impl EventEmitter<crate::Event> for TaskStore {}
+
+#[derive(Debug)]
+pub enum TaskSettingsLocation<'a> {
+    Global(&'a Path),
+    Worktree(SettingsLocation<'a>),
+}
 
 impl TaskStore {
     pub fn init(client: Option<&AnyProtoClient>) {
@@ -152,7 +158,6 @@ impl TaskStore {
     }
 
     pub fn local(
-        fs: Arc<dyn Fs>,
         buffer_store: WeakEntity<BufferStore>,
         worktree_store: Entity<WorktreeStore>,
         toolchain_store: Arc<dyn LanguageToolchainStore>,
@@ -168,12 +173,10 @@ impl TaskStore {
             buffer_store,
             toolchain_store,
             worktree_store,
-            _global_task_config_watcher: Self::subscribe_to_global_task_file_changes(fs, cx),
         })
     }
 
     pub fn remote(
-        fs: Arc<dyn Fs>,
         buffer_store: WeakEntity<BufferStore>,
         worktree_store: Entity<WorktreeStore>,
         toolchain_store: Arc<dyn LanguageToolchainStore>,
@@ -190,7 +193,6 @@ impl TaskStore {
             buffer_store,
             toolchain_store,
             worktree_store,
-            _global_task_config_watcher: Self::subscribe_to_global_task_file_changes(fs, cx),
         })
     }
 
@@ -260,10 +262,11 @@ impl TaskStore {
 
     pub(super) fn update_user_tasks(
         &self,
-        location: Option<SettingsLocation<'_>>,
+        location: TaskSettingsLocation<'_>,
         raw_tasks_json: Option<&str>,
+        task_type: TaskKind,
         cx: &mut Context<'_, Self>,
-    ) -> anyhow::Result<()> {
+    ) -> Result<(), InvalidSettingsError> {
         let task_inventory = match self {
             TaskStore::Functional(state) => &state.task_inventory,
             TaskStore::Noop => return Ok(()),
@@ -273,42 +276,7 @@ impl TaskStore {
             .filter(|json| !json.is_empty());
 
         task_inventory.update(cx, |inventory, _| {
-            inventory.update_file_based_tasks(location, raw_tasks_json)
-        })
-    }
-
-    fn subscribe_to_global_task_file_changes(
-        fs: Arc<dyn Fs>,
-        cx: &mut Context<'_, Self>,
-    ) -> Task<()> {
-        let mut user_tasks_file_rx =
-            watch_config_file(&cx.background_executor(), fs, paths::tasks_file().clone());
-        let user_tasks_content = cx.background_executor().block(user_tasks_file_rx.next());
-        cx.spawn(move |task_store, mut cx| async move {
-            if let Some(user_tasks_content) = user_tasks_content {
-                let Ok(_) = task_store.update(&mut cx, |task_store, cx| {
-                    task_store
-                        .update_user_tasks(None, Some(&user_tasks_content), cx)
-                        .log_err();
-                }) else {
-                    return;
-                };
-            }
-            while let Some(user_tasks_content) = user_tasks_file_rx.next().await {
-                let Ok(()) = task_store.update(&mut cx, |task_store, cx| {
-                    let result = task_store.update_user_tasks(None, Some(&user_tasks_content), cx);
-                    if let Err(err) = &result {
-                        log::error!("Failed to load user tasks: {err}");
-                        cx.emit(crate::Event::Toast {
-                            notification_id: "load-user-tasks".into(),
-                            message: format!("Invalid global tasks file\n{err}"),
-                        });
-                    }
-                    cx.refresh_windows();
-                }) else {
-                    break; // App dropped
-                };
-            }
+            inventory.update_file_based_tasks(location, raw_tasks_json, task_type)
         })
     }
 }
@@ -326,10 +294,10 @@ fn local_task_context_for_location(
         .and_then(|worktree_id| worktree_store.read(cx).worktree_for_id(worktree_id, cx))
         .and_then(|worktree| worktree.read(cx).root_dir());
 
-    cx.spawn(|mut cx| async move {
+    cx.spawn(async move |cx| {
         let worktree_abs_path = worktree_abs_path.clone();
         let project_env = environment
-            .update(&mut cx, |environment, cx| {
+            .update(cx, |environment, cx| {
                 environment.get_environment(worktree_id, worktree_abs_path.clone(), cx)
             })
             .ok()?
@@ -369,7 +337,7 @@ fn remote_task_context_for_location(
     toolchain_store: Arc<dyn LanguageToolchainStore>,
     cx: &mut App,
 ) -> Task<Option<TaskContext>> {
-    cx.spawn(|cx| async move {
+    cx.spawn(async move |cx| {
         // We need to gather a client context, as the headless one may lack certain information (e.g. tree-sitter parsing is disabled there, so symbols are not available).
         let mut remote_context = cx
             .update(|cx| {
@@ -436,7 +404,7 @@ fn combine_task_variables(
         .read(cx)
         .language()
         .and_then(|language| language.context_provider());
-    cx.spawn(move |cx| async move {
+    cx.spawn(async move |cx| {
         let baseline = cx
             .update(|cx| {
                 baseline.build_context(

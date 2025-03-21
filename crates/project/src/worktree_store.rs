@@ -12,7 +12,6 @@ use futures::{
     future::{BoxFuture, Shared},
     FutureExt, SinkExt,
 };
-use git::repository::Branch;
 use gpui::{
     App, AppContext as _, AsyncApp, Context, Entity, EntityId, EventEmitter, Task, WeakEntity,
 };
@@ -27,10 +26,7 @@ use smol::{
 };
 use text::ReplicaId;
 use util::{paths::SanitizedPath, ResultExt};
-use worktree::{
-    branch_to_proto, Entry, ProjectEntryId, UpdatedEntriesSet, Worktree, WorktreeId,
-    WorktreeSettings,
-};
+use worktree::{Entry, ProjectEntryId, UpdatedEntriesSet, Worktree, WorktreeId, WorktreeSettings};
 
 use crate::{search::SearchQuery, ProjectPath};
 
@@ -83,8 +79,6 @@ impl WorktreeStore {
         client.add_entity_request_handler(Self::handle_delete_project_entry);
         client.add_entity_request_handler(Self::handle_expand_project_entry);
         client.add_entity_request_handler(Self::handle_expand_all_for_project_entry);
-        client.add_entity_request_handler(Self::handle_git_branches);
-        client.add_entity_request_handler(Self::handle_update_branch);
     }
 
     pub fn local(retain_worktrees: bool, fs: Arc<dyn Fs>) -> Self {
@@ -137,14 +131,6 @@ impl WorktreeStore {
     pub fn worktree_for_id(&self, id: WorktreeId, cx: &App) -> Option<Entity<Worktree>> {
         self.worktrees()
             .find(|worktree| worktree.read(cx).id() == id)
-    }
-
-    pub fn current_branch(&self, repository: ProjectPath, cx: &App) -> Option<Branch> {
-        self.worktree_for_id(repository.worktree_id, cx)?
-            .read(cx)
-            .git_entry(repository.path)?
-            .branch()
-            .cloned()
     }
 
     pub fn worktree_for_entry(
@@ -242,9 +228,9 @@ impl WorktreeStore {
                 .insert(abs_path.clone(), task.shared());
         }
         let task = self.loading_worktrees.get(&abs_path).unwrap().clone();
-        cx.spawn(|this, mut cx| async move {
+        cx.spawn(async move |this, cx| {
             let result = task.await;
-            this.update(&mut cx, |this, _| this.loading_worktrees.remove(&abs_path))
+            this.update(cx, |this, _| this.loading_worktrees.remove(&abs_path))
                 .ok();
             match result {
                 Ok(worktree) => Ok(worktree),
@@ -271,7 +257,7 @@ impl WorktreeStore {
         if abs_path.is_empty() || abs_path == "/" {
             abs_path = "~/".to_string();
         }
-        cx.spawn(|this, mut cx| async move {
+        cx.spawn(async move |this, cx| {
             let this = this.upgrade().context("Dropped worktree store")?;
 
             let path = Path::new(abs_path.as_str());
@@ -283,7 +269,7 @@ impl WorktreeStore {
                 })
                 .await?;
 
-            if let Some(existing_worktree) = this.read_with(&cx, |this, cx| {
+            if let Some(existing_worktree) = this.read_with(cx, |this, cx| {
                 this.worktree_for_id(WorktreeId::from_proto(response.worktree_id), cx)
             })? {
                 return Ok(existing_worktree);
@@ -310,7 +296,7 @@ impl WorktreeStore {
                 )
             })?;
 
-            this.update(&mut cx, |this, cx| {
+            this.update(cx, |this, cx| {
                 this.add(&worktree, cx);
             })?;
             Ok(worktree)
@@ -327,12 +313,12 @@ impl WorktreeStore {
         let next_entry_id = self.next_entry_id.clone();
         let path: SanitizedPath = abs_path.into();
 
-        cx.spawn(move |this, mut cx| async move {
-            let worktree = Worktree::local(path.clone(), visible, fs, next_entry_id, &mut cx).await;
+        cx.spawn(async move |this, cx| {
+            let worktree = Worktree::local(path.clone(), visible, fs, next_entry_id, cx).await;
 
             let worktree = worktree?;
 
-            this.update(&mut cx, |this, cx| this.add(&worktree, cx))?;
+            this.update(cx, |this, cx| this.add(&worktree, cx))?;
 
             if visible {
                 cx.update(|cx| {
@@ -377,7 +363,7 @@ impl WorktreeStore {
             match event {
                 worktree::Event::UpdatedEntries(changes) => {
                     cx.emit(WorktreeStoreEvent::WorktreeUpdatedEntries(
-                        worktree.read(cx).id(),
+                        worktree_id,
                         changes.clone(),
                     ));
                 }
@@ -559,12 +545,12 @@ impl WorktreeStore {
             downstream_client.send(update).log_err();
             None
         };
-        cx.spawn(|this, mut cx| async move {
+        cx.spawn(async move |this, cx| {
             if let Some(update_project) = update_project {
                 update_project.await?;
             }
 
-            this.update(&mut cx, |this, cx| {
+            this.update(cx, |this, cx| {
                 let worktrees = this.worktrees().collect::<Vec<_>>();
 
                 for worktree in worktrees {
@@ -575,12 +561,44 @@ impl WorktreeStore {
                                 let client = client.clone();
                                 async move {
                                     if client.is_via_collab() {
-                                        client
-                                            .request(update)
-                                            .map(|result| result.log_err().is_some())
-                                            .await
+                                        match update {
+                                            proto::WorktreeRelatedMessage::UpdateWorktree(
+                                                update,
+                                            ) => {
+                                                client
+                                                    .request(update)
+                                                    .map(|result| result.log_err().is_some())
+                                                    .await
+                                            }
+                                            proto::WorktreeRelatedMessage::UpdateRepository(
+                                                update,
+                                            ) => {
+                                                client
+                                                    .request(update)
+                                                    .map(|result| result.log_err().is_some())
+                                                    .await
+                                            }
+                                            proto::WorktreeRelatedMessage::RemoveRepository(
+                                                update,
+                                            ) => {
+                                                client
+                                                    .request(update)
+                                                    .map(|result| result.log_err().is_some())
+                                                    .await
+                                            }
+                                        }
                                     } else {
-                                        client.send(update).log_err().is_some()
+                                        match update {
+                                            proto::WorktreeRelatedMessage::UpdateWorktree(
+                                                update,
+                                            ) => client.send(update).log_err().is_some(),
+                                            proto::WorktreeRelatedMessage::UpdateRepository(
+                                                update,
+                                            ) => client.send(update).log_err().is_some(),
+                                            proto::WorktreeRelatedMessage::RemoveRepository(
+                                                update,
+                                            ) => client.send(update).log_err().is_some(),
+                                        }
                                     }
                                 }
                             }
@@ -890,145 +908,6 @@ impl WorktreeStore {
         Ok(())
     }
 
-    pub fn branches(
-        &self,
-        project_path: ProjectPath,
-        cx: &App,
-    ) -> Task<Result<Vec<git::repository::Branch>>> {
-        let Some(worktree) = self.worktree_for_id(project_path.worktree_id, cx) else {
-            return Task::ready(Err(anyhow!("No worktree found for ProjectPath")));
-        };
-
-        match worktree.read(cx) {
-            Worktree::Local(local_worktree) => {
-                let branches = util::maybe!({
-                    let worktree_error = |error| {
-                        format!(
-                            "{} for worktree {}",
-                            error,
-                            local_worktree.abs_path().to_string_lossy()
-                        )
-                    };
-
-                    let entry = local_worktree
-                        .git_entry(project_path.path)
-                        .with_context(|| worktree_error("No git entry found"))?;
-
-                    let repo = local_worktree
-                        .get_local_repo(&entry)
-                        .with_context(|| worktree_error("No repository found"))?
-                        .repo()
-                        .clone();
-
-                    repo.branches()
-                });
-
-                Task::ready(branches)
-            }
-            Worktree::Remote(remote_worktree) => {
-                let request = remote_worktree.client().request(proto::GitBranches {
-                    project_id: remote_worktree.project_id(),
-                    repository: Some(proto::ProjectPath {
-                        worktree_id: project_path.worktree_id.to_proto(),
-                        path: project_path.path.to_proto(), // Root path
-                    }),
-                });
-
-                cx.background_spawn(async move {
-                    let response = request.await?;
-
-                    let branches = response
-                        .branches
-                        .into_iter()
-                        .map(|proto_branch| git::repository::Branch {
-                            is_head: proto_branch.is_head,
-                            name: proto_branch.name.into(),
-                            upstream: proto_branch.upstream.map(|upstream| {
-                                git::repository::Upstream {
-                                    ref_name: upstream.ref_name.into(),
-                                    tracking: upstream.tracking.map(|tracking| {
-                                        git::repository::UpstreamTracking {
-                                            ahead: tracking.ahead as u32,
-                                            behind: tracking.behind as u32,
-                                        }
-                                    }),
-                                }
-                            }),
-                            most_recent_commit: proto_branch.most_recent_commit.map(|commit| {
-                                git::repository::CommitSummary {
-                                    sha: commit.sha.into(),
-                                    subject: commit.subject.into(),
-                                    commit_timestamp: commit.commit_timestamp,
-                                }
-                            }),
-                        })
-                        .collect();
-
-                    Ok(branches)
-                })
-            }
-        }
-    }
-
-    pub fn update_or_create_branch(
-        &self,
-        repository: ProjectPath,
-        new_branch: String,
-        cx: &App,
-    ) -> Task<Result<()>> {
-        let Some(worktree) = self.worktree_for_id(repository.worktree_id, cx) else {
-            return Task::ready(Err(anyhow!("No worktree found for ProjectPath")));
-        };
-
-        match worktree.read(cx) {
-            Worktree::Local(local_worktree) => {
-                let result = util::maybe!({
-                    let worktree_error = |error| {
-                        format!(
-                            "{} for worktree {}",
-                            error,
-                            local_worktree.abs_path().to_string_lossy()
-                        )
-                    };
-
-                    let entry = local_worktree
-                        .git_entry(repository.path)
-                        .with_context(|| worktree_error("No git entry found"))?;
-
-                    let repo = local_worktree
-                        .get_local_repo(&entry)
-                        .with_context(|| worktree_error("No repository found"))?
-                        .repo()
-                        .clone();
-
-                    if !repo.branch_exits(&new_branch)? {
-                        repo.create_branch(&new_branch)?;
-                    }
-
-                    repo.change_branch(&new_branch)?;
-                    Ok(())
-                });
-
-                Task::ready(result)
-            }
-            Worktree::Remote(remote_worktree) => {
-                let request = remote_worktree.client().request(proto::UpdateGitBranch {
-                    project_id: remote_worktree.project_id(),
-                    repository: Some(proto::ProjectPath {
-                        worktree_id: repository.worktree_id.to_proto(),
-                        path: repository.path.to_proto(), // Root path
-                    }),
-                    branch_name: new_branch,
-                });
-
-                cx.background_spawn(async move {
-                    request.await?;
-                    Ok(())
-                })
-            }
-        }
-    }
-
     async fn filter_paths(
         fs: &Arc<dyn Fs>,
         mut input: Receiver<MatchingEntry>,
@@ -1124,54 +1003,6 @@ impl WorktreeStore {
             .update(&mut cx, |this, cx| this.worktree_for_entry(entry_id, cx))?
             .ok_or_else(|| anyhow!("invalid request"))?;
         Worktree::handle_expand_all_for_entry(worktree, envelope.payload, cx).await
-    }
-
-    pub async fn handle_git_branches(
-        this: Entity<Self>,
-        branches: TypedEnvelope<proto::GitBranches>,
-        cx: AsyncApp,
-    ) -> Result<proto::GitBranchesResponse> {
-        let project_path = branches
-            .payload
-            .repository
-            .clone()
-            .context("Invalid GitBranches call")?;
-        let project_path = ProjectPath {
-            worktree_id: WorktreeId::from_proto(project_path.worktree_id),
-            path: Arc::<Path>::from_proto(project_path.path),
-        };
-
-        let branches = this
-            .read_with(&cx, |this, cx| this.branches(project_path, cx))?
-            .await?;
-
-        Ok(proto::GitBranchesResponse {
-            branches: branches.iter().map(branch_to_proto).collect(),
-        })
-    }
-
-    pub async fn handle_update_branch(
-        this: Entity<Self>,
-        update_branch: TypedEnvelope<proto::UpdateGitBranch>,
-        cx: AsyncApp,
-    ) -> Result<proto::Ack> {
-        let project_path = update_branch
-            .payload
-            .repository
-            .clone()
-            .context("Invalid GitBranches call")?;
-        let project_path = ProjectPath {
-            worktree_id: WorktreeId::from_proto(project_path.worktree_id),
-            path: Arc::<Path>::from_proto(project_path.path),
-        };
-        let new_branch = update_branch.payload.branch_name;
-
-        this.read_with(&cx, |this, cx| {
-            this.update_or_create_branch(project_path, new_branch, cx)
-        })?
-        .await?;
-
-        Ok(proto::Ack {})
     }
 }
 

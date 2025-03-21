@@ -25,11 +25,28 @@ pub struct AnthropicModelCacheConfiguration {
 }
 
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+pub enum AnthropicModelMode {
+    #[default]
+    Default,
+    Thinking {
+        budget_tokens: Option<u32>,
+    },
+}
+
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, EnumIter)]
 pub enum Model {
     #[default]
     #[serde(rename = "claude-3-5-sonnet", alias = "claude-3-5-sonnet-latest")]
     Claude3_5Sonnet,
+    #[serde(rename = "claude-3-7-sonnet", alias = "claude-3-7-sonnet-latest")]
+    Claude3_7Sonnet,
+    #[serde(
+        rename = "claude-3-7-sonnet-thinking",
+        alias = "claude-3-7-sonnet-thinking-latest"
+    )]
+    Claude3_7SonnetThinking,
     #[serde(rename = "claude-3-5-haiku", alias = "claude-3-5-haiku-latest")]
     Claude3_5Haiku,
     #[serde(rename = "claude-3-opus", alias = "claude-3-opus-latest")]
@@ -52,6 +69,8 @@ pub enum Model {
         default_temperature: Option<f32>,
         #[serde(default)]
         extra_beta_headers: Vec<String>,
+        #[serde(default)]
+        mode: AnthropicModelMode,
     },
 }
 
@@ -59,6 +78,10 @@ impl Model {
     pub fn from_id(id: &str) -> Result<Self> {
         if id.starts_with("claude-3-5-sonnet") {
             Ok(Self::Claude3_5Sonnet)
+        } else if id.starts_with("claude-3-7-sonnet-thinking") {
+            Ok(Self::Claude3_7SonnetThinking)
+        } else if id.starts_with("claude-3-7-sonnet") {
+            Ok(Self::Claude3_7Sonnet)
         } else if id.starts_with("claude-3-5-haiku") {
             Ok(Self::Claude3_5Haiku)
         } else if id.starts_with("claude-3-opus") {
@@ -75,6 +98,21 @@ impl Model {
     pub fn id(&self) -> &str {
         match self {
             Model::Claude3_5Sonnet => "claude-3-5-sonnet-latest",
+            Model::Claude3_7Sonnet => "claude-3-7-sonnet-latest",
+            Model::Claude3_7SonnetThinking => "claude-3-7-sonnet-thinking-latest",
+            Model::Claude3_5Haiku => "claude-3-5-haiku-latest",
+            Model::Claude3Opus => "claude-3-opus-latest",
+            Model::Claude3Sonnet => "claude-3-sonnet-20240229",
+            Model::Claude3Haiku => "claude-3-haiku-20240307",
+            Self::Custom { name, .. } => name,
+        }
+    }
+
+    /// The id of the model that should be used for making API requests
+    pub fn request_id(&self) -> &str {
+        match self {
+            Model::Claude3_5Sonnet => "claude-3-5-sonnet-latest",
+            Model::Claude3_7Sonnet | Model::Claude3_7SonnetThinking => "claude-3-7-sonnet-latest",
             Model::Claude3_5Haiku => "claude-3-5-haiku-latest",
             Model::Claude3Opus => "claude-3-opus-latest",
             Model::Claude3Sonnet => "claude-3-sonnet-20240229",
@@ -85,7 +123,9 @@ impl Model {
 
     pub fn display_name(&self) -> &str {
         match self {
+            Self::Claude3_7Sonnet => "Claude 3.7 Sonnet",
             Self::Claude3_5Sonnet => "Claude 3.5 Sonnet",
+            Self::Claude3_7SonnetThinking => "Claude 3.7 Sonnet Thinking",
             Self::Claude3_5Haiku => "Claude 3.5 Haiku",
             Self::Claude3Opus => "Claude 3 Opus",
             Self::Claude3Sonnet => "Claude 3 Sonnet",
@@ -98,13 +138,15 @@ impl Model {
 
     pub fn cache_configuration(&self) -> Option<AnthropicModelCacheConfiguration> {
         match self {
-            Self::Claude3_5Sonnet | Self::Claude3_5Haiku | Self::Claude3Haiku => {
-                Some(AnthropicModelCacheConfiguration {
-                    min_total_token: 2_048,
-                    should_speculate: true,
-                    max_cache_anchors: 4,
-                })
-            }
+            Self::Claude3_5Sonnet
+            | Self::Claude3_5Haiku
+            | Self::Claude3_7Sonnet
+            | Self::Claude3_7SonnetThinking
+            | Self::Claude3Haiku => Some(AnthropicModelCacheConfiguration {
+                min_total_token: 2_048,
+                should_speculate: true,
+                max_cache_anchors: 4,
+            }),
             Self::Custom {
                 cache_configuration,
                 ..
@@ -117,6 +159,8 @@ impl Model {
         match self {
             Self::Claude3_5Sonnet
             | Self::Claude3_5Haiku
+            | Self::Claude3_7Sonnet
+            | Self::Claude3_7SonnetThinking
             | Self::Claude3Opus
             | Self::Claude3Sonnet
             | Self::Claude3Haiku => 200_000,
@@ -127,7 +171,10 @@ impl Model {
     pub fn max_output_tokens(&self) -> u32 {
         match self {
             Self::Claude3Opus | Self::Claude3Sonnet | Self::Claude3Haiku => 4_096,
-            Self::Claude3_5Sonnet | Self::Claude3_5Haiku => 8_192,
+            Self::Claude3_5Sonnet
+            | Self::Claude3_7Sonnet
+            | Self::Claude3_7SonnetThinking
+            | Self::Claude3_5Haiku => 8_192,
             Self::Custom {
                 max_output_tokens, ..
             } => max_output_tokens.unwrap_or(4_096),
@@ -137,6 +184,8 @@ impl Model {
     pub fn default_temperature(&self) -> f32 {
         match self {
             Self::Claude3_5Sonnet
+            | Self::Claude3_7Sonnet
+            | Self::Claude3_7SonnetThinking
             | Self::Claude3_5Haiku
             | Self::Claude3Opus
             | Self::Claude3Sonnet
@@ -145,6 +194,21 @@ impl Model {
                 default_temperature,
                 ..
             } => default_temperature.unwrap_or(1.0),
+        }
+    }
+
+    pub fn mode(&self) -> AnthropicModelMode {
+        match self {
+            Self::Claude3_5Sonnet
+            | Self::Claude3_7Sonnet
+            | Self::Claude3_5Haiku
+            | Self::Claude3Opus
+            | Self::Claude3Sonnet
+            | Self::Claude3Haiku => AnthropicModelMode::Default,
+            Self::Claude3_7SonnetThinking => AnthropicModelMode::Thinking {
+                budget_tokens: Some(4_096),
+            },
+            Self::Custom { mode, .. } => mode.clone(),
         }
     }
 
@@ -179,7 +243,7 @@ impl Model {
         {
             tool_override
         } else {
-            self.id()
+            self.request_id()
         }
     }
 }
@@ -400,6 +464,8 @@ pub async fn extract_tool_args_from_events(
             Err(error) => Some(Err(error)),
             Ok(Event::ContentBlockDelta { index, delta }) => match delta {
                 ContentDelta::TextDelta { .. } => None,
+                ContentDelta::ThinkingDelta { .. } => None,
+                ContentDelta::SignatureDelta { .. } => None,
                 ContentDelta::InputJsonDelta { partial_json } => {
                     if index == tool_use_index {
                         Some(Ok(partial_json))
@@ -478,6 +544,10 @@ pub enum RequestContent {
 pub enum ResponseContent {
     #[serde(rename = "text")]
     Text { text: String },
+    #[serde(rename = "thinking")]
+    Thinking { thinking: String },
+    #[serde(rename = "redacted_thinking")]
+    RedactedThinking { data: String },
     #[serde(rename = "tool_use")]
     ToolUse {
         id: String,
@@ -510,12 +580,20 @@ pub enum ToolChoice {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "lowercase")]
+pub enum Thinking {
+    Enabled { budget_tokens: Option<u32> },
+}
+
+#[derive(Debug, Serialize, Deserialize)]
 pub struct Request {
     pub model: String,
     pub max_tokens: u32,
     pub messages: Vec<Message>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub tools: Vec<Tool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thinking: Option<Thinking>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tool_choice: Option<ToolChoice>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -544,7 +622,7 @@ pub struct Metadata {
     pub user_id: Option<String>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Default)]
 pub struct Usage {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub input_tokens: Option<u32>,
@@ -600,6 +678,10 @@ pub enum Event {
 pub enum ContentDelta {
     #[serde(rename = "text_delta")]
     TextDelta { text: String },
+    #[serde(rename = "thinking_delta")]
+    ThinkingDelta { thinking: String },
+    #[serde(rename = "signature_delta")]
+    SignatureDelta { signature: String },
     #[serde(rename = "input_json_delta")]
     InputJsonDelta { partial_json: String },
 }

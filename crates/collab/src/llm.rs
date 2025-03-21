@@ -5,6 +5,7 @@ mod token;
 use crate::api::events::SnowflakeRow;
 use crate::api::CloudflareIpCountryHeader;
 use crate::build_kinesis_client;
+use crate::rpc::MIN_ACCOUNT_AGE_FOR_LLM_USE;
 use crate::{db::UserId, executor::Executor, Cents, Config, Error, Result};
 use anyhow::{anyhow, Context as _};
 use authorization::authorize_access_to_language_model;
@@ -217,6 +218,13 @@ async fn perform_completion(
         params.model,
     );
 
+    let bypass_account_age_check = claims.has_llm_subscription || claims.bypass_account_age_check;
+    if !bypass_account_age_check {
+        if Utc::now().naive_utc() - claims.account_created_at < MIN_ACCOUNT_AGE_FOR_LLM_USE {
+            Err(anyhow!("account too young"))?
+        }
+    }
+
     authorize_access_to_language_model(
         &state.config,
         &claims,
@@ -256,6 +264,7 @@ async fn perform_completion(
             // so that users can use the new version, without having to update Zed.
             request.model = match model.as_str() {
                 "claude-3-5-sonnet" => anthropic::Model::Claude3_5Sonnet.id().to_string(),
+                "claude-3-7-sonnet" => anthropic::Model::Claude3_7Sonnet.id().to_string(),
                 "claude-3-opus" => anthropic::Model::Claude3Opus.id().to_string(),
                 "claude-3-haiku" => anthropic::Model::Claude3Haiku.id().to_string(),
                 "claude-3-sonnet" => anthropic::Model::Claude3Sonnet.id().to_string(),
@@ -450,19 +459,15 @@ async fn check_usage_limit(
         return Ok(());
     }
 
+    let user_id = UserId::from_proto(claims.user_id);
     let model = state.db.model(provider, model_name)?;
-    let usage = state
-        .db
-        .get_usage(
-            UserId::from_proto(claims.user_id),
-            provider,
-            model_name,
-            Utc::now(),
-        )
-        .await?;
     let free_tier = claims.free_tier_monthly_spending_limit();
 
-    if usage.spending_this_month >= free_tier {
+    let spending_this_month = state
+        .db
+        .get_user_spending_for_month(user_id, Utc::now())
+        .await?;
+    if spending_this_month >= free_tier {
         if !claims.has_llm_subscription {
             return Err(Error::http(
                 StatusCode::PAYMENT_REQUIRED,
@@ -470,7 +475,8 @@ async fn check_usage_limit(
             ));
         }
 
-        if (usage.spending_this_month - free_tier) >= Cents(claims.max_monthly_spend_in_cents) {
+        let monthly_spend = spending_this_month.saturating_sub(free_tier);
+        if monthly_spend >= Cents(claims.max_monthly_spend_in_cents) {
             return Err(Error::Http(
                 StatusCode::FORBIDDEN,
                 "Maximum spending limit reached for this month.".to_string(),
@@ -494,6 +500,11 @@ async fn check_usage_limit(
     let per_user_max_tokens_per_minute =
         model.max_tokens_per_minute as usize / users_in_recent_minutes;
     let per_user_max_tokens_per_day = model.max_tokens_per_day as usize / users_in_recent_days;
+
+    let usage = state
+        .db
+        .get_usage(user_id, provider, model_name, Utc::now())
+        .await?;
 
     let checks = [
         (

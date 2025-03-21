@@ -1,5 +1,4 @@
-use super::open_ai::count_open_ai_tokens;
-use anthropic::AnthropicError;
+use anthropic::{AnthropicError, AnthropicModelMode};
 use anyhow::{anyhow, Result};
 use client::{
     zed_urls, Client, PerformCompletionParams, UserStore, EXPIRED_LLM_TOKEN_HEADER_NAME,
@@ -11,10 +10,7 @@ use futures::{
     future::BoxFuture, stream::BoxStream, AsyncBufReadExt, FutureExt, Stream, StreamExt,
     TryStreamExt as _,
 };
-use gpui::{
-    AnyElement, AnyView, App, AsyncApp, Context, Entity, EventEmitter, Global, ReadGlobal,
-    Subscription, Task,
-};
+use gpui::{AnyElement, AnyView, App, AsyncApp, Context, Entity, Subscription, Task};
 use http_client::{AsyncBody, HttpClient, Method, Response, StatusCode};
 use language_model::{
     AuthenticateError, CloudModel, LanguageModel, LanguageModelCacheConfiguration, LanguageModelId,
@@ -23,30 +19,27 @@ use language_model::{
     ZED_CLOUD_PROVIDER_ID,
 };
 use language_model::{
-    LanguageModelAvailability, LanguageModelCompletionEvent, LanguageModelProvider,
+    LanguageModelAvailability, LanguageModelCompletionEvent, LanguageModelProvider, LlmApiToken,
+    MaxMonthlySpendReachedError, PaymentRequiredError, RefreshLlmTokenListener,
 };
-use proto::TypedEnvelope;
 use schemars::JsonSchema;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_json::value::RawValue;
 use settings::{Settings, SettingsStore};
-use smol::{
-    io::{AsyncReadExt, BufReader},
-    lock::{RwLock, RwLockUpgradableReadGuard, RwLockWriteGuard},
-};
-use std::fmt;
+use smol::io::{AsyncReadExt, BufReader};
 use std::{
     future,
     sync::{Arc, LazyLock},
 };
 use strum::IntoEnumIterator;
-use thiserror::Error;
 use ui::{prelude::*, TintColor};
 
-use crate::provider::anthropic::map_to_language_model_completion_events;
+use crate::provider::anthropic::{
+    count_anthropic_tokens, into_anthropic, map_to_language_model_completion_events,
+};
+use crate::provider::google::into_google;
+use crate::provider::open_ai::{count_open_ai_tokens, into_open_ai};
 use crate::AllLanguageModelSettings;
-
-use super::anthropic::count_anthropic_tokens;
 
 pub const PROVIDER_NAME: &str = "Zed";
 
@@ -98,43 +91,27 @@ pub struct AvailableModel {
     /// Any extra beta headers to provide when using the model.
     #[serde(default)]
     pub extra_beta_headers: Vec<String>,
+    /// The model's mode (e.g. thinking)
+    pub mode: Option<ModelMode>,
 }
 
-struct GlobalRefreshLlmTokenListener(Entity<RefreshLlmTokenListener>);
-
-impl Global for GlobalRefreshLlmTokenListener {}
-
-pub struct RefreshLlmTokenEvent;
-
-pub struct RefreshLlmTokenListener {
-    _llm_token_subscription: client::Subscription,
+#[derive(Default, Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "type", rename_all = "lowercase")]
+pub enum ModelMode {
+    #[default]
+    Default,
+    Thinking {
+        /// The maximum number of tokens to use for reasoning. Must be lower than the model's `max_output_tokens`.
+        budget_tokens: Option<u32>,
+    },
 }
 
-impl EventEmitter<RefreshLlmTokenEvent> for RefreshLlmTokenListener {}
-
-impl RefreshLlmTokenListener {
-    pub fn register(client: Arc<Client>, cx: &mut App) {
-        let listener = cx.new(|cx| RefreshLlmTokenListener::new(client, cx));
-        cx.set_global(GlobalRefreshLlmTokenListener(listener));
-    }
-
-    pub fn global(cx: &App) -> Entity<Self> {
-        GlobalRefreshLlmTokenListener::global(cx).0.clone()
-    }
-
-    fn new(client: Arc<Client>, cx: &mut Context<Self>) -> Self {
-        Self {
-            _llm_token_subscription: client
-                .add_message_handler(cx.weak_entity(), Self::handle_refresh_llm_token),
+impl From<ModelMode> for AnthropicModelMode {
+    fn from(value: ModelMode) -> Self {
+        match value {
+            ModelMode::Default => AnthropicModelMode::Default,
+            ModelMode::Thinking { budget_tokens } => AnthropicModelMode::Thinking { budget_tokens },
         }
-    }
-
-    async fn handle_refresh_llm_token(
-        this: Entity<Self>,
-        _: TypedEnvelope<proto::RefreshLlmToken>,
-        mut cx: AsyncApp,
-    ) -> Result<()> {
-        this.update(&mut cx, |_this, cx| cx.emit(RefreshLlmTokenEvent))
     }
 }
 
@@ -177,7 +154,7 @@ impl State {
                 |this, _listener, _event, cx| {
                     let client = this.client.clone();
                     let llm_api_token = this.llm_api_token.clone();
-                    cx.spawn(|_this, _cx| async move {
+                    cx.spawn(async move |_this, _cx| {
                         llm_api_token.refresh(&client).await?;
                         anyhow::Ok(())
                     })
@@ -193,9 +170,9 @@ impl State {
 
     fn authenticate(&self, cx: &mut Context<Self>) -> Task<Result<()>> {
         let client = self.client.clone();
-        cx.spawn(move |this, mut cx| async move {
+        cx.spawn(async move |this, cx| {
             client.authenticate_and_connect(true, &cx).await?;
-            this.update(&mut cx, |_, cx| cx.notify())
+            this.update(cx, |_, cx| cx.notify())
         })
     }
 
@@ -208,11 +185,11 @@ impl State {
 
     fn accept_terms_of_service(&mut self, cx: &mut Context<Self>) {
         let user_store = self.user_store.clone();
-        self.accept_terms = Some(cx.spawn(move |this, mut cx| async move {
+        self.accept_terms = Some(cx.spawn(async move |this, cx| {
             let _ = user_store
-                .update(&mut cx, |store, cx| store.accept_terms_of_service(cx))?
+                .update(cx, |store, cx| store.accept_terms_of_service(cx))?
                 .await;
-            this.update(&mut cx, |this, cx| {
+            this.update(cx, |this, cx| {
                 this.accept_terms = None;
                 cx.notify()
             })
@@ -228,10 +205,10 @@ impl CloudLanguageModelProvider {
         let state = cx.new(|cx| State::new(client.clone(), user_store.clone(), status, cx));
 
         let state_ref = state.downgrade();
-        let maintain_client_status = cx.spawn(|mut cx| async move {
+        let maintain_client_status = cx.spawn(async move |cx| {
             while let Some(status) = status_rx.next().await {
                 if let Some(this) = state_ref.upgrade() {
-                    _ = this.update(&mut cx, |this, cx| {
+                    _ = this.update(cx, |this, cx| {
                         if this.status != status {
                             this.status = status;
                             cx.notify();
@@ -272,6 +249,18 @@ impl LanguageModelProvider for CloudLanguageModelProvider {
         IconName::AiZed
     }
 
+    fn default_model(&self, cx: &App) -> Option<Arc<dyn LanguageModel>> {
+        let llm_api_token = self.state.read(cx).llm_api_token.clone();
+        let model = CloudModel::Anthropic(anthropic::Model::default());
+        Some(Arc::new(CloudLanguageModel {
+            id: LanguageModelId::from(model.id().to_string()),
+            model,
+            llm_api_token: llm_api_token.clone(),
+            client: self.client.clone(),
+            request_limiter: RateLimiter::new(4),
+        }))
+    }
+
     fn provided_models(&self, cx: &App) -> Vec<Arc<dyn LanguageModel>> {
         let mut models = BTreeMap::default();
 
@@ -295,6 +284,14 @@ impl LanguageModelProvider for CloudLanguageModelProvider {
             models.insert(
                 anthropic::Model::Claude3_5Sonnet.id().to_string(),
                 CloudModel::Anthropic(anthropic::Model::Claude3_5Sonnet),
+            );
+            models.insert(
+                anthropic::Model::Claude3_7Sonnet.id().to_string(),
+                CloudModel::Anthropic(anthropic::Model::Claude3_7Sonnet),
+            );
+            models.insert(
+                anthropic::Model::Claude3_7SonnetThinking.id().to_string(),
+                CloudModel::Anthropic(anthropic::Model::Claude3_7SonnetThinking),
             );
         }
 
@@ -328,6 +325,7 @@ impl LanguageModelProvider for CloudLanguageModelProvider {
                     default_temperature: model.default_temperature,
                     max_output_tokens: model.max_output_tokens,
                     extra_beta_headers: model.extra_beta_headers.clone(),
+                    mode: model.mode.unwrap_or_default().into(),
                 }),
                 AvailableProvider::OpenAi => CloudModel::OpenAi(open_ai::Model::Custom {
                     name: model.name.clone(),
@@ -415,17 +413,10 @@ fn render_accept_terms(
     let form = v_flex()
         .w_full()
         .gap_2()
-        .when(
-            view_kind == LanguageModelProviderTosView::ThreadEmptyState,
-            |form| form.items_center(),
-        )
         .child(
             h_flex()
                 .flex_wrap()
-                .when(
-                    view_kind == LanguageModelProviderTosView::ThreadEmptyState,
-                    |form| form.justify_center(),
-                )
+                .items_start()
                 .child(Label::new(text))
                 .child(terms_button),
         )
@@ -445,9 +436,11 @@ fn render_accept_terms(
             );
 
             match view_kind {
-                LanguageModelProviderTosView::ThreadEmptyState => button_container.justify_center(),
                 LanguageModelProviderTosView::PromptEditorPopup => button_container.justify_end(),
-                LanguageModelProviderTosView::Configuration => button_container.justify_start(),
+                LanguageModelProviderTosView::Configuration
+                | LanguageModelProviderTosView::ThreadEmptyState => {
+                    button_container.justify_start()
+                }
             }
         });
 
@@ -460,33 +453,6 @@ pub struct CloudLanguageModel {
     llm_api_token: LlmApiToken,
     client: Arc<Client>,
     request_limiter: RateLimiter,
-}
-
-#[derive(Clone, Default)]
-pub struct LlmApiToken(Arc<RwLock<Option<String>>>);
-
-#[derive(Error, Debug)]
-pub struct PaymentRequiredError;
-
-impl fmt::Display for PaymentRequiredError {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(
-            f,
-            "Payment required to use this language model. Please upgrade your account."
-        )
-    }
-}
-
-#[derive(Error, Debug)]
-pub struct MaxMonthlySpendReachedError;
-
-impl fmt::Display for MaxMonthlySpendReachedError {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(
-            f,
-            "Maximum spending limit reached for this month. For more usage, increase your spending limit."
-        )
-    }
 }
 
 impl CloudLanguageModel {
@@ -600,7 +566,7 @@ impl LanguageModel for CloudLanguageModel {
             CloudModel::OpenAi(model) => count_open_ai_tokens(request, model, cx),
             CloudModel::Google(model) => {
                 let client = self.client.clone();
-                let request = request.into_google(model.id().into());
+                let request = into_google(request, model.id().into());
                 let request = google_ai::CountTokensRequest {
                     contents: request.contents,
                 };
@@ -626,10 +592,12 @@ impl LanguageModel for CloudLanguageModel {
     ) -> BoxFuture<'static, Result<BoxStream<'static, Result<LanguageModelCompletionEvent>>>> {
         match &self.model {
             CloudModel::Anthropic(model) => {
-                let request = request.into_anthropic(
-                    model.id().into(),
+                let request = into_anthropic(
+                    request,
+                    model.request_id().into(),
                     model.default_temperature(),
                     model.max_output_tokens(),
+                    model.mode(),
                 );
                 let client = self.client.clone();
                 let llm_api_token = self.llm_api_token.clone();
@@ -654,7 +622,7 @@ impl LanguageModel for CloudLanguageModel {
             }
             CloudModel::OpenAi(model) => {
                 let client = self.client.clone();
-                let request = request.into_open_ai(model.id().into(), model.max_output_tokens());
+                let request = into_open_ai(request, model.id().into(), model.max_output_tokens());
                 let llm_api_token = self.llm_api_token.clone();
                 let future = self.request_limiter.stream(async move {
                     let response = Self::perform_llm_completion(
@@ -681,7 +649,7 @@ impl LanguageModel for CloudLanguageModel {
             }
             CloudModel::Google(model) => {
                 let client = self.client.clone();
-                let request = request.into_google(model.id().into());
+                let request = into_google(request, model.id().into());
                 let llm_api_token = self.llm_api_token.clone();
                 let future = self.request_limiter.stream(async move {
                     let response = Self::perform_llm_completion(
@@ -724,10 +692,12 @@ impl LanguageModel for CloudLanguageModel {
 
         match &self.model {
             CloudModel::Anthropic(model) => {
-                let mut request = request.into_anthropic(
+                let mut request = into_anthropic(
+                    request,
                     model.tool_model_id().into(),
                     model.default_temperature(),
                     model.max_output_tokens(),
+                    model.mode(),
                 );
                 request.tool_choice = Some(anthropic::ToolChoice::Tool {
                     name: tool_name.clone(),
@@ -764,7 +734,7 @@ impl LanguageModel for CloudLanguageModel {
             }
             CloudModel::OpenAi(model) => {
                 let mut request =
-                    request.into_open_ai(model.id().into(), model.max_output_tokens());
+                    into_open_ai(request, model.id().into(), model.max_output_tokens());
                 request.tool_choice = Some(open_ai::ToolChoice::Other(
                     open_ai::ToolDefinition::Function {
                         function: open_ai::FunctionDefinition {
@@ -830,30 +800,6 @@ fn response_lines<T: DeserializeOwned>(
             }
         },
     )
-}
-
-impl LlmApiToken {
-    pub async fn acquire(&self, client: &Arc<Client>) -> Result<String> {
-        let lock = self.0.upgradable_read().await;
-        if let Some(token) = lock.as_ref() {
-            Ok(token.to_string())
-        } else {
-            Self::fetch(RwLockUpgradableReadGuard::upgrade(lock).await, client).await
-        }
-    }
-
-    pub async fn refresh(&self, client: &Arc<Client>) -> Result<String> {
-        Self::fetch(self.0.write().await, client).await
-    }
-
-    async fn fetch<'a>(
-        mut lock: RwLockWriteGuard<'a, Option<String>>,
-        client: &Arc<Client>,
-    ) -> Result<String> {
-        let response = client.request(proto::GetLlmToken {}).await?;
-        *lock = Some(response.token.clone());
-        Ok(response.token.clone())
-    }
 }
 
 struct ConfigurationView {

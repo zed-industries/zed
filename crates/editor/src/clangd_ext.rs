@@ -2,12 +2,13 @@ use anyhow::Context as _;
 use gpui::{App, Context, Entity, Window};
 use language::Language;
 use url::Url;
+use workspace::{OpenOptions, OpenVisible};
 
 use crate::lsp_ext::find_specific_language_server_in_selection;
 
 use crate::{element::register_action, Editor, SwitchSourceHeader};
 
-const CLANGD_SERVER_NAME: &str = "clangd";
+use project::lsp_store::clangd_ext::CLANGD_SERVER_NAME;
 
 fn is_c_language(language: &Language) -> bool {
     return language.name() == "C++".into() || language.name() == "C".into();
@@ -46,11 +47,11 @@ pub fn switch_source_header(
         project.request_lsp(
             buffer,
             project::LanguageServerToQuery::Other(server_to_query),
-            project::lsp_ext_command::SwitchSourceHeader,
+            project::lsp_store::lsp_ext_command::SwitchSourceHeader,
             cx,
         )
     });
-    cx.spawn_in(window, |_editor, mut cx| async move {
+    cx.spawn_in(window, async move |_editor, cx| {
         let switch_source_header = switch_source_header_task
             .await
             .with_context(|| format!("Switch source/header LSP request for path \"{source_file}\" failed"))?;
@@ -71,8 +72,8 @@ pub fn switch_source_header(
         })?;
 
         workspace
-            .update_in(&mut cx, |workspace, window, cx| {
-                workspace.open_abs_path(path, false, window, cx)
+            .update_in(cx, |workspace, window, cx| {
+                workspace.open_abs_path(path, OpenOptions { visible: Some(OpenVisible::None), ..Default::default() }, window, cx)
             })
             .with_context(|| {
                 format!(

@@ -22,6 +22,7 @@ use crate::*;
 pub(crate) const WM_GPUI_CURSOR_STYLE_CHANGED: u32 = WM_USER + 1;
 pub(crate) const WM_GPUI_CLOSE_ONE_WINDOW: u32 = WM_USER + 2;
 pub(crate) const WM_GPUI_TASK_DISPATCHED_ON_MAIN_THREAD: u32 = WM_USER + 3;
+pub(crate) const WM_GPUI_DOCK_MENU_ACTION: u32 = WM_USER + 4;
 
 const SIZE_MOVE_LOOP_TIMER_ID: usize = 1;
 const AUTO_HIDE_TASKBAR_THICKNESS_PX: i32 = 1;
@@ -176,7 +177,12 @@ fn handle_size_msg(
 
 fn handle_size_move_loop(handle: HWND) -> Option<isize> {
     unsafe {
-        let ret = SetTimer(handle, SIZE_MOVE_LOOP_TIMER_ID, USER_TIMER_MINIMUM, None);
+        let ret = SetTimer(
+            Some(handle),
+            SIZE_MOVE_LOOP_TIMER_ID,
+            USER_TIMER_MINIMUM,
+            None,
+        );
         if ret == 0 {
             log::error!(
                 "unable to create timer: {}",
@@ -189,7 +195,7 @@ fn handle_size_move_loop(handle: HWND) -> Option<isize> {
 
 fn handle_size_move_loop_exit(handle: HWND) -> Option<isize> {
     unsafe {
-        KillTimer(handle, SIZE_MOVE_LOOP_TIMER_ID).log_err();
+        KillTimer(Some(handle), SIZE_MOVE_LOOP_TIMER_ID).log_err();
     }
     None
 }
@@ -216,7 +222,7 @@ fn handle_paint_msg(handle: HWND, state_ptr: Rc<WindowsWindowStatePtr>) -> Optio
         request_frame(Default::default());
         state_ptr.state.borrow_mut().callbacks.request_frame = Some(request_frame);
     }
-    unsafe { ValidateRect(handle, None).ok().log_err() };
+    unsafe { ValidateRect(Some(handle), None).ok().log_err() };
     Some(0)
 }
 
@@ -775,7 +781,7 @@ fn handle_activate_msg(
     if state_ptr.hide_title_bar {
         if let Some(titlebar_rect) = state_ptr.state.borrow().get_titlebar_rect().log_err() {
             unsafe {
-                InvalidateRect(handle, Some(&titlebar_rect), FALSE)
+                InvalidateRect(Some(handle), Some(&titlebar_rect), false)
                     .ok()
                     .log_err()
             };
@@ -1104,7 +1110,7 @@ fn handle_nc_mouse_up_msg(
             HTCLOSE => {
                 if last_button == HTCLOSE {
                     unsafe {
-                        PostMessageW(handle, WM_CLOSE, WPARAM::default(), LPARAM::default())
+                        PostMessageW(Some(handle), WM_CLOSE, WPARAM::default(), LPARAM::default())
                             .log_err()
                     };
                     handled = true;
@@ -1121,19 +1127,7 @@ fn handle_nc_mouse_up_msg(
 }
 
 fn handle_cursor_changed(lparam: LPARAM, state_ptr: Rc<WindowsWindowStatePtr>) -> Option<isize> {
-    let mut state = state_ptr.state.borrow_mut();
-    let had_cursor = state.current_cursor.is_some();
-
-    state.current_cursor = if lparam.0 == 0 {
-        None
-    } else {
-        Some(HCURSOR(lparam.0 as _))
-    };
-
-    if had_cursor != state.current_cursor.is_some() {
-        unsafe { SetCursor(state.current_cursor.as_ref()) };
-    }
-
+    state_ptr.state.borrow_mut().current_cursor = HCURSOR(lparam.0 as _);
     Some(0)
 }
 
@@ -1144,9 +1138,7 @@ fn handle_set_cursor(lparam: LPARAM, state_ptr: Rc<WindowsWindowStatePtr>) -> Op
     ) {
         return None;
     }
-    unsafe {
-        SetCursor(state_ptr.state.borrow().current_cursor.as_ref());
-    };
+    unsafe { SetCursor(Some(state_ptr.state.borrow().current_cursor)) };
     Some(1)
 }
 
@@ -1249,6 +1241,7 @@ fn parse_syskeydown_msg_keystroke(wparam: WPARAM) -> Option<Keystroke> {
         VK_ESCAPE => "escape",
         VK_INSERT => "insert",
         VK_DELETE => "delete",
+        VK_APPS => "menu",
         _ => {
             let basic_key = basic_vkcode_to_string(vk_code, modifiers);
             if basic_key.is_some() {
@@ -1303,6 +1296,7 @@ fn parse_keydown_msg_keystroke(wparam: WPARAM) -> Option<KeystrokeOrModifier> {
         VK_ESCAPE => "escape",
         VK_INSERT => "insert",
         VK_DELETE => "delete",
+        VK_APPS => "menu",
         _ => {
             if is_modifier(VIRTUAL_KEY(vk_code)) {
                 return Some(KeystrokeOrModifier::Modifier(modifiers));

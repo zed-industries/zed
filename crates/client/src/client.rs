@@ -144,9 +144,9 @@ pub fn init(client: &Arc<Client>, cx: &mut App) {
         let client = client.clone();
         move |_: &SignIn, cx| {
             if let Some(client) = client.upgrade() {
-                cx.spawn(
-                    |cx| async move { client.authenticate_and_connect(true, &cx).log_err().await },
-                )
+                cx.spawn(async move |cx| {
+                    client.authenticate_and_connect(true, &cx).log_err().await
+                })
                 .detach();
             }
         }
@@ -156,7 +156,7 @@ pub fn init(client: &Arc<Client>, cx: &mut App) {
         let client = client.clone();
         move |_: &SignOut, cx| {
             if let Some(client) = client.upgrade() {
-                cx.spawn(|cx| async move {
+                cx.spawn(async move |cx| {
                     client.sign_out(&cx).await;
                 })
                 .detach();
@@ -168,7 +168,7 @@ pub fn init(client: &Arc<Client>, cx: &mut App) {
         let client = client.clone();
         move |_: &Reconnect, cx| {
             if let Some(client) = client.upgrade() {
-                cx.spawn(|cx| async move {
+                cx.spawn(async move |cx| {
                     client.reconnect(&cx);
                 })
                 .detach();
@@ -640,7 +640,7 @@ impl Client {
             }
             Status::ConnectionLost => {
                 let this = self.clone();
-                state._reconnect_task = Some(cx.spawn(move |cx| async move {
+                state._reconnect_task = Some(cx.spawn(async move |cx| {
                     #[cfg(any(test, feature = "test-support"))]
                     let mut rng = StdRng::seed_from_u64(0);
                     #[cfg(not(any(test, feature = "test-support")))]
@@ -964,13 +964,11 @@ impl Client {
 
         cx.spawn({
             let this = self.clone();
-            |cx| {
-                async move {
-                    while let Some(message) = incoming.next().await {
-                        this.handle_message(message, &cx);
-                        // Don't starve the main thread when receiving lots of messages at once.
-                        smol::future::yield_now().await;
-                    }
+            async move |cx| {
+                while let Some(message) = incoming.next().await {
+                    this.handle_message(message, &cx);
+                    // Don't starve the main thread when receiving lots of messages at once.
+                    smol::future::yield_now().await;
                 }
             }
         })
@@ -978,22 +976,20 @@ impl Client {
 
         cx.spawn({
             let this = self.clone();
-            move |cx| async move {
-                match handle_io.await {
-                    Ok(()) => {
-                        if *this.status().borrow()
-                            == (Status::Connected {
-                                connection_id,
-                                peer_id,
-                            })
-                        {
-                            this.set_status(Status::SignedOut, &cx);
-                        }
+            async move |cx| match handle_io.await {
+                Ok(()) => {
+                    if *this.status().borrow()
+                        == (Status::Connected {
+                            connection_id,
+                            peer_id,
+                        })
+                    {
+                        this.set_status(Status::SignedOut, &cx);
                     }
-                    Err(err) => {
-                        log::error!("connection error: {:?}", err);
-                        this.set_status(Status::ConnectionLost, &cx);
-                    }
+                }
+                Err(err) => {
+                    log::error!("connection error: {:?}", err);
+                    this.set_status(Status::ConnectionLost, &cx);
                 }
             }
         })
@@ -1154,7 +1150,7 @@ impl Client {
                         async_tungstenite::async_tls::client_async_tls_with_connector(
                             request,
                             stream,
-                            Some(http_client::tls_config().into()),
+                            Some(http_client_tls::tls_config().into()),
                         )
                         .await?;
                     Ok(Connection::new(
@@ -1178,12 +1174,12 @@ impl Client {
     pub fn authenticate_with_browser(self: &Arc<Self>, cx: &AsyncApp) -> Task<Result<Credentials>> {
         let http = self.http.clone();
         let this = self.clone();
-        cx.spawn(|cx| async move {
+        cx.spawn(async move |cx| {
             let background = cx.background_executor().clone();
 
             let (open_url_tx, open_url_rx) = oneshot::channel::<String>();
             cx.update(|cx| {
-                cx.spawn(move |cx| async move {
+                cx.spawn(async move |cx| {
                     let url = open_url_rx.await?;
                     cx.update(|cx| cx.open_url(&url))
                 })
@@ -1545,25 +1541,23 @@ impl Client {
                 original_sender_id,
                 type_name
             );
-            cx.spawn(move |_| async move {
-                match future.await {
-                    Ok(()) => {
-                        log::debug!(
-                            "rpc message handled. client_id:{}, sender_id:{:?}, type:{}",
-                            client_id,
-                            original_sender_id,
-                            type_name
-                        );
-                    }
-                    Err(error) => {
-                        log::error!(
-                            "error handling message. client_id:{}, sender_id:{:?}, type:{}, error:{:?}",
-                            client_id,
-                            original_sender_id,
-                            type_name,
-                            error
-                        );
-                    }
+            cx.spawn(async move |_| match future.await {
+                Ok(()) => {
+                    log::debug!(
+                        "rpc message handled. client_id:{}, sender_id:{:?}, type:{}",
+                        client_id,
+                        original_sender_id,
+                        type_name
+                    );
+                }
+                Err(error) => {
+                    log::error!(
+                        "error handling message. client_id:{}, sender_id:{:?}, type:{}, error:{:?}",
+                        client_id,
+                        original_sender_id,
+                        type_name,
+                        error
+                    );
                 }
             })
             .detach();

@@ -29,8 +29,7 @@
   "|"
   "="
   "!"
-  (start_assertion)
-  (end_assertion)
+  (any_character)
 ] @operator.regex
 
 [
@@ -50,7 +49,3 @@
     "^" @operator.regex
     (class_range "-" @operator.regex)
   ])
-
-(class_character) @constant.character
-
-(pattern_character) @string

@@ -1,5 +1,3 @@
-#![allow(missing_docs)]
-
 use gpui::{Action, AnyElement, AnyView, AppContext as _, FocusHandle, IntoElement, Render};
 use settings::Settings;
 use theme::ThemeSettings;
@@ -226,7 +224,7 @@ impl Render for LinkPreview {
 
 // View this component preview using `workspace: open component-preview`
 impl ComponentPreview for Tooltip {
-    fn preview(_window: &mut Window, _cx: &App) -> AnyElement {
+    fn preview(_window: &mut Window, _cx: &mut App) -> AnyElement {
         example_group(vec![single_example(
             "Text only",
             Button::new("delete-example", "Delete")

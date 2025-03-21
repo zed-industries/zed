@@ -37,7 +37,6 @@ pub struct EditorSettings {
     pub auto_signature_help: bool,
     pub show_signature_help_after_edits: bool,
     pub jupyter: Jupyter,
-    pub hide_mouse_while_typing: Option<bool>,
 }
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
@@ -118,6 +117,7 @@ pub struct Gutter {
     pub line_numbers: bool,
     pub code_actions: bool,
     pub runnables: bool,
+    pub breakpoints: bool,
     pub folds: bool,
 }
 
@@ -178,7 +178,7 @@ impl<'de> Deserialize<'de> for ScrollbarDiagnostics {
     {
         struct Visitor;
 
-        impl<'de> serde::de::Visitor<'de> for Visitor {
+        impl serde::de::Visitor<'_> for Visitor {
             type Value = ScrollbarDiagnostics;
 
             fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
@@ -271,10 +271,6 @@ pub struct EditorSettingsContent {
     ///
     /// Default: None
     pub cursor_shape: Option<CursorShape>,
-    /// Determines whether the mouse cursor should be hidden while typing in an editor or input box.
-    ///
-    /// Default: true
-    pub hide_mouse_while_typing: Option<bool>,
     /// How to highlight the current line in the editor.
     ///
     /// Default: all
@@ -469,6 +465,10 @@ pub struct GutterContent {
     ///
     /// Default: true
     pub runnables: Option<bool>,
+    /// Whether to show breakpoints in the gutter.
+    ///
+    /// Default: true
+    pub breakpoints: Option<bool>,
     /// Whether to show fold buttons in the gutter.
     ///
     /// Default: true

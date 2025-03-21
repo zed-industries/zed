@@ -3,11 +3,11 @@ use async_compression::futures::bufread::GzipDecoder;
 use async_trait::async_trait;
 use collections::HashMap;
 use futures::{io::BufReader, StreamExt};
-use gpui::{App, AsyncApp, Task};
+use gpui::{App, AsyncApp, SharedString, Task};
 use http_client::github::AssetKind;
 use http_client::github::{latest_github_release, GitHubLspBinaryVersion};
 pub use language::*;
-use lsp::{LanguageServerBinary, LanguageServerName};
+use lsp::LanguageServerBinary;
 use regex::Regex;
 use smol::fs::{self};
 use std::fmt::Display;
@@ -68,20 +68,23 @@ impl RustLspAdapter {
     }
 }
 
-#[async_trait(?Send)]
-impl LspAdapter for RustLspAdapter {
-    fn name(&self) -> LanguageServerName {
-        Self::SERVER_NAME.clone()
+pub(crate) struct CargoManifestProvider;
+
+impl ManifestProvider for CargoManifestProvider {
+    fn name(&self) -> ManifestName {
+        SharedString::new_static("Cargo.toml").into()
     }
 
-    fn find_project_root(
+    fn search(
         &self,
-        path: &Path,
-        ancestor_depth: usize,
-        delegate: &Arc<dyn LspAdapterDelegate>,
+        ManifestQuery {
+            path,
+            depth,
+            delegate,
+        }: ManifestQuery,
     ) -> Option<Arc<Path>> {
         let mut outermost_cargo_toml = None;
-        for path in path.ancestors().take(ancestor_depth) {
+        for path in path.ancestors().take(depth) {
             let p = path.join("Cargo.toml");
             if delegate.exists(&p, Some(false)) {
                 outermost_cargo_toml = Some(Arc::from(path));
@@ -89,6 +92,17 @@ impl LspAdapter for RustLspAdapter {
         }
 
         outermost_cargo_toml
+    }
+}
+
+#[async_trait(?Send)]
+impl LspAdapter for RustLspAdapter {
+    fn name(&self) -> LanguageServerName {
+        Self::SERVER_NAME.clone()
+    }
+
+    fn manifest_name(&self) -> Option<ManifestName> {
+        Some(SharedString::new_static("Cargo.toml").into())
     }
 
     async fn check_if_user_installed(
@@ -472,6 +486,12 @@ const RUST_BIN_KIND_TASK_VARIABLE: VariableName =
 const RUST_TEST_FRAGMENT_TASK_VARIABLE: VariableName =
     VariableName::Custom(Cow::Borrowed("RUST_TEST_FRAGMENT"));
 
+const RUST_DOC_TEST_NAME_TASK_VARIABLE: VariableName =
+    VariableName::Custom(Cow::Borrowed("RUST_DOC_TEST_NAME"));
+
+const RUST_TEST_NAME_TASK_VARIABLE: VariableName =
+    VariableName::Custom(Cow::Borrowed("RUST_TEST_NAME"));
+
 impl ContextProvider for RustContextProvider {
     fn build_context(
         &self,
@@ -516,6 +536,16 @@ impl ContextProvider for RustContextProvider {
             let fragment = test_fragment(&variables, path, stem);
             variables.insert(RUST_TEST_FRAGMENT_TASK_VARIABLE, fragment);
         };
+        if let Some(test_name) =
+            task_variables.get(&VariableName::Custom(Cow::Borrowed("_test_name")))
+        {
+            variables.insert(RUST_TEST_NAME_TASK_VARIABLE, test_name.into());
+        }
+        if let Some(doc_test_name) =
+            task_variables.get(&VariableName::Custom(Cow::Borrowed("_doc_test_name")))
+        {
+            variables.insert(RUST_DOC_TEST_NAME_TASK_VARIABLE, doc_test_name.into());
+        }
 
         Task::ready(Ok(variables))
     }
@@ -526,17 +556,25 @@ impl ContextProvider for RustContextProvider {
         cx: &App,
     ) -> Option<TaskTemplates> {
         const DEFAULT_RUN_NAME_STR: &str = "RUST_DEFAULT_PACKAGE_RUN";
-        let package_to_run = language_settings(Some("Rust".into()), file.as_ref(), cx)
+        const CUSTOM_TARGET_DIR: &str = "RUST_TARGET_DIR";
+
+        let language_sets = language_settings(Some("Rust".into()), file.as_ref(), cx);
+        let package_to_run = language_sets
             .tasks
             .variables
             .get(DEFAULT_RUN_NAME_STR)
+            .cloned();
+        let custom_target_dir = language_sets
+            .tasks
+            .variables
+            .get(CUSTOM_TARGET_DIR)
             .cloned();
         let run_task_args = if let Some(package_to_run) = package_to_run {
             vec!["run".into(), "-p".into(), package_to_run]
         } else {
             vec!["run".into()]
         };
-        Some(TaskTemplates(vec![
+        let mut task_templates = vec![
             TaskTemplate {
                 label: format!(
                     "Check (package: {})",
@@ -561,7 +599,7 @@ impl ContextProvider for RustContextProvider {
             TaskTemplate {
                 label: format!(
                     "Test '{}' (package: {})",
-                    VariableName::Symbol.template_value(),
+                    RUST_TEST_NAME_TASK_VARIABLE.template_value(),
                     RUST_PACKAGE_TASK_VARIABLE.template_value(),
                 ),
                 command: "cargo".into(),
@@ -569,7 +607,7 @@ impl ContextProvider for RustContextProvider {
                     "test".into(),
                     "-p".into(),
                     RUST_PACKAGE_TASK_VARIABLE.template_value(),
-                    VariableName::Symbol.template_value(),
+                    RUST_TEST_NAME_TASK_VARIABLE.template_value(),
                     "--".into(),
                     "--nocapture".into(),
                 ],
@@ -579,8 +617,8 @@ impl ContextProvider for RustContextProvider {
             },
             TaskTemplate {
                 label: format!(
-                    "DocTest '{}' (package: {})",
-                    VariableName::Symbol.template_value(),
+                    "Doc test '{}' (package: {})",
+                    RUST_DOC_TEST_NAME_TASK_VARIABLE.template_value(),
                     RUST_PACKAGE_TASK_VARIABLE.template_value(),
                 ),
                 command: "cargo".into(),
@@ -589,7 +627,7 @@ impl ContextProvider for RustContextProvider {
                     "--doc".into(),
                     "-p".into(),
                     RUST_PACKAGE_TASK_VARIABLE.template_value(),
-                    VariableName::Symbol.template_value(),
+                    RUST_DOC_TEST_NAME_TASK_VARIABLE.template_value(),
                     "--".into(),
                     "--nocapture".into(),
                 ],
@@ -599,7 +637,7 @@ impl ContextProvider for RustContextProvider {
             },
             TaskTemplate {
                 label: format!(
-                    "Test '{}' (package: {})",
+                    "Test mod '{}' (package: {})",
                     VariableName::Stem.template_value(),
                     RUST_PACKAGE_TASK_VARIABLE.template_value(),
                 ),
@@ -661,7 +699,25 @@ impl ContextProvider for RustContextProvider {
                 cwd: Some("$ZED_DIRNAME".to_owned()),
                 ..TaskTemplate::default()
             },
-        ]))
+        ];
+
+        if let Some(custom_target_dir) = custom_target_dir {
+            task_templates = task_templates
+                .into_iter()
+                .map(|mut task_template| {
+                    let mut args = task_template.args.split_off(1);
+                    task_template.args.append(&mut vec![
+                        "--target-dir".to_string(),
+                        custom_target_dir.clone(),
+                    ]);
+                    task_template.args.append(&mut args);
+
+                    task_template
+                })
+                .collect();
+        }
+
+        Some(TaskTemplates(task_templates))
     }
 }
 

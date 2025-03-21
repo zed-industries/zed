@@ -1,4 +1,3 @@
-#![allow(missing_docs)]
 use gpui::{Hsla, IntoElement};
 
 use crate::prelude::*;

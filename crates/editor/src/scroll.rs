@@ -3,7 +3,6 @@ pub(crate) mod autoscroll;
 pub(crate) mod scroll_amount;
 
 use crate::editor_settings::{ScrollBeyondLastLine, ScrollbarAxes};
-use crate::EditPredictionPreview;
 use crate::{
     display_map::{DisplaySnapshot, ToDisplayPoint},
     hover_popover::hide_hover,
@@ -224,7 +223,6 @@ impl ScrollManager {
         self.anchor.scroll_position(snapshot)
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn set_scroll_position(
         &mut self,
         scroll_position: gpui::Point<f32>,
@@ -299,7 +297,6 @@ impl ScrollManager {
         );
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn set_anchor(
         &mut self,
         anchor: ScrollAnchor,
@@ -344,12 +341,12 @@ impl ScrollManager {
         }
 
         if cx.default_global::<ScrollbarAutoHide>().0 {
-            self.hide_scrollbar_task = Some(cx.spawn_in(window, |editor, mut cx| async move {
+            self.hide_scrollbar_task = Some(cx.spawn_in(window, async move |editor, cx| {
                 cx.background_executor()
                     .timer(SCROLLBAR_SHOW_INTERVAL)
                     .await;
                 editor
-                    .update(&mut cx, |editor, cx| {
+                    .update(cx, |editor, cx| {
                         editor.scroll_manager.show_scrollbars = false;
                         cx.notify();
                     })
@@ -428,9 +425,9 @@ impl Editor {
         let opened_first_time = self.scroll_manager.visible_line_count.is_none();
         self.scroll_manager.visible_line_count = Some(lines);
         if opened_first_time {
-            cx.spawn_in(window, |editor, mut cx| async move {
+            cx.spawn_in(window, async move |editor, cx| {
                 editor
-                    .update(&mut cx, |editor, cx| {
+                    .update(cx, |editor, cx| {
                         editor.refresh_inlay_hints(InlayHintRefreshReason::NewLinesShown, cx)
                     })
                     .ok()
@@ -496,14 +493,8 @@ impl Editor {
         hide_hover(self, cx);
         let workspace_id = self.workspace.as_ref().and_then(|workspace| workspace.1);
 
-        if let EditPredictionPreview::Active {
-            previous_scroll_position,
-        } = &mut self.edit_prediction_preview
-        {
-            if !autoscroll {
-                previous_scroll_position.take();
-            }
-        }
+        self.edit_prediction_preview
+            .set_previous_scroll_position(None);
 
         self.scroll_manager.set_scroll_position(
             scroll_position,

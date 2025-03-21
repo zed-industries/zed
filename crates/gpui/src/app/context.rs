@@ -12,6 +12,7 @@ use std::{
     future::Future,
     sync::Arc,
 };
+use util::Deferred;
 
 use super::{App, AsyncWindowContext, Entity, KeystrokeEvent};
 
@@ -87,6 +88,21 @@ impl<'a, T: 'static> Context<'a, T> {
             } else {
                 false
             }
+        })
+    }
+
+    /// Subscribe to an event type from ourself
+    pub fn subscribe_self<Evt>(
+        &mut self,
+        mut on_event: impl FnMut(&mut T, &Evt, &mut Context<'_, T>) + 'static,
+    ) -> Subscription
+    where
+        T: 'static + EventEmitter<Evt>,
+        Evt: 'static,
+    {
+        let this = self.entity();
+        self.app.subscribe(&this, move |this, evt, cx| {
+            this.update(cx, |this, cx| on_event(this, evt, cx))
         })
     }
 
@@ -184,14 +200,14 @@ impl<'a, T: 'static> Context<'a, T> {
     /// The function is provided a weak handle to the entity owned by this context and a context that can be held across await points.
     /// The returned task must be held or detached.
     #[track_caller]
-    pub fn spawn<Fut, R>(&self, f: impl FnOnce(WeakEntity<T>, AsyncApp) -> Fut) -> Task<R>
+    pub fn spawn<AsyncFn, R>(&self, f: AsyncFn) -> Task<R>
     where
         T: 'static,
-        Fut: Future<Output = R> + 'static,
+        AsyncFn: AsyncFnOnce(WeakEntity<T>, &mut AsyncApp) -> R + 'static,
         R: 'static,
     {
         let this = self.weak_entity();
-        self.app.spawn(|cx| f(this, cx))
+        self.app.spawn(async move |cx| f(this, cx).await)
     }
 
     /// Convenience method for accessing view state in an event callback.
@@ -207,6 +223,18 @@ impl<'a, T: 'static> Context<'a, T> {
         move |e: &E, window: &mut Window, cx: &mut App| {
             view.update(cx, |view, cx| f(view, e, window, cx)).ok();
         }
+    }
+
+    /// Run something using this entity and cx, when the returned struct is dropped
+    pub fn on_drop(
+        &self,
+        f: impl FnOnce(&mut T, &mut Context<T>) + 'static,
+    ) -> Deferred<impl FnOnce()> {
+        let this = self.weak_entity();
+        let mut cx = self.to_async();
+        util::defer(move || {
+            this.update(&mut cx, f).ok();
+        })
     }
 
     /// Focus the given view in the given window. View type is required to implement Focusable.
@@ -585,17 +613,13 @@ impl<'a, T: 'static> Context<'a, T> {
     /// It's also given an [`AsyncWindowContext`], which can be used to access the state of the view across await points.
     /// The returned future will be polled on the main thread.
     #[track_caller]
-    pub fn spawn_in<Fut, R>(
-        &self,
-        window: &Window,
-        f: impl FnOnce(WeakEntity<T>, AsyncWindowContext) -> Fut,
-    ) -> Task<R>
+    pub fn spawn_in<AsyncFn, R>(&self, window: &Window, f: AsyncFn) -> Task<R>
     where
         R: 'static,
-        Fut: Future<Output = R> + 'static,
+        AsyncFn: AsyncFnOnce(WeakEntity<T>, &mut AsyncWindowContext) -> R + 'static,
     {
         let view = self.weak_entity();
-        window.spawn(self, |mut cx| f(view, cx))
+        window.spawn(self, async move |cx| f(view, cx).await)
     }
 
     /// Register a callback to be invoked when the given global state changes.
@@ -649,7 +673,7 @@ impl<'a, T: 'static> Context<'a, T> {
     }
 }
 
-impl<'a, T> Context<'a, T> {
+impl<T> Context<'_, T> {
     /// Emit an event of the specified type, which can be handled by other entities that have subscribed via `subscribe` methods on their respective contexts.
     pub fn emit<Evt>(&mut self, event: Evt)
     where
@@ -664,7 +688,7 @@ impl<'a, T> Context<'a, T> {
     }
 }
 
-impl<'a, T> AppContext for Context<'a, T> {
+impl<T> AppContext for Context<'_, T> {
     type Result<U> = U;
 
     fn new<U: 'static>(

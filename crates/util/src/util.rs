@@ -29,7 +29,7 @@ use anyhow::{anyhow, Context as _};
 
 pub use take_until::*;
 #[cfg(any(test, feature = "test-support"))]
-pub use util_macros::{separator, uri};
+pub use util_macros::{line_endings, separator, uri};
 
 #[macro_export]
 macro_rules! debug_panic {
@@ -332,7 +332,7 @@ pub fn merge_json_value_into(source: serde_json::Value, target: &mut serde_json:
                 if let Some(target) = target.get_mut(&key) {
                     merge_json_value_into(value, target);
                 } else {
-                    target.insert(key.clone(), value);
+                    target.insert(key, value);
                 }
             }
         }
@@ -360,7 +360,7 @@ pub fn merge_non_null_json_value_into(source: serde_json::Value, target: &mut se
             if let Some(target) = target_object.get_mut(&key) {
                 merge_non_null_json_value_into(value, target);
             } else if !value.is_null() {
-                target_object.insert(key.clone(), value);
+                target_object.insert(key, value);
             }
         }
     } else if !source.is_null() {
@@ -678,7 +678,7 @@ mod rng {
 pub use rng::RandomCharIter;
 /// Get an embedded file as a string.
 pub fn asset_str<A: rust_embed::RustEmbed>(path: &str) -> Cow<'static, str> {
-    match A::get(path).unwrap().data {
+    match A::get(path).expect(path).data {
         Cow::Borrowed(bytes) => Cow::Borrowed(std::str::from_utf8(bytes).unwrap()),
         Cow::Owned(bytes) => Cow::Owned(String::from_utf8(bytes).unwrap()),
     }
@@ -781,7 +781,7 @@ impl Ord for NumericPrefixWithSuffix<'_> {
     }
 }
 
-impl<'a> PartialOrd for NumericPrefixWithSuffix<'a> {
+impl PartialOrd for NumericPrefixWithSuffix<'_> {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         Some(self.cmp(other))
     }
@@ -826,6 +826,10 @@ pub fn word_consists_of_emojis(s: &str) -> bool {
         prev_end = capture.end();
     }
     prev_end == s.len()
+}
+
+pub fn default<D: Default>() -> D {
+    Default::default()
 }
 
 #[cfg(test)]

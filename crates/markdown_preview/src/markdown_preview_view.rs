@@ -229,7 +229,7 @@ impl MarkdownPreviewView {
                                                 s.bg(cx.theme().colors().border_variant)
                                             }
                                         })
-                                        .rounded_sm();
+                                        .rounded_xs();
 
                                     container.child(
                                         div()
@@ -317,7 +317,9 @@ impl MarkdownPreviewView {
             window,
             |this, editor, event: &EditorEvent, window, cx| {
                 match event {
-                    EditorEvent::Edited { .. } | EditorEvent::DirtyChanged => {
+                    EditorEvent::Edited { .. }
+                    | EditorEvent::DirtyChanged
+                    | EditorEvent::ExcerptsEdited { .. } => {
                         this.parse_markdown_from_active_editor(true, window, cx);
                     }
                     EditorEvent::SelectionsChanged { .. } => {
@@ -370,13 +372,13 @@ impl MarkdownPreviewView {
     ) -> Task<Result<()>> {
         let language_registry = self.language_registry.clone();
 
-        cx.spawn_in(window, move |view, mut cx| async move {
+        cx.spawn_in(window, async move |view, cx| {
             if wait_for_debounce {
                 // Wait for the user to stop typing
                 cx.background_executor().timer(REPARSE_DEBOUNCE).await;
             }
 
-            let (contents, file_location) = view.update(&mut cx, |_, cx| {
+            let (contents, file_location) = view.update(cx, |_, cx| {
                 let editor = editor.read(cx);
                 let contents = editor.buffer().read(cx).snapshot(cx).text();
                 let file_location = MarkdownPreviewView::get_folder_for_active_editor(editor, cx);
@@ -387,7 +389,7 @@ impl MarkdownPreviewView {
                 parse_markdown(&contents, file_location, Some(language_registry)).await
             });
             let contents = parsing_task.await;
-            view.update(&mut cx, move |view, cx| {
+            view.update(cx, move |view, cx| {
                 let markdown_blocks_count = contents.children.len();
                 view.contents = Some(contents);
                 let scroll_top = view.list_state.logical_scroll_top();
