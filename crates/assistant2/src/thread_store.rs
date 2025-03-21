@@ -387,7 +387,7 @@ pub(crate) struct ThreadsDatabase {
     threads: Database<SerdeBincode<ThreadId>, SerializedThread>,
 }
 
-impl<'a> heed::BytesEncode<'a> for SerializedThread {
+impl heed::BytesEncode<'_> for SerializedThread {
     type EItem = SerializedThread;
 
     fn bytes_encode(item: &Self::EItem) -> Result<Cow<[u8]>, heed::BoxedError> {
