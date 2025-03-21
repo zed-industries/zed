@@ -37,6 +37,7 @@ use crate::{Chat, ChatMode, RemoveAllContext, ThreadEvent, ToggleContextPicker};
 pub struct MessageEditor {
     thread: Entity<Thread>,
     editor: Entity<Editor>,
+    #[allow(dead_code)]
     workspace: WeakEntity<Workspace>,
     project: Entity<Project>,
     context_store: Entity<ContextStore>,
