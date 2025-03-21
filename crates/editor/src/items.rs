@@ -629,18 +629,20 @@ impl Item for Editor {
             self.buffer()
                 .read(cx)
                 .as_singleton()
-                .and_then(|buffer| buffer.read(cx).project_path(cx))
-                .and_then(|path| {
+                .and_then(|buffer| {
+                    let buffer = buffer.read(cx);
+                    let path = buffer.project_path(cx)?;
+                    let buffer_id = buffer.remote_id();
                     let project = self.project.as_ref()?.read(cx);
                     let entry = project.entry_for_path(&path, cx)?;
-                    let git_status = project
-                        .worktree_for_id(path.worktree_id, cx)?
+                    let (repo, repo_path) = project
+                        .git_store()
                         .read(cx)
-                        .snapshot()
-                        .status_for_file(path.path)?;
+                        .repository_and_path_for_buffer_id(buffer_id, cx)?;
+                    let status = repo.read(cx).status_for_path(&repo_path)?.status;
 
                     Some(entry_git_aware_label_color(
-                        git_status.summary(),
+                        status.summary(),
                         entry.is_ignored,
                         params.selected,
                     ))
@@ -1076,8 +1078,7 @@ impl SerializableItem for Editor {
                         cx.new(|cx| {
                             let mut editor = Editor::for_buffer(buffer, Some(project), window, cx);
 
-                            editor.read_selections_from_db(item_id, workspace_id, window, cx);
-                            editor.read_scroll_position_from_db(item_id, workspace_id, window, cx);
+                            editor.read_metadata_from_db(item_id, workspace_id, window, cx);
                             editor
                         })
                     })
@@ -1135,18 +1136,7 @@ impl SerializableItem for Editor {
                                     let mut editor =
                                         Editor::for_buffer(buffer, Some(project), window, cx);
 
-                                    editor.read_selections_from_db(
-                                        item_id,
-                                        workspace_id,
-                                        window,
-                                        cx,
-                                    );
-                                    editor.read_scroll_position_from_db(
-                                        item_id,
-                                        workspace_id,
-                                        window,
-                                        cx,
-                                    );
+                                    editor.read_metadata_from_db(item_id, workspace_id, window, cx);
                                     editor
                                 })
                             })
@@ -1167,8 +1157,7 @@ impl SerializableItem for Editor {
                         window.spawn(cx, async move |cx| {
                             let editor = open_by_abs_path?.await?.downcast::<Editor>().with_context(|| format!("Failed to downcast to Editor after opening abs path {abs_path:?}"))?;
                             editor.update_in(cx, |editor, window, cx| {
-                                editor.read_selections_from_db(item_id, workspace_id, window, cx);
-                                editor.read_scroll_position_from_db(item_id, workspace_id, window, cx);
+                                editor.read_metadata_from_db(item_id, workspace_id, window, cx);
                             })?;
                             Ok(editor)
                         })

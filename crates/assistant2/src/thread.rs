@@ -1,5 +1,6 @@
 use std::fmt::Write as _;
 use std::io::Write;
+use std::mem;
 use std::sync::Arc;
 
 use anyhow::{Context as _, Result};
@@ -18,7 +19,7 @@ use language_model::{
     LanguageModelToolUseId, MaxMonthlySpendReachedError, MessageContent, PaymentRequiredError,
     Role, StopReason, TokenUsage,
 };
-use project::git::GitStoreCheckpoint;
+use project::git_store::{GitStore, GitStoreCheckpoint};
 use project::{Project, Worktree};
 use prompt_store::{
     AssistantSystemPromptContext, PromptBuilder, RulesFile, WorktreeInfoForSystemPrompt,
@@ -31,7 +32,8 @@ use uuid::Uuid;
 
 use crate::context::{attach_context_to_message, ContextId, ContextSnapshot};
 use crate::thread_store::{
-    SerializedMessage, SerializedThread, SerializedToolResult, SerializedToolUse,
+    SerializedMessage, SerializedMessageSegment, SerializedThread, SerializedToolResult,
+    SerializedToolUse,
 };
 use crate::tool_use::{PendingToolUse, ToolUse, ToolUseState};
 
@@ -71,7 +73,47 @@ impl MessageId {
 pub struct Message {
     pub id: MessageId,
     pub role: Role,
-    pub text: String,
+    pub segments: Vec<MessageSegment>,
+}
+
+impl Message {
+    pub fn push_thinking(&mut self, text: &str) {
+        if let Some(MessageSegment::Thinking(segment)) = self.segments.last_mut() {
+            segment.push_str(text);
+        } else {
+            self.segments
+                .push(MessageSegment::Thinking(text.to_string()));
+        }
+    }
+
+    pub fn push_text(&mut self, text: &str) {
+        if let Some(MessageSegment::Text(segment)) = self.segments.last_mut() {
+            segment.push_str(text);
+        } else {
+            self.segments.push(MessageSegment::Text(text.to_string()));
+        }
+    }
+
+    pub fn to_string(&self) -> String {
+        let mut result = String::new();
+        for segment in &self.segments {
+            match segment {
+                MessageSegment::Text(text) => result.push_str(text),
+                MessageSegment::Thinking(text) => {
+                    result.push_str("<think>");
+                    result.push_str(text);
+                    result.push_str("</think>");
+                }
+            }
+        }
+        result
+    }
+}
+
+#[derive(Debug, Clone)]
+pub enum MessageSegment {
+    Text(String),
+    Thinking(String),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -99,6 +141,12 @@ pub struct GitState {
 pub struct ThreadCheckpoint {
     message_id: MessageId,
     git_checkpoint: GitStoreCheckpoint,
+}
+
+#[derive(Copy, Clone, Debug)]
+pub enum ThreadFeedback {
+    Positive,
+    Negative,
 }
 
 pub enum LastRestoreCheckpoint {
@@ -131,7 +179,7 @@ pub struct Thread {
     context: BTreeMap<ContextId, ContextSnapshot>,
     context_by_message: HashMap<MessageId, Vec<ContextId>>,
     system_prompt_context: Option<AssistantSystemPromptContext>,
-    checkpoints_by_message: HashMap<MessageId, GitStoreCheckpoint>,
+    checkpoints_by_message: HashMap<MessageId, ThreadCheckpoint>,
     completion_count: usize,
     pending_completions: Vec<PendingCompletion>,
     project: Entity<Project>,
@@ -140,10 +188,13 @@ pub struct Thread {
     tool_use: ToolUseState,
     action_log: Entity<ActionLog>,
     last_restore_checkpoint: Option<LastRestoreCheckpoint>,
+    pending_checkpoint: Option<Task<Result<ThreadCheckpoint>>>,
+    checkpoint_on_next_user_message: bool,
     scripting_session: Entity<ScriptingSession>,
     scripting_tool_use: ToolUseState,
     initial_project_snapshot: Shared<Task<Option<Arc<ProjectSnapshot>>>>,
     cumulative_token_usage: TokenUsage,
+    feedback: Option<ThreadFeedback>,
 }
 
 impl Thread {
@@ -170,6 +221,8 @@ impl Thread {
             prompt_builder,
             tools: tools.clone(),
             last_restore_checkpoint: None,
+            pending_checkpoint: None,
+            checkpoint_on_next_user_message: true,
             tool_use: ToolUseState::new(tools.clone()),
             scripting_session: cx.new(|cx| ScriptingSession::new(project.clone(), cx)),
             scripting_tool_use: ToolUseState::new(tools),
@@ -181,6 +234,7 @@ impl Thread {
                     .shared()
             },
             cumulative_token_usage: TokenUsage::default(),
+            feedback: None,
         }
     }
 
@@ -220,7 +274,16 @@ impl Thread {
                 .map(|message| Message {
                     id: message.id,
                     role: message.role,
-                    text: message.text,
+                    segments: message
+                        .segments
+                        .into_iter()
+                        .map(|segment| match segment {
+                            SerializedMessageSegment::Text { text } => MessageSegment::Text(text),
+                            SerializedMessageSegment::Thinking { text } => {
+                                MessageSegment::Thinking(text)
+                            }
+                        })
+                        .collect(),
                 })
                 .collect(),
             next_message_id,
@@ -231,6 +294,8 @@ impl Thread {
             completion_count: 0,
             pending_completions: Vec::new(),
             last_restore_checkpoint: None,
+            pending_checkpoint: None,
+            checkpoint_on_next_user_message: true,
             project,
             prompt_builder,
             tools,
@@ -241,6 +306,7 @@ impl Thread {
             initial_project_snapshot: Task::ready(serialized.initial_project_snapshot).shared(),
             // TODO: persist token usage?
             cumulative_token_usage: TokenUsage::default(),
+            feedback: None,
         }
     }
 
@@ -305,11 +371,7 @@ impl Thread {
     }
 
     pub fn checkpoint_for_message(&self, id: MessageId) -> Option<ThreadCheckpoint> {
-        let checkpoint = self.checkpoints_by_message.get(&id).cloned()?;
-        Some(ThreadCheckpoint {
-            message_id: id,
-            git_checkpoint: checkpoint,
-        })
+        self.checkpoints_by_message.get(&id).cloned()
     }
 
     pub fn restore_checkpoint(
@@ -321,12 +383,13 @@ impl Thread {
             message_id: checkpoint.message_id,
         });
         cx.emit(ThreadEvent::CheckpointChanged);
+        cx.notify();
 
         let project = self.project.read(cx);
         let restore = project
             .git_store()
             .read(cx)
-            .restore_checkpoint(checkpoint.git_checkpoint, cx);
+            .restore_checkpoint(checkpoint.git_checkpoint.clone(), cx);
         cx.spawn(async move |this, cx| {
             let result = restore.await;
             this.update(cx, |this, cx| {
@@ -336,13 +399,60 @@ impl Thread {
                         error: err.to_string(),
                     });
                 } else {
-                    this.last_restore_checkpoint = None;
                     this.truncate(checkpoint.message_id, cx);
+                    this.last_restore_checkpoint = None;
+                    this.pending_checkpoint = Some(Task::ready(Ok(ThreadCheckpoint {
+                        message_id: this.next_message_id,
+                        git_checkpoint: checkpoint.git_checkpoint,
+                    })));
                 }
                 cx.emit(ThreadEvent::CheckpointChanged);
+                cx.notify();
             })?;
             result
         })
+    }
+
+    fn checkpoint(&mut self, cx: &mut Context<Self>) {
+        if self.is_generating() {
+            return;
+        }
+
+        let git_store = self.project.read(cx).git_store().clone();
+        let new_checkpoint = git_store.read(cx).checkpoint(cx);
+        let old_checkpoint = self.pending_checkpoint.take();
+        let next_user_message_id = self.next_message_id;
+        self.pending_checkpoint = Some(cx.spawn(async move |this, cx| {
+            let new_checkpoint = new_checkpoint.await?;
+
+            if let Some(old_checkpoint) = old_checkpoint {
+                if let Ok(old_checkpoint) = old_checkpoint.await {
+                    let equal = git_store
+                        .read_with(cx, |store, cx| {
+                            store.compare_checkpoints(
+                                old_checkpoint.git_checkpoint.clone(),
+                                new_checkpoint.clone(),
+                                cx,
+                            )
+                        })?
+                        .await;
+
+                    if equal.ok() != Some(true) {
+                        this.update(cx, |this, cx| {
+                            this.checkpoints_by_message
+                                .insert(old_checkpoint.message_id, old_checkpoint);
+                            cx.emit(ThreadEvent::CheckpointChanged);
+                            cx.notify();
+                        })?;
+                    }
+                }
+            }
+
+            Ok(ThreadCheckpoint {
+                message_id: next_user_message_id,
+                git_checkpoint: new_checkpoint,
+            })
+        }));
     }
 
     pub fn last_restore_checkpoint(&self) -> Option<&LastRestoreCheckpoint> {
@@ -423,32 +533,29 @@ impl Thread {
         &mut self,
         text: impl Into<String>,
         context: Vec<ContextSnapshot>,
-        checkpoint: Option<GitStoreCheckpoint>,
         cx: &mut Context<Self>,
     ) -> MessageId {
-        let message_id = self.insert_message(Role::User, text, cx);
+        if mem::take(&mut self.checkpoint_on_next_user_message) {
+            self.checkpoint(cx);
+        }
+
+        let message_id =
+            self.insert_message(Role::User, vec![MessageSegment::Text(text.into())], cx);
         let context_ids = context.iter().map(|context| context.id).collect::<Vec<_>>();
         self.context
             .extend(context.into_iter().map(|context| (context.id, context)));
         self.context_by_message.insert(message_id, context_ids);
-        if let Some(checkpoint) = checkpoint {
-            self.checkpoints_by_message.insert(message_id, checkpoint);
-        }
         message_id
     }
 
     pub fn insert_message(
         &mut self,
         role: Role,
-        text: impl Into<String>,
+        segments: Vec<MessageSegment>,
         cx: &mut Context<Self>,
     ) -> MessageId {
         let id = self.next_message_id.post_inc();
-        self.messages.push(Message {
-            id,
-            role,
-            text: text.into(),
-        });
+        self.messages.push(Message { id, role, segments });
         self.touch_updated_at();
         cx.emit(ThreadEvent::MessageAdded(id));
         id
@@ -458,14 +565,14 @@ impl Thread {
         &mut self,
         id: MessageId,
         new_role: Role,
-        new_text: String,
+        new_segments: Vec<MessageSegment>,
         cx: &mut Context<Self>,
     ) -> bool {
         let Some(message) = self.messages.iter_mut().find(|message| message.id == id) else {
             return false;
         };
         message.role = new_role;
-        message.text = new_text;
+        message.segments = new_segments;
         self.touch_updated_at();
         cx.emit(ThreadEvent::MessageEdited(id));
         true
@@ -496,7 +603,14 @@ impl Thread {
             });
             text.push('\n');
 
-            text.push_str(&message.text);
+            for segment in &message.segments {
+                match segment {
+                    MessageSegment::Text(content) => text.push_str(content),
+                    MessageSegment::Thinking(content) => {
+                        text.push_str(&format!("<think>{}</think>", content))
+                    }
+                }
+            }
             text.push('\n');
         }
 
@@ -509,6 +623,7 @@ impl Thread {
         cx.spawn(async move |this, cx| {
             let initial_project_snapshot = initial_project_snapshot.await;
             this.read_with(cx, |this, cx| SerializedThread {
+                version: SerializedThread::VERSION.to_string(),
                 summary: this.summary_or_default(),
                 updated_at: this.updated_at(),
                 messages: this
@@ -516,7 +631,18 @@ impl Thread {
                     .map(|message| SerializedMessage {
                         id: message.id,
                         role: message.role,
-                        text: message.text.clone(),
+                        segments: message
+                            .segments
+                            .iter()
+                            .map(|segment| match segment {
+                                MessageSegment::Text(text) => {
+                                    SerializedMessageSegment::Text { text: text.clone() }
+                                }
+                                MessageSegment::Thinking(text) => {
+                                    SerializedMessageSegment::Thinking { text: text.clone() }
+                                }
+                            })
+                            .collect(),
                         tool_uses: this
                             .tool_uses_for_message(message.id, cx)
                             .into_iter()
@@ -740,10 +866,10 @@ impl Thread {
                 }
             }
 
-            if !message.text.is_empty() {
+            if !message.segments.is_empty() {
                 request_message
                     .content
-                    .push(MessageContent::Text(message.text.clone()));
+                    .push(MessageContent::Text(message.to_string()));
             }
 
             match request_kind {
@@ -833,7 +959,11 @@ impl Thread {
                     thread.update(cx, |thread, cx| {
                         match event {
                             LanguageModelCompletionEvent::StartMessage { .. } => {
-                                thread.insert_message(Role::Assistant, String::new(), cx);
+                                thread.insert_message(
+                                    Role::Assistant,
+                                    vec![MessageSegment::Text(String::new())],
+                                    cx,
+                                );
                             }
                             LanguageModelCompletionEvent::Stop(reason) => {
                                 stop_reason = reason;
@@ -847,7 +977,7 @@ impl Thread {
                             LanguageModelCompletionEvent::Text(chunk) => {
                                 if let Some(last_message) = thread.messages.last_mut() {
                                     if last_message.role == Role::Assistant {
-                                        last_message.text.push_str(&chunk);
+                                        last_message.push_text(&chunk);
                                         cx.emit(ThreadEvent::StreamedAssistantText(
                                             last_message.id,
                                             chunk,
@@ -858,7 +988,33 @@ impl Thread {
                                         //
                                         // Importantly: We do *not* want to emit a `StreamedAssistantText` event here, as it
                                         // will result in duplicating the text of the chunk in the rendered Markdown.
-                                        thread.insert_message(Role::Assistant, chunk, cx);
+                                        thread.insert_message(
+                                            Role::Assistant,
+                                            vec![MessageSegment::Text(chunk.to_string())],
+                                            cx,
+                                        );
+                                    };
+                                }
+                            }
+                            LanguageModelCompletionEvent::Thinking(chunk) => {
+                                if let Some(last_message) = thread.messages.last_mut() {
+                                    if last_message.role == Role::Assistant {
+                                        last_message.push_thinking(&chunk);
+                                        cx.emit(ThreadEvent::StreamedAssistantThinking(
+                                            last_message.id,
+                                            chunk,
+                                        ));
+                                    } else {
+                                        // If we won't have an Assistant message yet, assume this chunk marks the beginning
+                                        // of a new Assistant response.
+                                        //
+                                        // Importantly: We do *not* want to emit a `StreamedAssistantText` event here, as it
+                                        // will result in duplicating the text of the chunk in the rendered Markdown.
+                                        thread.insert_message(
+                                            Role::Assistant,
+                                            vec![MessageSegment::Thinking(chunk.to_string())],
+                                            cx,
+                                        );
                                     };
                                 }
                             }
@@ -910,6 +1066,7 @@ impl Thread {
 
             thread
                 .update(cx, |thread, cx| {
+                    thread.checkpoint(cx);
                     match result.as_ref() {
                         Ok(stop_reason) => match stop_reason {
                             StopReason::ToolUse => {
@@ -1168,7 +1325,6 @@ impl Thread {
             // so for now we provide some text to keep the model on track.
             "Here are the tool results.",
             Vec::new(),
-            None,
             cx,
         );
     }
@@ -1177,7 +1333,7 @@ impl Thread {
     ///
     /// Returns whether a completion was canceled.
     pub fn cancel_last_completion(&mut self, cx: &mut Context<Self>) -> bool {
-        if self.pending_completions.pop().is_some() {
+        let canceled = if self.pending_completions.pop().is_some() {
             true
         } else {
             let mut canceled = false;
@@ -1190,15 +1346,28 @@ impl Thread {
                 });
             }
             canceled
-        }
+        };
+        self.checkpoint(cx);
+        canceled
+    }
+
+    /// Returns the feedback given to the thread, if any.
+    pub fn feedback(&self) -> Option<ThreadFeedback> {
+        self.feedback
     }
 
     /// Reports feedback about the thread and stores it in our telemetry backend.
-    pub fn report_feedback(&self, is_positive: bool, cx: &mut Context<Self>) -> Task<Result<()>> {
+    pub fn report_feedback(
+        &mut self,
+        feedback: ThreadFeedback,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<()>> {
         let final_project_snapshot = Self::project_snapshot(self.project.clone(), cx);
         let serialized_thread = self.serialize(cx);
         let thread_id = self.id().clone();
         let client = self.project.read(cx).client();
+        self.feedback = Some(feedback);
+        cx.notify();
 
         cx.background_spawn(async move {
             let final_project_snapshot = final_project_snapshot.await;
@@ -1206,7 +1375,10 @@ impl Thread {
             let thread_data =
                 serde_json::to_value(serialized_thread).unwrap_or_else(|_| serde_json::Value::Null);
 
-            let rating = if is_positive { "positive" } else { "negative" };
+            let rating = match feedback {
+                ThreadFeedback::Positive => "positive",
+                ThreadFeedback::Negative => "negative",
+            };
             telemetry::event!(
                 "Assistant Thread Rated",
                 rating,
@@ -1225,10 +1397,11 @@ impl Thread {
         project: Entity<Project>,
         cx: &mut Context<Self>,
     ) -> Task<Arc<ProjectSnapshot>> {
+        let git_store = project.read(cx).git_store().clone();
         let worktree_snapshots: Vec<_> = project
             .read(cx)
             .visible_worktrees(cx)
-            .map(|worktree| Self::worktree_snapshot(worktree, cx))
+            .map(|worktree| Self::worktree_snapshot(worktree, git_store.clone(), cx))
             .collect();
 
         cx.spawn(async move |_, cx| {
@@ -1257,7 +1430,11 @@ impl Thread {
         })
     }
 
-    fn worktree_snapshot(worktree: Entity<project::Worktree>, cx: &App) -> Task<WorktreeSnapshot> {
+    fn worktree_snapshot(
+        worktree: Entity<project::Worktree>,
+        git_store: Entity<GitStore>,
+        cx: &App,
+    ) -> Task<WorktreeSnapshot> {
         cx.spawn(async move |cx| {
             // Get worktree path and snapshot
             let worktree_info = cx.update(|app_cx| {
@@ -1274,42 +1451,40 @@ impl Thread {
                 };
             };
 
+            let repo_info = git_store
+                .update(cx, |git_store, cx| {
+                    git_store
+                        .repositories()
+                        .values()
+                        .find(|repo| repo.read(cx).worktree_id == snapshot.id())
+                        .and_then(|repo| {
+                            let repo = repo.read(cx);
+                            Some((repo.branch().cloned(), repo.local_repository()?))
+                        })
+                })
+                .ok()
+                .flatten();
+
             // Extract git information
-            let git_state = match snapshot.repositories().first() {
+            let git_state = match repo_info {
                 None => None,
-                Some(repo_entry) => {
-                    // Get branch information
-                    let current_branch = repo_entry.branch().map(|branch| branch.name.to_string());
+                Some((branch, repo)) => {
+                    let current_branch = branch.map(|branch| branch.name.to_string());
+                    let remote_url = repo.remote_url("origin");
+                    let head_sha = repo.head_sha();
 
-                    // Get repository info
-                    let repo_result = worktree.read_with(cx, |worktree, _cx| {
-                        if let project::Worktree::Local(local_worktree) = &worktree {
-                            local_worktree.get_local_repo(repo_entry).map(|local_repo| {
-                                let repo = local_repo.repo();
-                                (repo.remote_url("origin"), repo.head_sha(), repo.clone())
-                            })
-                        } else {
-                            None
-                        }
-                    });
+                    // Get diff asynchronously
+                    let diff = repo
+                        .diff(git::repository::DiffType::HeadToWorktree, cx.clone())
+                        .await
+                        .ok();
 
-                    match repo_result {
-                        Ok(Some((remote_url, head_sha, repository))) => {
-                            // Get diff asynchronously
-                            let diff = repository
-                                .diff(git::repository::DiffType::HeadToWorktree, cx.clone())
-                                .await
-                                .ok();
-
-                            Some(GitState {
-                                remote_url,
-                                head_sha,
-                                current_branch,
-                                diff,
-                            })
-                        }
-                        Err(_) | Ok(None) => None,
-                    }
+                    Some(GitState {
+                        remote_url,
+                        head_sha,
+                        current_branch,
+                        diff,
+                    })
                 }
             };
 
@@ -1337,7 +1512,14 @@ impl Thread {
                     Role::System => "System",
                 }
             )?;
-            writeln!(markdown, "{}\n", message.text)?;
+            for segment in &message.segments {
+                match segment {
+                    MessageSegment::Text(text) => writeln!(markdown, "{}\n", text)?,
+                    MessageSegment::Thinking(text) => {
+                        writeln!(markdown, "<think>{}</think>\n", text)?
+                    }
+                }
+            }
 
             for tool_use in self.tool_uses_for_message(message.id, cx) {
                 writeln!(
@@ -1405,6 +1587,7 @@ pub enum ThreadEvent {
     ShowError(ThreadError),
     StreamedCompletion,
     StreamedAssistantText(MessageId, String),
+    StreamedAssistantThinking(MessageId, String),
     DoneStreaming,
     MessageAdded(MessageId),
     MessageEdited(MessageId),

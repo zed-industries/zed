@@ -96,7 +96,7 @@ impl Eval {
             assistant.update(cx, |assistant, cx| {
                 assistant.thread.update(cx, |thread, cx| {
                     let context = vec![];
-                    thread.insert_user_message(self.user_prompt.clone(), context, None, cx);
+                    thread.insert_user_message(self.user_prompt.clone(), context, cx);
                     thread.set_system_prompt_context(system_prompt_context);
                     thread.send_to_model(model, RequestKind::Chat, cx);
                 });
@@ -120,7 +120,7 @@ impl Eval {
                     .count();
                 Ok(EvalOutput {
                     diff,
-                    last_message: last_message.text.clone(),
+                    last_message: last_message.to_string(),
                     elapsed_time,
                     assistant_response_count,
                     tool_use_counts: assistant.tool_use_counts.clone(),

@@ -23,7 +23,7 @@ use gpui::{
 use language::{Anchor, Buffer, Capability, OffsetRangeExt};
 use multi_buffer::{MultiBuffer, PathKey};
 use project::{
-    git::{GitEvent, GitStore},
+    git_store::{GitEvent, GitStore},
     Project, ProjectPath,
 };
 use std::any::{Any, TypeId};

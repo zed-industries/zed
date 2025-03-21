@@ -4,7 +4,7 @@ use gpui::{
 use itertools::Itertools;
 use picker::{Picker, PickerDelegate};
 use project::{
-    git::{GitStore, Repository},
+    git_store::{GitStore, Repository},
     Project,
 };
 use std::sync::Arc;
