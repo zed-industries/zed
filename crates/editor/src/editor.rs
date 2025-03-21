@@ -123,7 +123,7 @@ pub use proposed_changes_editor::{
     ProposedChangeLocation, ProposedChangesEditor, ProposedChangesEditorToolbar,
 };
 use smallvec::smallvec;
-use std::iter::Peekable;
+use std::{cell::OnceCell, iter::Peekable};
 use task::{ResolvedTask, TaskTemplate, TaskVariables};
 
 pub use lsp::CompletionContext;
@@ -188,7 +188,7 @@ use ui::{
 use util::{maybe, post_inc, RangeExt, ResultExt, TryFutureExt};
 use workspace::{
     item::{ItemHandle, PreviewTabsSettings},
-    ItemId, RestoreOnStartupBehavior,
+    ItemId, RestoreOnStartupBehavior, SERIALIZATION_THROTTLE_TIME,
 };
 use workspace::{
     notifications::{DetachAndPromptErr, NotificationId, NotifyTaskExt},
@@ -777,6 +777,7 @@ pub struct Editor {
     toggle_fold_multiple_buffers: Task<()>,
     _scroll_cursor_center_top_bottom_task: Task<()>,
     serialize_selections: Task<()>,
+    serialize_folds: Task<()>,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Default)]
@@ -1183,6 +1184,7 @@ impl Editor {
                 display_map.set_state(&snapshot, cx);
             });
         });
+        clone.folds_did_change(cx);
         clone.selections.clone_state(&self.selections);
         clone.scroll_manager.clone_state(&self.scroll_manager);
         clone.searchable = self.searchable;
@@ -1514,6 +1516,7 @@ impl Editor {
             selection_mark_mode: false,
             toggle_fold_multiple_buffers: Task::ready(()),
             serialize_selections: Task::ready(()),
+            serialize_folds: Task::ready(()),
             text_style_refinement: None,
             load_diff_task: load_uncommitted_diff,
         };
@@ -2254,7 +2257,7 @@ impl Editor {
                 let snapshot = self.buffer().read(cx).snapshot(cx);
                 let selections = selections.clone();
                 self.serialize_selections = cx.background_spawn(async move {
-                    background_executor.timer(Duration::from_millis(100)).await;
+                    background_executor.timer(SERIALIZATION_THROTTLE_TIME).await;
                     let selections = selections
                         .iter()
                         .map(|selection| {
@@ -2273,6 +2276,40 @@ impl Editor {
         }
 
         cx.notify();
+    }
+
+    fn folds_did_change(&mut self, cx: &mut Context<Self>) {
+        if !self.is_singleton(cx)
+            || WorkspaceSettings::get(None, cx).restore_on_startup == RestoreOnStartupBehavior::None
+        {
+            return;
+        }
+
+        let Some(workspace_id) = self.workspace.as_ref().and_then(|workspace| workspace.1) else {
+            return;
+        };
+        let background_executor = cx.background_executor().clone();
+        let editor_id = cx.entity().entity_id().as_u64() as ItemId;
+        let snapshot = self.buffer().read(cx).snapshot(cx);
+        let folds = self.display_map.update(cx, |display_map, cx| {
+            display_map
+                .snapshot(cx)
+                .folds_in_range(0..snapshot.len())
+                .map(|fold| {
+                    (
+                        fold.range.start.to_offset(&snapshot),
+                        fold.range.end.to_offset(&snapshot),
+                    )
+                })
+                .collect()
+        });
+        self.serialize_folds = cx.background_spawn(async move {
+            background_executor.timer(SERIALIZATION_THROTTLE_TIME).await;
+            DB.save_editor_folds(editor_id, workspace_id, folds)
+                .await
+                .with_context(|| format!("persisting editor folds for editor {editor_id}, workspace {workspace_id:?}"))
+                .log_err();
+        });
     }
 
     pub fn sync_selections(
@@ -14358,6 +14395,7 @@ impl Editor {
         }
 
         self.scrollbar_marker_state.dirty = true;
+        self.folds_did_change(cx);
     }
 
     /// Removes any folds whose ranges intersect any of the given ranges.
@@ -14371,6 +14409,7 @@ impl Editor {
         self.remove_folds_with(ranges, auto_scroll, cx, |map, cx| {
             map.unfold_intersecting(ranges.iter().cloned(), inclusive, cx)
         });
+        self.folds_did_change(cx);
     }
 
     pub fn fold_buffer(&mut self, buffer_id: BufferId, cx: &mut Context<Self>) {
@@ -14422,6 +14461,7 @@ impl Editor {
         self.remove_folds_with(ranges, auto_scroll, cx, |map, cx| {
             map.remove_folds_with_type(ranges.iter().cloned(), type_id, cx)
         });
+        self.folds_did_change(cx);
     }
 
     fn remove_folds_with<T: ToOffset + Clone>(
@@ -17144,31 +17184,52 @@ impl Editor {
         self.load_diff_task.clone()
     }
 
-    fn read_selections_from_db(
+    fn read_metadata_from_db(
         &mut self,
         item_id: u64,
         workspace_id: WorkspaceId,
         window: &mut Window,
         cx: &mut Context<Editor>,
     ) {
-        if !self.is_singleton(cx)
-            || WorkspaceSettings::get(None, cx).restore_on_startup == RestoreOnStartupBehavior::None
+        if self.is_singleton(cx)
+            && WorkspaceSettings::get(None, cx).restore_on_startup != RestoreOnStartupBehavior::None
         {
-            return;
-        }
-        let Some(selections) = DB.get_editor_selections(item_id, workspace_id).log_err() else {
-            return;
-        };
-        if selections.is_empty() {
-            return;
+            let buffer_snapshot = OnceCell::new();
+
+            if let Some(selections) = DB.get_editor_selections(item_id, workspace_id).log_err() {
+                if !selections.is_empty() {
+                    let snapshot =
+                        buffer_snapshot.get_or_init(|| self.buffer.read(cx).snapshot(cx));
+                    self.change_selections(None, window, cx, |s| {
+                        s.select_ranges(selections.into_iter().map(|(start, end)| {
+                            snapshot.clip_offset(start, Bias::Left)
+                                ..snapshot.clip_offset(end, Bias::Right)
+                        }));
+                    });
+                }
+            };
+
+            if let Some(folds) = DB.get_editor_folds(item_id, workspace_id).log_err() {
+                if !folds.is_empty() {
+                    let snapshot =
+                        buffer_snapshot.get_or_init(|| self.buffer.read(cx).snapshot(cx));
+                    self.fold_ranges(
+                        folds
+                            .into_iter()
+                            .map(|(start, end)| {
+                                snapshot.clip_offset(start, Bias::Left)
+                                    ..snapshot.clip_offset(end, Bias::Right)
+                            })
+                            .collect(),
+                        false,
+                        window,
+                        cx,
+                    );
+                }
+            }
         }
 
-        let snapshot = self.buffer.read(cx).snapshot(cx);
-        self.change_selections(None, window, cx, |s| {
-            s.select_ranges(selections.into_iter().map(|(start, end)| {
-                snapshot.clip_offset(start, Bias::Left)..snapshot.clip_offset(end, Bias::Right)
-            }));
-        });
+        self.read_scroll_position_from_db(item_id, workspace_id, window, cx);
     }
 }
 
