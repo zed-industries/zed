@@ -109,7 +109,9 @@ macro_rules! time {
 #[macro_export]
 macro_rules! scoped {
     ($parent:expr => $name:expr) => {{
-        let mut scope = $parent.scope;
+        let parent = $parent;
+        let name = $name;
+        let mut scope = parent.scope;
         let mut index = 1; // always have crate/module name
         while index < scope.len() && !scope[index].is_empty() {
             index += 1;
@@ -117,18 +119,18 @@ macro_rules! scoped {
         if index >= scope.len() {
             #[cfg(debug_assertions)]
             {
-                panic!("Scope overflow trying to add scope {}", $name);
+                panic!("Scope overflow trying to add scope {}", name);
             }
             #[cfg(not(debug_assertions))]
             {
                 $crate::warn!(
-                    *parent,
+                    parent =>
                     "Scope overflow trying to add scope {}... ignoring scope",
                     name
                 );
             }
         }
-        scope[index] = $name;
+        scope[index] = name;
         $crate::Logger { scope }
     }};
     ($name:expr) => {
