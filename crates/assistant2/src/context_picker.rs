@@ -10,7 +10,7 @@ use std::sync::Arc;
 use anyhow::{anyhow, Result};
 use editor::actions::FoldAt;
 use editor::display_map::{Crease, FoldId};
-use editor::{Anchor, AnchorRangeExt as _, Editor, FoldPlaceholder, ToPoint as _};
+use editor::{Anchor, AnchorRangeExt as _, Editor, ExcerptId, FoldPlaceholder, ToPoint as _};
 use file_context_picker::render_file_context_entry;
 use gpui::{
     App, DismissEvent, Empty, Entity, EventEmitter, FocusHandle, Focusable, Task, WeakEntity,
@@ -531,14 +531,24 @@ fn recent_context_picker_entries(
 }
 
 pub(crate) fn insert_crease_for_mention(
+    excerpt_id: ExcerptId,
+    crease_range: Range<text::Anchor>,
     crease_label: SharedString,
     crease_icon: IconName,
-    crease_range: Range<Anchor>,
     editor_entity: Entity<Editor>,
     window: &mut Window,
     cx: &mut App,
 ) {
     editor_entity.update(cx, |editor, cx| {
+        let snapshot = editor.buffer().read(cx).snapshot(cx);
+
+        let Some((start, end)) = snapshot
+            .anchor_in_excerpt(excerpt_id, crease_range.start)
+            .zip(snapshot.anchor_in_excerpt(excerpt_id, crease_range.end))
+        else {
+            return;
+        };
+
         let placeholder = FoldPlaceholder {
             render: render_fold_icon_button(crease_icon, crease_label, editor_entity.downgrade()),
             ..Default::default()
@@ -548,10 +558,10 @@ pub(crate) fn insert_crease_for_mention(
             move |_row, _unfold, _window: &mut Window, _cx: &mut App| Empty.into_any();
 
         let buffer = editor.buffer().read(cx).snapshot(cx);
-        let buffer_row = MultiBufferRow(crease_range.start.to_point(&buffer).row);
+        let buffer_row = MultiBufferRow(start.to_point(&buffer).row);
 
         let crease = Crease::inline(
-            crease_range,
+            start..end,
             placeholder.clone(),
             fold_toggle("mention"),
             render_trailer,

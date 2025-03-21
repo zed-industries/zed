@@ -12,7 +12,6 @@ use gpui::{
 };
 use language_model::LanguageModelRegistry;
 use language_model_selector::ToggleModelSelector;
-use rope::Point;
 use settings::Settings;
 use std::time::Duration;
 use theme::ThemeSettings;

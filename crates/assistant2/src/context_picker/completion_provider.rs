@@ -10,7 +10,7 @@ use editor::{CompletionProvider, Editor, ExcerptId};
 use gpui::{App, Entity, Task, WeakEntity};
 use language::{Buffer, CodeLabel, HighlightId};
 use lsp::CompletionContext;
-use project::{Completion, CompletionIntent, WorktreeId};
+use project::{Completion, CompletionIntent, ProjectPath, WorktreeId};
 use rope::Point;
 use text::{Anchor, ToPoint};
 use ui::prelude::*;
@@ -19,6 +19,7 @@ use workspace::Workspace;
 use crate::context_store::ContextStore;
 use crate::thread_store::ThreadStore;
 
+use super::thread_context_picker::ThreadContextEntry;
 use super::{recent_context_picker_entries, supported_context_picker_modes, ContextPickerMode};
 
 pub struct ContextPickerCompletionProvider {
@@ -67,21 +68,26 @@ impl ContextPickerCompletionProvider {
                     project_path,
                     path_prefix: _,
                 } => Self::completion_for_path(
-                    project_path.worktree_id,
-                    &project_path.path,
+                    project_path.clone(),
                     false,
                     excerpt_id,
                     range_to_replace.clone(),
                     editor.clone(),
+                    context_store.clone(),
                     workspace.clone(),
                     cx,
                 ),
                 super::RecentEntry::Thread(thread_context_entry) => {
+                    let thread_store = thread_store
+                        .as_ref()
+                        .and_then(|thread_store| thread_store.upgrade())?;
                     Some(Self::completion_for_thread(
-                        thread_context_entry.summary.clone(),
+                        thread_context_entry.clone(),
                         excerpt_id,
                         range_to_replace.clone(),
                         editor.clone(),
+                        context_store.clone(),
+                        thread_store,
                     ))
                 }
             }),
@@ -162,40 +168,77 @@ impl ContextPickerCompletionProvider {
     }
 
     fn completion_for_thread(
-        thread_summary: SharedString,
+        thread_entry: ThreadContextEntry,
         excerpt_id: ExcerptId,
         range_to_replace: Range<Anchor>,
         editor: Entity<Editor>,
+        context_store: Entity<ContextStore>,
+        thread_store: Entity<ThreadStore>,
     ) -> Completion {
         Completion {
             old_range: range_to_replace.clone(),
-            new_text: format!("@thread {}", thread_summary),
-            label: CodeLabel::plain(thread_summary.to_string(), None),
+            new_text: format!("@thread {}", thread_entry.summary),
+            label: CodeLabel::plain(thread_entry.summary.to_string(), None),
             documentation: None,
             source: project::CompletionSource::Custom,
-            confirm: Some(insert_crease_callback(
+            confirm: Some(confirm_completion_callback(
                 IconName::MessageCircle,
-                thread_summary.clone(),
+                thread_entry.summary.clone(),
                 excerpt_id,
                 range_to_replace.clone(),
                 editor.clone(),
+                move |cx| {
+                    let thread_id = thread_entry.id.clone();
+                    let context_store = context_store.clone();
+                    let thread_store = thread_store.clone();
+                    cx.spawn(async move |cx| {
+                        let thread = thread_store
+                            .update(cx, |thread_store, cx| {
+                                thread_store.open_thread(&thread_id, cx)
+                            })?
+                            .await?;
+                        context_store
+                            .update(cx, |context_store, cx| context_store.add_thread(thread, cx))
+                    })
+                    .detach_and_log_err(cx);
+                },
             )),
         }
     }
 
     fn completion_for_path(
-        worktree_id: WorktreeId,
-        path: &Path,
+        project_path: ProjectPath,
         is_directory: bool,
         excerpt_id: ExcerptId,
         range_to_replace: Range<Anchor>,
         editor: Entity<Editor>,
+        context_store: Entity<ContextStore>,
         workspace: Entity<Workspace>,
         cx: &App,
     ) -> Option<Completion> {
-        let label =
-            Self::build_code_label_for_full_path(worktree_id, &path, workspace.clone(), cx)?;
-        let full_path = Self::full_path_for_entry(worktree_id, &path, workspace.clone(), cx)?;
+        let label = Self::build_code_label_for_full_path(
+            project_path.worktree_id,
+            &project_path.path,
+            workspace.clone(),
+            cx,
+        )?;
+        let full_path = Self::full_path_for_entry(
+            project_path.worktree_id,
+            &project_path.path,
+            workspace.clone(),
+            cx,
+        )?;
+
+        let crease_icon = if is_directory {
+            IconName::Folder
+        } else {
+            IconName::File
+        };
+        let crease_name = project_path
+            .path
+            .file_name()
+            .map(|file_name| file_name.to_string_lossy().to_string())
+            .unwrap_or_else(|| "untitled".to_string());
 
         Some(Completion {
             old_range: range_to_replace.clone(),
@@ -203,19 +246,22 @@ impl ContextPickerCompletionProvider {
             label,
             documentation: None,
             source: project::CompletionSource::Custom,
-            confirm: Some(insert_crease_callback(
-                if is_directory {
-                    IconName::Folder
-                } else {
-                    IconName::File
-                },
-                path.file_name()
-                    .map(|file_name| file_name.to_string_lossy().to_string())
-                    .unwrap_or_else(|| "untitled".to_string())
-                    .into(),
+            confirm: Some(confirm_completion_callback(
+                crease_icon,
+                crease_name.into(),
                 excerpt_id,
                 range_to_replace,
                 editor,
+                move |cx| {
+                    context_store.update(cx, |context_store, cx| {
+                        let task = if is_directory {
+                            context_store.add_directory(project_path.clone(), cx)
+                        } else {
+                            context_store.add_file_from_path(project_path.clone(), cx)
+                        };
+                        task.detach_and_log_err(cx);
+                    })
+                },
             )),
         })
     }
@@ -284,12 +330,15 @@ impl CompletionProvider for ContextPickerCompletionProvider {
                         completions.extend(path_matches.iter().filter_map(|mat| {
                             let editor = editor.upgrade()?;
                             Self::completion_for_path(
-                                WorktreeId::from_usize(mat.worktree_id),
-                                &mat.path,
+                                ProjectPath {
+                                    worktree_id: WorktreeId::from_usize(mat.worktree_id),
+                                    path: mat.path.clone(),
+                                },
                                 mat.is_dir,
                                 excerpt_id,
                                 range_to_replace.clone(),
                                 editor.clone(),
+                                context_store.clone(),
                                 workspace.clone(),
                                 cx,
                             )
@@ -306,17 +355,19 @@ impl CompletionProvider for ContextPickerCompletionProvider {
                             .update(|cx| {
                                 super::thread_context_picker::search_threads(
                                     query,
-                                    thread_store,
+                                    thread_store.clone(),
                                     cx,
                                 )
                             })?
                             .await;
                         for thread in threads {
                             completions.push(Self::completion_for_thread(
-                                thread.summary.clone(),
+                                thread.clone(),
                                 excerpt_id,
                                 range_to_replace.clone(),
                                 editor.clone(),
+                                context_store.clone(),
+                                thread_store.clone(),
                             ));
                         }
                     }
@@ -375,41 +426,32 @@ impl CompletionProvider for ContextPickerCompletionProvider {
     }
 }
 
-fn insert_crease_callback(
+fn confirm_completion_callback(
     crease_icon: IconName,
     crease_text: SharedString,
     excerpt_id: ExcerptId,
     range_to_replace: Range<Anchor>,
     editor: Entity<Editor>,
+    add_context_fn: impl Fn(&mut App) -> () + Send + Sync + 'static,
 ) -> Arc<dyn Fn(CompletionIntent, &mut Window, &mut App) -> bool + Send + Sync> {
-    Arc::new({
-        let editor = editor.clone();
-        let range_to_replace = range_to_replace.clone();
-        move |_, window, cx| {
-            let editor = editor.clone();
-            let range_to_replace = range_to_replace.clone();
-            let crease_text = crease_text.clone();
-            {
-                window.defer(cx, move |window, cx| {
-                    let snapshot = editor.read(cx).buffer().read(cx).snapshot(cx);
+    Arc::new(move |_, window, cx| {
+        add_context_fn(cx);
 
-                    if let Some((start, end)) = snapshot
-                        .anchor_in_excerpt(excerpt_id, range_to_replace.start)
-                        .zip(snapshot.anchor_in_excerpt(excerpt_id, range_to_replace.end))
-                    {
-                        crate::context_picker::insert_crease_for_mention(
-                            crease_text.clone(),
-                            crease_icon,
-                            start..end,
-                            editor.clone(),
-                            window,
-                            cx,
-                        );
-                    }
-                });
-                false
-            }
-        }
+        let crease_text = crease_text.clone();
+        let range_to_replace = range_to_replace.clone();
+        let editor = editor.clone();
+        window.defer(cx, move |window, cx| {
+            crate::context_picker::insert_crease_for_mention(
+                excerpt_id,
+                range_to_replace,
+                crease_text,
+                crease_icon,
+                editor,
+                window,
+                cx,
+            );
+        });
+        false
     })
 }
 
