@@ -32,27 +32,10 @@ impl RemoteAudioTrack {
         self.server_track.publisher_id.clone()
     }
 
-    pub fn start(&self) {
-        if let Some(room) = self.room.upgrade() {
-            room.0
-                .lock()
-                .paused_audio_tracks
-                .remove(&self.server_track.sid);
-        }
-    }
-
-    pub fn stop(&self) {
-        if let Some(room) = self.room.upgrade() {
-            room.0
-                .lock()
-                .paused_audio_tracks
-                .insert(self.server_track.sid.clone());
-        }
-    }
-
     pub fn enabled(&self) -> bool {
         if let Some(room) = self.room.upgrade() {
-            room.0
+            !room
+                .0
                 .lock()
                 .paused_audio_tracks
                 .contains(&self.server_track.sid)
@@ -62,10 +45,19 @@ impl RemoteAudioTrack {
     }
 
     pub fn set_enabled(&self, enabled: bool) {
+        let Some(room) = self.room.upgrade() else {
+            return;
+        };
         if enabled {
-            self.start()
+            room.0
+                .lock()
+                .paused_audio_tracks
+                .remove(&self.server_track.sid);
         } else {
-            self.stop()
+            room.0
+                .lock()
+                .paused_audio_tracks
+                .insert(self.server_track.sid.clone());
         }
     }
 }
