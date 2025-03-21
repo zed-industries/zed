@@ -399,10 +399,7 @@ impl ComponentPreview {
         if let Some(component) = component {
             v_flex()
                 .id("render-component-page")
-                .overflow_y_scroll()
-                .overflow_x_hidden()
-                .w_full()
-                .min_h_full()
+                .size_full()
                 .child(ComponentPreviewPage::new(component.clone()))
                 .into_any_element()
         } else {
@@ -675,6 +672,8 @@ impl RenderOnce for ComponentPreviewPage {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         v_flex()
             .id("component-preview-page")
+            .overflow_y_scroll()
+            .overflow_x_hidden()
             .w_full()
             .child(self.render_header(window, cx))
             .child(self.render_preview(window, cx))
