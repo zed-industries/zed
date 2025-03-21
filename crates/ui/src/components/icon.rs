@@ -143,6 +143,7 @@ pub enum IconName {
     ArrowUp,
     ArrowUpFromLine,
     ArrowUpRight,
+    ArrowUpRightAlt,
     AtSign,
     AudioOff,
     AudioOn,

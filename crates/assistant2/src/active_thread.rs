@@ -1314,10 +1314,8 @@ impl ActiveThread {
             .px_2p5()
             .child(
                 h_flex()
-                    .group("rules-item")
                     .w_full()
-                    .gap_2()
-                    .justify_between()
+                    .gap_0p5()
                     .child(
                         h_flex()
                             .gap_1p5()
@@ -1334,11 +1332,12 @@ impl ActiveThread {
                             ),
                     )
                     .child(
-                        div().visible_on_hover("rules-item").child(
-                            Button::new("open-rules", "Open Rules")
-                                .label_size(LabelSize::XSmall)
-                                .on_click(cx.listener(Self::handle_open_rules)),
-                        ),
+                        IconButton::new("open-rule", IconName::ArrowUpRightAlt)
+                            .shape(ui::IconButtonShape::Square)
+                            .icon_size(IconSize::XSmall)
+                            .icon_color(Color::Ignored)
+                            .on_click(cx.listener(Self::handle_open_rules))
+                            .tooltip(Tooltip::text("View Rules")),
                     ),
             )
             .into_any()
