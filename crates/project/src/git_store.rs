@@ -36,7 +36,7 @@ use language::{
 };
 use parking_lot::Mutex;
 use rpc::{
-    proto::{self, git_reset, ToProto, SSH_PROJECT_ID},
+    proto::{self, git_reset, FromProto, ToProto, SSH_PROJECT_ID},
     AnyProtoClient, TypedEnvelope,
 };
 use serde::Deserialize;
@@ -48,17 +48,18 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
+use sum_tree::TreeSet;
 use text::BufferId;
 use util::{debug_panic, maybe, ResultExt};
 use worktree::{
-    File, ProjectEntryId, RepositoryEntry, StatusEntry, UpdatedGitRepositoriesSet, WorkDirectory,
-    Worktree,
+    proto_to_branch, File, PathKey, ProjectEntryId, RepositoryEntry, StatusEntry,
+    UpdatedGitRepositoriesSet, WorkDirectory, Worktree,
 };
 
 pub struct GitStore {
     state: GitStoreState,
     buffer_store: Entity<BufferStore>,
-    _worktree_store: Entity<WorktreeStore>,
+    worktree_store: Entity<WorktreeStore>,
     repositories: HashMap<ProjectEntryId, Entity<Repository>>,
     active_repo_id: Option<ProjectEntryId>,
     #[allow(clippy::type_complexity)]
@@ -111,7 +112,7 @@ enum DiffKind {
 
 enum GitStoreState {
     Local {
-        downstream_client: Option<(AnyProtoClient, ProjectId)>,
+        downstream_client: Option<LocalDownstreamState>,
         environment: Entity<ProjectEnvironment>,
         fs: Arc<dyn Fs>,
     },
@@ -127,9 +128,21 @@ enum GitStoreState {
     },
 }
 
+enum DownstreamUpdate {
+    UpdateRepository(RepositoryEntry),
+    RemoveRepository(ProjectEntryId),
+}
+
+struct LocalDownstreamState {
+    client: AnyProtoClient,
+    project_id: ProjectId,
+    updates_tx: mpsc::UnboundedSender<DownstreamUpdate>,
+    _task: Task<Result<()>>,
+}
+
 #[derive(Clone)]
 pub struct GitStoreCheckpoint {
-    checkpoints_by_dot_git_abs_path: HashMap<PathBuf, GitRepositoryCheckpoint>,
+    checkpoints_by_work_dir_abs_path: HashMap<PathBuf, GitRepositoryCheckpoint>,
 }
 
 pub struct Repository {
@@ -138,12 +151,9 @@ pub struct Repository {
     project_environment: Option<WeakEntity<ProjectEnvironment>>,
     pub worktree_id: WorktreeId,
     pub repository_entry: RepositoryEntry,
-    pub dot_git_abs_path: PathBuf,
-    pub worktree_abs_path: Arc<Path>,
-    pub is_from_single_file_worktree: bool,
     pub merge_message: Option<String>,
     pub completed_scan_id: usize,
-    git_repo: RepositoryState,
+    state: RepositoryState,
     job_sender: mpsc::UnboundedSender<GitJob>,
     askpass_delegates: Arc<Mutex<HashMap<u64, AskPassDelegate>>>,
     latest_askpass_id: u64,
@@ -254,7 +264,7 @@ impl GitStore {
         GitStore {
             state,
             buffer_store,
-            _worktree_store: worktree_store,
+            worktree_store,
             repositories: HashMap::default(),
             active_repo_id: None,
             update_sender,
@@ -290,21 +300,79 @@ impl GitStore {
         client.add_entity_message_handler(Self::handle_update_diff_bases);
         client.add_entity_request_handler(Self::handle_get_permalink_to_line);
         client.add_entity_request_handler(Self::handle_blame_buffer);
+        client.add_entity_message_handler(Self::handle_update_repository);
+        client.add_entity_message_handler(Self::handle_remove_repository);
     }
 
     pub fn is_local(&self) -> bool {
         matches!(self.state, GitStoreState::Local { .. })
     }
 
-    pub fn shared(&mut self, remote_id: u64, client: AnyProtoClient, _cx: &mut App) {
+    pub fn shared(&mut self, remote_id: u64, client: AnyProtoClient, cx: &mut Context<Self>) {
         match &mut self.state {
-            GitStoreState::Local {
-                downstream_client, ..
-            }
-            | GitStoreState::Ssh {
+            GitStoreState::Ssh {
                 downstream_client, ..
             } => {
                 *downstream_client = Some((client, ProjectId(remote_id)));
+            }
+            GitStoreState::Local {
+                downstream_client, ..
+            } => {
+                let mut snapshots = HashMap::default();
+                let (updates_tx, mut updates_rx) = mpsc::unbounded();
+                for repo in self.repositories.values() {
+                    updates_tx
+                        .unbounded_send(DownstreamUpdate::UpdateRepository(
+                            repo.read(cx).repository_entry.clone(),
+                        ))
+                        .ok();
+                }
+                *downstream_client = Some(LocalDownstreamState {
+                    client: client.clone(),
+                    project_id: ProjectId(remote_id),
+                    updates_tx,
+                    _task: cx.spawn(async move |this, cx| {
+                        cx.background_spawn(async move {
+                            while let Some(update) = updates_rx.next().await {
+                                match update {
+                                    DownstreamUpdate::UpdateRepository(snapshot) => {
+                                        if let Some(old_snapshot) =
+                                            snapshots.get_mut(&snapshot.work_directory_id)
+                                        {
+                                            let update =
+                                                snapshot.build_update(old_snapshot, remote_id);
+                                            *old_snapshot = snapshot;
+                                            client.send(update)?;
+                                        } else {
+                                            let update = snapshot.initial_update(remote_id);
+                                            client.send(update)?;
+                                            snapshots.insert(snapshot.work_directory_id, snapshot);
+                                        }
+                                    }
+                                    DownstreamUpdate::RemoveRepository(id) => {
+                                        client.send(proto::RemoveRepository {
+                                            project_id: remote_id,
+                                            id: id.to_proto(),
+                                        })?;
+                                    }
+                                }
+                            }
+                            anyhow::Ok(())
+                        })
+                        .await
+                        .ok();
+                        this.update(cx, |this, _| {
+                            if let GitStoreState::Local {
+                                downstream_client, ..
+                            } = &mut this.state
+                            {
+                                downstream_client.take();
+                            } else {
+                                unreachable!("unshared called on remote store");
+                            }
+                        })
+                    }),
+                });
             }
             GitStoreState::Remote { .. } => {
                 debug_panic!("shared called on remote store");
@@ -316,8 +384,10 @@ impl GitStore {
         match &mut self.state {
             GitStoreState::Local {
                 downstream_client, ..
+            } => {
+                downstream_client.take();
             }
-            | GitStoreState::Ssh {
+            GitStoreState::Ssh {
                 downstream_client, ..
             } => {
                 downstream_client.take();
@@ -544,7 +614,7 @@ impl GitStore {
         let mut checkpoints = Vec::new();
         for repository in self.repositories.values() {
             let repository = repository.read(cx);
-            dot_git_abs_paths.push(repository.dot_git_abs_path.clone());
+            dot_git_abs_paths.push(repository.repository_entry.work_directory_abs_path.clone());
             checkpoints.push(repository.checkpoint().map(|checkpoint| checkpoint?));
         }
 
@@ -552,7 +622,7 @@ impl GitStore {
             let checkpoints: Vec<GitRepositoryCheckpoint> =
                 future::try_join_all(checkpoints).await?;
             Ok(GitStoreCheckpoint {
-                checkpoints_by_dot_git_abs_path: dot_git_abs_paths
+                checkpoints_by_work_dir_abs_path: dot_git_abs_paths
                     .into_iter()
                     .zip(checkpoints)
                     .collect(),
@@ -561,15 +631,23 @@ impl GitStore {
     }
 
     pub fn restore_checkpoint(&self, checkpoint: GitStoreCheckpoint, cx: &App) -> Task<Result<()>> {
-        let repositories_by_dot_git_abs_path = self
+        let repositories_by_work_dir_abs_path = self
             .repositories
             .values()
-            .map(|repo| (repo.read(cx).dot_git_abs_path.clone(), repo))
+            .map(|repo| {
+                (
+                    repo.read(cx)
+                        .repository_entry
+                        .work_directory_abs_path
+                        .clone(),
+                    repo,
+                )
+            })
             .collect::<HashMap<_, _>>();
 
         let mut tasks = Vec::new();
-        for (dot_git_abs_path, checkpoint) in checkpoint.checkpoints_by_dot_git_abs_path {
-            if let Some(repository) = repositories_by_dot_git_abs_path.get(&dot_git_abs_path) {
+        for (dot_git_abs_path, checkpoint) in checkpoint.checkpoints_by_work_dir_abs_path {
+            if let Some(repository) = repositories_by_work_dir_abs_path.get(&dot_git_abs_path) {
                 let restore = repository.read(cx).restore_checkpoint(checkpoint);
                 tasks.push(async move { restore.await? });
             }
@@ -750,8 +828,10 @@ impl GitStore {
         match &self.state {
             GitStoreState::Local {
                 downstream_client, ..
-            }
-            | GitStoreState::Ssh {
+            } => downstream_client
+                .as_ref()
+                .map(|state| (state.client.clone(), state.project_id)),
+            GitStoreState::Ssh {
                 downstream_client, ..
             } => downstream_client.clone(),
             GitStoreState::Remote { .. } => None,
@@ -792,9 +872,32 @@ impl GitStore {
         event: &WorktreeStoreEvent,
         cx: &mut Context<Self>,
     ) {
+        match event {
+            WorktreeStoreEvent::WorktreeUpdatedGitRepositories(worktree_id, changed_repos) => {
+                self.update_repositories(&worktree_store, cx);
+                if self.is_local() {
+                    if let Some(worktree) =
+                        worktree_store.read(cx).worktree_for_id(*worktree_id, cx)
+                    {
+                        self.local_worktree_git_repos_changed(worktree, changed_repos, cx);
+                    }
+                }
+                cx.emit(GitEvent::GitStateUpdated);
+            }
+            WorktreeStoreEvent::WorktreeAdded(_) => {}
+            _ => {
+                cx.emit(GitEvent::FileSystemUpdated);
+            }
+        }
+    }
+
+    fn update_repositories(
+        &mut self,
+        worktree_store: &Entity<WorktreeStore>,
+        cx: &mut Context<'_, GitStore>,
+    ) {
         let mut new_repositories = HashMap::default();
         let git_store = cx.weak_entity();
-
         worktree_store.update(cx, |worktree_store, cx| {
             for worktree in worktree_store.worktrees() {
                 worktree.update(cx, |worktree, cx| {
@@ -853,22 +956,45 @@ impl GitStore {
                                 askpass_delegates: Default::default(),
                                 latest_askpass_id: 0,
                                 repository_entry: repo_entry.clone(),
-                                dot_git_abs_path: worktree
-                                    .dot_git_abs_path(&repo_entry.work_directory),
-                                worktree_abs_path: worktree.abs_path(),
-                                is_from_single_file_worktree: worktree.is_single_file(),
-                                git_repo,
                                 job_sender: self.update_sender.clone(),
                                 merge_message,
                                 commit_message_buffer: None,
                                 completed_scan_id: worktree.completed_scan_id(),
+                                state: git_repo,
                             })
                         };
+
+                        // TODO only send out messages for repository snapshots that have changed
+                        let snapshot = repo.read(cx).repository_entry.clone();
+                        if let GitStoreState::Local {
+                            downstream_client: Some(state),
+                            ..
+                        } = &self.state
+                        {
+                            state
+                                .updates_tx
+                                .unbounded_send(DownstreamUpdate::UpdateRepository(snapshot))
+                                .ok();
+                        }
                         new_repositories.insert(repo_entry.work_directory_id(), repo);
+                        self.repositories.remove(&repo_entry.work_directory_id());
                     }
                 })
             }
         });
+
+        if let GitStoreState::Local {
+            downstream_client: Some(state),
+            ..
+        } = &self.state
+        {
+            for id in self.repositories.keys().cloned() {
+                state
+                    .updates_tx
+                    .unbounded_send(DownstreamUpdate::RemoveRepository(id))
+                    .ok();
+            }
+        }
 
         self.repositories = new_repositories;
         if let Some(id) = self.active_repo_id.as_ref() {
@@ -877,31 +1003,6 @@ impl GitStore {
             }
         } else if let Some(&first_id) = self.repositories.keys().next() {
             self.active_repo_id = Some(first_id);
-        }
-
-        match event {
-            WorktreeStoreEvent::WorktreeUpdatedGitRepositories(_) => {
-                cx.emit(GitEvent::GitStateUpdated);
-            }
-            WorktreeStoreEvent::WorktreeAdded(worktree) => {
-                if self.is_local() {
-                    cx.subscribe(worktree, Self::on_worktree_event).detach();
-                }
-            }
-            _ => {
-                cx.emit(GitEvent::FileSystemUpdated);
-            }
-        }
-    }
-
-    fn on_worktree_event(
-        &mut self,
-        worktree: Entity<Worktree>,
-        event: &worktree::Event,
-        cx: &mut Context<Self>,
-    ) {
-        if let worktree::Event::UpdatedGitRepositories(changed_repos) = event {
-            self.local_worktree_git_repos_changed(worktree, changed_repos, cx);
         }
     }
 
@@ -1287,6 +1388,105 @@ impl GitStore {
                 })
             }
         }
+    }
+
+    fn worktree_for_repository_path(
+        &self,
+        abs_path: &Path,
+        cx: &App,
+    ) -> Option<(Entity<Worktree>, WorkDirectory)> {
+        let worktree_store = self.worktree_store.read(cx);
+        if let Some((worktree, relative_path)) = worktree_store.find_worktree(abs_path, cx) {
+            return Some((
+                worktree,
+                WorkDirectory::InProject {
+                    relative_path: relative_path.into(),
+                },
+            ));
+        }
+
+        worktree_store.worktrees().find_map(|worktree| {
+            let worktree_path = worktree.read(cx).abs_path();
+            let relative_path = worktree_path.strip_prefix(abs_path).ok()?;
+            Some((
+                worktree,
+                WorkDirectory::AboveProject {
+                    absolute_path: abs_path.into(),
+                    location_in_repo: relative_path.into(),
+                },
+            ))
+        })
+    }
+
+    async fn handle_update_repository(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::UpdateRepository>,
+        mut cx: AsyncApp,
+    ) -> Result<()> {
+        this.update(&mut cx, |this, cx| {
+            let update = envelope.payload;
+            let work_directory_id = ProjectEntryId::from_proto(update.id);
+
+            let repo = this
+                .repositories
+                .entry(work_directory_id)
+                .or_insert_with(|| {
+                    let worktree = this
+                        .worktree_store
+                        .read(cx)
+                        .find_worktree(&update.abs_path, cx);
+
+                    let git_store = cx.weak_entity();
+
+                    cx.new(|_| Repository {
+                        commit_message_buffer: None,
+                        git_store,
+                        project_environment: todo!(),
+                        worktree_id: todo!(),
+                        repository_entry: RepositoryEntry {
+                            work_directory_id,
+                            // When syncing repository entries from a peer, we don't need
+                            // the location_in_repo field, since git operations don't happen locally
+                            // anyway.
+                            work_directory: WorkDirectory::InProject {
+                                relative_path: work_dir_entry.path.clone(),
+                            },
+                            current_branch: None,
+                            statuses_by_path: Default::default(),
+                            current_merge_conflicts: Default::default(),
+                            work_directory_abs_path: update.abs_path.into(),
+                            worktree_scan_id: update.scan_id as usize,
+                        },
+                        merge_message: None,
+                        completed_scan_id: todo!(),
+                        state: todo!(),
+                        job_sender: todo!(),
+                        askpass_delegates: todo!(),
+                        latest_askpass_id: todo!(),
+                    })
+                });
+
+            repo.update(cx, |repo, _cx| repo.apply_remote_update(envelope.payload));
+            Ok(())
+        })?
+    }
+
+    async fn handle_remove_repository(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::RemoveRepository>,
+        mut cx: AsyncApp,
+    ) -> Result<()> {
+        this.update(&mut cx, |this, cx| {
+            if let Some(worktree) =
+                this.worktree_for_entry(ProjectEntryId::from_proto(envelope.payload.id), cx)
+            {
+                worktree.update(cx, |worktree, _| {
+                    let worktree = worktree.as_remote_mut().unwrap();
+                    worktree.update_from_remote(envelope.payload);
+                });
+            }
+            Ok(())
+        })?
     }
 
     async fn handle_git_init(
@@ -2326,7 +2526,7 @@ impl Repository {
         R: Send + 'static,
     {
         let (result_tx, result_rx) = futures::channel::oneshot::channel();
-        let git_repo = self.git_repo.clone();
+        let git_repo = self.state.clone();
         self.job_sender
             .unbounded_send(GitJob {
                 key,
@@ -2437,7 +2637,7 @@ impl Repository {
     }
 
     pub fn local_repository(&self) -> Option<Arc<dyn GitRepository>> {
-        match &self.git_repo {
+        match &self.state {
             RepositoryState::Local(git_repository) => Some(git_repository.clone()),
             RepositoryState::Remote { .. } => None,
         }
@@ -2458,7 +2658,7 @@ impl Repository {
             client,
             worktree_id,
             work_directory_id,
-        } = self.git_repo.clone()
+        } = self.state.clone()
         {
             let client = client.clone();
             cx.spawn(async move |repository, cx| {
@@ -2803,7 +3003,12 @@ impl Repository {
             env.update(cx, |env, cx| {
                 env.get_environment(
                     Some(self.worktree_id),
-                    Some(self.worktree_abs_path.clone()),
+                    Some(
+                        self.repository_entry
+                            .work_directory_abs_path
+                            .as_path()
+                            .into(),
+                    ),
                     cx,
                 )
             })
@@ -3265,6 +3470,33 @@ impl Repository {
                 RepositoryState::Remote { .. } => Err(anyhow!("not implemented yet")),
             }
         })
+    }
+
+    pub(crate) fn apply_remote_update(&mut self, update: proto::UpdateRepository) -> Result<()> {
+        let conflicted_paths = TreeSet::from_ordered_entries(
+            update
+                .current_merge_conflicts
+                .into_iter()
+                .map(|path| RepoPath(Path::new(&path).into())),
+        );
+        self.repository_entry.current_branch = update.branch_summary.as_ref().map(proto_to_branch);
+        self.repository_entry.current_merge_conflicts = conflicted_paths;
+
+        let edits = update
+            .removed_statuses
+            .into_iter()
+            .map(|path| sum_tree::Edit::Remove(PathKey(FromProto::from_proto(path))))
+            .chain(
+                update
+                    .updated_statuses
+                    .into_iter()
+                    .filter_map(|updated_status| {
+                        Some(sum_tree::Edit::Insert(updated_status.try_into().log_err()?))
+                    }),
+            )
+            .collect::<Vec<_>>();
+        self.repository_entry.statuses_by_path.edit(edits, &());
+        Ok(())
     }
 }
 

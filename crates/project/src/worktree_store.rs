@@ -26,7 +26,10 @@ use smol::{
 };
 use text::ReplicaId;
 use util::{paths::SanitizedPath, ResultExt};
-use worktree::{Entry, ProjectEntryId, UpdatedEntriesSet, Worktree, WorktreeId, WorktreeSettings};
+use worktree::{
+    Entry, ProjectEntryId, UpdatedEntriesSet, UpdatedGitRepositoriesSet, Worktree, WorktreeId,
+    WorktreeSettings,
+};
 
 use crate::{search::SearchQuery, ProjectPath};
 
@@ -66,7 +69,7 @@ pub enum WorktreeStoreEvent {
     WorktreeOrderChanged,
     WorktreeUpdateSent(Entity<Worktree>),
     WorktreeUpdatedEntries(WorktreeId, UpdatedEntriesSet),
-    WorktreeUpdatedGitRepositories(WorktreeId),
+    WorktreeUpdatedGitRepositories(WorktreeId, UpdatedGitRepositoriesSet),
     WorktreeDeletedEntry(WorktreeId, ProjectEntryId),
 }
 
@@ -367,9 +370,10 @@ impl WorktreeStore {
                         changes.clone(),
                     ));
                 }
-                worktree::Event::UpdatedGitRepositories(_) => {
+                worktree::Event::UpdatedGitRepositories(set) => {
                     cx.emit(WorktreeStoreEvent::WorktreeUpdatedGitRepositories(
                         worktree_id,
+                        set.clone(),
                     ));
                 }
                 worktree::Event::DeletedEntry(id) => {
@@ -561,44 +565,12 @@ impl WorktreeStore {
                                 let client = client.clone();
                                 async move {
                                     if client.is_via_collab() {
-                                        match update {
-                                            proto::WorktreeRelatedMessage::UpdateWorktree(
-                                                update,
-                                            ) => {
-                                                client
-                                                    .request(update)
-                                                    .map(|result| result.log_err().is_some())
-                                                    .await
-                                            }
-                                            proto::WorktreeRelatedMessage::UpdateRepository(
-                                                update,
-                                            ) => {
-                                                client
-                                                    .request(update)
-                                                    .map(|result| result.log_err().is_some())
-                                                    .await
-                                            }
-                                            proto::WorktreeRelatedMessage::RemoveRepository(
-                                                update,
-                                            ) => {
-                                                client
-                                                    .request(update)
-                                                    .map(|result| result.log_err().is_some())
-                                                    .await
-                                            }
-                                        }
+                                        client
+                                            .request(update)
+                                            .map(|result| result.log_err().is_some())
+                                            .await
                                     } else {
-                                        match update {
-                                            proto::WorktreeRelatedMessage::UpdateWorktree(
-                                                update,
-                                            ) => client.send(update).log_err().is_some(),
-                                            proto::WorktreeRelatedMessage::UpdateRepository(
-                                                update,
-                                            ) => client.send(update).log_err().is_some(),
-                                            proto::WorktreeRelatedMessage::RemoveRepository(
-                                                update,
-                                            ) => client.send(update).log_err().is_some(),
-                                        }
+                                        client.send(update).log_err().is_some()
                                     }
                                 }
                             }
