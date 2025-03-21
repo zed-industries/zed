@@ -9,8 +9,9 @@ use playback::{capture_local_audio_track, capture_local_video_track};
 
 mod playback;
 
+use crate::{LocalTrack, Participant, RemoteTrack, RoomEvent, TrackPublication};
 pub use playback::{play_remote_audio_track, AudioStream};
-pub use remote_video_track_view::{RemoteVideoTrackView, RemoteVideoTrackViewEvent};
+pub(crate) use playback::{play_remote_video_track, RemoteVideoFrame};
 
 #[derive(Clone, Debug)]
 pub struct RemoteVideoTrack(livekit::track::RemoteVideoTrack);
@@ -40,54 +41,6 @@ pub type ConnectionState = livekit::ConnectionState;
 #[derive(Clone, Debug, Eq, Hash, PartialEq, PartialOrd, Ord)]
 pub struct ParticipantIdentity(pub String);
 
-impl From<livekit::participant::Participant> for Participant {
-    fn from(participant: livekit::participant::Participant) -> Self {
-        match participant {
-            livekit::participant::Participant::Local(local) => {
-                Participant::Local(LocalParticipant(local))
-            }
-            livekit::participant::Participant::Remote(remote) => {
-                Participant::Remote(RemoteParticipant(remote))
-            }
-        }
-    }
-}
-
-impl From<livekit::publication::TrackPublication> for TrackPublication {
-    fn from(publication: livekit::publication::TrackPublication) -> Self {
-        match publication {
-            livekit::publication::TrackPublication::Local(local) => {
-                TrackPublication::Local(LocalTrackPublication(local))
-            }
-            livekit::publication::TrackPublication::Remote(remote) => {
-                TrackPublication::Remote(RemoteTrackPublication(remote))
-            }
-        }
-    }
-}
-
-impl From<livekit::track::RemoteTrack> for RemoteTrack {
-    fn from(track: livekit::track::RemoteTrack) -> Self {
-        match track {
-            livekit::track::RemoteTrack::Audio(audio) => {
-                RemoteTrack::Audio(RemoteAudioTrack(audio))
-            }
-            livekit::track::RemoteTrack::Video(video) => {
-                RemoteTrack::Video(RemoteVideoTrack(video))
-            }
-        }
-    }
-}
-
-impl From<livekit::track::LocalTrack> for LocalTrack {
-    fn from(track: livekit::track::LocalTrack) -> Self {
-        match track {
-            livekit::track::LocalTrack::Audio(audio) => LocalTrack::Audio(LocalAudioTrack(audio)),
-            livekit::track::LocalTrack::Video(video) => LocalTrack::Video(LocalVideoTrack(video)),
-        }
-    }
-}
-
 impl Room {
     pub async fn connect(
         url: String,
@@ -106,7 +59,7 @@ impl Room {
         let (mut tx, rx) = mpsc::unbounded();
         let task = cx.background_executor().spawn(async move {
             while let Some(event) = events.recv().await {
-                if let Some(event) = RoomEvent::from_livekit(event) {
+                if let Some(event) = room_event_from_livekit(event) {
                     tx.send(event.into()).await.ok();
                 }
             }
@@ -260,7 +213,7 @@ impl RemoteTrackPublication {
     }
 
     pub fn track(&self) -> Option<RemoteTrack> {
-        Some(self.0.track()?.into())
+        self.0.track().map(remote_track_from_livekit)
     }
 
     pub fn is_audio(&self) -> bool {
@@ -306,151 +259,187 @@ impl Participant {
         }
     }
 }
-impl RoomEvent {
-    fn from_livekit(event: livekit::RoomEvent) -> Option<Self> {
-        let event = match event {
-            livekit::RoomEvent::ParticipantConnected(remote_participant) => {
-                RoomEvent::ParticipantConnected(RemoteParticipant(remote_participant))
-            }
-            livekit::RoomEvent::ParticipantDisconnected(remote_participant) => {
-                RoomEvent::ParticipantDisconnected(RemoteParticipant(remote_participant))
-            }
-            livekit::RoomEvent::LocalTrackPublished {
-                publication,
-                track,
-                participant,
-            } => RoomEvent::LocalTrackPublished {
-                publication: LocalTrackPublication(publication),
-                track: track.into(),
-                participant: LocalParticipant(participant),
-            },
-            livekit::RoomEvent::LocalTrackUnpublished {
-                publication,
-                participant,
-            } => RoomEvent::LocalTrackUnpublished {
-                publication: LocalTrackPublication(publication),
-                participant: LocalParticipant(participant),
-            },
-            livekit::RoomEvent::LocalTrackSubscribed { track } => RoomEvent::LocalTrackSubscribed {
-                track: track.into(),
-            },
-            livekit::RoomEvent::TrackSubscribed {
-                track,
-                publication,
-                participant,
-            } => RoomEvent::TrackSubscribed {
-                track: track.into(),
-                publication: RemoteTrackPublication(publication),
-                participant: RemoteParticipant(participant),
-            },
-            livekit::RoomEvent::TrackUnsubscribed {
-                track,
-                publication,
-                participant,
-            } => RoomEvent::TrackUnsubscribed {
-                track: track.into(),
-                publication: RemoteTrackPublication(publication),
-                participant: RemoteParticipant(participant),
-            },
-            livekit::RoomEvent::TrackSubscriptionFailed {
-                participant,
-                error: _,
-                track_sid,
-            } => RoomEvent::TrackSubscriptionFailed {
-                participant: RemoteParticipant(participant),
-                track_sid,
-            },
-            livekit::RoomEvent::TrackPublished {
-                publication,
-                participant,
-            } => RoomEvent::TrackPublished {
-                publication: RemoteTrackPublication(publication),
-                participant: RemoteParticipant(participant),
-            },
-            livekit::RoomEvent::TrackUnpublished {
-                publication,
-                participant,
-            } => RoomEvent::TrackUnpublished {
-                publication: RemoteTrackPublication(publication),
-                participant: RemoteParticipant(participant),
-            },
-            livekit::RoomEvent::TrackMuted {
-                participant,
-                publication,
-            } => RoomEvent::TrackMuted {
-                publication: publication.into(),
-                participant: participant.into(),
-            },
-            livekit::RoomEvent::TrackUnmuted {
-                participant,
-                publication,
-            } => RoomEvent::TrackUnmuted {
-                publication: publication.into(),
-                participant: participant.into(),
-            },
-            livekit::RoomEvent::RoomMetadataChanged {
-                old_metadata,
-                metadata,
-            } => RoomEvent::RoomMetadataChanged {
-                old_metadata,
-                metadata,
-            },
-            livekit::RoomEvent::ParticipantMetadataChanged {
-                participant,
-                old_metadata,
-                metadata,
-            } => RoomEvent::ParticipantMetadataChanged {
-                participant: participant.into(),
-                old_metadata,
-                metadata,
-            },
-            livekit::RoomEvent::ParticipantNameChanged {
-                participant,
-                old_name,
-                name,
-            } => RoomEvent::ParticipantNameChanged {
-                participant: participant.into(),
-                old_name,
-                name,
-            },
-            livekit::RoomEvent::ParticipantAttributesChanged {
-                participant,
-                changed_attributes,
-            } => RoomEvent::ParticipantAttributesChanged {
-                participant: participant.into(),
-                changed_attributes: changed_attributes.into_iter().collect(),
-            },
-            livekit::RoomEvent::ActiveSpeakersChanged { speakers } => {
-                RoomEvent::ActiveSpeakersChanged {
-                    speakers: speakers.into_iter().map(|s| s.into()).collect(),
-                }
-            }
-            livekit::RoomEvent::Connected {
-                participants_with_tracks,
-            } => RoomEvent::Connected {
-                participants_with_tracks: participants_with_tracks
-                    .into_iter()
-                    .map({
-                        |(p, t)| {
-                            (
-                                RemoteParticipant(p),
-                                t.into_iter().map(|t| RemoteTrackPublication(t)).collect(),
-                            )
-                        }
-                    })
-                    .collect(),
-            },
-            livekit::RoomEvent::Disconnected { reason } => RoomEvent::Disconnected {
-                reason: reason.as_str_name(),
-            },
-            livekit::RoomEvent::Reconnecting => RoomEvent::Reconnecting,
-            livekit::RoomEvent::Reconnected => RoomEvent::Reconnected,
-            _ => {
-                log::trace!("dropping livekit event: {:?}", event);
-                return None;
-            }
-        };
 
-        Some(event)
+fn participant_from_livekit(participant: livekit::participant::Participant) -> Participant {
+    match participant {
+        livekit::participant::Participant::Local(local) => {
+            Participant::Local(LocalParticipant(local))
+        }
+        livekit::participant::Participant::Remote(remote) => {
+            Participant::Remote(RemoteParticipant(remote))
+        }
     }
+}
+
+fn publication_from_livekit(
+    publication: livekit::publication::TrackPublication,
+) -> TrackPublication {
+    match publication {
+        livekit::publication::TrackPublication::Local(local) => {
+            TrackPublication::Local(LocalTrackPublication(local))
+        }
+        livekit::publication::TrackPublication::Remote(remote) => {
+            TrackPublication::Remote(RemoteTrackPublication(remote))
+        }
+    }
+}
+
+fn remote_track_from_livekit(track: livekit::track::RemoteTrack) -> RemoteTrack {
+    match track {
+        livekit::track::RemoteTrack::Audio(audio) => RemoteTrack::Audio(RemoteAudioTrack(audio)),
+        livekit::track::RemoteTrack::Video(video) => RemoteTrack::Video(RemoteVideoTrack(video)),
+    }
+}
+
+fn local_track_from_livekit(track: livekit::track::LocalTrack) -> LocalTrack {
+    match track {
+        livekit::track::LocalTrack::Audio(audio) => LocalTrack::Audio(LocalAudioTrack(audio)),
+        livekit::track::LocalTrack::Video(video) => LocalTrack::Video(LocalVideoTrack(video)),
+    }
+}
+fn room_event_from_livekit(event: livekit::RoomEvent) -> Option<RoomEvent> {
+    let event = match event {
+        livekit::RoomEvent::ParticipantConnected(remote_participant) => {
+            RoomEvent::ParticipantConnected(RemoteParticipant(remote_participant))
+        }
+        livekit::RoomEvent::ParticipantDisconnected(remote_participant) => {
+            RoomEvent::ParticipantDisconnected(RemoteParticipant(remote_participant))
+        }
+        livekit::RoomEvent::LocalTrackPublished {
+            publication,
+            track,
+            participant,
+        } => RoomEvent::LocalTrackPublished {
+            publication: LocalTrackPublication(publication),
+            track: local_track_from_livekit(track),
+            participant: LocalParticipant(participant),
+        },
+        livekit::RoomEvent::LocalTrackUnpublished {
+            publication,
+            participant,
+        } => RoomEvent::LocalTrackUnpublished {
+            publication: LocalTrackPublication(publication),
+            participant: LocalParticipant(participant),
+        },
+        livekit::RoomEvent::LocalTrackSubscribed { track } => RoomEvent::LocalTrackSubscribed {
+            track: local_track_from_livekit(track),
+        },
+        livekit::RoomEvent::TrackSubscribed {
+            track,
+            publication,
+            participant,
+        } => RoomEvent::TrackSubscribed {
+            track: remote_track_from_livekit(track),
+            publication: RemoteTrackPublication(publication),
+            participant: RemoteParticipant(participant),
+        },
+        livekit::RoomEvent::TrackUnsubscribed {
+            track,
+            publication,
+            participant,
+        } => RoomEvent::TrackUnsubscribed {
+            track: remote_track_from_livekit(track),
+            publication: RemoteTrackPublication(publication),
+            participant: RemoteParticipant(participant),
+        },
+        livekit::RoomEvent::TrackSubscriptionFailed {
+            participant,
+            error: _,
+            track_sid,
+        } => RoomEvent::TrackSubscriptionFailed {
+            participant: RemoteParticipant(participant),
+            track_sid,
+        },
+        livekit::RoomEvent::TrackPublished {
+            publication,
+            participant,
+        } => RoomEvent::TrackPublished {
+            publication: RemoteTrackPublication(publication),
+            participant: RemoteParticipant(participant),
+        },
+        livekit::RoomEvent::TrackUnpublished {
+            publication,
+            participant,
+        } => RoomEvent::TrackUnpublished {
+            publication: RemoteTrackPublication(publication),
+            participant: RemoteParticipant(participant),
+        },
+        livekit::RoomEvent::TrackMuted {
+            participant,
+            publication,
+        } => RoomEvent::TrackMuted {
+            publication: publication_from_livekit(publication),
+            participant: participant_from_livekit(participant),
+        },
+        livekit::RoomEvent::TrackUnmuted {
+            participant,
+            publication,
+        } => RoomEvent::TrackUnmuted {
+            publication: publication_from_livekit(publication),
+            participant: participant_from_livekit(participant),
+        },
+        livekit::RoomEvent::RoomMetadataChanged {
+            old_metadata,
+            metadata,
+        } => RoomEvent::RoomMetadataChanged {
+            old_metadata,
+            metadata,
+        },
+        livekit::RoomEvent::ParticipantMetadataChanged {
+            participant,
+            old_metadata,
+            metadata,
+        } => RoomEvent::ParticipantMetadataChanged {
+            participant: participant_from_livekit(participant),
+            old_metadata,
+            metadata,
+        },
+        livekit::RoomEvent::ParticipantNameChanged {
+            participant,
+            old_name,
+            name,
+        } => RoomEvent::ParticipantNameChanged {
+            participant: participant_from_livekit(participant),
+            old_name,
+            name,
+        },
+        livekit::RoomEvent::ParticipantAttributesChanged {
+            participant,
+            changed_attributes,
+        } => RoomEvent::ParticipantAttributesChanged {
+            participant: participant_from_livekit(participant),
+            changed_attributes: changed_attributes.into_iter().collect(),
+        },
+        livekit::RoomEvent::ActiveSpeakersChanged { speakers } => {
+            RoomEvent::ActiveSpeakersChanged {
+                speakers: speakers.into_iter().map(participant_from_livekit).collect(),
+            }
+        }
+        livekit::RoomEvent::Connected {
+            participants_with_tracks,
+        } => RoomEvent::Connected {
+            participants_with_tracks: participants_with_tracks
+                .into_iter()
+                .map({
+                    |(p, t)| {
+                        (
+                            RemoteParticipant(p),
+                            t.into_iter().map(|t| RemoteTrackPublication(t)).collect(),
+                        )
+                    }
+                })
+                .collect(),
+        },
+        livekit::RoomEvent::Disconnected { reason } => RoomEvent::Disconnected {
+            reason: reason.as_str_name(),
+        },
+        livekit::RoomEvent::Reconnecting => RoomEvent::Reconnecting,
+        livekit::RoomEvent::Reconnected => RoomEvent::Reconnected,
+        _ => {
+            log::trace!("dropping livekit event: {:?}", event);
+            return None;
+        }
+    };
+
+    Some(event)
 }
