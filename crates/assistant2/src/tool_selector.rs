@@ -63,6 +63,7 @@ impl ToolSelector {
                     let tools = tool_set.clone();
                     move |_window, cx| {
                         tools.disable_source(ToolSource::Native, cx);
+                        tools.disable_scripting_tool();
                         tools.enable(
                             ToolSource::Native,
                             &profile
