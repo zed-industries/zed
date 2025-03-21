@@ -1,7 +1,6 @@
 #![allow(clippy::format_collect)]
 
 use crate::{task_inventory::TaskContexts, task_store::TaskSettingsLocation, Event, *};
-use anyhow::Context;
 use buffer_diff::{
     assert_hunks, BufferDiffEvent, DiffHunkSecondaryStatus, DiffHunkStatus, DiffHunkStatusKind,
 };

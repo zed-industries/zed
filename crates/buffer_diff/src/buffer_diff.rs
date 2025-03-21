@@ -1710,7 +1710,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_stage_and_unstage_hunks(cx: &mut TestAppContext) {
+    async fn test_toggling_stage_and_unstage_same_hunk(cx: &mut TestAppContext) {
         let head_text = "
             one
             two
