@@ -1021,7 +1021,7 @@ impl ActiveThread {
                                 ToolUseStatus::Pending => container,
                                 ToolUseStatus::NeedsConfirmation => container.child(
                                     content_container().child(
-                                        Label::new("Waiting for confirmation")
+                                        Label::new("Asking Permission")
                                             .size(LabelSize::Small)
                                             .color(Color::Muted)
                                             .buffer_font(cx),
@@ -1095,7 +1095,7 @@ impl ActiveThread {
                                 ToolUseStatus::Running => "Running",
                                 ToolUseStatus::Finished(_) => "Finished",
                                 ToolUseStatus::Error(_) => "Error",
-                                ToolUseStatus::NeedsConfirmation => "Awaiting Confirmation",
+                                ToolUseStatus::NeedsConfirmation => "Asking Permission",
                             })
                             .size(LabelSize::XSmall)
                             .buffer_font(cx),
@@ -1152,7 +1152,7 @@ impl ActiveThread {
                                         .gap_0p5()
                                         .py_1()
                                         .px_2p5()
-                                        .child(Label::new("Waiting for confirmation")),
+                                        .child(Label::new("Asking Permission")),
                                 ),
                             }),
                     )
@@ -1217,7 +1217,7 @@ impl ActiveThread {
             .into_any()
     }
 
-    fn handle_tool_accept(
+    fn handle_allow_tool(
         &mut self,
         tool_use_id: LanguageModelToolUseId,
         _: &ClickEvent,
@@ -1250,7 +1250,7 @@ impl ActiveThread {
         }
     }
 
-    fn handle_tool_deny(
+    fn handle_deny_tool(
         &mut self,
         tool_use_id: LanguageModelToolUseId,
         _: &ClickEvent,
@@ -1266,13 +1266,11 @@ impl ActiveThread {
             .any(|tool_use| tool_use.id == tool_use_id && tool_use.status.needs_confirmation())
         {
             self.thread.update(cx, |thread, cx| {
-                // Cancel the tool execution
                 thread.tool_use.insert_tool_output(
                     tool_use_id.clone(),
                     Err(anyhow::anyhow!("Tool execution denied by user")),
                 );
 
-                // Emit the finished event with canceled flag
                 cx.emit(ThreadEvent::ToolFinished {
                     tool_use_id,
                     pending_tool_use: None,
@@ -1340,22 +1338,22 @@ impl ActiveThread {
                                     .gap_1()
                                     .child({
                                         let tool_id = tool.id.clone();
-                                        Button::new("accept-tool", "Allow").on_click(cx.listener(
-                                            move |this, event, window, cx| {
-                                                this.handle_tool_accept(
+                                        Button::new("allow-tool-action", "Allow").on_click(
+                                            cx.listener(move |this, event, window, cx| {
+                                                this.handle_allow_tool(
                                                     tool_id.clone(),
                                                     event,
                                                     window,
                                                     cx,
                                                 )
-                                            },
-                                        ))
+                                            }),
+                                        )
                                     })
                                     .child({
                                         let tool_id = tool.id.clone();
                                         Button::new("deny-tool", "Deny").on_click(cx.listener(
                                             move |this, event, window, cx| {
-                                                this.handle_tool_deny(
+                                                this.handle_deny_tool(
                                                     tool_id.clone(),
                                                     event,
                                                     window,
