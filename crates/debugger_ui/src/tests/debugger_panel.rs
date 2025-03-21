@@ -1367,7 +1367,7 @@ async fn test_unsetting_breakpoints_on_clear_breakpoint_action(
                 match args
                     .source
                     .path
-                    .expect("We should alway send a breakpoint's path")
+                    .expect("We should always send a breakpoint's path")
                     .as_str()
                 {
                     "/project/main.rs" | "/project/second.rs" => {}
