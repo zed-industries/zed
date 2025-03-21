@@ -6182,6 +6182,8 @@ impl Editor {
             .is_some_and(|gutter_bp| gutter_bp.row() == row)
         {
             Color::Hint
+        } else if breakpoint.is_disabled() {
+            Color::Custom(Color::Debugger.color(cx).opacity(0.5))
         } else {
             Color::Debugger
         };

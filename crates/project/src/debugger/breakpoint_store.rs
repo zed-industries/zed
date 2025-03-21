@@ -610,6 +610,14 @@ impl Breakpoint {
             },
         })
     }
+
+    pub fn is_enabled(&self) -> bool {
+        matches!(self.state, BreakpointState::Enabled)
+    }
+
+    pub fn is_disabled(&self) -> bool {
+        matches!(self.state, BreakpointState::Disabled)
+    }
 }
 
 #[derive(Clone, Debug, Hash, PartialEq, Eq)]
