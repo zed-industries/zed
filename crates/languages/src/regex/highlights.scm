@@ -29,6 +29,8 @@
   "|"
   "="
   "!"
+  (start_assertion)
+  (end_assertion)
   (any_character)
 ] @operator.regex
 
