@@ -1,3 +1,29 @@
+// A heat map color gradient for debugging (blue -> cyan -> green -> yellow -> red).
+fn heat_map_color(value: f32, minValue: f32, maxValue: f32, position: vec2<f32>) -> vec4<f32> {
+    // Normalize value to 0-1 range
+    let t = clamp((value - minValue) / (maxValue - minValue), 0.0, 1.0);
+
+    // Heat map color calculation
+    let r = t * t;
+    let g = 4.0 * t * (1.0 - t);
+    let b = (1.0 - t) * (1.0 - t);
+    let heat_color = vec3<f32>(r, g, b);
+
+    // Create a checkerboard pattern (black and white)
+    let sum = floor(position.x / 3) + floor(position.y / 3);
+    let is_odd = fract(sum * 0.5); // 0.0 for even, 0.5 for odd
+    let checker_value = is_odd * 2.0; // 0.0 for even, 1.0 for odd
+    let checker_color = vec3<f32>(checker_value);
+
+    // Determine if value is in range (1.0 if in range, 0.0 if out of range)
+    let in_range = step(minValue, value) * step(value, maxValue);
+
+    // Mix checkerboard and heat map based on whether value is in range
+    let final_color = mix(checker_color, heat_color, in_range);
+
+    return vec4<f32>(final_color, 1.0);
+}
+
 struct GlobalParams {
     viewport_size: vec2<f32>,
     premultiplied_alpha: u32,
