@@ -237,7 +237,7 @@ pub enum LanguageModelRequestTool {
         input_schema: serde_json::Value,
     },
     RefactorMeProviderDefined {
-        // todo! this payload would like depend on the provider. should this be a serde_json::Value?
+        // todo! this payload would likely depend on the provider. should this be a serde_json::Value?
         #[serde(rename = "type")]
         tool_type: String,
         name: String,

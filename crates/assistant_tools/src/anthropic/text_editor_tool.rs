@@ -133,13 +133,11 @@ impl Tool for TextEditorTool {
 
         let path = input.path().clone();
 
-        let project_path =
-            // todo! how can we tell the model to not use abs paths
-            if path.is_absolute() {
-                project.read(cx).project_path_for_absolute_path(&path, cx)
-            } else {
-                project.read(cx).find_project_path(&path, cx)
-            };
+        let project_path = if path.is_absolute() {
+            project.read(cx).project_path_for_absolute_path(&path, cx)
+        } else {
+            project.read(cx).find_project_path(&path, cx)
+        };
 
         let Some(project_path) = project_path else {
             return Task::ready(Err(anyhow!("Path {} not found in project", path.display())));
@@ -214,7 +212,6 @@ impl Tool for TextEditorTool {
                         return Err(anyhow!("{} does not exist", path.display()));
                     }
 
-                    // todo! anthropic requires that we fail if >1 match is found
                     let diff_result = cx
                         .background_spawn(async move {
                             replace_exact(&old_str, &new_str, &snapshot).await
