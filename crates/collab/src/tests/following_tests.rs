@@ -457,7 +457,7 @@ async fn test_basic_following(
                 .update(cx, |room, cx| room.share_screen(cx))
         })
         .await
-        .unwrap(); // This is what breaks
+        .unwrap();
     executor.run_until_parked();
     let shared_screen = workspace_a.update(cx_a, |workspace, cx| {
         workspace

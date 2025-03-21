@@ -941,7 +941,9 @@ impl Room {
                     )
                 })?;
                 if self.live_kit.as_ref().map_or(true, |kit| kit.deafened) {
-                    track.set_enabled(false, cx);
+                    if matches!(track, livekit_client::RemoteTrack::Audio(_)) {
+                        track.set_enabled(false, cx);
+                    }
                 }
                 match track {
                     livekit_client::RemoteTrack::Audio(track) => {
