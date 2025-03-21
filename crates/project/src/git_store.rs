@@ -584,7 +584,7 @@ impl GitStore {
     pub fn compare_checkpoints(
         &self,
         left: GitStoreCheckpoint,
-        right: GitStoreCheckpoint,
+        mut right: GitStoreCheckpoint,
         cx: &App,
     ) -> Task<Result<bool>> {
         let repositories_by_dot_git_abs_path = self
@@ -595,8 +595,9 @@ impl GitStore {
 
         let mut tasks = Vec::new();
         for (dot_git_abs_path, left_checkpoint) in left.checkpoints_by_dot_git_abs_path {
-            if let Some(right_checkpoint) =
-                right.checkpoints_by_dot_git_abs_path.get(&dot_git_abs_path)
+            if let Some(right_checkpoint) = right
+                .checkpoints_by_dot_git_abs_path
+                .remove(&dot_git_abs_path)
             {
                 if let Some(repository) = repositories_by_dot_git_abs_path.get(&dot_git_abs_path) {
                     let compare = repository
