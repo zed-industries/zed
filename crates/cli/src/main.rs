@@ -737,7 +737,6 @@ mod mac_os {
         },
         LocalPath {
             executable: PathBuf,
-            plist: InfoPlist,
         },
     }
 
@@ -774,34 +773,16 @@ mod mac_os {
                         plist,
                     })
                 }
-                _ => {
-                    println!("Bundle path {bundle_path:?} has no *.app extension, attempting to locate a dev build");
-                    let plist_path = bundle_path
-                        .parent()
-                        .with_context(|| format!("Bundle path {bundle_path:?} has no parent"))?
-                        .join("WebRTC.framework/Resources/Info.plist");
-                    let plist =
-                        plist::from_file::<_, InfoPlist>(&plist_path).with_context(|| {
-                            format!("Reading dev bundle plist file at {plist_path:?}")
-                        })?;
-                    Ok(Bundle::LocalPath {
-                        executable: bundle_path,
-                        plist,
-                    })
-                }
+                _ => Ok(Bundle::LocalPath {
+                    executable: bundle_path,
+                }),
             }
         }
     }
 
     impl InstalledApp for Bundle {
         fn zed_version_string(&self) -> String {
-            let is_dev = matches!(self, Self::LocalPath { .. });
-            format!(
-                "Zed {}{} – {}",
-                self.plist().bundle_short_version_string,
-                if is_dev { " (dev)" } else { "" },
-                self.path().display(),
-            )
+            format!("Zed {} – {}", self.version(), self.path().display(),)
         }
 
         fn launch(&self, url: String) -> anyhow::Result<()> {
@@ -880,10 +861,10 @@ mod mac_os {
     }
 
     impl Bundle {
-        fn plist(&self) -> &InfoPlist {
+        fn version(&self) -> String {
             match self {
-                Self::App { plist, .. } => plist,
-                Self::LocalPath { plist, .. } => plist,
+                Self::App { plist, .. } => plist.bundle_short_version_string.clone(),
+                Self::LocalPath { .. } => "<development>".to_string(),
             }
         }
 
