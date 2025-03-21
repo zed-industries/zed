@@ -307,6 +307,34 @@ impl LocalMode {
         })
     }
 
+    fn unset_breakpoints_from_paths(&self, paths: &Vec<Arc<Path>>, cx: &mut App) -> Task<()> {
+        let tasks: Vec<_> = paths
+            .into_iter()
+            .map(|path| {
+                self.request(
+                    dap_command::SetBreakpoints {
+                        source: client_source(path),
+                        source_modified: None,
+                        breakpoints: vec![],
+                    },
+                    cx.background_executor().clone(),
+                )
+            })
+            .collect();
+
+        cx.background_spawn(async move {
+            futures::future::join_all(tasks)
+                .await
+                .iter()
+                .for_each(|res| match res {
+                    Ok(_) => {}
+                    Err(err) => {
+                        log::warn!("Set breakpoints request failed: {}", err);
+                    }
+                });
+        })
+    }
+
     fn send_breakpoints_from_path(
         &self,
         abs_path: Arc<Path>,
@@ -751,6 +779,14 @@ impl Session {
                                 .send_breakpoints_from_path(path.clone(), *reason, cx)
                                 .detach();
                         };
+                    }
+                    BreakpointStoreEvent::BreakpointsCleared(paths) => {
+                        if let Some(local) = (!this.ignore_breakpoints)
+                            .then(|| this.as_local_mut())
+                            .flatten()
+                        {
+                            local.unset_breakpoints_from_paths(paths, cx).detach();
+                        }
                     }
                     BreakpointStoreEvent::ActiveDebugLineChanged => {}
                 })

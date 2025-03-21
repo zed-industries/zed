@@ -5,7 +5,7 @@ use anyhow::{anyhow, Result};
 use breakpoints_in_file::BreakpointsInFile;
 use collections::BTreeMap;
 use dap::client::SessionId;
-use gpui::{App, AppContext, AsyncApp, Context, Entity, EventEmitter, Task};
+use gpui::{App, AppContext, AsyncApp, Context, Entity, EventEmitter, Subscription, Task};
 use language::{proto::serialize_anchor as serialize_text_anchor, Buffer, BufferSnapshot};
 use rpc::{
     proto::{self},
@@ -31,7 +31,7 @@ mod breakpoints_in_file {
         pub(super) buffer: Entity<Buffer>,
         // TODO: This is.. less than ideal, as it's O(n) and does not return entries in order. We'll have to change TreeMap to support passing in the context for comparisons
         pub(super) breakpoints: Vec<(text::Anchor, Breakpoint)>,
-        _subscription: Arc<gpui::Subscription>,
+        _subscription: Arc<Subscription>,
     }
 
     impl BreakpointsInFile {
@@ -341,6 +341,12 @@ impl BreakpointStore {
         }
     }
 
+    pub fn clear_breakpoints(&mut self, cx: &mut Context<Self>) {
+        let breakpoint_paths = self.breakpoints.keys().cloned().collect();
+        self.breakpoints.clear();
+        cx.emit(BreakpointStoreEvent::BreakpointsCleared(breakpoint_paths));
+    }
+
     pub fn breakpoints<'a>(
         &'a self,
         buffer: &'a Entity<Buffer>,
@@ -509,6 +515,7 @@ pub enum BreakpointUpdatedReason {
 pub enum BreakpointStoreEvent {
     ActiveDebugLineChanged,
     BreakpointsUpdated(Arc<Path>, BreakpointUpdatedReason),
+    BreakpointsCleared(Vec<Arc<Path>>),
 }
 
 impl EventEmitter<BreakpointStoreEvent> for BreakpointStore {}

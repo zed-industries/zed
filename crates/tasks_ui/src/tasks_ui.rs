@@ -9,6 +9,7 @@ use modal::{TaskOverrides, TasksModal};
 use project::{Location, TaskContexts, Worktree};
 use task::{RevealTarget, TaskContext, TaskId, TaskModal, TaskVariables, VariableName};
 use workspace::tasks::schedule_task;
+use workspace::ClearBreakpoints;
 use workspace::{tasks::schedule_resolved_task, Start, Workspace};
 
 mod modal;
@@ -95,10 +96,25 @@ pub fn init(cx: &mut App) {
             };
 
             cx.when_flag_enabled::<Debugger>(window, |workspace, _, _| {
-                workspace.register_action(|workspace: &mut Workspace, _: &Start, window, cx| {
-                    crate::toggle_modal(workspace, None, task::TaskModal::DebugModal, window, cx)
+                workspace
+                    .register_action(|workspace: &mut Workspace, _: &Start, window, cx| {
+                        crate::toggle_modal(
+                            workspace,
+                            None,
+                            task::TaskModal::DebugModal,
+                            window,
+                            cx,
+                        )
                         .detach();
-                });
+                    })
+                    .register_action(|workspace: &mut Workspace, _: &ClearBreakpoints, _, cx| {
+                        workspace.project().read(cx).breakpoint_store().update(
+                            cx,
+                            |breakpoint_store, cx| {
+                                breakpoint_store.clear_breakpoints(cx);
+                            },
+                        )
+                    });
             });
         },
     )
