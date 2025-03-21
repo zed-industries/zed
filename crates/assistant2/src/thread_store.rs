@@ -259,11 +259,42 @@ pub struct SerializedThreadMetadata {
 
 #[derive(Serialize, Deserialize)]
 pub struct SerializedThread {
+    pub version: String,
     pub summary: SharedString,
     pub updated_at: DateTime<Utc>,
     pub messages: Vec<SerializedMessage>,
     #[serde(default)]
     pub initial_project_snapshot: Option<Arc<ProjectSnapshot>>,
+}
+
+impl SerializedThread {
+    pub const VERSION: &'static str = "0.1.0";
+
+    pub fn from_json(json: &str) -> Result<Self> {
+        let saved_thread_json = serde_json::from_str::<serde_json::Value>(json)?;
+        dbg!(&saved_thread_json);
+        match saved_thread_json.get("version") {
+            Some(serde_json::Value::String(version)) => match version.as_str() {
+                SerializedThread::VERSION => Ok(serde_json::from_value::<SerializedThread>(
+                    saved_thread_json,
+                )?),
+                _ => Err(anyhow!(
+                    "unrecognized serialized thread version: {}",
+                    version
+                )),
+            },
+            None => {
+                dbg!("Loading legacy");
+                let saved_thread =
+                    serde_json::from_value::<LegacySerializedThread>(saved_thread_json)?;
+                Ok(saved_thread.upgrade())
+            }
+            version => Err(anyhow!(
+                "unrecognized serialized thread version: {:?}",
+                version
+            )),
+        }
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -299,6 +330,50 @@ pub struct SerializedToolResult {
     pub tool_use_id: LanguageModelToolUseId,
     pub is_error: bool,
     pub content: Arc<str>,
+}
+
+#[derive(Serialize, Deserialize)]
+struct LegacySerializedThread {
+    pub summary: SharedString,
+    pub updated_at: DateTime<Utc>,
+    pub messages: Vec<LegacySerializedMessage>,
+    #[serde(default)]
+    pub initial_project_snapshot: Option<Arc<ProjectSnapshot>>,
+}
+
+impl LegacySerializedThread {
+    pub fn upgrade(self) -> SerializedThread {
+        SerializedThread {
+            version: SerializedThread::VERSION.to_string(),
+            summary: self.summary,
+            updated_at: self.updated_at,
+            messages: self.messages.into_iter().map(|msg| msg.upgrade()).collect(),
+            initial_project_snapshot: self.initial_project_snapshot,
+        }
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct LegacySerializedMessage {
+    pub id: MessageId,
+    pub role: Role,
+    pub text: String,
+    #[serde(default)]
+    pub tool_uses: Vec<SerializedToolUse>,
+    #[serde(default)]
+    pub tool_results: Vec<SerializedToolResult>,
+}
+
+impl LegacySerializedMessage {
+    fn upgrade(self) -> SerializedMessage {
+        SerializedMessage {
+            id: self.id,
+            role: self.role,
+            segments: vec![SerializedMessageSegment::Text { text: self.text }],
+            tool_uses: self.tool_uses,
+            tool_results: self.tool_results,
+        }
+    }
 }
 
 struct GlobalThreadsDatabase(

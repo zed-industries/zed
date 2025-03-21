@@ -504,6 +504,7 @@ impl Thread {
         cx.spawn(async move |this, cx| {
             let initial_project_snapshot = initial_project_snapshot.await;
             this.read_with(cx, |this, cx| SerializedThread {
+                version: SerializedThread::VERSION.to_string(),
                 summary: this.summary_or_default(),
                 updated_at: this.updated_at(),
                 messages: this
