@@ -237,6 +237,19 @@ impl LocalMode {
                     .on_request::<dap::requests::Initialize, _>(move |_, _| Ok(caps.clone()))
                     .await;
 
+                let paths = cx.update(|cx| session.breakpoint_store.read(cx).breakpoint_paths()).expect("msg");
+
+                session.client.on_request::<dap::requests::SetBreakpoints, _>(move |_, args| {
+                    let p = Arc::from(Path::new(&args.source.path.unwrap()));
+                    if !paths.contains(&p) {
+                        panic!("Sent breakpoints for path without any")
+                    }
+
+                    Ok(dap::SetBreakpointsResponse {
+                        breakpoints: Vec::default(),
+                    })
+                }).await;
+
                 match config.request.clone() {
                     dap::DebugRequestType::Launch if fail => {
                         session

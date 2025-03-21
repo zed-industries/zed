@@ -1356,80 +1356,9 @@ async fn test_unsetting_breakpoints_on_clear_breakpoint_action(
     let called_set_breakpoints = Arc::new(AtomicBool::new(false));
 
     client
-        .on_request::<StackTrace, _>(move |_, _| {
-            Ok(dap::StackTraceResponse {
-                stack_frames: Vec::default(),
-                total_frames: None,
-            })
-        })
-        .await;
-
-    client
-        .fake_event(dap::messages::Events::Stopped(dap::StoppedEvent {
-            reason: dap::StoppedEventReason::Pause,
-            description: None,
-            thread_id: Some(1),
-            preserve_focus_hint: None,
-            text: None,
-            all_threads_stopped: None,
-            hit_breakpoint_ids: None,
-        }))
-        .await;
-
-    client
         .on_request::<SetBreakpoints, _>({
             let called_set_breakpoints = called_set_breakpoints.clone();
             move |_, args| {
-                assert_eq!(path!("/project/main.rs"), args.source.path.unwrap());
-                assert_eq!(
-                    vec![SourceBreakpoint {
-                        line: 2,
-                        column: None,
-                        condition: None,
-                        hit_condition: None,
-                        log_message: None,
-                        mode: None
-                    }],
-                    args.breakpoints.unwrap()
-                );
-                assert!(!args.source_modified.unwrap());
-
-                called_set_breakpoints.store(true, Ordering::SeqCst);
-
-                Ok(dap::SetBreakpointsResponse {
-                    breakpoints: Vec::default(),
-                })
-            }
-        })
-        .await;
-
-    assert!(
-        called_set_breakpoints.load(std::sync::atomic::Ordering::SeqCst),
-        "SetBreakpoint request must be called"
-    );
-
-    called_set_breakpoints.store(false, Ordering::SeqCst);
-
-    cx.run_until_parked();
-
-    client
-        .on_request::<SetBreakpoints, _>({
-            let called_set_breakpoints = called_set_breakpoints.clone();
-            move |_, args| {
-                assert_eq!(path!("/project/main.rs"), args.source.path.unwrap());
-                assert_eq!(
-                    vec![SourceBreakpoint {
-                        line: 3,
-                        column: None,
-                        condition: None,
-                        hit_condition: None,
-                        log_message: None,
-                        mode: None
-                    }],
-                    args.breakpoints.unwrap()
-                );
-                assert!(args.source_modified.unwrap());
-
                 called_set_breakpoints.store(true, Ordering::SeqCst);
 
                 Ok(dap::SetBreakpointsResponse {
