@@ -10604,6 +10604,7 @@ dependencies = [
  "util",
  "which 6.0.3",
  "worktree",
+ "zlog",
 ]
 
 [[package]]
@@ -17465,6 +17466,7 @@ dependencies = [
  "workspace",
  "zed_actions",
  "zeta",
+ "zlog_settings",
 ]
 
 [[package]]
@@ -17770,6 +17772,25 @@ dependencies = [
  "sha1",
  "time",
  "zstd",
+]
+
+[[package]]
+name = "zlog"
+version = "0.1.0"
+dependencies = [
+ "log",
+]
+
+[[package]]
+name = "zlog_settings"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "gpui",
+ "schemars",
+ "serde",
+ "settings",
+ "zlog",
 ]
 
 [[package]]
