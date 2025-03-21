@@ -45,16 +45,6 @@ impl Disclosure {
         self.on_toggle = handler.into();
         self
     }
-
-    pub fn opened_icon(mut self, icon: IconName) -> Self {
-        self.opened_icon = icon;
-        self
-    }
-
-    pub fn closed_icon(mut self, icon: IconName) -> Self {
-        self.closed_icon = icon;
-        self
-    }
 }
 
 impl Toggleable for Disclosure {
