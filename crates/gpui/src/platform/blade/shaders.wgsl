@@ -386,7 +386,7 @@ fn gradient_color(background: Background, position: vec2<f32>, bounds: Bounds,
 
 struct Quad {
     order: u32,
-    pad: u32,
+    border_style: u32,
     bounds: Bounds,
     content_mask: Bounds,
     background: Background,
@@ -478,14 +478,82 @@ fn fs_quad(input: QuadVarying) -> @location(0) vec4<f32> {
     var color = background_color;
     if (border_width > 0.0) {
         let inset_distance = distance + border_width;
+        var border_color = input.border_color;
+
+        // Dashed border logic when border_style == 1
+        if (quad.border_style == 1) {
+            // Define segment lengths (assume uniform corner radii for simplicity; adjust as needed)
+            let avg_corner_radius = (quad.corner_radii.top_left + quad.corner_radii.top_right +
+                                    quad.corner_radii.bottom_left + quad.corner_radii.bottom_right) / 4.0;
+            let L_top = quad.bounds.size.x - quad.corner_radii.top_left - quad.corner_radii.top_right;
+            let L_right = quad.bounds.size.y - quad.corner_radii.top_right - quad.corner_radii.bottom_right;
+            let L_bottom = quad.bounds.size.x - quad.corner_radii.bottom_left - quad.corner_radii.bottom_right;
+            let L_left = quad.bounds.size.y - quad.corner_radii.top_left - quad.corner_radii.bottom_left;
+            let L_arc = (M_PI_F / 2.0) * avg_corner_radius;
+
+            // Compute perimeter parameter t
+            var t = 0.0;
+            if (center_to_point.y < -half_size.y + quad.corner_radii.top_left &&
+                center_to_point.x < -half_size.x + quad.corner_radii.top_left) {
+                // Top-left corner
+                let corner_center = vec2<f32>(-half_size.x + quad.corner_radii.top_left, -half_size.y + quad.corner_radii.top_left);
+                let theta = atan2(center_to_point.y - corner_center.y, center_to_point.x - corner_center.x);
+                t = L_top + L_arc + L_right + L_arc + L_bottom + L_arc + ((theta - M_PI_F) / (M_PI_F / 2.0)) * L_arc;
+            } else if (center_to_point.y < -half_size.y + quad.corner_radii.top_right &&
+                      center_to_point.x > half_size.x - quad.corner_radii.top_right) {
+                // Top-right corner
+                let corner_center = vec2<f32>(half_size.x - quad.corner_radii.top_right, -half_size.y + quad.corner_radii.top_right);
+                let theta = atan2(center_to_point.y - corner_center.y, center_to_point.x - corner_center.x);
+                t = L_top + ((theta + M_PI_F / 2.0) / (M_PI_F / 2.0)) * L_arc;
+            } else if (center_to_point.y > half_size.y - quad.corner_radii.bottom_right &&
+                      center_to_point.x > half_size.x - quad.corner_radii.bottom_right) {
+                // Bottom-right corner
+                let corner_center = vec2<f32>(half_size.x - quad.corner_radii.bottom_right, half_size.y - quad.corner_radii.bottom_right);
+                let theta = atan2(center_to_point.y - corner_center.y, center_to_point.x - corner_center.x);
+                t = L_top + L_arc + L_right + ((theta) / (M_PI_F / 2.0)) * L_arc;
+            } else if (center_to_point.y > half_size.y - quad.corner_radii.bottom_left &&
+                      center_to_point.x < -half_size.x + quad.corner_radii.bottom_left) {
+                // Bottom-left corner
+                let corner_center = vec2<f32>(-half_size.x + quad.corner_radii.bottom_left, half_size.y - quad.corner_radii.bottom_left);
+                let theta = atan2(center_to_point.y - corner_center.y, center_to_point.x - corner_center.x);
+                t = L_top + L_arc + L_right + L_arc + L_bottom + ((theta - M_PI_F / 2.0) / (M_PI_F / 2.0)) * L_arc;
+            } else {
+                // Straight regions
+                if (center_to_point.y < -half_size.y + border_width && abs(center_to_point.x) < half_size.x - corner_radius) {
+                    // Top straight
+                    t = center_to_point.x + half_size.x - quad.corner_radii.top_left;
+                } else if (center_to_point.x > half_size.x - border_width && abs(center_to_point.y) < half_size.y - corner_radius) {
+                    // Right straight
+                    t = L_top + L_arc + (center_to_point.y + half_size.y - quad.corner_radii.top_right);
+                } else if (center_to_point.y > half_size.y - border_width && abs(center_to_point.x) < half_size.x - corner_radius) {
+                    // Bottom straight
+                    t = L_top + L_arc + L_right + L_arc + (half_size.x - center_to_point.x - quad.corner_radii.bottom_right);
+                } else {
+                    // Left straight
+                    t = L_top + L_arc + L_right + L_arc + L_bottom + L_arc + (half_size.y - center_to_point.y - quad.corner_radii.bottom_left);
+                }
+            }
+
+            // Dash pattern: 4 pixels dash, 4 pixels gap
+            let dash_period = 8.0;
+            let dash_length = 4.0;
+            let dash_alpha = step(fmod(t, dash_period), dash_length);
+            border_color.a *= dash_alpha;
+        }
+
         // Blend the border on top of the background and then linearly interpolate
         // between the two as we slide inside the background.
-        let blended_border = over(background_color, input.border_color);
+        let blended_border = over(background_color, border_color);
         color = mix(blended_border, background_color,
                     saturate(0.5 - inset_distance));
     }
 
     return blend_color(color, saturate(0.5 - distance));
+}
+
+// Modulus that is always positive.
+fn fmod(a: f32, b: f32) -> f32 {
+    return a - b * trunc(a / b);
 }
 
 // --- shadows --- //

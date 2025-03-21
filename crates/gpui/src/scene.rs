@@ -455,12 +455,11 @@ pub(crate) enum PrimitiveBatch<'a> {
 #[repr(C)]
 pub(crate) struct Quad {
     pub order: DrawOrder,
-    pub pad: u32, // align to 8 bytes
+    pub border_style: BorderStyle,
     pub bounds: Bounds<ScaledPixels>,
     pub content_mask: ContentMask<ScaledPixels>,
     pub background: Background,
     pub border_color: Hsla,
-    pub border_style: BorderStyle,
     pub corner_radii: Corners<ScaledPixels>,
     pub border_widths: Edges<ScaledPixels>,
 }
