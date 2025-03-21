@@ -20,3 +20,4 @@ settings.workspace = true
 theme.workspace = true
 ui.workspace = true
 workspace.workspace = true
+workspace-hack.workspace = true

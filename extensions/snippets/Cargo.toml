@@ -15,3 +15,4 @@ crate-type = ["cdylib"]
 [dependencies]
 zed_extension_api = "0.1.0"
 serde_json = "1.0"
+workspace-hack.workspace = true
