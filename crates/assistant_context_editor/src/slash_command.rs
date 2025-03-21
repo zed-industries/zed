@@ -126,6 +126,7 @@ impl SlashCommandCompletionProvider {
                                 )),
                                 new_text,
                                 label: command.label(cx),
+                                icon_path: None,
                                 confirm,
                                 source: CompletionSource::Custom,
                             })
@@ -223,6 +224,7 @@ impl SlashCommandCompletionProvider {
                                     last_argument_range.clone()
                                 },
                                 label: new_argument.label,
+                                icon_path: None,
                                 new_text,
                                 documentation: None,
                                 confirm,

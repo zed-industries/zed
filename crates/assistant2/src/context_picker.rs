@@ -534,7 +534,7 @@ pub(crate) fn insert_crease_for_mention(
     excerpt_id: ExcerptId,
     crease_range: Range<text::Anchor>,
     crease_label: SharedString,
-    crease_icon: IconName,
+    crease_icon_path: SharedString,
     editor_entity: Entity<Editor>,
     window: &mut Window,
     cx: &mut App,
@@ -550,7 +550,11 @@ pub(crate) fn insert_crease_for_mention(
         };
 
         let placeholder = FoldPlaceholder {
-            render: render_fold_icon_button(crease_icon, crease_label, editor_entity.downgrade()),
+            render: render_fold_icon_button(
+                crease_icon_path,
+                crease_label,
+                editor_entity.downgrade(),
+            ),
             ..Default::default()
         };
 
@@ -573,7 +577,7 @@ pub(crate) fn insert_crease_for_mention(
 }
 
 fn render_fold_icon_button(
-    icon: IconName,
+    icon_path: SharedString,
     label: SharedString,
     editor: WeakEntity<Editor>,
 ) -> Arc<dyn Send + Sync + Fn(FoldId, Range<Anchor>, &mut App) -> AnyElement> {
@@ -623,7 +627,11 @@ fn render_fold_icon_button(
                 .child(
                     h_flex()
                         .gap_1()
-                        .child(Icon::new(icon).size(IconSize::Small).color(Color::Muted))
+                        .child(
+                            Icon::from_path(icon_path.clone())
+                                .size(IconSize::Small)
+                                .color(Color::Muted),
+                        )
                         .child(
                             Label::new(label.clone())
                                 .size(LabelSize::Small)

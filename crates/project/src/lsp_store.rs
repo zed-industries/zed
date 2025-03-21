@@ -7786,6 +7786,7 @@ impl LspStore {
                         runs: Default::default(),
                         filter_range: Default::default(),
                     },
+                    icon_path: None,
                     confirm: None,
                 }]))),
                 0,
@@ -8992,6 +8993,7 @@ async fn populate_labels_for_completions(
                     old_range: completion.old_range,
                     new_text: completion.new_text,
                     source: completion.source,
+                    icon_path: None,
                     confirm: None,
                 });
             }
@@ -9004,6 +9006,7 @@ async fn populate_labels_for_completions(
                     old_range: completion.old_range,
                     new_text: completion.new_text,
                     source: completion.source,
+                    icon_path: None,
                     confirm: None,
                 });
             }

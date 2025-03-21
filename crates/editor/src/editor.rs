@@ -4246,6 +4246,7 @@ impl Editor {
                     old_range: old_range.clone(),
                     new_text: word.clone(),
                     label: CodeLabel::plain(word, None),
+                    icon_path: None,
                     documentation: None,
                     source: CompletionSource::BufferWord {
                         word_range,
@@ -17935,6 +17936,7 @@ fn snippet_completions(
                         runs: Vec::new(),
                         filter_range: 0..matching_prefix.len(),
                     },
+                    icon_path: None,
                     documentation: snippet
                         .description
                         .clone()

@@ -312,6 +312,7 @@ impl MessageEditor {
                     old_range: range.clone(),
                     new_text,
                     label,
+                    icon_path: None,
                     confirm: None,
                     documentation: None,
                     source: CompletionSource::Custom,

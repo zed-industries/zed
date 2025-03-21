@@ -7,6 +7,7 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use editor::{CompletionProvider, Editor, ExcerptId};
+use file_icons::FileIcons;
 use gpui::{App, Entity, Task, WeakEntity};
 use language::{Buffer, CodeLabel, HighlightId};
 use lsp::CompletionContext;
@@ -69,6 +70,7 @@ impl ContextPickerCompletionProvider {
                     path_prefix: _,
                 } => Self::completion_for_path(
                     project_path.clone(),
+                    true,
                     false,
                     excerpt_id,
                     range_to_replace.clone(),
@@ -85,6 +87,7 @@ impl ContextPickerCompletionProvider {
                         thread_context_entry.clone(),
                         excerpt_id,
                         range_to_replace.clone(),
+                        true,
                         editor.clone(),
                         context_store.clone(),
                         thread_store,
@@ -101,6 +104,7 @@ impl ContextPickerCompletionProvider {
                         old_range: range_to_replace.clone(),
                         new_text: format!("@{} ", mode.mention_prefix()),
                         label: CodeLabel::plain(mode.label().to_string(), None),
+                        icon_path: Some(mode.icon().path().into()),
                         documentation: None,
                         source: project::CompletionSource::Custom,
                         // This ensures that when a user accepts this completion, the
@@ -171,18 +175,25 @@ impl ContextPickerCompletionProvider {
         thread_entry: ThreadContextEntry,
         excerpt_id: ExcerptId,
         range_to_replace: Range<Anchor>,
+        recent: bool,
         editor: Entity<Editor>,
         context_store: Entity<ContextStore>,
         thread_store: Entity<ThreadStore>,
     ) -> Completion {
+        let icon_for_completion = if recent {
+            IconName::HistoryRerun
+        } else {
+            IconName::MessageCircle
+        };
         Completion {
             old_range: range_to_replace.clone(),
             new_text: format!("@thread {}", thread_entry.summary),
             label: CodeLabel::plain(thread_entry.summary.to_string(), None),
             documentation: None,
             source: project::CompletionSource::Custom,
+            icon_path: Some(icon_for_completion.path().into()),
             confirm: Some(confirm_completion_callback(
-                IconName::MessageCircle,
+                IconName::MessageCircle.path().into(),
                 thread_entry.summary.clone(),
                 excerpt_id,
                 range_to_replace.clone(),
@@ -208,6 +219,7 @@ impl ContextPickerCompletionProvider {
 
     fn completion_for_path(
         project_path: ProjectPath,
+        is_recent: bool,
         is_directory: bool,
         excerpt_id: ExcerptId,
         range_to_replace: Range<Anchor>,
@@ -229,10 +241,12 @@ impl ContextPickerCompletionProvider {
             cx,
         )?;
 
-        let crease_icon = if is_directory {
-            IconName::Folder
+        let crease_icon_path = if is_recent {
+            IconName::HistoryRerun.path().into()
+        } else if is_directory {
+            FileIcons::get_folder_icon(false, cx).unwrap_or_else(|| IconName::Folder.path().into())
         } else {
-            IconName::File
+            FileIcons::get_icon(&full_path, cx).unwrap_or_else(|| IconName::File.path().into())
         };
         let crease_name = project_path
             .path
@@ -246,8 +260,9 @@ impl ContextPickerCompletionProvider {
             label,
             documentation: None,
             source: project::CompletionSource::Custom,
+            icon_path: Some(crease_icon_path.clone()),
             confirm: Some(confirm_completion_callback(
-                crease_icon,
+                crease_icon_path,
                 crease_name.into(),
                 excerpt_id,
                 range_to_replace,
@@ -334,6 +349,7 @@ impl CompletionProvider for ContextPickerCompletionProvider {
                                     worktree_id: WorktreeId::from_usize(mat.worktree_id),
                                     path: mat.path.clone(),
                                 },
+                                false,
                                 mat.is_dir,
                                 excerpt_id,
                                 range_to_replace.clone(),
@@ -365,6 +381,7 @@ impl CompletionProvider for ContextPickerCompletionProvider {
                                 thread.clone(),
                                 excerpt_id,
                                 range_to_replace.clone(),
+                                false,
                                 editor.clone(),
                                 context_store.clone(),
                                 thread_store.clone(),
@@ -427,7 +444,7 @@ impl CompletionProvider for ContextPickerCompletionProvider {
 }
 
 fn confirm_completion_callback(
-    crease_icon: IconName,
+    crease_icon_path: SharedString,
     crease_text: SharedString,
     excerpt_id: ExcerptId,
     range_to_replace: Range<Anchor>,
@@ -438,6 +455,7 @@ fn confirm_completion_callback(
         add_context_fn(cx);
 
         let crease_text = crease_text.clone();
+        let crease_icon_path = crease_icon_path.clone();
         let range_to_replace = range_to_replace.clone();
         let editor = editor.clone();
         window.defer(cx, move |window, cx| {
@@ -445,7 +463,7 @@ fn confirm_completion_callback(
                 excerpt_id,
                 range_to_replace,
                 crease_text,
-                crease_icon,
+                crease_icon_path,
                 editor,
                 window,
                 cx,
