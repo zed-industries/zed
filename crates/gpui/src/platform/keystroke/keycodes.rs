@@ -623,8 +623,8 @@ impl KeyCodes {
         let high = (result >> 8) as u8;
         let low = result as u8;
         let shift = high & 1;
-        let ctrl = high & 2;
-        let alt = high & 8;
+        let ctrl = (high >> 1) & 1;
+        let alt = (high >> 2) & 1;
         let this = VIRTUAL_KEY(low as u16).try_into()?;
         Ok((this, shift != 0, ctrl != 0, alt != 0))
     }
