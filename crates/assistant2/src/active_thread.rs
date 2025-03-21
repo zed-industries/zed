@@ -1131,7 +1131,7 @@ impl ActiveThread {
                             )
                             .into_any_element(),
                         RenderedMessageSegment::Text(markdown) => {
-                            div().p_2p5().child(markdown.clone()).into_any_element()
+                            div().child(markdown.clone()).into_any_element()
                         }
                     },
                 ),
