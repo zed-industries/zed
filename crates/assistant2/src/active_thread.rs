@@ -1004,17 +1004,33 @@ impl ActiveThread {
 
         let lighter_border = cx.theme().colors().border.opacity(0.5);
 
+        let tool_icon = match tool_use.name.as_ref() {
+            "bash" => IconName::Terminal,
+            "delete-path" => IconName::Trash,
+            "diagnostics" => IconName::Warning,
+            "edit-files" => IconName::Pencil,
+            "fetch" => IconName::Globe,
+            "list-directory" => IconName::Folder,
+            "now" => IconName::Info,
+            "path-search" => IconName::SearchCode,
+            "read-file" => IconName::Eye,
+            "regex-search" => IconName::Regex,
+            "thinking" => IconName::BellRing, // placeholder for now
+            _ => IconName::Terminal,
+        };
+
         div().px_4().child(
             v_flex()
                 .rounded_lg()
                 .border_1()
                 .border_color(lighter_border)
+                .overflow_hidden()
                 .child(
                     h_flex()
+                        .group("disclosure-header")
                         .justify_between()
                         .py_1()
-                        .pl_1()
-                        .pr_2()
+                        .px_2()
                         .bg(cx.theme().colors().editor_foreground.opacity(0.025))
                         .map(|element| {
                             if is_open {
@@ -1026,54 +1042,79 @@ impl ActiveThread {
                         .border_color(lighter_border)
                         .child(
                             h_flex()
-                                .gap_1()
-                                .child(Disclosure::new("tool-use-disclosure", is_open).on_click(
-                                    cx.listener({
-                                        let tool_use_id = tool_use.id.clone();
-                                        move |this, _event, _window, _cx| {
-                                            let is_open = this
-                                                .expanded_tool_uses
-                                                .entry(tool_use_id.clone())
-                                                .or_insert(false);
-
-                                            *is_open = !*is_open;
-                                        }
-                                    }),
-                                ))
-                                .child(div().text_ui_sm(cx).children(
-                                    self.rendered_tool_use_labels.get(&tool_use.id).cloned(),
-                                ))
-                                .truncate(),
-                        )
-                        .child({
-                            let (icon_name, color, animated) = match &tool_use.status {
-                                ToolUseStatus::Pending => {
-                                    (IconName::Warning, Color::Warning, false)
-                                }
-                                ToolUseStatus::Running => {
-                                    (IconName::ArrowCircle, Color::Accent, true)
-                                }
-                                ToolUseStatus::Finished(_) => {
-                                    (IconName::Check, Color::Success, false)
-                                }
-                                ToolUseStatus::Error(_) => (IconName::Close, Color::Error, false),
-                            };
-
-                            let icon = Icon::new(icon_name).color(color).size(IconSize::Small);
-
-                            if animated {
-                                icon.with_animation(
-                                    "arrow-circle",
-                                    Animation::new(Duration::from_secs(2)).repeat(),
-                                    |icon, delta| {
-                                        icon.transform(Transformation::rotate(percentage(delta)))
-                                    },
+                                .gap_1p5()
+                                .child(
+                                    Icon::new(tool_icon)
+                                        .size(IconSize::XSmall)
+                                        .color(Color::Muted),
                                 )
-                                .into_any_element()
-                            } else {
-                                icon.into_any_element()
-                            }
-                        }),
+                                .child(
+                                    div()
+                                        .text_ui_sm(cx)
+                                        .children(
+                                            self.rendered_tool_use_labels
+                                                .get(&tool_use.id)
+                                                .cloned(),
+                                        )
+                                        .truncate(),
+                                ),
+                        )
+                        .child(
+                            h_flex()
+                                .gap_1()
+                                .child(
+                                    div().visible_on_hover("disclosure-header").child(
+                                        Disclosure::new("tool-use-disclosure", is_open)
+                                            .opened_icon(IconName::ChevronUp)
+                                            .closed_icon(IconName::ChevronDown)
+                                            .on_click(cx.listener({
+                                                let tool_use_id = tool_use.id.clone();
+                                                move |this, _event, _window, _cx| {
+                                                    let is_open = this
+                                                        .expanded_tool_uses
+                                                        .entry(tool_use_id.clone())
+                                                        .or_insert(false);
+
+                                                    *is_open = !*is_open;
+                                                }
+                                            })),
+                                    ),
+                                )
+                                .child({
+                                    let (icon_name, color, animated) = match &tool_use.status {
+                                        ToolUseStatus::Pending => {
+                                            (IconName::Warning, Color::Warning, false)
+                                        }
+                                        ToolUseStatus::Running => {
+                                            (IconName::ArrowCircle, Color::Accent, true)
+                                        }
+                                        ToolUseStatus::Finished(_) => {
+                                            (IconName::Check, Color::Success, false)
+                                        }
+                                        ToolUseStatus::Error(_) => {
+                                            (IconName::Close, Color::Error, false)
+                                        }
+                                    };
+
+                                    let icon =
+                                        Icon::new(icon_name).color(color).size(IconSize::Small);
+
+                                    if animated {
+                                        icon.with_animation(
+                                            "arrow-circle",
+                                            Animation::new(Duration::from_secs(2)).repeat(),
+                                            |icon, delta| {
+                                                icon.transform(Transformation::rotate(percentage(
+                                                    delta,
+                                                )))
+                                            },
+                                        )
+                                        .into_any_element()
+                                    } else {
+                                        icon.into_any_element()
+                                    }
+                                }),
+                        ),
                 )
                 .map(|parent| {
                     if !is_open {
