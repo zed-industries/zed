@@ -7699,7 +7699,7 @@ async fn test_document_format_during_save(cx: &mut TestAppContext) {
         })
         .unwrap();
     fake_server
-        .handle_request::<lsp::request::Formatting, _, _>(move |params, _| async move {
+        .set_request_handler::<lsp::request::Formatting, _, _>(move |params, _| async move {
             assert_eq!(
                 params.text_document.uri,
                 lsp::Url::from_file_path(path!("/file.rs")).unwrap()
@@ -7727,14 +7727,16 @@ async fn test_document_format_during_save(cx: &mut TestAppContext) {
     assert!(cx.read(|cx| editor.is_dirty(cx)));
 
     // Ensure we can still save even if formatting hangs.
-    fake_server.handle_request::<lsp::request::Formatting, _, _>(move |params, _| async move {
-        assert_eq!(
-            params.text_document.uri,
-            lsp::Url::from_file_path(path!("/file.rs")).unwrap()
-        );
-        futures::future::pending::<()>().await;
-        unreachable!()
-    });
+    fake_server.set_request_handler::<lsp::request::Formatting, _, _>(
+        move |params, _| async move {
+            assert_eq!(
+                params.text_document.uri,
+                lsp::Url::from_file_path(path!("/file.rs")).unwrap()
+            );
+            futures::future::pending::<()>().await;
+            unreachable!()
+        },
+    );
     let save = editor
         .update_in(cx, |editor, window, cx| {
             editor.save(true, project.clone(), window, cx)
@@ -7756,7 +7758,7 @@ async fn test_document_format_during_save(cx: &mut TestAppContext) {
         })
         .unwrap();
     let _pending_format_request = fake_server
-        .handle_request::<lsp::request::RangeFormatting, _, _>(move |_, _| async move {
+        .set_request_handler::<lsp::request::RangeFormatting, _, _>(move |_, _| async move {
             panic!("Should not be invoked on non-dirty buffer");
         })
         .next();
@@ -7784,7 +7786,7 @@ async fn test_document_format_during_save(cx: &mut TestAppContext) {
         })
         .unwrap();
     fake_server
-        .handle_request::<lsp::request::Formatting, _, _>(move |params, _| async move {
+        .set_request_handler::<lsp::request::Formatting, _, _>(move |params, _| async move {
             assert_eq!(
                 params.text_document.uri,
                 lsp::Url::from_file_path(path!("/file.rs")).unwrap()
@@ -8074,7 +8076,7 @@ async fn test_range_format_during_save(cx: &mut TestAppContext) {
         })
         .unwrap();
     fake_server
-        .handle_request::<lsp::request::RangeFormatting, _, _>(move |params, _| async move {
+        .set_request_handler::<lsp::request::RangeFormatting, _, _>(move |params, _| async move {
             assert_eq!(
                 params.text_document.uri,
                 lsp::Url::from_file_path(path!("/file.rs")).unwrap()
@@ -8101,7 +8103,7 @@ async fn test_range_format_during_save(cx: &mut TestAppContext) {
     assert!(cx.read(|cx| editor.is_dirty(cx)));
 
     // Ensure we can still save even if formatting hangs.
-    fake_server.handle_request::<lsp::request::RangeFormatting, _, _>(
+    fake_server.set_request_handler::<lsp::request::RangeFormatting, _, _>(
         move |params, _| async move {
             assert_eq!(
                 params.text_document.uri,
@@ -8132,7 +8134,7 @@ async fn test_range_format_during_save(cx: &mut TestAppContext) {
         })
         .unwrap();
     let _pending_format_request = fake_server
-        .handle_request::<lsp::request::RangeFormatting, _, _>(move |_, _| async move {
+        .set_request_handler::<lsp::request::RangeFormatting, _, _>(move |_, _| async move {
             panic!("Should not be invoked on non-dirty buffer");
         })
         .next();
@@ -8160,7 +8162,7 @@ async fn test_range_format_during_save(cx: &mut TestAppContext) {
         })
         .unwrap();
     fake_server
-        .handle_request::<lsp::request::RangeFormatting, _, _>(move |params, _| async move {
+        .set_request_handler::<lsp::request::RangeFormatting, _, _>(move |params, _| async move {
             assert_eq!(
                 params.text_document.uri,
                 lsp::Url::from_file_path(path!("/file.rs")).unwrap()
@@ -8248,7 +8250,7 @@ async fn test_document_format_manual_trigger(cx: &mut TestAppContext) {
         })
         .unwrap();
     fake_server
-        .handle_request::<lsp::request::Formatting, _, _>(move |params, _| async move {
+        .set_request_handler::<lsp::request::Formatting, _, _>(move |params, _| async move {
             assert_eq!(
                 params.text_document.uri,
                 lsp::Url::from_file_path(path!("/file.rs")).unwrap()
@@ -8272,14 +8274,16 @@ async fn test_document_format_manual_trigger(cx: &mut TestAppContext) {
         editor.set_text("one\ntwo\nthree\n", window, cx)
     });
     // Ensure we don't lock if formatting hangs.
-    fake_server.handle_request::<lsp::request::Formatting, _, _>(move |params, _| async move {
-        assert_eq!(
-            params.text_document.uri,
-            lsp::Url::from_file_path(path!("/file.rs")).unwrap()
-        );
-        futures::future::pending::<()>().await;
-        unreachable!()
-    });
+    fake_server.set_request_handler::<lsp::request::Formatting, _, _>(
+        move |params, _| async move {
+            assert_eq!(
+                params.text_document.uri,
+                lsp::Url::from_file_path(path!("/file.rs")).unwrap()
+            );
+            futures::future::pending::<()>().await;
+            unreachable!()
+        },
+    );
     let format = editor
         .update_in(cx, |editor, window, cx| {
             editor.perform_format(
@@ -8375,7 +8379,7 @@ async fn test_organize_imports_manual_trigger(cx: &mut TestAppContext) {
         })
         .unwrap();
     fake_server
-        .handle_request::<lsp::request::CodeActionRequest, _, _>(move |params, _| async move {
+        .set_request_handler::<lsp::request::CodeActionRequest, _, _>(move |params, _| async move {
             assert_eq!(
                 params.text_document.uri,
                 lsp::Url::from_file_path(path!("/file.ts")).unwrap()
@@ -8422,7 +8426,7 @@ async fn test_organize_imports_manual_trigger(cx: &mut TestAppContext) {
         )
     });
     // Ensure we don't lock if code action hangs.
-    fake_server.handle_request::<lsp::request::CodeActionRequest, _, _>(
+    fake_server.set_request_handler::<lsp::request::CodeActionRequest, _, _>(
         move |params, _| async move {
             assert_eq!(
                 params.text_document.uri,
@@ -8471,7 +8475,7 @@ async fn test_concurrent_format_requests(cx: &mut TestAppContext) {
     // The format request takes a long time. When it completes, it inserts
     // a newline and an indent before the `.`
     cx.lsp
-        .handle_request::<lsp::request::Formatting, _, _>(move |_, cx| {
+        .set_request_handler::<lsp::request::Formatting, _, _>(move |_, cx| {
             let executor = cx.background_executor().clone();
             async move {
                 executor.timer(Duration::from_millis(100)).await;
@@ -8555,44 +8559,51 @@ async fn test_strip_whitespace_and_format_via_lsp(cx: &mut TestAppContext) {
         });
 
     // Handle formatting requests to the language server.
-    cx.lsp.handle_request::<lsp::request::Formatting, _, _>({
-        let buffer_changes = buffer_changes.clone();
-        move |_, _| {
-            // When formatting is requested, trailing whitespace has already been stripped,
-            // and the trailing newline has already been added.
-            assert_eq!(
-                &buffer_changes.lock()[1..],
-                &[
-                    (
-                        lsp::Range::new(lsp::Position::new(0, 3), lsp::Position::new(0, 4)),
-                        "".into()
-                    ),
-                    (
-                        lsp::Range::new(lsp::Position::new(2, 5), lsp::Position::new(2, 6)),
-                        "".into()
-                    ),
-                    (
-                        lsp::Range::new(lsp::Position::new(3, 4), lsp::Position::new(3, 4)),
-                        "\n".into()
-                    ),
-                ]
-            );
+    cx.lsp
+        .set_request_handler::<lsp::request::Formatting, _, _>({
+            let buffer_changes = buffer_changes.clone();
+            move |_, _| {
+                // When formatting is requested, trailing whitespace has already been stripped,
+                // and the trailing newline has already been added.
+                assert_eq!(
+                    &buffer_changes.lock()[1..],
+                    &[
+                        (
+                            lsp::Range::new(lsp::Position::new(0, 3), lsp::Position::new(0, 4)),
+                            "".into()
+                        ),
+                        (
+                            lsp::Range::new(lsp::Position::new(2, 5), lsp::Position::new(2, 6)),
+                            "".into()
+                        ),
+                        (
+                            lsp::Range::new(lsp::Position::new(3, 4), lsp::Position::new(3, 4)),
+                            "\n".into()
+                        ),
+                    ]
+                );
 
-            // Insert blank lines between each line of the buffer.
-            async move {
-                Ok(Some(vec![
-                    lsp::TextEdit {
-                        range: lsp::Range::new(lsp::Position::new(1, 0), lsp::Position::new(1, 0)),
-                        new_text: "\n".into(),
-                    },
-                    lsp::TextEdit {
-                        range: lsp::Range::new(lsp::Position::new(2, 0), lsp::Position::new(2, 0)),
-                        new_text: "\n".into(),
-                    },
-                ]))
+                // Insert blank lines between each line of the buffer.
+                async move {
+                    Ok(Some(vec![
+                        lsp::TextEdit {
+                            range: lsp::Range::new(
+                                lsp::Position::new(1, 0),
+                                lsp::Position::new(1, 0),
+                            ),
+                            new_text: "\n".into(),
+                        },
+                        lsp::TextEdit {
+                            range: lsp::Range::new(
+                                lsp::Position::new(2, 0),
+                                lsp::Position::new(2, 0),
+                            ),
+                            new_text: "\n".into(),
+                        },
+                    ]))
+                }
             }
-        }
-    });
+        });
 
     // After formatting the buffer, the trailing whitespace is stripped,
     // a newline is appended, and the edits provided by the language server
@@ -9852,8 +9863,8 @@ async fn test_multiline_completion(cx: &mut TestAppContext) {
     let multiline_description = "d\ne\nf\n";
     let multiline_detail_2 = "g\nh\ni\n";
 
-    let mut completion_handle =
-        fake_server.handle_request::<lsp::request::Completion, _, _>(move |params, _| async move {
+    let mut completion_handle = fake_server.set_request_handler::<lsp::request::Completion, _, _>(
+        move |params, _| async move {
             Ok(Some(lsp::CompletionResponse::Array(vec![
                 lsp::CompletionItem {
                     label: multiline_label.to_string(),
@@ -9890,7 +9901,8 @@ async fn test_multiline_completion(cx: &mut TestAppContext) {
                     ..lsp::CompletionItem::default()
                 },
             ])))
-        });
+        },
+    );
 
     editor.update_in(cx, |editor, window, cx| {
         cx.focus_self(window);
@@ -9953,7 +9965,7 @@ async fn test_completion_page_up_down_keys(cx: &mut TestAppContext) {
     )
     .await;
     cx.lsp
-        .handle_request::<lsp::request::Completion, _, _>(move |_, _| async move {
+        .set_request_handler::<lsp::request::Completion, _, _>(move |_, _| async move {
             Ok(Some(lsp::CompletionResponse::Array(vec![
                 lsp::CompletionItem {
                     label: "first".into(),
@@ -10020,7 +10032,7 @@ async fn test_completion_sort(cx: &mut TestAppContext) {
     )
     .await;
     cx.lsp
-        .handle_request::<lsp::request::Completion, _, _>(move |_, _| async move {
+        .set_request_handler::<lsp::request::Completion, _, _>(move |_, _| async move {
             Ok(Some(lsp::CompletionResponse::Array(vec![
                 lsp::CompletionItem {
                     label: "Range".into(),
@@ -10138,7 +10150,7 @@ async fn test_no_duplicated_completion_requests(cx: &mut TestAppContext) {
     let closure_completion_item = completion_item.clone();
     let counter = Arc::new(AtomicUsize::new(0));
     let counter_clone = counter.clone();
-    let mut request = cx.handle_request::<lsp::request::Completion, _, _>(move |_, _, _| {
+    let mut request = cx.set_request_handler::<lsp::request::Completion, _, _>(move |_, _, _| {
         let task_completion_item = closure_completion_item.clone();
         counter_clone.fetch_add(1, atomic::Ordering::Release);
         async move {
@@ -12241,21 +12253,23 @@ async fn test_on_type_formatting_not_triggered(cx: &mut TestAppContext) {
     cx.executor().start_waiting();
     let fake_server = fake_servers.next().await.unwrap();
 
-    fake_server.handle_request::<lsp::request::OnTypeFormatting, _, _>(|params, _| async move {
-        assert_eq!(
-            params.text_document_position.text_document.uri,
-            lsp::Url::from_file_path(path!("/a/main.rs")).unwrap(),
-        );
-        assert_eq!(
-            params.text_document_position.position,
-            lsp::Position::new(0, 21),
-        );
+    fake_server.set_request_handler::<lsp::request::OnTypeFormatting, _, _>(
+        |params, _| async move {
+            assert_eq!(
+                params.text_document_position.text_document.uri,
+                lsp::Url::from_file_path(path!("/a/main.rs")).unwrap(),
+            );
+            assert_eq!(
+                params.text_document_position.position,
+                lsp::Position::new(0, 21),
+            );
 
-        Ok(Some(vec![lsp::TextEdit {
-            new_text: "]".to_string(),
-            range: lsp::Range::new(lsp::Position::new(0, 22), lsp::Position::new(0, 22)),
-        }]))
-    });
+            Ok(Some(vec![lsp::TextEdit {
+                new_text: "]".to_string(),
+                range: lsp::Range::new(lsp::Position::new(0, 22), lsp::Position::new(0, 22)),
+            }]))
+        },
+    );
 
     editor_handle.update_in(cx, |editor, window, cx| {
         window.focus(&editor.focus_handle(cx));
@@ -12318,7 +12332,7 @@ async fn test_language_server_restart_due_to_settings_change(cx: &mut TestAppCon
             })),
             initializer: Some(Box::new(move |fake_server| {
                 let task_restarts = Arc::clone(&closure_restarts);
-                fake_server.handle_request::<lsp::request::Shutdown, _, _>(move |_, _| {
+                fake_server.set_request_handler::<lsp::request::Shutdown, _, _>(move |_, _| {
                     task_restarts.fetch_add(1, atomic::Ordering::Release);
                     futures::future::ready(Ok(()))
                 });
@@ -12487,7 +12501,7 @@ async fn test_completions_with_additional_edits(cx: &mut TestAppContext) {
     };
 
     let closure_completion_item = completion_item.clone();
-    let mut request = cx.handle_request::<lsp::request::Completion, _, _>(move |_, _, _| {
+    let mut request = cx.set_request_handler::<lsp::request::Completion, _, _>(move |_, _, _| {
         let task_completion_item = closure_completion_item.clone();
         async move {
             Ok(Some(lsp::CompletionResponse::Array(vec![
@@ -12507,7 +12521,7 @@ async fn test_completions_with_additional_edits(cx: &mut TestAppContext) {
     });
     cx.assert_editor_state("fn main() { let a = 2.Some(2)ˇ; }");
 
-    cx.handle_request::<lsp::request::ResolveCompletionItem, _, _>(move |_, _, _| {
+    cx.set_request_handler::<lsp::request::ResolveCompletionItem, _, _>(move |_, _, _| {
         let task_completion_item = completion_item.clone();
         async move { Ok(task_completion_item) }
     })
@@ -12563,7 +12577,7 @@ async fn test_completions_resolve_updates_labels_if_filter_text_matches(cx: &mut
     };
 
     let item1 = item1.clone();
-    cx.handle_request::<lsp::request::Completion, _, _>({
+    cx.set_request_handler::<lsp::request::Completion, _, _>({
         let item1 = item1.clone();
         move |_, _, _| {
             let item1 = item1.clone();
@@ -12596,7 +12610,7 @@ async fn test_completions_resolve_updates_labels_if_filter_text_matches(cx: &mut
         }
     });
 
-    cx.handle_request::<lsp::request::ResolveCompletionItem, _, _>({
+    cx.set_request_handler::<lsp::request::ResolveCompletionItem, _, _>({
         let item1 = item1.clone();
         move |_, item_to_resolve, _| {
             let item1 = item1.clone();
@@ -12743,7 +12757,7 @@ async fn test_completions_resolve_happens_once(cx: &mut TestAppContext) {
         })
         .detach();
 
-    cx.handle_request::<lsp::request::Completion, _, _>(move |_, _, _| {
+    cx.set_request_handler::<lsp::request::Completion, _, _>(move |_, _, _| {
         let unresolved_item_1 = unresolved_item_1.clone();
         let unresolved_item_2 = unresolved_item_2.clone();
         async move {
@@ -12880,7 +12894,7 @@ async fn test_completions_default_resolve_data_handling(cx: &mut TestAppContext)
     let completion_data = default_data.clone();
     let completion_characters = default_commit_characters.clone();
     let completion_items = items.clone();
-    cx.handle_request::<lsp::request::Completion, _, _>(move |_, _, _| {
+    cx.set_request_handler::<lsp::request::Completion, _, _>(move |_, _, _| {
         let default_data = completion_data.clone();
         let default_commit_characters = completion_characters.clone();
         let items = completion_items.clone();
@@ -13019,7 +13033,7 @@ async fn test_completions_in_languages_with_extra_word_characters(cx: &mut TestA
     .await;
 
     cx.lsp
-        .handle_request::<lsp::request::Completion, _, _>(move |_, _| async move {
+        .set_request_handler::<lsp::request::Completion, _, _>(move |_, _| async move {
             Ok(Some(lsp::CompletionResponse::Array(vec![
                 lsp::CompletionItem {
                     label: "bg-blue".into(),
@@ -16308,26 +16322,31 @@ async fn test_goto_definition_with_find_all_references_fallback(cx: &mut TestApp
     .await;
 
     let set_up_lsp_handlers = |empty_go_to_definition: bool, cx: &mut EditorLspTestContext| {
-        let go_to_definition = cx.lsp.handle_request::<lsp::request::GotoDefinition, _, _>(
-            move |params, _| async move {
-                if empty_go_to_definition {
-                    Ok(None)
-                } else {
-                    Ok(Some(lsp::GotoDefinitionResponse::Scalar(lsp::Location {
-                        uri: params.text_document_position_params.text_document.uri,
-                        range: lsp::Range::new(lsp::Position::new(4, 3), lsp::Position::new(4, 6)),
-                    })))
-                }
-            },
-        );
-        let references =
-            cx.lsp
-                .handle_request::<lsp::request::References, _, _>(move |params, _| async move {
-                    Ok(Some(vec![lsp::Location {
-                        uri: params.text_document_position.text_document.uri,
-                        range: lsp::Range::new(lsp::Position::new(0, 8), lsp::Position::new(0, 11)),
-                    }]))
-                });
+        let go_to_definition = cx
+            .lsp
+            .set_request_handler::<lsp::request::GotoDefinition, _, _>(
+                move |params, _| async move {
+                    if empty_go_to_definition {
+                        Ok(None)
+                    } else {
+                        Ok(Some(lsp::GotoDefinitionResponse::Scalar(lsp::Location {
+                            uri: params.text_document_position_params.text_document.uri,
+                            range: lsp::Range::new(
+                                lsp::Position::new(4, 3),
+                                lsp::Position::new(4, 6),
+                            ),
+                        })))
+                    }
+                },
+            );
+        let references = cx
+            .lsp
+            .set_request_handler::<lsp::request::References, _, _>(move |params, _| async move {
+                Ok(Some(vec![lsp::Location {
+                    uri: params.text_document_position.text_document.uri,
+                    range: lsp::Range::new(lsp::Position::new(0, 8), lsp::Position::new(0, 11)),
+                }]))
+            });
         (go_to_definition, references)
     };
 
@@ -17663,19 +17682,21 @@ async fn test_rename_with_duplicate_edits(cx: &mut TestAppContext) {
         );
     });
 
-    let mut prepare_rename_handler =
-        cx.handle_request::<lsp::request::PrepareRenameRequest, _, _>(move |_, _, _| async move {
-            Ok(Some(lsp::PrepareRenameResponse::Range(lsp::Range {
-                start: lsp::Position {
-                    line: 0,
-                    character: 7,
-                },
-                end: lsp::Position {
-                    line: 0,
-                    character: 10,
-                },
-            })))
-        });
+    let mut prepare_rename_handler = cx
+        .set_request_handler::<lsp::request::PrepareRenameRequest, _, _>(
+            move |_, _, _| async move {
+                Ok(Some(lsp::PrepareRenameResponse::Range(lsp::Range {
+                    start: lsp::Position {
+                        line: 0,
+                        character: 7,
+                    },
+                    end: lsp::Position {
+                        line: 0,
+                        character: 10,
+                    },
+                })))
+            },
+        );
     let prepare_rename_task = cx
         .update_editor(|e, window, cx| e.rename(&Rename, window, cx))
         .expect("Prepare rename was not started");
@@ -17683,7 +17704,7 @@ async fn test_rename_with_duplicate_edits(cx: &mut TestAppContext) {
     prepare_rename_task.await.expect("Prepare rename failed");
 
     let mut rename_handler =
-        cx.handle_request::<lsp::request::Rename, _, _>(move |url, _, _| async move {
+        cx.set_request_handler::<lsp::request::Rename, _, _>(move |url, _, _| async move {
             let edit = lsp::TextEdit {
                 range: lsp::Range {
                     start: lsp::Position {
@@ -17745,7 +17766,7 @@ async fn test_rename_without_prepare(cx: &mut TestAppContext) {
         .expect("Prepare rename failed");
 
     let mut rename_handler =
-        cx.handle_request::<lsp::request::Rename, _, _>(move |url, _, _| async move {
+        cx.set_request_handler::<lsp::request::Rename, _, _>(move |url, _, _| async move {
             let edit = lsp::TextEdit {
                 range: lsp::Range {
                     start: lsp::Position {
@@ -17896,7 +17917,7 @@ async fn test_apply_code_lens_actions_with_commands(cx: &mut gpui::TestAppContex
         .unwrap();
 
     fake_server
-        .handle_request::<lsp::request::CodeLensRequest, _, _>(|_, _| async move {
+        .set_request_handler::<lsp::request::CodeLensRequest, _, _>(|_, _| async move {
             Ok(Some(vec![
                 lsp::CodeLens {
                     range: lsp::Range::default(),
@@ -17952,17 +17973,19 @@ async fn test_apply_code_lens_actions_with_commands(cx: &mut gpui::TestAppContex
 
     // Resolving the code action does not populate its edits. In absence of
     // edits, we must execute the given command.
-    fake_server.handle_request::<lsp::request::CodeLensResolve, _, _>(|mut lens, _| async move {
-        let lens_command = lens.command.as_mut().expect("should have a command");
-        assert_eq!(lens_command.title, "Code lens command");
-        lens_command.arguments = Some(vec![json!("the-argument")]);
-        Ok(lens)
-    });
+    fake_server.set_request_handler::<lsp::request::CodeLensResolve, _, _>(
+        |mut lens, _| async move {
+            let lens_command = lens.command.as_mut().expect("should have a command");
+            assert_eq!(lens_command.title, "Code lens command");
+            lens_command.arguments = Some(vec![json!("the-argument")]);
+            Ok(lens)
+        },
+    );
 
     // While executing the command, the language server sends the editor
     // a `workspaceEdit` request.
     fake_server
-        .handle_request::<lsp::request::ExecuteCommand, _, _>({
+        .set_request_handler::<lsp::request::ExecuteCommand, _, _>({
             let fake = fake_server.clone();
             move |params, _| {
                 assert_eq!(params.command, "_the/command");
@@ -18271,7 +18294,7 @@ pub fn handle_signature_help_request(
     mocked_response: lsp::SignatureHelp,
 ) -> impl Future<Output = ()> {
     let mut request =
-        cx.handle_request::<lsp::request::SignatureHelpRequest, _, _>(move |_, _, _| {
+        cx.set_request_handler::<lsp::request::SignatureHelpRequest, _, _>(move |_, _, _| {
             let mocked_response = mocked_response.clone();
             async move { Ok(Some(mocked_response)) }
         });
@@ -18302,30 +18325,31 @@ pub fn handle_completion_request(
     let replace_range =
         cx.to_lsp_range(marked_ranges.remove(&replace_range_marker).unwrap()[0].clone());
 
-    let mut request = cx.handle_request::<lsp::request::Completion, _, _>(move |url, params, _| {
-        let completions = completions.clone();
-        counter.fetch_add(1, atomic::Ordering::Release);
-        async move {
-            assert_eq!(params.text_document_position.text_document.uri, url.clone());
-            assert_eq!(
-                params.text_document_position.position,
-                complete_from_position
-            );
-            Ok(Some(lsp::CompletionResponse::Array(
-                completions
-                    .iter()
-                    .map(|completion_text| lsp::CompletionItem {
-                        label: completion_text.to_string(),
-                        text_edit: Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
-                            range: replace_range,
-                            new_text: completion_text.to_string(),
-                        })),
-                        ..Default::default()
-                    })
-                    .collect(),
-            )))
-        }
-    });
+    let mut request =
+        cx.set_request_handler::<lsp::request::Completion, _, _>(move |url, params, _| {
+            let completions = completions.clone();
+            counter.fetch_add(1, atomic::Ordering::Release);
+            async move {
+                assert_eq!(params.text_document_position.text_document.uri, url.clone());
+                assert_eq!(
+                    params.text_document_position.position,
+                    complete_from_position
+                );
+                Ok(Some(lsp::CompletionResponse::Array(
+                    completions
+                        .iter()
+                        .map(|completion_text| lsp::CompletionItem {
+                            label: completion_text.to_string(),
+                            text_edit: Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
+                                range: replace_range,
+                                new_text: completion_text.to_string(),
+                            })),
+                            ..Default::default()
+                        })
+                        .collect(),
+                )))
+            }
+        });
 
     async move {
         request.next().await;
@@ -18348,7 +18372,7 @@ fn handle_resolve_completion_request(
     });
 
     let mut request =
-        cx.handle_request::<lsp::request::ResolveCompletionItem, _, _>(move |_, _, _| {
+        cx.set_request_handler::<lsp::request::ResolveCompletionItem, _, _>(move |_, _, _| {
             let edits = edits.clone();
             async move {
                 Ok(lsp::CompletionItem {

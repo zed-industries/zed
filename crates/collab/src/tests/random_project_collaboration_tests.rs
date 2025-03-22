@@ -1043,7 +1043,7 @@ impl RandomizedTest for ProjectCollaborationTest {
                 initializer: Some(Box::new({
                     let fs = client.app_state.fs.clone();
                     move |fake_server: &mut FakeLanguageServer| {
-                        fake_server.handle_request::<lsp::request::Completion, _, _>(
+                        fake_server.set_request_handler::<lsp::request::Completion, _, _>(
                             |_, _| async move {
                                 Ok(Some(lsp::CompletionResponse::Array(vec![
                                     lsp::CompletionItem {
@@ -1062,7 +1062,7 @@ impl RandomizedTest for ProjectCollaborationTest {
                             },
                         );
 
-                        fake_server.handle_request::<lsp::request::CodeActionRequest, _, _>(
+                        fake_server.set_request_handler::<lsp::request::CodeActionRequest, _, _>(
                             |_, _| async move {
                                 Ok(Some(vec![lsp::CodeActionOrCommand::CodeAction(
                                     lsp::CodeAction {
@@ -1073,7 +1073,7 @@ impl RandomizedTest for ProjectCollaborationTest {
                             },
                         );
 
-                        fake_server.handle_request::<lsp::request::PrepareRenameRequest, _, _>(
+                        fake_server.set_request_handler::<lsp::request::PrepareRenameRequest, _, _>(
                             |params, _| async move {
                                 Ok(Some(lsp::PrepareRenameResponse::Range(lsp::Range::new(
                                     params.position,
@@ -1082,7 +1082,7 @@ impl RandomizedTest for ProjectCollaborationTest {
                             },
                         );
 
-                        fake_server.handle_request::<lsp::request::GotoDefinition, _, _>({
+                        fake_server.set_request_handler::<lsp::request::GotoDefinition, _, _>({
                             let fs = fs.clone();
                             move |_, cx| {
                                 let background = cx.background_executor();
@@ -1107,7 +1107,7 @@ impl RandomizedTest for ProjectCollaborationTest {
                             }
                         });
 
-                        fake_server.handle_request::<lsp::request::DocumentHighlightRequest, _, _>(
+                        fake_server.set_request_handler::<lsp::request::DocumentHighlightRequest, _, _>(
                             move |_, cx| {
                                 let mut highlights = Vec::new();
                                 let background = cx.background_executor();

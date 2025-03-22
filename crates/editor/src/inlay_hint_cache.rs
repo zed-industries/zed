@@ -1326,7 +1326,7 @@ pub mod tests {
         });
         let (_, editor, fake_server) = prepare_test_objects(cx, |fake_server, file_with_hints| {
             let lsp_request_count = Arc::new(AtomicU32::new(0));
-            fake_server.handle_request::<lsp::request::InlayHintRequest, _, _>(move |params, _| {
+            fake_server.set_request_handler::<lsp::request::InlayHintRequest, _, _>(move |params, _| {
                 let task_lsp_request_count = Arc::clone(&lsp_request_count);
                 async move {
                     let i = task_lsp_request_count.fetch_add(1, Ordering::Release) + 1;
@@ -1431,7 +1431,7 @@ pub mod tests {
 
         let (_, editor, fake_server) = prepare_test_objects(cx, |fake_server, file_with_hints| {
             let lsp_request_count = Arc::new(AtomicU32::new(0));
-            fake_server.handle_request::<lsp::request::InlayHintRequest, _, _>(move |params, _| {
+            fake_server.set_request_handler::<lsp::request::InlayHintRequest, _, _>(move |params, _| {
                 let task_lsp_request_count = Arc::clone(&lsp_request_count);
                 async move {
                     assert_eq!(
@@ -1571,7 +1571,7 @@ pub mod tests {
                         move |fake_server| {
                             let rs_lsp_request_count = Arc::new(AtomicU32::new(0));
                             let md_lsp_request_count = Arc::new(AtomicU32::new(0));
-                            fake_server.handle_request::<lsp::request::InlayHintRequest, _, _>(
+                            fake_server.set_request_handler::<lsp::request::InlayHintRequest, _, _>(
                                 move |params, _| {
                                     let i = match name {
                                         "Rust" => {
@@ -1757,7 +1757,7 @@ pub mod tests {
             let lsp_request_count = lsp_request_count.clone();
             move |fake_server, file_with_hints| {
                 let lsp_request_count = lsp_request_count.clone();
-                fake_server.handle_request::<lsp::request::InlayHintRequest, _, _>(
+                fake_server.set_request_handler::<lsp::request::InlayHintRequest, _, _>(
                     move |params, _| {
                         lsp_request_count.fetch_add(1, Ordering::Release);
                         async move {
@@ -2087,7 +2087,7 @@ pub mod tests {
             let lsp_request_count = lsp_request_count.clone();
             move |fake_server, file_with_hints| {
                 let lsp_request_count = lsp_request_count.clone();
-                fake_server.handle_request::<lsp::request::InlayHintRequest, _, _>(
+                fake_server.set_request_handler::<lsp::request::InlayHintRequest, _, _>(
                     move |params, _| {
                         let lsp_request_count = lsp_request_count.clone();
                         async move {
@@ -2244,7 +2244,7 @@ pub mod tests {
                     move |fake_server| {
                         let closure_lsp_request_ranges = Arc::clone(&lsp_request_ranges);
                         let closure_lsp_request_count = Arc::clone(&lsp_request_count);
-                        fake_server.handle_request::<lsp::request::InlayHintRequest, _, _>(
+                        fake_server.set_request_handler::<lsp::request::InlayHintRequest, _, _>(
                             move |params, _| {
                                 let task_lsp_request_ranges =
                                     Arc::clone(&closure_lsp_request_ranges);
@@ -2625,7 +2625,7 @@ pub mod tests {
         let fake_server = fake_servers.next().await.unwrap();
         let closure_editor_edited = Arc::clone(&editor_edited);
         fake_server
-            .handle_request::<lsp::request::InlayHintRequest, _, _>(move |params, _| {
+            .set_request_handler::<lsp::request::InlayHintRequest, _, _>(move |params, _| {
                 let task_editor_edited = Arc::clone(&closure_editor_edited);
                 async move {
                     let hint_text = if params.text_document.uri
@@ -2926,7 +2926,7 @@ pub mod tests {
         let fake_server = fake_servers.next().await.unwrap();
         let closure_editor_edited = Arc::clone(&editor_edited);
         fake_server
-            .handle_request::<lsp::request::InlayHintRequest, _, _>(move |params, _| {
+            .set_request_handler::<lsp::request::InlayHintRequest, _, _>(move |params, _| {
                 let task_editor_edited = Arc::clone(&closure_editor_edited);
                 async move {
                     let hint_text = if params.text_document.uri
@@ -3094,7 +3094,7 @@ pub mod tests {
                 },
                 initializer: Some(Box::new(move |fake_server| {
                     let lsp_request_count = Arc::new(AtomicU32::new(0));
-                    fake_server.handle_request::<lsp::request::InlayHintRequest, _, _>(
+                    fake_server.set_request_handler::<lsp::request::InlayHintRequest, _, _>(
                         move |params, _| {
                             let i = lsp_request_count.fetch_add(1, Ordering::Release) + 1;
                             async move {
@@ -3165,7 +3165,7 @@ pub mod tests {
 
         let (_, editor, _fake_server) = prepare_test_objects(cx, |fake_server, file_with_hints| {
             let lsp_request_count = Arc::new(AtomicU32::new(0));
-            fake_server.handle_request::<lsp::request::InlayHintRequest, _, _>(move |params, _| {
+            fake_server.set_request_handler::<lsp::request::InlayHintRequest, _, _>(move |params, _| {
                 let lsp_request_count = lsp_request_count.clone();
                 async move {
                     assert_eq!(
@@ -3326,7 +3326,7 @@ pub mod tests {
                     ..Default::default()
                 },
                 initializer: Some(Box::new(move |fake_server| {
-                    fake_server.handle_request::<lsp::request::InlayHintRequest, _, _>(
+                    fake_server.set_request_handler::<lsp::request::InlayHintRequest, _, _>(
                         move |params, _| async move {
                             assert_eq!(
                                 params.text_document.uri,
