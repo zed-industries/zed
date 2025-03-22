@@ -1,7 +1,7 @@
 use super::Axis;
 use crate::{
-    display_map::DisplayRow, Autoscroll, Bias, DisplayPoint, Editor, EditorMode, NextScreen,
-    NextScrollCursorCenterTopBottom, ScrollAnchor, ScrollCursorBottom, ScrollCursorCenter,
+    display_map::DisplayRow, Autoscroll, Editor, EditorMode, NextScreen,
+    NextScrollCursorCenterTopBottom, ScrollCursorBottom, ScrollCursorCenter,
     ScrollCursorCenterTopBottom, ScrollCursorTop, SCROLL_CENTER_TOP_BOTTOM_DEBOUNCE_TIMEOUT,
 };
 use gpui::{Context, Point, Window};
@@ -74,7 +74,7 @@ impl Editor {
         let scroll_margin_rows = self.vertical_scroll_margin() as u32;
         let new_screen_top = self.selections.newest_display(cx).head().row().0;
         let new_screen_top = new_screen_top.saturating_sub(scroll_margin_rows);
-        self.set_scroll_screen_top(new_screen_top, window, cx);
+        self.set_scroll_top_row(DisplayRow(new_screen_top), window, cx);
     }
 
     pub fn scroll_cursor_center(
@@ -88,7 +88,7 @@ impl Editor {
         };
         let new_screen_top = self.selections.newest_display(cx).head().row().0;
         let new_screen_top = new_screen_top.saturating_sub(visible_rows / 2);
-        self.set_scroll_screen_top(new_screen_top, window, cx);
+        self.set_scroll_top_row(DisplayRow(new_screen_top), window, cx);
     }
 
     pub fn scroll_cursor_bottom(
@@ -104,23 +104,6 @@ impl Editor {
         let new_screen_top = self.selections.newest_display(cx).head().row().0;
         let new_screen_top =
             new_screen_top.saturating_sub(visible_rows.saturating_sub(scroll_margin_rows));
-        self.set_scroll_screen_top(new_screen_top, window, cx);
-    }
-
-    /// Scrolls so that `row` is at the top of the editor view.
-    fn set_scroll_screen_top(&mut self, row: u32, window: &mut Window, cx: &mut Context<Editor>) {
-        let snapshot = self.snapshot(window, cx).display_snapshot;
-        let new_screen_top = DisplayPoint::new(DisplayRow(row), 0);
-        let new_screen_top = new_screen_top.to_offset(&snapshot, Bias::Left);
-        let new_anchor = snapshot.buffer_snapshot.anchor_before(new_screen_top);
-
-        self.set_scroll_anchor(
-            ScrollAnchor {
-                anchor: new_anchor,
-                offset: Default::default(),
-            },
-            window,
-            cx,
-        );
+        self.set_scroll_top_row(DisplayRow(new_screen_top), window, cx);
     }
 }
