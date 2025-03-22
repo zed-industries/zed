@@ -289,6 +289,10 @@ impl LanguageModelProvider for CloudLanguageModelProvider {
                 anthropic::Model::Claude3_7Sonnet.id().to_string(),
                 CloudModel::Anthropic(anthropic::Model::Claude3_7Sonnet),
             );
+            models.insert(
+                anthropic::Model::Claude3_7SonnetThinking.id().to_string(),
+                CloudModel::Anthropic(anthropic::Model::Claude3_7SonnetThinking),
+            );
         }
 
         let llm_closed_beta_models = if cx.has_flag::<LlmClosedBeta>() {

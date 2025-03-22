@@ -308,6 +308,13 @@ pub trait GitRepository: Send + Sync {
         right: GitRepositoryCheckpoint,
         cx: AsyncApp,
     ) -> BoxFuture<Result<bool>>;
+
+    /// Deletes a previously-created checkpoint.
+    fn delete_checkpoint(
+        &self,
+        checkpoint: GitRepositoryCheckpoint,
+        cx: AsyncApp,
+    ) -> BoxFuture<Result<()>>;
 }
 
 pub enum DiffType {
@@ -351,10 +358,11 @@ impl RealGitRepository {
     }
 }
 
-#[derive(Copy, Clone)]
+#[derive(Clone, Debug)]
 pub struct GitRepositoryCheckpoint {
+    ref_name: String,
     head_sha: Option<Oid>,
-    sha: Oid,
+    commit_sha: Oid,
 }
 
 // https://git-scm.com/book/en/v2/Git-Internals-Git-Objects
@@ -1071,21 +1079,17 @@ impl GitRepository for RealGitRepository {
                 } else {
                     git.run(&["commit-tree", &tree, "-m", "Checkpoint"]).await?
                 };
-                let ref_name = Uuid::new_v4().to_string();
-                git.run(&[
-                    "update-ref",
-                    &format!("refs/zed/{ref_name}"),
-                    &checkpoint_sha,
-                ])
-                .await?;
+                let ref_name = format!("refs/zed/{}", Uuid::new_v4());
+                git.run(&["update-ref", &ref_name, &checkpoint_sha]).await?;
 
                 Ok(GitRepositoryCheckpoint {
+                    ref_name,
                     head_sha: if let Some(head_sha) = head_sha {
                         Some(head_sha.parse()?)
                     } else {
                         None
                     },
-                    sha: checkpoint_sha.parse()?,
+                    commit_sha: checkpoint_sha.parse()?,
                 })
             })
             .await
@@ -1109,14 +1113,15 @@ impl GitRepository for RealGitRepository {
             git.run(&[
                 "restore",
                 "--source",
-                &checkpoint.sha.to_string(),
+                &checkpoint.commit_sha.to_string(),
                 "--worktree",
                 ".",
             ])
             .await?;
 
             git.with_temp_index(async move |git| {
-                git.run(&["read-tree", &checkpoint.sha.to_string()]).await?;
+                git.run(&["read-tree", &checkpoint.commit_sha.to_string()])
+                    .await?;
                 git.run(&["clean", "-d", "--force"]).await
             })
             .await?;
@@ -1154,8 +1159,8 @@ impl GitRepository for RealGitRepository {
                 .run(&[
                     "diff-tree",
                     "--quiet",
-                    &left.sha.to_string(),
-                    &right.sha.to_string(),
+                    &left.commit_sha.to_string(),
+                    &right.commit_sha.to_string(),
                 ])
                 .await;
             match result {
@@ -1172,6 +1177,24 @@ impl GitRepository for RealGitRepository {
                     Err(error)
                 }
             }
+        })
+        .boxed()
+    }
+
+    fn delete_checkpoint(
+        &self,
+        checkpoint: GitRepositoryCheckpoint,
+        cx: AsyncApp,
+    ) -> BoxFuture<Result<()>> {
+        let working_directory = self.working_directory();
+        let git_binary_path = self.git_binary_path.clone();
+
+        let executor = cx.background_executor().clone();
+        cx.background_spawn(async move {
+            let working_directory = working_directory?;
+            let git = GitBinary::new(git_binary_path, working_directory, executor);
+            git.run(&["update-ref", "-d", &checkpoint.ref_name]).await?;
+            Ok(())
         })
         .boxed()
     }
@@ -1574,7 +1597,9 @@ mod tests {
             .await
             .unwrap();
 
-        repo.restore_checkpoint(checkpoint, cx.to_async())
+        // Ensure checkpoint stays alive even after a Git GC.
+        repo.gc(cx.to_async()).await.unwrap();
+        repo.restore_checkpoint(checkpoint.clone(), cx.to_async())
             .await
             .unwrap();
 
@@ -1595,6 +1620,15 @@ mod tests {
                 .ok(),
             None
         );
+
+        // Garbage collecting after deleting a checkpoint makes it unreachable.
+        repo.delete_checkpoint(checkpoint.clone(), cx.to_async())
+            .await
+            .unwrap();
+        repo.gc(cx.to_async()).await.unwrap();
+        repo.restore_checkpoint(checkpoint.clone(), cx.to_async())
+            .await
+            .unwrap_err();
     }
 
     #[gpui::test]
@@ -1737,7 +1771,7 @@ mod tests {
         let checkpoint2 = repo.checkpoint(cx.to_async()).await.unwrap();
 
         assert!(!repo
-            .compare_checkpoints(checkpoint1, checkpoint2, cx.to_async())
+            .compare_checkpoints(checkpoint1, checkpoint2.clone(), cx.to_async())
             .await
             .unwrap());
 
@@ -1773,5 +1807,22 @@ mod tests {
                 })
             }]
         )
+    }
+
+    impl RealGitRepository {
+        /// Force a Git garbage collection on the repository.
+        fn gc(&self, cx: AsyncApp) -> BoxFuture<Result<()>> {
+            let working_directory = self.working_directory();
+            let git_binary_path = self.git_binary_path.clone();
+            let executor = cx.background_executor().clone();
+            cx.background_spawn(async move {
+                let git_binary_path = git_binary_path.clone();
+                let working_directory = working_directory?;
+                let git = GitBinary::new(git_binary_path, working_directory, executor);
+                git.run(&["gc", "--prune=now"]).await?;
+                Ok(())
+            })
+            .boxed()
+        }
     }
 }
