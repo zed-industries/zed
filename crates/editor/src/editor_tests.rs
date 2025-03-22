@@ -9425,9 +9425,7 @@ async fn test_completion(cx: &mut TestAppContext) {
     cx.set_state("editorˇ");
     cx.simulate_keystroke(".");
     assert!(cx.editor(|e, _, _| e.context_menu.borrow_mut().is_none()));
-    cx.simulate_keystroke("c");
-    cx.simulate_keystroke("l");
-    cx.simulate_keystroke("o");
+    cx.simulate_keystrokes("c l o");
     cx.assert_editor_state("editor.cloˇ");
     assert!(cx.editor(|e, _, _| e.context_menu.borrow_mut().is_none()));
     cx.update_editor(|editor, window, cx| {
@@ -10202,9 +10200,7 @@ async fn test_no_duplicated_completion_requests(cx: &mut TestAppContext) {
     assert!(request.next().await.is_some());
     assert_eq!(counter.load(atomic::Ordering::Acquire), 1);
 
-    cx.simulate_keystroke("S");
-    cx.simulate_keystroke("o");
-    cx.simulate_keystroke("m");
+    cx.simulate_keystrokes("S o m");
     cx.condition(|editor, _| editor.context_menu_visible())
         .await;
     cx.assert_editor_state(indoc! {"fn main() { let a = 2.Somˇ; }"});
