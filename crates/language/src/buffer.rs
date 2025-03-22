@@ -2160,8 +2160,10 @@ impl Buffer {
     {
         // Skip invalid edits and coalesce contiguous ones.
         let mut edits: Vec<(Range<usize>, Arc<str>)> = Vec::new();
+
         for (range, new_text) in edits_iter {
             let mut range = range.start.to_offset(self)..range.end.to_offset(self);
+
             if range.start > range.end {
                 mem::swap(&mut range.start, &mut range.end);
             }

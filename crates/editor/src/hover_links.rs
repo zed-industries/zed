@@ -962,7 +962,7 @@ mod tests {
         cx.run_until_parked();
 
         let mut requests =
-            cx.handle_request::<GotoTypeDefinition, _, _>(move |url, _, _| async move {
+            cx.set_request_handler::<GotoTypeDefinition, _, _>(move |url, _, _| async move {
                 Ok(Some(lsp::GotoTypeDefinitionResponse::Link(vec![
                     lsp::LocationLink {
                         origin_selection_range: Some(symbol_range),
@@ -1037,7 +1037,7 @@ mod tests {
                 fn «do_work»() { test(); }
             "});
 
-        let mut requests = cx.handle_request::<GotoDefinition, _, _>(move |url, _, _| async move {
+        let mut requests = cx.set_request_handler::<GotoDefinition, _, _>(move |url, _, _| async move {
             Ok(Some(lsp::GotoDefinitionResponse::Link(vec![
                 lsp::LocationLink {
                     origin_selection_range: Some(symbol_range),
@@ -1063,7 +1063,7 @@ mod tests {
                 fn do_work() { test(); }
             "});
 
-        let mut requests = cx.handle_request::<GotoDefinition, _, _>(move |url, _, _| async move {
+        let mut requests = cx.set_request_handler::<GotoDefinition, _, _>(move |url, _, _| async move {
             Ok(Some(lsp::GotoDefinitionResponse::Link(vec![
                 lsp::LocationLink {
                     origin_selection_range: Some(symbol_range),
@@ -1087,12 +1087,12 @@ mod tests {
                 fˇn test() { do_work(); }
                 fn do_work() { test(); }
             "});
-        let mut requests = cx
-            .lsp
-            .handle_request::<GotoDefinition, _, _>(move |_, _| async move {
-                // No definitions returned
-                Ok(Some(lsp::GotoDefinitionResponse::Link(vec![])))
-            });
+        let mut requests =
+            cx.lsp
+                .set_request_handler::<GotoDefinition, _, _>(move |_, _| async move {
+                    // No definitions returned
+                    Ok(Some(lsp::GotoDefinitionResponse::Link(vec![])))
+                });
         cx.simulate_mouse_move(hover_point, None, Modifiers::secondary_key());
 
         requests.next().await;
@@ -1126,7 +1126,7 @@ mod tests {
                 fn do_work() { test(); }
             "});
 
-        let mut requests = cx.handle_request::<GotoDefinition, _, _>(move |url, _, _| async move {
+        let mut requests = cx.set_request_handler::<GotoDefinition, _, _>(move |url, _, _| async move {
             Ok(Some(lsp::GotoDefinitionResponse::Link(vec![
                 lsp::LocationLink {
                     origin_selection_range: Some(symbol_range),
@@ -1175,7 +1175,7 @@ mod tests {
         // Cmd click with existing definition doesn't re-request and dismisses highlight
         cx.simulate_click(hover_point, Modifiers::secondary_key());
         cx.lsp
-            .handle_request::<GotoDefinition, _, _>(move |_, _| async move {
+            .set_request_handler::<GotoDefinition, _, _>(move |_, _| async move {
                 // Empty definition response to make sure we aren't hitting the lsp and using
                 // the cached location instead
                 Ok(Some(lsp::GotoDefinitionResponse::Link(vec![])))
@@ -1202,7 +1202,7 @@ mod tests {
                 fn «do_work»() { test(); }
             "});
 
-        let mut requests = cx.handle_request::<GotoDefinition, _, _>(move |url, _, _| async move {
+        let mut requests = cx.set_request_handler::<GotoDefinition, _, _>(move |url, _, _| async move {
             Ok(Some(lsp::GotoDefinitionResponse::Link(vec![
                 lsp::LocationLink {
                     origin_selection_range: None,
@@ -1230,7 +1230,7 @@ mod tests {
                 fn test() { do_work(); }
                 fn «do_work»() { test(); }
             "});
-        let mut requests = cx.handle_request::<GotoDefinition, _, _>(move |url, _, _| async move {
+        let mut requests = cx.set_request_handler::<GotoDefinition, _, _>(move |url, _, _| async move {
             Ok(Some(lsp::GotoDefinitionResponse::Link(vec![
                 lsp::LocationLink {
                     origin_selection_range: None,
@@ -1315,7 +1315,7 @@ mod tests {
         let expected_uri = cx.buffer_lsp_url.clone();
         let hint_label = ": TestStruct";
         cx.lsp
-            .handle_request::<lsp::request::InlayHintRequest, _, _>(move |params, _| {
+            .set_request_handler::<lsp::request::InlayHintRequest, _, _>(move |params, _| {
                 let expected_uri = expected_uri.clone();
                 async move {
                     assert_eq!(params.text_document.uri, expected_uri);

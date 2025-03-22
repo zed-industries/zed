@@ -4480,7 +4480,7 @@ async fn test_formatting_buffer(
         project.register_buffer_with_language_servers(&buffer_b, cx)
     });
     let fake_language_server = fake_language_servers.next().await.unwrap();
-    fake_language_server.handle_request::<lsp::request::Formatting, _, _>(|_, _| async move {
+    fake_language_server.set_request_handler::<lsp::request::Formatting, _, _>(|_, _| async move {
         Ok(Some(vec![
             lsp::TextEdit {
                 range: lsp::Range::new(lsp::Position::new(0, 4), lsp::Position::new(0, 4)),
@@ -4633,7 +4633,7 @@ async fn test_prettier_formatting_buffer(
         });
     });
     let fake_language_server = fake_language_servers.next().await.unwrap();
-    fake_language_server.handle_request::<lsp::request::Formatting, _, _>(|_, _| async move {
+    fake_language_server.set_request_handler::<lsp::request::Formatting, _, _>(|_, _| async move {
         panic!(
             "Unexpected: prettier should be preferred since it's enabled and language supports it"
         )
@@ -4731,7 +4731,7 @@ async fn test_definition(
 
     // Request the definition of a symbol as the guest.
     let fake_language_server = fake_language_servers.next().await.unwrap();
-    fake_language_server.handle_request::<lsp::request::GotoDefinition, _, _>(|_, _| async move {
+    fake_language_server.set_request_handler::<lsp::request::GotoDefinition, _, _>(|_, _| async move {
         Ok(Some(lsp::GotoDefinitionResponse::Scalar(
             lsp::Location::new(
                 lsp::Url::from_file_path("/root/dir-2/b.rs").unwrap(),
@@ -4760,7 +4760,7 @@ async fn test_definition(
 
     // Try getting more definitions for the same buffer, ensuring the buffer gets reused from
     // the previous call to `definition`.
-    fake_language_server.handle_request::<lsp::request::GotoDefinition, _, _>(|_, _| async move {
+    fake_language_server.set_request_handler::<lsp::request::GotoDefinition, _, _>(|_, _| async move {
         Ok(Some(lsp::GotoDefinitionResponse::Scalar(
             lsp::Location::new(
                 lsp::Url::from_file_path("/root/dir-2/b.rs").unwrap(),
@@ -4791,7 +4791,7 @@ async fn test_definition(
         definitions_2[0].target.buffer
     );
 
-    fake_language_server.handle_request::<lsp::request::GotoTypeDefinition, _, _>(
+    fake_language_server.set_request_handler::<lsp::request::GotoTypeDefinition, _, _>(
         |req, _| async move {
             assert_eq!(
                 req.text_document_position_params.position,
@@ -4881,7 +4881,7 @@ async fn test_references(
     // Request references to a symbol as the guest.
     let fake_language_server = fake_language_servers.next().await.unwrap();
     let (lsp_response_tx, rx) = mpsc::unbounded::<Result<Option<Vec<lsp::Location>>>>();
-    fake_language_server.handle_request::<lsp::request::References, _, _>({
+    fake_language_server.set_request_handler::<lsp::request::References, _, _>({
         let rx = Arc::new(Mutex::new(Some(rx)));
         move |params, _| {
             assert_eq!(
@@ -5131,7 +5131,7 @@ async fn test_document_highlights(
 
     // Request document highlights as the guest.
     let fake_language_server = fake_language_servers.next().await.unwrap();
-    fake_language_server.handle_request::<lsp::request::DocumentHighlightRequest, _, _>(
+    fake_language_server.set_request_handler::<lsp::request::DocumentHighlightRequest, _, _>(
         |params, _| async move {
             assert_eq!(
                 params
@@ -5268,7 +5268,7 @@ async fn test_lsp_hover(
             "CrabLang-ls" => {
                 servers_with_hover_requests.insert(
                     new_server_name.clone(),
-                    new_server.handle_request::<lsp::request::HoverRequest, _, _>(
+                    new_server.set_request_handler::<lsp::request::HoverRequest, _, _>(
                         move |params, _| {
                             assert_eq!(
                                 params
@@ -5294,7 +5294,7 @@ async fn test_lsp_hover(
             "rust-analyzer" => {
                 servers_with_hover_requests.insert(
                     new_server_name.clone(),
-                    new_server.handle_request::<lsp::request::HoverRequest, _, _>(
+                    new_server.set_request_handler::<lsp::request::HoverRequest, _, _>(
                         |params, _| async move {
                             assert_eq!(
                                 params
@@ -5432,7 +5432,7 @@ async fn test_project_symbols(
         .unwrap();
 
     let fake_language_server = fake_language_servers.next().await.unwrap();
-    fake_language_server.handle_request::<lsp::WorkspaceSymbolRequest, _, _>(|_, _| async move {
+    fake_language_server.set_request_handler::<lsp::WorkspaceSymbolRequest, _, _>(|_, _| async move {
         Ok(Some(lsp::WorkspaceSymbolResponse::Flat(vec![
             #[allow(deprecated)]
             lsp::SymbolInformation {
@@ -5529,7 +5529,7 @@ async fn test_open_buffer_while_getting_definition_pointing_to_it(
         .unwrap();
 
     let fake_language_server = fake_language_servers.next().await.unwrap();
-    fake_language_server.handle_request::<lsp::request::GotoDefinition, _, _>(|_, _| async move {
+    fake_language_server.set_request_handler::<lsp::request::GotoDefinition, _, _>(|_, _| async move {
         Ok(Some(lsp::GotoDefinitionResponse::Scalar(
             lsp::Location::new(
                 lsp::Url::from_file_path("/root/b.rs").unwrap(),

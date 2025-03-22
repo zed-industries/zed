@@ -1220,7 +1220,7 @@ mod tests {
         );
 
         // Ensure all previously-registered buffers are closed when signing out.
-        lsp.handle_request::<request::SignOut, _, _>(|_, _| async {
+        lsp.set_request_handler::<request::SignOut, _, _>(|_, _| async {
             Ok(request::SignOutResult {})
         });
         copilot
@@ -1243,7 +1243,7 @@ mod tests {
         );
 
         // Ensure all previously-registered buffers are re-opened when signing in.
-        lsp.handle_request::<request::SignInInitiate, _, _>(|_, _| async {
+        lsp.set_request_handler::<request::SignInInitiate, _, _>(|_, _| async {
             Ok(request::SignInInitiateResult::AlreadySignedIn {
                 user: "user-1".into(),
             })

@@ -435,7 +435,7 @@ mod test {
         );
 
         let mut request =
-            cx.handle_request::<lsp::request::Completion, _, _>(move |_, params, _| async move {
+            cx.set_request_handler::<lsp::request::Completion, _, _>(move |_, params, _| async move {
                 let position = params.text_document_position.position;
                 Ok(Some(lsp::CompletionResponse::Array(vec![
                     lsp::CompletionItem {
