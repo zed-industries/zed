@@ -40,6 +40,7 @@ worktree.workspace = true
 workspace.workspace = true
 language.workspace = true
 zed_actions.workspace = true
+workspace-hack.workspace = true
 
 [dev-dependencies]
 client = { workspace = true, features = ["test-support"] }

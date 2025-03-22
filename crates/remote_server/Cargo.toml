@@ -61,6 +61,7 @@ sysinfo.workspace = true
 telemetry_events.workspace = true
 util.workspace = true
 worktree.workspace = true
+workspace-hack.workspace = true
 
 [target.'cfg(not(windows))'.dependencies]
 fork.workspace = true

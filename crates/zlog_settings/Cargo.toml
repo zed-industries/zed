@@ -21,3 +21,4 @@ schemars.workspace = true
 serde.workspace = true
 settings.workspace = true
 zlog.workspace = true
+workspace-hack.workspace = true

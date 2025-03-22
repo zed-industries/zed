@@ -51,6 +51,7 @@ tiktoken-rs.workspace = true
 tokio = { workspace = true, features = ["rt", "rt-multi-thread"] }
 ui.workspace = true
 util.workspace = true
+workspace-hack.workspace = true
 
 [dev-dependencies]
 editor = { workspace = true, features = ["test-support"] }

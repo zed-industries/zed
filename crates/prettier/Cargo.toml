@@ -29,6 +29,7 @@ paths.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 util.workspace = true
+workspace-hack.workspace = true
 
 [dev-dependencies]
 fs = { workspace = true,  features = ["test-support"] }

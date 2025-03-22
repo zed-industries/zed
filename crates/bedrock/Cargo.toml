@@ -26,3 +26,4 @@ serde_json.workspace = true
 strum.workspace = true
 thiserror.workspace = true
 tokio = { workspace = true, features = ["rt", "rt-multi-thread"] }
+workspace-hack.workspace = true

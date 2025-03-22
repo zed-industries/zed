@@ -39,6 +39,7 @@ media.workspace = true
 nanoid = { workspace = true, optional = true}
 parking_lot.workspace = true
 postage.workspace = true
+workspace-hack.workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]
 core-foundation.workspace = true
