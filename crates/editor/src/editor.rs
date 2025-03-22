@@ -10770,6 +10770,10 @@ impl Editor {
         self.nav_history.as_ref()
     }
 
+    pub fn create_nav_history_entry(&mut self, cx: &mut Context<Self>) {
+        self.push_to_nav_history(self.selections.newest_anchor().head(), None, cx);
+    }
+
     fn push_to_nav_history(
         &mut self,
         cursor_anchor: Anchor,
@@ -10799,6 +10803,9 @@ impl Editor {
                 }),
                 cx,
             );
+            cx.emit(EditorEvent::PushedToNavHistory {
+                anchor: cursor_anchor,
+            })
         }
     }
 
@@ -18554,6 +18561,9 @@ pub enum EditorEvent {
     },
     Reloaded,
     CursorShapeChanged,
+    PushedToNavHistory {
+        anchor: Anchor,
+    },
 }
 
 impl EventEmitter<EditorEvent> for Editor {}
