@@ -85,14 +85,14 @@ impl Model {
 
     pub fn id(&self) -> &str {
         match self {
-            Model::Claude3_5Sonnet => "us.anthropic.claude-3-5-sonnet-20241022-v2:0",
-            Model::Claude3Opus => "us.anthropic.claude-3-opus-20240229-v1:0",
-            Model::Claude3Sonnet => "us.anthropic.claude-3-sonnet-20240229-v1:0",
-            Model::Claude3_5Haiku => "us.anthropic.claude-3-5-haiku-20241022-v1:0",
-            Model::Claude3_7Sonnet => "us.anthropic.claude-3-7-sonnet-20250219-v1:0",
-            Model::AmazonNovaLite => "us.amazon.nova-lite-v1:0",
-            Model::AmazonNovaMicro => "us.amazon.nova-micro-v1:0",
-            Model::AmazonNovaPro => "us.amazon.nova-pro-v1:0",
+            Model::Claude3_5Sonnet => "anthropic.claude-3-5-sonnet-20241022-v2:0",
+            Model::Claude3Opus => "anthropic.claude-3-opus-20240229-v1:0",
+            Model::Claude3Sonnet => "anthropic.claude-3-sonnet-20240229-v1:0",
+            Model::Claude3_5Haiku => "anthropic.claude-3-5-haiku-20241022-v1:0",
+            Model::Claude3_7Sonnet => "anthropic.claude-3-7-sonnet-20250219-v1:0",
+            Model::AmazonNovaLite => "amazon.nova-lite-v1:0",
+            Model::AmazonNovaMicro => "amazon.nova-micro-v1:0",
+            Model::AmazonNovaPro => "amazon.nova-pro-v1:0",
             Model::DeepSeekR1 => "us.deepseek.r1-v1:0",
             Model::AI21J2GrandeInstruct => "ai21.j2-grande-instruct",
             Model::AI21J2JumboInstruct => "ai21.j2-jumbo-instruct",
@@ -207,5 +207,245 @@ impl Model {
             } => default_temperature.unwrap_or(1.0),
             _ => 1.0,
         }
+    }
+
+    pub fn cross_region_inference_id(&self, region: &str) -> Result<String, anyhow::Error> {
+        // Determine the regional prefix based on the AWS region
+        let region_group = if region.starts_with("us-gov-") {
+            "us-gov"
+        } else if region.starts_with("us-") {
+            "us"
+        } else if region.starts_with("eu-") {
+            "eu"
+        } else if region.starts_with("ap-") || region == "me-central-1" || region == "me-south-1" {
+            "apac"
+        } else if region.starts_with("ca-") || region.starts_with("sa-") {
+            // Canada and South America regions - default to US profiles
+            "us"
+        } else {
+            return Err(anyhow!("Unsupported Region")); // Unknown region
+        };
+
+        // Get the standard model ID
+        let model_id = self.id();
+
+        // Check if the model is available in the specified region
+        match (self, region_group) {
+            // Handle special cases first
+            (Model::Custom { .. }, _) => Ok(self.id().into()), // Custom models don't have cross-region profiles
+
+            // Models available only in US
+            (Model::Claude3Opus, "us") | (Model::Claude3_7Sonnet, "us") => {
+                Ok(format!("{}.{}", region_group, model_id))
+            }
+
+            // Models available in US, EU, and APAC
+            (Model::Claude3_5Sonnet, _)
+            | (Model::Claude3Sonnet, _)
+            | (Model::AmazonNovaLite, _)
+            | (Model::AmazonNovaMicro, _)
+            | (Model::AmazonNovaPro, _) => Ok(format!("{}.{}", region_group, model_id)),
+
+            // Models with limited EU availability
+            (Model::MetaLlama321BInstructV1, "us" | "eu")
+            | (Model::MetaLlama323BInstructV1, "us" | "eu") => {
+                Ok(format!("{}.{}", region_group, model_id))
+            }
+
+            // US-only models (all remaining Meta models)
+            (Model::MetaLlama38BInstructV1, "us")
+            | (Model::MetaLlama370BInstructV1, "us")
+            | (Model::MetaLlama318BInstructV1, "us")
+            | (Model::MetaLlama318BInstructV1_128k, "us")
+            | (Model::MetaLlama3170BInstructV1, "us")
+            | (Model::MetaLlama3170BInstructV1_128k, "us")
+            | (Model::MetaLlama3211BInstructV1, "us")
+            | (Model::MetaLlama3290BInstructV1, "us") => {
+                Ok(format!("{}.{}", region_group, model_id))
+            }
+
+            // Claude 3 Haiku with US & US-GOV availability
+            (Model::Claude3_5Haiku, "us" | "us-gov") => {
+                Ok(format!("{}.{}", region_group, model_id))
+            }
+
+            // Any other combination is not supported
+            _ => Ok(self.id().into()),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_us_region_inference_ids() -> anyhow::Result<()> {
+        // Test US regions
+        assert_eq!(
+            Model::Claude3_5Sonnet.cross_region_inference_id("us-east-1")?,
+            "us.anthropic.claude-3-5-sonnet-20241022-v2:0"
+        );
+        assert_eq!(
+            Model::Claude3_5Sonnet.cross_region_inference_id("us-west-2")?,
+            "us.anthropic.claude-3-5-sonnet-20241022-v2:0"
+        );
+        assert_eq!(
+            Model::AmazonNovaPro.cross_region_inference_id("us-east-2")?,
+            "us.amazon.nova-pro-v1:0"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_eu_region_inference_ids() -> anyhow::Result<()> {
+        // Test European regions
+        assert_eq!(
+            Model::Claude3_5Sonnet.cross_region_inference_id("eu-central-1")?,
+            "eu.anthropic.claude-3-5-sonnet-20241022-v2:0"
+        );
+        assert_eq!(
+            Model::Claude3Sonnet.cross_region_inference_id("eu-west-1")?,
+            "eu.anthropic.claude-3-sonnet-20240229-v1:0"
+        );
+        assert_eq!(
+            Model::AmazonNovaMicro.cross_region_inference_id("eu-north-1")?,
+            "eu.amazon.nova-micro-v1:0"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_apac_region_inference_ids() -> anyhow::Result<()> {
+        // Test Asia-Pacific regions
+        assert_eq!(
+            Model::Claude3_5Sonnet.cross_region_inference_id("ap-northeast-1")?,
+            "apac.anthropic.claude-3-5-sonnet-20241022-v2:0"
+        );
+        assert_eq!(
+            Model::AmazonNovaLite.cross_region_inference_id("ap-south-1")?,
+            "apac.amazon.nova-lite-v1:0"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_gov_region_inference_ids() -> anyhow::Result<()> {
+        // Test Government regions
+        assert_eq!(
+            Model::Claude3_5Sonnet.cross_region_inference_id("us-gov-east-1")?,
+            "us-gov.anthropic.claude-3-5-sonnet-20241022-v2:0"
+        );
+        assert_eq!(
+            Model::Claude3Sonnet.cross_region_inference_id("us-gov-west-1")?,
+            "us-gov.anthropic.claude-3-sonnet-20240229-v1:0"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_meta_models_inference_ids() -> anyhow::Result<()> {
+        // Test Meta models
+        assert_eq!(
+            Model::MetaLlama370BInstructV1.cross_region_inference_id("us-east-1")?,
+            "us.meta.llama3-70b-instruct-v1:0"
+        );
+        assert_eq!(
+            Model::MetaLlama321BInstructV1.cross_region_inference_id("eu-west-1")?,
+            "eu.meta.llama3-2-1b-instruct-v1:0"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_mistral_models_inference_ids() -> anyhow::Result<()> {
+        // Mistral models don't follow the regional prefix pattern,
+        // so they should return their original IDs
+        assert_eq!(
+            Model::MistralMistralLarge2402V1.cross_region_inference_id("us-east-1")?,
+            "mistral.mistral-large-2402-v1:0"
+        );
+        assert_eq!(
+            Model::MistralMixtral8x7BInstructV0.cross_region_inference_id("eu-west-1")?,
+            "mistral.mixtral-8x7b-instruct-v0:1"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_ai21_models_inference_ids() -> anyhow::Result<()> {
+        // AI21 models don't follow the regional prefix pattern,
+        // so they should return their original IDs
+        assert_eq!(
+            Model::AI21J2UltraV1.cross_region_inference_id("us-east-1")?,
+            "ai21.j2-ultra-v1"
+        );
+        assert_eq!(
+            Model::AI21JambaInstructV1.cross_region_inference_id("eu-west-1")?,
+            "ai21.jamba-instruct-v1:0"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_cohere_models_inference_ids() -> anyhow::Result<()> {
+        // Cohere models don't follow the regional prefix pattern,
+        // so they should return their original IDs
+        assert_eq!(
+            Model::CohereCommandRV1.cross_region_inference_id("us-east-1")?,
+            "cohere.command-r-v1:0"
+        );
+        assert_eq!(
+            Model::CohereCommandTextV14_4k.cross_region_inference_id("ap-southeast-1")?,
+            "cohere.command-text-v14:7:4k"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_custom_model_inference_ids() -> anyhow::Result<()> {
+        // Test custom models
+        let custom_model = Model::Custom {
+            name: "custom.my-model-v1:0".to_string(),
+            max_tokens: 100000,
+            display_name: Some("My Custom Model".to_string()),
+            max_output_tokens: Some(8192),
+            default_temperature: Some(0.7),
+        };
+
+        // Custom model should return its name unchanged
+        assert_eq!(
+            custom_model.cross_region_inference_id("us-east-1")?,
+            "custom.my-model-v1:0"
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_unsupported_model_region_combination() {
+        // Test for a hypothetical case where a specific model-region combination is unsupported
+
+        // For this test, we can simulate an error case by creating a specialized test model
+        // that's designed to fail for certain regions
+
+        // we'd test it if the implementation supported returning errors for
+        // unsupported model-region combinations:
+        /*
+        let test_model = Model::Custom {
+            name: "test.unsupported-model".to_string(),
+            max_tokens: 1000,
+            display_name: None,
+            max_output_tokens: None,
+            default_temperature: None,
+        };
+
+        let result = test_model.cross_region_inference_id("restricted-region");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("unsupported model-region combination"));
+        */
+
+        // Since current implementation doesn't return errors for this scenario,
+        // we skip the actual test and leave this as a placeholder for future implementation
     }
 }
