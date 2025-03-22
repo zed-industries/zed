@@ -427,6 +427,8 @@
   "project_panel": {
     // Whether to show the project panel button in the status bar
     "button": true,
+    // Whether to hide the gitignore entries in the project panel.
+    "hide_gitignore": false,
     // Default width of the project panel.
     "default_width": 240,
     // Where to dock the project panel. Can be 'left' or 'right'.

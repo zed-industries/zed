@@ -2590,7 +2590,9 @@ impl ProjectPanel {
         new_selected_entry: Option<(WorktreeId, ProjectEntryId)>,
         cx: &mut Context<Self>,
     ) {
-        let auto_collapse_dirs = ProjectPanelSettings::get_global(cx).auto_fold_dirs;
+        let settings = ProjectPanelSettings::get_global(cx);
+        let auto_collapse_dirs = settings.auto_fold_dirs;
+        let hide_gitignore = settings.hide_gitignore;
         let project = self.project.read(cx);
         self.last_worktree_root_id = project
             .visible_worktrees(cx)
@@ -2675,7 +2677,9 @@ impl ProjectPanel {
                     }
                 }
                 auto_folded_ancestors.clear();
-                visible_worktree_entries.push(entry.to_owned());
+                if !hide_gitignore || !entry.is_ignored {
+                    visible_worktree_entries.push(entry.to_owned());
+                }
                 let precedes_new_entry = if let Some(new_entry_id) = new_entry_parent_id {
                     entry.id == new_entry_id || {
                         self.ancestors.get(&entry.id).map_or(false, |entries| {
@@ -2688,7 +2692,7 @@ impl ProjectPanel {
                 } else {
                     false
                 };
-                if precedes_new_entry {
+                if precedes_new_entry && (!hide_gitignore || !entry.is_ignored) {
                     visible_worktree_entries.push(GitEntry {
                         entry: Entry {
                             id: NEW_ENTRY_ID,
