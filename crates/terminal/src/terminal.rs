@@ -1874,6 +1874,10 @@ impl Terminal {
             }
         }
     }
+
+    pub fn vi_mode_enabled(&self) -> bool {
+        self.vi_mode_enabled
+    }
 }
 
 // Helper function to convert a grid row to a string

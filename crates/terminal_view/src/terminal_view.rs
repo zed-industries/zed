@@ -590,6 +590,10 @@ impl TerminalView {
         let mut dispatch_context = KeyContext::new_with_defaults();
         dispatch_context.add("Terminal");
 
+        if self.terminal.read(cx).vi_mode_enabled() {
+            dispatch_context.add("vi_mode");
+        }
+
         let mode = self.terminal.read(cx).last_content.mode;
         dispatch_context.set(
             "screen",
