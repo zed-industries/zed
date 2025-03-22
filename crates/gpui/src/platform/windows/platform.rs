@@ -25,10 +25,7 @@ use windows::{
         System::{Com::*, LibraryLoader::*, Ole::*, SystemInformation::*, Threading::*},
         UI::{Input::KeyboardAndMouse::*, Shell::*, WindowsAndMessaging::*},
     },
-    UI::{
-        StartScreen::{JumpList, JumpListItem},
-        ViewManagement::UISettings,
-    },
+    UI::ViewManagement::UISettings,
 };
 
 use crate::{platform::blade::BladeContext, *};
@@ -52,7 +49,7 @@ pub(crate) struct WindowsPlatform {
 pub(crate) struct WindowsPlatformState {
     callbacks: PlatformCallbacks,
     menus: Vec<OwnedMenu>,
-    dock_menu_actions: Vec<Box<dyn Action>>,
+    dock_menus: Vec<DockMenuItem>,
     // NOTE: standard cursor handles don't need to close.
     pub(crate) current_cursor: HCURSOR,
 }
@@ -70,12 +67,12 @@ struct PlatformCallbacks {
 impl WindowsPlatformState {
     fn new() -> Self {
         let callbacks = PlatformCallbacks::default();
-        let dock_menu_actions = Vec::new();
+        let dock_menus = Vec::new();
         let current_cursor = load_cursor(CursorStyle::Arrow);
 
         Self {
             callbacks,
-            dock_menu_actions,
+            dock_menus,
             current_cursor,
             menus: Vec::new(),
         }
@@ -189,9 +186,9 @@ impl WindowsPlatform {
         let mut lock = self.state.borrow_mut();
         if let Some(mut callback) = lock.callbacks.app_menu_action.take() {
             let Some(action) = lock
-                .dock_menu_actions
+                .dock_menus
                 .get(action_idx)
-                .map(|action| action.boxed_clone())
+                .map(|dock_menu| dock_menu.action.boxed_clone())
             else {
                 lock.callbacks.app_menu_action = Some(callback);
                 log::error!("Dock menu for index {action_idx} not found");
@@ -254,33 +251,20 @@ impl WindowsPlatform {
         false
     }
 
-    fn configure_jump_list(&self, menus: Vec<MenuItem>) -> Result<()> {
-        let jump_list = JumpList::LoadCurrentAsync()?.get()?;
-        let items = jump_list.Items()?;
-        items.Clear()?;
+    /// You have to call `update_jump_list` to show the button after calling this method.
+    fn set_dock_menus(&self, menus: Vec<MenuItem>) {
         let mut actions = Vec::new();
-        for item in menus.into_iter() {
-            let item = match item {
-                MenuItem::Separator => JumpListItem::CreateSeparator()?,
-                MenuItem::Submenu(_) => {
-                    log::error!("Set `MenuItemSubmenu` for dock menu on Windows is not supported.");
-                    continue;
-                }
-                MenuItem::Action { name, action, .. } => {
-                    let idx = actions.len();
-                    actions.push(action.boxed_clone());
-                    let item_args = format!("--dock-action {}", idx);
-                    JumpListItem::CreateWithArguments(
-                        &HSTRING::from(item_args),
-                        &HSTRING::from(name.as_ref()),
-                    )?
-                }
-            };
-            items.Append(&item)?;
-        }
-        jump_list.SaveAsync()?.get()?;
-        self.state.borrow_mut().dock_menu_actions = actions;
-        Ok(())
+        menus.into_iter().for_each(|menu| {
+            if let Some(dock_menu) = DockMenuItem::new(menu).log_err() {
+                actions.push(dock_menu);
+            }
+        });
+        self.state.borrow_mut().dock_menus = actions;
+    }
+
+    fn update_jump_list(&self, entries: &[&Vec<String>]) -> Option<Vec<Vec<String>>> {
+        let dock_menus = &self.state.borrow().dock_menus;
+        update_jump_list(entries, dock_menus).log_err().flatten()
     }
 }
 
@@ -531,7 +515,7 @@ impl Platform for WindowsPlatform {
     }
 
     fn set_dock_menu(&self, menus: Vec<MenuItem>, _keymap: &Keymap) {
-        self.configure_jump_list(menus).log_err();
+        self.set_dock_menus(menus);
     }
 
     fn on_app_menu_action(&self, callback: Box<dyn FnMut(&dyn Action)>) {
@@ -668,6 +652,10 @@ impl Platform for WindowsPlatform {
             )
             .log_err();
         }
+    }
+
+    fn update_jump_list(&self, entries: &[&Vec<String>]) -> Option<Vec<Vec<String>>> {
+        self.update_jump_list(entries)
     }
 }
 
