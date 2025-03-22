@@ -664,6 +664,7 @@ impl VariableList {
         } else {
             colors.default
         };
+        let path = entry.path.clone();
 
         div()
             .id(var_ref as usize)
@@ -676,7 +677,8 @@ impl VariableList {
             .h_full()
             .hover(|style| style.bg(bg_hover_color))
             .on_click(cx.listener({
-                move |_this, _, _window, cx| {
+                move |this, _, _window, cx| {
+                    this.selection = Some(path.clone());
                     cx.notify();
                 }
             }))
