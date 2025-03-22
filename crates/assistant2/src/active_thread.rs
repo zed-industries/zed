@@ -1719,20 +1719,21 @@ impl ActiveThread {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if let Some(PendingToolUseStatus::NeedsConfirmation {
-            tool_use_id,
-            input,
-            ui_text,
-            messages,
-            tool_type,
-        }) = self
+        if let Some(PendingToolUseStatus::NeedsConfirmation(c)) = self
             .thread
             .read(cx)
             .pending_tool(&tool_use_id)
             .map(|tool_use| tool_use.status.clone())
         {
             self.thread.update(cx, |thread, cx| {
-                thread.run_tool(tool_use_id, ui_text, input, &messages, tool_type, cx);
+                thread.run_tool(
+                    c.tool_use_id.clone(),
+                    c.ui_text.clone(),
+                    c.input.clone(),
+                    &c.messages,
+                    c.tool_type.clone(),
+                    cx,
+                );
             });
         }
     }

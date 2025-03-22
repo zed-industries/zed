@@ -290,13 +290,14 @@ impl ToolUseState {
         if let Some(tool_use) = self.pending_tool_uses_by_id.get_mut(&tool_use_id) {
             let ui_text = ui_text.into();
             tool_use.ui_text = ui_text.clone();
-            tool_use.status = PendingToolUseStatus::NeedsConfirmation {
+            let confirmation = Confirmation {
                 tool_use_id,
                 input,
                 messages,
                 tool_type,
                 ui_text,
             };
+            tool_use.status = PendingToolUseStatus::NeedsConfirmation(Arc::new(confirmation));
         }
     }
 
@@ -404,18 +405,19 @@ pub enum ToolType {
 }
 
 #[derive(Debug, Clone)]
+pub struct Confirmation {
+    pub tool_use_id: LanguageModelToolUseId,
+    pub input: serde_json::Value,
+    pub ui_text: Arc<str>,
+    pub messages: Arc<Vec<LanguageModelRequestMessage>>,
+    pub tool_type: ToolType,
+}
+
+#[derive(Debug, Clone)]
 pub enum PendingToolUseStatus {
     Idle,
-    NeedsConfirmation {
-        tool_use_id: LanguageModelToolUseId,
-        input: serde_json::Value,
-        ui_text: Arc<str>,
-        messages: Arc<Vec<LanguageModelRequestMessage>>,
-        tool_type: ToolType,
-    },
-    Running {
-        _task: Shared<Task<()>>,
-    },
+    NeedsConfirmation(Arc<Confirmation>),
+    Running { _task: Shared<Task<()>> },
     Error(#[allow(unused)] Arc<str>),
 }
 

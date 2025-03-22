@@ -370,9 +370,8 @@ impl Thread {
             .pending_tool_uses()
             .into_iter()
             .filter_map(|tool_use| {
-                if let PendingToolUseStatus::NeedsConfirmation { tool_type, .. } = &tool_use.status
-                {
-                    Some((tool_type.clone(), tool_use))
+                if let PendingToolUseStatus::NeedsConfirmation(confirmation) = &tool_use.status {
+                    Some((confirmation.tool_type.clone(), tool_use))
                 } else {
                     None
                 }
