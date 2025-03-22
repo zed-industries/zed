@@ -9454,6 +9454,7 @@ async fn test_completion(cx: &mut TestAppContext) {
 
 #[gpui::test]
 async fn test_word_completion(cx: &mut TestAppContext) {
+    // similar to this, but I think I should use Fake Lsp provider
     let lsp_fetch_timeout_ms = 10;
     init_test(cx, |language_settings| {
         language_settings.defaults.completions = Some(CompletionSettings {
