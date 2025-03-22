@@ -5,6 +5,7 @@ use futures::{Stream, StreamExt as _};
 use gpui::{
     BackgroundExecutor, ScreenCaptureFrame, ScreenCaptureSource, ScreenCaptureStream, Task,
 };
+use libwebrtc::native::apm::AudioProcessingModule;
 use livekit::track;
 
 use livekit::webrtc::{
@@ -16,6 +17,7 @@ use livekit::webrtc::{
     video_stream::native::NativeVideoStream,
 };
 use parking_lot::Mutex;
+use std::time::Duration;
 use std::{borrow::Cow, collections::VecDeque, sync::Arc, thread};
 use util::ResultExt as _;
 
@@ -71,6 +73,7 @@ pub(crate) async fn capture_local_video_track(
 }
 
 pub(crate) fn capture_local_audio_track(
+    apm: Arc<Mutex<libwebrtc::native::apm::AudioProcessingModule>>,
     background_executor: &BackgroundExecutor,
 ) -> Result<Task<(crate::LocalAudioTrack, AudioStream)>> {
     use util::maybe;
@@ -80,48 +83,59 @@ pub(crate) fn capture_local_audio_track(
     let sample_rate;
     let channels;
 
-    if cfg!(any(test, feature = "test-support")) {
-        sample_rate = 2;
-        channels = 1;
-    } else {
-        let (device, config) = default_device(true)?;
-        sample_rate = config.sample_rate().0;
-        channels = config.channels() as u32;
-        thread::spawn(move || {
-            maybe!({
-                if let Some(name) = device.name().ok() {
-                    log::info!("Using microphone: {}", name)
-                } else {
-                    log::info!("Using microphone: <unknown>");
-                }
+    let (device, config) = default_device(true)?;
+    sample_rate = config.sample_rate().0;
+    channels = config.channels() as u32;
+    thread::spawn(move || {
+        maybe!({
+            if let Some(name) = device.name().ok() {
+                log::info!("Using microphone: {}", name)
+            } else {
+                log::info!("Using microphone: <unknown>");
+            }
 
-                let stream = device
-                    .build_input_stream_raw(
-                        &config.config(),
-                        cpal::SampleFormat::I16,
-                        move |data, _: &_| {
-                            frame_tx
-                                .unbounded_send(AudioFrame {
-                                    data: Cow::Owned(data.as_slice::<i16>().unwrap().to_vec()),
-                                    sample_rate,
-                                    num_channels: channels,
-                                    samples_per_channel: data.len() as u32 / channels,
-                                })
-                                .ok();
-                        },
-                        |err| log::error!("error capturing audio track: {:?}", err),
-                        None,
-                    )
-                    .context("failed to build input stream")?;
+            let mut buf: Vec<i16> = Vec::with_capacity((channels * sample_rate / 100) as usize);
 
-                stream.play()?;
-                // Keep the thread alive and holding onto the `stream`
-                thread_kill_rx.recv().ok();
-                anyhow::Ok(Some(()))
-            })
-            .log_err();
-        });
-    }
+            let stream = device
+                .build_input_stream_raw(
+                    &config.config(),
+                    cpal::SampleFormat::I16,
+                    move |data, _: &_| {
+                        let mut data = data.as_slice::<i16>().unwrap();
+                        while data.len() > 0 {
+                            let remainder = (buf.capacity() - buf.len()).min(data.len());
+                            buf.extend_from_slice(&data[..remainder]);
+                            data = &data[remainder..];
+
+                            if buf.capacity() == buf.len() {
+                                frame_tx
+                                    .unbounded_send(AudioFrame {
+                                        data: Cow::Owned(std::mem::replace(
+                                            &mut buf,
+                                            Vec::with_capacity(
+                                                (channels * sample_rate / 100) as usize,
+                                            ),
+                                        )),
+                                        sample_rate,
+                                        num_channels: channels,
+                                        samples_per_channel: buf.len() as u32 / channels,
+                                    })
+                                    .ok();
+                            }
+                        }
+                    },
+                    |err| log::error!("error capturing audio track: {:?}", err),
+                    Some(Duration::from_millis(10)),
+                )
+                .context("failed to build input stream")?;
+
+            stream.play()?;
+            // Keep the thread alive and holding onto the `stream`
+            thread_kill_rx.recv().ok();
+            anyhow::Ok(Some(()))
+        })
+        .log_err();
+    });
 
     Ok(background_executor.spawn({
         let background_executor = background_executor.clone();
@@ -134,12 +148,19 @@ pub(crate) fn capture_local_audio_track(
                 },
                 sample_rate,
                 channels,
-                100,
+                10,
             );
             let transmit_task = background_executor.spawn({
                 let source = source.clone();
                 async move {
-                    while let Some(frame) = frame_rx.next().await {
+                    while let Some(mut frame) = frame_rx.next().await {
+                        apm.lock()
+                            .process_stream(
+                                frame.data.to_mut(),
+                                sample_rate as i32,
+                                channels as i32,
+                            )
+                            .log_err();
                         source.capture_frame(&frame).await.log_err();
                     }
                 }
@@ -162,56 +183,52 @@ pub(crate) fn capture_local_audio_track(
 }
 
 pub fn play_remote_audio_track(
+    apm: Arc<Mutex<libwebrtc::native::apm::AudioProcessingModule>>,
     track: &RemoteAudioTrack,
     background_executor: &BackgroundExecutor,
 ) -> Result<AudioStream> {
     let track = track.clone();
     // We track device changes in our output because Livekit has a resampler built in,
     // and it's easy to create a new native audio stream when the device changes.
-    if cfg!(any(test, feature = "test-support")) {
-        Ok(AudioStream::Output {
-            _task: background_executor.spawn(async {}),
-        })
-    } else {
-        let mut default_change_listener = DeviceChangeListener::new(false)?;
-        let (output_device, output_config) = default_device(false)?;
+    let mut default_change_listener = DeviceChangeListener::new(false)?;
+    let (output_device, output_config) = default_device(false)?;
 
-        let _task = background_executor.spawn({
-            let background_executor = background_executor.clone();
-            async move {
-                let (mut _receive_task, mut _thread) = start_output_stream(
+    let _task = background_executor.spawn({
+        let background_executor = background_executor.clone();
+        async move {
+            let (mut _receive_task, mut _thread) = start_output_stream(
+                apm.clone(),
+                output_config,
+                output_device,
+                &track.0,
+                &background_executor,
+            );
+
+            while let Some(_) = default_change_listener.next().await {
+                let Some((output_device, output_config)) = get_default_output().log_err() else {
+                    continue;
+                };
+
+                if let Ok(name) = output_device.name() {
+                    log::info!("Using speaker: {}", name)
+                } else {
+                    log::info!("Using speaker: <unknown>")
+                }
+
+                (_receive_task, _thread) = start_output_stream(
+                    apm.clone(),
                     output_config,
                     output_device,
                     &track.0,
                     &background_executor,
                 );
-
-                while let Some(_) = default_change_listener.next().await {
-                    let Some((output_device, output_config)) = get_default_output().log_err()
-                    else {
-                        continue;
-                    };
-
-                    if let Ok(name) = output_device.name() {
-                        log::info!("Using speaker: {}", name)
-                    } else {
-                        log::info!("Using speaker: <unknown>")
-                    }
-
-                    (_receive_task, _thread) = start_output_stream(
-                        output_config,
-                        output_device,
-                        &track.0,
-                        &background_executor,
-                    );
-                }
-
-                futures::future::pending::<()>().await;
             }
-        });
 
-        Ok(AudioStream::Output { _task })
-    }
+            futures::future::pending::<()>().await;
+        }
+    });
+
+    Ok(AudioStream::Output { _task })
 }
 
 fn default_device(input: bool) -> anyhow::Result<(cpal::Device, cpal::SupportedStreamConfig)> {
@@ -245,6 +262,7 @@ fn get_default_output() -> anyhow::Result<(cpal::Device, cpal::SupportedStreamCo
 }
 
 fn start_output_stream(
+    apm: Arc<Mutex<libwebrtc::native::apm::AudioProcessingModule>>,
     output_config: cpal::SupportedStreamConfig,
     output_device: cpal::Device,
     track: &track::RemoteAudioTrack,
@@ -264,7 +282,7 @@ fn start_output_stream(
         async move {
             const MS_OF_BUFFER: u32 = 100;
             const MS_IN_SEC: u32 = 1000;
-            while let Some(frame) = stream.next().await {
+            while let Some(mut frame) = stream.next().await {
                 let frame_size = frame.samples_per_channel * frame.num_channels;
                 debug_assert!(frame.data.len() == frame_size as usize);
 
@@ -278,7 +296,16 @@ fn start_output_stream(
                     buffer.drain(0..overflow);
                 }
 
-                buffer.extend(frame.data.iter());
+                let data = frame.data.to_mut();
+
+                apm.lock()
+                    .process_reverse_stream(
+                        data,
+                        frame.sample_rate as i32,
+                        frame.num_channels as i32,
+                    )
+                    .log_err();
+                buffer.extend(data.iter());
             }
         }
     });
@@ -287,11 +314,7 @@ fn start_output_stream(
     // and we experienced a deadlock when it's created on the main thread.
     let (thread, end_on_drop_rx) = std::sync::mpsc::channel::<()>();
     thread::spawn(move || {
-        if cfg!(any(test, feature = "test-support")) {
-            // Can't play audio in tests
-            return;
-        }
-
+        let sample_rate = output_config.sample_rate();
         let output_stream = output_device.build_output_stream(
             &output_config.config(),
             {
@@ -313,7 +336,7 @@ fn start_output_stream(
                 }
             },
             |error| log::error!("error playing audio track: {:?}", error),
-            None,
+            Some(Duration::from_millis(10)),
         );
 
         let Some(output_stream) = output_stream.log_err() else {

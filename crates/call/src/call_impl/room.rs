@@ -950,7 +950,14 @@ impl Room {
                         cx.emit(Event::RemoteAudioTracksChanged {
                             participant_id: participant.peer_id,
                         });
-                        let stream = play_remote_audio_track(&track, cx.background_executor())?;
+                        let apm = self
+                            .live_kit
+                            .as_ref()
+                            .unwrap()
+                            .room
+                            .audio_processing_module();
+                        let stream =
+                            play_remote_audio_track(apm, &track, cx.background_executor())?;
                         participant.audio_tracks.insert(track_id, (track, stream));
                         participant.muted = publication.is_muted();
                     }
@@ -1303,17 +1310,21 @@ impl Room {
             return Task::ready(Err(anyhow!("room is offline")));
         }
 
-        let (participant, publish_id) = if let Some(live_kit) = self.live_kit.as_mut() {
+        let (participant, publish_id, apm) = if let Some(live_kit) = self.live_kit.as_mut() {
             let publish_id = post_inc(&mut live_kit.next_publish_id);
             live_kit.microphone_track = LocalTrack::Pending { publish_id };
             cx.notify();
-            (live_kit.room.local_participant(), publish_id)
+            (
+                live_kit.room.local_participant(),
+                publish_id,
+                live_kit.room.audio_processing_module(),
+            )
         } else {
             return Task::ready(Err(anyhow!("live-kit was not initialized")));
         };
 
         cx.spawn(async move |this, cx| {
-            let publication = participant.publish_microphone_track(cx).await;
+            let publication = participant.publish_microphone_track(apm, cx).await;
             this.update(cx, |this, cx| {
                 let live_kit = this
                     .live_kit

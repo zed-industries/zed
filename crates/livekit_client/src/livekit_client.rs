@@ -5,6 +5,8 @@ use collections::HashMap;
 use futures::{channel::mpsc, SinkExt};
 use gpui::{App, AsyncApp, ScreenCaptureSource, ScreenCaptureStream, Task};
 use gpui_tokio::Tokio;
+use libwebrtc::native::apm::AudioProcessingModule;
+use parking_lot::Mutex;
 use playback::{capture_local_audio_track, capture_local_video_track};
 
 mod playback;
@@ -34,6 +36,7 @@ pub struct LocalParticipant(livekit::participant::LocalParticipant);
 pub struct Room {
     room: livekit::Room,
     _task: Task<()>,
+    apm: Arc<Mutex<AudioProcessingModule>>,
 }
 
 pub type TrackSid = livekit::id::TrackSid;
@@ -65,7 +68,16 @@ impl Room {
             }
         });
 
-        Ok((Self { room, _task: task }, rx))
+        Ok((
+            Self {
+                room,
+                _task: task,
+                apm: Arc::new(Mutex::new(AudioProcessingModule::new(
+                    true, true, true, true,
+                ))),
+            },
+            rx,
+        ))
     }
 
     pub fn local_participant(&self) -> LocalParticipant {
@@ -83,14 +95,19 @@ impl Room {
     pub fn connection_state(&self) -> ConnectionState {
         self.room.connection_state()
     }
+
+    pub fn audio_processing_module(&self) -> Arc<Mutex<AudioProcessingModule>> {
+        self.apm.clone()
+    }
 }
 
 impl LocalParticipant {
     pub async fn publish_microphone_track(
         &self,
+        apm: Arc<Mutex<AudioProcessingModule>>,
         cx: &mut AsyncApp,
     ) -> Result<(LocalTrackPublication, playback::AudioStream)> {
-        let (track, stream) = capture_local_audio_track(cx.background_executor())?.await;
+        let (track, stream) = capture_local_audio_track(apm, cx.background_executor())?.await;
         let publication = self
             .publish_track(
                 livekit::track::LocalTrack::Audio(track.0),

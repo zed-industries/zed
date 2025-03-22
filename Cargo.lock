@@ -7858,6 +7858,7 @@ dependencies = [
  "gpui_tokio",
  "http_client_tls",
  "image",
+ "libwebrtc",
  "livekit",
  "livekit_api",
  "log",

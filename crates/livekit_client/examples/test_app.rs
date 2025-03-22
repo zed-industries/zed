@@ -167,12 +167,14 @@ impl LivekitWindow {
                 participant,
                 track,
             } => {
+                let apm = self.room.audio_processing_module();
                 let output = self.remote_participant(participant);
                 match track {
                     livekit_client::RemoteTrack::Audio(track) => {
                         output.audio_output_stream = Some((
                             publication.clone(),
                             livekit_client::play_remote_audio_track(
+                                apm,
                                 &track,
                                 cx.background_executor(),
                             )
@@ -246,8 +248,10 @@ impl LivekitWindow {
             cx.notify();
         } else {
             let participant = self.room.local_participant();
+            let apm = self.room.audio_processing_module();
             cx.spawn_in(window, async move |this, cx| {
-                let (publication, stream) = participant.publish_microphone_track(cx).await.unwrap();
+                let (publication, stream) =
+                    participant.publish_microphone_track(apm, cx).await.unwrap();
                 this.update(cx, |this, cx| {
                     this.microphone_track = Some(publication);
                     this.microphone_stream = Some(stream);
