@@ -2,6 +2,7 @@ use anyhow::Context as _;
 use gpui::{App, UpdateGlobal};
 use json::json_task_context;
 use node_runtime::NodeRuntime;
+use rust::CargoManifestProvider;
 use rust_embed::RustEmbed;
 use settings::SettingsStore;
 use smol::stream::StreamExt;
@@ -284,7 +285,7 @@ pub fn init(languages: Arc<LanguageRegistry>, node: NodeRuntime, cx: &mut App) {
     let mut subscription = languages.subscribe();
     let mut prev_language_settings = languages.language_settings();
 
-    cx.spawn(|cx| async move {
+    cx.spawn(async move |cx| {
         while subscription.next().await.is_some() {
             let language_settings = languages.language_settings();
             if language_settings != prev_language_settings {
@@ -301,6 +302,7 @@ pub fn init(languages: Arc<LanguageRegistry>, node: NodeRuntime, cx: &mut App) {
         anyhow::Ok(())
     })
     .detach();
+    project::ManifestProviders::global(cx).register(Arc::from(CargoManifestProvider));
 }
 
 #[derive(Default)]

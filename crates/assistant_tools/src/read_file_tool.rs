@@ -44,6 +44,10 @@ impl Tool for ReadFileTool {
         "read-file".into()
     }
 
+    fn needs_confirmation(&self) -> bool {
+        false
+    }
+
     fn description(&self) -> String {
         include_str!("./read_file_tool/description.md").into()
     }
@@ -51,6 +55,13 @@ impl Tool for ReadFileTool {
     fn input_schema(&self) -> serde_json::Value {
         let schema = schemars::schema_for!(ReadFileToolInput);
         serde_json::to_value(&schema).unwrap()
+    }
+
+    fn ui_text(&self, input: &serde_json::Value) -> String {
+        match serde_json::from_value::<ReadFileToolInput>(input.clone()) {
+            Ok(input) => format!("Read file `{}`", input.path.display()),
+            Err(_) => "Read file".to_string(),
+        }
     }
 
     fn run(
@@ -67,42 +78,36 @@ impl Tool for ReadFileTool {
         };
 
         let Some(project_path) = project.read(cx).find_project_path(&input.path, cx) else {
-            return Task::ready(Err(anyhow!("Path not found in project")));
+            return Task::ready(Err(anyhow!(
+                "Path {} not found in project",
+                &input.path.display()
+            )));
         };
 
-        cx.spawn(|mut cx| async move {
+        cx.spawn(async move |cx| {
             let buffer = cx
                 .update(|cx| {
                     project.update(cx, |project, cx| project.open_buffer(project_path, cx))
                 })?
                 .await?;
 
-            let result = buffer.read_with(&cx, |buffer, _cx| {
-                if buffer
-                    .file()
-                    .map_or(false, |file| file.disk_state().exists())
-                {
-                    let text = buffer.text();
-                    let string = if input.start_line.is_some() || input.end_line.is_some() {
-                        let start = input.start_line.unwrap_or(1);
-                        let lines = text.split('\n').skip(start - 1);
-                        if let Some(end) = input.end_line {
-                            let count = end.saturating_sub(start);
-                            Itertools::intersperse(lines.take(count), "\n").collect()
-                        } else {
-                            Itertools::intersperse(lines, "\n").collect()
-                        }
+            let result = buffer.read_with(cx, |buffer, _cx| {
+                let text = buffer.text();
+                if input.start_line.is_some() || input.end_line.is_some() {
+                    let start = input.start_line.unwrap_or(1);
+                    let lines = text.split('\n').skip(start - 1);
+                    if let Some(end) = input.end_line {
+                        let count = end.saturating_sub(start);
+                        Itertools::intersperse(lines.take(count), "\n").collect()
                     } else {
-                        text
-                    };
-
-                    Ok(string)
+                        Itertools::intersperse(lines, "\n").collect()
+                    }
                 } else {
-                    Err(anyhow!("File does not exist"))
+                    text
                 }
-            })??;
+            })?;
 
-            action_log.update(&mut cx, |log, cx| {
+            action_log.update(cx, |log, cx| {
                 log.buffer_read(buffer, cx);
             })?;
 

@@ -22,16 +22,27 @@ pub struct RegexSearchToolInput {
     /// Optional starting position for paginated results (0-based).
     /// When not provided, starts from the beginning.
     #[serde(default)]
-    pub offset: Option<usize>,
+    pub offset: Option<u32>,
 }
 
-const RESULTS_PER_PAGE: usize = 20;
+impl RegexSearchToolInput {
+    /// Which page of search results this is.
+    pub fn page(&self) -> u32 {
+        1 + (self.offset.unwrap_or(0) / RESULTS_PER_PAGE)
+    }
+}
+
+const RESULTS_PER_PAGE: u32 = 20;
 
 pub struct RegexSearchTool;
 
 impl Tool for RegexSearchTool {
     fn name(&self) -> String {
         "regex-search".into()
+    }
+
+    fn needs_confirmation(&self) -> bool {
+        false
     }
 
     fn description(&self) -> String {
@@ -41,6 +52,24 @@ impl Tool for RegexSearchTool {
     fn input_schema(&self) -> serde_json::Value {
         let schema = schemars::schema_for!(RegexSearchToolInput);
         serde_json::to_value(&schema).unwrap()
+    }
+
+    fn ui_text(&self, input: &serde_json::Value) -> String {
+        match serde_json::from_value::<RegexSearchToolInput>(input.clone()) {
+            Ok(input) => {
+                let page = input.page();
+
+                if page > 1 {
+                    format!(
+                        "Get page {page} of search results for regex “`{}`”",
+                        input.regex
+                    )
+                } else {
+                    format!("Search files for regex “`{}`”", input.regex)
+                }
+            }
+            Err(_) => "Search with regex".to_string(),
+        }
     }
 
     fn run(
@@ -73,7 +102,7 @@ impl Tool for RegexSearchTool {
 
         let results = project.update(cx, |project, cx| project.search(query, cx));
 
-        cx.spawn(|cx| async move {
+        cx.spawn(async move|cx|  {
             futures::pin_mut!(results);
 
             let mut output = String::new();
@@ -86,7 +115,7 @@ impl Tool for RegexSearchTool {
                     continue;
                 }
 
-                buffer.read_with(&cx, |buffer, cx| -> Result<(), anyhow::Error> {
+                buffer.read_with(cx, |buffer, cx| -> Result<(), anyhow::Error> {
                     if let Some(path) = buffer.file().map(|file| file.full_path(cx)) {
                         let mut file_header_written = false;
                         let mut ranges = ranges
@@ -154,7 +183,7 @@ impl Tool for RegexSearchTool {
                     offset + matches_found,
                     offset + RESULTS_PER_PAGE,
                 ))
-          } else {
+            } else {
                 Ok(format!("Found {matches_found} matches:\n{output}"))
             }
         })

@@ -22,6 +22,10 @@ impl Tool for ThinkingTool {
         "thinking".to_string()
     }
 
+    fn needs_confirmation(&self) -> bool {
+        false
+    }
+
     fn description(&self) -> String {
         include_str!("./thinking_tool/description.md").to_string()
     }
@@ -29,6 +33,10 @@ impl Tool for ThinkingTool {
     fn input_schema(&self) -> serde_json::Value {
         let schema = schemars::schema_for!(ThinkingToolInput);
         serde_json::to_value(&schema).unwrap()
+    }
+
+    fn ui_text(&self, _input: &serde_json::Value) -> String {
+        "Thinking".to_string()
     }
 
     fn run(

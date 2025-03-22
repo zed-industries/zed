@@ -206,11 +206,11 @@ impl PickerDelegate for FileContextPickerDelegate {
 
         let search_task = self.search(query, Arc::<AtomicBool>::default(), &workspace, cx);
 
-        cx.spawn_in(window, |this, mut cx| async move {
+        cx.spawn_in(window, async move |this, cx| {
             // TODO: This should be probably be run in the background.
             let paths = search_task.await;
 
-            this.update(&mut cx, |this, _cx| {
+            this.update(cx, |this, _cx| {
                 this.delegate.matches = paths;
             })
             .log_err();
@@ -345,10 +345,10 @@ impl PickerDelegate for FileContextPickerDelegate {
         };
 
         let confirm_behavior = self.confirm_behavior;
-        cx.spawn_in(window, |this, mut cx| async move {
-            match task.await.notify_async_err(&mut cx) {
+        cx.spawn_in(window, async move |this, cx| {
+            match task.await.notify_async_err(cx) {
                 None => anyhow::Ok(()),
-                Some(()) => this.update_in(&mut cx, |this, window, cx| match confirm_behavior {
+                Some(()) => this.update_in(cx, |this, window, cx| match confirm_behavior {
                     ConfirmBehavior::KeepOpen => {}
                     ConfirmBehavior::Close => this.delegate.dismissed(window, cx),
                 }),

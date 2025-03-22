@@ -10,7 +10,7 @@ use node_runtime::NodeRuntime;
 use project::{
     buffer_store::{BufferStore, BufferStoreEvent},
     debugger::{breakpoint_store::BreakpointStore, dap_store::DapStore},
-    git::GitStore,
+    git_store::GitStore,
     project_settings::SettingsObserver,
     search::SearchQuery,
     task_store::TaskStore,
@@ -140,7 +140,6 @@ impl HeadlessProject {
 
         let task_store = cx.new(|cx| {
             let mut task_store = TaskStore::local(
-                fs.clone(),
                 buffer_store.downgrade(),
                 worktree_store.clone(),
                 toolchain_store.read(cx).as_language_toolchain_store(),
@@ -406,8 +405,8 @@ impl HeadlessProject {
         // and immediately dropping the reference of the new client, causing it
         // to be dropped on the headless project, and the client only then
         // receiving a response to AddWorktree.
-        cx.spawn(|mut cx| async move {
-            this.update(&mut cx, |this, cx| {
+        cx.spawn(async move |cx| {
+            this.update(cx, |this, cx| {
                 this.worktree_store.update(cx, |worktree_store, cx| {
                     worktree_store.add(&worktree, cx);
                 });
@@ -636,7 +635,7 @@ impl HeadlessProject {
         _envelope: TypedEnvelope<proto::ShutdownRemoteServer>,
         cx: AsyncApp,
     ) -> Result<proto::Ack> {
-        cx.spawn(|cx| async move {
+        cx.spawn(async move |cx| {
             cx.update(|cx| {
                 // TODO: This is a hack, because in a headless project, shutdown isn't executed
                 // when calling quit, but it should be.

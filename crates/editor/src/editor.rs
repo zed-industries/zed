@@ -123,7 +123,7 @@ pub use proposed_changes_editor::{
     ProposedChangeLocation, ProposedChangesEditor, ProposedChangesEditorToolbar,
 };
 use smallvec::smallvec;
-use std::iter::Peekable;
+use std::{cell::OnceCell, iter::Peekable};
 use task::{ResolvedTask, TaskTemplate, TaskVariables};
 
 pub use lsp::CompletionContext;
@@ -185,19 +185,15 @@ use ui::{
     h_flex, prelude::*, ButtonSize, ButtonStyle, Disclosure, IconButton, IconName, IconSize, Key,
     Tooltip,
 };
-use util::{defer, maybe, post_inc, RangeExt, ResultExt, TryFutureExt};
+use util::{maybe, post_inc, RangeExt, ResultExt, TryFutureExt};
 use workspace::{
     item::{ItemHandle, PreviewTabsSettings},
-    ItemId, RestoreOnStartupBehavior,
-};
-use workspace::{
     notifications::{DetachAndPromptErr, NotificationId, NotifyTaskExt},
-    WorkspaceSettings,
+    searchable::SearchEvent,
+    Item as WorkspaceItem, ItemId, ItemNavHistory, OpenInTerminal, OpenTerminal,
+    RestoreOnStartupBehavior, SplitDirection, TabBarSettings, Toast, ViewId, Workspace,
+    WorkspaceId, WorkspaceSettings, SERIALIZATION_THROTTLE_TIME,
 };
-use workspace::{
-    searchable::SearchEvent, ItemNavHistory, SplitDirection, ViewId, Workspace, WorkspaceId,
-};
-use workspace::{Item as WorkspaceItem, OpenInTerminal, OpenTerminal, TabBarSettings, Toast};
 
 use crate::hover_links::{find_url, find_url_from_range};
 use crate::signature_help::{SignatureHelpHiddenBy, SignatureHelpState};
@@ -641,7 +637,7 @@ pub struct Editor {
     selection_history: SelectionHistory,
     autoclose_regions: Vec<AutocloseRegion>,
     snippet_stack: InvalidationStack<SnippetState>,
-    select_larger_syntax_node_stack: Vec<Box<[Selection<usize>]>>,
+    select_syntax_node_history: SelectSyntaxNodeHistory,
     ime_transaction: Option<TransactionId>,
     active_diagnostics: Option<ActiveDiagnosticGroup>,
     show_inline_diagnostics: bool,
@@ -777,6 +773,7 @@ pub struct Editor {
     toggle_fold_multiple_buffers: Task<()>,
     _scroll_cursor_center_top_bottom_task: Task<()>,
     serialize_selections: Task<()>,
+    serialize_folds: Task<()>,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Default)]
@@ -1031,6 +1028,42 @@ pub struct ClipboardSelection {
     pub first_line_indent: u32,
 }
 
+// selections, scroll behavior, was newest selection reversed
+type SelectSyntaxNodeHistoryState = (
+    Box<[Selection<usize>]>,
+    SelectSyntaxNodeScrollBehavior,
+    bool,
+);
+
+#[derive(Default)]
+struct SelectSyntaxNodeHistory {
+    stack: Vec<SelectSyntaxNodeHistoryState>,
+    // disable temporarily to allow changing selections without losing the stack
+    pub disable_clearing: bool,
+}
+
+impl SelectSyntaxNodeHistory {
+    pub fn try_clear(&mut self) {
+        if !self.disable_clearing {
+            self.stack.clear();
+        }
+    }
+
+    pub fn push(&mut self, selection: SelectSyntaxNodeHistoryState) {
+        self.stack.push(selection);
+    }
+
+    pub fn pop(&mut self) -> Option<SelectSyntaxNodeHistoryState> {
+        self.stack.pop()
+    }
+}
+
+enum SelectSyntaxNodeScrollBehavior {
+    CursorTop,
+    CenterSelection,
+    CursorBottom,
+}
+
 #[derive(Debug)]
 pub(crate) struct NavigationData {
     cursor_anchor: Anchor,
@@ -1183,6 +1216,7 @@ impl Editor {
                 display_map.set_state(&snapshot, cx);
             });
         });
+        clone.folds_did_change(cx);
         clone.selections.clone_state(&self.selections);
         clone.scroll_manager.clone_state(&self.scroll_manager);
         clone.searchable = self.searchable;
@@ -1372,7 +1406,7 @@ impl Editor {
             selection_history: Default::default(),
             autoclose_regions: Default::default(),
             snippet_stack: Default::default(),
-            select_larger_syntax_node_stack: Vec::new(),
+            select_syntax_node_history: SelectSyntaxNodeHistory::default(),
             ime_transaction: Default::default(),
             active_diagnostics: None,
             show_inline_diagnostics: ProjectSettings::get_global(cx).diagnostics.inline.enabled,
@@ -1514,6 +1548,7 @@ impl Editor {
             selection_mark_mode: false,
             toggle_fold_multiple_buffers: Task::ready(()),
             serialize_selections: Task::ready(()),
+            serialize_folds: Task::ready(()),
             text_style_refinement: None,
             load_diff_task: load_uncommitted_diff,
         };
@@ -1715,9 +1750,9 @@ impl Editor {
         let project = workspace.project().clone();
         let create = project.update(cx, |project, cx| project.create_buffer(cx));
 
-        cx.spawn_in(window, |workspace, mut cx| async move {
+        cx.spawn_in(window, async move |workspace, cx| {
             let buffer = create.await?;
-            workspace.update_in(&mut cx, |workspace, window, cx| {
+            workspace.update_in(cx, |workspace, window, cx| {
                 let editor =
                     cx.new(|cx| Editor::for_buffer(buffer, Some(project.clone()), window, cx));
                 workspace.add_item_to_active_pane(Box::new(editor.clone()), None, true, window, cx);
@@ -1753,9 +1788,9 @@ impl Editor {
         let project = workspace.project().clone();
         let create = project.update(cx, |project, cx| project.create_buffer(cx));
 
-        cx.spawn_in(window, |workspace, mut cx| async move {
+        cx.spawn_in(window, async move |workspace, cx| {
             let buffer = create.await?;
-            workspace.update_in(&mut cx, move |workspace, window, cx| {
+            workspace.update_in(cx, move |workspace, window, cx| {
                 workspace.split_item(
                     direction,
                     Box::new(
@@ -2133,7 +2168,7 @@ impl Editor {
         self.add_selections_state = None;
         self.select_next_state = None;
         self.select_prev_state = None;
-        self.select_larger_syntax_node_stack.clear();
+        self.select_syntax_node_history.try_clear();
         self.invalidate_autoclose_regions(&self.selections.disjoint_anchors(), buffer);
         self.snippet_stack
             .invalidate(&self.selections.disjoint_anchors(), buffer);
@@ -2144,6 +2179,7 @@ impl Editor {
         self.push_to_nav_history(
             *old_cursor_position,
             Some(new_cursor_position.to_point(buffer)),
+            false,
             cx,
         );
 
@@ -2184,12 +2220,12 @@ impl Editor {
                     drop(context_menu);
 
                     let query = Self::completion_query(buffer, cursor_position);
-                    cx.spawn(move |this, mut cx| async move {
+                    cx.spawn(async move |this, cx| {
                         completion_menu
                             .filter(query.as_deref(), cx.background_executor().clone())
                             .await;
 
-                        this.update(&mut cx, |this, cx| {
+                        this.update(cx, |this, cx| {
                             let mut context_menu = this.context_menu.borrow_mut();
                             let Some(CodeContextMenu::Completions(menu)) = context_menu.as_ref()
                             else {
@@ -2254,7 +2290,7 @@ impl Editor {
                 let snapshot = self.buffer().read(cx).snapshot(cx);
                 let selections = selections.clone();
                 self.serialize_selections = cx.background_spawn(async move {
-                    background_executor.timer(Duration::from_millis(100)).await;
+                    background_executor.timer(SERIALIZATION_THROTTLE_TIME).await;
                     let selections = selections
                         .iter()
                         .map(|selection| {
@@ -2273,6 +2309,40 @@ impl Editor {
         }
 
         cx.notify();
+    }
+
+    fn folds_did_change(&mut self, cx: &mut Context<Self>) {
+        if !self.is_singleton(cx)
+            || WorkspaceSettings::get(None, cx).restore_on_startup == RestoreOnStartupBehavior::None
+        {
+            return;
+        }
+
+        let Some(workspace_id) = self.workspace.as_ref().and_then(|workspace| workspace.1) else {
+            return;
+        };
+        let background_executor = cx.background_executor().clone();
+        let editor_id = cx.entity().entity_id().as_u64() as ItemId;
+        let snapshot = self.buffer().read(cx).snapshot(cx);
+        let folds = self.display_map.update(cx, |display_map, cx| {
+            display_map
+                .snapshot(cx)
+                .folds_in_range(0..snapshot.len())
+                .map(|fold| {
+                    (
+                        fold.range.start.to_offset(&snapshot),
+                        fold.range.end.to_offset(&snapshot),
+                    )
+                })
+                .collect()
+        });
+        self.serialize_folds = cx.background_spawn(async move {
+            background_executor.timer(SERIALIZATION_THROTTLE_TIME).await;
+            DB.save_editor_folds(editor_id, workspace_id, folds)
+                .await
+                .with_context(|| format!("persisting editor folds for editor {editor_id}, workspace {workspace_id:?}"))
+                .log_err();
+        });
     }
 
     pub fn sync_selections(
@@ -4050,16 +4120,16 @@ impl Editor {
                 cx,
             )
         });
-        Some(cx.spawn_in(window, |editor, mut cx| async move {
+        Some(cx.spawn_in(window, async move |editor, cx| {
             if let Some(transaction) = on_type_formatting.await? {
                 if push_to_client_history {
                     buffer
-                        .update(&mut cx, |buffer, _| {
+                        .update(cx, |buffer, _| {
                             buffer.push_transaction(transaction, Instant::now());
                         })
                         .ok();
                 }
-                editor.update(&mut cx, |editor, cx| {
+                editor.update(cx, |editor, cx| {
                     editor.refresh_document_highlights(cx);
                 })?;
             }
@@ -4215,9 +4285,9 @@ impl Editor {
             .map_or(true, |provider| provider.sort_completions());
 
         let id = post_inc(&mut self.next_completion_id);
-        let task = cx.spawn_in(window, |editor, mut cx| {
+        let task = cx.spawn_in(window, async move |editor, cx| {
             async move {
-                editor.update(&mut cx, |this, _| {
+                editor.update(cx, |this, _| {
                     this.completion_tasks.retain(|(task_id, _)| *task_id >= id);
                 })?;
 
@@ -4267,7 +4337,7 @@ impl Editor {
                     menu.visible().then_some(menu)
                 };
 
-                editor.update_in(&mut cx, |editor, window, cx| {
+                editor.update_in(cx, |editor, window, cx| {
                     match editor.context_menu.borrow().as_ref() {
                         None => {}
                         Some(CodeContextMenu::Completions(prev_menu)) => {
@@ -4308,6 +4378,7 @@ impl Editor {
                 anyhow::Ok(())
             }
             .log_err()
+            .await
         });
 
         self.completion_tasks.push((id, task));
@@ -4550,13 +4621,13 @@ impl Editor {
         let deployed_from_indicator = action.deployed_from_indicator;
         let mut task = self.code_actions_task.take();
         let action = action.clone();
-        cx.spawn_in(window, |editor, mut cx| async move {
+        cx.spawn_in(window, async move |editor, cx| {
             while let Some(prev_task) = task {
                 prev_task.await.log_err();
-                task = editor.update(&mut cx, |this, _| this.code_actions_task.take())?;
+                task = editor.update(cx, |this, _| this.code_actions_task.take())?;
             }
 
-            let spawned_test_task = editor.update_in(&mut cx, |editor, window, cx| {
+            let spawned_test_task = editor.update_in(cx, |editor, window, cx| {
                 if editor.focus_handle.is_focused(window) {
                     let multibuffer_point = action
                         .deployed_from_indicator
@@ -4605,7 +4676,7 @@ impl Editor {
                                 Self::build_tasks_context(&project, &buffer, buffer_row, tasks, cx)
                             });
 
-                    Some(cx.spawn_in(window, |editor, mut cx| async move {
+                    Some(cx.spawn_in(window, async move |editor, cx| {
                         let task_context = match task_context {
                             Some(task_context) => task_context.await,
                             None => None,
@@ -4626,7 +4697,7 @@ impl Editor {
                             && code_actions
                                 .as_ref()
                                 .map_or(true, |actions| actions.is_empty());
-                        if let Ok(task) = editor.update_in(&mut cx, |editor, window, cx| {
+                        if let Ok(task) = editor.update_in(cx, |editor, window, cx| {
                             *editor.context_menu.borrow_mut() =
                                 Some(CodeContextMenu::CodeActions(CodeActionsMenu {
                                     buffer,
@@ -4709,7 +4780,7 @@ impl Editor {
                 let apply_code_action =
                     provider.apply_code_action(buffer, action, excerpt_id, true, window, cx);
                 let workspace = workspace.downgrade();
-                Some(cx.spawn_in(window, |editor, cx| async move {
+                Some(cx.spawn_in(window, async move |editor, cx| {
                     let project_transaction = apply_code_action.await?;
                     Self::open_project_transaction(
                         &editor,
@@ -4729,7 +4800,7 @@ impl Editor {
         workspace: WeakEntity<Workspace>,
         transaction: ProjectTransaction,
         title: String,
-        mut cx: AsyncWindowContext,
+        cx: &mut AsyncWindowContext,
     ) -> Result<()> {
         let mut entries = transaction.0.into_iter().collect::<Vec<_>>();
         cx.update(|_, cx| {
@@ -4743,7 +4814,7 @@ impl Editor {
 
         if let Some((buffer, transaction)) = entries.first() {
             if entries.len() == 1 {
-                let excerpt = this.update(&mut cx, |editor, cx| {
+                let excerpt = this.update(cx, |editor, cx| {
                     editor
                         .buffer()
                         .read(cx)
@@ -4751,7 +4822,7 @@ impl Editor {
                 })?;
                 if let Some((_, excerpted_buffer, excerpt_range)) = excerpt {
                     if excerpted_buffer == *buffer {
-                        let all_edits_within_excerpt = buffer.read_with(&cx, |buffer, _| {
+                        let all_edits_within_excerpt = buffer.read_with(cx, |buffer, _| {
                             let excerpt_range = excerpt_range.to_offset(buffer);
                             buffer
                                 .edited_ranges_for_transaction::<usize>(transaction)
@@ -4791,7 +4862,7 @@ impl Editor {
             multibuffer
         })?;
 
-        workspace.update_in(&mut cx, |workspace, window, cx| {
+        workspace.update_in(cx, |workspace, window, cx| {
             let project = workspace.project().clone();
             let editor =
                 cx.new(|cx| Editor::for_multibuffer(excerpt_buffer, Some(project), window, cx));
@@ -4854,12 +4925,12 @@ impl Editor {
             return None;
         }
 
-        self.code_actions_task = Some(cx.spawn_in(window, |this, mut cx| async move {
+        self.code_actions_task = Some(cx.spawn_in(window, async move |this, cx| {
             cx.background_executor()
                 .timer(CODE_ACTIONS_DEBOUNCE_TIMEOUT)
                 .await;
 
-            let (providers, tasks) = this.update_in(&mut cx, |this, window, cx| {
+            let (providers, tasks) = this.update_in(cx, |this, window, cx| {
                 let providers = this.code_action_providers.clone();
                 let tasks = this
                     .code_action_providers
@@ -4884,7 +4955,7 @@ impl Editor {
                 }
             }
 
-            this.update(&mut cx, |this, cx| {
+            this.update(cx, |this, cx| {
                 this.available_code_actions = if actions.is_empty() {
                     None
                 } else {
@@ -4907,10 +4978,10 @@ impl Editor {
             self.show_git_blame_inline = false;
 
             self.show_git_blame_inline_delay_task =
-                Some(cx.spawn_in(window, |this, mut cx| async move {
+                Some(cx.spawn_in(window, async move |this, cx| {
                     cx.background_executor().timer(delay).await;
 
-                    this.update(&mut cx, |this, cx| {
+                    this.update(cx, |this, cx| {
                         this.show_git_blame_inline = true;
                         cx.notify();
                     })
@@ -4935,7 +5006,7 @@ impl Editor {
             return None;
         }
         let debounce = EditorSettings::get_global(cx).lsp_highlight_debounce;
-        self.document_highlights_task = Some(cx.spawn(|this, mut cx| async move {
+        self.document_highlights_task = Some(cx.spawn(async move |this, cx| {
             cx.background_executor()
                 .timer(Duration::from_millis(debounce))
                 .await;
@@ -4953,7 +5024,7 @@ impl Editor {
             };
 
             if let Some(highlights) = highlights {
-                this.update(&mut cx, |this, cx| {
+                this.update(cx, |this, cx| {
                     if this.pending_rename.is_some() {
                         return;
                     }
@@ -5046,12 +5117,12 @@ impl Editor {
             return;
         }
         let debounce = EditorSettings::get_global(cx).selection_highlight_debounce;
-        self.selection_highlight_task = Some(cx.spawn_in(window, |editor, mut cx| async move {
+        self.selection_highlight_task = Some(cx.spawn_in(window, async move |editor, cx| {
             cx.background_executor()
                 .timer(Duration::from_millis(debounce))
                 .await;
             let Some(Some(matches_task)) = editor
-                .update_in(&mut cx, |editor, _, cx| {
+                .update_in(cx, |editor, _, cx| {
                     if editor.selections.count() != 1 || editor.selections.line_mode {
                         editor.clear_background_highlights::<SelectedTextHighlight>(cx);
                         return None;
@@ -5116,7 +5187,7 @@ impl Editor {
             };
             let matches = matches_task.await;
             editor
-                .update_in(&mut cx, |editor, _, cx| {
+                .update_in(cx, |editor, _, cx| {
                     editor.clear_background_highlights::<SelectedTextHighlight>(cx);
                     if !matches.is_empty() {
                         editor.highlight_background::<SelectedTextHighlight>(
@@ -5342,9 +5413,9 @@ impl Editor {
     fn show_cursor_names(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.show_cursor_names = true;
         cx.notify();
-        cx.spawn_in(window, |this, mut cx| async move {
+        cx.spawn_in(window, async move |this, cx| {
             cx.background_executor().timer(CURSORS_VISIBLE_FOR).await;
-            this.update(&mut cx, |this, cx| {
+            this.update(cx, |this, cx| {
                 this.show_cursor_names = false;
                 cx.notify()
             })
@@ -5918,11 +5989,7 @@ impl Editor {
         breakpoint: Option<&(Anchor, Breakpoint)>,
         cx: &mut Context<Self>,
     ) -> Option<IconButton> {
-        let color = if breakpoint.is_some() {
-            Color::Debugger
-        } else {
-            Color::Muted
-        };
+        let color = Color::Muted;
 
         let position = breakpoint.as_ref().map(|(anchor, _)| *anchor);
         let bp_kind = Arc::new(
@@ -6022,7 +6089,9 @@ impl Editor {
                     .breakpoints(&buffer, None, buffer_snapshot.clone(), cx)
             {
                 let point = buffer_snapshot.summary_for_anchor::<Point>(&breakpoint.0);
-                let anchor = multi_buffer_snapshot.anchor_before(point);
+                let mut anchor = multi_buffer_snapshot.anchor_before(point);
+                anchor.text_anchor = breakpoint.0;
+
                 breakpoint_display_points.insert(
                     snapshot
                         .point_to_display_point(
@@ -6055,6 +6124,9 @@ impl Editor {
                 continue;
             };
 
+            if buffer.read(cx).file().is_none() {
+                continue;
+            }
             let breakpoints = breakpoint_store.read(cx).breakpoints(
                 &buffer,
                 Some(info.range.context.start..info.range.context.end),
@@ -6234,7 +6306,7 @@ impl Editor {
 
         let reveal_strategy = action.reveal;
         let task_context = Self::build_tasks_context(&project, &buffer, buffer_row, &tasks, cx);
-        cx.spawn_in(window, |_, mut cx| async move {
+        cx.spawn_in(window, async move |_, cx| {
             let context = task_context.await?;
             let (task_source_kind, mut resolved_task) = tasks.resolve(&context).next()?;
 
@@ -6242,7 +6314,7 @@ impl Editor {
             resolved.reveal = reveal_strategy;
 
             workspace
-                .update(&mut cx, |workspace, cx| {
+                .update(cx, |workspace, cx| {
                     workspace::tasks::schedule_resolved_task(
                         workspace,
                         task_source_kind,
@@ -6320,11 +6392,7 @@ impl Editor {
         breakpoint: Option<(Anchor, Breakpoint)>,
         cx: &mut Context<Self>,
     ) -> IconButton {
-        let color = if breakpoint.is_some() {
-            Color::Debugger
-        } else {
-            Color::Muted
-        };
+        let color = Color::Muted;
 
         let position = breakpoint.as_ref().map(|(anchor, _)| *anchor);
         let bp_kind = Arc::new(
@@ -9433,7 +9501,15 @@ impl Editor {
         self.do_paste(&text, metadata, false, window, cx);
     }
 
+    pub fn copy_and_trim(&mut self, _: &CopyAndTrim, _: &mut Window, cx: &mut Context<Self>) {
+        self.do_copy(true, cx);
+    }
+
     pub fn copy(&mut self, _: &Copy, _: &mut Window, cx: &mut Context<Self>) {
+        self.do_copy(false, cx);
+    }
+
+    fn do_copy(&self, strip_leading_indents: bool, cx: &mut Context<Self>) {
         let selections = self.selections.all::<Point>(cx);
         let buffer = self.buffer.read(cx).read(cx);
         let mut text = String::new();
@@ -9442,7 +9518,7 @@ impl Editor {
         {
             let max_point = buffer.max_point();
             let mut is_first = true;
-            for selection in selections.iter() {
+            for selection in &selections {
                 let mut start = selection.start;
                 let mut end = selection.end;
                 let is_entire_line = selection.is_empty() || self.selections.line_mode;
@@ -9450,21 +9526,55 @@ impl Editor {
                     start = Point::new(start.row, 0);
                     end = cmp::min(max_point, Point::new(end.row + 1, 0));
                 }
-                if is_first {
-                    is_first = false;
+
+                let mut trimmed_selections = Vec::new();
+                if strip_leading_indents && end.row.saturating_sub(start.row) > 0 {
+                    let row = MultiBufferRow(start.row);
+                    let first_indent = buffer.indent_size_for_line(row);
+                    if first_indent.len == 0 || start.column > first_indent.len {
+                        trimmed_selections.push(start..end);
+                    } else {
+                        trimmed_selections.push(
+                            Point::new(row.0, first_indent.len)
+                                ..Point::new(row.0, buffer.line_len(row)),
+                        );
+                        for row in start.row + 1..=end.row {
+                            let row_indent_size = buffer.indent_size_for_line(MultiBufferRow(row));
+                            if row_indent_size.len >= first_indent.len {
+                                trimmed_selections.push(
+                                    Point::new(row, first_indent.len)
+                                        ..Point::new(row, buffer.line_len(MultiBufferRow(row))),
+                                );
+                            } else {
+                                trimmed_selections.clear();
+                                trimmed_selections.push(start..end);
+                                break;
+                            }
+                        }
+                    }
                 } else {
-                    text += "\n";
+                    trimmed_selections.push(start..end);
                 }
-                let mut len = 0;
-                for chunk in buffer.text_for_range(start..end) {
-                    text.push_str(chunk);
-                    len += chunk.len();
+
+                for trimmed_range in trimmed_selections {
+                    if is_first {
+                        is_first = false;
+                    } else {
+                        text += "\n";
+                    }
+                    let mut len = 0;
+                    for chunk in buffer.text_for_range(trimmed_range.start..trimmed_range.end) {
+                        text.push_str(chunk);
+                        len += chunk.len();
+                    }
+                    clipboard_selections.push(ClipboardSelection {
+                        len,
+                        is_entire_line,
+                        first_line_indent: buffer
+                            .indent_size_for_line(MultiBufferRow(trimmed_range.start.row))
+                            .len,
+                    });
                 }
-                clipboard_selections.push(ClipboardSelection {
-                    len,
-                    is_entire_line,
-                    first_line_indent: buffer.indent_size_for_line(MultiBufferRow(start.row)).len,
-                });
             }
         }
 
@@ -10732,10 +10842,15 @@ impl Editor {
         self.nav_history.as_ref()
     }
 
+    pub fn create_nav_history_entry(&mut self, cx: &mut Context<Self>) {
+        self.push_to_nav_history(self.selections.newest_anchor().head(), None, false, cx);
+    }
+
     fn push_to_nav_history(
         &mut self,
         cursor_anchor: Anchor,
         new_position: Option<Point>,
+        is_deactivate: bool,
         cx: &mut Context<Self>,
     ) {
         if let Some(nav_history) = self.nav_history.as_mut() {
@@ -10761,6 +10876,10 @@ impl Editor {
                 }),
                 cx,
             );
+            cx.emit(EditorEvent::PushedToNavHistory {
+                anchor: cursor_anchor,
+                is_deactivate,
+            })
         }
     }
 
@@ -11732,13 +11851,19 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let Some(visible_row_count) = self.visible_row_count() else {
+            return;
+        };
+        let old_selections: Box<[_]> = self.selections.all::<usize>(cx).into();
+        if old_selections.is_empty() {
+            return;
+        }
+
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let buffer = self.buffer.read(cx).snapshot(cx);
-        let old_selections = self.selections.all::<usize>(cx).into_boxed_slice();
 
-        let mut stack = mem::take(&mut self.select_larger_syntax_node_stack);
         let mut selected_larger_node = false;
-        let new_selections = old_selections
+        let mut new_selections = old_selections
             .iter()
             .map(|selection| {
                 let old_range = selection.start..selection.end;
@@ -11780,13 +11905,56 @@ impl Editor {
             })
             .collect::<Vec<_>>();
 
-        if selected_larger_node {
-            stack.push(old_selections);
-            self.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
-                s.select(new_selections);
-            });
+        if !selected_larger_node {
+            return; // don't put this call in the history
         }
-        self.select_larger_syntax_node_stack = stack;
+
+        // scroll based on transformation done to the last selection created by the user
+        let (last_old, last_new) = old_selections
+            .last()
+            .zip(new_selections.last().cloned())
+            .expect("old_selections isn't empty");
+
+        // revert selection
+        let is_selection_reversed = {
+            let should_newest_selection_be_reversed = last_old.start != last_new.start;
+            new_selections.last_mut().expect("checked above").reversed =
+                should_newest_selection_be_reversed;
+            should_newest_selection_be_reversed
+        };
+
+        if selected_larger_node {
+            self.select_syntax_node_history.disable_clearing = true;
+            self.change_selections(None, window, cx, |s| {
+                s.select(new_selections.clone());
+            });
+            self.select_syntax_node_history.disable_clearing = false;
+        }
+
+        let start_row = last_new.start.to_display_point(&display_map).row().0;
+        let end_row = last_new.end.to_display_point(&display_map).row().0;
+        let selection_height = end_row - start_row + 1;
+        let scroll_margin_rows = self.vertical_scroll_margin() as u32;
+
+        // if fits on screen (considering margin), keep it in the middle, else, scroll to selection head
+        let scroll_behavior = if visible_row_count >= selection_height + scroll_margin_rows * 2 {
+            let middle_row = (end_row + start_row) / 2;
+            let selection_center = middle_row.saturating_sub(visible_row_count / 2);
+            self.set_scroll_top_row(DisplayRow(selection_center), window, cx);
+            SelectSyntaxNodeScrollBehavior::CenterSelection
+        } else if is_selection_reversed {
+            self.scroll_cursor_top(&Default::default(), window, cx);
+            SelectSyntaxNodeScrollBehavior::CursorTop
+        } else {
+            self.scroll_cursor_bottom(&Default::default(), window, cx);
+            SelectSyntaxNodeScrollBehavior::CursorBottom
+        };
+
+        self.select_syntax_node_history.push((
+            old_selections,
+            scroll_behavior,
+            is_selection_reversed,
+        ));
     }
 
     pub fn select_smaller_syntax_node(
@@ -11795,13 +11963,44 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let mut stack = mem::take(&mut self.select_larger_syntax_node_stack);
-        if let Some(selections) = stack.pop() {
-            self.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
+        let Some(visible_row_count) = self.visible_row_count() else {
+            return;
+        };
+
+        if let Some((mut selections, scroll_behavior, is_selection_reversed)) =
+            self.select_syntax_node_history.pop()
+        {
+            let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
+
+            if let Some(selection) = selections.last_mut() {
+                selection.reversed = is_selection_reversed;
+            }
+
+            self.select_syntax_node_history.disable_clearing = true;
+            self.change_selections(None, window, cx, |s| {
                 s.select(selections.to_vec());
             });
+            self.select_syntax_node_history.disable_clearing = false;
+
+            let newest = self.selections.newest::<usize>(cx);
+            let start_row = newest.start.to_display_point(&display_map).row().0;
+            let end_row = newest.end.to_display_point(&display_map).row().0;
+
+            match scroll_behavior {
+                SelectSyntaxNodeScrollBehavior::CursorTop => {
+                    self.scroll_cursor_top(&Default::default(), window, cx);
+                }
+                SelectSyntaxNodeScrollBehavior::CenterSelection => {
+                    let middle_row = (end_row + start_row) / 2;
+                    let selection_center = middle_row.saturating_sub(visible_row_count / 2);
+                    // centralize the selection, not the cursor
+                    self.set_scroll_top_row(DisplayRow(selection_center), window, cx);
+                }
+                SelectSyntaxNodeScrollBehavior::CursorBottom => {
+                    self.scroll_cursor_bottom(&Default::default(), window, cx);
+                }
+            }
         }
-        self.select_larger_syntax_node_stack = stack;
     }
 
     fn refresh_runnables(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Task<()> {
@@ -11810,19 +12009,19 @@ impl Editor {
             return Task::ready(());
         }
         let project = self.project.as_ref().map(Entity::downgrade);
-        cx.spawn_in(window, |this, mut cx| async move {
+        cx.spawn_in(window, async move |this, cx| {
             cx.background_executor().timer(UPDATE_DEBOUNCE).await;
             let Some(project) = project.and_then(|p| p.upgrade()) else {
                 return;
             };
-            let Ok(display_snapshot) = this.update(&mut cx, |this, cx| {
+            let Ok(display_snapshot) = this.update(cx, |this, cx| {
                 this.display_map.update(cx, |map, cx| map.snapshot(cx))
             }) else {
                 return;
             };
 
             let hide_runnables = project
-                .update(&mut cx, |project, cx| {
+                .update(cx, |project, cx| {
                     // Do not display any test indicators in non-dev server remote projects.
                     project.is_via_collab() && project.ssh_connection_string(cx).is_none()
                 })
@@ -11840,7 +12039,7 @@ impl Editor {
                     .await;
 
             let rows = Self::runnable_rows(project, display_snapshot, new_rows, cx.clone());
-            this.update(&mut cx, |this, _| {
+            this.update(cx, |this, _| {
                 this.clear_tasks();
                 for (key, value) in rows {
                     this.insert_tasks(key, value);
@@ -12113,12 +12312,18 @@ impl Editor {
         &mut self,
         excerpt: ExcerptId,
         direction: ExpandExcerptDirection,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let current_scroll_position = self.scroll_position(cx);
         let lines = EditorSettings::get_global(cx).expand_excerpt_lines;
         self.buffer.update(cx, |buffer, cx| {
             buffer.expand_excerpts([excerpt], lines, direction, cx)
-        })
+        });
+        if direction == ExpandExcerptDirection::Down {
+            let new_scroll_position = current_scroll_position + gpui::Point::new(0.0, lines as f32);
+            self.set_scroll_position(new_scroll_position, window, cx);
+        }
     }
 
     pub fn go_to_singleton_buffer_point(
@@ -12429,11 +12634,11 @@ impl Editor {
     ) -> Task<Result<Navigated>> {
         let definition =
             self.go_to_definition_of_kind(GotoDefinitionKind::Symbol, false, window, cx);
-        cx.spawn_in(window, |editor, mut cx| async move {
+        cx.spawn_in(window, async move |editor, cx| {
             if definition.await? == Navigated::Yes {
                 return Ok(Navigated::Yes);
             }
-            match editor.update_in(&mut cx, |editor, window, cx| {
+            match editor.update_in(cx, |editor, window, cx| {
                 editor.find_all_references(&FindAllReferences, window, cx)
             })? {
                 Some(references) => references.await,
@@ -12527,10 +12732,10 @@ impl Editor {
             return Task::ready(Ok(Navigated::No));
         };
 
-        cx.spawn_in(window, |editor, mut cx| async move {
+        cx.spawn_in(window, async move |editor, cx| {
             let definitions = definitions.await?;
             let navigated = editor
-                .update_in(&mut cx, |editor, window, cx| {
+                .update_in(cx, |editor, window, cx| {
                     editor.navigate_to_hover_links(
                         Some(kind),
                         definitions
@@ -12570,7 +12775,7 @@ impl Editor {
             None
         };
 
-        let url_finder = cx.spawn_in(window, |editor, mut cx| async move {
+        let url_finder = cx.spawn_in(window, async move |editor, cx| {
             let url = if let Some(end_pos) = end_position {
                 find_url_from_range(&buffer, start_position..end_pos, cx.clone())
             } else {
@@ -12578,7 +12783,7 @@ impl Editor {
             };
 
             if let Some(url) = url {
-                editor.update(&mut cx, |_, cx| {
+                editor.update(cx, |_, cx| {
                     cx.open_url(&url);
                 })
             } else {
@@ -12609,12 +12814,12 @@ impl Editor {
 
         let project = self.project.clone();
 
-        cx.spawn_in(window, |_, mut cx| async move {
-            let result = find_file(&buffer, project, buffer_position, &mut cx).await;
+        cx.spawn_in(window, async move |_, cx| {
+            let result = find_file(&buffer, project, buffer_position, cx).await;
 
             if let Some((_, path)) = result {
                 workspace
-                    .update_in(&mut cx, |workspace, window, cx| {
+                    .update_in(cx, |workspace, window, cx| {
                         workspace.open_resolved_path(path, window, cx)
                     })?
                     .await?;
@@ -12659,9 +12864,9 @@ impl Editor {
                 }
                 HoverLink::File(path) => {
                     if let Some(workspace) = self.workspace() {
-                        cx.spawn_in(window, |_, mut cx| async move {
+                        cx.spawn_in(window, async move |_, cx| {
                             workspace
-                                .update_in(&mut cx, |workspace, window, cx| {
+                                .update_in(cx, |workspace, window, cx| {
                                     workspace.open_resolved_path(path, window, cx)
                                 })?
                                 .await
@@ -12672,14 +12877,14 @@ impl Editor {
                     }
                 }
             };
-            cx.spawn_in(window, |editor, mut cx| async move {
+            cx.spawn_in(window, async move |editor, cx| {
                 let target = match target_task.await.context("target resolution task")? {
                     TargetTaskResult::AlreadyNavigated => return Ok(Navigated::Yes),
                     TargetTaskResult::Location(None) => return Ok(Navigated::No),
                     TargetTaskResult::Location(Some(target)) => target,
                 };
 
-                editor.update_in(&mut cx, |editor, window, cx| {
+                editor.update_in(cx, |editor, window, cx| {
                     let Some(workspace) = editor.workspace() else {
                         return Navigated::No;
                     };
@@ -12725,9 +12930,9 @@ impl Editor {
                 })
             })
         } else if !definitions.is_empty() {
-            cx.spawn_in(window, |editor, mut cx| async move {
+            cx.spawn_in(window, async move |editor, cx| {
                 let (title, location_tasks, workspace) = editor
-                    .update_in(&mut cx, |editor, window, cx| {
+                    .update_in(cx, |editor, window, cx| {
                         let tab_kind = match kind {
                             Some(GotoDefinitionKind::Implementation) => "Implementations",
                             _ => "Definitions",
@@ -12775,7 +12980,7 @@ impl Editor {
                     return Ok(Navigated::No);
                 };
                 let opened = workspace
-                    .update_in(&mut cx, |workspace, window, cx| {
+                    .update_in(cx, |workspace, window, cx| {
                         Self::open_locations_in_multibuffer(
                             workspace,
                             locations,
@@ -12806,8 +13011,8 @@ impl Editor {
             return Task::ready(Ok(None));
         };
 
-        cx.spawn_in(window, move |editor, mut cx| async move {
-            let location_task = editor.update(&mut cx, |_, cx| {
+        cx.spawn_in(window, async move |editor, cx| {
+            let location_task = editor.update(cx, |_, cx| {
                 project.update(cx, |project, cx| {
                     let language_server_name = project
                         .language_server_statuses(cx)
@@ -12826,7 +13031,7 @@ impl Editor {
             let location = match location_task {
                 Some(task) => Some({
                     let target_buffer_handle = task.await.context("open local buffer")?;
-                    let range = target_buffer_handle.update(&mut cx, |target_buffer, _| {
+                    let range = target_buffer_handle.update(cx, |target_buffer, _| {
                         let target_start = target_buffer
                             .clip_point_utf16(point_from_lsp(lsp_location.range.start), Bias::Left);
                         let target_end = target_buffer
@@ -12884,21 +13089,13 @@ impl Editor {
         let workspace = self.workspace()?;
         let project = workspace.read(cx).project().clone();
         let references = project.update(cx, |project, cx| project.references(&buffer, head, cx));
-        Some(cx.spawn_in(window, |editor, mut cx| async move {
-            let _cleanup = defer({
-                let mut cx = cx.clone();
-                move || {
-                    let _ = editor.update(&mut cx, |editor, _| {
-                        if let Ok(i) =
-                            editor
-                                .find_all_references_task_sources
-                                .binary_search_by(|anchor| {
-                                    anchor.cmp(&head_anchor, &multi_buffer_snapshot)
-                                })
-                        {
-                            editor.find_all_references_task_sources.remove(i);
-                        }
-                    });
+        Some(cx.spawn_in(window, async move |editor, cx| {
+            let _cleanup = cx.on_drop(&editor, move |editor, _| {
+                if let Ok(i) = editor
+                    .find_all_references_task_sources
+                    .binary_search_by(|anchor| anchor.cmp(&head_anchor, &multi_buffer_snapshot))
+                {
+                    editor.find_all_references_task_sources.remove(i);
                 }
             });
 
@@ -12907,7 +13104,7 @@ impl Editor {
                 return anyhow::Ok(Navigated::No);
             }
 
-            workspace.update_in(&mut cx, |workspace, window, cx| {
+            workspace.update_in(cx, |workspace, window, cx| {
                 let title = locations
                     .first()
                     .as_ref()
@@ -13071,11 +13268,11 @@ impl Editor {
             .unwrap_or_else(|| Task::ready(Ok(None)));
         drop(snapshot);
 
-        Some(cx.spawn_in(window, |this, mut cx| async move {
+        Some(cx.spawn_in(window, async move |this, cx| {
             let rename_range = if let Some(range) = prepare_rename.await? {
                 Some(range)
             } else {
-                this.update(&mut cx, |this, cx| {
+                this.update(cx, |this, cx| {
                     let buffer = this.buffer.read(cx).snapshot(cx);
                     let mut buffer_highlights = this
                         .document_highlights_for_position(selection.head(), &buffer)
@@ -13089,7 +13286,7 @@ impl Editor {
                 })?
             };
             if let Some(rename_range) = rename_range {
-                this.update_in(&mut cx, |this, window, cx| {
+                this.update_in(cx, |this, window, cx| {
                     let snapshot = cursor_buffer.read(cx).snapshot();
                     let rename_buffer_range = rename_range.to_offset(&snapshot);
                     let cursor_offset_in_rename_range =
@@ -13262,18 +13459,18 @@ impl Editor {
             cx,
         )?;
 
-        Some(cx.spawn_in(window, |editor, mut cx| async move {
+        Some(cx.spawn_in(window, async move |editor, cx| {
             let project_transaction = rename.await?;
             Self::open_project_transaction(
                 &editor,
                 workspace,
                 project_transaction,
                 format!("Rename: {} → {}", old_name, new_name),
-                cx.clone(),
+                cx,
             )
             .await?;
 
-            editor.update(&mut cx, |editor, cx| {
+            editor.update(cx, |editor, cx| {
                 editor.refresh_document_highlights(cx);
             })?;
             Ok(())
@@ -13420,7 +13617,7 @@ impl Editor {
             project.format(buffers, target, true, trigger, cx)
         });
 
-        cx.spawn_in(window, |_, mut cx| async move {
+        cx.spawn_in(window, async move |_, cx| {
             let transaction = futures::select_biased! {
                 transaction = format.log_err().fuse() => transaction,
                 () = timeout => {
@@ -13430,7 +13627,7 @@ impl Editor {
             };
 
             buffer
-                .update(&mut cx, |buffer, cx| {
+                .update(cx, |buffer, cx| {
                     if let Some(transaction) = transaction {
                         if !buffer.is_singleton() {
                             buffer.push_transaction(&transaction.0, cx);
@@ -13475,7 +13672,7 @@ impl Editor {
         let apply_action = project.update(cx, |project, cx| {
             project.apply_code_action_kind(buffers, kind, true, cx)
         });
-        cx.spawn_in(window, |_, mut cx| async move {
+        cx.spawn_in(window, async move |_, cx| {
             let transaction = futures::select_biased! {
                 () = timeout => {
                     log::warn!("timed out waiting for executing code action");
@@ -13484,7 +13681,7 @@ impl Editor {
                 transaction = apply_action.log_err().fuse() => transaction,
             };
             buffer
-                .update(&mut cx, |buffer, cx| {
+                .update(cx, |buffer, cx| {
                     // check if we need this
                     if let Some(transaction) = transaction {
                         if !buffer.is_singleton() {
@@ -13699,12 +13896,12 @@ impl Editor {
         } else {
             None
         };
-        self.inline_diagnostics_update = cx.spawn_in(window, |editor, mut cx| async move {
+        self.inline_diagnostics_update = cx.spawn_in(window, async move |editor, cx| {
             if let Some(debounce) = debounce {
                 cx.background_executor().timer(debounce).await;
             }
             let Some(snapshot) = editor
-                .update(&mut cx, |editor, cx| editor.buffer().read(cx).snapshot(cx))
+                .update(cx, |editor, cx| editor.buffer().read(cx).snapshot(cx))
                 .ok()
             else {
                 return;
@@ -13745,7 +13942,7 @@ impl Editor {
                 .await;
 
             editor
-                .update(&mut cx, |editor, cx| {
+                .update(cx, |editor, cx| {
                     editor.inline_diagnostics = new_inline_diagnostics;
                     cx.notify();
                 })
@@ -14046,9 +14243,9 @@ impl Editor {
 
             self.fold_creases(fold_ranges, true, window, cx);
         } else {
-            self.toggle_fold_multiple_buffers = cx.spawn_in(window, |editor, mut cx| async move {
+            self.toggle_fold_multiple_buffers = cx.spawn_in(window, async move |editor, cx| {
                 editor
-                    .update_in(&mut cx, |editor, _, cx| {
+                    .update_in(cx, |editor, _, cx| {
                         for buffer_id in editor.buffer.read(cx).excerpt_buffer_ids() {
                             editor.fold_buffer(buffer_id, cx);
                         }
@@ -14222,9 +14419,9 @@ impl Editor {
             let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
             self.unfold_ranges(&[0..display_map.buffer_snapshot.len()], true, true, cx);
         } else {
-            self.toggle_fold_multiple_buffers = cx.spawn(|editor, mut cx| async move {
+            self.toggle_fold_multiple_buffers = cx.spawn(async move |editor, cx| {
                 editor
-                    .update(&mut cx, |editor, cx| {
+                    .update(cx, |editor, cx| {
                         for buffer_id in editor.buffer.read(cx).excerpt_buffer_ids() {
                             editor.unfold_buffer(buffer_id, cx);
                         }
@@ -14320,6 +14517,7 @@ impl Editor {
         }
 
         self.scrollbar_marker_state.dirty = true;
+        self.folds_did_change(cx);
     }
 
     /// Removes any folds whose ranges intersect any of the given ranges.
@@ -14333,6 +14531,7 @@ impl Editor {
         self.remove_folds_with(ranges, auto_scroll, cx, |map, cx| {
             map.unfold_intersecting(ranges.iter().cloned(), inclusive, cx)
         });
+        self.folds_did_change(cx);
     }
 
     pub fn fold_buffer(&mut self, buffer_id: BufferId, cx: &mut Context<Self>) {
@@ -14384,6 +14583,7 @@ impl Editor {
         self.remove_folds_with(ranges, auto_scroll, cx, |map, cx| {
             map.remove_folds_with_type(ranges.iter().cloned(), type_id, cx)
         });
+        self.folds_did_change(cx);
     }
 
     fn remove_folds_with<T: ToOffset + Clone>(
@@ -14511,9 +14711,9 @@ impl Editor {
         cx: &mut Context<Self>,
     ) {
         let task = self.save_buffers_for_ranges_if_needed(&ranges, cx);
-        cx.spawn(|this, mut cx| async move {
+        cx.spawn(async move |this, cx| {
             task.await?;
-            this.update(&mut cx, |this, cx| {
+            this.update(cx, |this, cx| {
                 let snapshot = this.buffer.read(cx).snapshot(cx);
                 let chunk_by = this
                     .diff_hunks_in_ranges(&ranges, &snapshot)
@@ -15467,34 +15667,32 @@ impl Editor {
         let permalink_task = self.get_permalink_to_line(cx);
         let workspace = self.workspace();
 
-        cx.spawn_in(window, |_, mut cx| async move {
-            match permalink_task.await {
-                Ok(permalink) => {
-                    cx.update(|_, cx| {
-                        cx.write_to_clipboard(ClipboardItem::new_string(permalink.to_string()));
-                    })
-                    .ok();
-                }
-                Err(err) => {
-                    let message = format!("Failed to copy permalink: {err}");
+        cx.spawn_in(window, async move |_, cx| match permalink_task.await {
+            Ok(permalink) => {
+                cx.update(|_, cx| {
+                    cx.write_to_clipboard(ClipboardItem::new_string(permalink.to_string()));
+                })
+                .ok();
+            }
+            Err(err) => {
+                let message = format!("Failed to copy permalink: {err}");
 
-                    Err::<(), anyhow::Error>(err).log_err();
+                Err::<(), anyhow::Error>(err).log_err();
 
-                    if let Some(workspace) = workspace {
-                        workspace
-                            .update_in(&mut cx, |workspace, _, cx| {
-                                struct CopyPermalinkToLine;
+                if let Some(workspace) = workspace {
+                    workspace
+                        .update_in(cx, |workspace, _, cx| {
+                            struct CopyPermalinkToLine;
 
-                                workspace.show_toast(
-                                    Toast::new(
-                                        NotificationId::unique::<CopyPermalinkToLine>(),
-                                        message,
-                                    ),
-                                    cx,
-                                )
-                            })
-                            .ok();
-                    }
+                            workspace.show_toast(
+                                Toast::new(
+                                    NotificationId::unique::<CopyPermalinkToLine>(),
+                                    message,
+                                ),
+                                cx,
+                            )
+                        })
+                        .ok();
                 }
             }
         })
@@ -15524,34 +15722,32 @@ impl Editor {
         let permalink_task = self.get_permalink_to_line(cx);
         let workspace = self.workspace();
 
-        cx.spawn_in(window, |_, mut cx| async move {
-            match permalink_task.await {
-                Ok(permalink) => {
-                    cx.update(|_, cx| {
-                        cx.open_url(permalink.as_ref());
-                    })
-                    .ok();
-                }
-                Err(err) => {
-                    let message = format!("Failed to open permalink: {err}");
+        cx.spawn_in(window, async move |_, cx| match permalink_task.await {
+            Ok(permalink) => {
+                cx.update(|_, cx| {
+                    cx.open_url(permalink.as_ref());
+                })
+                .ok();
+            }
+            Err(err) => {
+                let message = format!("Failed to open permalink: {err}");
 
-                    Err::<(), anyhow::Error>(err).log_err();
+                Err::<(), anyhow::Error>(err).log_err();
 
-                    if let Some(workspace) = workspace {
-                        workspace
-                            .update(&mut cx, |workspace, cx| {
-                                struct OpenPermalinkToLine;
+                if let Some(workspace) = workspace {
+                    workspace
+                        .update(cx, |workspace, cx| {
+                            struct OpenPermalinkToLine;
 
-                                workspace.show_toast(
-                                    Toast::new(
-                                        NotificationId::unique::<OpenPermalinkToLine>(),
-                                        message,
-                                    ),
-                                    cx,
-                                )
-                            })
-                            .ok();
-                    }
+                            workspace.show_toast(
+                                Toast::new(
+                                    NotificationId::unique::<OpenPermalinkToLine>(),
+                                    message,
+                                ),
+                                cx,
+                            )
+                        })
+                        .ok();
                 }
             }
         })
@@ -15623,8 +15819,8 @@ impl Editor {
 
         let title = multibuffer.title(cx).to_string();
 
-        cx.spawn_in(window, |_, mut cx| async move {
-            workspace.update_in(&mut cx, |workspace, window, cx| {
+        cx.spawn_in(window, async move |_, cx| {
+            workspace.update_in(cx, |workspace, window, cx| {
                 Self::open_locations_in_multibuffer(
                     workspace,
                     locations,
@@ -17012,12 +17208,12 @@ impl Editor {
             }
             tasks
         });
-        cx.spawn_in(window, |_, mut cx| async move {
+        cx.spawn_in(window, async move |_, cx| {
             for (buffer, task) in save_tasks {
                 let result = task.await;
                 if result.is_err() {
                     let Some(path) = buffer
-                        .read_with(&cx, |buffer, cx| buffer.project_path(cx))
+                        .read_with(cx, |buffer, cx| buffer.project_path(cx))
                         .ok()
                     else {
                         continue;
@@ -17110,31 +17306,52 @@ impl Editor {
         self.load_diff_task.clone()
     }
 
-    fn read_selections_from_db(
+    fn read_metadata_from_db(
         &mut self,
         item_id: u64,
         workspace_id: WorkspaceId,
         window: &mut Window,
         cx: &mut Context<Editor>,
     ) {
-        if !self.is_singleton(cx)
-            || WorkspaceSettings::get(None, cx).restore_on_startup == RestoreOnStartupBehavior::None
+        if self.is_singleton(cx)
+            && WorkspaceSettings::get(None, cx).restore_on_startup != RestoreOnStartupBehavior::None
         {
-            return;
-        }
-        let Some(selections) = DB.get_editor_selections(item_id, workspace_id).log_err() else {
-            return;
-        };
-        if selections.is_empty() {
-            return;
+            let buffer_snapshot = OnceCell::new();
+
+            if let Some(selections) = DB.get_editor_selections(item_id, workspace_id).log_err() {
+                if !selections.is_empty() {
+                    let snapshot =
+                        buffer_snapshot.get_or_init(|| self.buffer.read(cx).snapshot(cx));
+                    self.change_selections(None, window, cx, |s| {
+                        s.select_ranges(selections.into_iter().map(|(start, end)| {
+                            snapshot.clip_offset(start, Bias::Left)
+                                ..snapshot.clip_offset(end, Bias::Right)
+                        }));
+                    });
+                }
+            };
+
+            if let Some(folds) = DB.get_editor_folds(item_id, workspace_id).log_err() {
+                if !folds.is_empty() {
+                    let snapshot =
+                        buffer_snapshot.get_or_init(|| self.buffer.read(cx).snapshot(cx));
+                    self.fold_ranges(
+                        folds
+                            .into_iter()
+                            .map(|(start, end)| {
+                                snapshot.clip_offset(start, Bias::Left)
+                                    ..snapshot.clip_offset(end, Bias::Right)
+                            })
+                            .collect(),
+                        false,
+                        window,
+                        cx,
+                    );
+                }
+            }
         }
 
-        let snapshot = self.buffer.read(cx).snapshot(cx);
-        self.change_selections(None, window, cx, |s| {
-            s.select_ranges(selections.into_iter().map(|(start, end)| {
-                snapshot.clip_offset(start, Bias::Left)..snapshot.clip_offset(end, Bias::Right)
-            }));
-        });
+        self.read_scroll_position_from_db(item_id, workspace_id, window, cx);
     }
 }
 
@@ -17216,10 +17433,10 @@ fn get_uncommitted_diff_for_buffer(
             tasks.push(project.open_uncommitted_diff(buffer.clone(), cx))
         }
     });
-    cx.spawn(|mut cx| async move {
+    cx.spawn(async move |cx| {
         let diffs = future::join_all(tasks).await;
         buffer
-            .update(&mut cx, |buffer, cx| {
+            .update(cx, |buffer, cx| {
                 for diff in diffs.into_iter().flatten() {
                     buffer.add_diff(diff, cx);
                 }
@@ -18073,13 +18290,13 @@ impl SemanticsProvider for Entity<Project> {
         Some(self.update(cx, |project, cx| {
             let buffer = buffer.clone();
             let task = project.prepare_rename(buffer.clone(), position, cx);
-            cx.spawn(|_, mut cx| async move {
+            cx.spawn(async move |_, cx| {
                 Ok(match task.await? {
                     PrepareRenameResponse::Success(range) => Some(range),
                     PrepareRenameResponse::InvalidPosition => None,
                     PrepareRenameResponse::OnlyUnpreparedRenameSupported => {
                         // Fallback on using TreeSitter info to determine identifier range
-                        buffer.update(&mut cx, |buffer, _| {
+                        buffer.update(cx, |buffer, _| {
                             let snapshot = buffer.snapshot();
                             let (range, kind) = snapshot.surrounding_word(position);
                             if kind != Some(CharKind::Word) {
@@ -18522,6 +18739,10 @@ pub enum EditorEvent {
     },
     Reloaded,
     CursorShapeChanged,
+    PushedToNavHistory {
+        anchor: Anchor,
+        is_deactivate: bool,
+    },
 }
 
 impl EventEmitter<EditorEvent> for Editor {}

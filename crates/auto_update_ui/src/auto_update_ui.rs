@@ -64,7 +64,7 @@ fn view_release_notes_locally(
 
     workspace
         .with_local_workspace(window, cx, move |_, window, cx| {
-            cx.spawn_in(window, |workspace, mut cx| async move {
+            cx.spawn_in(window, async move |workspace, cx| {
                 let markdown = markdown.await.log_err();
                 let response = client.get(&url, Default::default(), true).await;
                 let Some(mut response) = response.log_err() else {
@@ -79,7 +79,7 @@ fn view_release_notes_locally(
 
                 if let Ok(body) = body {
                     workspace
-                        .update_in(&mut cx, |workspace, window, cx| {
+                        .update_in(cx, |workspace, window, cx| {
                             let project = workspace.project().clone();
                             let buffer = project.update(cx, |project, cx| {
                                 project.create_local_buffer("", markdown, cx)
@@ -130,7 +130,7 @@ pub fn notify_if_app_was_updated(cx: &mut App) {
         return;
     };
     let should_show_notification = updater.read(cx).should_show_update_notification(cx);
-    cx.spawn(|cx| async move {
+    cx.spawn(async move |cx| {
         let should_show_notification = should_show_notification.await?;
         if should_show_notification {
             cx.update(|cx| {

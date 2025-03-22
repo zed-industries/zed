@@ -113,6 +113,10 @@ impl Tool for FetchTool {
         "fetch".to_string()
     }
 
+    fn needs_confirmation(&self) -> bool {
+        true
+    }
+
     fn description(&self) -> String {
         include_str!("./fetch_tool/description.md").to_string()
     }
@@ -120,6 +124,13 @@ impl Tool for FetchTool {
     fn input_schema(&self) -> serde_json::Value {
         let schema = schemars::schema_for!(FetchToolInput);
         serde_json::to_value(&schema).unwrap()
+    }
+
+    fn ui_text(&self, input: &serde_json::Value) -> String {
+        match serde_json::from_value::<FetchToolInput>(input.clone()) {
+            Ok(input) => format!("Fetch `{}`", input.url),
+            Err(_) => "Fetch URL".to_string(),
+        }
     }
 
     fn run(

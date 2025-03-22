@@ -38,7 +38,7 @@ To create a custom debug configuration you have to create a `.zed/debug.json` fi
 [
   {
     // The label for the debug configuration and used to identify the debug session inside the debug panel
-    "label": "Example Start debugger config"
+    "label": "Example Start debugger config",
     // The debug adapter that Zed should use to debug the program
     "adapter": "custom",
     // Request: defaults to launch
@@ -55,7 +55,11 @@ To create a custom debug configuration you have to create a `.zed/debug.json` fi
     // initialize_args: This field should contain all the adapter specific initialization arguments that are directly send to the debug adapter
     "initialize_args": {
       // "stopOnEntry": true // e.g. to stop on the first line of the program (These args are DAP specific)
-    }
+    },
+    // connection: the connection that a custom debugger should use
+    "connection": "stdio",
+    // The cli command used to start the debug adapter e.g. `python3`, `node` or the adapter binary
+    "command": "path_to_cli"
   }
 ]
 ```

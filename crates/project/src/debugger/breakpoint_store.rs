@@ -5,7 +5,7 @@ use anyhow::{anyhow, Result};
 use breakpoints_in_file::BreakpointsInFile;
 use collections::BTreeMap;
 use dap::client::SessionId;
-use gpui::{App, AppContext, AsyncApp, Context, Entity, EventEmitter, Task};
+use gpui::{App, AppContext, AsyncApp, Context, Entity, EventEmitter, Subscription, Task};
 use language::{proto::serialize_anchor as serialize_text_anchor, Buffer, BufferSnapshot};
 use rpc::{
     proto::{self},
@@ -31,7 +31,7 @@ mod breakpoints_in_file {
         pub(super) buffer: Entity<Buffer>,
         // TODO: This is.. less than ideal, as it's O(n) and does not return entries in order. We'll have to change TreeMap to support passing in the context for comparisons
         pub(super) breakpoints: Vec<(text::Anchor, Breakpoint)>,
-        _subscription: Arc<gpui::Subscription>,
+        _subscription: Arc<Subscription>,
     }
 
     impl BreakpointsInFile {
@@ -341,6 +341,12 @@ impl BreakpointStore {
         }
     }
 
+    pub fn clear_breakpoints(&mut self, cx: &mut Context<Self>) {
+        let breakpoint_paths = self.breakpoints.keys().cloned().collect();
+        self.breakpoints.clear();
+        cx.emit(BreakpointStoreEvent::BreakpointsCleared(breakpoint_paths));
+    }
+
     pub fn breakpoints<'a>(
         &'a self,
         buffer: &'a Entity<Buffer>,
@@ -448,7 +454,7 @@ impl BreakpointStore {
     ) -> Task<Result<()>> {
         if let BreakpointStoreMode::Local(mode) = &self.mode {
             let mode = mode.clone();
-            cx.spawn(move |this, mut cx| async move {
+            cx.spawn(async move |this, cx| {
                 let mut new_breakpoints = BTreeMap::default();
                 for (path, bps) in breakpoints {
                     if bps.is_empty() {
@@ -456,13 +462,13 @@ impl BreakpointStore {
                     }
                     let (worktree, relative_path) = mode
                         .worktree_store
-                        .update(&mut cx, |this, cx| {
+                        .update(cx, |this, cx| {
                             this.find_or_create_worktree(&path, false, cx)
                         })?
                         .await?;
                     let buffer = mode
                         .buffer_store
-                        .update(&mut cx, |this, cx| {
+                        .update(cx, |this, cx| {
                             let path = ProjectPath {
                                 worktree_id: worktree.read(cx).id(),
                                 path: relative_path.into(),
@@ -474,10 +480,10 @@ impl BreakpointStore {
                         log::error!("Todo: Serialized breakpoints which do not have buffer (yet)");
                         continue;
                     };
-                    let snapshot = buffer.update(&mut cx, |buffer, _| buffer.snapshot())?;
+                    let snapshot = buffer.update(cx, |buffer, _| buffer.snapshot())?;
 
                     let mut breakpoints_for_file =
-                        this.update(&mut cx, |_, cx| BreakpointsInFile::new(buffer, cx))?;
+                        this.update(cx, |_, cx| BreakpointsInFile::new(buffer, cx))?;
 
                     for bp in bps {
                         let position = snapshot.anchor_before(PointUtf16::new(bp.position, 0));
@@ -487,7 +493,7 @@ impl BreakpointStore {
                     }
                     new_breakpoints.insert(path, breakpoints_for_file);
                 }
-                this.update(&mut cx, |this, cx| {
+                this.update(cx, |this, cx| {
                     this.breakpoints = new_breakpoints;
                     cx.notify();
                 })?;
@@ -497,6 +503,11 @@ impl BreakpointStore {
         } else {
             Task::ready(Ok(()))
         }
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub(crate) fn breakpoint_paths(&self) -> Vec<Arc<Path>> {
+        self.breakpoints.keys().cloned().collect()
     }
 }
 
@@ -509,6 +520,7 @@ pub enum BreakpointUpdatedReason {
 pub enum BreakpointStoreEvent {
     ActiveDebugLineChanged,
     BreakpointsUpdated(Arc<Path>, BreakpointUpdatedReason),
+    BreakpointsCleared(Vec<Arc<Path>>),
 }
 
 impl EventEmitter<BreakpointStoreEvent> for BreakpointStore {}

@@ -1,17 +1,39 @@
 use std::sync::Arc;
 
+use assistant_settings::{AgentProfile, AssistantSettings};
 use assistant_tool::{ToolSource, ToolWorkingSet};
-use gpui::Entity;
+use gpui::{Entity, Subscription};
+use indexmap::IndexMap;
 use scripting_tool::ScriptingTool;
+use settings::{Settings as _, SettingsStore};
 use ui::{prelude::*, ContextMenu, PopoverMenu, Tooltip};
 
 pub struct ToolSelector {
+    profiles: IndexMap<Arc<str>, AgentProfile>,
     tools: Arc<ToolWorkingSet>,
+    _subscriptions: Vec<Subscription>,
 }
 
 impl ToolSelector {
-    pub fn new(tools: Arc<ToolWorkingSet>, _cx: &mut Context<Self>) -> Self {
-        Self { tools }
+    pub fn new(tools: Arc<ToolWorkingSet>, cx: &mut Context<Self>) -> Self {
+        let settings_subscription = cx.observe_global::<SettingsStore>(move |this, cx| {
+            this.refresh_profiles(cx);
+        });
+
+        let mut this = Self {
+            profiles: IndexMap::default(),
+            tools,
+            _subscriptions: vec![settings_subscription],
+        };
+        this.refresh_profiles(cx);
+
+        this
+    }
+
+    fn refresh_profiles(&mut self, cx: &mut Context<Self>) {
+        let settings = AssistantSettings::get_global(cx);
+
+        self.profiles = settings.profiles.clone();
     }
 
     fn build_context_menu(
@@ -19,9 +41,36 @@ impl ToolSelector {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Entity<ContextMenu> {
+        let profiles = self.profiles.clone();
         let tool_set = self.tools.clone();
         ContextMenu::build_persistent(window, cx, move |mut menu, _window, cx| {
             let icon_position = IconPosition::End;
+
+            menu = menu.header("Profiles");
+            for (_id, profile) in profiles.clone() {
+                menu = menu.toggleable_entry(profile.name.clone(), false, icon_position, None, {
+                    let tools = tool_set.clone();
+                    move |_window, cx| {
+                        tools.disable_source(ToolSource::Native, cx);
+                        tools.disable_scripting_tool();
+                        tools.enable(
+                            ToolSource::Native,
+                            &profile
+                                .tools
+                                .iter()
+                                .filter_map(|(tool, enabled)| enabled.then(|| tool.clone()))
+                                .collect::<Vec<_>>(),
+                        );
+
+                        if profile.tools.contains_key(ScriptingTool::NAME) {
+                            tools.enable_scripting_tool();
+                        }
+                    }
+                });
+            }
+
+            menu = menu.separator();
+
             let tools_by_source = tool_set.tools_by_source(cx);
 
             let all_tools_enabled = tool_set.are_all_tools_enabled();

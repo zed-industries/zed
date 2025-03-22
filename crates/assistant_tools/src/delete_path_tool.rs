@@ -30,6 +30,10 @@ impl Tool for DeletePathTool {
         "delete-path".into()
     }
 
+    fn needs_confirmation(&self) -> bool {
+        true
+    }
+
     fn description(&self) -> String {
         include_str!("./delete_path_tool/description.md").into()
     }
@@ -37,6 +41,13 @@ impl Tool for DeletePathTool {
     fn input_schema(&self) -> serde_json::Value {
         let schema = schemars::schema_for!(DeletePathToolInput);
         serde_json::to_value(&schema).unwrap()
+    }
+
+    fn ui_text(&self, input: &serde_json::Value) -> String {
+        match serde_json::from_value::<DeletePathToolInput>(input.clone()) {
+            Ok(input) => format!("Delete “`{}`”", input.path),
+            Err(_) => "Delete path".to_string(),
+        }
     }
 
     fn run(
@@ -59,13 +70,12 @@ impl Tool for DeletePathTool {
         {
             Some(deletion_task) => cx.background_spawn(async move {
                 match deletion_task.await {
-                    Ok(()) => Ok(format!("Deleted {}", &path_str)),
-                    Err(err) => Err(anyhow!("Failed to delete {}: {}", &path_str, err)),
+                    Ok(()) => Ok(format!("Deleted {path_str}")),
+                    Err(err) => Err(anyhow!("Failed to delete {path_str}: {err}")),
                 }
             }),
             None => Task::ready(Err(anyhow!(
-                "Couldn't delete {} because that path isn't in this project.",
-                path_str
+                "Couldn't delete {path_str} because that path isn't in this project."
             ))),
         }
     }

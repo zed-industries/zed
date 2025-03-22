@@ -32,9 +32,11 @@ serde.workspace = true
 smol.workspace = true
 sum_tree.workspace = true
 text.workspace = true
+thiserror.workspace = true
 time.workspace = true
 url.workspace = true
 util.workspace = true
+uuid.workspace = true
 futures.workspace = true
 
 [dev-dependencies]
@@ -43,3 +45,4 @@ serde_json.workspace = true
 text = { workspace = true, features = ["test-support"] }
 unindent.workspace = true
 gpui = { workspace = true, features = ["test-support"] }
+tempfile.workspace = true

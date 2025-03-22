@@ -207,7 +207,7 @@ impl FeatureFlagAppExt for App {
     fn has_flag<T: FeatureFlag>(&self) -> bool {
         self.try_global::<FeatureFlags>()
             .map(|flags| flags.has_flag::<T>())
-            .unwrap_or_else(|| T::enabled_in_development())
+            .unwrap_or(false)
     }
 
     fn is_staff(&self) -> bool {
@@ -252,7 +252,7 @@ impl FeatureFlagAppExt for App {
     fn wait_for_flag_or_timeout<T: FeatureFlag>(&mut self, timeout: Duration) -> Task<bool> {
         let wait_for_flag = self.wait_for_flag::<T>();
 
-        self.spawn(|_cx| async move {
+        self.spawn(async move |_cx| {
             let mut wait_for_flag = wait_for_flag.fuse();
             let mut timeout = FutureExt::fuse(smol::Timer::after(timeout));
 

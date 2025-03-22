@@ -11,7 +11,7 @@ use super::dap_command::{
 };
 use super::dap_store::DapAdapterDelegate;
 use anyhow::{anyhow, Result};
-use collections::{HashMap, IndexMap, IndexSet};
+use collections::{HashMap, HashSet, IndexMap, IndexSet};
 use dap::adapters::{DebugAdapter, DebugAdapterBinary};
 use dap::messages::Response;
 use dap::OutputEventCategory;
@@ -191,8 +191,8 @@ impl LocalMode {
         messages_tx: futures::channel::mpsc::UnboundedSender<Message>,
         cx: AsyncApp,
     ) -> Task<Result<(Self, Capabilities)>> {
-        cx.spawn(move |mut cx| async move {
-            let (adapter, binary) = Self::get_adapter_binary(&config, &delegate, &mut cx).await?;
+        cx.spawn(async move |cx| {
+            let (adapter, binary) = Self::get_adapter_binary(&config, &delegate,  cx).await?;
 
             let message_handler = Box::new(move |message| {
                 messages_tx.unbounded_send(message).ok();
@@ -236,6 +236,19 @@ impl LocalMode {
                     .client
                     .on_request::<dap::requests::Initialize, _>(move |_, _| Ok(caps.clone()))
                     .await;
+
+                let paths = cx.update(|cx| session.breakpoint_store.read(cx).breakpoint_paths()).expect("Breakpoint store should exist in all tests that start debuggers");
+
+                session.client.on_request::<dap::requests::SetBreakpoints, _>(move |_, args| {
+                    let p = Arc::from(Path::new(&args.source.path.unwrap()));
+                    if !paths.contains(&p) {
+                        panic!("Sent breakpoints for path without any")
+                    }
+
+                    Ok(dap::SetBreakpointsResponse {
+                        breakpoints: Vec::default(),
+                    })
+                }).await;
 
                 match config.request.clone() {
                     dap::DebugRequestType::Launch if fail => {
@@ -304,6 +317,34 @@ impl LocalMode {
                 .await?;
 
             Ok((session, capabilities))
+        })
+    }
+
+    fn unset_breakpoints_from_paths(&self, paths: &Vec<Arc<Path>>, cx: &mut App) -> Task<()> {
+        let tasks: Vec<_> = paths
+            .into_iter()
+            .map(|path| {
+                self.request(
+                    dap_command::SetBreakpoints {
+                        source: client_source(path),
+                        source_modified: None,
+                        breakpoints: vec![],
+                    },
+                    cx.background_executor().clone(),
+                )
+            })
+            .collect();
+
+        cx.background_spawn(async move {
+            futures::future::join_all(tasks)
+                .await
+                .iter()
+                .for_each(|res| match res {
+                    Ok(_) => {}
+                    Err(err) => {
+                        log::warn!("Set breakpoints request failed: {}", err);
+                    }
+                });
         })
     }
 
@@ -439,7 +480,7 @@ impl LocalMode {
 
         let configuration_sequence = cx.spawn({
             let this = self.clone();
-            move |cx| async move {
+            async move |cx| {
                 initialized_rx.await?;
                 // todo(debugger) figure out if we want to handle a breakpoint response error
                 // This will probably consist of letting a user know that breakpoints failed to be set
@@ -522,6 +563,11 @@ impl ThreadStates {
         self.known_thread_states.clear();
     }
 
+    fn exit_all_threads(&mut self) {
+        self.global_state = Some(ThreadStatus::Exited);
+        self.known_thread_states.clear();
+    }
+
     fn continue_all_threads(&mut self) {
         self.global_state = Some(ThreadStatus::Running);
         self.known_thread_states.clear();
@@ -577,6 +623,7 @@ pub struct Session {
     mode: Mode,
     pub(super) capabilities: Capabilities,
     id: SessionId,
+    child_session_ids: HashSet<SessionId>,
     parent_id: Option<SessionId>,
     ignore_breakpoints: bool,
     modules: Vec<dap::Module>,
@@ -697,7 +744,7 @@ impl Session {
     ) -> Task<Result<Entity<Self>>> {
         let (message_tx, mut message_rx) = futures::channel::mpsc::unbounded();
 
-        cx.spawn(move |mut cx| async move {
+        cx.spawn(async move |cx| {
             let (mode, capabilities) = LocalMode::new(
                 session_id,
                 parent_session.clone(),
@@ -710,31 +757,30 @@ impl Session {
             .await?;
 
             cx.new(|cx| {
-                let _background_tasks =
-                    vec![cx.spawn(move |this: WeakEntity<Self>, mut cx| async move {
-                        let mut initialized_tx = Some(initialized_tx);
-                        while let Some(message) = message_rx.next().await {
-                            if let Message::Event(event) = message {
-                                if let Events::Initialized(_) = *event {
-                                    if let Some(tx) = initialized_tx.take() {
-                                        tx.send(()).ok();
-                                    }
-                                } else {
-                                    let Ok(_) = this.update(&mut cx, |session, cx| {
-                                        session.handle_dap_event(event, cx);
-                                    }) else {
-                                        break;
-                                    };
+                let _background_tasks = vec![cx.spawn(async move |this: WeakEntity<Self>, cx| {
+                    let mut initialized_tx = Some(initialized_tx);
+                    while let Some(message) = message_rx.next().await {
+                        if let Message::Event(event) = message {
+                            if let Events::Initialized(_) = *event {
+                                if let Some(tx) = initialized_tx.take() {
+                                    tx.send(()).ok();
                                 }
                             } else {
-                                let Ok(_) = start_debugging_requests_tx
-                                    .unbounded_send((session_id, message))
-                                else {
+                                let Ok(_) = this.update(cx, |session, cx| {
+                                    session.handle_dap_event(event, cx);
+                                }) else {
                                     break;
                                 };
                             }
+                        } else {
+                            let Ok(_) =
+                                start_debugging_requests_tx.unbounded_send((session_id, message))
+                            else {
+                                break;
+                            };
                         }
-                    })];
+                    }
+                })];
 
                 cx.subscribe(&breakpoint_store, |this, _, event, cx| match event {
                     BreakpointStoreEvent::BreakpointsUpdated(path, reason) => {
@@ -747,6 +793,14 @@ impl Session {
                                 .detach();
                         };
                     }
+                    BreakpointStoreEvent::BreakpointsCleared(paths) => {
+                        if let Some(local) = (!this.ignore_breakpoints)
+                            .then(|| this.as_local_mut())
+                            .flatten()
+                        {
+                            local.unset_breakpoints_from_paths(paths, cx).detach();
+                        }
+                    }
                     BreakpointStoreEvent::ActiveDebugLineChanged => {}
                 })
                 .detach();
@@ -754,6 +808,7 @@ impl Session {
                 Self {
                     mode: Mode::Local(mode),
                     id: session_id,
+                    child_session_ids: HashSet::default(),
                     parent_id: parent_session.map(|session| session.read(cx).id),
                     variables: Default::default(),
                     capabilities,
@@ -786,13 +841,13 @@ impl Session {
                 _upstream_project_id: upstream_project_id,
             }),
             id: session_id,
+            child_session_ids: HashSet::default(),
             parent_id: None,
             capabilities: Capabilities::default(),
             ignore_breakpoints,
             variables: Default::default(),
             stack_frames: Default::default(),
             thread_states: ThreadStates::default(),
-
             output_token: OutputToken(0),
             output: circular_buffer::CircularBuffer::boxed(),
             requests: HashMap::default(),
@@ -807,6 +862,18 @@ impl Session {
 
     pub fn session_id(&self) -> SessionId {
         self.id
+    }
+
+    pub fn child_session_ids(&self) -> HashSet<SessionId> {
+        self.child_session_ids.clone()
+    }
+
+    pub fn add_child_session_id(&mut self, session_id: SessionId) {
+        self.child_session_ids.insert(session_id);
+    }
+
+    pub fn remove_child_session_id(&mut self, session_id: SessionId) {
+        self.child_session_ids.remove(&session_id);
     }
 
     pub fn parent_id(&self) -> Option<SessionId> {
@@ -1052,6 +1119,7 @@ impl Session {
 
         if !self.thread_states.any_stopped_thread()
             && request.type_id() != TypeId::of::<ThreadsCommand>()
+            || self.is_session_terminated
         {
             return;
         }
@@ -1102,17 +1170,17 @@ impl Session {
             let error = Err(anyhow::Error::msg(
                 "Couldn't complete request because it's not supported",
             ));
-            return cx.spawn(|this, mut cx| async move {
-                this.update(&mut cx, |this, cx| process_result(this, error, cx))
+            return cx.spawn(async move |this, cx| {
+                this.update(cx, |this, cx| process_result(this, error, cx))
                     .log_err()
                     .flatten()
             });
         }
 
         let request = mode.request_dap(session_id, request, cx);
-        cx.spawn(|this, mut cx| async move {
+        cx.spawn(async move |this, cx| {
             let result = request.await;
-            this.update(&mut cx, |this, cx| process_result(this, result, cx))
+            this.update(cx, |this, cx| process_result(this, result, cx))
                 .log_err()
                 .flatten()
         })
@@ -1332,6 +1400,10 @@ impl Session {
     }
 
     pub fn shutdown(&mut self, cx: &mut Context<Self>) -> Task<()> {
+        self.is_session_terminated = true;
+        self.thread_states.exit_all_threads();
+        cx.notify();
+
         let task = if self
             .capabilities
             .supports_terminate_request
@@ -1694,6 +1766,7 @@ impl Session {
             },
             |this, response, cx| {
                 let response = response.log_err()?;
+                this.output_token.0 += 1;
                 this.output.push_back(dap::OutputEvent {
                     category: None,
                     output: response.result.clone(),

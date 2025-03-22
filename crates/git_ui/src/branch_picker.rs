@@ -8,7 +8,7 @@ use gpui::{
     SharedString, Styled, Subscription, Task, Window,
 };
 use picker::{Picker, PickerDelegate, PickerEditorPosition};
-use project::git::Repository;
+use project::git_store::Repository;
 use std::sync::Arc;
 use time::OffsetDateTime;
 use time_format::format_local_timestamp;
@@ -90,7 +90,7 @@ impl BranchList {
             .clone()
             .map(|repository| repository.read(cx).branches());
 
-        cx.spawn_in(window, |this, mut cx| async move {
+        cx.spawn_in(window, async move |this, cx| {
             let mut all_branches = all_branches_request
                 .context("No active repository")?
                 .await??;
@@ -102,7 +102,7 @@ impl BranchList {
                     .map(|commit| 0 - commit.commit_timestamp)
             });
 
-            this.update_in(&mut cx, |this, window, cx| {
+            this.update_in(cx, |this, window, cx| {
                 this.picker.update(cx, |picker, cx| {
                     picker.delegate.all_branches = Some(all_branches);
                     picker.refresh(window, cx);
@@ -201,7 +201,7 @@ impl BranchListDelegate {
         let Some(repo) = self.repo.clone() else {
             return;
         };
-        cx.spawn(|_, cx| async move {
+        cx.spawn(async move |_, cx| {
             cx.update(|cx| repo.read(cx).create_branch(new_branch_name.to_string()))?
                 .await??;
             cx.update(|cx| repo.read(cx).change_branch(new_branch_name.to_string()))?
@@ -257,7 +257,7 @@ impl PickerDelegate for BranchListDelegate {
         };
 
         const RECENT_BRANCHES_COUNT: usize = 10;
-        cx.spawn_in(window, move |picker, mut cx| async move {
+        cx.spawn_in(window, async move |picker, cx| {
             let mut matches: Vec<BranchEntry> = if query.is_empty() {
                 all_branches
                     .into_iter()
@@ -293,7 +293,7 @@ impl PickerDelegate for BranchListDelegate {
                 .collect()
             };
             picker
-                .update(&mut cx, |picker, _| {
+                .update(cx, |picker, _| {
                     #[allow(clippy::nonminimal_bool)]
                     if !query.is_empty()
                         && !matches
@@ -350,8 +350,8 @@ impl PickerDelegate for BranchListDelegate {
 
         cx.spawn_in(window, {
             let branch = entry.branch.clone();
-            |picker, mut cx| async move {
-                let branch_change_task = picker.update(&mut cx, |this, cx| {
+            async move |picker, cx| {
+                let branch_change_task = picker.update(cx, |this, cx| {
                     let repo = this
                         .delegate
                         .repo
@@ -369,7 +369,7 @@ impl PickerDelegate for BranchListDelegate {
 
                 branch_change_task.await?;
 
-                picker.update(&mut cx, |_, cx| {
+                picker.update(cx, |_, cx| {
                     cx.emit(DismissEvent);
 
                     anyhow::Ok(())

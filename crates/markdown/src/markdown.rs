@@ -231,10 +231,10 @@ impl Markdown {
         });
 
         self.should_reparse = false;
-        self.pending_parse = Some(cx.spawn(|this, mut cx| {
+        self.pending_parse = Some(cx.spawn(async move |this, cx| {
             async move {
                 let parsed = parsed.await?;
-                this.update(&mut cx, |this, cx| {
+                this.update(cx, |this, cx| {
                     this.parsed_markdown = parsed;
                     this.pending_parse.take();
                     if this.should_reparse {
@@ -246,6 +246,7 @@ impl Markdown {
                 anyhow::Ok(())
             }
             .log_err()
+            .await
         }));
     }
 
@@ -795,7 +796,7 @@ impl Element for MarkdownElement {
                                                     code.clone(),
                                                 ));
 
-                                                cx.spawn(|this, cx| async move {
+                                                cx.spawn(async move |this, cx| {
                                                     cx.background_executor()
                                                         .timer(Duration::from_secs(2))
                                                         .await;

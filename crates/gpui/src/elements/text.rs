@@ -6,7 +6,6 @@ use crate::{
     WrappedLineLayout,
 };
 use anyhow::anyhow;
-use parking_lot::{Mutex, MutexGuard};
 use smallvec::SmallVec;
 use std::{
     cell::{Cell, RefCell},
@@ -277,7 +276,7 @@ impl IntoElement for StyledText {
 
 /// The Layout for TextElement. This can be used to map indices to pixels and vice versa.
 #[derive(Default, Clone)]
-pub struct TextLayout(Arc<Mutex<Option<TextLayoutInner>>>);
+pub struct TextLayout(Rc<RefCell<Option<TextLayoutInner>>>);
 
 struct TextLayoutInner {
     lines: SmallVec<[WrappedLine; 1]>,
@@ -288,10 +287,6 @@ struct TextLayoutInner {
 }
 
 impl TextLayout {
-    fn lock(&self) -> MutexGuard<Option<TextLayoutInner>> {
-        self.0.lock()
-    }
-
     fn layout(
         &self,
         text: SharedString,
@@ -341,7 +336,7 @@ impl TextLayout {
                         (None, None)
                     };
 
-                if let Some(text_layout) = element_state.0.lock().as_ref() {
+                if let Some(text_layout) = element_state.0.borrow().as_ref() {
                     if text_layout.size.is_some()
                         && (wrap_width.is_none() || wrap_width == text_layout.wrap_width)
                     {
@@ -367,7 +362,7 @@ impl TextLayout {
                     )
                     .log_err()
                 else {
-                    element_state.lock().replace(TextLayoutInner {
+                    element_state.0.borrow_mut().replace(TextLayoutInner {
                         lines: Default::default(),
                         line_height,
                         wrap_width,
@@ -384,7 +379,7 @@ impl TextLayout {
                     size.width = size.width.max(line_size.width).ceil();
                 }
 
-                element_state.lock().replace(TextLayoutInner {
+                element_state.0.borrow_mut().replace(TextLayoutInner {
                     lines,
                     line_height,
                     wrap_width,
@@ -400,7 +395,7 @@ impl TextLayout {
     }
 
     fn prepaint(&self, bounds: Bounds<Pixels>, text: &str) {
-        let mut element_state = self.lock();
+        let mut element_state = self.0.borrow_mut();
         let element_state = element_state
             .as_mut()
             .ok_or_else(|| anyhow!("measurement has not been performed on {}", text))
@@ -409,7 +404,7 @@ impl TextLayout {
     }
 
     fn paint(&self, text: &str, window: &mut Window, cx: &mut App) {
-        let element_state = self.lock();
+        let element_state = self.0.borrow();
         let element_state = element_state
             .as_ref()
             .ok_or_else(|| anyhow!("measurement has not been performed on {}", text))
@@ -438,7 +433,7 @@ impl TextLayout {
 
     /// Get the byte index into the input of the pixel position.
     pub fn index_for_position(&self, mut position: Point<Pixels>) -> Result<usize, usize> {
-        let element_state = self.lock();
+        let element_state = self.0.borrow();
         let element_state = element_state
             .as_ref()
             .expect("measurement has not been performed");
@@ -472,7 +467,7 @@ impl TextLayout {
 
     /// Get the pixel position for the given byte index.
     pub fn position_for_index(&self, index: usize) -> Option<Point<Pixels>> {
-        let element_state = self.lock();
+        let element_state = self.0.borrow();
         let element_state = element_state
             .as_ref()
             .expect("measurement has not been performed");
@@ -503,7 +498,7 @@ impl TextLayout {
 
     /// Retrieve the layout for the line containing the given byte index.
     pub fn line_layout_for_index(&self, index: usize) -> Option<Arc<WrappedLineLayout>> {
-        let element_state = self.lock();
+        let element_state = self.0.borrow();
         let element_state = element_state
             .as_ref()
             .expect("measurement has not been performed");
@@ -533,18 +528,18 @@ impl TextLayout {
 
     /// The bounds of this layout.
     pub fn bounds(&self) -> Bounds<Pixels> {
-        self.0.lock().as_ref().unwrap().bounds.unwrap()
+        self.0.borrow().as_ref().unwrap().bounds.unwrap()
     }
 
     /// The line height for this layout.
     pub fn line_height(&self) -> Pixels {
-        self.0.lock().as_ref().unwrap().line_height
+        self.0.borrow().as_ref().unwrap().line_height
     }
 
     /// The text for this layout.
     pub fn text(&self) -> String {
         self.0
-            .lock()
+            .borrow()
             .as_ref()
             .unwrap()
             .lines
@@ -691,6 +686,7 @@ impl Element for InteractiveText {
         window: &mut Window,
         cx: &mut App,
     ) {
+        let current_view = window.current_view();
         let text_layout = self.text.layout().clone();
         window.with_element_state::<InteractiveTextState, _>(
             global_id.unwrap(),
@@ -764,7 +760,7 @@ impl Element for InteractiveText {
                                 if let Some(hover_listener) = hover_listener.as_ref() {
                                     hover_listener(updated, event.clone(), window, cx);
                                 }
-                                window.refresh();
+                                cx.notify(current_view);
                             }
                         }
                     }

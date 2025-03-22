@@ -160,6 +160,7 @@ members = [
     "crates/ui",
     "crates/ui_input",
     "crates/ui_macros",
+    "crates/ui_prompt",
     "crates/util",
     "crates/util_macros",
     "crates/vim",
@@ -170,6 +171,8 @@ members = [
     "crates/zed",
     "crates/zed_actions",
     "crates/zeta",
+    "crates/zlog",
+    "crates/zlog_settings",
 
     #
     # Extensions
@@ -362,6 +365,7 @@ toolchain_selector = { path = "crates/toolchain_selector" }
 ui = { path = "crates/ui" }
 ui_input = { path = "crates/ui_input" }
 ui_macros = { path = "crates/ui_macros" }
+ui_prompt = { path = "crates/ui_prompt" }
 util = { path = "crates/util" }
 util_macros = { path = "crates/util_macros" }
 vim = { path = "crates/vim" }
@@ -372,6 +376,8 @@ worktree = { path = "crates/worktree" }
 zed = { path = "crates/zed" }
 zed_actions = { path = "crates/zed_actions" }
 zeta = { path = "crates/zeta" }
+zlog = { path = "crates/zlog" }
+zlog_settings = { path = "crates/zlog_settings" }
 
 #
 # External crates
@@ -533,7 +539,7 @@ sys-locale = "0.3.1"
 sysinfo = "0.31.0"
 take-until = "0.2.0"
 tempfile = "3.9.0"
-thiserror = "1.0.29"
+thiserror = "2.0.12"
 tiktoken-rs = "0.6.0"
 time = { version = "0.3", features = [
     "macros",

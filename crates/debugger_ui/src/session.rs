@@ -6,6 +6,7 @@ mod starting;
 use std::time::Duration;
 
 use dap::client::SessionId;
+use dap::DebugAdapterConfig;
 use failed::FailedState;
 use gpui::{
     percentage, Animation, AnimationExt, AnyElement, App, Entity, EventEmitter, FocusHandle,
@@ -19,10 +20,13 @@ use rpc::proto::{self, PeerId};
 use running::RunningState;
 use starting::{StartingEvent, StartingState};
 use ui::prelude::*;
+use util::ResultExt;
 use workspace::{
     item::{self, Item},
     FollowableItem, ViewId, Workspace,
 };
+
+use crate::debugger_panel::DebugPanel;
 
 pub(crate) enum DebugSessionState {
     Inert(Entity<InertState>),
@@ -44,6 +48,7 @@ pub struct DebugSession {
     remote_id: Option<workspace::ViewId>,
     mode: DebugSessionState,
     dap_store: WeakEntity<DapStore>,
+    debug_panel: WeakEntity<DebugPanel>,
     worktree_store: WeakEntity<WorktreeStore>,
     workspace: WeakEntity<Workspace>,
     _subscriptions: [Subscription; 1],
@@ -67,6 +72,8 @@ impl DebugSession {
     pub(super) fn inert(
         project: Entity<Project>,
         workspace: WeakEntity<Workspace>,
+        debug_panel: WeakEntity<DebugPanel>,
+        config: Option<DebugAdapterConfig>,
         window: &mut Window,
         cx: &mut App,
     ) -> Entity<Self> {
@@ -77,7 +84,8 @@ impl DebugSession {
             .and_then(|tree| tree.read(cx).abs_path().to_str().map(|str| str.to_string()))
             .unwrap_or_default();
 
-        let inert = cx.new(|cx| InertState::new(workspace.clone(), &default_cwd, window, cx));
+        let inert =
+            cx.new(|cx| InertState::new(workspace.clone(), &default_cwd, config, window, cx));
 
         let project = project.read(cx);
         let dap_store = project.dap_store().downgrade();
@@ -89,6 +97,7 @@ impl DebugSession {
                 mode: DebugSessionState::Inert(inert),
                 dap_store,
                 worktree_store,
+                debug_panel,
                 workspace,
                 _subscriptions,
             }
@@ -99,6 +108,7 @@ impl DebugSession {
         project: Entity<Project>,
         workspace: WeakEntity<Workspace>,
         session: Entity<Session>,
+        debug_panel: WeakEntity<DebugPanel>,
         window: &mut Window,
         cx: &mut App,
     ) -> Entity<Self> {
@@ -111,6 +121,7 @@ impl DebugSession {
             remote_id: None,
             mode: DebugSessionState::Running(mode),
             dap_store: project.read(cx).dap_store().downgrade(),
+            debug_panel,
             worktree_store: project.read(cx).worktree_store().downgrade(),
             workspace,
         })
@@ -148,6 +159,11 @@ impl DebugSession {
         let dap_store = self.dap_store.clone();
         let InertEvent::Spawned { config } = event;
         let config = config.clone();
+
+        self.debug_panel
+            .update(cx, |this, _| this.last_inert_config = Some(config.clone()))
+            .log_err();
+
         let worktree = self
             .worktree_store
             .update(cx, |this, _| this.worktrees().next())
