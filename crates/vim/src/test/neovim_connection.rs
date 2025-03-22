@@ -111,17 +111,27 @@ impl NeovimConnection {
     // Sends a keystroke to the neovim process.
     #[cfg(feature = "neovim")]
     pub async fn send_keystroke(&mut self, keystroke_text: &str) {
-        let mut keystroke = Keystroke::parse(keystroke_text).unwrap();
+        let mut keystroke = Keystroke::parse(keystroke_text, false, None).unwrap();
 
+        // What's this? "<" key? "lt" key?
+        #[cfg(not(target_os = "windows"))]
         if keystroke.key == "<" {
-            keystroke.key = "lt".to_string()
+            keystroke.key = "lt".to_string();
+        }
+        #[cfg(target_os = "windows")]
+        if keystroke.key == gpui::KeyCodes::Unknown("<".into()) {
+            keystroke.key = gpui::KeyCodes::Unknown("lt".to_string());
         }
 
+        #[cfg(not(target_os = "windows"))]
+        let long_key = keystroke.key.len() > 1;
+        #[cfg(target_os = "windows")]
+        let long_key = keystroke.key.display().len() > 1;
         let special = keystroke.modifiers.shift
             || keystroke.modifiers.control
             || keystroke.modifiers.alt
             || keystroke.modifiers.platform
-            || keystroke.key.len() > 1;
+            || long_key;
         let start = if special { "<" } else { "" };
         let shift = if keystroke.modifiers.shift { "S-" } else { "" };
         let ctrl = if keystroke.modifiers.control {
@@ -137,7 +147,13 @@ impl NeovimConnection {
         };
         let end = if special { ">" } else { "" };
 
+        #[cfg(not(target_os = "windows"))]
         let key = format!("{start}{shift}{ctrl}{alt}{cmd}{}{end}", keystroke.key);
+        #[cfg(target_os = "windows")]
+        let key = format!(
+            "{start}{shift}{ctrl}{alt}{cmd}{}{end}",
+            keystroke.key.display()
+        );
 
         self.data
             .push_back(NeovimData::Key(keystroke_text.to_string()));
@@ -477,7 +493,7 @@ impl NeovimConnection {
     #[cfg(not(feature = "neovim"))]
     fn read_test_data(test_case_id: &str) -> VecDeque<NeovimData> {
         let path = Self::test_data_path(test_case_id);
-        let json = std::fs::read_to_string(path).expect(
+        let json = std::fs::read_to_string(&path).expect(
             "Could not read test data. Is it generated? Try running test with '--features neovim'",
         );
 

@@ -1,3 +1,5 @@
+#[cfg(target_os = "windows")]
+use crate::KeyCodes;
 use crate::{
     point, prelude::*, px, size, transparent_black, Action, AnyDrag, AnyElement, AnyTooltip,
     AnyView, App, AppContext, Arena, Asset, AsyncWindowContext, AvailableSpace, Background, Bounds,
@@ -3194,17 +3196,31 @@ impl Window {
                 && self.pending_modifier.modifiers.number_of_modifiers() == 1
                 && !self.pending_modifier.saw_keystroke
             {
+                #[cfg(not(target_os = "windows"))]
                 let key = match self.pending_modifier.modifiers {
-                    modifiers if modifiers.shift => Some("shift"),
-                    modifiers if modifiers.control => Some("control"),
-                    modifiers if modifiers.alt => Some("alt"),
-                    modifiers if modifiers.platform => Some("platform"),
-                    modifiers if modifiers.function => Some("function"),
+                    modifiers if modifiers.shift => Some("shift".to_string()),
+                    modifiers if modifiers.control => Some("control".to_string()),
+                    modifiers if modifiers.alt => Some("alt".to_string()),
+                    modifiers if modifiers.platform => Some("platform".to_string()),
+                    modifiers if modifiers.function => Some("function".to_string()),
+                    _ => None,
+                };
+                #[cfg(target_os = "windows")]
+                let key = match self.pending_modifier.modifiers {
+                    modifiers if modifiers.shift => Some(KeyCodes::Shift(crate::KeyPosition::Any)),
+                    modifiers if modifiers.control => {
+                        Some(KeyCodes::Control(crate::KeyPosition::Any))
+                    }
+                    modifiers if modifiers.alt => Some(KeyCodes::Alt(crate::KeyPosition::Any)),
+                    modifiers if modifiers.platform => {
+                        Some(KeyCodes::Platform(crate::KeyPosition::Any))
+                    }
+                    modifiers if modifiers.function => Some(KeyCodes::Function),
                     _ => None,
                 };
                 if let Some(key) = key {
                     keystroke = Some(Keystroke {
-                        key: key.to_string(),
+                        key,
                         key_char: None,
                         modifiers: Modifiers::default(),
                     });

@@ -1254,11 +1254,18 @@ pub fn handle_keymap_file_changes(
     })
     .detach();
 
+    // Is that ok we just compare `cx.keyboard_layout()` instead of the content?
     let mut current_mapping = settings::get_key_equivalents(cx.keyboard_layout());
+    let mut current_keyboard_layout = cx.keyboard_layout().clone();
     cx.on_keyboard_layout_change(move |cx| {
         let next_mapping = settings::get_key_equivalents(cx.keyboard_layout());
         if next_mapping != current_mapping {
             current_mapping = next_mapping;
+            keyboard_layout_tx.unbounded_send(()).ok();
+        }
+        let new_keyboard_layout = cx.keyboard_layout().clone();
+        if new_keyboard_layout != current_keyboard_layout {
+            current_keyboard_layout = new_keyboard_layout;
             keyboard_layout_tx.unbounded_send(()).ok();
         }
     })
@@ -4358,11 +4365,23 @@ mod tests {
                 line,
                 action.name(),
             );
+            #[cfg(not(target_os = "windows"))]
             assert!(
                 // and key strokes contain the given key
                 bindings
                     .into_iter()
                     .any(|binding| binding.keystrokes().iter().any(|k| k.key == key)),
+                "On {} Failed to find {} with key binding {}",
+                line,
+                action.name(),
+                key
+            );
+            #[cfg(target_os = "windows")]
+            assert!(
+                bindings.into_iter().any(|binding| binding
+                    .keystrokes()
+                    .iter()
+                    .any(|k| k.key == gpui::KeyCodes::parse(key).unwrap().0)),
                 "On {} Failed to find {} with key binding {}",
                 line,
                 action.name(),

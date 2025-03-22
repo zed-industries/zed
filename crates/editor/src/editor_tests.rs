@@ -9360,7 +9360,7 @@ async fn test_completion(cx: &mut TestAppContext) {
         threeˇ
         additional edit
     "});
-    cx.simulate_keystroke(" ");
+    cx.simulate_keystroke("space");
     assert!(cx.editor(|e, _, _| e.context_menu.borrow_mut().is_none()));
     cx.simulate_keystroke("s");
     assert!(cx.editor(|e, _, _| e.context_menu.borrow_mut().is_none()));
@@ -10202,7 +10202,7 @@ async fn test_no_duplicated_completion_requests(cx: &mut TestAppContext) {
     assert!(request.next().await.is_some());
     assert_eq!(counter.load(atomic::Ordering::Acquire), 1);
 
-    cx.simulate_keystroke("S");
+    cx.simulate_keystroke("shift-s");
     cx.simulate_keystroke("o");
     cx.simulate_keystroke("m");
     cx.condition(|editor, _| editor.context_menu_visible())
@@ -16973,8 +16973,15 @@ async fn test_folding_buffer_when_multibuffer_has_only_one_excerpt(cx: &mut Test
 async fn test_multi_buffer_navigation_with_folded_buffers(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
     cx.update(|cx| {
+        #[cfg(not(target_os = "windows"))]
         let default_key_bindings = settings::KeymapFile::load_asset_allow_partial_failure(
             "keymaps/default-linux.json",
+            cx,
+        )
+        .unwrap();
+        #[cfg(target_os = "windows")]
+        let default_key_bindings = settings::KeymapFile::load_asset_allow_partial_failure(
+            "keymaps/default-windows.json",
             cx,
         )
         .unwrap();

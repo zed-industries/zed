@@ -89,7 +89,10 @@ impl KeyBinding {
         match key_icon {
             Some(icon) => KeyIcon::new(icon, color).size(self.size).into_any_element(),
             None => {
+                #[cfg(not(target_os = "windows"))]
                 let key = util::capitalize(&keystroke.key);
+                #[cfg(target_os = "windows")]
+                let key = util::capitalize(&keystroke.key.display());
                 Key::new(&key, color).size(self.size).into_any_element()
             }
         }
@@ -110,7 +113,16 @@ impl RenderOnce for KeyBinding {
                     self.key_binding
                         .keystrokes()
                         .iter()
-                        .map(|k| k.key.to_string())
+                        .map(|k| {
+                            #[cfg(not(target_os = "windows"))]
+                            {
+                                k.key.to_string()
+                            }
+                            #[cfg(target_os = "windows")]
+                            {
+                                k.key.display()
+                            }
+                        })
                         .collect::<Vec<_>>()
                         .join(" ")
                 )
@@ -147,6 +159,7 @@ impl RenderOnce for KeyBinding {
 }
 
 fn icon_for_key(keystroke: &Keystroke, platform_style: PlatformStyle) -> Option<IconName> {
+    #[cfg(not(target_os = "windows"))]
     match keystroke.key.as_str() {
         "left" => Some(IconName::ArrowLeft),
         "right" => Some(IconName::ArrowRight),
@@ -166,6 +179,32 @@ fn icon_for_key(keystroke: &Keystroke, platform_style: PlatformStyle) -> Option<
         "platform" if platform_style == PlatformStyle::Mac => Some(IconName::Command),
         "function" if platform_style == PlatformStyle::Mac => Some(IconName::Control),
         "alt" if platform_style == PlatformStyle::Mac => Some(IconName::Option),
+        _ => None,
+    }
+    #[cfg(target_os = "windows")]
+    match keystroke.key {
+        gpui::KeyCodes::Left => Some(IconName::ArrowLeft),
+        gpui::KeyCodes::Right => Some(IconName::ArrowRight),
+        gpui::KeyCodes::Up => Some(IconName::ArrowUp),
+        gpui::KeyCodes::Down => Some(IconName::ArrowDown),
+        gpui::KeyCodes::Backspace => Some(IconName::Backspace),
+        gpui::KeyCodes::Delete => Some(IconName::Delete),
+        // gpui::KeyCodes::Enter => Some(IconName::Return),
+        gpui::KeyCodes::Enter => Some(IconName::Return),
+        gpui::KeyCodes::Tab => Some(IconName::Tab),
+        gpui::KeyCodes::Space => Some(IconName::Space),
+        gpui::KeyCodes::Escape => Some(IconName::Escape),
+        gpui::KeyCodes::PageDown => Some(IconName::PageDown),
+        gpui::KeyCodes::PageUp => Some(IconName::PageUp),
+        gpui::KeyCodes::Shift(_) if platform_style == PlatformStyle::Mac => Some(IconName::Shift),
+        gpui::KeyCodes::Control(_) if platform_style == PlatformStyle::Mac => {
+            Some(IconName::Control)
+        }
+        gpui::KeyCodes::Platform(_) if platform_style == PlatformStyle::Mac => {
+            Some(IconName::Command)
+        }
+        gpui::KeyCodes::Function if platform_style == PlatformStyle::Mac => Some(IconName::Control),
+        gpui::KeyCodes::Alt(_) if platform_style == PlatformStyle::Mac => Some(IconName::Option),
         _ => None,
     }
 }
@@ -424,12 +463,22 @@ fn keystroke_text(keystroke: &Keystroke, platform_style: PlatformStyle, vim_mode
     }
 
     if vim_mode {
-        text.push_str(&keystroke.key)
+        #[cfg(not(target_os = "windows"))]
+        text.push_str(&keystroke.key);
+        #[cfg(target_os = "windows")]
+        text.push_str(&keystroke.key.display());
     } else {
+        #[cfg(not(target_os = "windows"))]
         let key = match keystroke.key.as_str() {
             "pageup" => "PageUp",
             "pagedown" => "PageDown",
             key => &util::capitalize(key),
+        };
+        #[cfg(target_os = "windows")]
+        let key = match &keystroke.key {
+            gpui::KeyCodes::PageUp => "PageUp",
+            gpui::KeyCodes::PageDown => "PageDown",
+            key => &util::capitalize(&key.display()),
         };
         text.push_str(key);
     }
@@ -445,7 +494,7 @@ mod tests {
     fn test_text_for_keystroke() {
         assert_eq!(
             keystroke_text(
-                &Keystroke::parse("cmd-c").unwrap(),
+                &Keystroke::parse("cmd-c", false, None).unwrap(),
                 PlatformStyle::Mac,
                 false
             ),
@@ -453,7 +502,7 @@ mod tests {
         );
         assert_eq!(
             keystroke_text(
-                &Keystroke::parse("cmd-c").unwrap(),
+                &Keystroke::parse("cmd-c", false, None).unwrap(),
                 PlatformStyle::Linux,
                 false
             ),
@@ -461,7 +510,7 @@ mod tests {
         );
         assert_eq!(
             keystroke_text(
-                &Keystroke::parse("cmd-c").unwrap(),
+                &Keystroke::parse("cmd-c", false, None).unwrap(),
                 PlatformStyle::Windows,
                 false
             ),
@@ -470,7 +519,7 @@ mod tests {
 
         assert_eq!(
             keystroke_text(
-                &Keystroke::parse("ctrl-alt-delete").unwrap(),
+                &Keystroke::parse("ctrl-alt-delete", false, None).unwrap(),
                 PlatformStyle::Mac,
                 false
             ),
@@ -478,7 +527,7 @@ mod tests {
         );
         assert_eq!(
             keystroke_text(
-                &Keystroke::parse("ctrl-alt-delete").unwrap(),
+                &Keystroke::parse("ctrl-alt-delete", false, None).unwrap(),
                 PlatformStyle::Linux,
                 false
             ),
@@ -486,7 +535,7 @@ mod tests {
         );
         assert_eq!(
             keystroke_text(
-                &Keystroke::parse("ctrl-alt-delete").unwrap(),
+                &Keystroke::parse("ctrl-alt-delete", false, None).unwrap(),
                 PlatformStyle::Windows,
                 false
             ),
@@ -495,7 +544,7 @@ mod tests {
 
         assert_eq!(
             keystroke_text(
-                &Keystroke::parse("shift-pageup").unwrap(),
+                &Keystroke::parse("shift-pageup", false, None).unwrap(),
                 PlatformStyle::Mac,
                 false
             ),
@@ -503,7 +552,7 @@ mod tests {
         );
         assert_eq!(
             keystroke_text(
-                &Keystroke::parse("shift-pageup").unwrap(),
+                &Keystroke::parse("shift-pageup", false, None).unwrap(),
                 PlatformStyle::Linux,
                 false,
             ),
@@ -511,7 +560,7 @@ mod tests {
         );
         assert_eq!(
             keystroke_text(
-                &Keystroke::parse("shift-pageup").unwrap(),
+                &Keystroke::parse("shift-pageup", false, None).unwrap(),
                 PlatformStyle::Windows,
                 false
             ),

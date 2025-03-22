@@ -302,6 +302,8 @@ impl TerminalView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        // What's going on here?
+        // On Windows, the character palette is opened with Win+.(period).
         if self
             .terminal
             .read(cx)
@@ -309,9 +311,13 @@ impl TerminalView {
             .mode
             .contains(TermMode::ALT_SCREEN)
         {
+            #[cfg(not(target_os = "windows"))]
+            let key = "ctrl-cmd-space";
+            #[cfg(target_os = "windows")]
+            let key = "win-.";
             self.terminal.update(cx, |term, cx| {
                 term.try_keystroke(
-                    &Keystroke::parse("ctrl-cmd-space").unwrap(),
+                    &Keystroke::parse(key, false, None).unwrap(),
                     TerminalSettings::get_global(cx).option_as_meta,
                 )
             });
@@ -578,7 +584,7 @@ impl TerminalView {
     }
 
     fn send_keystroke(&mut self, text: &SendKeystroke, _: &mut Window, cx: &mut Context<Self>) {
-        if let Some(keystroke) = Keystroke::parse(&text.0).log_err() {
+        if let Some(keystroke) = Keystroke::parse(&text.0, false, None).log_err() {
             self.clear_bell(cx);
             self.terminal.update(cx, |term, cx| {
                 term.try_keystroke(&keystroke, TerminalSettings::get_global(cx).option_as_meta);
