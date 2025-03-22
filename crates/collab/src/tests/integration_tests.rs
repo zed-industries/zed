@@ -4731,14 +4731,16 @@ async fn test_definition(
 
     // Request the definition of a symbol as the guest.
     let fake_language_server = fake_language_servers.next().await.unwrap();
-    fake_language_server.set_request_handler::<lsp::request::GotoDefinition, _, _>(|_, _| async move {
-        Ok(Some(lsp::GotoDefinitionResponse::Scalar(
-            lsp::Location::new(
-                lsp::Url::from_file_path("/root/dir-2/b.rs").unwrap(),
-                lsp::Range::new(lsp::Position::new(0, 6), lsp::Position::new(0, 9)),
-            ),
-        )))
-    });
+    fake_language_server.set_request_handler::<lsp::request::GotoDefinition, _, _>(
+        |_, _| async move {
+            Ok(Some(lsp::GotoDefinitionResponse::Scalar(
+                lsp::Location::new(
+                    lsp::Url::from_file_path("/root/dir-2/b.rs").unwrap(),
+                    lsp::Range::new(lsp::Position::new(0, 6), lsp::Position::new(0, 9)),
+                ),
+            )))
+        },
+    );
 
     let definitions_1 = project_b
         .update(cx_b, |p, cx| p.definition(&buffer_b, 23, cx))
@@ -4760,14 +4762,16 @@ async fn test_definition(
 
     // Try getting more definitions for the same buffer, ensuring the buffer gets reused from
     // the previous call to `definition`.
-    fake_language_server.set_request_handler::<lsp::request::GotoDefinition, _, _>(|_, _| async move {
-        Ok(Some(lsp::GotoDefinitionResponse::Scalar(
-            lsp::Location::new(
-                lsp::Url::from_file_path("/root/dir-2/b.rs").unwrap(),
-                lsp::Range::new(lsp::Position::new(1, 6), lsp::Position::new(1, 11)),
-            ),
-        )))
-    });
+    fake_language_server.set_request_handler::<lsp::request::GotoDefinition, _, _>(
+        |_, _| async move {
+            Ok(Some(lsp::GotoDefinitionResponse::Scalar(
+                lsp::Location::new(
+                    lsp::Url::from_file_path("/root/dir-2/b.rs").unwrap(),
+                    lsp::Range::new(lsp::Position::new(1, 6), lsp::Position::new(1, 11)),
+                ),
+            )))
+        },
+    );
 
     let definitions_2 = project_b
         .update(cx_b, |p, cx| p.definition(&buffer_b, 33, cx))
@@ -5432,22 +5436,24 @@ async fn test_project_symbols(
         .unwrap();
 
     let fake_language_server = fake_language_servers.next().await.unwrap();
-    fake_language_server.set_request_handler::<lsp::WorkspaceSymbolRequest, _, _>(|_, _| async move {
-        Ok(Some(lsp::WorkspaceSymbolResponse::Flat(vec![
-            #[allow(deprecated)]
-            lsp::SymbolInformation {
-                name: "TWO".into(),
-                location: lsp::Location {
-                    uri: lsp::Url::from_file_path("/code/crate-2/two.rs").unwrap(),
-                    range: lsp::Range::new(lsp::Position::new(0, 6), lsp::Position::new(0, 9)),
+    fake_language_server.set_request_handler::<lsp::WorkspaceSymbolRequest, _, _>(
+        |_, _| async move {
+            Ok(Some(lsp::WorkspaceSymbolResponse::Flat(vec![
+                #[allow(deprecated)]
+                lsp::SymbolInformation {
+                    name: "TWO".into(),
+                    location: lsp::Location {
+                        uri: lsp::Url::from_file_path("/code/crate-2/two.rs").unwrap(),
+                        range: lsp::Range::new(lsp::Position::new(0, 6), lsp::Position::new(0, 9)),
+                    },
+                    kind: lsp::SymbolKind::CONSTANT,
+                    tags: None,
+                    container_name: None,
+                    deprecated: None,
                 },
-                kind: lsp::SymbolKind::CONSTANT,
-                tags: None,
-                container_name: None,
-                deprecated: None,
-            },
-        ])))
-    });
+            ])))
+        },
+    );
 
     // Request the definition of a symbol as the guest.
     let symbols = project_b
@@ -5529,14 +5535,16 @@ async fn test_open_buffer_while_getting_definition_pointing_to_it(
         .unwrap();
 
     let fake_language_server = fake_language_servers.next().await.unwrap();
-    fake_language_server.set_request_handler::<lsp::request::GotoDefinition, _, _>(|_, _| async move {
-        Ok(Some(lsp::GotoDefinitionResponse::Scalar(
-            lsp::Location::new(
-                lsp::Url::from_file_path("/root/b.rs").unwrap(),
-                lsp::Range::new(lsp::Position::new(0, 6), lsp::Position::new(0, 9)),
-            ),
-        )))
-    });
+    fake_language_server.set_request_handler::<lsp::request::GotoDefinition, _, _>(
+        |_, _| async move {
+            Ok(Some(lsp::GotoDefinitionResponse::Scalar(
+                lsp::Location::new(
+                    lsp::Url::from_file_path("/root/b.rs").unwrap(),
+                    lsp::Range::new(lsp::Position::new(0, 6), lsp::Position::new(0, 9)),
+                ),
+            )))
+        },
+    );
 
     let definitions;
     let buffer_b2;

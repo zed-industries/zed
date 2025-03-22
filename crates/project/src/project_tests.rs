@@ -5175,17 +5175,19 @@ async fn test_multiple_language_server_hovers(cx: &mut gpui::TestAppContext) {
             "TailwindServer" | "TypeScriptServer" => {
                 servers_with_hover_requests.insert(
                     new_server_name.clone(),
-                    new_server.set_request_handler::<lsp::request::HoverRequest, _, _>(move |_, _| {
-                        let name = new_server_name.clone();
-                        async move {
-                            Ok(Some(lsp::Hover {
-                                contents: lsp::HoverContents::Scalar(lsp::MarkedString::String(
-                                    format!("{name} hover"),
-                                )),
-                                range: None,
-                            }))
-                        }
-                    }),
+                    new_server.set_request_handler::<lsp::request::HoverRequest, _, _>(
+                        move |_, _| {
+                            let name = new_server_name.clone();
+                            async move {
+                                Ok(Some(lsp::Hover {
+                                    contents: lsp::HoverContents::Scalar(
+                                        lsp::MarkedString::String(format!("{name} hover")),
+                                    ),
+                                    range: None,
+                                }))
+                            }
+                        },
+                    ),
                 );
             }
             "ESLintServer" => {
@@ -5197,13 +5199,12 @@ async fn test_multiple_language_server_hovers(cx: &mut gpui::TestAppContext) {
                 );
             }
             "NoHoverCapabilitiesServer" => {
-                let _never_handled = new_server.set_request_handler::<lsp::request::HoverRequest, _, _>(
-                    |_, _| async move {
+                let _never_handled = new_server
+                    .set_request_handler::<lsp::request::HoverRequest, _, _>(|_, _| async move {
                         panic!(
                             "Should not call for hovers server with no corresponding capabilities"
                         )
-                    },
-                );
+                    });
             }
             unexpected => panic!("Unexpected server name: {unexpected}"),
         }
@@ -5274,8 +5275,8 @@ async fn test_hovers_with_empty_parts(cx: &mut gpui::TestAppContext) {
         .await
         .expect("failed to get the language server");
 
-    let mut request_handled =
-        fake_server.set_request_handler::<lsp::request::HoverRequest, _, _>(move |_, _| async move {
+    let mut request_handled = fake_server.set_request_handler::<lsp::request::HoverRequest, _, _>(
+        move |_, _| async move {
             Ok(Some(lsp::Hover {
                 contents: lsp::HoverContents::Array(vec![
                     lsp::MarkedString::String("".to_string()),
@@ -5284,7 +5285,8 @@ async fn test_hovers_with_empty_parts(cx: &mut gpui::TestAppContext) {
                 ]),
                 range: None,
             }))
-        });
+        },
+    );
 
     let hover_task = project.update(cx, |project, cx| {
         project.hover(&buffer, Point::new(0, 0), cx)
@@ -5346,8 +5348,8 @@ async fn test_code_actions_only_kinds(cx: &mut gpui::TestAppContext) {
         .await
         .expect("failed to get the language server");
 
-    let mut request_handled = fake_server.set_request_handler::<lsp::request::CodeActionRequest, _, _>(
-        move |_, _| async move {
+    let mut request_handled = fake_server
+        .set_request_handler::<lsp::request::CodeActionRequest, _, _>(move |_, _| async move {
             Ok(Some(vec![
                 lsp::CodeActionOrCommand::CodeAction(lsp::CodeAction {
                     title: "organize imports".to_string(),
@@ -5360,8 +5362,7 @@ async fn test_code_actions_only_kinds(cx: &mut gpui::TestAppContext) {
                     ..lsp::CodeAction::default()
                 }),
             ]))
-        },
-    );
+        });
 
     let code_actions_task = project.update(cx, |project, cx| {
         project.code_actions(

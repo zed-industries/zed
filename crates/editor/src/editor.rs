@@ -4455,7 +4455,6 @@ impl Editor {
         let old_range = completion.old_range.to_offset(buffer);
         let old_text = buffer.text_for_range(old_range.clone()).collect::<String>();
 
-
         let start_distance = newest_selection.start.saturating_sub(old_range.start);
         let end_distance = old_range.end.saturating_sub(newest_selection.end);
         let mut common_prefix_len = old_text
