@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use futures::StreamExt;
 use gpui::{
     actions, bounds, div, point,
@@ -73,7 +75,7 @@ fn quit(_: &Quit, cx: &mut gpui::App) {
 }
 
 struct LivekitWindow {
-    room: livekit_client::Room,
+    room: Arc<livekit_client::Room>,
     microphone_track: Option<LocalTrackPublication>,
     screen_share_track: Option<LocalTrackPublication>,
     microphone_stream: Option<livekit_client::AudioStream>,
@@ -119,7 +121,7 @@ impl LivekitWindow {
                         });
 
                         Self {
-                            room,
+                            room: Arc::new(room),
                             microphone_track: None,
                             microphone_stream: None,
                             screen_share_track: None,
@@ -167,18 +169,13 @@ impl LivekitWindow {
                 participant,
                 track,
             } => {
-                let apm = self.room.audio_processing_module();
+                let room = self.room.clone();
                 let output = self.remote_participant(participant);
                 match track {
                     livekit_client::RemoteTrack::Audio(track) => {
                         output.audio_output_stream = Some((
                             publication.clone(),
-                            livekit_client::play_remote_audio_track(
-                                apm,
-                                &track,
-                                cx.background_executor(),
-                            )
-                            .unwrap(),
+                            room.play_remote_audio_track(&track, cx).unwrap(),
                         ));
                     }
                     livekit_client::RemoteTrack::Video(track) => {
@@ -247,11 +244,9 @@ impl LivekitWindow {
             }
             cx.notify();
         } else {
-            let participant = self.room.local_participant();
-            let apm = self.room.audio_processing_module();
+            let room = self.room.clone();
             cx.spawn_in(window, async move |this, cx| {
-                let (publication, stream) =
-                    participant.publish_microphone_track(apm, cx).await.unwrap();
+                let (publication, stream) = room.publish_local_microphone_track(cx).await.unwrap();
                 this.update(cx, |this, cx| {
                     this.microphone_track = Some(publication);
                     this.microphone_stream = Some(stream);
