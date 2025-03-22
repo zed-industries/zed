@@ -347,7 +347,7 @@ For example, to use `Nerd Font` as a fallback, add the following to your setting
 
 **Options**
 
-`"standard"`, `"comfortable"` or `{"custom": float}` (`1` is very compact, `2` very loose)
+`"standard"`, `"comfortable"` or `{ "custom": float }` (`1` is compact, `2` is loose)
 
 ## Confirm Quit
 
