@@ -3714,21 +3714,25 @@ impl GitPanel {
                 h_flex()
                     .items_center()
                     .flex_1()
+                    .gap_3()
                     // .overflow_hidden()
+                    .child(
+                        self.entry_label(display_name.clone(), label_color)
+                            .when(status.is_deleted(), |this| this.strikethrough()),
+                    )
                     .when_some(entry.parent_dir(), |this, parent| {
                         if !parent.is_empty() {
                             this.child(
-                                self.entry_label(format!("{}/", parent), path_color)
-                                    .when(status.is_deleted(), |this| this.strikethrough()),
+                                self.entry_label(
+                                    format!("{}/{}", parent, display_name.clone()),
+                                    path_color,
+                                )
+                                .when(status.is_deleted(), |this| this.strikethrough()),
                             )
                         } else {
                             this
                         }
-                    })
-                    .child(
-                        self.entry_label(display_name.clone(), label_color)
-                            .when(status.is_deleted(), |this| this.strikethrough()),
-                    ),
+                    }),
             )
             .into_any_element()
     }
