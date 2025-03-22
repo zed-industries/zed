@@ -1669,12 +1669,7 @@ impl Terminal {
                         self.pty_tx.notify(scroll);
                     }
                 };
-            } else if self
-                .last_content
-                .mode
-                .contains(TermMode::ALT_SCREEN | TermMode::ALTERNATE_SCROLL)
-                && !e.shift
-            {
+            } else if self.last_content.mode.contains(TermMode::ALT_SCREEN) && !e.shift {
                 self.pty_tx.notify(alt_scroll(scroll_lines))
             } else if scroll_lines != 0 {
                 let scroll = AlacScroll::Delta(scroll_lines);
