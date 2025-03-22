@@ -37,6 +37,10 @@ impl Tool for DiagnosticsTool {
         "diagnostics".into()
     }
 
+    fn needs_confirmation(&self) -> bool {
+        false
+    }
+
     fn description(&self) -> String {
         include_str!("./diagnostics_tool/description.md").into()
     }

@@ -3,7 +3,7 @@ use crate::thread::{
     ThreadEvent, ThreadFeedback,
 };
 use crate::thread_store::ThreadStore;
-use crate::tool_use::{ToolUse, ToolUseStatus};
+use crate::tool_use::{PendingToolUseStatus, ToolType, ToolUse, ToolUseStatus};
 use crate::ui::ContextPill;
 use collections::HashMap;
 use editor::{Editor, MultiBuffer};
@@ -471,8 +471,15 @@ impl ActiveThread {
 
                 for tool_use in tool_uses {
                     self.render_tool_use_label_markdown(
-                        tool_use.id,
+                        tool_use.id.clone(),
                         tool_use.ui_text.clone(),
+                        window,
+                        cx,
+                    );
+                    self.render_scripting_tool_use_markdown(
+                        tool_use.id,
+                        tool_use.name.as_ref(),
+                        tool_use.input.clone(),
                         window,
                         cx,
                     );
@@ -488,13 +495,6 @@ impl ActiveThread {
                     self.render_tool_use_label_markdown(
                         tool_use.id.clone(),
                         SharedString::from(tool_use.ui_text.clone()),
-                        window,
-                        cx,
-                    );
-                    self.render_scripting_tool_use_markdown(
-                        tool_use.id.clone(),
-                        tool_use.name.as_ref(),
-                        tool_use.input.clone(),
                         window,
                         cx,
                     );
@@ -996,29 +996,31 @@ impl ActiveThread {
                         )
                         .child(div().p_2().child(message_content)),
                 ),
-            Role::Assistant => v_flex()
-                .id(("message-container", ix))
-                .ml_2()
-                .pl_2()
-                .border_l_1()
-                .border_color(cx.theme().colors().border_variant)
-                .child(message_content)
-                .when(
-                    !tool_uses.is_empty() || !scripting_tool_uses.is_empty(),
-                    |parent| {
-                        parent.child(
-                            v_flex()
-                                .children(
-                                    tool_uses
-                                        .into_iter()
-                                        .map(|tool_use| self.render_tool_use(tool_use, cx)),
-                                )
-                                .children(scripting_tool_uses.into_iter().map(|tool_use| {
-                                    self.render_scripting_tool_use(tool_use, window, cx)
-                                })),
-                        )
-                    },
-                ),
+            Role::Assistant => {
+                v_flex()
+                    .id(("message-container", ix))
+                    .ml_2()
+                    .pl_2()
+                    .border_l_1()
+                    .border_color(cx.theme().colors().border_variant)
+                    .child(message_content)
+                    .when(
+                        !tool_uses.is_empty() || !scripting_tool_uses.is_empty(),
+                        |parent| {
+                            parent.child(
+                                v_flex()
+                                    .children(
+                                        tool_uses
+                                            .into_iter()
+                                            .map(|tool_use| self.render_tool_use(tool_use, cx)),
+                                    )
+                                    .children(scripting_tool_uses.into_iter().map(|tool_use| {
+                                        self.render_scripting_tool_use(tool_use, cx)
+                                    })),
+                            )
+                        },
+                    )
+            }
             Role::System => div().id(("message-container", ix)).py_1().px_2().child(
                 v_flex()
                     .bg(colors.editor_background)
@@ -1379,7 +1381,8 @@ impl ActiveThread {
                                 )
                                 .child({
                                     let (icon_name, color, animated) = match &tool_use.status {
-                                        ToolUseStatus::Pending => {
+                                        ToolUseStatus::Pending
+                                        | ToolUseStatus::NeedsConfirmation => {
                                             (IconName::Warning, Color::Warning, false)
                                         }
                                         ToolUseStatus::Running => {
@@ -1500,6 +1503,14 @@ impl ActiveThread {
                                         ),
                                 ),
                                 ToolUseStatus::Pending => container,
+                                ToolUseStatus::NeedsConfirmation => container.child(
+                                    content_container().child(
+                                        Label::new("Asking Permission")
+                                            .size(LabelSize::Small)
+                                            .color(Color::Muted)
+                                            .buffer_font(cx),
+                                    ),
+                                ),
                             }),
                     )
                 }),
@@ -1509,7 +1520,6 @@ impl ActiveThread {
     fn render_scripting_tool_use(
         &self,
         tool_use: ToolUse,
-        window: &Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let is_open = self
@@ -1555,13 +1565,25 @@ impl ActiveThread {
                                         }
                                     }),
                                 ))
-                                .child(div().text_ui_sm(cx).child(render_markdown(
-                                    tool_use.ui_text.clone(),
-                                    self.language_registry.clone(),
-                                    window,
-                                    cx,
-                                )))
-                                .truncate(),
+                                .child(
+                                    h_flex()
+                                        .gap_1p5()
+                                        .child(
+                                            Icon::new(IconName::Terminal)
+                                                .size(IconSize::XSmall)
+                                                .color(Color::Muted),
+                                        )
+                                        .child(
+                                            div()
+                                                .text_ui_sm(cx)
+                                                .children(
+                                                    self.rendered_tool_use_labels
+                                                        .get(&tool_use.id)
+                                                        .cloned(),
+                                                )
+                                                .truncate(),
+                                        ),
+                                ),
                         )
                         .child(
                             Label::new(match tool_use.status {
@@ -1569,6 +1591,7 @@ impl ActiveThread {
                                 ToolUseStatus::Running => "Running",
                                 ToolUseStatus::Finished(_) => "Finished",
                                 ToolUseStatus::Error(_) => "Error",
+                                ToolUseStatus::NeedsConfirmation => "Asking Permission",
                             })
                             .size(LabelSize::XSmall)
                             .buffer_font(cx),
@@ -1620,6 +1643,13 @@ impl ActiveThread {
                                         .child(Label::new(err)),
                                 ),
                                 ToolUseStatus::Pending | ToolUseStatus::Running => parent,
+                                ToolUseStatus::NeedsConfirmation => parent.child(
+                                    v_flex()
+                                        .gap_0p5()
+                                        .py_1()
+                                        .px_2p5()
+                                        .child(Label::new("Asking Permission")),
+                                ),
                             }),
                     )
                 }),
@@ -1682,6 +1712,45 @@ impl ActiveThread {
             .into_any()
     }
 
+    fn handle_allow_tool(
+        &mut self,
+        tool_use_id: LanguageModelToolUseId,
+        _: &ClickEvent,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(PendingToolUseStatus::NeedsConfirmation(c)) = self
+            .thread
+            .read(cx)
+            .pending_tool(&tool_use_id)
+            .map(|tool_use| tool_use.status.clone())
+        {
+            self.thread.update(cx, |thread, cx| {
+                thread.run_tool(
+                    c.tool_use_id.clone(),
+                    c.ui_text.clone(),
+                    c.input.clone(),
+                    &c.messages,
+                    c.tool_type.clone(),
+                    cx,
+                );
+            });
+        }
+    }
+
+    fn handle_deny_tool(
+        &mut self,
+        tool_use_id: LanguageModelToolUseId,
+        tool_type: ToolType,
+        _: &ClickEvent,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.thread.update(cx, |thread, cx| {
+            thread.deny_tool_use(tool_use_id, tool_type, cx);
+        });
+    }
+
     fn handle_open_rules(&mut self, _: &ClickEvent, window: &mut Window, cx: &mut Context<Self>) {
         let Some(system_prompt_context) = self.thread.read(cx).system_prompt_context().as_ref()
         else {
@@ -1704,12 +1773,82 @@ impl ActiveThread {
             task.detach();
         }
     }
+
+    fn render_confirmations<'a>(
+        &'a mut self,
+        cx: &'a mut Context<Self>,
+    ) -> impl Iterator<Item = AnyElement> + 'a {
+        let thread = self.thread.read(cx);
+
+        thread
+            .tools_needing_confirmation()
+            .map(|(tool_type, tool)| {
+                div()
+                    .m_3()
+                    .p_2()
+                    .bg(cx.theme().colors().editor_background)
+                    .border_1()
+                    .border_color(cx.theme().colors().border)
+                    .rounded_lg()
+                    .child(
+                        v_flex()
+                            .gap_1()
+                            .child(
+                                v_flex()
+                                    .gap_0p5()
+                                    .child(
+                                        Label::new("The agent wants to run this action:")
+                                            .color(Color::Muted),
+                                    )
+                                    .child(div().p_3().child(Label::new(&tool.ui_text))),
+                            )
+                            .child(
+                                h_flex()
+                                    .gap_1()
+                                    .child({
+                                        let tool_id = tool.id.clone();
+                                        Button::new("allow-tool-action", "Allow").on_click(
+                                            cx.listener(move |this, event, window, cx| {
+                                                this.handle_allow_tool(
+                                                    tool_id.clone(),
+                                                    event,
+                                                    window,
+                                                    cx,
+                                                )
+                                            }),
+                                        )
+                                    })
+                                    .child({
+                                        let tool_id = tool.id.clone();
+                                        Button::new("deny-tool", "Deny").on_click(cx.listener(
+                                            move |this, event, window, cx| {
+                                                this.handle_deny_tool(
+                                                    tool_id.clone(),
+                                                    tool_type.clone(),
+                                                    event,
+                                                    window,
+                                                    cx,
+                                                )
+                                            },
+                                        ))
+                                    }),
+                            )
+                            .child(
+                                Label::new("Note: A future release will introduce a way to remember your answers to these. In the meantime, you can avoid these prompts by adding \"assistant\": { \"always_allow_tool_actions\": true } to your settings.json.")
+                                    .color(Color::Muted)
+                                    .size(LabelSize::Small),
+                            ),
+                    )
+                    .into_any()
+            })
+    }
 }
 
 impl Render for ActiveThread {
-    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         v_flex()
             .size_full()
             .child(list(self.list_state.clone()).flex_grow())
+            .children(self.render_confirmations(cx))
     }
 }
