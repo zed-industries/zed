@@ -5,13 +5,14 @@ use std::sync::Arc;
 use crate::ui::InstructionListItem;
 use anyhow::{anyhow, Context as _, Result};
 use aws_config::stalled_stream_protection::StalledStreamProtectionConfig;
-use aws_config::Region;
+use aws_config::{BehaviorVersion, Region};
 use aws_credential_types::Credentials;
 use aws_http_client::AwsHttpClient;
+use bedrock::bedrock_client::config::timeout::TimeoutConfig;
 use bedrock::bedrock_client::types::{
     ContentBlockDelta, ContentBlockStart, ContentBlockStartEvent, ConverseStreamOutput,
 };
-use bedrock::bedrock_client::{self, Config};
+use bedrock::bedrock_client::Client as BedrockClient;
 use bedrock::{
     value_to_aws_document, BedrockError, BedrockInnerContent, BedrockMessage, BedrockSpecificTool,
     BedrockStreamingResponse, BedrockTool, BedrockToolChoice, BedrockToolInputSchema, Model,
@@ -21,7 +22,8 @@ use credentials_provider::CredentialsProvider;
 use editor::{Editor, EditorElement, EditorStyle};
 use futures::{future::BoxFuture, stream::BoxStream, FutureExt, Stream, StreamExt};
 use gpui::{
-    AnyView, App, AsyncApp, Context, Entity, FontStyle, Subscription, Task, TextStyle, WhiteSpace,
+    AnyView, App, AsyncApp, Context, Entity, FontStyle, FontWeight, Subscription, Task, TextStyle,
+    WhiteSpace,
 };
 use gpui_tokio::Tokio;
 use http_client::HttpClient;
@@ -35,10 +37,11 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use settings::{Settings, SettingsStore};
-use strum::IntoEnumIterator;
+use smol::lock::OnceCell;
+use strum::{EnumIter, IntoEnumIterator, IntoStaticStr};
 use theme::ThemeSettings;
 use tokio::runtime::Handle;
-use ui::{prelude::*, Icon, IconName, List, Tooltip};
+use ui::{prelude::*, ContextMenu, DropdownMenu, Icon, IconName, List, Tooltip};
 use util::{maybe, ResultExt};
 
 use crate::AllLanguageModelSettings;
@@ -48,15 +51,31 @@ const PROVIDER_NAME: &str = "Amazon Bedrock";
 
 #[derive(Default, Clone, Deserialize, Serialize, PartialEq, Debug)]
 pub struct BedrockCredentials {
-    pub region: String,
     pub access_key_id: String,
     pub secret_access_key: String,
+    pub session_token: Option<String>,
 }
 
 #[derive(Default, Clone, Debug, PartialEq)]
 pub struct AmazonBedrockSettings {
-    pub session_token: Option<String>,
     pub available_models: Vec<AvailableModel>,
+    pub region: Option<String>,
+    pub endpoint: Option<String>,
+    pub profile_name: Option<String>,
+    pub role_arn: Option<String>,
+    pub authentication_method: Option<BedrockAuthMethod>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, EnumIter, IntoStaticStr, JsonSchema)]
+pub enum BedrockAuthMethod {
+    #[serde(rename = "named_profile")]
+    NamedProfile,
+    #[serde(rename = "static_credentials")]
+    StaticCredentials,
+    #[serde(rename = "sso")]
+    SingleSignOn,
+    #[serde(rename = "default")]
+    Automatic, // IMDSv2, PodIdentity, Env vars, etc.
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -78,11 +97,15 @@ const AMAZON_AWS_URL: &str = "https://amazonaws.com";
 // These environment variables all use a `ZED_` prefix because we don't want to overwrite the user's AWS credentials.
 const ZED_BEDROCK_ACCESS_KEY_ID_VAR: &str = "ZED_ACCESS_KEY_ID";
 const ZED_BEDROCK_SECRET_ACCESS_KEY_VAR: &str = "ZED_SECRET_ACCESS_KEY";
+const ZED_BEDROCK_SESSION_TOKEN_VAR: &str = "ZED_SESSION_TOKEN";
+const ZED_AWS_PROFILE_VAR: &str = "ZED_AWS_PROFILE";
 const ZED_BEDROCK_REGION_VAR: &str = "ZED_AWS_REGION";
 const ZED_AWS_CREDENTIALS_VAR: &str = "ZED_AWS_CREDENTIALS";
+const ZED_AWS_ENDPOINT_VAR: &str = "ZED_AWS_ENDPOINT";
 
 pub struct State {
     credentials: Option<BedrockCredentials>,
+    settings: Option<AmazonBedrockSettings>,
     credentials_from_env: bool,
     _subscription: Subscription,
 }
@@ -98,6 +121,7 @@ impl State {
             this.update(cx, |this, cx| {
                 this.credentials = None;
                 this.credentials_from_env = false;
+                this.settings = None;
                 cx.notify();
             })
         })
@@ -106,6 +130,7 @@ impl State {
     fn set_credentials(
         &mut self,
         credentials: BedrockCredentials,
+        settings: AmazonBedrockSettings,
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
         let credentials_provider = <dyn CredentialsProvider>::global(cx);
@@ -120,9 +145,29 @@ impl State {
                 .await?;
             this.update(cx, |this, cx| {
                 this.credentials = Some(credentials);
+                this.settings = Some(settings);
                 cx.notify();
             })
         })
+    }
+
+    fn set_authentication_method(
+        &mut self,
+        auth_method: BedrockAuthMethod,
+        cx: &mut Context<Self>,
+    ) {
+        match self.settings.as_mut() {
+            None => {
+                self.settings = Some(AmazonBedrockSettings {
+                    authentication_method: Some(auth_method),
+                    ..Default::default()
+                });
+            }
+            Some(auth) => {
+                auth.authentication_method = Some(auth_method);
+            }
+        }
+        cx.notify();
     }
 
     fn is_authenticated(&self) -> bool {
@@ -175,6 +220,7 @@ impl BedrockLanguageModelProvider {
     pub fn new(http_client: Arc<dyn HttpClient>, cx: &mut App) -> Self {
         let state = cx.new(|cx| State {
             credentials: None,
+            settings: Some(AllLanguageModelSettings::get_global(cx).bedrock.clone()),
             credentials_from_env: false,
             _subscription: cx.observe_global::<SettingsStore>(|_, cx| {
                 cx.notify();
@@ -214,6 +260,7 @@ impl LanguageModelProvider for BedrockLanguageModelProvider {
             http_client: self.http_client.clone(),
             handler: self.handler.clone(),
             state: self.state.clone(),
+            client: OnceCell::new(),
             request_limiter: RateLimiter::new(4),
         }))
     }
@@ -254,6 +301,7 @@ impl LanguageModelProvider for BedrockLanguageModelProvider {
                     http_client: self.http_client.clone(),
                     handler: self.handler.clone(),
                     state: self.state.clone(),
+                    client: OnceCell::new(),
                     request_limiter: RateLimiter::new(4),
                 }) as Arc<dyn LanguageModel>
             })
@@ -292,11 +340,100 @@ struct BedrockModel {
     model: Model,
     http_client: AwsHttpClient,
     handler: tokio::runtime::Handle,
+    client: OnceCell<BedrockClient>,
     state: gpui::Entity<State>,
     request_limiter: RateLimiter,
 }
 
 impl BedrockModel {
+    fn get_or_init_client(&self, cx: &AsyncApp) -> Result<&BedrockClient, anyhow::Error> {
+        self.client
+            .get_or_try_init_blocking(|| {
+                let Ok((auth_method, credentials, endpoint, region, settings)) =
+                    cx.read_entity(&self.state, |state, _cx| {
+                        // Get the authentication method and credentials
+                        let auth_method = state
+                            .settings
+                            .as_ref()
+                            .and_then(|s| s.authentication_method.clone())
+                            .unwrap_or(BedrockAuthMethod::Automatic);
+
+                        // Get endpoint if configured
+                        let endpoint = state.settings.as_ref().and_then(|s| s.endpoint.clone());
+
+                        // Get region - from credentials or directly from settings
+                        let region = state
+                            .settings
+                            .as_ref()
+                            .and_then(|s| s.region.clone())
+                            .unwrap_or(String::from("us-east-1"));
+
+                        (
+                            auth_method,
+                            state.credentials.clone(),
+                            endpoint,
+                            region,
+                            state.settings.clone(),
+                        )
+                    })
+                else {
+                    return Err(anyhow!("App state dropped"));
+                };
+
+                let mut config_builder = aws_config::defaults(BehaviorVersion::latest())
+                    .stalled_stream_protection(StalledStreamProtectionConfig::disabled())
+                    .http_client(self.http_client.clone())
+                    .region(Region::new(region))
+                    .timeout_config(TimeoutConfig::disabled());
+
+                // Apply endpoint configuration if specified
+                if let Some(endpoint_url) = endpoint {
+                    if !endpoint_url.is_empty() {
+                        config_builder = config_builder.endpoint_url(endpoint_url);
+                    }
+                }
+
+                // Configure authentication based on method
+                match auth_method {
+                    BedrockAuthMethod::StaticCredentials => {
+                        if let Some(creds) = credentials {
+                            let aws_creds = Credentials::new(
+                                creds.access_key_id,
+                                creds.secret_access_key,
+                                creds.session_token,
+                                None,
+                                "zed-bedrock-provider",
+                            );
+                            config_builder = config_builder.credentials_provider(aws_creds);
+                        }
+                    }
+                    BedrockAuthMethod::NamedProfile | BedrockAuthMethod::SingleSignOn => {
+                        // Currently NamedProfile and SSO behave the same way but only the instructions change
+                        // Until we support BearerAuth through SSO, this will not change.
+
+                        // Use profile from settings or environment
+                        let profile_name = settings
+                            .and_then(|s| s.profile_name)
+                            .unwrap_or_else(|| "default".to_string());
+
+                        if !profile_name.is_empty() {
+                            config_builder = config_builder.profile_name(profile_name);
+                        }
+                    }
+                    BedrockAuthMethod::Automatic => {
+                        // Use default credential provider chain
+                    }
+                }
+
+                let config = self.handler.block_on(config_builder.load());
+                Ok(BedrockClient::new(&config))
+            })
+            .map_err(|e| anyhow!("Failed to initialize Bedrock client: {}", e))?;
+
+        // safe unwrap since we know it was initialized
+        Ok(self.client.get().unwrap())
+    }
+
     fn stream_completion(
         &self,
         request: bedrock::Request,
@@ -304,40 +441,15 @@ impl BedrockModel {
     ) -> Result<
         BoxFuture<'static, BoxStream<'static, Result<BedrockStreamingResponse, BedrockError>>>,
     > {
-        let Ok(Ok((access_key_id, secret_access_key, region))) =
-            cx.read_entity(&self.state, |state, _cx| {
-                if let Some(credentials) = &state.credentials {
-                    Ok((
-                        credentials.access_key_id.clone(),
-                        credentials.secret_access_key.clone(),
-                        credentials.region.clone(),
-                    ))
-                } else {
-                    return Err(anyhow!("Failed to read credentials"));
-                }
-            })
-        else {
-            return Err(anyhow!("App state dropped"));
-        };
-
-        let runtime_client = bedrock_client::Client::from_conf(
-            Config::builder()
-                .stalled_stream_protection(StalledStreamProtectionConfig::disabled())
-                .credentials_provider(Credentials::new(
-                    access_key_id,
-                    secret_access_key,
-                    None,
-                    None,
-                    "Keychain",
-                ))
-                .region(Region::new(region))
-                .http_client(self.http_client.clone())
-                .build(),
-        );
-
+        let runtime_client = self
+            .get_or_init_client(cx)
+            .expect("Failed to initialize Bedrock Client")
+            .clone();
         let owned_handle = self.handler.clone();
 
+        // Configure AWS based on the authentication method
         Ok(async move {
+            // Stream completion with the configured client
             let request = bedrock::stream_completion(runtime_client, request, owned_handle);
             request.await.unwrap_or_else(|e| {
                 futures::stream::once(async move { Err(BedrockError::ClientError(e)) }).boxed()
@@ -389,9 +501,29 @@ impl LanguageModel for BedrockModel {
         request: LanguageModelRequest,
         cx: &AsyncApp,
     ) -> BoxFuture<'static, Result<BoxStream<'static, Result<LanguageModelCompletionEvent>>>> {
+        let Ok(region) = cx.read_entity(&self.state, |state, _cx| {
+            // Get region - from credentials or directly from settings
+            let region = state
+                .settings
+                .as_ref()
+                .and_then(|s| s.region.clone())
+                .unwrap_or(String::from("us-east-1"));
+
+            region
+        }) else {
+            return async move { Err(anyhow!("App State Droppped")) }.boxed();
+        };
+
+        let model_id = match self.model.cross_region_inference_id(&*region) {
+            Ok(s) => s,
+            Err(e) => {
+                return async move { Err(e) }.boxed();
+            }
+        };
+
         let request = into_bedrock(
             request,
-            self.model.id().into(),
+            model_id,
             self.model.default_temperature(),
             self.model.max_output_tokens(),
         );
@@ -770,7 +902,14 @@ pub fn map_to_language_model_completion_events(
 struct ConfigurationView {
     access_key_id_editor: Entity<Editor>,
     secret_access_key_editor: Entity<Editor>,
+    session_token_editor: Entity<Editor>,
     region_editor: Entity<Editor>,
+    endpoint_editor: Entity<Editor>,
+    profile_name_editor: Entity<Editor>,
+    #[allow(dead_code)]
+    start_url_editor: Entity<Editor>,
+    #[allow(dead_code)]
+    role_arn_editor: Entity<Editor>,
     state: gpui::Entity<State>,
     load_credentials_task: Option<Task<()>>,
 }
@@ -779,7 +918,11 @@ impl ConfigurationView {
     const PLACEHOLDER_ACCESS_KEY_ID_TEXT: &'static str = "XXXXXXXXXXXXXXXX";
     const PLACEHOLDER_SECRET_ACCESS_KEY_TEXT: &'static str =
         "XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX";
+    const PLACEHOLDER_SESSION_TOKEN_TEXT: &'static str = "XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX";
+    const PLACEHOLDER_PROFILE_NAME_TEXT: &'static str = "default";
     const PLACEHOLDER_REGION: &'static str = "us-east-1";
+    const PLACEHOLDER_START_URL: &'static str = "https://XXXXXXXXXXX.awsapps.com/start";
+    const PLACEHOLDER_ROLE_ARN: &'static str = "arn:aws:iam::XXXXXXXXXXX:role/MyRoleName";
 
     fn new(state: gpui::Entity<State>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         cx.observe(&state, |_, _, cx| {
@@ -816,9 +959,36 @@ impl ConfigurationView {
                 editor.set_placeholder_text(Self::PLACEHOLDER_SECRET_ACCESS_KEY_TEXT, cx);
                 editor
             }),
+            session_token_editor: cx.new(|cx| {
+                let mut editor = Editor::single_line(window, cx);
+                editor.set_placeholder_text(Self::PLACEHOLDER_SESSION_TOKEN_TEXT, cx);
+                editor
+            }),
             region_editor: cx.new(|cx| {
                 let mut editor = Editor::single_line(window, cx);
                 editor.set_placeholder_text(Self::PLACEHOLDER_REGION, cx);
+                editor
+            }),
+            endpoint_editor: cx.new(|cx| {
+                let mut editor = Editor::single_line(window, cx);
+                editor.set_placeholder_text("", cx);
+                editor
+            }),
+            profile_name_editor: cx.new(|cx| {
+                let mut editor = Editor::single_line(window, cx);
+                editor.set_placeholder_text(Self::PLACEHOLDER_PROFILE_NAME_TEXT, cx);
+                editor
+            }),
+            #[allow(dead_code)]
+            start_url_editor: cx.new(|cx| {
+                let mut editor = Editor::single_line(window, cx);
+                editor.set_placeholder_text(Self::PLACEHOLDER_START_URL, cx);
+                editor
+            }),
+            #[allow(dead_code)]
+            role_arn_editor: cx.new(|cx| {
+                let mut editor = Editor::single_line(window, cx);
+                editor.set_placeholder_text(Self::PLACEHOLDER_ROLE_ARN, cx);
                 editor
             }),
             state,
@@ -846,6 +1016,19 @@ impl ConfigurationView {
             .to_string()
             .trim()
             .to_string();
+        // Get session token if provided
+        let session_token = self
+            .session_token_editor
+            .read(cx)
+            .text(cx)
+            .to_string()
+            .trim()
+            .to_string();
+        let session_token = if session_token.is_empty() {
+            None
+        } else {
+            Some(session_token)
+        };
         let region = self
             .region_editor
             .read(cx)
@@ -853,6 +1036,42 @@ impl ConfigurationView {
             .to_string()
             .trim()
             .to_string();
+        let endpoint = self
+            .endpoint_editor
+            .read(cx)
+            .text(cx)
+            .to_string()
+            .trim()
+            .to_string();
+        let endpoint = if endpoint.is_empty() {
+            None
+        } else {
+            Some(endpoint)
+        };
+        let profile_name = self
+            .profile_name_editor
+            .read(cx)
+            .text(cx)
+            .to_string()
+            .trim()
+            .to_string();
+        let profile_name = if profile_name.is_empty() {
+            None
+        } else {
+            Some(profile_name)
+        };
+        let role_arn = self
+            .role_arn_editor
+            .read(cx)
+            .text(cx)
+            .to_string()
+            .trim()
+            .to_string();
+        let role_arn = if role_arn.is_empty() {
+            None
+        } else {
+            Some(role_arn)
+        };
 
         let state = self.state.clone();
         cx.spawn(async move |_, cx| {
@@ -861,10 +1080,22 @@ impl ConfigurationView {
                     let credentials: BedrockCredentials = BedrockCredentials {
                         access_key_id: access_key_id.clone(),
                         secret_access_key: secret_access_key.clone(),
-                        region: region.clone(),
+                        session_token: session_token.clone(),
                     };
 
-                    state.set_credentials(credentials, cx)
+                    let settings: AmazonBedrockSettings = AmazonBedrockSettings {
+                        available_models: vec![],
+                        region: Some(region),
+                        endpoint,
+                        profile_name,
+                        role_arn,
+                        authentication_method: state
+                            .settings
+                            .as_ref()
+                            .and_then(|s| s.authentication_method.clone()),
+                    };
+
+                    state.set_credentials(credentials, settings, cx)
                 })?
                 .await
         })
@@ -876,7 +1107,11 @@ impl ConfigurationView {
             .update(cx, |editor, cx| editor.set_text("", window, cx));
         self.secret_access_key_editor
             .update(cx, |editor, cx| editor.set_text("", window, cx));
+        self.session_token_editor
+            .update(cx, |editor, cx| editor.set_text("", window, cx));
         self.region_editor
+            .update(cx, |editor, cx| editor.set_text("", window, cx));
+        self.endpoint_editor
             .update(cx, |editor, cx| editor.set_text("", window, cx));
 
         let state = self.state.clone();
@@ -909,6 +1144,119 @@ impl ConfigurationView {
         }
     }
 
+    fn make_input_styles(&self, cx: &Context<Self>) -> Div {
+        let bg_color = cx.theme().colors().editor_background;
+        let border_color = cx.theme().colors().border_variant;
+
+        h_flex()
+            .w_full()
+            .px_2()
+            .py_1()
+            .bg(bg_color)
+            .border_1()
+            .border_color(border_color)
+            .rounded_sm()
+    }
+
+    fn should_render_editor(&self, cx: &mut Context<Self>) -> bool {
+        !self.state.read(cx).is_authenticated()
+    }
+}
+
+impl Render for ConfigurationView {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let env_var_set = self.state.read(cx).credentials_from_env;
+
+        // Handle loading state
+        if self.load_credentials_task.is_some() {
+            return div().child(Label::new("Loading credentials...")).into_any();
+        }
+
+        // Handle already authenticated state
+        if !self.should_render_editor(cx) {
+            return h_flex()
+                .size_full()
+                .justify_between()
+                .child(
+                    h_flex()
+                        .gap_1()
+                        .child(Icon::new(IconName::Check).color(Color::Success))
+                        .child(Label::new(if env_var_set {
+                            format!("Access Key ID is set in {ZED_BEDROCK_ACCESS_KEY_ID_VAR}, Secret Key is set in {ZED_BEDROCK_SECRET_ACCESS_KEY_VAR}, Region is set in {ZED_BEDROCK_REGION_VAR} environment variables.")
+                        } else {
+                            "Credentials configured.".to_string()
+                        })),
+                )
+                .child(
+                    Button::new("reset-key", "Reset key")
+                        .icon(Some(IconName::Trash))
+                        .icon_size(IconSize::Small)
+                        .icon_position(IconPosition::Start)
+                        .disabled(env_var_set)
+                        .when(env_var_set, |this| {
+                            this.tooltip(Tooltip::text(format!("To reset your credentials, unset the {ZED_BEDROCK_ACCESS_KEY_ID_VAR}, {ZED_BEDROCK_SECRET_ACCESS_KEY_VAR}, and {ZED_BEDROCK_REGION_VAR} environment variables.")))
+                        })
+                        .on_click(cx.listener(|this, _, window, cx| this.reset_credentials(window, cx))),
+                )
+                .into_any();
+        }
+
+        // Get the current authentication method
+        let authentication_method = match self.state.read(cx).settings {
+            Some(ref settings) => settings
+                .authentication_method
+                .clone()
+                .unwrap_or(BedrockAuthMethod::Automatic),
+            None => BedrockAuthMethod::StaticCredentials,
+        };
+
+        // Map of auth method render functions
+        let auth_method_ui = match authentication_method {
+            BedrockAuthMethod::NamedProfile => self.render_named_profile_ui(cx),
+            BedrockAuthMethod::StaticCredentials => self.render_static_credentials_ui(cx),
+            BedrockAuthMethod::SingleSignOn => self.render_sso_ui(cx),
+            BedrockAuthMethod::Automatic => self.render_automatic_ui(),
+        };
+
+        // Main configuration view
+        v_flex()
+            .size_full()
+            .on_action(cx.listener(ConfigurationView::save_credentials))
+            .child(Label::new("To use Zed's assistant with Bedrock, you need to select the method of authentication, then follow the instructions specific to strategy."))
+            .child(Label::new("Though to access models on AWS first, you will have to: "))
+            .child(
+                List::new()
+                    .child(
+                        InstructionListItem::new(
+                            "Grant permissions to the strategy you plan to use according to this documentation: ",
+                            Some("Prerequisites"),
+                            Some("https://docs.aws.amazon.com/bedrock/latest/userguide/inference-prereq.html"),
+                        )
+                    )
+                    .child(
+                        InstructionListItem::new(
+                            "Select the models you would like access to: ",
+                            Some("Bedrock Model Catalog"),
+                            Some("https://us-east-1.console.aws.amazon.com/bedrock/home?region=us-east-1#/modelaccess"),
+                        )
+                    )
+            )
+            .child(Label::new("Select an authentication provider:"))
+            .child(self.render_auth_method_selector(window, cx, authentication_method))
+            .child(auth_method_ui)
+            .child(self.render_common_fields(cx))
+            .child(
+                Label::new(
+                    format!("You can also assign the {ZED_BEDROCK_ACCESS_KEY_ID_VAR}, {ZED_BEDROCK_SECRET_ACCESS_KEY_VAR} AND {ZED_BEDROCK_REGION_VAR} environment variables and restart Zed.\n Optionally, if your environment uses AWS CLI profiles, you can set {ZED_AWS_PROFILE_VAR}; if it requires a custom endpoint, you can set {ZED_AWS_ENDPOINT_VAR}; and if it requires a Session Token, you can set {ZED_BEDROCK_SESSION_TOKEN_VAR}."),
+                )
+                    .size(LabelSize::Small)
+                    .color(Color::Muted),
+            )
+            .into_any()
+    }
+}
+
+impl ConfigurationView {
     fn render_aa_id_editor(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let text_style = self.make_text_style(cx);
 
@@ -937,6 +1285,20 @@ impl ConfigurationView {
         )
     }
 
+    fn render_session_token_editor(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let text_style = self.make_text_style(cx);
+
+        EditorElement::new(
+            &self.session_token_editor,
+            EditorStyle {
+                background: cx.theme().colors().editor_background,
+                local_player: cx.theme().players().local(),
+                text: text_style,
+                ..Default::default()
+            },
+        )
+    }
+
     fn render_region_editor(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let text_style = self.make_text_style(cx);
 
@@ -951,124 +1313,305 @@ impl ConfigurationView {
         )
     }
 
-    fn should_render_editor(&self, cx: &mut Context<Self>) -> bool {
-        !self.state.read(cx).is_authenticated()
+    fn render_profile_name_editor(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let text_style = self.make_text_style(cx);
+
+        EditorElement::new(
+            &self.profile_name_editor,
+            EditorStyle {
+                background: cx.theme().colors().editor_background,
+                local_player: cx.theme().players().local(),
+                text: text_style,
+                ..Default::default()
+            },
+        )
     }
-}
 
-impl Render for ConfigurationView {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let env_var_set = self.state.read(cx).credentials_from_env;
-        let bg_color = cx.theme().colors().editor_background;
-        let border_color = cx.theme().colors().border_variant;
-        let input_base_styles = || {
-            h_flex()
-                .w_full()
-                .px_2()
-                .py_1()
-                .bg(bg_color)
-                .border_1()
-                .border_color(border_color)
-                .rounded_sm()
-        };
+    fn render_endpoint_editor(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let text_style = self.make_text_style(cx);
 
-        if self.load_credentials_task.is_some() {
-            div().child(Label::new("Loading credentials...")).into_any()
-        } else if self.should_render_editor(cx) {
-            v_flex()
-                .size_full()
-                .on_action(cx.listener(ConfigurationView::save_credentials))
-                .child(Label::new("To use Zed's assistant with Bedrock, you need to add the Access Key ID, Secret Access Key and AWS Region. Follow these steps:"))
-                .child(
-                    List::new()
-                        .child(
-                            InstructionListItem::new(
-                                "Start by",
-                                Some("creating a user and security credentials"),
-                                Some("https://us-east-1.console.aws.amazon.com/iam/home")
-                            )
-                        )
-                        .child(
-                            InstructionListItem::new(
-                                "Grant that user permissions according to this documentation:",
-                                Some("Prerequisites"),
-                                Some("https://docs.aws.amazon.com/bedrock/latest/userguide/inference-prereq.html")
-                            )
-                        )
-                        .child(
-                            InstructionListItem::new(
-                                "Select the models you would like access to:",
-                                Some("Bedrock Model Catalog"),
-                                Some("https://us-east-1.console.aws.amazon.com/bedrock/home?region=us-east-1#/modelaccess")
-                            )
-                        )
-                        .child(
-                            InstructionListItem::text_only("Fill the fields below and hit enter to start using the assistant")
-                        )
-                )
-                .child(
-                    v_flex()
-                        .my_2()
-                        .gap_1p5()
-                        .child(
-                            v_flex()
-                                .gap_0p5()
-                                .child(Label::new("Access Key ID").size(LabelSize::Small))
-                                .child(
-                                    input_base_styles().child(self.render_aa_id_editor(cx))
-                                )
-                        )
-                        .child(
-                            v_flex()
-                                .gap_0p5()
-                                .child(Label::new("Secret Access Key").size(LabelSize::Small))
-                                .child(
-                                    input_base_styles().child(self.render_sk_editor(cx))
-                                )
-                        )
-                        .child(
-                            v_flex()
-                                .gap_0p5()
-                                .child(Label::new("Region").size(LabelSize::Small))
-                                .child(
-                                    input_base_styles().child(self.render_region_editor(cx))
-                                )
-                            )
-                )
-                .child(
-                    Label::new(
-                        format!("You can also assign the {ZED_BEDROCK_ACCESS_KEY_ID_VAR}, {ZED_BEDROCK_SECRET_ACCESS_KEY_VAR}, and {ZED_BEDROCK_REGION_VAR} environment variables and restart Zed."),
-                    )
-                        .size(LabelSize::Small)
-                        .color(Color::Muted),
-                )
-                .into_any()
-        } else {
-            h_flex()
-                .size_full()
-                .justify_between()
-                .child(
-                    h_flex()
-                        .gap_1()
-                        .child(Icon::new(IconName::Check).color(Color::Success))
-                        .child(Label::new(if env_var_set {
-                            format!("Access Key ID is set in {ZED_BEDROCK_ACCESS_KEY_ID_VAR}, Secret Key is set in {ZED_BEDROCK_SECRET_ACCESS_KEY_VAR}, Region is set in {ZED_BEDROCK_REGION_VAR} environment variables.")
-                        } else {
-                            "Credentials configured.".to_string()
-                        })),
-                )
-                .child(
-                    Button::new("reset-key", "Reset key")
-                        .icon(Some(IconName::Trash))
-                        .icon_size(IconSize::Small)
-                        .icon_position(IconPosition::Start)
-                        .disabled(env_var_set)
-                        .when(env_var_set, |this| {
-                            this.tooltip(Tooltip::text(format!("To reset your credentials, unset the {ZED_BEDROCK_ACCESS_KEY_ID_VAR}, {ZED_BEDROCK_SECRET_ACCESS_KEY_VAR}, and {ZED_BEDROCK_REGION_VAR} environment variables.")))
+        EditorElement::new(
+            &self.endpoint_editor,
+            EditorStyle {
+                background: cx.theme().colors().editor_background,
+                local_player: cx.theme().players().local(),
+                text: text_style,
+                ..Default::default()
+            },
+        )
+    }
+
+    #[allow(dead_code)]
+    fn render_start_url_editor(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let text_style = self.make_text_style(cx);
+
+        EditorElement::new(
+            &self.start_url_editor,
+            EditorStyle {
+                background: cx.theme().colors().editor_background,
+                local_player: cx.theme().players().local(),
+                text: text_style,
+                ..Default::default()
+            },
+        )
+    }
+
+    // Helper method to render the authentication method selector
+    fn render_auth_method_selector(
+        &self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+        current_method: BedrockAuthMethod,
+    ) -> impl IntoElement {
+        let context_menu = ContextMenu::build(window, cx, |mut menu, _, _| {
+            for method in BedrockAuthMethod::iter() {
+                let bedrock_string: &'static str = method.clone().into();
+                let state = self.state.clone();
+                menu = menu.custom_entry(
+                    move |_, _| Label::new(bedrock_string).into_any_element(),
+                    move |_, cx| {
+                        state.update(cx, |state, cx| {
+                            let owned_method = method.clone();
+                            state.set_authentication_method(owned_method, cx);
+                            cx.notify();
                         })
-                        .on_click(cx.listener(|this, _, window, cx| this.reset_credentials(window, cx))),
+                    },
+                );
+            }
+            menu
+        });
+
+        DropdownMenu::new(
+            "aws-auth-selector",
+            <BedrockAuthMethod as Into<&'static str>>::into(current_method),
+            context_menu,
+        )
+    }
+
+    // Render UI for Named Profile auth method
+    fn render_named_profile_ui(&self, cx: &mut Context<Self>) -> AnyElement {
+        v_flex()
+            .my_2()
+            .gap_1p5()
+            .child(
+                Label::new("Named Profile")
+                    .size(LabelSize::Large)
+                    .weight(FontWeight::BOLD)
+            )
+            .child(
+                Label::new("This method uses an AWS profile configured in your ~/.aws/credentials file. This is typically created by the AWS CLI.")
+                    .size(LabelSize::Small)
+            )
+            .child(
+                List::new()
+                    .child(InstructionListItem::text_only("Install the AWS CLI if you haven't already: https://aws.amazon.com/cli/"))
+                    .child(InstructionListItem::text_only("Run 'aws configure' to set up your credentials"))
+                    .child(InstructionListItem::text_only("To use a profile other than 'default', enter the profile name below"))
+            )
+            .child(
+                v_flex()
+                    .gap_0p5()
+                    .child(Label::new("Profile").size(LabelSize::Small))
+                    .child(
+                        self.make_input_styles(cx)
+                            .child(self.render_profile_name_editor(cx)),
+                    ),
+            )
+            .into_any_element()
+    }
+
+    // Render UI for Static Credentials auth method
+    fn render_static_credentials_ui(&self, cx: &mut Context<Self>) -> AnyElement {
+        v_flex()
+            .my_2()
+            .gap_1p5()
+            .child(
+                Label::new("Static Keys")
+                    .size(LabelSize::Default)
+                    .weight(FontWeight::BOLD),
+            )
+            .child(
+                Label::new(
+                    "This method uses your AWS access key ID and secret access key directly.",
                 )
-                .into_any()
-        }
+                    .size(LabelSize::Small),
+            )
+            .child(
+                List::new()
+                    .child(InstructionListItem::new(
+                        "Create an IAM user in the AWS console with programmatic access",
+                        Some("IAM Console"),
+                        Some("https://us-east-1.console.aws.amazon.com/iam/home?region=us-east-1#/users"),
+                    ))
+                    .child(InstructionListItem::new(
+                        "Attach the necessary Bedrock permissions to this ",
+                        Some("user"),
+                        Some("https://docs.aws.amazon.com/bedrock/latest/userguide/inference-prereq.html"),
+                    ))
+                    .child(InstructionListItem::text_only(
+                        "Copy the access key ID and secret access key when provided",
+                    ))
+                    .child(InstructionListItem::text_only(
+                        "Enter these credentials below",
+                    )),
+            )
+            .child(
+                v_flex()
+                    .gap_0p5()
+                    .child(Label::new("Access Key ID").size(LabelSize::Small))
+                    .child(
+                        self.make_input_styles(cx)
+                            .child(self.render_aa_id_editor(cx)),
+                    ),
+            )
+            .child(
+                v_flex()
+                    .gap_0p5()
+                    .child(Label::new("Secret Access Key").size(LabelSize::Small))
+                    .child(self.make_input_styles(cx).child(self.render_sk_editor(cx))),
+            )
+            .child(
+                v_flex()
+                    .gap_0p5()
+                    .child(Label::new("Session Token (Optional)").size(LabelSize::Small))
+                    .child(
+                        self.make_input_styles(cx)
+                            .child(self.render_session_token_editor(cx)),
+                    ),
+            )
+            .into_any_element()
+    }
+
+    // Render UI for SSO auth method
+    fn render_sso_ui(&self, cx: &mut Context<Self>) -> AnyElement {
+        v_flex()
+            .my_2()
+            .gap_1p5()
+            .child(
+                Label::new("AWS Single Sign-On (SSO) Authentication")
+                    .size(LabelSize::Default)
+                    .weight(FontWeight::BOLD),
+            )
+            .child(
+                Label::new(
+                    "This method uses AWS IAM Identity Center (formerly SSO) to authenticate.",
+                )
+                .size(LabelSize::Small),
+            )
+            .child(
+                List::new()
+                    .child(InstructionListItem::text_only(
+                        "Set up AWS SSO in your organization",
+                    ))
+                    .child(InstructionListItem::text_only(
+                        "Run 'aws configure sso' to configure your local environment",
+                    ))
+                    .child(InstructionListItem::text_only(
+                        "Then run 'aws sso login' to authenticate",
+                    ))
+                    .child(InstructionListItem::text_only(
+                        "Enter the named profile from the setup process here",
+                    )),
+            )
+            .child(
+                v_flex()
+                    .gap_0p5()
+                    .child(Label::new("SSO Profile").size(LabelSize::Small))
+                    .child(
+                        self.make_input_styles(cx)
+                            .child(self.render_profile_name_editor(cx)),
+                    ),
+            )
+            // .child(
+            //     v_flex()
+            //         .gap_0p5()
+            //         .child(Label::new("Start URL").size(LabelSize::Small))
+            //         .child(
+            //             self.make_input_styles(cx)
+            //                 .child(self.render_start_url_editor(cx)),
+            //         ),
+            // )
+            // .child(
+            //     v_flex()
+            //         .gap_0p5()
+            //         .child(Label::new("Role ARN").size(LabelSize::Small))
+            //         .child(
+            //             self.make_input_styles(cx)
+            //                 .child(self.render_role_arn_editor(cx)),
+            //         ),
+            // )
+            .into_any_element()
+    }
+
+    // Add a renderer for the role ARN editor
+    #[allow(dead_code)]
+    fn render_role_arn_editor(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let text_style = self.make_text_style(cx);
+
+        EditorElement::new(
+            &self.role_arn_editor,
+            EditorStyle {
+                background: cx.theme().colors().editor_background,
+                local_player: cx.theme().players().local(),
+                text: text_style,
+                ..Default::default()
+            },
+        )
+    }
+
+    // Render UI for Automatic auth method
+    fn render_automatic_ui(&self) -> AnyElement {
+        v_flex()
+            .my_2()
+            .gap_1p5()
+            .child(
+                Label::new("AWS Automatic Authentication")
+                    .size(LabelSize::Default)
+                    .weight(FontWeight::BOLD)
+            )
+            .child(
+                Label::new("This method automatically discovers AWS credentials using the default credential provider chain.")
+                    .size(LabelSize::Small)
+            )
+            .child(
+                List::new()
+                    .child(InstructionListItem::text_only("Credentials will be sourced in this order:"))
+                    .child(InstructionListItem::text_only("1. Environment variables (AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY)"))
+                    .child(InstructionListItem::text_only("2. Shared credentials file (~/.aws/credentials)"))
+                    .child(InstructionListItem::text_only("3. ECS container credentials"))
+                    .child(InstructionListItem::text_only("4. EC2 instance profile credentials"))
+            )
+            .into_any_element()
+    }
+
+    // Render common fields for all auth methods
+    fn render_common_fields(&self, cx: &mut Context<Self>) -> AnyElement {
+        v_flex()
+            .my_2()
+            .gap_1p5()
+            .child(
+                v_flex()
+                    .gap_0p5()
+                    .child(Label::new("Region").size(LabelSize::Small))
+                    .child(
+                        self.make_input_styles(cx)
+                            .child(self.render_region_editor(cx)),
+                    ),
+            )
+            .child(
+                v_flex()
+                    .gap_0p5()
+                    .child(Label::new("Endpoint (Optional)").size(LabelSize::Small))
+                    .child(
+                        Label::new("Only set this if you're using a non-standard AWS endpoint or a VPC endpoint")
+                            .size(LabelSize::Small)
+                            .color(Color::Muted)
+                    )
+                    .child(
+                        self.make_input_styles(cx)
+                            .child(self.render_endpoint_editor(cx)),
+                    ),
+            )
+            .into_any_element()
     }
 }
