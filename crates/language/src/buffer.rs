@@ -2164,6 +2164,11 @@ impl Buffer {
         for (range, new_text) in edits_iter {
             let mut range = range.start.to_offset(self)..range.end.to_offset(self);
 
+            #[cfg(debug_assertions)]
+            if let Some((last_range, _)) = edits.last() {
+                assert!(last_range.end <= range.start, "out of order or overlapping");
+            }
+
             if range.start > range.end {
                 mem::swap(&mut range.start, &mut range.end);
             }
