@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::cmp;
 use std::path::StripPrefixError;
 use std::sync::{Arc, OnceLock};
@@ -291,43 +292,38 @@ impl PathWithPosition {
     /// ```
     pub fn parse_str(s: &str) -> Self {
         let trimmed = s.trim();
-        let path = Path::new(trimmed);
-        let maybe_file_name_with_row_col = path.file_name().unwrap_or_default().to_string_lossy();
-        if maybe_file_name_with_row_col.is_empty() {
-            return Self {
-                path: Path::new(s).to_path_buf(),
-                row: None,
-                column: None,
-            };
+        let (suffix_start, row, column) = Self::parse_row_column(trimmed);
+        Self {
+            path: Path::new(&trimmed[..suffix_start]).to_path_buf(),
+            row,
+            column,
         }
+    }
+
+    /// Just parses, does not trim or allocate (except for invalid Unicode)
+    pub fn parse_row_column(s: &str) -> (usize, Option<u32>, Option<u32>) {
+        let Some(file_name) = Path::new(s).file_name() else {
+            return (s.len(), None, None);
+        };
+
+        let file_name: Cow<'_, _> = file_name
+            .to_str()
+            .map_or_else(|| file_name.to_string_lossy(), Into::into);
 
         // Let's avoid repeated init cost on this. It is subject to thread contention, but
         // so far this code isn't called from multiple hot paths. Getting contention here
         // in the future seems unlikely.
         static SUFFIX_RE: LazyLock<Regex> =
             LazyLock::new(|| Regex::new(ROW_COL_CAPTURE_REGEX).unwrap());
-        match SUFFIX_RE
-            .captures(&maybe_file_name_with_row_col)
-            .map(|caps| caps.extract())
-        {
-            Some((_, [file_name, maybe_row, maybe_column])) => {
+        match SUFFIX_RE.captures(&file_name).map(|caps| caps.extract()) {
+            Some((_, [file_name_parsed, maybe_row, maybe_column])) => {
                 let row = maybe_row.parse::<u32>().ok();
                 let column = maybe_column.parse::<u32>().ok();
 
-                let suffix_length = maybe_file_name_with_row_col.len() - file_name.len();
-                let path_without_suffix = &trimmed[..trimmed.len() - suffix_length];
-
-                Self {
-                    path: Path::new(path_without_suffix).to_path_buf(),
-                    row,
-                    column,
-                }
+                let suffix_length = file_name.len() - file_name_parsed.len();
+                (s.len() - suffix_length, row, column)
             }
-            None => Self {
-                path: Path::new(s).to_path_buf(),
-                row: None,
-                column: None,
-            },
+            None => (s.len(), None, None),
         }
     }
 
