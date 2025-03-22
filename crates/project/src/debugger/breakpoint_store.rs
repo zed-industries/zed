@@ -256,6 +256,21 @@ impl BreakpointStore {
                     breakpoint_set.breakpoints.push(breakpoint.clone());
                 }
             }
+            BreakpointEditAction::ToggleState => {
+                if let Some((_, bp)) = breakpoint_set
+                    .breakpoints
+                    .iter_mut()
+                    .find(|value| breakpoint == **value)
+                {
+                    if bp.is_enabled() {
+                        bp.state = BreakpointState::Disabled;
+                    } else {
+                        bp.state = BreakpointState::Enabled;
+                    }
+                } else {
+                    log::error!("Attempted to invert a breakpoint's state that doesn't exist ");
+                }
+            }
             BreakpointEditAction::EditLogMessage(log_message) => {
                 if !log_message.is_empty() {
                     breakpoint.1.kind = BreakpointKind::Log(log_message.clone());
@@ -487,9 +502,14 @@ impl BreakpointStore {
 
                     for bp in bps {
                         let position = snapshot.anchor_before(PointUtf16::new(bp.position, 0));
-                        breakpoints_for_file
-                            .breakpoints
-                            .push((position, Breakpoint { kind: bp.kind }))
+                        breakpoints_for_file.breakpoints.push((
+                            position,
+                            Breakpoint {
+                                kind: bp.kind,
+                                // todo(debugger): We should be deriving this from database
+                                state: BreakpointState::Enabled,
+                            },
+                        ))
                     }
                     new_breakpoints.insert(path, breakpoints_for_file);
                 }
@@ -530,11 +550,13 @@ type LogMessage = Arc<str>;
 #[derive(Clone, Debug)]
 pub enum BreakpointEditAction {
     Toggle,
+    ToggleState,
     EditLogMessage(LogMessage),
 }
 
-#[derive(Clone, Debug)]
+#[derive(Default, Clone, Debug)]
 pub enum BreakpointKind {
+    #[default]
     Standard,
     Log(LogMessage),
 }
@@ -569,16 +591,27 @@ impl Hash for BreakpointKind {
     }
 }
 
-#[derive(Clone, Debug, Hash, PartialEq, Eq)]
+#[derive(Default, Clone, Debug, Hash, PartialEq, Eq)]
+pub enum BreakpointState {
+    #[default]
+    Enabled,
+    Disabled,
+}
+
+#[derive(Clone, Default, Debug, Hash, PartialEq, Eq)]
 pub struct Breakpoint {
     pub kind: BreakpointKind,
+    pub state: BreakpointState,
 }
 
 impl Breakpoint {
     fn to_proto(&self, _path: &Path, position: &text::Anchor) -> Option<client::proto::Breakpoint> {
         Some(client::proto::Breakpoint {
             position: Some(serialize_text_anchor(position)),
-
+            state: match self.state {
+                BreakpointState::Enabled => proto::BreakpointState::Enabled.into(),
+                BreakpointState::Disabled => proto::BreakpointState::Disabled.into(),
+            },
             kind: match self.kind {
                 BreakpointKind::Standard => proto::BreakpointKind::Standard.into(),
                 BreakpointKind::Log(_) => proto::BreakpointKind::Log.into(),
@@ -599,7 +632,19 @@ impl Breakpoint {
                 }
                 None | Some(proto::BreakpointKind::Standard) => BreakpointKind::Standard,
             },
+            state: match proto::BreakpointState::from_i32(breakpoint.state) {
+                Some(proto::BreakpointState::Disabled) => BreakpointState::Disabled,
+                None | Some(proto::BreakpointState::Enabled) => BreakpointState::Enabled,
+            },
         })
+    }
+
+    pub fn is_enabled(&self) -> bool {
+        matches!(self.state, BreakpointState::Enabled)
+    }
+
+    pub fn is_disabled(&self) -> bool {
+        matches!(self.state, BreakpointState::Disabled)
     }
 }
 

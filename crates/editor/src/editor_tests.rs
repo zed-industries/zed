@@ -31,7 +31,7 @@ use multi_buffer::{IndentGuide, PathKey};
 use parking_lot::Mutex;
 use pretty_assertions::{assert_eq, assert_ne};
 use project::{
-    debugger::breakpoint_store::{BreakpointKind, SerializedBreakpoint},
+    debugger::breakpoint_store::{BreakpointKind, BreakpointState, SerializedBreakpoint},
     project_settings::{LspSettings, ProjectSettings},
     FakeFs,
 };
@@ -17397,12 +17397,18 @@ fn add_log_breakpoint_at_cursor(
 
             let kind = BreakpointKind::Log(Arc::from(log_message));
 
-            (breakpoint_position, Breakpoint { kind })
+            (
+                breakpoint_position,
+                Breakpoint {
+                    kind,
+                    state: BreakpointState::Enabled,
+                },
+            )
         });
 
     editor.edit_breakpoint_at_anchor(
         anchor,
-        bp.kind,
+        bp,
         BreakpointEditAction::EditLogMessage(log_message.into()),
         cx,
     );
