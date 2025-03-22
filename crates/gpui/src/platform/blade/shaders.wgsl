@@ -283,35 +283,35 @@ fn pick_corner_radius(center_to_point: vec2<f32>, radii: Corners) -> f32 {
     }
 }
 
-// Vector from the point to the center of the rounded corner's circle, after
-// mirroring this into the bottom right quadrant. This mirroring causes both
-// x and y to be positive when the nearest point on the border is part of a
-// rounded corner.
-fn corner_center_to_point(center_to_point: vec2<f32>, half_size: vec2<f32>, corner_radius: f32) -> vec2<f32> {
-    return abs(center_to_point) - half_size + corner_radius;
-
-}
-
 // Signed distance of the point to the quad's border - positive outside the
 // border, and negative inside.
+//
+// See comments on similar code `quad_sdf_impl` in `fs_quad` for explanation.
 fn quad_sdf(point: vec2<f32>, bounds: Bounds, corner_radii: Corners) -> f32 {
     let half_size = bounds.size / 2.0;
     let center = bounds.origin + half_size;
     let center_to_point = point - center;
     let corner_radius = pick_corner_radius(center_to_point, corner_radii);
-    return quad_sdf_impl(corner_center_to_point(center_to_point, half_size, corner_radius), corner_radius);
+    let corner_to_point = abs(center_to_point) - half_size;
+    let corner_center_to_point = corner_to_point + corner_radius;
+    return quad_sdf_impl(corner_center_to_point, corner_radius);
 }
 
 fn quad_sdf_impl(corner_center_to_point: vec2<f32>, corner_radius: f32) -> f32 {
-    // Signed distance of the point from a quad that is inset by corner_radius.
-    // It is negative inside this quad, and positive outside.
-    let signed_distance_to_radius_inset_quad =
-        // 0 inside the inset quad, and positive outside.
-        length(max(vec2<f32>(0.0), corner_center_to_point)) +
-        // 0 outside the inset quad, and negative inside.
-        min(0.0, max(corner_center_to_point.x, corner_center_to_point.y));
+    if (corner_radius == 0.0) {
+        // Fast path for unrounded corners.
+        return max(corner_center_to_point.x, corner_center_to_point.y);
+    } else {
+        // Signed distance of the point from a quad that is inset by corner_radius.
+        // It is negative inside this quad, and positive outside.
+        let signed_distance_to_inset_quad =
+            // 0 inside the inset quad, and positive outside.
+            length(max(vec2<f32>(0.0), corner_center_to_point)) +
+            // 0 outside the inset quad, and negative inside.
+            min(0.0, max(corner_center_to_point.x, corner_center_to_point.y));
 
-    return signed_distance_to_radius_inset_quad - corner_radius;
+        return signed_distance_to_inset_quad - corner_radius;
+    }
 }
 
 // Abstract away the final color transformation based on the
@@ -485,94 +485,145 @@ fn fs_quad(input: QuadVarying) -> @location(0) vec4<f32> {
     }
 
     let quad = b_quads[input.quad_id];
-    let half_size = quad.bounds.size / 2.0;
-    let center = quad.bounds.origin + half_size;
-    let center_to_point = input.position.xy - center;
 
     let background_color = gradient_color(quad.background, input.position.xy, quad.bounds,
         input.background_solid, input.background_color0, input.background_color1);
 
     // Fast path when the quad is not rounded and doesn't have any border.
-    if (quad.corner_radii.top_left == 0.0 && quad.corner_radii.bottom_left == 0.0 &&
-        quad.corner_radii.top_right == 0.0 &&
-        quad.corner_radii.bottom_right == 0.0 && quad.border_widths.top == 0.0 &&
-        quad.border_widths.left == 0.0 && quad.border_widths.right == 0.0 &&
-        quad.border_widths.bottom == 0.0) {
+    if (quad.corner_radii.top_left == 0.0 &&
+            quad.corner_radii.bottom_left == 0.0 &&
+            quad.corner_radii.top_right == 0.0 &&
+            quad.corner_radii.bottom_right == 0.0 &&
+            quad.border_widths.top == 0.0 &&
+            quad.border_widths.left == 0.0 &&
+            quad.border_widths.right == 0.0 &&
+            quad.border_widths.bottom == 0.0) {
         return blend_color(background_color, 1.0);
     }
+
+    let half_size = quad.bounds.size / 2.0;
+    let center = quad.bounds.origin + half_size;
+    let center_to_point = input.position.xy - center;
+
+    // Signed distance field threshold for inclusion of pixels. Use of 0.5
+    // instead of 1.0 causes the width of rounded borders to appear more
+    // consistent with straight borders.
+    let antialias_threshold = 0.5;
 
     // Radius of the nearest corner.
     let corner_radius = pick_corner_radius(center_to_point, quad.corner_radii);
 
     // Width of the nearest borders.
-    let vertical_border = select(quad.border_widths.left, quad.border_widths.right, center_to_point.x > 0.0);
-    let horizontal_border = select(quad.border_widths.top, quad.border_widths.bottom, center_to_point.y > 0.0);
+    let border = vec2<f32>(
+        select(
+            quad.border_widths.right,
+            quad.border_widths.left,
+            center_to_point.x < 0.0),
+        select(
+            quad.border_widths.bottom,
+            quad.border_widths.top,
+            center_to_point.y < 0.0));
 
-    // Note that these vectors are computed after mirroring the point into the bottom right quadrant.
-    let outer_corner_center_to_point = corner_center_to_point(
-        center_to_point,
-        half_size,
-        corner_radius);
-    let inner_corner_center_to_point = corner_center_to_point(
-        center_to_point,
-        half_size - vec2<f32>(vertical_border, horizontal_border),
-        corner_radius);
+    // Vector from the corner of the quad bounds to the point, after mirroring
+    // the point into the bottom right quadrant. Both components are <= 0.
+    let corner_to_point = abs(center_to_point) - half_size;
+
+    // Vector from the point to the center of the rounded corner's circle, also
+    // mirrored into bottom right quadrant.
+    let corner_center_to_point = corner_to_point + corner_radius;
+
+    // Whether the nearest point on the border is rounded.
+    let is_near_rounded_corner = corner_center_to_point.x >= 0 && corner_center_to_point.y >= 0;
+
+    // Vector from straight border inner corner to point.
+    let straight_border_inner_corner_to_point = corner_to_point + border;
+
+    // Whether the point is beyond the inner edge of the straight border.
+    let is_beyond_inner_straight_border =
+            straight_border_inner_corner_to_point.x > antialias_threshold ||
+            straight_border_inner_corner_to_point.y > antialias_threshold;
+
+    // Fast path for points that must be part of the background.
+    //
+    // This could be optimized further for large rounded corners by including
+    // points in an inscribed rectangle, or some other quick linear check.
+    // However, that might negatively impact performance in the case of
+    // reasonable rounding sizes.
+    if (!is_beyond_inner_straight_border && !is_near_rounded_corner) {
+        return blend_color(background_color, 1.0);
+    }
 
     // Signed distance of the point to the outside of the quad's border. It is
     // positive outside this edge, and negative inside.
-    let outer_sdf = quad_sdf_impl(outer_corner_center_to_point, corner_radius);
+    let outer_sdf = quad_sdf_impl(corner_center_to_point, corner_radius);
 
-    // Signed distance of the point to the inside of the quad's border. It is
-    // negative outside this edge, and positive inside.
-    let inner_sdf = -quad_sdf_impl(inner_corner_center_to_point, corner_radius);
+    // Ellipse for the inner edge of the rounded border.
+    let ellipse_radii = max(vec2<f32>(0.0), corner_radius - border);
 
-    // Negative when inside the border
+    // Approximate signed distance of the point to the inside of the quad's
+    // border. It is negative outside this edge, and positive inside.
+    //
+    // This is not always an accurate signed distance:
+    //
+    // * The rounded portions use an approximation of nearest-point-on-ellipse.
+    //
+    // * When it is quickly known to be outside the edge, -1.0 is sometimes used.
+    var inner_sdf = 0.0;
+    if (ellipse_radii.x == 0.0 || ellipse_radii.y == 0.0) {
+        // Fast path for unrounded inner corners.
+        inner_sdf = -max(straight_border_inner_corner_to_point.x, straight_border_inner_corner_to_point.y);
+    } else {
+        if (corner_center_to_point.y <= 0) {
+            // Fast paths for straight horizontal borders.
+            inner_sdf = -straight_border_inner_corner_to_point.x;
+        } else if (corner_center_to_point.x <= 0) {
+            // Fast paths for straight vertical borders.
+            inner_sdf = -straight_border_inner_corner_to_point.y;
+        } else if (is_beyond_inner_straight_border) {
+            // Fast path for points that must be outside the inner edge.
+            inner_sdf = -1.0;
+        } else {
+            // Instead of doing a tricky nearest-point calculation, scale the
+            // space to treat the ellipse like a unit circle.
+            //
+            // todo! Update this to handle eccentric ellipses better.
+            let unit_circle_sdf = length(corner_center_to_point / ellipse_radii) - 1;
+            // Approximate upscaling - the boundary will be correct and the
+            // values near the boundary are good enough for anti-aliasing.
+            inner_sdf = unit_circle_sdf * length(ellipse_radii) * (-1.0 / sqrt(2.0));
+        }
+    }
+
+    // Negative when inside the border.
     let sdf = max(inner_sdf, outer_sdf);
 
     var color = background_color;
-    if (sdf < 0.5) {
+    if (sdf < antialias_threshold) {
         var border_color = input.border_color;
 
         // Dashed border logic when border_style == 1
         if (quad.border_style == 1) {
             var perimeter = 0.0;
             var t = 0.0;
-            var border_width = 0.0;
-            if inner_corner_center_to_point.x >= 0.0 && inner_corner_center_to_point.y >= 0.0 {
+            var border_width_for_dash_size = 0.0;
+            if (is_near_rounded_corner) {
                 perimeter = (M_PI_F / 2.0) * corner_radius;
-                let angle = atan2(inner_corner_center_to_point.y, inner_corner_center_to_point.x);
+                let angle = atan2(corner_center_to_point.y, corner_center_to_point.x);
                 t = angle * corner_radius;
-
-                let start_width =
-                    select(
-                        quad.border_widths.right,
-                        quad.border_widths.left,
-                        center_to_point.x < 0.0,
-                    );
-                let end_width =
-                    select(
-                        quad.border_widths.top,
-                        quad.border_widths.bottom,
-                        center_to_point.y < 0.0,
-                    );
 
                 // An alternative to this might be to interpolate the width
                 // around the arc, but that seems overcomplicated.
-                border_width = max(start_width, end_width);
+                border_width_for_dash_size = max(border.x, border.y);
             } else {
-                let is_horizontal = inner_corner_center_to_point.x < 0.0;
+                let is_horizontal = corner_center_to_point.x < corner_center_to_point.y;
 
-                let y_borders = quad.border_widths.top + quad.border_widths.bottom;
-                let x_borders = quad.border_widths.left + quad.border_widths.right;
                 perimeter = max(0.0, select(
-                    quad.bounds.size.y - y_borders -
-                    select(
-                        quad.corner_radii.top_right + quad.corner_radii.bottom_left,
+                    quad.bounds.size.y - select(
+                        quad.corner_radii.top_right + quad.corner_radii.bottom_right,
                         quad.corner_radii.top_left + quad.corner_radii.bottom_left,
                         center_to_point.x < 0.0,
                     ),
-                    quad.bounds.size.x - x_borders -
-                    select(
+                    quad.bounds.size.x - select(
                         quad.corner_radii.bottom_left + quad.corner_radii.bottom_right,
                         quad.corner_radii.top_left + quad.corner_radii.top_right,
                         center_to_point.y < 0.0,
@@ -581,50 +632,61 @@ fn fs_quad(input: QuadVarying) -> @location(0) vec4<f32> {
 
                 let point = input.position.xy - quad.bounds.origin;
                 t = select(
-                    point.y - quad.border_widths.top -
-                    select(
+                    point.y - select(
                         quad.corner_radii.top_right,
                         quad.corner_radii.top_left,
                         center_to_point.x < 0.0,
                     ),
-                    point.x - quad.border_widths.left -
-                    select(
+                    point.x - select(
                         quad.corner_radii.bottom_left,
                         quad.corner_radii.top_left,
                         center_to_point.y < 0.0,
                     ),
                     is_horizontal);
 
-                border_width = select(vertical_border, horizontal_border, is_horizontal);
+                border_width_for_dash_size = select(border.x, border.y, is_horizontal);
             }
 
-            // Dash pattern: (2 * border_width) dash, (1 * border_width) pixels gap
-            let dash_length = 2 * border_width;
-            let desired_dash_gap = border_width;
+            // Dash pattern: (2 * width) dash, (1 * width) gap
+            let dash_length = 2 * border_width_for_dash_size;
+            let desired_dash_gap = border_width_for_dash_size;
             let desired_dash_period = dash_length + desired_dash_gap;
 
-            // Adjust dash gap to evenly divide this portion of the perimeter.
-            let dash_count = floor(perimeter / desired_dash_period);
-            let dash_period = perimeter / dash_count;
+            // Straight borders should start and end with a dash, and rounded
+            // borders should start and end with a gap. The perimeter is reduced
+            // to cause this.
+            let reduced_perimeter = perimeter - select(dash_length, desired_dash_gap, is_near_rounded_corner);
+            if (reduced_perimeter >= desired_dash_period) {
+                // Adjust dash gap to evenly divide this portion of the perimeter.
+                let dash_count = floor(reduced_perimeter / desired_dash_period);
+                let dash_period = reduced_perimeter / dash_count;
 
-            // Offset such that the dashes make nice corners when the corners
-            // aren't rounded - half a dash on each side of the corner.
-            t += dash_period + dash_length / 2;
+                // This offset causes there to be a gap at the start and end of
+                // the rounded borders.
+                if (is_near_rounded_corner) {
+                    let dash_gap = dash_period - dash_length;
+                    // todo! why does 1.5 work well?
+                    t += dash_gap * 1.5;
+                }
 
-            let dash_alpha = step(fmod(t, dash_period), dash_length);
-            border_color.a *= dash_alpha;
+                let dash_alpha = step(fmod(t, dash_period), dash_length);
+                border_color.a *= dash_alpha;
+            } else if (is_near_rounded_corner) {
+                // No dash on rounded corners that don't have space for it.
+                border_color.a = 0.0;
+            }
+            // todo! single centered dash on straight portion that doesn't have space?
         }
 
         // Blend the border on top of the background and then linearly interpolate
         // between the two as we slide inside the background.
         let blended_border = over(background_color, border_color);
         color = mix(background_color, blended_border,
-                    saturate(0.5 - inner_sdf));
+                    saturate(antialias_threshold - inner_sdf));
     }
 
-    return blend_color(color, saturate(0.5 - outer_sdf));
+    return blend_color(color, saturate(antialias_threshold - outer_sdf));
 }
-
 
 // Modulus that has the same sign as `a`.
 fn fmod(a: f32, b: f32) -> f32 {
