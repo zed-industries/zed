@@ -1038,7 +1038,7 @@ type SelectSyntaxNodeHistoryState = (
 #[derive(Default)]
 struct SelectSyntaxNodeHistory {
     stack: Vec<SelectSyntaxNodeHistoryState>,
-    // disable tepmorarily to allow changing selections without losing the stack
+    // disable temporarily to allow changing selections without losing the stack
     pub disable_clearing: bool,
 }
 
