@@ -84,7 +84,7 @@ impl SystemSpecs {
             memory,
             architecture,
             commit_sha,
-            gpu_specs: None,
+            gpu_specs: try_determine_available_gpus(),
         }
     }
 }
@@ -121,5 +121,31 @@ impl Display for SystemSpecs {
         .join("\n");
 
         write!(f, "{system_specs}")
+    }
+}
+
+fn try_determine_available_gpus() -> Option<String> {
+    #[cfg(target_os = "linux")]
+    {
+        return std::process::Command::new("vulkaninfo")
+            .args(&["--summary"])
+            .output()
+            .ok()
+            .map(|output| {
+                [
+                    "<details><summary>`vulkaninfo --summary` output</summary>",
+                    "",
+                    "```",
+                    String::from_utf8_lossy(&output.stdout).as_ref(),
+                    "```",
+                    "</details>",
+                ]
+                .join("\n")
+            })
+            .or(Some("Failed to run `vulkaninfo --summary`".to_string()));
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        return None;
     }
 }
