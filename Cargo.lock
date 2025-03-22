@@ -472,6 +472,7 @@ dependencies = [
  "heed",
  "html_to_markdown",
  "http_client",
+ "indexmap",
  "indoc",
  "itertools 0.14.0",
  "language",
@@ -495,6 +496,7 @@ dependencies = [
  "serde",
  "serde_json",
  "settings",
+ "smallvec",
  "smol",
  "streaming_diff",
  "telemetry",
@@ -607,11 +609,11 @@ version = "0.1.0"
 dependencies = [
  "anthropic",
  "anyhow",
- "collections",
  "deepseek",
  "feature_flags",
  "fs",
  "gpui",
+ "indexmap",
  "language_model",
  "lmstudio",
  "log",
@@ -5593,6 +5595,7 @@ dependencies = [
  "sum_tree",
  "tempfile",
  "text",
+ "thiserror 2.0.12",
  "time",
  "unindent",
  "url",
@@ -10601,6 +10604,7 @@ dependencies = [
  "util",
  "which 6.0.3",
  "worktree",
+ "zlog",
 ]
 
 [[package]]
@@ -17462,6 +17466,7 @@ dependencies = [
  "workspace",
  "zed_actions",
  "zeta",
+ "zlog_settings",
 ]
 
 [[package]]
@@ -17767,6 +17772,25 @@ dependencies = [
  "sha1",
  "time",
  "zstd",
+]
+
+[[package]]
+name = "zlog"
+version = "0.1.0"
+dependencies = [
+ "log",
+]
+
+[[package]]
+name = "zlog_settings"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "gpui",
+ "schemars",
+ "serde",
+ "settings",
+ "zlog",
 ]
 
 [[package]]

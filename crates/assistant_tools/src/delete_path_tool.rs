@@ -30,6 +30,10 @@ impl Tool for DeletePathTool {
         "delete-path".into()
     }
 
+    fn needs_confirmation(&self) -> bool {
+        true
+    }
+
     fn description(&self) -> String {
         include_str!("./delete_path_tool/description.md").into()
     }

@@ -614,6 +614,37 @@
       "provider": "zed.dev",
       // The model to use.
       "model": "claude-3-5-sonnet-latest"
+    },
+    "profiles": {
+      "read-only": {
+        "name": "Read-only",
+        "tools": {
+          "diagnostics": true,
+          "fetch": true,
+          "list-directory": true,
+          "now": true,
+          "path-search": true,
+          "read-file": true,
+          "regex-search": true,
+          "thinking": true
+        }
+      },
+      "code-writer": {
+        "name": "Code Writer",
+        "tools": {
+          "bash": true,
+          "delete-path": true,
+          "diagnostics": true,
+          "edit-files": true,
+          "fetch": true,
+          "list-directory": true,
+          "now": true,
+          "path-search": true,
+          "read-file": true,
+          "regex-search": true,
+          "thinking": true
+        }
+      }
     }
   },
   // The settings for slash commands.
@@ -1228,7 +1259,7 @@
       "format_on_save": "off",
       "use_on_type_format": false,
       "allow_rewrap": "anywhere",
-      "soft_wrap": "bounded",
+      "soft_wrap": "editor_width",
       "prettier": {
         "allowed": true
       }
