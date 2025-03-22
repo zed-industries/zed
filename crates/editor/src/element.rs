@@ -6809,10 +6809,9 @@ impl Element for EditorElement {
                     let content_origin =
                         text_hitbox.origin + point(gutter_dimensions.margin, Pixels::ZERO);
 
-                    let scrollbar_bounds =
-                        Bounds::from_corners(content_origin, bounds.bottom_right());
+                    let editor_text_bounds = text_hitbox.bounds;
 
-                    let height_in_lines = scrollbar_bounds.size.height / line_height;
+                    let height_in_lines = editor_text_bounds.size.height / line_height;
 
                     // NOTE: The max row number in the current file, minus one
                     let max_row = snapshot.max_point().row().as_f32();
@@ -7143,7 +7142,7 @@ impl Element for EditorElement {
                     .width;
 
                     let scrollbar_range_data = ScrollbarRangeData::new(
-                        scrollbar_bounds,
+                        editor_text_bounds,
                         letter_size,
                         &snapshot,
                         longest_line_width,
@@ -7217,7 +7216,7 @@ impl Element for EditorElement {
                         MultiBufferRow(end_anchor.to_point(&snapshot.buffer_snapshot).row);
 
                     let scroll_max = point(
-                        ((scroll_width - scrollbar_bounds.size.width) / em_width).max(0.0),
+                        ((scroll_width - editor_text_bounds.size.width) / em_width).max(0.0),
                         max_row.as_f32(),
                     );
 
@@ -7349,7 +7348,7 @@ impl Element for EditorElement {
                     );
 
                     let scroll_max = point(
-                        ((scroll_width - scrollbar_bounds.size.width) / em_width).max(0.0),
+                        ((scroll_width - editor_text_bounds.size.width) / em_width).max(0.0),
                         max_scroll_top,
                     );
 
