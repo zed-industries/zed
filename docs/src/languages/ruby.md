@@ -269,7 +269,7 @@ end
 
 To run tests in your Ruby project, you can set up custom tasks in your local `.zed/tasks.json` configuration file. These tasks can be defined to work with different test frameworks like Minitest, RSpec, quickdraw, and tldr. Below are some examples of how to set up these tasks to run your tests from within your editor.
 
-### Minitest
+### Minitest with Rails
 
 ```json
 [
@@ -281,6 +281,8 @@ To run tests in your Ruby project, you can set up custom tasks in your local `.z
   }
 ]
 ```
+
+Note: Plain minitest does not support running tests by line number.
 
 ### RSpec
 
