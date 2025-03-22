@@ -1103,6 +1103,219 @@ async fn test_keyboard_navigation(executor: BackgroundExecutor, cx: &mut TestApp
             });
     });
 
+    // select scope 2 backwards
+    cx.dispatch_action(SelectPrevious);
+    cx.run_until_parked();
+    running_state.update(cx, |debug_panel_item, cx| {
+        debug_panel_item
+            .variable_list()
+            .update(cx, |variable_list, _| {
+                variable_list.assert_visual_entries(vec!["> Scope 1", "> Scope 2 <=== selected"]);
+            });
+    });
+
+    // select scope 1 backwards
+    cx.dispatch_action(SelectNext);
+    cx.run_until_parked();
+    running_state.update(cx, |debug_panel_item, cx| {
+        debug_panel_item
+            .variable_list()
+            .update(cx, |variable_list, _| {
+                variable_list.assert_visual_entries(vec!["> Scope 1 <=== selected", "> Scope 2"]);
+            });
+    });
+
+    // test stepping through nested with ExpandSelectedEntry/CollapseSelectedEntry actions
+
+    cx.dispatch_action(ExpandSelectedEntry);
+    cx.run_until_parked();
+    running_state.update(cx, |debug_panel_item, cx| {
+        debug_panel_item
+            .variable_list()
+            .update(cx, |variable_list, _| {
+                variable_list.assert_visual_entries(vec![
+                    "v Scope 1 <=== selected",
+                    "    > variable1",
+                    "    > variable2",
+                    "> Scope 2",
+                ]);
+            });
+    });
+
+    cx.dispatch_action(ExpandSelectedEntry);
+    cx.run_until_parked();
+    running_state.update(cx, |debug_panel_item, cx| {
+        debug_panel_item
+            .variable_list()
+            .update(cx, |variable_list, _| {
+                variable_list.assert_visual_entries(vec![
+                    "v Scope 1",
+                    "    > variable1 <=== selected",
+                    "    > variable2",
+                    "> Scope 2",
+                ]);
+            });
+    });
+
+    cx.dispatch_action(ExpandSelectedEntry);
+    cx.run_until_parked();
+    running_state.update(cx, |debug_panel_item, cx| {
+        debug_panel_item
+            .variable_list()
+            .update(cx, |variable_list, _| {
+                variable_list.assert_visual_entries(vec![
+                    "v Scope 1",
+                    "    v variable1 <=== selected",
+                    "        > nested1",
+                    "        > nested2",
+                    "    > variable2",
+                    "> Scope 2",
+                ]);
+            });
+    });
+
+    cx.dispatch_action(ExpandSelectedEntry);
+    cx.run_until_parked();
+    running_state.update(cx, |debug_panel_item, cx| {
+        debug_panel_item
+            .variable_list()
+            .update(cx, |variable_list, _| {
+                variable_list.assert_visual_entries(vec![
+                    "v Scope 1",
+                    "    v variable1",
+                    "        > nested1 <=== selected",
+                    "        > nested2",
+                    "    > variable2",
+                    "> Scope 2",
+                ]);
+            });
+    });
+
+    cx.dispatch_action(ExpandSelectedEntry);
+    cx.run_until_parked();
+    running_state.update(cx, |debug_panel_item, cx| {
+        debug_panel_item
+            .variable_list()
+            .update(cx, |variable_list, _| {
+                variable_list.assert_visual_entries(vec![
+                    "v Scope 1",
+                    "    v variable1",
+                    "        > nested1",
+                    "        > nested2 <=== selected",
+                    "    > variable2",
+                    "> Scope 2",
+                ]);
+            });
+    });
+
+    cx.dispatch_action(ExpandSelectedEntry);
+    cx.run_until_parked();
+    running_state.update(cx, |debug_panel_item, cx| {
+        debug_panel_item
+            .variable_list()
+            .update(cx, |variable_list, _| {
+                variable_list.assert_visual_entries(vec![
+                    "v Scope 1",
+                    "    v variable1",
+                    "        > nested1",
+                    "        > nested2",
+                    "    > variable2 <=== selected",
+                    "> Scope 2",
+                ]);
+            });
+    });
+
+    cx.dispatch_action(CollapseSelectedEntry);
+    cx.run_until_parked();
+    running_state.update(cx, |debug_panel_item, cx| {
+        debug_panel_item
+            .variable_list()
+            .update(cx, |variable_list, _| {
+                variable_list.assert_visual_entries(vec![
+                    "v Scope 1",
+                    "    v variable1",
+                    "        > nested1",
+                    "        > nested2 <=== selected",
+                    "    > variable2",
+                    "> Scope 2",
+                ]);
+            });
+    });
+
+    cx.dispatch_action(CollapseSelectedEntry);
+    cx.run_until_parked();
+    running_state.update(cx, |debug_panel_item, cx| {
+        debug_panel_item
+            .variable_list()
+            .update(cx, |variable_list, _| {
+                variable_list.assert_visual_entries(vec![
+                    "v Scope 1",
+                    "    v variable1",
+                    "        > nested1 <=== selected",
+                    "        > nested2",
+                    "    > variable2",
+                    "> Scope 2",
+                ]);
+            });
+    });
+
+    cx.dispatch_action(CollapseSelectedEntry);
+    cx.run_until_parked();
+    running_state.update(cx, |debug_panel_item, cx| {
+        debug_panel_item
+            .variable_list()
+            .update(cx, |variable_list, _| {
+                variable_list.assert_visual_entries(vec![
+                    "v Scope 1",
+                    "    v variable1 <=== selected",
+                    "        > nested1",
+                    "        > nested2",
+                    "    > variable2",
+                    "> Scope 2",
+                ]);
+            });
+    });
+
+    cx.dispatch_action(CollapseSelectedEntry);
+    cx.run_until_parked();
+    running_state.update(cx, |debug_panel_item, cx| {
+        debug_panel_item
+            .variable_list()
+            .update(cx, |variable_list, _| {
+                variable_list.assert_visual_entries(vec![
+                    "v Scope 1",
+                    "    > variable1 <=== selected",
+                    "    > variable2",
+                    "> Scope 2",
+                ]);
+            });
+    });
+
+    cx.dispatch_action(CollapseSelectedEntry);
+    cx.run_until_parked();
+    running_state.update(cx, |debug_panel_item, cx| {
+        debug_panel_item
+            .variable_list()
+            .update(cx, |variable_list, _| {
+                variable_list.assert_visual_entries(vec![
+                    "v Scope 1 <=== selected",
+                    "    > variable1",
+                    "    > variable2",
+                    "> Scope 2",
+                ]);
+            });
+    });
+
+    cx.dispatch_action(CollapseSelectedEntry);
+    cx.run_until_parked();
+    running_state.update(cx, |debug_panel_item, cx| {
+        debug_panel_item
+            .variable_list()
+            .update(cx, |variable_list, _| {
+                variable_list.assert_visual_entries(vec!["> Scope 1 <=== selected", "> Scope 2"]);
+            });
+    });
+
     let shutdown_session = project.update(cx, |project, cx| {
         project.dap_store().update(cx, |dap_store, cx| {
             dap_store.shutdown_session(session.read(cx).session_id(), cx)
