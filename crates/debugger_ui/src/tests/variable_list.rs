@@ -1103,6 +1103,28 @@ async fn test_keyboard_navigation(executor: BackgroundExecutor, cx: &mut TestApp
             });
     });
 
+    // select scope 2
+    cx.dispatch_action(SelectPrevious);
+    cx.run_until_parked();
+    running_state.update(cx, |debug_panel_item, cx| {
+        debug_panel_item
+            .variable_list()
+            .update(cx, |variable_list, _| {
+                variable_list.assert_visual_entries(vec!["> Scope 1", "> Scope 2 <=== selected"]);
+            });
+    });
+
+    // select scope 1
+    cx.dispatch_action(SelectNext);
+    cx.run_until_parked();
+    running_state.update(cx, |debug_panel_item, cx| {
+        debug_panel_item
+            .variable_list()
+            .update(cx, |variable_list, _| {
+                variable_list.assert_visual_entries(vec!["> Scope 1 <=== selected", "> Scope 2"]);
+            });
+    });
+
     let shutdown_session = project.update(cx, |project, cx| {
         project.dap_store().update(cx, |dap_store, cx| {
             dap_store.shutdown_session(session.read(cx).session_id(), cx)
