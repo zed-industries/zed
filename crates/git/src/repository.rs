@@ -476,11 +476,13 @@ impl GitRepository for RealGitRepository {
         let repo = self.repository.clone();
         cx.background_spawn(async move {
             fn logic(repo: &git2::Repository, path: &RepoPath) -> Result<Option<String>> {
-                const STAGE_NORMAL: i32 = 0;
-                let index = repo.index()?;
-
                 // This check is required because index.get_path() unwraps internally :(
                 check_path_to_repo_path_errors(path)?;
+
+                const STAGE_NORMAL: i32 = 0;
+                let mut index = repo.index()?;
+
+                index.read(false)?;
 
                 let oid = match index.get_path(path, STAGE_NORMAL) {
                     Some(entry) if entry.mode != GIT_MODE_SYMLINK => entry.id,
