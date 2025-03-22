@@ -31,7 +31,19 @@ Extensions that provide language servers may also provide default settings for t
 
 ## Active Pane Modifiers
 
-Styling settings applied to the active pane.
+- Description: Styling settings applied to the active pane.
+- Setting: `active_pane_modifiers`
+- Default:
+
+```json
+{
+  "active_pane_modifiers": {
+    "magnification": 1.0,
+    "border_size": 0.0,
+    "inactive_opacity": 1.0
+  }
+}
+```
 
 ### Magnification
 
@@ -39,11 +51,19 @@ Styling settings applied to the active pane.
 - Setting: `magnification`
 - Default: `1.0`
 
+**Options**
+
+`float` values
+
 ### Border size
 
 - Description: Size of the border surrounding the active pane. When set to 0, the active pane doesn't have any border. The border is drawn inset.
 - Setting: `border_size`
 - Default: `0.0`
+
+**Options**
+
+`float` values
 
 ### Inactive Opacity
 
