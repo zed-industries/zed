@@ -827,7 +827,7 @@ impl Vim {
                 self.update_editor(window, cx, |vim, editor, window, cx| {
                     vim.set_mark(
                         "'".to_string(),
-                        vec![cursor_anchor.clone()],
+                        vec![*cursor_anchor],
                         editor.buffer(),
                         window,
                         cx,
