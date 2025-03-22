@@ -1,4 +1,4 @@
-use crate::track::RemoteVideoTrack;
+use super::RemoteVideoTrack;
 use anyhow::Result;
 use futures::StreamExt as _;
 use gpui::{
@@ -23,7 +23,7 @@ pub enum RemoteVideoTrackViewEvent {
 impl RemoteVideoTrackView {
     pub fn new(track: RemoteVideoTrack, window: &mut Window, cx: &mut Context<Self>) -> Self {
         cx.focus_handle();
-        let frames = super::play_remote_video_track(&track);
+        let frames = crate::play_remote_video_track(&track);
         let _window_handle = window.window_handle();
 
         Self {

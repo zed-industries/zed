@@ -1,12 +1,13 @@
 use anyhow::{anyhow, Result};
-use client::ParticipantIndex;
-use client::{proto, User};
+use client::{proto, ParticipantIndex, User};
 use collections::HashMap;
 use gpui::WeakEntity;
-pub use livekit_client_macos::Frame;
-pub use livekit_client_macos::{RemoteAudioTrack, RemoteVideoTrack};
+use livekit_client::AudioStream;
 use project::Project;
 use std::sync::Arc;
+
+pub use livekit_client::TrackSid;
+pub use livekit_client::{RemoteAudioTrack, RemoteVideoTrack};
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum ParticipantLocation {
@@ -48,7 +49,6 @@ impl LocalParticipant {
     }
 }
 
-#[derive(Clone, Debug)]
 pub struct RemoteParticipant {
     pub user: Arc<User>,
     pub peer_id: proto::PeerId,
@@ -58,13 +58,13 @@ pub struct RemoteParticipant {
     pub participant_index: ParticipantIndex,
     pub muted: bool,
     pub speaking: bool,
-    pub video_tracks: HashMap<livekit_client_macos::Sid, Arc<RemoteVideoTrack>>,
-    pub audio_tracks: HashMap<livekit_client_macos::Sid, Arc<RemoteAudioTrack>>,
+    pub video_tracks: HashMap<TrackSid, RemoteVideoTrack>,
+    pub audio_tracks: HashMap<TrackSid, (RemoteAudioTrack, AudioStream)>,
 }
 
 impl RemoteParticipant {
     pub fn has_video_tracks(&self) -> bool {
-        !self.video_tracks.is_empty()
+        return !self.video_tracks.is_empty();
     }
 
     pub fn can_write(&self) -> bool {

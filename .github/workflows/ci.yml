@@ -209,7 +209,6 @@ jobs:
           cargo check -p workspace
           cargo build -p remote_server
           cargo check -p gpui --examples
-          script/check-rust-livekit-macos
 
       # Since the macOS runners are stateful, so we need to remove the config file to prevent potential bug.
       - name: Clean CI config file
