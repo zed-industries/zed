@@ -18,8 +18,10 @@ float2 to_tile_position(float2 unit_vertex, AtlasTile tile,
                         constant Size_DevicePixels *atlas_size);
 float4 distance_from_clip_rect(float2 unit_vertex, Bounds_ScaledPixels bounds,
                                Bounds_ScaledPixels clip_bounds);
+float pick_corner_radius(float2 center_to_point, Corners_ScaledPixels corner_radii);
 float quad_sdf(float2 point, Bounds_ScaledPixels bounds,
                Corners_ScaledPixels corner_radii);
+float quad_sdf_impl(float2 center_to_point, float2 half_size, float corner_radius);
 float gaussian(float x, float sigma);
 float2 erf(float2 x);
 float blur_along_x(float x, float y, float sigma, float corner,
@@ -90,72 +92,114 @@ vertex QuadVertexOutput quad_vertex(uint unit_vertex_id [[vertex_id]],
 }
 
 fragment float4 quad_fragment(QuadFragmentInput input [[stage_in]],
-                              constant Quad *quads
-                              [[buffer(QuadInputIndex_Quads)]]) {
+                              constant Quad *quads [[buffer(QuadInputIndex_Quads)]]) {
   Quad quad = quads[input.quad_id];
   float2 half_size = float2(quad.bounds.size.width, quad.bounds.size.height) / 2.;
   float2 center = float2(quad.bounds.origin.x, quad.bounds.origin.y) + half_size;
   float2 center_to_point = input.position.xy - center;
   float4 color = fill_color(quad.background, input.position.xy, quad.bounds,
-    input.background_solid, input.background_color0, input.background_color1);
+                            input.background_solid, input.background_color0,
+                            input.background_color1);
 
-  // Fast path when the quad is not rounded and doesn't have any border.
+  // Fast path for non-rounded, borderless quads
   if (quad.corner_radii.top_left == 0. && quad.corner_radii.bottom_left == 0. &&
-      quad.corner_radii.top_right == 0. &&
-      quad.corner_radii.bottom_right == 0. && quad.border_widths.top == 0. &&
-      quad.border_widths.left == 0. && quad.border_widths.right == 0. &&
-      quad.border_widths.bottom == 0.) {
+      quad.corner_radii.top_right == 0. && quad.corner_radii.bottom_right == 0. &&
+      quad.border_widths.top == 0. && quad.border_widths.left == 0. &&
+      quad.border_widths.right == 0. && quad.border_widths.bottom == 0.) {
     return color;
   }
 
-  float corner_radius;
-  if (center_to_point.x < 0.) {
-    if (center_to_point.y < 0.) {
-      corner_radius = quad.corner_radii.top_left;
-    } else {
-      corner_radius = quad.corner_radii.bottom_left;
+  // Radius of the nearest corner.
+  float corner_radius = pick_corner_radius(center_to_point, quad.corner_radii);
+
+  // Widths of the nearest borders.
+  float vertical_border = (center_to_point.x <= 0.) ? quad.border_widths.left : quad.border_widths.right;
+  float horizontal_border = (center_to_point.y <= 0.) ? quad.border_widths.top : quad.border_widths.bottom;
+
+  // Signed distance of the point to the quad's border - positive outside the
+  // border, and negative inside.
+  float outer_sdf = quad_sdf_impl(center_to_point, half_size, corner_radius);
+
+  // Signed distance of the point to the inside of the quad's border. It is
+  // negative outside this edge, and positive inside.
+  float inner_sdf = quad_sdf_impl(center_to_point,
+                                  half_size - float2(vertical_border, horizontal_border),
+                                  corner_radius);
+
+  // Negative when inside the border
+  float sdf = max(inner_sdf, outer_sdf);
+
+  if (sdf < 0.5) {
+    float4 border_color = input.border_color;
+
+    // Dashed border logic when border_style == 1
+    if (quad.border_style == 1) {
+      // Define segment lengths (assume uniform corner radii for simplicity; adjust as needed)
+      float avg_corner_radius = (quad.corner_radii.top_left + quad.corner_radii.top_right +
+                                 quad.corner_radii.bottom_left + quad.corner_radii.bottom_right) / 4.0;
+      float L_top = quad.bounds.size.width - quad.corner_radii.top_left - quad.corner_radii.top_right;
+      float L_right = quad.bounds.size.height - quad.corner_radii.top_right - quad.corner_radii.bottom_right;
+      float L_bottom = quad.bounds.size.width - quad.corner_radii.bottom_left - quad.corner_radii.bottom_right;
+      float L_left = quad.bounds.size.height - quad.corner_radii.top_left - quad.corner_radii.bottom_left;
+      float L_arc = (M_PI_F / 2.0) * avg_corner_radius;
+
+      // Compute perimeter parameter t
+      float t;
+      if (center_to_point.y < -half_size.y + quad.corner_radii.top_left &&
+          center_to_point.x < -half_size.x + quad.corner_radii.top_left) {
+        // Top-left corner
+        float2 corner_center = float2(-half_size.x + quad.corner_radii.top_left, -half_size.y + quad.corner_radii.top_left);
+        float theta = atan2(center_to_point.y - corner_center.y, center_to_point.x - corner_center.x);
+        t = L_top + L_arc + L_right + L_arc + L_bottom + L_arc + ((theta - M_PI_F) / (M_PI_F / 2.0)) * L_arc;
+      } else if (center_to_point.y < -half_size.y + quad.corner_radii.top_right &&
+                 center_to_point.x > half_size.x - quad.corner_radii.top_right) {
+        // Top-right corner
+        float2 corner_center = float2(half_size.x - quad.corner_radii.top_right, -half_size.y + quad.corner_radii.top_right);
+        float theta = atan2(center_to_point.y - corner_center.y, center_to_point.x - corner_center.x);
+        t = L_top + ((theta + M_PI_F / 2.0) / (M_PI_F / 2.0)) * L_arc;
+      } else if (center_to_point.y > half_size.y - quad.corner_radii.bottom_right &&
+                 center_to_point.x > half_size.x - quad.corner_radii.bottom_right) {
+        // Bottom-right corner
+        float2 corner_center = float2(half_size.x - quad.corner_radii.bottom_right, half_size.y - quad.corner_radii.bottom_right);
+        float theta = atan2(center_to_point.y - corner_center.y, center_to_point.x - corner_center.x);
+        t = L_top + L_arc + L_right + ((theta) / (M_PI_F / 2.0)) * L_arc;
+      } else if (center_to_point.y > half_size.y - quad.corner_radii.bottom_left &&
+                 center_to_point.x < -half_size.x + quad.corner_radii.bottom_left) {
+        // Bottom-left corner
+        float2 corner_center = float2(-half_size.x + quad.corner_radii.bottom_left, half_size.y - quad.corner_radii.bottom_left);
+        float theta = atan2(center_to_point.y - corner_center.y, center_to_point.x - corner_center.x);
+        t = L_top + L_arc + L_right + L_arc + L_bottom + ((theta - M_PI_F / 2.0) / (M_PI_F / 2.0)) * L_arc;
+      } else {
+        // Straight regions
+        if (abs(center_to_point.x) < half_size.x - corner_radius) {
+          // Top straight
+          t = center_to_point.x + half_size.x - quad.corner_radii.top_left;
+        } else if (abs(center_to_point.y) < half_size.y - corner_radius) {
+          // Right straight
+          t = L_top + L_arc + (center_to_point.y + half_size.y - quad.corner_radii.top_right);
+        } else if (abs(center_to_point.x) < half_size.x - corner_radius) {
+          // Bottom straight
+          t = L_top + L_arc + L_right + L_arc + (half_size.x - center_to_point.x - quad.corner_radii.bottom_right);
+        } else {
+          // Left straight
+          t = L_top + L_arc + L_right + L_arc + L_bottom + L_arc + (half_size.y - center_to_point.y - quad.corner_radii.bottom_left);
+        }
+      }
+
+      // Dash pattern: 4 pixels dash, 4 pixels gap
+      float dash_period = 8.0;
+      float dash_length = 4.0;
+      float dash_alpha = step(fmod(t, dash_period), dash_length);
+      border_color.a *= dash_alpha;
     }
-  } else {
-    if (center_to_point.y < 0.) {
-      corner_radius = quad.corner_radii.top_right;
-    } else {
-      corner_radius = quad.corner_radii.bottom_right;
-    }
+
+    // Blend border over background
+    float4 blended_border = over(color, border_color);
+    color = mix(blended_border, color, saturate(0.5 - inner_sdf));
   }
 
-  float2 rounded_edge_to_point =
-      fabs(center_to_point) - half_size + corner_radius;
-  float distance =
-      length(max(0., rounded_edge_to_point)) +
-      min(0., max(rounded_edge_to_point.x, rounded_edge_to_point.y)) -
-      corner_radius;
-
-  float vertical_border = center_to_point.x <= 0. ? quad.border_widths.left
-                                                  : quad.border_widths.right;
-  float horizontal_border = center_to_point.y <= 0. ? quad.border_widths.top
-                                                    : quad.border_widths.bottom;
-  float2 inset_size =
-      half_size - corner_radius - float2(vertical_border, horizontal_border);
-  float2 point_to_inset_corner = fabs(center_to_point) - inset_size;
-  float border_width;
-  if (point_to_inset_corner.x < 0. && point_to_inset_corner.y < 0.) {
-    border_width = 0.;
-  } else if (point_to_inset_corner.y > point_to_inset_corner.x) {
-    border_width = horizontal_border;
-  } else {
-    border_width = vertical_border;
-  }
-
-  if (border_width != 0.) {
-    float inset_distance = distance + border_width;
-    // Blend the border on top of the background and then linearly interpolate
-    // between the two as we slide inside the background.
-    float4 blended_border = over(color, input.border_color);
-    color = mix(blended_border, color,
-                saturate(0.5 - inset_distance));
-  }
-
-  return color * float4(1., 1., 1., saturate(0.5 - distance));
+  // Apply outer edge antialiasing
+  return color * float4(1., 1., 1., saturate(0.5 - outer_sdf));
 }
 
 struct ShadowVertexOutput {
@@ -720,34 +764,50 @@ float2 to_tile_position(float2 unit_vertex, AtlasTile tile,
          float2((float)atlas_size->width, (float)atlas_size->height);
 }
 
+// Selects corner radius based on quadrant.
+float pick_corner_radius(float2 center_to_point, Corners_ScaledPixels corner_radii) {
+  if (center_to_point.x < 0.) {
+    if (center_to_point.y < 0.) {
+      return corner_radii.top_left;
+    } else {
+      return corner_radii.bottom_left;
+    }
+  } else {
+    if (center_to_point.y < 0.) {
+      return corner_radii.top_right;
+    } else {
+      return corner_radii.bottom_right;
+    }
+  }
+}
+
+// Signed distance of the point to the quad's border - positive outside the
+// border, and negative inside.
 float quad_sdf(float2 point, Bounds_ScaledPixels bounds,
                Corners_ScaledPixels corner_radii) {
   float2 half_size = float2(bounds.size.width, bounds.size.height) / 2.;
   float2 center = float2(bounds.origin.x, bounds.origin.y) + half_size;
   float2 center_to_point = point - center;
-  float corner_radius;
-  if (center_to_point.x < 0.) {
-    if (center_to_point.y < 0.) {
-      corner_radius = corner_radii.top_left;
-    } else {
-      corner_radius = corner_radii.bottom_left;
-    }
-  } else {
-    if (center_to_point.y < 0.) {
-      corner_radius = corner_radii.top_right;
-    } else {
-      corner_radius = corner_radii.bottom_right;
-    }
-  }
+  float corner_radius = pick_corner_radius(center_to_point, corner_radii);
+  return quad_sdf_impl(center_to_point, half_size, corner_radius);
+}
 
-  float2 rounded_edge_to_point =
-      abs(center_to_point) - half_size + corner_radius;
-  float distance =
-      length(max(0., rounded_edge_to_point)) +
-      min(0., max(rounded_edge_to_point.x, rounded_edge_to_point.y)) -
-      corner_radius;
+float quad_sdf_impl(float2 center_to_point, float2 half_size, float corner_radius) {
+  // Vector from the point to the center of the rounded corner's circle, after
+  // mirroring this into the bottom right quadrant. This mirroring causes both
+  // x and y to be positive when the nearest point on the border is part of a
+  // rounded corner.
+  float2 arc_center_to_point = fabs(center_to_point) - half_size + corner_radius;
 
-  return distance;
+  // Signed distance of the point from a quad that is inset by corner_radius.
+  // It is negative inside this quad, and positive outside.
+  float signed_distance_to_radius_inset_quad =
+    // 0 inside the inset quad, and positive outside.
+    length(max(0., arc_center_to_point)) +
+    // 0 outside the inset quad, and negative inside.
+    min(0., max(arc_center_to_point.x, arc_center_to_point.y));
+
+  return signed_distance_to_radius_inset_quad - corner_radius;
 }
 
 // A standard gaussian function, used for weighting samples
