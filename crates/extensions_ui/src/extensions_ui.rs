@@ -12,9 +12,9 @@ use editor::{Editor, EditorElement, EditorStyle};
 use extension_host::{ExtensionManifest, ExtensionOperation, ExtensionStore};
 use fuzzy::{match_strings, StringMatchCandidate};
 use gpui::{
-    actions, uniform_list, Action, App, ClipboardItem, Context, Entity, EventEmitter, Flatten,
-    Focusable, InteractiveElement, KeyContext, ParentElement, Render, Styled, Task, TextStyle,
-    UniformListScrollHandle, WeakEntity, Window,
+    actions, point, uniform_list, Action, App, ClipboardItem, Context, Entity, EventEmitter,
+    Flatten, Focusable, InteractiveElement, KeyContext, ParentElement, Render, Styled, Task,
+    TextStyle, UniformListScrollHandle, WeakEntity, Window,
 };
 use num_format::{Locale, ToFormattedString};
 use project::DirectoryLister;
@@ -23,8 +23,8 @@ use settings::Settings;
 use strum::IntoEnumIterator as _;
 use theme::ThemeSettings;
 use ui::{
-    prelude::*, CheckboxWithLabel, ContextMenu, PopoverMenu, Scrollbar, ScrollbarState,
-    ToggleButton, Tooltip,
+    prelude::*, CheckboxWithLabel, ContextMenu, PopoverMenu, ScrollableHandle, Scrollbar,
+    ScrollbarState, ToggleButton, Tooltip,
 };
 use vim_mode_setting::VimModeSetting;
 use workspace::{
@@ -413,6 +413,7 @@ impl ExtensionsPage {
                 })
                 .map(|(ix, _)| ix),
         );
+        self.list.set_offset(point(px(0.), px(0.)));
         cx.notify();
     }
 
