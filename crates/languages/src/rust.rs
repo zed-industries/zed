@@ -529,7 +529,7 @@ impl ContextProvider for RustContextProvider {
             if let Some(features) = target.required_features {
                 variables.insert(
                     RUST_BIN_REQUIRED_FEATURES_TASK_VARIABLE.clone(),
-                    format!("--features {}", features.join(",".into())),
+                    format!("--features {}", features.join(",")),
                 );
             } else {
                 variables.insert(RUST_BIN_REQUIRED_FEATURES_TASK_VARIABLE, "".into());
