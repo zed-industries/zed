@@ -9770,6 +9770,53 @@ fn gen_text_edit(params: &CompletionParams, text: &str) -> Option<lsp::Completio
 }
 
 #[gpui::test]
+async fn test_completion_edit_replacing_text_scenarios(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorLspTestContext::new_rust(lsp::ServerCapabilities::default(), cx).await;
+    cx.lsp
+        .set_request_handler::<lsp::request::Completion, _, _>(move |params, _| async move {
+            Ok(Some(lsp::CompletionResponse::Array(vec![
+                lsp::CompletionItem {
+                    text_edit: gen_text_edit(&params, "pub"),
+                    ..Default::default()
+                },
+            ])))
+        });
+
+    cx.set_state(indoc! {"
+        pub struct Test {
+            pˇfield: bool,
+        }
+    "});
+
+    cx.executor().run_until_parked();
+    cx.update_editor(|editor, window, cx| {
+        editor.show_completions(
+            &ShowCompletions {
+                trigger: Some("pub".into()),
+            },
+            window,
+            cx,
+        );
+    });
+
+    cx.executor().run_until_parked();
+    cx.update_editor(|editor, window, cx| {
+        editor
+            .confirm_completion(&ConfirmCompletion::default(), window, cx)
+            .unwrap()
+    })
+    .await
+    .unwrap();
+
+    cx.assert_editor_state(indoc! {"
+        pub struct Test {
+            pub ˇfield: bool,
+        }
+    "});
+}
+
+#[gpui::test]
 async fn test_multiline_completion(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
