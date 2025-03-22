@@ -371,6 +371,7 @@ struct VimCommand {
                 + 'static,
         >,
     >,
+    args: Option<Box<dyn Fn(Vec<String>) -> Option<Box<dyn Action>> + Send + Sync + 'static>>,
     has_count: bool,
 }
 
@@ -399,6 +400,14 @@ impl VimCommand {
         self
     }
 
+    fn args(
+        mut self,
+        f: impl Fn(Vec<String>) -> Option<Box<dyn Action>> + Send + Sync + 'static,
+    ) -> Self {
+        self.args = Some(Box::new(f));
+        self
+    }
+
     fn range(
         mut self,
         f: impl Fn(Box<dyn Action>, &CommandRange) -> Option<Box<dyn Action>> + Send + Sync + 'static,
@@ -423,8 +432,16 @@ impl VimCommand {
             query = &query[..query.len() - 1];
         }
 
-        let suffix = query.strip_prefix(self.prefix)?;
-        if !self.suffix.starts_with(suffix) {
+        let query_owned = query.to_string();
+        let mut suffix = query_owned.strip_prefix(self.prefix)?.to_string();
+        if suffix.starts_with(|c: char| c == ' ') {
+            // If we start with a ' ' then we satisfy the prefix and the rest is treated as arguments
+            suffix.insert_str(0, self.suffix);
+        }
+        if !self
+            .suffix
+            .starts_with(suffix.split_whitespace().next().unwrap_or(&suffix))
+        {
             return None;
         }
 
@@ -438,7 +455,19 @@ impl VimCommand {
             return None;
         };
 
-        if let Some(range) = range {
+        let args = suffix
+            .split_whitespace()
+            .skip(1)
+            .map(|s| s.to_string())
+            .collect_vec();
+        if !args.is_empty() {
+            // if command does not accept args and we have args then we should do no action
+            if let Some(args_fn) = &self.args {
+                args_fn.deref()(args)
+            } else {
+                None
+            }
+        } else if let Some(range) = range {
             self.range.as_ref().and_then(|f| f(action, range))
         } else {
             Some(action)
@@ -677,6 +706,15 @@ fn generate_commands(_: &App) -> Vec<VimCommand> {
                 save_intent: Some(SaveIntent::Save),
             },
         )
+        .args(|args| {
+            let arg = args.first()?;
+            Some(
+                workspace::Save {
+                    save_intent: Some(SaveIntent::SaveWith(arg.clone())),
+                }
+                .boxed_clone(),
+            )
+        })
         .bang(workspace::Save {
             save_intent: Some(SaveIntent::Overwrite),
         }),

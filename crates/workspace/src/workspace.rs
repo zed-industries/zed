@@ -1944,7 +1944,7 @@ impl Workspace {
 
     fn save_all(&mut self, action: &SaveAll, window: &mut Window, cx: &mut Context<Self>) {
         self.save_all_internal(
-            action.save_intent.unwrap_or(SaveIntent::SaveAll),
+            action.save_intent.clone().unwrap_or(SaveIntent::SaveAll),
             window,
             cx,
         )
@@ -2079,7 +2079,9 @@ impl Workspace {
                 let (singleton, project_entry_ids) =
                     cx.update(|_, cx| (item.is_singleton(cx), item.project_entry_ids(cx)))?;
                 if singleton || !project_entry_ids.is_empty() {
-                    if !Pane::save_item(project.clone(), &pane, &*item, save_intent, cx).await? {
+                    if !Pane::save_item(project.clone(), &pane, &*item, save_intent.clone(), cx)
+                        .await?
+                    {
                         return Ok(false);
                     }
                 }
@@ -2410,7 +2412,7 @@ impl Workspace {
     ) {
         if let Some(task) = self.close_all_internal(
             true,
-            action.save_intent.unwrap_or(SaveIntent::Close),
+            action.save_intent.clone().unwrap_or(SaveIntent::Close),
             window,
             cx,
         ) {
@@ -2426,7 +2428,7 @@ impl Workspace {
     ) {
         if let Some(task) = self.close_all_internal(
             false,
-            action.save_intent.unwrap_or(SaveIntent::Close),
+            action.save_intent.clone().unwrap_or(SaveIntent::Close),
             window,
             cx,
         ) {
@@ -2468,7 +2470,7 @@ impl Workspace {
             if let Some(close_pane_items) = pane.update(cx, |pane: &mut Pane, cx| {
                 pane.close_all_items(
                     &CloseAllItems {
-                        save_intent: Some(save_intent),
+                        save_intent: Some(save_intent.clone()),
                         close_pinned: false,
                     },
                     window,
@@ -3432,7 +3434,7 @@ impl Workspace {
                 cx.emit(Event::UserSavedItem {
                     pane: pane.downgrade(),
                     item: item.boxed_clone(),
-                    save_intent: *save_intent,
+                    save_intent: save_intent.clone(),
                 });
                 serialize_workspace = false;
             }
@@ -4899,7 +4901,11 @@ impl Workspace {
             }))
             .on_action(cx.listener(|workspace, action: &Save, window, cx| {
                 workspace
-                    .save_active_item(action.save_intent.unwrap_or(SaveIntent::Save), window, cx)
+                    .save_active_item(
+                        action.save_intent.clone().unwrap_or(SaveIntent::Save),
+                        window,
+                        cx,
+                    )
                     .detach_and_prompt_err("Failed to save", window, cx, |_, _, _| None);
             }))
             .on_action(cx.listener(|workspace, _: &SaveWithoutFormat, window, cx| {

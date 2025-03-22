@@ -31,7 +31,7 @@ use std::{
     any::Any,
     cmp, fmt, mem,
     ops::ControlFlow,
-    path::PathBuf,
+    path::{Path, PathBuf},
     rc::Rc,
     sync::{
         atomic::{AtomicUsize, Ordering},
@@ -71,7 +71,7 @@ impl DraggedSelection {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Debug, Deserialize, JsonSchema)]
+#[derive(Clone, PartialEq, Debug, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum SaveIntent {
     /// write all files (even if unchanged)
@@ -84,6 +84,8 @@ pub enum SaveIntent {
     SaveAll,
     /// always prompt for a new path
     SaveAs,
+    /// do not prompt
+    SaveWith(String),
     /// prompt "you have unsaved changes" before writing
     Close,
     /// write all dirty files, don't prompt on conflict
@@ -1294,7 +1296,7 @@ impl Pane {
         let active_item_id = self.items[self.active_item_index].item_id();
         Some(self.close_item_by_id(
             active_item_id,
-            action.save_intent.unwrap_or(SaveIntent::Close),
+            action.save_intent.clone().unwrap_or(SaveIntent::Close),
             window,
             cx,
         ))
@@ -1327,7 +1329,7 @@ impl Pane {
         Some(self.close_items(
             window,
             cx,
-            action.save_intent.unwrap_or(SaveIntent::Close),
+            action.save_intent.clone().unwrap_or(SaveIntent::Close),
             move |item_id| item_id != active_item_id && !non_closeable_items.contains(&item_id),
         ))
     }
@@ -1446,7 +1448,7 @@ impl Pane {
         Some(self.close_items(
             window,
             cx,
-            action.save_intent.unwrap_or(SaveIntent::Close),
+            action.save_intent.clone().unwrap_or(SaveIntent::Close),
             |item_id| !non_closeable_items.contains(&item_id),
         ))
     }
@@ -1624,8 +1626,14 @@ impl Pane {
                 }
 
                 if should_save {
-                    if !Self::save_item(project.clone(), &pane, &*item_to_close, save_intent, cx)
-                        .await?
+                    if !Self::save_item(
+                        project.clone(),
+                        &pane,
+                        &*item_to_close,
+                        save_intent.clone(),
+                        cx,
+                    )
+                    .await?
                     {
                         break;
                     }
@@ -1844,19 +1852,24 @@ impl Pane {
             )
         })?;
 
+        let mut intent_path: Option<String> = None;
+
         // when saving a single buffer, we ignore whether or not it's dirty.
-        if save_intent == SaveIntent::Save || save_intent == SaveIntent::SaveWithoutFormat {
-            is_dirty = true;
-        }
-
-        if save_intent == SaveIntent::SaveAs {
-            is_dirty = true;
-            has_conflict = false;
-            can_save = false;
-        }
-
-        if save_intent == SaveIntent::Overwrite {
-            has_conflict = false;
+        match &save_intent {
+            SaveIntent::Save | SaveIntent::SaveWithoutFormat => is_dirty = true,
+            SaveIntent::SaveAs => {
+                is_dirty = true;
+                has_conflict = false;
+                can_save = false;
+            }
+            SaveIntent::SaveWith(path) => {
+                is_dirty = true;
+                has_conflict = false;
+                can_save = false;
+                intent_path = Some(path.clone())
+            }
+            SaveIntent::Overwrite => has_conflict = false,
+            _ => {}
         }
 
         let should_format = save_intent != SaveIntent::SaveWithoutFormat;
@@ -1977,24 +1990,52 @@ impl Pane {
                 })?
                 .await?;
             } else if can_save_as && is_singleton {
-                let abs_path = pane.update_in(cx, |pane, window, cx| {
-                    pane.activate_item(item_ix, true, true, window, cx);
-                    pane.workspace.update(cx, |workspace, cx| {
-                        workspace.prompt_for_new_path(window, cx)
-                    })
-                })??;
-                if let Some(abs_path) = abs_path.await.ok().flatten() {
-                    pane.update_in(cx, |pane, window, cx| {
-                        if let Some(item) = pane.item_for_path(abs_path.clone(), cx) {
-                            pane.remove_item(item.item_id(), false, false, window, cx);
-                        }
+                if let Some(path) = intent_path {
+                    let abs_path = pane.update_in(cx, |pane, window, cx| {
+                        pane.activate_item(item_ix, true, true, window, cx);
+                        pane.workspace
+                            .update(cx, |workspace, cx| {
+                                let entity = workspace.worktrees(cx).next()?;
+                                let worktree_id = entity.read(cx).id();
+                                Some(ProjectPath {
+                                    worktree_id,
+                                    path: Arc::from(Path::new(&path)),
+                                })
+                            })
+                            .ok()?
+                    })?;
+                    if let Some(abs_path) = abs_path {
+                        pane.update_in(cx, |pane, window, cx| {
+                            if let Some(item) = pane.item_for_path(abs_path.clone(), cx) {
+                                pane.remove_item(item.item_id(), false, false, window, cx);
+                            }
 
-                        item.save_as(project, abs_path, window, cx)
-                    })?
-                    .await?;
+                            item.save_as(project, abs_path, window, cx)
+                        })?
+                        .await?;
+                    } else {
+                        return Ok(false);
+                    }
                 } else {
-                    return Ok(false);
-                }
+                    let abs_path = pane.update_in(cx, |pane, window, cx| {
+                        pane.activate_item(item_ix, true, true, window, cx);
+                        pane.workspace.update(cx, |workspace, cx| {
+                            workspace.prompt_for_new_path(window, cx)
+                        })
+                    })??;
+                    if let Some(abs_path) = abs_path.await.ok().flatten() {
+                        pane.update_in(cx, |pane, window, cx| {
+                            if let Some(item) = pane.item_for_path(abs_path.clone(), cx) {
+                                pane.remove_item(item.item_id(), false, false, window, cx);
+                            }
+
+                            item.save_as(project, abs_path, window, cx)
+                        })?
+                        .await?;
+                    } else {
+                        return Ok(false);
+                    }
+                };
             }
         }
 
