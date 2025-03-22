@@ -11,11 +11,11 @@ use db::sqlez_macros::sql;
 use editor::display_map::{is_invisible, replacement};
 use editor::{Anchor, ClipboardSelection, Editor, MultiBuffer, ToPoint as EditorToPoint};
 use gpui::{
-    Action, App, AppContext, AsyncApp, BorrowAppContext, ClipboardEntry, ClipboardItem,
-    DismissEvent, Entity, EntityId, Global, HighlightStyle, StyledText, Subscription, Task,
-    TextStyle, WeakEntity,
+    Action, App, AppContext, BorrowAppContext, ClipboardEntry, ClipboardItem, DismissEvent, Entity,
+    EntityId, Global, HighlightStyle, StyledText, Subscription, Task, TextStyle, WeakEntity,
 };
-use language::{Buffer, BufferEvent, BufferId, Point};
+use language::{Buffer, BufferEvent, BufferId, Chunk, Point};
+use multi_buffer::MultiBufferRow;
 use picker::{Picker, PickerDelegate};
 use project::{Project, ProjectItem, ProjectPath};
 use serde::{Deserialize, Serialize};
@@ -1242,11 +1242,32 @@ impl RegistersView {
 enum MarksMatchInfo {
     Path(Arc<Path>),
     Title(String),
-    Content(String),
+    Content {
+        line: String,
+        highlights: Vec<(Range<usize>, HighlightStyle)>,
+    },
+}
+
+impl MarksMatchInfo {
+    fn from_chunks<'a>(chunks: impl Iterator<Item = Chunk<'a>>, cx: &App) -> Self {
+        let mut line = String::new();
+        let mut highlights = Vec::new();
+        let mut offset = 0;
+        for chunk in chunks {
+            line.push_str(chunk.text);
+            if let Some(highlight_style) = chunk.syntax_highlight_id {
+                if let Some(highlight) = highlight_style.style(cx.theme().syntax()) {
+                    highlights.push((offset..offset + chunk.text.len(), highlight))
+                }
+            }
+            offset += chunk.text.len();
+        }
+        MarksMatchInfo::Content { line, highlights }
+    }
 }
 
 struct MarksMatch {
-    name: char,
+    name: String,
     position: Point,
     info: MarksMatchInfo,
 }
@@ -1254,6 +1275,7 @@ struct MarksMatch {
 pub struct MarksViewDelegate {
     selected_index: usize,
     matches: Vec<MarksMatch>,
+    point_column_width: usize,
     workspace: WeakEntity<Workspace>,
 }
 
@@ -1286,171 +1308,155 @@ impl PickerDelegate for MarksViewDelegate {
         let Some(workspace) = self.workspace.upgrade().clone() else {
             return Task::ready(());
         };
-        cx.spawn(
-            |picker: WeakEntity<Picker<MarksViewDelegate>>, cx: &mut AsyncApp| {
-                let mut cx = cx.clone();
-                async move {
-                    let mut matches = Vec::new();
-                    let _ = cx.update_entity(&workspace, |workspace, cx| {
-                        let entity_id = cx.entity_id();
-                        let Some(editor) = workspace
-                            .active_item(cx)
-                            .and_then(|item| item.act_as::<Editor>(cx))
-                        else {
-                            return;
-                        };
-                        let editor = editor.read(cx);
-                        let mut has_seen = HashSet::new();
-                        let Some(marks_state) = cx.global::<VimGlobals>().marks.get(&entity_id)
-                        else {
-                            return;
-                        };
-                        let marks_state = marks_state.read(cx);
+        cx.spawn(async move |picker, cx| {
+            let mut matches = Vec::new();
+            let _ = workspace.update(cx, |workspace, cx| {
+                let entity_id = cx.entity_id();
+                let Some(editor) = workspace
+                    .active_item(cx)
+                    .and_then(|item| item.act_as::<Editor>(cx))
+                else {
+                    return;
+                };
+                let editor = editor.read(cx);
+                let mut has_seen = HashSet::new();
+                let Some(marks_state) = cx.global::<VimGlobals>().marks.get(&entity_id) else {
+                    return;
+                };
+                let marks_state = marks_state.read(cx);
 
-                        if let Some(map) = marks_state
-                            .multibuffer_marks
-                            .get(&editor.buffer().entity_id())
-                        {
-                            for (name, anchors) in map {
-                                let Some(c) = name.chars().next() else {
-                                    continue;
-                                };
-                                if has_seen.contains(&c) {
-                                    continue;
-                                }
-                                has_seen.insert(c);
-                                let Some(anchor) = anchors.first() else {
-                                    continue;
-                                };
-
-                                let snapshot = editor.buffer().read(cx).snapshot(cx);
-                                let position = anchor.to_point(&snapshot);
-                                let info = MarksMatchInfo::Content(
-                                    snapshot
-                                        .text_for_range(
-                                            Point::new(position.row, 0)
-                                                ..Point::new(
-                                                    position.row,
-                                                    snapshot.line_len(
-                                                        multi_buffer::MultiBufferRow(position.row),
-                                                    ),
-                                                ),
-                                        )
-                                        .collect(),
-                                );
-                                matches.push(MarksMatch {
-                                    name: c,
-                                    position,
-                                    info,
-                                })
-                            }
+                if let Some(map) = marks_state
+                    .multibuffer_marks
+                    .get(&editor.buffer().entity_id())
+                {
+                    for (name, anchors) in map {
+                        if has_seen.contains(name) {
+                            continue;
                         }
+                        has_seen.insert(name.clone());
+                        let Some(anchor) = anchors.first() else {
+                            continue;
+                        };
 
-                        if let Some(buffer) = editor.buffer().read(cx).as_singleton() {
-                            let buffer = buffer.read(cx);
-                            if let Some(map) = marks_state.buffer_marks.get(&buffer.remote_id()) {
-                                for (name, anchors) in map {
-                                    let Some(c) = name.chars().next() else {
-                                        continue;
-                                    };
-                                    if has_seen.contains(&c) {
-                                        continue;
-                                    }
-                                    has_seen.insert(c);
-                                    let Some(anchor) = anchors.first() else {
-                                        continue;
-                                    };
-                                    let snapshot = buffer.snapshot();
-                                    let position = anchor.to_point(&snapshot);
-                                    let info = MarksMatchInfo::Content(
-                                        snapshot
-                                            .text_for_range(
-                                                Point::new(position.row, 0)
-                                                    ..Point::new(
-                                                        position.row,
-                                                        snapshot.line_len(position.row),
-                                                    ),
-                                            )
-                                            .collect(),
-                                    );
-                                    matches.push(MarksMatch {
-                                        name: c,
-                                        position,
-                                        info,
-                                    })
-                                }
+                        let snapshot = editor.buffer().read(cx).snapshot(cx);
+                        let position = anchor.to_point(&snapshot);
+
+                        let chunks = snapshot.chunks(
+                            Point::new(position.row, 0)
+                                ..Point::new(
+                                    position.row,
+                                    snapshot.line_len(MultiBufferRow(position.row)),
+                                ),
+                            true,
+                        );
+                        matches.push(MarksMatch {
+                            name: name.clone(),
+                            position,
+                            info: MarksMatchInfo::from_chunks(chunks, cx),
+                        })
+                    }
+                }
+
+                if let Some(buffer) = editor.buffer().read(cx).as_singleton() {
+                    let buffer = buffer.read(cx);
+                    if let Some(map) = marks_state.buffer_marks.get(&buffer.remote_id()) {
+                        for (name, anchors) in map {
+                            if has_seen.contains(name) {
+                                continue;
                             }
-                        }
-
-                        for (name, mark_location) in marks_state.global_marks.iter() {
-                            let Some(c) = name.chars().next() else {
+                            has_seen.insert(name.clone());
+                            let Some(anchor) = anchors.first() else {
                                 continue;
                             };
+                            let snapshot = buffer.snapshot();
+                            let position = anchor.to_point(&snapshot);
+                            let chunks = snapshot.chunks(
+                                Point::new(position.row, 0)
+                                    ..Point::new(position.row, snapshot.line_len(position.row)),
+                                true,
+                            );
 
-                            if has_seen.contains(&c) {
-                                continue;
-                            }
-                            has_seen.insert(c);
+                            matches.push(MarksMatch {
+                                name: name.clone(),
+                                position,
+                                info: MarksMatchInfo::from_chunks(chunks, cx),
+                            })
+                        }
+                    }
+                }
 
-                            match mark_location {
-                                MarkLocation::Buffer(entity_id) => {
-                                    if let Some(&anchor) = marks_state
-                                        .multibuffer_marks
-                                        .get(entity_id)
-                                        .and_then(|map| map.get(name))
-                                        .and_then(|anchors| anchors.first())
-                                    {
-                                        let Some((info, snapshot)) = workspace
-                                            .items(cx)
-                                            .filter_map(|item| item.act_as::<Editor>(cx))
-                                            .map(|entity| entity.read(cx).buffer())
-                                            .find(|buffer| buffer.entity_id().eq(entity_id))
-                                            .map(|buffer| {
-                                                (
-                                                    MarksMatchInfo::Title(
-                                                        buffer.read(cx).title(cx).to_string(),
-                                                    ),
-                                                    buffer.read(cx).snapshot(cx),
-                                                )
-                                            })
-                                        else {
-                                            continue;
-                                        };
-                                        matches.push(MarksMatch {
-                                            name: c,
-                                            position: anchor.to_point(&snapshot),
-                                            info,
-                                        });
-                                    }
-                                }
-                                MarkLocation::Path(path) => {
-                                    if let Some(&position) = marks_state
-                                        .serialized_marks
-                                        .get(path.as_ref())
-                                        .and_then(|map| map.get(name))
-                                        .and_then(|points| points.first())
-                                    {
-                                        let info = MarksMatchInfo::Path(path.clone());
-                                        matches.push(MarksMatch {
-                                            name: c,
-                                            position,
-                                            info,
-                                        });
-                                    }
-                                }
+                for (name, mark_location) in marks_state.global_marks.iter() {
+                    if has_seen.contains(name) {
+                        continue;
+                    }
+                    has_seen.insert(name.clone());
+
+                    match mark_location {
+                        MarkLocation::Buffer(entity_id) => {
+                            if let Some(&anchor) = marks_state
+                                .multibuffer_marks
+                                .get(entity_id)
+                                .and_then(|map| map.get(name))
+                                .and_then(|anchors| anchors.first())
+                            {
+                                let Some((info, snapshot)) = workspace
+                                    .items(cx)
+                                    .filter_map(|item| item.act_as::<Editor>(cx))
+                                    .map(|entity| entity.read(cx).buffer())
+                                    .find(|buffer| buffer.entity_id().eq(entity_id))
+                                    .map(|buffer| {
+                                        (
+                                            MarksMatchInfo::Title(
+                                                buffer.read(cx).title(cx).to_string(),
+                                            ),
+                                            buffer.read(cx).snapshot(cx),
+                                        )
+                                    })
+                                else {
+                                    continue;
+                                };
+                                matches.push(MarksMatch {
+                                    name: name.clone(),
+                                    position: anchor.to_point(&snapshot),
+                                    info,
+                                });
                             }
                         }
-                    });
-                    let Some(picker) = picker.upgrade() else {
-                        return;
-                    };
-                    let _ = cx.update_entity(&picker, |picker, _| {
-                        matches.sort_by(|a, b| a.name.cmp(&b.name));
-                        picker.delegate.matches = matches;
-                    });
+                        MarkLocation::Path(path) => {
+                            if let Some(&position) = marks_state
+                                .serialized_marks
+                                .get(path.as_ref())
+                                .and_then(|map| map.get(name))
+                                .and_then(|points| points.first())
+                            {
+                                let info = MarksMatchInfo::Path(path.clone());
+                                matches.push(MarksMatch {
+                                    name: name.clone(),
+                                    position,
+                                    info,
+                                });
+                            }
+                        }
+                    }
                 }
-            },
-        )
+            });
+            let _ = picker.update(cx, |picker, cx| {
+                matches.sort_by_key(|a| {
+                    (
+                        a.name.chars().next().map(|c| c.is_ascii_uppercase()),
+                        a.name.clone(),
+                    )
+                });
+                let digits = matches
+                    .iter()
+                    .map(|m| (m.position.row + 1).ilog10() + (m.position.column + 1).ilog10())
+                    .max()
+                    .unwrap_or_default();
+                picker.delegate.matches = matches;
+                picker.delegate.point_column_width = (digits + 4) as usize;
+                cx.notify();
+            });
+        })
     }
 
     fn confirm(&mut self, _: bool, window: &mut Window, cx: &mut Context<Picker<Self>>) {
@@ -1496,16 +1502,23 @@ impl PickerDelegate for MarksViewDelegate {
         let mut left_output = String::new();
         let mut left_runs = Vec::new();
         left_output.push('`');
-        left_output.push(mark_match.name);
+        left_output.push_str(&mark_match.name);
         left_runs.push((
             0..left_output.len(),
             HighlightStyle::color(cx.theme().colors().text_accent),
         ));
         left_output.push(' ');
         left_output.push(' ');
-        left_output.push_str(
-            format!("{},{}", mark_match.position.row, mark_match.position.column).as_str(),
+        let point_column = format!(
+            "{},{}",
+            mark_match.position.row + 1,
+            mark_match.position.column + 1
         );
+        left_output.push_str(&point_column);
+        if let Some(padding) = self.point_column_width.checked_sub(point_column.len()) {
+            left_output.push_str(&" ".repeat(padding));
+        }
+
         let (right_output, right_runs): (String, Vec<_>) = match &mark_match.info {
             MarksMatchInfo::Path(path) => {
                 let s = path.to_string_lossy().to_string();
@@ -1518,16 +1531,10 @@ impl PickerDelegate for MarksViewDelegate {
                 title.clone(),
                 vec![(
                     0..title.len(),
-                    HighlightStyle::color(cx.theme().colors().text_muted),
+                    HighlightStyle::color(cx.theme().colors().text),
                 )],
             ),
-            MarksMatchInfo::Content(content) => (
-                content.clone(),
-                vec![(
-                    0..content.len(),
-                    HighlightStyle::color(cx.theme().colors().text_accent),
-                )],
-            ),
+            MarksMatchInfo::Content { line, highlights } => (line.clone(), highlights.clone()),
         };
 
         let theme = ThemeSettings::get_global(cx);
@@ -1545,13 +1552,11 @@ impl PickerDelegate for MarksViewDelegate {
 
         Some(
             h_flex()
-                .justify_between()
                 .when(selected, |el| el.bg(cx.theme().colors().element_selected))
                 .font_buffer(cx)
                 .text_buffer(cx)
                 .h(theme.buffer_font_size(cx) * theme.line_height())
                 .px_2()
-                .gap_1()
                 .child(StyledText::new(left_output).with_default_highlights(&text_style, left_runs))
                 .child(
                     StyledText::new(right_output).with_default_highlights(&text_style, right_runs),
@@ -1584,6 +1589,7 @@ impl MarksView {
         let matches = Vec::default();
         let delegate = MarksViewDelegate {
             selected_index: 0,
+            point_column_width: 0,
             matches,
             workspace,
         };
