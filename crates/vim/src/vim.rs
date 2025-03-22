@@ -822,16 +822,16 @@ impl Vim {
             EditorEvent::FocusedIn => self.sync_vim_settings(window, cx),
             EditorEvent::CursorShapeChanged => self.cursor_shape_changed(window, cx),
             EditorEvent::PushedToNavHistory {
-                anchor: cursor_anchor,
+                anchor,
+                is_deactivate,
             } => {
                 self.update_editor(window, cx, |vim, editor, window, cx| {
-                    vim.set_mark(
-                        "'".to_string(),
-                        vec![*cursor_anchor],
-                        editor.buffer(),
-                        window,
-                        cx,
-                    );
+                    let mark = if *is_deactivate {
+                        "\"".to_string()
+                    } else {
+                        "'".to_string()
+                    };
+                    vim.set_mark(mark, vec![*anchor], editor.buffer(), window, cx);
                 });
             }
             _ => {}
