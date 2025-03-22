@@ -592,6 +592,7 @@ mod tests {
                             default_height: None,
                             enable_experimental_live_diffs: None,
                             profiles: None,
+                            always_allow_tool_actions: None,
                         }),
                     )
                 },
