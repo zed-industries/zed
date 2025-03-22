@@ -156,6 +156,19 @@ Ruby LSP uses pull-based diagnostics which Zed doesn't support yet. We can tell 
 }
 ```
 
+Project-specific settings can be added in `.zed/settings.json`, for example:
+
+{
+  "lsp": {
+    "ruby-lsp": {
+      "initialization_options": {
+        "formatter": "standard",
+        "linters": ["standard"]
+      }
+    }
+  }
+}
+
 By default, Ruby LSP does not use `bundle exec` to run in the context of the bundle. To enable that, you can use the `use_bundler` configuration option:
 
 ```json
