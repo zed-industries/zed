@@ -483,6 +483,10 @@ const RUST_BIN_NAME_TASK_VARIABLE: VariableName =
 const RUST_BIN_KIND_TASK_VARIABLE: VariableName =
     VariableName::Custom(Cow::Borrowed("RUST_BIN_KIND"));
 
+/// The list of required features for executing a bin, if any
+const RUST_BIN_REQUIRED_FEATURES_TASK_VARIABLE: VariableName =
+    VariableName::Custom(Cow::Borrowed("RUST_BIN_REQUIRED_FEATURES"));
+
 const RUST_TEST_FRAGMENT_TASK_VARIABLE: VariableName =
     VariableName::Custom(Cow::Borrowed("RUST_TEST_FRAGMENT"));
 
@@ -522,6 +526,14 @@ impl ContextProvider for RustContextProvider {
                     target.target_kind.to_string(),
                 ),
             ]));
+            if let Some(features) = target.required_features {
+                variables.insert(
+                    RUST_BIN_REQUIRED_FEATURES_TASK_VARIABLE.clone(),
+                    format!("--features {}", features.join(",".into())),
+                );
+            } else {
+                variables.insert(RUST_BIN_REQUIRED_FEATURES_TASK_VARIABLE, "".into());
+            }
         }
 
         if let Some(package_name) = local_abs_path
@@ -666,6 +678,7 @@ impl ContextProvider for RustContextProvider {
                     RUST_PACKAGE_TASK_VARIABLE.template_value(),
                     format!("--{}", RUST_BIN_KIND_TASK_VARIABLE.template_value()),
                     RUST_BIN_NAME_TASK_VARIABLE.template_value(),
+                    RUST_BIN_REQUIRED_FEATURES_TASK_VARIABLE.template_value(),
                 ],
                 cwd: Some("$ZED_DIRNAME".to_owned()),
                 tags: vec!["rust-main".to_owned()],
@@ -738,6 +751,8 @@ struct CargoTarget {
     name: String,
     kind: Vec<String>,
     src_path: String,
+    #[serde(rename = "required-features")]
+    required_features: Option<Vec<String>>,
 }
 
 #[derive(Debug, PartialEq)]
@@ -770,6 +785,7 @@ struct TargetInfo {
     package_name: String,
     target_name: String,
     target_kind: TargetKind,
+    required_features: Option<Vec<String>>,
 }
 
 fn package_name_and_bin_name_from_abs_path(
@@ -792,23 +808,24 @@ fn package_name_and_bin_name_from_abs_path(
 
     let metadata: CargoMetadata = serde_json::from_slice(&output).log_err()?;
 
-    retrieve_package_id_and_bin_name_from_metadata(metadata, abs_path).and_then(
-        |(package_id, bin_name, target_kind)| {
+    retrieve_package_id_and_bin_info_from_metadata(metadata, abs_path).and_then(
+        |(package_id, bin_name, required_features, target_kind)| {
             let package_name = package_name_from_pkgid(&package_id);
 
             package_name.map(|package_name| TargetInfo {
                 package_name: package_name.to_owned(),
                 target_name: bin_name,
+                required_features,
                 target_kind,
             })
         },
     )
 }
 
-fn retrieve_package_id_and_bin_name_from_metadata(
+fn retrieve_package_id_and_bin_info_from_metadata(
     metadata: CargoMetadata,
     abs_path: &Path,
-) -> Option<(String, String, TargetKind)> {
+) -> Option<(String, String, Option<Vec<String>>, TargetKind)> {
     for package in metadata.packages {
         for target in package.targets {
             let Some(bin_kind) = target
@@ -820,7 +837,7 @@ fn retrieve_package_id_and_bin_name_from_metadata(
             };
             let target_path = PathBuf::from(target.src_path);
             if target_path == abs_path {
-                return Some((package.id, target.name, bin_kind));
+                return Some((package.id, target.name, target.required_features, bin_kind));
             }
         }
     }
@@ -1240,6 +1257,7 @@ mod tests {
                 Some((
                     "path+file:///path/to/zed/crates/zed#0.131.0",
                     "zed",
+                    None,
                     TargetKind::Bin,
                 )),
             ),
@@ -1249,6 +1267,7 @@ mod tests {
                 Some((
                     "path+file:///path/to/custom-package#my-custom-package@0.1.0",
                     "my-custom-bin",
+                    None,
                     TargetKind::Bin,
                 )),
             ),
@@ -1258,6 +1277,17 @@ mod tests {
                 Some((
                     "path+file:///path/to/custom-package#my-custom-package@0.1.0",
                     "my-custom-bin",
+                    None,
+                    TargetKind::Example,
+                )),
+            ),
+            (
+                r#"{"packages":[{"id":"path+file:///path/to/custom-package#my-custom-package@0.1.0","targets":[{"name":"my-custom-bin","kind":["example"],"src_path":"/path/to/custom-package/src/main.rs","required-features":["foo","bar"]}]}]}"#,
+                "/path/to/custom-package/src/main.rs",
+                Some((
+                    "path+file:///path/to/custom-package#my-custom-package@0.1.0",
+                    "my-custom-bin",
+                    Some(vec!["foo".to_owned(), "bar".to_owned()]),
                     TargetKind::Example,
                 )),
             ),
@@ -1272,8 +1302,13 @@ mod tests {
             let absolute_path = Path::new(absolute_path);
 
             assert_eq!(
-                retrieve_package_id_and_bin_name_from_metadata(metadata, absolute_path),
-                expected.map(|(pkgid, name, kind)| (pkgid.to_owned(), name.to_owned(), kind))
+                retrieve_package_id_and_bin_info_from_metadata(metadata, absolute_path),
+                expected.map(|(pkgid, name, required_features, kind)| (
+                    pkgid.to_owned(),
+                    name.to_owned(),
+                    required_features,
+                    kind
+                ))
             );
         }
     }
