@@ -171,6 +171,106 @@ You can configure ESLint's `workingDirectory` setting:
 }
 ```
 
+
+### Configure ESLint's `quiet`:
+
+Suppress warnings, showing only errors:
+
+```json
+{
+  "lsp": {
+    "eslint": {
+      "settings": {
+        "quiet": true
+      }
+    }
+  }
+}
+```
+
+### Configure ESLint's `onIgnoredFiles`:
+
+Control whether warnings should be generated when linting ignored files:
+
+```json
+{
+  "lsp": {
+    "eslint": {
+      "settings": {
+        "onIgnoredFiles": "off"
+      }
+    }
+  }
+}
+```
+
+### Configure ESLint's `run`:
+
+Specify when ESLint should run:
+
+```json
+{
+  "lsp": {
+    "eslint": {
+      "settings": {
+        "run": "onSave"
+      }
+    }
+  }
+}
+```
+
+### Configure ESLint's `options`:
+
+Pass additional options directly to the [ESLint API](https://eslint.org/docs/latest/integrate/nodejs-api#parameters):
+
+[more info](https://github.com/microsoft/vscode-eslint?tab=readme-ov-file#settings-options)
+
+```json
+{
+  "lsp": {
+    "eslint": {
+      "settings": {
+        "options": {
+          "fixTypes": ["problem", "suggestion"] // Only apply problem and suggestion fixes
+        }
+      }
+    }
+  }
+}
+```
+
+### Configure ESLint's `format`:
+Enable/disable formatting capability:
+
+```json
+{
+  "lsp": {
+    "eslint": {
+      "settings": {
+        "format": true
+      }
+    }
+  }
+}
+```
+
+### Configure ESLint's `useESLintClass`:
+
+Enable using the ESLint class-based API:
+
+```json
+{
+  "lsp": {
+    "eslint": {
+      "settings": {
+        "useESLintClass": true
+      }
+    }
+  }
+}
+```
+
 ## See also
 
 - [Yarn documentation](./yarn.md) for a walkthrough of configuring your project to use Yarn.
