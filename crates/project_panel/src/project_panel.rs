@@ -36,7 +36,7 @@ use project_panel_settings::{
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::{Settings, SettingsStore};
+use settings::{update_settings_file, Settings, SettingsStore};
 use smallvec::SmallVec;
 use std::any::TypeId;
 use std::{
@@ -197,6 +197,7 @@ actions!(
         Open,
         OpenPermanent,
         ToggleFocus,
+        ToggleHideGitIgnore,
         NewSearchInDirectory,
         UnfoldDirectory,
         FoldDirectory,
@@ -232,6 +233,13 @@ pub fn init(cx: &mut App) {
     cx.observe_new(|workspace: &mut Workspace, _, _| {
         workspace.register_action(|workspace, _: &ToggleFocus, window, cx| {
             workspace.toggle_panel_focus::<ProjectPanel>(window, cx);
+        });
+
+        workspace.register_action(|workspace, _: &ToggleHideGitIgnore, _, cx| {
+            let fs = workspace.app_state().fs.clone();
+            update_settings_file::<ProjectPanelSettings>(fs, cx, move |setting, _| {
+                setting.hide_gitignore = Some(!setting.hide_gitignore.unwrap_or(false));
+            })
         });
     })
     .detach();
