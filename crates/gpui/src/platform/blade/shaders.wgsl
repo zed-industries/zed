@@ -537,10 +537,28 @@ fn fs_quad(input: QuadVarying) -> @location(0) vec4<f32> {
         if (quad.border_style == 1) {
             var perimeter = 0.0;
             var t = 0.0;
+            var border_width = 0.0;
             if inner_corner_center_to_point.x >= 0.0 && inner_corner_center_to_point.y >= 0.0 {
                 perimeter = (M_PI_F / 2.0) * corner_radius;
-                let theta = atan2(inner_corner_center_to_point.y, inner_corner_center_to_point.x);
-                t = theta * corner_radius;
+                let angle = atan2(inner_corner_center_to_point.y, inner_corner_center_to_point.x);
+                t = angle * corner_radius;
+
+                let start_width =
+                    select(
+                        quad.border_widths.right,
+                        quad.border_widths.left,
+                        center_to_point.x < 0.0,
+                    );
+                let end_width =
+                    select(
+                        quad.border_widths.top,
+                        quad.border_widths.bottom,
+                        center_to_point.y < 0.0,
+                    );
+
+                // An alternative to this might be to interpolate the width
+                // around the arc, but that seems overcomplicated.
+                border_width = max(start_width, end_width);
             } else {
                 let is_horizontal = inner_corner_center_to_point.x < 0.0;
 
@@ -576,17 +594,18 @@ fn fs_quad(input: QuadVarying) -> @location(0) vec4<f32> {
                         center_to_point.y < 0.0,
                     ),
                     is_horizontal);
+
+                border_width = select(vertical_border, horizontal_border, is_horizontal);
             }
 
-            // Dash pattern: 4 pixels dash, 4 pixels gap
-            let desired_dash_period = 8.0;
-            let dash_length_multiplier = 0.5;
+            // Dash pattern: (2 * border_width) dash, (1 * border_width) pixels gap
+            let dash_length = 2 * border_width;
+            let desired_dash_gap = border_width;
+            let desired_dash_period = dash_length + desired_dash_gap;
 
-            // Adjust dash period and length to evenly divide this portion of
-            // the perimeter.
-            let dash_count = trunc(perimeter / desired_dash_period);
+            // Adjust dash gap to evenly divide this portion of the perimeter.
+            let dash_count = floor(perimeter / desired_dash_period);
             let dash_period = perimeter / dash_count;
-            let dash_length = dash_period * dash_length_multiplier;
 
             // Offset such that the dashes make nice corners when the corners
             // aren't rounded - half a dash on each side of the corner.
