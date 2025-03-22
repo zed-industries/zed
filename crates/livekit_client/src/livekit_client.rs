@@ -5,13 +5,15 @@ use collections::HashMap;
 use futures::{channel::mpsc, SinkExt};
 use gpui::{App, AsyncApp, ScreenCaptureSource, ScreenCaptureStream, Task};
 use gpui_tokio::Tokio;
+use libwebrtc::native::apm::AudioProcessingModule;
+use parking_lot::Mutex;
 use playback::{capture_local_audio_track, capture_local_video_track};
 
 mod playback;
 
 use crate::{LocalTrack, Participant, RemoteTrack, RoomEvent, TrackPublication};
-pub use playback::{play_remote_audio_track, AudioStream};
-pub(crate) use playback::{play_remote_video_track, RemoteVideoFrame};
+pub use playback::AudioStream;
+pub(crate) use playback::{play_remote_audio_track, play_remote_video_track, RemoteVideoFrame};
 
 #[derive(Clone, Debug)]
 pub struct RemoteVideoTrack(livekit::track::RemoteVideoTrack);
@@ -34,6 +36,7 @@ pub struct LocalParticipant(livekit::participant::LocalParticipant);
 pub struct Room {
     room: livekit::Room,
     _task: Task<()>,
+    apm: Arc<Mutex<AudioProcessingModule>>,
 }
 
 pub type TrackSid = livekit::id::TrackSid;
@@ -65,7 +68,16 @@ impl Room {
             }
         });
 
-        Ok((Self { room, _task: task }, rx))
+        Ok((
+            Self {
+                room,
+                _task: task,
+                apm: Arc::new(Mutex::new(AudioProcessingModule::new(
+                    true, true, true, true,
+                ))),
+            },
+            rx,
+        ))
     }
 
     pub fn local_participant(&self) -> LocalParticipant {
@@ -83,15 +95,15 @@ impl Room {
     pub fn connection_state(&self) -> ConnectionState {
         self.room.connection_state()
     }
-}
 
-impl LocalParticipant {
-    pub async fn publish_microphone_track(
+    pub async fn publish_local_microphone_track(
         &self,
         cx: &mut AsyncApp,
     ) -> Result<(LocalTrackPublication, playback::AudioStream)> {
-        let (track, stream) = capture_local_audio_track(cx.background_executor())?.await;
+        let (track, stream) =
+            capture_local_audio_track(self.apm.clone(), cx.background_executor())?.await;
         let publication = self
+            .local_participant()
             .publish_track(
                 livekit::track::LocalTrack::Audio(track.0),
                 livekit::options::TrackPublishOptions {
@@ -105,6 +117,24 @@ impl LocalParticipant {
         Ok((publication, stream))
     }
 
+    pub async fn unpublish_local_track(
+        &self,
+        sid: TrackSid,
+        cx: &mut AsyncApp,
+    ) -> Result<LocalTrackPublication> {
+        self.local_participant().unpublish_track(sid, cx).await
+    }
+
+    pub fn play_remote_audio_track(
+        &self,
+        track: &RemoteAudioTrack,
+        cx: &App,
+    ) -> Result<playback::AudioStream> {
+        play_remote_audio_track(self.apm.clone(), track, cx.background_executor())
+    }
+}
+
+impl LocalParticipant {
     pub async fn publish_screenshare_track(
         &self,
         source: &dyn ScreenCaptureSource,

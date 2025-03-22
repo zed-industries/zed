@@ -14,7 +14,7 @@ use futures::{FutureExt, StreamExt};
 use gpui::{App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, Task, WeakEntity};
 use gpui_tokio::Tokio;
 use language::LanguageRegistry;
-use livekit::{play_remote_audio_track, LocalTrackPublication, ParticipantIdentity, RoomEvent};
+use livekit::{LocalTrackPublication, ParticipantIdentity, RoomEvent};
 use livekit_client as livekit;
 use postage::{sink::Sink, stream::Stream, watch};
 use project::Project;
@@ -950,9 +950,11 @@ impl Room {
                         cx.emit(Event::RemoteAudioTracksChanged {
                             participant_id: participant.peer_id,
                         });
-                        let stream = play_remote_audio_track(&track, cx.background_executor())?;
-                        participant.audio_tracks.insert(track_id, (track, stream));
-                        participant.muted = publication.is_muted();
+                        if let Some(live_kit) = self.live_kit.as_ref() {
+                            let stream = live_kit.room.play_remote_audio_track(&track, cx)?;
+                            participant.audio_tracks.insert(track_id, (track, stream));
+                            participant.muted = publication.is_muted();
+                        }
                     }
                     livekit_client::RemoteTrack::Video(track) => {
                         cx.emit(Event::RemoteVideoTracksChanged {
@@ -1303,17 +1305,17 @@ impl Room {
             return Task::ready(Err(anyhow!("room is offline")));
         }
 
-        let (participant, publish_id) = if let Some(live_kit) = self.live_kit.as_mut() {
+        let (room, publish_id) = if let Some(live_kit) = self.live_kit.as_mut() {
             let publish_id = post_inc(&mut live_kit.next_publish_id);
             live_kit.microphone_track = LocalTrack::Pending { publish_id };
             cx.notify();
-            (live_kit.room.local_participant(), publish_id)
+            (live_kit.room.clone(), publish_id)
         } else {
             return Task::ready(Err(anyhow!("live-kit was not initialized")));
         };
 
         cx.spawn(async move |this, cx| {
-            let publication = participant.publish_microphone_track(cx).await;
+            let publication = room.publish_local_microphone_track(cx).await;
             this.update(cx, |this, cx| {
                 let live_kit = this
                     .live_kit
@@ -1333,7 +1335,7 @@ impl Room {
                     Ok((publication, stream)) => {
                         if canceled {
                             cx.spawn(async move |_, cx| {
-                                participant.unpublish_track(publication.sid(), cx).await
+                                room.unpublish_local_track(publication.sid(), cx).await
                             })
                             .detach_and_log_err(cx)
                         } else {

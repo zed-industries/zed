@@ -1,5 +1,3 @@
-use gpui::BackgroundExecutor;
-
 use crate::test;
 
 pub(crate) mod participant;
@@ -20,13 +18,6 @@ pub type Room = test::Room;
 pub use test::{ConnectionState, ParticipantIdentity, TrackSid};
 
 pub struct AudioStream {}
-
-pub fn play_remote_audio_track(
-    _track: &RemoteAudioTrack,
-    _background_executor: &BackgroundExecutor,
-) -> anyhow::Result<AudioStream> {
-    Ok(AudioStream {})
-}
 
 #[cfg(not(target_os = "macos"))]
 pub type RemoteVideoFrame = std::sync::Arc<gpui::RenderImage>;

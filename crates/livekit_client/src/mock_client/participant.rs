@@ -36,7 +36,7 @@ impl LocalParticipant {
             .await
     }
 
-    pub async fn publish_microphone_track(
+    pub(crate) async fn publish_microphone_track(
         &self,
         _cx: &AsyncApp,
     ) -> Result<(LocalTrackPublication, AudioStream)> {

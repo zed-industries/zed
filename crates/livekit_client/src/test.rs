@@ -1,10 +1,10 @@
-use crate::{Participant, RemoteTrack, RoomEvent, TrackPublication};
+use crate::{AudioStream, Participant, RemoteTrack, RoomEvent, TrackPublication};
 
 use crate::mock_client::{participant::*, publication::*, track::*};
 use anyhow::{anyhow, Context as _, Result};
 use async_trait::async_trait;
 use collections::{btree_map::Entry as BTreeEntry, hash_map::Entry, BTreeMap, HashMap, HashSet};
-use gpui::{AsyncApp, BackgroundExecutor};
+use gpui::{App, AsyncApp, BackgroundExecutor};
 use livekit_api::{proto, token};
 use parking_lot::Mutex;
 use postage::{mpsc, sink::Sink};
@@ -728,6 +728,25 @@ impl Room {
 
     pub(crate) fn token(&self) -> String {
         self.0.lock().token.clone()
+    }
+
+    pub fn play_remote_audio_track(
+        &self,
+        _track: &RemoteAudioTrack,
+        _cx: &App,
+    ) -> anyhow::Result<AudioStream> {
+        Ok(AudioStream {})
+    }
+
+    pub async fn unpublish_local_track(&self, sid: TrackSid, cx: &mut AsyncApp) -> Result<()> {
+        self.local_participant().unpublish_track(sid, cx).await
+    }
+
+    pub async fn publish_local_microphone_track(
+        &self,
+        cx: &mut AsyncApp,
+    ) -> Result<(LocalTrackPublication, AudioStream)> {
+        self.local_participant().publish_microphone_track(cx).await
     }
 }
 
