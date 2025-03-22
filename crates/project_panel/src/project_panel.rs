@@ -422,6 +422,9 @@ impl ProjectPanel {
             cx.observe_global::<SettingsStore>(move |this, cx| {
                 let new_settings = *ProjectPanelSettings::get_global(cx);
                 if project_panel_settings != new_settings {
+                    if project_panel_settings.hide_gitignore != new_settings.hide_gitignore {
+                        this.update_visible_entries(None, cx);
+                    }
                     project_panel_settings = new_settings;
                     this.update_diagnostics(cx);
                     cx.notify();
