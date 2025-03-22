@@ -6135,15 +6135,43 @@ impl Editor {
         let weak_editor = cx.weak_entity();
         let focus_handle = self.focus_handle(cx);
 
-        let second_entry_msg = if breakpoint.kind.log_message().is_some() {
+        let log_breakpoint_msg = if breakpoint.kind.log_message().is_some() {
             "Edit Log Breakpoint"
         } else {
             "Add Log Breakpoint"
         };
 
+        let toggle_state_msg = if breakpoint.is_enabled() {
+            "Disable"
+        } else {
+            "Enable"
+        };
+
+        let snapshot = self.buffer.read(cx).snapshot(cx);
+        let point = anchor.to_point(&snapshot);
+        let show_toggle_state = self.breakpoint_at_row(point.row, window, cx).is_some();
+
         ui::ContextMenu::build(window, cx, |menu, _, _cx| {
             menu.on_blur_subscription(Subscription::new(|| {}))
                 .context(focus_handle)
+                .when(show_toggle_state, |this| {
+                    this.entry(toggle_state_msg, None, {
+                        let weak_editor = weak_editor.clone();
+                        let breakpoint = breakpoint.clone();
+                        move |_window, cx| {
+                            weak_editor
+                                .update(cx, |this, cx| {
+                                    this.edit_breakpoint_at_anchor(
+                                        anchor,
+                                        breakpoint.as_ref().clone(),
+                                        BreakpointEditAction::ToggleState,
+                                        cx,
+                                    );
+                                })
+                                .log_err();
+                        }
+                    })
+                })
                 .entry("Toggle Breakpoint", None, {
                     let weak_editor = weak_editor.clone();
                     let breakpoint = breakpoint.clone();
@@ -6160,7 +6188,7 @@ impl Editor {
                             .log_err();
                     }
                 })
-                .entry(second_entry_msg, None, move |window, cx| {
+                .entry(log_breakpoint_msg, None, move |window, cx| {
                     weak_editor
                         .update(cx, |this, cx| {
                             this.add_edit_breakpoint_block(anchor, breakpoint.as_ref(), window, cx);
@@ -8368,7 +8396,7 @@ impl Editor {
     fn set_breakpoint_context_menu(
         &mut self,
         row: DisplayRow,
-        position: Option<Anchor>,
+        mut position: Option<Anchor>,
         breakpoint: Arc<Breakpoint>,
         clicked_point: gpui::Point<Pixels>,
         window: &mut Window,
@@ -8433,34 +8461,43 @@ impl Editor {
         });
     }
 
-    pub(crate) fn breakpoint_at_cursor_head(
+    fn breakpoint_at_cursor_head(
         &self,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<(Anchor, Breakpoint)> {
         let cursor_position: Point = self.selections.newest(cx).head();
+        self.breakpoint_at_row(cursor_position.row, window, cx)
+    }
+
+    pub(crate) fn breakpoint_at_row(
+        &self,
+        row: u32,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<(Anchor, Breakpoint)> {
         let snapshot = self.snapshot(window, cx);
         // We Set the column position to zero so this function interacts correctly
         // between calls by clicking on the gutter & using an action to toggle a
         // breakpoint. Otherwise, toggling a breakpoint through an action wouldn't
         // untoggle a breakpoint that was added through clicking on the gutter
-        let cursor_position = snapshot
+        let breakpoint_position = snapshot
             .display_snapshot
             .buffer_snapshot
-            .anchor_before(Point::new(cursor_position.row, 0));
+            .anchor_before(Point::new(row, 0));
 
         let project = self.project.clone();
 
-        let buffer_id = cursor_position.text_anchor.buffer_id?;
+        let buffer_id = breakpoint_position.text_anchor.buffer_id?;
         let enclosing_excerpt = snapshot
             .buffer_snapshot
-            .excerpt_ids_for_range(cursor_position..cursor_position)
+            .excerpt_ids_for_range(breakpoint_position..breakpoint_position)
             .next()?;
         let buffer = project?.read_with(cx, |project, cx| project.buffer_for_id(buffer_id, cx))?;
         let buffer_snapshot = buffer.read(cx).snapshot();
 
         let row = buffer_snapshot
-            .summary_for_anchor::<text::PointUtf16>(&cursor_position.text_anchor)
+            .summary_for_anchor::<text::PointUtf16>(&breakpoint_position.text_anchor)
             .row;
 
         let bp = self
@@ -8470,7 +8507,7 @@ impl Editor {
                 breakpoint_store
                     .breakpoints(
                         &buffer,
-                        Some(cursor_position.text_anchor..(text::Anchor::MAX)),
+                        Some(breakpoint_position.text_anchor..(text::Anchor::MAX)),
                         buffer_snapshot.clone(),
                         cx,
                     )

@@ -256,6 +256,21 @@ impl BreakpointStore {
                     breakpoint_set.breakpoints.push(breakpoint.clone());
                 }
             }
+            BreakpointEditAction::ToggleState => {
+                if let Some((_, bp)) = breakpoint_set
+                    .breakpoints
+                    .iter_mut()
+                    .find(|value| breakpoint == **value)
+                {
+                    if bp.is_enabled() {
+                        bp.state = BreakpointState::Disabled;
+                    } else {
+                        bp.state = BreakpointState::Enabled;
+                    }
+                } else {
+                    log::error!("Attempted to invert a breakpoint's state that doesn't exist ");
+                }
+            }
             BreakpointEditAction::EditLogMessage(log_message) => {
                 if !log_message.is_empty() {
                     breakpoint.1.kind = BreakpointKind::Log(log_message.clone());
@@ -523,6 +538,7 @@ type LogMessage = Arc<str>;
 #[derive(Clone, Debug)]
 pub enum BreakpointEditAction {
     Toggle,
+    ToggleState,
     EditLogMessage(LogMessage),
 }
 
