@@ -2300,6 +2300,7 @@ impl Editor {
                             )
                         })
                         .collect();
+
                     DB.save_editor_selections(editor_id, workspace_id, selections)
                         .await
                         .with_context(|| format!("persisting editor selections for editor {editor_id}, workspace {workspace_id:?}"))
@@ -3242,8 +3243,7 @@ impl Editor {
                             let start_point = TP::to_point(&range.start, &snapshot);
                             (start_point..end_point, text)
                         })
-                        .sorted_by_key(|(range, _)| range.start)
-                        .collect::<Vec<_>>();
+                        .sorted_by_key(|(range, _)| range.start);
                     buffer.edit(edits, None, cx);
                 })
             }
@@ -4408,9 +4408,7 @@ impl Editor {
         intent: CompletionIntent,
         window: &mut Window,
         cx: &mut Context<Editor>,
-    ) -> Option<Task<std::result::Result<(), anyhow::Error>>> {
-        use language::ToOffset as _;
-
+    ) -> Option<Task<Result<()>>> {
         let completions_menu =
             if let CodeContextMenu::Completions(menu) = self.hide_context_menu(window, cx)? {
                 menu
@@ -4418,13 +4416,14 @@ impl Editor {
                 return None;
             };
 
-        let entries = completions_menu.entries.borrow();
-        let mat = entries.get(item_ix.unwrap_or(completions_menu.selected_item))?;
-        if self.show_edit_predictions_in_menu() {
-            self.discard_inline_completion(true, cx);
-        }
-        let candidate_id = mat.candidate_id;
-        drop(entries);
+        let candidate_id = {
+            let entries = completions_menu.entries.borrow();
+            let mat = entries.get(item_ix.unwrap_or(completions_menu.selected_item))?;
+            if self.show_edit_predictions_in_menu() {
+                self.discard_inline_completion(true, cx);
+            }
+            mat.candidate_id
+        };
 
         let buffer_handle = completions_menu.buffer;
         let completion = completions_menu
@@ -4434,37 +4433,33 @@ impl Editor {
             .clone();
         cx.stop_propagation();
 
-        let snippet;
-        let text;
+        if self.selections.newest_anchor().start.buffer_id
+            != Some(buffer_handle.read(cx).remote_id())
+        {
+            return None;
+        }
 
+        let snippet;
+        let new_text;
         if completion.is_snippet() {
             snippet = Some(Snippet::parse(&completion.new_text).log_err()?);
-            text = snippet.as_ref().unwrap().text.clone();
+            new_text = snippet.as_ref().unwrap().text.clone();
         } else {
             snippet = None;
-            text = completion.new_text.clone();
+            new_text = completion.new_text.clone();
         };
+
+        let newest_selection = self.selections.newest::<usize>(cx);
         let selections = self.selections.all::<usize>(cx);
         let buffer = buffer_handle.read(cx);
         let old_range = completion.old_range.to_offset(buffer);
         let old_text = buffer.text_for_range(old_range.clone()).collect::<String>();
 
-        let newest_selection = self.selections.newest_anchor();
-        if newest_selection.start.buffer_id != Some(buffer_handle.read(cx).remote_id()) {
-            return None;
-        }
-
-        let lookbehind = newest_selection
-            .start
-            .text_anchor
-            .to_offset(buffer)
-            .saturating_sub(old_range.start);
-        let lookahead = old_range
-            .end
-            .saturating_sub(newest_selection.end.text_anchor.to_offset(buffer));
+        let start_distance = newest_selection.start.saturating_sub(old_range.start);
+        let end_distance = old_range.end.saturating_sub(newest_selection.end);
         let mut common_prefix_len = old_text
             .bytes()
-            .zip(text.bytes())
+            .zip(new_text.bytes())
             .take_while(|(a, b)| a == b)
             .count();
 
@@ -4473,9 +4468,9 @@ impl Editor {
         let mut ranges = Vec::new();
         let mut linked_edits = HashMap::<_, Vec<_>>::default();
         for selection in &selections {
-            if snapshot.contains_str_at(selection.start.saturating_sub(lookbehind), &old_text) {
-                let start = selection.start.saturating_sub(lookbehind);
-                let end = selection.end + lookahead;
+            if snapshot.contains_str_at(selection.start.saturating_sub(start_distance), &old_text) {
+                let start = selection.start.saturating_sub(start_distance);
+                let end = selection.end + end_distance;
                 if selection.id == newest_selection.id {
                     range_to_replace = Some(
                         ((start + common_prefix_len) as isize - selection.start as isize)
@@ -4511,13 +4506,13 @@ impl Editor {
                         linked_edits.entry(buffer.clone()).or_default().extend(
                             edits
                                 .into_iter()
-                                .map(|range| (range, text[common_prefix_len..].to_owned())),
+                                .map(|range| (range, new_text[common_prefix_len..].to_owned())),
                         );
                     }
                 }
             }
         }
-        let text = &text[common_prefix_len..];
+        let text = &new_text[common_prefix_len..];
 
         cx.emit(EditorEvent::InputHandled {
             utf16_range_to_replace: range_to_replace,
@@ -4539,11 +4534,8 @@ impl Editor {
                 this.insert_snippet(&ranges, snippet, window, cx).log_err();
             } else {
                 this.buffer.update(cx, |buffer, cx| {
-                    buffer.edit(
-                        ranges.iter().map(|range| (range.clone(), text)),
-                        this.autoindent_mode.clone(),
-                        cx,
-                    );
+                    let edits = ranges.iter().map(|range| (range.clone(), text));
+                    buffer.edit(edits, this.autoindent_mode.clone(), cx);
                 });
             }
             for (buffer, edits) in linked_edits {
@@ -4557,8 +4549,7 @@ impl Editor {
                             let start_point = TP::to_point(&range.start, &snapshot);
                             (start_point..end_point, text)
                         })
-                        .sorted_by_key(|(range, _)| range.start)
-                        .collect::<Vec<_>>();
+                        .sorted_by_key(|(range, _)| range.start);
                     buffer.edit(edits, None, cx);
                 })
             }
@@ -7525,14 +7516,11 @@ impl Editor {
 
         let tabstops = self.buffer.update(cx, |buffer, cx| {
             let snippet_text: Arc<str> = snippet.text.clone().into();
-            buffer.edit(
-                insertion_ranges
-                    .iter()
-                    .cloned()
-                    .map(|range| (range, snippet_text.clone())),
-                Some(AutoindentMode::EachLine),
-                cx,
-            );
+            let edits = insertion_ranges
+                .iter()
+                .cloned()
+                .map(|range| (range, snippet_text.clone()));
+            buffer.edit(edits, Some(AutoindentMode::EachLine), cx);
 
             let snapshot = &*buffer.read(cx);
             let snippet = &snippet;
