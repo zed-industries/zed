@@ -9425,9 +9425,7 @@ async fn test_completion(cx: &mut TestAppContext) {
     cx.set_state("editorˇ");
     cx.simulate_keystroke(".");
     assert!(cx.editor(|e, _, _| e.context_menu.borrow_mut().is_none()));
-    cx.simulate_keystroke("c");
-    cx.simulate_keystroke("l");
-    cx.simulate_keystroke("o");
+    cx.simulate_keystrokes("c l o");
     cx.assert_editor_state("editor.cloˇ");
     assert!(cx.editor(|e, _, _| e.context_menu.borrow_mut().is_none()));
     cx.update_editor(|editor, window, cx| {
@@ -9979,7 +9977,6 @@ async fn test_multiline_completion(cx: &mut TestAppContext) {
                         "Adjusted completion items should still keep their filter ranges for the entire label. Item: {completion:?}"
                     );
                 }
-
         } else {
             panic!("expected completion menu to be open");
         }
@@ -10140,7 +10137,7 @@ async fn test_no_duplicated_completion_requests(cx: &mut TestAppContext) {
     )
     .await;
 
-    cx.set_state(indoc! {"fn main() { let a = 2ˇ; }"});
+    cx.set_state("fn main() { let a = 2ˇ; }");
     cx.simulate_keystroke(".");
     let completion_item = lsp::CompletionItem {
         label: "Some".into(),
@@ -10198,16 +10195,14 @@ async fn test_no_duplicated_completion_requests(cx: &mut TestAppContext) {
 
     cx.condition(|editor, _| editor.context_menu_visible())
         .await;
-    cx.assert_editor_state(indoc! {"fn main() { let a = 2.ˇ; }"});
+    cx.assert_editor_state("fn main() { let a = 2.ˇ; }");
     assert!(request.next().await.is_some());
     assert_eq!(counter.load(atomic::Ordering::Acquire), 1);
 
-    cx.simulate_keystroke("S");
-    cx.simulate_keystroke("o");
-    cx.simulate_keystroke("m");
+    cx.simulate_keystrokes("S o m");
     cx.condition(|editor, _| editor.context_menu_visible())
         .await;
-    cx.assert_editor_state(indoc! {"fn main() { let a = 2.Somˇ; }"});
+    cx.assert_editor_state("fn main() { let a = 2.Somˇ; }");
     assert!(request.next().await.is_some());
     assert!(request.next().await.is_some());
     assert!(request.next().await.is_some());
@@ -12493,7 +12488,7 @@ async fn test_completions_with_additional_edits(cx: &mut TestAppContext) {
     )
     .await;
 
-    cx.set_state(indoc! {"fn main() { let a = 2ˇ; }"});
+    cx.set_state("fn main() { let a = 2ˇ; }");
     cx.simulate_keystroke(".");
     let completion_item = lsp::CompletionItem {
         label: "some".into(),
@@ -12555,7 +12550,7 @@ async fn test_completions_with_additional_edits(cx: &mut TestAppContext) {
             .confirm_completion(&ConfirmCompletion::default(), window, cx)
             .unwrap()
     });
-    cx.assert_editor_state(indoc! {"fn main() { let a = 2.Some(2)ˇ; }"});
+    cx.assert_editor_state("fn main() { let a = 2.Some(2)ˇ; }");
 
     cx.handle_request::<lsp::request::ResolveCompletionItem, _, _>(move |_, _, _| {
         let task_completion_item = completion_item.clone();
@@ -12565,7 +12560,7 @@ async fn test_completions_with_additional_edits(cx: &mut TestAppContext) {
     .await
     .unwrap();
     apply_additional_edits.await.unwrap();
-    cx.assert_editor_state(indoc! {"fn main() { let a = Some(2)ˇ; }"});
+    cx.assert_editor_state("fn main() { let a = Some(2)ˇ; }");
 }
 
 #[gpui::test]
@@ -12585,7 +12580,7 @@ async fn test_completions_resolve_updates_labels_if_filter_text_matches(cx: &mut
     )
     .await;
 
-    cx.set_state(indoc! {"fn main() { let a = 2ˇ; }"});
+    cx.set_state("fn main() { let a = 2ˇ; }");
     cx.simulate_keystroke(".");
 
     let item1 = lsp::CompletionItem {
@@ -12720,7 +12715,7 @@ async fn test_completions_resolve_happens_once(cx: &mut TestAppContext) {
     )
     .await;
 
-    cx.set_state(indoc! {"fn main() { let a = 2ˇ; }"});
+    cx.set_state("fn main() { let a = 2ˇ; }");
     cx.simulate_keystroke(".");
 
     let unresolved_item_1 = lsp::CompletionItem {
@@ -12924,7 +12919,7 @@ async fn test_completions_default_resolve_data_handling(cx: &mut TestAppContext)
     )
     .await;
 
-    cx.set_state(indoc! {"fn main() { let a = 2ˇ; }"});
+    cx.set_state("fn main() { let a = 2ˇ; }");
     cx.simulate_keystroke(".");
 
     let completion_data = default_data.clone();

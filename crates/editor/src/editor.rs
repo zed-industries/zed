@@ -2300,6 +2300,7 @@ impl Editor {
                             )
                         })
                         .collect();
+
                     DB.save_editor_selections(editor_id, workspace_id, selections)
                         .await
                         .with_context(|| format!("persisting editor selections for editor {editor_id}, workspace {workspace_id:?}"))
@@ -3242,8 +3243,7 @@ impl Editor {
                             let start_point = TP::to_point(&range.start, &snapshot);
                             (start_point..end_point, text)
                         })
-                        .sorted_by_key(|(range, _)| range.start)
-                        .collect::<Vec<_>>();
+                        .sorted_by_key(|(range, _)| range.start);
                     buffer.edit(edits, None, cx);
                 })
             }
@@ -4408,7 +4408,7 @@ impl Editor {
         intent: CompletionIntent,
         window: &mut Window,
         cx: &mut Context<Editor>,
-    ) -> Option<Task<std::result::Result<(), anyhow::Error>>> {
+    ) -> Option<Task<Result<()>>> {
         use language::ToOffset as _;
 
         let completions_menu =
@@ -4436,7 +4436,6 @@ impl Editor {
 
         let snippet;
         let text;
-
         if completion.is_snippet() {
             snippet = Some(Snippet::parse(&completion.new_text).log_err()?);
             text = snippet.as_ref().unwrap().text.clone();
@@ -4444,6 +4443,7 @@ impl Editor {
             snippet = None;
             text = completion.new_text.clone();
         };
+
         let selections = self.selections.all::<usize>(cx);
         let buffer = buffer_handle.read(cx);
         let old_range = completion.old_range.to_offset(buffer);
@@ -7525,14 +7525,11 @@ impl Editor {
 
         let tabstops = self.buffer.update(cx, |buffer, cx| {
             let snippet_text: Arc<str> = snippet.text.clone().into();
-            buffer.edit(
-                insertion_ranges
-                    .iter()
-                    .cloned()
-                    .map(|range| (range, snippet_text.clone())),
-                Some(AutoindentMode::EachLine),
-                cx,
-            );
+            let edits = insertion_ranges
+                .iter()
+                .cloned()
+                .map(|range| (range, snippet_text.clone()));
+            buffer.edit(edits, Some(AutoindentMode::EachLine), cx);
 
             let snapshot = &*buffer.read(cx);
             let snippet = &snippet;
