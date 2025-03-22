@@ -183,10 +183,13 @@ impl Vim {
         &mut self,
         text: Arc<str>,
         line: bool,
+        should_pop_operator: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.pop_operator(window, cx);
+        if should_pop_operator {
+            self.pop_operator(window, cx);
+        }
         let mark = self
             .update_editor(window, cx, |vim, editor, window, cx| {
                 vim.get_mark(&text, editor, window, cx)

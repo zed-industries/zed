@@ -144,6 +144,7 @@ actions!(
         PushReplace,
         PushDeleteSurrounds,
         PushMark,
+        ToggleMarksView,
         PushIndent,
         PushOutdent,
         PushAutoIndent,
@@ -1599,7 +1600,7 @@ impl Vim {
                     self.select_register(text, window, cx);
                 }
             },
-            Some(Operator::Jump { line }) => self.jump(text, line, window, cx),
+            Some(Operator::Jump { line }) => self.jump(text, line, true, window, cx),
             _ => {
                 if self.mode == Mode::Replace {
                     self.multi_replace(text, window, cx)
