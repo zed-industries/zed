@@ -20,8 +20,8 @@ use git::{
     blame::Blame,
     parse_git_remote_url,
     repository::{
-        Branch, CommitDetails, DiffType, GitRepository, GitRepositoryCheckpoint, PushOptions,
-        Remote, RemoteCommandOutput, RepoPath, ResetMode,
+        Branch, CommitDetails, DiffType, FetchOptions, GitRepository, GitRepositoryCheckpoint,
+        PushOptions, Remote, RemoteCommandOutput, RepoPath, ResetMode,
     },
     status::FileStatus,
     BuildPermalinkParams, GitHostingProviderRegistry,
@@ -1368,6 +1368,7 @@ impl GitStore {
         let work_directory_id = ProjectEntryId::from_proto(envelope.payload.work_directory_id);
         let repository_handle =
             Self::repository_for_request(&this, worktree_id, work_directory_id, &mut cx)?;
+        let fetch_options = FetchOptions::from_proto(envelope.payload.fetch_options);
         let askpass_id = envelope.payload.askpass_id;
 
         let askpass = make_remote_delegate(
@@ -1381,7 +1382,7 @@ impl GitStore {
 
         let remote_output = repository_handle
             .update(&mut cx, |repository_handle, cx| {
-                repository_handle.fetch(askpass, cx)
+                repository_handle.fetch(fetch_options, askpass, cx)
             })?
             .await??;
 
@@ -2909,6 +2910,7 @@ impl Repository {
 
     pub fn fetch(
         &mut self,
+        fetch_options: FetchOptions,
         askpass: AskPassDelegate,
         cx: &mut App,
     ) -> oneshot::Receiver<Result<RemoteCommandOutput>> {
@@ -2922,7 +2924,7 @@ impl Repository {
                 RepositoryState::Local(git_repository) => {
                     let askpass = AskPassSession::new(&executor, askpass).await?;
                     let env = env.await;
-                    git_repository.fetch(askpass, env, cx).await
+                    git_repository.fetch(fetch_options, askpass, env, cx).await
                 }
                 RepositoryState::Remote {
                     project_id,
@@ -2942,6 +2944,7 @@ impl Repository {
                             worktree_id: worktree_id.to_proto(),
                             work_directory_id: work_directory_id.to_proto(),
                             askpass_id,
+                            fetch_options: fetch_options.to_proto(),
                         })
                         .await
                         .context("sending fetch request")?;
