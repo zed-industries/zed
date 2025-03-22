@@ -27,6 +27,7 @@ use language::{
     Override, Point,
 };
 use language_settings::{Formatter, FormatterList, IndentGuideSettings};
+use lsp::CompletionParams;
 use multi_buffer::{IndentGuide, PathKey};
 use parking_lot::Mutex;
 use pretty_assertions::{assert_eq, assert_ne};
@@ -9743,6 +9744,20 @@ async fn test_word_completions_usually_skip_digits(cx: &mut TestAppContext) {
     });
 }
 
+fn gen_text_edit(params: &CompletionParams, text: &str) -> Option<lsp::CompletionTextEdit> {
+    let position = || lsp::Position {
+        line: params.text_document_position.position.line,
+        character: params.text_document_position.position.character,
+    };
+    Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
+        range: lsp::Range {
+            start: position(),
+            end: position(),
+        },
+        new_text: text.to_string(),
+    }))
+}
+
 #[gpui::test]
 async fn test_multiline_completion(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
@@ -9842,37 +9857,13 @@ async fn test_multiline_completion(cx: &mut TestAppContext) {
             Ok(Some(lsp::CompletionResponse::Array(vec![
                 lsp::CompletionItem {
                     label: multiline_label.to_string(),
-                    text_edit: Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
-                        range: lsp::Range {
-                            start: lsp::Position {
-                                line: params.text_document_position.position.line,
-                                character: params.text_document_position.position.character,
-                            },
-                            end: lsp::Position {
-                                line: params.text_document_position.position.line,
-                                character: params.text_document_position.position.character,
-                            },
-                        },
-                        new_text: "new_text_1".to_string(),
-                    })),
+                    text_edit: gen_text_edit(&params, "new_text_1"),
                     ..lsp::CompletionItem::default()
                 },
                 lsp::CompletionItem {
                     label: "single line label 1".to_string(),
                     detail: Some(multiline_detail.to_string()),
-                    text_edit: Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
-                        range: lsp::Range {
-                            start: lsp::Position {
-                                line: params.text_document_position.position.line,
-                                character: params.text_document_position.position.character,
-                            },
-                            end: lsp::Position {
-                                line: params.text_document_position.position.line,
-                                character: params.text_document_position.position.character,
-                            },
-                        },
-                        new_text: "new_text_2".to_string(),
-                    })),
+                    text_edit: gen_text_edit(&params, "new_text_2"),
                     ..lsp::CompletionItem::default()
                 },
                 lsp::CompletionItem {
@@ -9881,37 +9872,13 @@ async fn test_multiline_completion(cx: &mut TestAppContext) {
                         description: Some(multiline_description.to_string()),
                         detail: None,
                     }),
-                    text_edit: Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
-                        range: lsp::Range {
-                            start: lsp::Position {
-                                line: params.text_document_position.position.line,
-                                character: params.text_document_position.position.character,
-                            },
-                            end: lsp::Position {
-                                line: params.text_document_position.position.line,
-                                character: params.text_document_position.position.character,
-                            },
-                        },
-                        new_text: "new_text_2".to_string(),
-                    })),
+                    text_edit: gen_text_edit(&params, "new_text_2"),
                     ..lsp::CompletionItem::default()
                 },
                 lsp::CompletionItem {
                     label: multiline_label_2.to_string(),
                     detail: Some(multiline_detail_2.to_string()),
-                    text_edit: Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
-                        range: lsp::Range {
-                            start: lsp::Position {
-                                line: params.text_document_position.position.line,
-                                character: params.text_document_position.position.character,
-                            },
-                            end: lsp::Position {
-                                line: params.text_document_position.position.line,
-                                character: params.text_document_position.position.character,
-                            },
-                        },
-                        new_text: "new_text_3".to_string(),
-                    })),
+                    text_edit: gen_text_edit(&params, "new_text_3"),
                     ..lsp::CompletionItem::default()
                 },
                 lsp::CompletionItem {
@@ -9919,19 +9886,7 @@ async fn test_multiline_completion(cx: &mut TestAppContext) {
                     detail: Some(
                         "Details with many     spaces and \t but without newlines".to_string(),
                     ),
-                    text_edit: Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
-                        range: lsp::Range {
-                            start: lsp::Position {
-                                line: params.text_document_position.position.line,
-                                character: params.text_document_position.position.character,
-                            },
-                            end: lsp::Position {
-                                line: params.text_document_position.position.line,
-                                character: params.text_document_position.position.character,
-                            },
-                        },
-                        new_text: "new_text_4".to_string(),
-                    })),
+                    text_edit: gen_text_edit(&params, "new_text_4"),
                     ..lsp::CompletionItem::default()
                 },
             ])))
