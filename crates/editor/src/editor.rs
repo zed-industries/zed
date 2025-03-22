@@ -188,16 +188,12 @@ use ui::{
 use util::{maybe, post_inc, RangeExt, ResultExt, TryFutureExt};
 use workspace::{
     item::{ItemHandle, PreviewTabsSettings},
-    ItemId, RestoreOnStartupBehavior, SERIALIZATION_THROTTLE_TIME,
-};
-use workspace::{
     notifications::{DetachAndPromptErr, NotificationId, NotifyTaskExt},
-    WorkspaceSettings,
+    searchable::SearchEvent,
+    Item as WorkspaceItem, ItemId, ItemNavHistory, OpenInTerminal, OpenTerminal,
+    RestoreOnStartupBehavior, SplitDirection, TabBarSettings, Toast, ViewId, Workspace,
+    WorkspaceId, WorkspaceSettings, SERIALIZATION_THROTTLE_TIME,
 };
-use workspace::{
-    searchable::SearchEvent, ItemNavHistory, SplitDirection, ViewId, Workspace, WorkspaceId,
-};
-use workspace::{Item as WorkspaceItem, OpenInTerminal, OpenTerminal, TabBarSettings, Toast};
 
 use crate::hover_links::{find_url, find_url_from_range};
 use crate::signature_help::{SignatureHelpHiddenBy, SignatureHelpState};
@@ -641,7 +637,7 @@ pub struct Editor {
     selection_history: SelectionHistory,
     autoclose_regions: Vec<AutocloseRegion>,
     snippet_stack: InvalidationStack<SnippetState>,
-    select_larger_syntax_node_stack: Vec<Box<[Selection<usize>]>>,
+    select_syntax_node_history: SelectSyntaxNodeHistory,
     ime_transaction: Option<TransactionId>,
     active_diagnostics: Option<ActiveDiagnosticGroup>,
     show_inline_diagnostics: bool,
@@ -1032,6 +1028,42 @@ pub struct ClipboardSelection {
     pub first_line_indent: u32,
 }
 
+// selections, scroll behavior, was newest selection reversed
+type SelectSyntaxNodeHistoryState = (
+    Box<[Selection<usize>]>,
+    SelectSyntaxNodeScrollBehavior,
+    bool,
+);
+
+#[derive(Default)]
+struct SelectSyntaxNodeHistory {
+    stack: Vec<SelectSyntaxNodeHistoryState>,
+    // disable temporarily to allow changing selections without losing the stack
+    pub disable_clearing: bool,
+}
+
+impl SelectSyntaxNodeHistory {
+    pub fn try_clear(&mut self) {
+        if !self.disable_clearing {
+            self.stack.clear();
+        }
+    }
+
+    pub fn push(&mut self, selection: SelectSyntaxNodeHistoryState) {
+        self.stack.push(selection);
+    }
+
+    pub fn pop(&mut self) -> Option<SelectSyntaxNodeHistoryState> {
+        self.stack.pop()
+    }
+}
+
+enum SelectSyntaxNodeScrollBehavior {
+    CursorTop,
+    CenterSelection,
+    CursorBottom,
+}
+
 #[derive(Debug)]
 pub(crate) struct NavigationData {
     cursor_anchor: Anchor,
@@ -1374,7 +1406,7 @@ impl Editor {
             selection_history: Default::default(),
             autoclose_regions: Default::default(),
             snippet_stack: Default::default(),
-            select_larger_syntax_node_stack: Vec::new(),
+            select_syntax_node_history: SelectSyntaxNodeHistory::default(),
             ime_transaction: Default::default(),
             active_diagnostics: None,
             show_inline_diagnostics: ProjectSettings::get_global(cx).diagnostics.inline.enabled,
@@ -2136,7 +2168,7 @@ impl Editor {
         self.add_selections_state = None;
         self.select_next_state = None;
         self.select_prev_state = None;
-        self.select_larger_syntax_node_stack.clear();
+        self.select_syntax_node_history.try_clear();
         self.invalidate_autoclose_regions(&self.selections.disjoint_anchors(), buffer);
         self.snippet_stack
             .invalidate(&self.selections.disjoint_anchors(), buffer);
@@ -11819,13 +11851,19 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let Some(visible_row_count) = self.visible_row_count() else {
+            return;
+        };
+        let old_selections: Box<[_]> = self.selections.all::<usize>(cx).into();
+        if old_selections.is_empty() {
+            return;
+        }
+
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let buffer = self.buffer.read(cx).snapshot(cx);
-        let old_selections = self.selections.all::<usize>(cx).into_boxed_slice();
 
-        let mut stack = mem::take(&mut self.select_larger_syntax_node_stack);
         let mut selected_larger_node = false;
-        let new_selections = old_selections
+        let mut new_selections = old_selections
             .iter()
             .map(|selection| {
                 let old_range = selection.start..selection.end;
@@ -11867,13 +11905,56 @@ impl Editor {
             })
             .collect::<Vec<_>>();
 
-        if selected_larger_node {
-            stack.push(old_selections);
-            self.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
-                s.select(new_selections);
-            });
+        if !selected_larger_node {
+            return; // don't put this call in the history
         }
-        self.select_larger_syntax_node_stack = stack;
+
+        // scroll based on transformation done to the last selection created by the user
+        let (last_old, last_new) = old_selections
+            .last()
+            .zip(new_selections.last().cloned())
+            .expect("old_selections isn't empty");
+
+        // revert selection
+        let is_selection_reversed = {
+            let should_newest_selection_be_reversed = last_old.start != last_new.start;
+            new_selections.last_mut().expect("checked above").reversed =
+                should_newest_selection_be_reversed;
+            should_newest_selection_be_reversed
+        };
+
+        if selected_larger_node {
+            self.select_syntax_node_history.disable_clearing = true;
+            self.change_selections(None, window, cx, |s| {
+                s.select(new_selections.clone());
+            });
+            self.select_syntax_node_history.disable_clearing = false;
+        }
+
+        let start_row = last_new.start.to_display_point(&display_map).row().0;
+        let end_row = last_new.end.to_display_point(&display_map).row().0;
+        let selection_height = end_row - start_row + 1;
+        let scroll_margin_rows = self.vertical_scroll_margin() as u32;
+
+        // if fits on screen (considering margin), keep it in the middle, else, scroll to selection head
+        let scroll_behavior = if visible_row_count >= selection_height + scroll_margin_rows * 2 {
+            let middle_row = (end_row + start_row) / 2;
+            let selection_center = middle_row.saturating_sub(visible_row_count / 2);
+            self.set_scroll_top_row(DisplayRow(selection_center), window, cx);
+            SelectSyntaxNodeScrollBehavior::CenterSelection
+        } else if is_selection_reversed {
+            self.scroll_cursor_top(&Default::default(), window, cx);
+            SelectSyntaxNodeScrollBehavior::CursorTop
+        } else {
+            self.scroll_cursor_bottom(&Default::default(), window, cx);
+            SelectSyntaxNodeScrollBehavior::CursorBottom
+        };
+
+        self.select_syntax_node_history.push((
+            old_selections,
+            scroll_behavior,
+            is_selection_reversed,
+        ));
     }
 
     pub fn select_smaller_syntax_node(
@@ -11882,13 +11963,44 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let mut stack = mem::take(&mut self.select_larger_syntax_node_stack);
-        if let Some(selections) = stack.pop() {
-            self.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
+        let Some(visible_row_count) = self.visible_row_count() else {
+            return;
+        };
+
+        if let Some((mut selections, scroll_behavior, is_selection_reversed)) =
+            self.select_syntax_node_history.pop()
+        {
+            let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
+
+            if let Some(selection) = selections.last_mut() {
+                selection.reversed = is_selection_reversed;
+            }
+
+            self.select_syntax_node_history.disable_clearing = true;
+            self.change_selections(None, window, cx, |s| {
                 s.select(selections.to_vec());
             });
+            self.select_syntax_node_history.disable_clearing = false;
+
+            let newest = self.selections.newest::<usize>(cx);
+            let start_row = newest.start.to_display_point(&display_map).row().0;
+            let end_row = newest.end.to_display_point(&display_map).row().0;
+
+            match scroll_behavior {
+                SelectSyntaxNodeScrollBehavior::CursorTop => {
+                    self.scroll_cursor_top(&Default::default(), window, cx);
+                }
+                SelectSyntaxNodeScrollBehavior::CenterSelection => {
+                    let middle_row = (end_row + start_row) / 2;
+                    let selection_center = middle_row.saturating_sub(visible_row_count / 2);
+                    // centralize the selection, not the cursor
+                    self.set_scroll_top_row(DisplayRow(selection_center), window, cx);
+                }
+                SelectSyntaxNodeScrollBehavior::CursorBottom => {
+                    self.scroll_cursor_bottom(&Default::default(), window, cx);
+                }
+            }
         }
-        self.select_larger_syntax_node_stack = stack;
     }
 
     fn refresh_runnables(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Task<()> {
