@@ -7884,8 +7884,13 @@ impl Editor {
                 let indent_remainder = snapshot
                     .text_for_range(Point::new(cursor.row, 0)..cursor)
                     .flat_map(str::chars)
-                    .fold(row_delta % tab_size, 
-                        |counter: u32, c| if c == '\t' { 0 } else { (counter + 1) % tab_size });
+                    .fold(row_delta % tab_size, |counter: u32, c| {
+                        if c == '\t' { 
+                            0 
+                        } else { 
+                            (counter + 1) % tab_size 
+                        }
+                    });
 
                 let chars_to_next_tab_stop = tab_size - indent_remainder;
                 IndentSize::spaces(chars_to_next_tab_stop)
