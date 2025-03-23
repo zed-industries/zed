@@ -43,6 +43,8 @@ pub enum Model {
     Claude3_5Sonnet,
     #[serde(alias = "claude-3-7-sonnet", rename = "claude-3.7-sonnet")]
     Claude3_7Sonnet,
+    #[serde(alias = "claude-3-7-sonnet-thinking", rename = "claude-3.7-sonnet-thinking")]
+    Claude3_7SonnetThinking,
     #[serde(alias = "gemini-2.0-flash", rename = "gemini-2.0-flash-001")]
     Gemini20Flash,
 }
@@ -54,7 +56,8 @@ impl Model {
             | Self::Gpt4
             | Self::Gpt3_5Turbo
             | Self::Claude3_5Sonnet
-            | Self::Claude3_7Sonnet => true,
+            | Self::Claude3_7Sonnet
+            | Self::Claude3_7SonnetThinking => true,
             Self::O3Mini | Self::O1 | Self::Gemini20Flash => false,
         }
     }
@@ -68,6 +71,7 @@ impl Model {
             "o3-mini" => Ok(Self::O3Mini),
             "claude-3-5-sonnet" => Ok(Self::Claude3_5Sonnet),
             "claude-3-7-sonnet" => Ok(Self::Claude3_7Sonnet),
+            "claude-3-7-sonnet-thinking" => Ok(Self::Claude3_7SonnetThinking),
             "gemini-2.0-flash-001" => Ok(Self::Gemini20Flash),
             _ => Err(anyhow!("Invalid model id: {}", id)),
         }
@@ -82,6 +86,7 @@ impl Model {
             Self::O1 => "o1",
             Self::Claude3_5Sonnet => "claude-3-5-sonnet",
             Self::Claude3_7Sonnet => "claude-3-7-sonnet",
+            Self::Claude3_7SonnetThinking => "claude-3.7-sonnet-thinking",
             Self::Gemini20Flash => "gemini-2.0-flash-001",
         }
     }
@@ -95,6 +100,7 @@ impl Model {
             Self::O1 => "o1",
             Self::Claude3_5Sonnet => "Claude 3.5 Sonnet",
             Self::Claude3_7Sonnet => "Claude 3.7 Sonnet",
+            Self::Claude3_7SonnetThinking => "Claude 3.7 Sonnet Thinking",
             Self::Gemini20Flash => "Gemini 2.0 Flash",
         }
     }
@@ -108,6 +114,7 @@ impl Model {
             Self::O1 => 20_000,
             Self::Claude3_5Sonnet => 200_000,
             Self::Claude3_7Sonnet => 90_000,
+            Model::Claude3_7SonnetThinking => 90_000,
             Model::Gemini20Flash => 128_000,
         }
     }
