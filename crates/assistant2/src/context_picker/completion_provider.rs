@@ -47,7 +47,7 @@ impl ContextPickerCompletionProvider {
 
     fn default_completions(
         excerpt_id: ExcerptId,
-        range_to_replace: Range<Anchor>,
+        source_range: Range<Anchor>,
         context_store: Entity<ContextStore>,
         thread_store: Option<WeakEntity<ThreadStore>>,
         editor: Entity<Editor>,
@@ -73,7 +73,7 @@ impl ContextPickerCompletionProvider {
                     true,
                     false,
                     excerpt_id,
-                    range_to_replace.clone(),
+                    source_range.clone(),
                     editor.clone(),
                     context_store.clone(),
                     workspace.clone(),
@@ -86,7 +86,7 @@ impl ContextPickerCompletionProvider {
                     Some(Self::completion_for_thread(
                         thread_context_entry.clone(),
                         excerpt_id,
-                        range_to_replace.clone(),
+                        source_range.clone(),
                         true,
                         editor.clone(),
                         context_store.clone(),
@@ -101,7 +101,7 @@ impl ContextPickerCompletionProvider {
                 .iter()
                 .map(|mode| {
                     Completion {
-                        old_range: range_to_replace.clone(),
+                        old_range: source_range.clone(),
                         new_text: format!("@{} ", mode.mention_prefix()),
                         label: CodeLabel::plain(mode.label().to_string(), None),
                         icon_path: Some(mode.icon().path().into()),
@@ -174,7 +174,7 @@ impl ContextPickerCompletionProvider {
     fn completion_for_thread(
         thread_entry: ThreadContextEntry,
         excerpt_id: ExcerptId,
-        range_to_replace: Range<Anchor>,
+        source_range: Range<Anchor>,
         recent: bool,
         editor: Entity<Editor>,
         context_store: Entity<ContextStore>,
@@ -186,7 +186,7 @@ impl ContextPickerCompletionProvider {
             IconName::MessageCircle
         };
         Completion {
-            old_range: range_to_replace.clone(),
+            old_range: source_range.clone(),
             new_text: format!("@thread {}", thread_entry.summary),
             label: CodeLabel::plain(thread_entry.summary.to_string(), None),
             documentation: None,
@@ -196,7 +196,7 @@ impl ContextPickerCompletionProvider {
                 IconName::MessageCircle.path().into(),
                 thread_entry.summary.clone(),
                 excerpt_id,
-                range_to_replace.clone(),
+                source_range.clone(),
                 editor.clone(),
                 move |cx| {
                     let thread_id = thread_entry.id.clone();
@@ -222,7 +222,7 @@ impl ContextPickerCompletionProvider {
         is_recent: bool,
         is_directory: bool,
         excerpt_id: ExcerptId,
-        range_to_replace: Range<Anchor>,
+        source_range: Range<Anchor>,
         editor: Entity<Editor>,
         context_store: Entity<ContextStore>,
         workspace: Entity<Workspace>,
@@ -255,7 +255,7 @@ impl ContextPickerCompletionProvider {
             .unwrap_or_else(|| "untitled".to_string());
 
         Some(Completion {
-            old_range: range_to_replace.clone(),
+            old_range: source_range.clone(),
             new_text: format!("@file {}", full_path.to_string_lossy()),
             label,
             documentation: None,
@@ -265,7 +265,7 @@ impl ContextPickerCompletionProvider {
                 crease_icon_path,
                 crease_name.into(),
                 excerpt_id,
-                range_to_replace,
+                source_range,
                 editor,
                 move |cx| {
                     context_store.update(cx, |context_store, cx| {
@@ -311,8 +311,8 @@ impl CompletionProvider for ContextPickerCompletionProvider {
         };
 
         let snapshot = buffer.read(cx).snapshot();
-        let range_to_replace = snapshot.anchor_after(state.range_to_replace.start)
-            ..snapshot.anchor_after(state.range_to_replace.end);
+        let source_range = snapshot.anchor_after(state.source_range.start)
+            ..snapshot.anchor_after(state.source_range.end);
 
         let thread_store = self.thread_store.clone();
         let editor = self.editor.clone();
@@ -352,7 +352,7 @@ impl CompletionProvider for ContextPickerCompletionProvider {
                                 false,
                                 mat.is_dir,
                                 excerpt_id,
-                                range_to_replace.clone(),
+                                source_range.clone(),
                                 editor.clone(),
                                 context_store.clone(),
                                 workspace.clone(),
@@ -380,7 +380,7 @@ impl CompletionProvider for ContextPickerCompletionProvider {
                             completions.push(Self::completion_for_thread(
                                 thread.clone(),
                                 excerpt_id,
-                                range_to_replace.clone(),
+                                source_range.clone(),
                                 false,
                                 editor.clone(),
                                 context_store.clone(),
@@ -394,7 +394,7 @@ impl CompletionProvider for ContextPickerCompletionProvider {
                         if let Some(editor) = editor.upgrade() {
                             completions.extend(Self::default_completions(
                                 excerpt_id,
-                                range_to_replace.clone(),
+                                source_range.clone(),
                                 context_store.clone(),
                                 thread_store.clone(),
                                 editor,
@@ -432,7 +432,12 @@ impl CompletionProvider for ContextPickerCompletionProvider {
         let line_start = Point::new(position.row, 0);
         let mut lines = buffer.text_for_range(line_start..position).lines();
         if let Some(line) = lines.next() {
-            MentionCompletion::try_parse(line).is_some()
+            MentionCompletion::try_parse(line)
+                .map(|completion| {
+                    completion.source_range.start <= position.column as usize
+                        && completion.source_range.end >= position.column as usize
+                })
+                .unwrap_or(false)
         } else {
             false
         }
@@ -447,7 +452,7 @@ fn confirm_completion_callback(
     crease_icon_path: SharedString,
     crease_text: SharedString,
     excerpt_id: ExcerptId,
-    range_to_replace: Range<Anchor>,
+    source_range: Range<Anchor>,
     editor: Entity<Editor>,
     add_context_fn: impl Fn(&mut App) -> () + Send + Sync + 'static,
 ) -> Arc<dyn Fn(CompletionIntent, &mut Window, &mut App) -> bool + Send + Sync> {
@@ -456,12 +461,12 @@ fn confirm_completion_callback(
 
         let crease_text = crease_text.clone();
         let crease_icon_path = crease_icon_path.clone();
-        let range_to_replace = range_to_replace.clone();
+        let source_range = source_range.clone();
         let editor = editor.clone();
         window.defer(cx, move |window, cx| {
             crate::context_picker::insert_crease_for_mention(
                 excerpt_id,
-                range_to_replace,
+                source_range,
                 crease_text,
                 crease_icon_path,
                 editor,
@@ -475,7 +480,7 @@ fn confirm_completion_callback(
 
 #[derive(Debug, Default, PartialEq)]
 struct MentionCompletion {
-    range_to_replace: Range<usize>,
+    source_range: Range<usize>,
     mode: Option<ContextPickerMode>,
     argument: Option<String>,
 }
@@ -511,7 +516,7 @@ impl MentionCompletion {
         }
 
         Some(Self {
-            range_to_replace: last_mention_start..end,
+            source_range: last_mention_start..end,
             mode,
             argument,
         })
@@ -536,7 +541,7 @@ mod tests {
         assert_eq!(
             MentionCompletion::try_parse("Lorem @"),
             Some(MentionCompletion {
-                range_to_replace: 6..7,
+                source_range: 6..7,
                 mode: None,
                 argument: None,
             })
@@ -545,7 +550,7 @@ mod tests {
         assert_eq!(
             MentionCompletion::try_parse("Lorem @file"),
             Some(MentionCompletion {
-                range_to_replace: 6..11,
+                source_range: 6..11,
                 mode: Some(ContextPickerMode::File),
                 argument: None,
             })
@@ -554,7 +559,7 @@ mod tests {
         assert_eq!(
             MentionCompletion::try_parse("Lorem @file "),
             Some(MentionCompletion {
-                range_to_replace: 6..12,
+                source_range: 6..12,
                 mode: Some(ContextPickerMode::File),
                 argument: None,
             })
@@ -563,7 +568,7 @@ mod tests {
         assert_eq!(
             MentionCompletion::try_parse("Lorem @file main.rs"),
             Some(MentionCompletion {
-                range_to_replace: 6..19,
+                source_range: 6..19,
                 mode: Some(ContextPickerMode::File),
                 argument: Some("main.rs".to_string()),
             })
@@ -572,7 +577,7 @@ mod tests {
         assert_eq!(
             MentionCompletion::try_parse("Lorem @file main.rs "),
             Some(MentionCompletion {
-                range_to_replace: 6..19,
+                source_range: 6..19,
                 mode: Some(ContextPickerMode::File),
                 argument: Some("main.rs".to_string()),
             })
@@ -581,7 +586,7 @@ mod tests {
         assert_eq!(
             MentionCompletion::try_parse("Lorem @file main.rs Ipsum"),
             Some(MentionCompletion {
-                range_to_replace: 6..19,
+                source_range: 6..19,
                 mode: Some(ContextPickerMode::File),
                 argument: Some("main.rs".to_string()),
             })
