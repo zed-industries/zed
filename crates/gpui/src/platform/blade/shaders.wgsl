@@ -655,13 +655,20 @@ fn fs_quad(input: QuadVarying) -> @location(0) vec4<f32> {
                     t += dash_gap * 1.5;
                 }
 
-                let dash_alpha = step(fmod(t, dash_period), dash_length);
-                border_color.a *= dash_alpha;
+                border_color.a *= dash_alpha(t, dash_period, dash_length);
             } else if (is_near_rounded_corner) {
                 // No dash on rounded corners that don't have space for it.
                 border_color.a = 0.0;
+            } else {
+                // When there isn't enough space for the full gap between the
+                // two start / end dashes of a straight border, reduce gap to
+                // make them fit.
+                let dash_gap = perimeter - 2 * dash_length;
+                if (dash_gap > 0.0) {
+                    let dash_period = dash_length + dash_gap;
+                    border_color.a *= dash_alpha(t, dash_period, dash_length);
+                }
             }
-            // todo! single centered dash on straight portion that doesn't have space?
         }
 
         // Blend the border on top of the background and then linearly interpolate
@@ -672,6 +679,19 @@ fn fs_quad(input: QuadVarying) -> @location(0) vec4<f32> {
     }
 
     return blend_color(color, saturate(antialias_threshold - outer_sdf));
+}
+
+// Returns alpha used to render antialiased dashes.
+fn dash_alpha(t: f32, period: f32, length: f32) -> f32 {
+    let half_period = period / 2;
+    let half_length = length / 2;
+    // Value in [-half_period, half_period].
+    // The dash is in [-half_length, half_length].
+    let centered = fmod(t + half_period - half_length, period) - half_period;
+    // Signed distance for the dash, negative values are inside the dash.
+    let signed_distance = abs(centered) - half_length;
+    // Antialiased alpha based on the signed distance.
+    return saturate(0.5 - signed_distance);
 }
 
 // This approximates distance to the nearest point to a quarter ellipse in a way
