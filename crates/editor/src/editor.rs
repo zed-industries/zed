@@ -7885,10 +7885,10 @@ impl Editor {
                     .text_for_range(Point::new(cursor.row, 0)..cursor)
                     .flat_map(str::chars)
                     .fold(row_delta % tab_size, |counter: u32, c| {
-                        if c == '\t' { 
-                            0 
-                        } else { 
-                            (counter + 1) % tab_size 
+                        if c == '\t' {
+                            0
+                        } else {
+                            (counter + 1) % tab_size
                         }
                     });
 
