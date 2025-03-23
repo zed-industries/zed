@@ -1,5 +1,5 @@
 use crate::status::GitStatus;
-use crate::{Oid, SHORT_SHA_LENGTH};
+use crate::{GitDiff, Oid, SHORT_SHA_LENGTH};
 use anyhow::{anyhow, Context as _, Result};
 use collections::HashMap;
 use futures::future::BoxFuture;
@@ -315,6 +315,14 @@ pub trait GitRepository: Send + Sync {
         checkpoint: GitRepositoryCheckpoint,
         cx: AsyncApp,
     ) -> BoxFuture<Result<()>>;
+
+    /// Computes a diff between two checkpoints.
+    fn diff_checkpoints(
+        &self,
+        base_checkpoint: GitRepositoryCheckpoint,
+        target_checkpoint: GitRepositoryCheckpoint,
+        cx: AsyncApp,
+    ) -> BoxFuture<Result<GitDiff>>;
 }
 
 pub enum DiffType {
@@ -1195,6 +1203,36 @@ impl GitRepository for RealGitRepository {
             let git = GitBinary::new(git_binary_path, working_directory, executor);
             git.run(&["update-ref", "-d", &checkpoint.ref_name]).await?;
             Ok(())
+        })
+        .boxed()
+    }
+
+    fn diff_checkpoints(
+        &self,
+        base_checkpoint: GitRepositoryCheckpoint,
+        target_checkpoint: GitRepositoryCheckpoint,
+        cx: AsyncApp,
+    ) -> BoxFuture<Result<GitDiff>> {
+        let working_directory = self.working_directory();
+        let git_binary_path = self.git_binary_path.clone();
+
+        let executor = cx.background_executor().clone();
+        cx.background_spawn(async move {
+            let working_directory = working_directory?;
+            let git = GitBinary::new(git_binary_path, working_directory, executor);
+
+            // Run git diff with options to detect renames and show more context
+            let diff_output = git
+                .run(&[
+                    "diff",
+                    "--find-renames",
+                    "--patch",
+                    &base_checkpoint.ref_name,
+                    &target_checkpoint.ref_name,
+                ])
+                .await?;
+
+            diff_output.parse()
         })
         .boxed()
     }

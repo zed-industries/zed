@@ -9,6 +9,7 @@ use git::{
         Remote, RepoPath, ResetMode,
     },
     status::{FileStatus, GitStatus, StatusCode, TrackedStatus, UnmergedStatus},
+    GitDiff,
 };
 use gpui::{AsyncApp, BackgroundExecutor};
 use ignore::gitignore::GitignoreBuilder;
@@ -435,6 +436,15 @@ impl GitRepository for FakeGitRepository {
         _checkpoint: GitRepositoryCheckpoint,
         _cx: AsyncApp,
     ) -> BoxFuture<Result<()>> {
+        unimplemented!()
+    }
+
+    fn diff_checkpoints(
+        &self,
+        _base_checkpoint: GitRepositoryCheckpoint,
+        _target_checkpoint: GitRepositoryCheckpoint,
+        _cx: AsyncApp,
+    ) -> BoxFuture<Result<GitDiff>> {
         unimplemented!()
     }
 }

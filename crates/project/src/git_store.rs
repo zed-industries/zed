@@ -24,7 +24,7 @@ use git::{
         Remote, RemoteCommandOutput, RepoPath, ResetMode,
     },
     status::FileStatus,
-    BuildPermalinkParams, GitHostingProviderRegistry,
+    BuildPermalinkParams, GitDiff, GitHostingProviderRegistry,
 };
 use gpui::{
     App, AppContext, AsyncApp, Context, Entity, EventEmitter, SharedString, Subscription, Task,
@@ -130,6 +130,11 @@ enum GitStoreState {
 #[derive(Clone)]
 pub struct GitStoreCheckpoint {
     checkpoints_by_dot_git_abs_path: HashMap<PathBuf, GitRepositoryCheckpoint>,
+}
+
+#[derive(Clone)]
+pub struct GitStoreCheckpointDiff {
+    diffs_by_dot_git_abs_path: HashMap<PathBuf, String>,
 }
 
 pub struct Repository {
@@ -540,21 +545,21 @@ impl GitStore {
     }
 
     pub fn checkpoint(&self, cx: &App) -> Task<Result<GitStoreCheckpoint>> {
-        let mut dot_git_abs_paths = Vec::new();
         let mut checkpoints = Vec::new();
         for repository in self.repositories.values() {
             let repository = repository.read(cx);
-            dot_git_abs_paths.push(repository.dot_git_abs_path.clone());
-            checkpoints.push(repository.checkpoint().map(|checkpoint| checkpoint?));
+            let dot_git_abs_path = repository.dot_git_abs_path.clone();
+            let checkpoint = repository.checkpoint().map(|checkpoint| checkpoint?);
+            checkpoints.push(async move {
+                let checkpoint = checkpoint.await?;
+                anyhow::Ok((dot_git_abs_path, checkpoint))
+            });
         }
 
         cx.background_executor().spawn(async move {
             let checkpoints = future::try_join_all(checkpoints).await?;
             Ok(GitStoreCheckpoint {
-                checkpoints_by_dot_git_abs_path: dot_git_abs_paths
-                    .into_iter()
-                    .zip(checkpoints)
-                    .collect(),
+                checkpoints_by_dot_git_abs_path: checkpoints.into_iter().collect(),
             })
         })
     }
@@ -633,6 +638,45 @@ impl GitStore {
         cx.background_spawn(async move {
             future::try_join_all(tasks).await?;
             Ok(())
+        })
+    }
+
+    pub fn diff_checkpoints(
+        &self,
+        base_checkpoint: GitStoreCheckpoint,
+        target_checkpoint: GitStoreCheckpoint,
+        cx: &App,
+    ) -> Task<Result<GitStoreCheckpointDiff>> {
+        let repositories_by_dot_git_abs_path = self
+            .repositories
+            .values()
+            .map(|repo| (repo.read(cx).dot_git_abs_path.clone(), repo))
+            .collect::<HashMap<_, _>>();
+
+        let mut tasks = Vec::new();
+        for (dot_git_abs_path, base_checkpoint) in base_checkpoint.checkpoints_by_dot_git_abs_path {
+            if let Some(target_checkpoint) = target_checkpoint
+                .checkpoints_by_dot_git_abs_path
+                .get(&dot_git_abs_path)
+                .cloned()
+            {
+                if let Some(repository) = repositories_by_dot_git_abs_path.get(&dot_git_abs_path) {
+                    let diff = repository
+                        .read(cx)
+                        .diff_checkpoints(base_checkpoint, target_checkpoint);
+                    tasks.push(async move {
+                        let diff = diff.await??;
+                        anyhow::Ok((dot_git_abs_path, diff))
+                    });
+                }
+            }
+        }
+
+        cx.background_spawn(async move {
+            let diffs_by_path = future::try_join_all(tasks).await?;
+            Ok(GitStoreCheckpointDiff {
+                diffs_by_dot_git_abs_path: diffs_by_path.into_iter().collect(),
+            })
         })
     }
 
@@ -3347,6 +3391,23 @@ impl Repository {
             match repo {
                 RepositoryState::Local(git_repository) => {
                     git_repository.delete_checkpoint(checkpoint, cx).await
+                }
+                RepositoryState::Remote { .. } => Err(anyhow!("not implemented yet")),
+            }
+        })
+    }
+
+    pub fn diff_checkpoints(
+        &self,
+        base_checkpoint: GitRepositoryCheckpoint,
+        target_checkpoint: GitRepositoryCheckpoint,
+    ) -> oneshot::Receiver<Result<GitDiff>> {
+        self.send_job(move |repo, cx| async move {
+            match repo {
+                RepositoryState::Local(git_repository) => {
+                    git_repository
+                        .diff_checkpoints(base_checkpoint, target_checkpoint, cx)
+                        .await
                 }
                 RepositoryState::Remote { .. } => Err(anyhow!("not implemented yet")),
             }
