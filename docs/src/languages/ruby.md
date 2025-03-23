@@ -156,7 +156,7 @@ Ruby LSP uses pull-based diagnostics which Zed doesn't support yet. We can tell 
 }
 ```
 
-Project-specific settings can be added in `.zed/settings.json`, for example to use [standardrb/standard](https://github.com/standardrb/standard) as a formatter and linter:
+LSP `settings` and `initialization_options` can also be project-specific. For example to use [standardrb/standard](https://github.com/standardrb/standard) as a formatter and linter for a particular project, add this to a `.zed/settings.json` inside your project repo:
 
 ```json
 {
