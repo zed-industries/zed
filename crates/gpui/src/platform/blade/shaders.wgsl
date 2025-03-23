@@ -564,34 +564,20 @@ fn fs_quad(input: QuadVarying) -> @location(0) vec4<f32> {
     // border. It is negative outside this edge, and positive inside.
     //
     // This is not always an accurate signed distance:
-    //
-    // * The rounded portions use an approximation of nearest-point-on-ellipse.
-    //
-    // * When it is quickly known to be outside the edge, -1.0 is sometimes used.
+    // * The rounded portions with varying border width use an approximation of
+    //   nearest-point-on-ellipse.
+    // * When it is quickly known to be outside the edge, -1.0 is used.
     var inner_sdf = 0.0;
-    if (ellipse_radii.x == 0.0 || ellipse_radii.y == 0.0) {
-        // Fast path for unrounded inner corners.
+    if (corner_center_to_point.x <= 0 || corner_center_to_point.y <= 0) {
+        // Fast paths for straight borders.
         inner_sdf = -max(straight_border_inner_corner_to_point.x, straight_border_inner_corner_to_point.y);
+    } else if (is_beyond_inner_straight_border) {
+        // Fast path for points that must be outside the inner edge.
+        inner_sdf = -1.0;
+    } else if (ellipse_radii.x == ellipse_radii.y) {
+        inner_sdf = ellipse_radii.x - length(corner_center_to_point);
     } else {
-        if (corner_center_to_point.y <= 0) {
-            // Fast paths for straight horizontal borders.
-            inner_sdf = -straight_border_inner_corner_to_point.x;
-        } else if (corner_center_to_point.x <= 0) {
-            // Fast paths for straight vertical borders.
-            inner_sdf = -straight_border_inner_corner_to_point.y;
-        } else if (is_beyond_inner_straight_border) {
-            // Fast path for points that must be outside the inner edge.
-            inner_sdf = -1.0;
-        } else {
-            // Instead of doing a tricky nearest-point calculation, scale the
-            // space to treat the ellipse like a unit circle.
-            //
-            // todo! Update this to handle eccentric ellipses better.
-            let unit_circle_sdf = length(corner_center_to_point / ellipse_radii) - 1;
-            // Approximate upscaling - the boundary will be correct and the
-            // values near the boundary are good enough for anti-aliasing.
-            inner_sdf = unit_circle_sdf * length(ellipse_radii) * (-1.0 / sqrt(2.0));
-        }
+        inner_sdf = quarter_ellipse_sdf(corner_center_to_point, ellipse_radii);
     }
 
     // Negative when inside the border.
@@ -686,6 +672,22 @@ fn fs_quad(input: QuadVarying) -> @location(0) vec4<f32> {
     }
 
     return blend_color(color, saturate(antialias_threshold - outer_sdf));
+}
+
+// This approximates distance to the nearest point to a quarter ellipse in a way
+// that is sufficient for anti-aliasing when the ellipse is not very eccentric.
+// The components of `point` are expected to be positive.
+//
+// Negative on the outside and positive on the inside.
+fn quarter_ellipse_sdf(point: vec2<f32>, radii: vec2<f32>) -> f32 {
+    // Scale the space to treat the ellipse like a unit circle.
+    let circle_vec = point / radii;
+    let unit_circle_sdf = length(circle_vec) - 1.0;
+    // Approximate up-scaling of the length by using the average of the radii.
+    //
+    // TODO: A better solution would be to use the gradient of the implicit
+    // function for an ellipse to approximate a better scaling factor.
+    return unit_circle_sdf * (radii.x + radii.y) * -0.5;
 }
 
 // Modulus that has the same sign as `a`.
