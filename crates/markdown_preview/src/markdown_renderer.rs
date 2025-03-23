@@ -8,7 +8,7 @@ use gpui::{
     div, img, px, rems, AbsoluteLength, AnyElement, App, AppContext as _, ClipboardItem, Context,
     DefiniteLength, Div, Element, ElementId, Entity, HighlightStyle, Hsla, ImageSource,
     InteractiveText, IntoElement, Keystroke, Length, Modifiers, ParentElement, Render, Resource,
-    SharedString, Styled, StyledText, TextStyle, WeakEntity, Window, Background,
+    SharedString, Styled, StyledText, TextStyle, WeakEntity, Window,
 };
 use settings::Settings;
 use core::hash;
