@@ -15,6 +15,7 @@ pub enum ParsedMarkdownElement {
     /// A paragraph of text and other inline elements.
     Paragraph(MarkdownParagraph),
     HorizontalRule(Range<usize>),
+    Html(String, Range<usize>),
 }
 
 impl ParsedMarkdownElement {
@@ -30,6 +31,7 @@ impl ParsedMarkdownElement {
                 MarkdownParagraphChunk::Image(image) => image.source_range.clone(),
             },
             Self::HorizontalRule(range) => range.clone(),
+            Self::Html(_, range) => range.clone(),
         })
     }
 

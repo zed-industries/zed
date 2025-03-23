@@ -123,11 +123,83 @@ impl<'a> MarkdownParser<'a> {
         self
     }
 
+    // #[async_recursion]
+    // async fn parse_block(&mut self) -> Option<Vec<ParsedMarkdownElement>> {
+    //     let (current, source_range) = self.current().unwrap();
+    //     let source_range = source_range.clone();
+    //     match current {
+    //         Event::Start(tag) => match tag {
+    //             Tag::Paragraph => {
+    //                 self.cursor += 1;
+    //                 let text = self.parse_text(false, Some(source_range));
+    //                 Some(vec![ParsedMarkdownElement::Paragraph(text)])
+    //             }
+    //             Tag::Heading { level, .. } => {
+    //                 let level = *level;
+    //                 self.cursor += 1;
+    //                 let heading = self.parse_heading(level);
+    //                 Some(vec![ParsedMarkdownElement::Heading(heading)])
+    //             }
+    //             Tag::Table(alignment) => {
+    //                 let alignment = alignment.clone();
+    //                 self.cursor += 1;
+    //                 let table = self.parse_table(alignment);
+    //                 Some(vec![ParsedMarkdownElement::Table(table)])
+    //             }
+    //             Tag::List(order) => {
+    //                 let order = *order;
+    //                 self.cursor += 1;
+    //                 let list = self.parse_list(order).await;
+    //                 Some(list)
+    //             }
+    //             Tag::BlockQuote(_kind) => {
+    //                 self.cursor += 1;
+    //                 let block_quote = self.parse_block_quote().await;
+    //                 Some(vec![ParsedMarkdownElement::BlockQuote(block_quote)])
+    //             }
+    //             Tag::CodeBlock(kind) => {
+    //                 let language = match kind {
+    //                     pulldown_cmark::CodeBlockKind::Indented => None,
+    //                     pulldown_cmark::CodeBlockKind::Fenced(language) => {
+    //                         if language.is_empty() {
+    //                             None
+    //                         } else {
+    //                             Some(language.to_string())
+    //                         }
+    //                     }
+    //                 };
+    //
+    //                 self.cursor += 1;
+    //
+    //                 let code_block = self.parse_code_block(language).await;
+    //                 Some(vec![ParsedMarkdownElement::CodeBlock(code_block)])
+    //             }
+    //             _ => None,
+    //         },
+    //         Event::Rule => {
+    //             let source_range = source_range.clone();
+    //             self.cursor += 1;
+    //             Some(vec![ParsedMarkdownElement::HorizontalRule(source_range)])
+    //         }
+    //         _ => None,
+    //     }
+    // }
+
     #[async_recursion]
-    async fn parse_block(&mut self) -> Option<Vec<ParsedMarkdownElement>> {
-        let (current, source_range) = self.current().unwrap();
-        let source_range = source_range.clone();
+    pub async fn parse_block(&mut self) -> Option<Vec<ParsedMarkdownElement>> {
+        // Em vez de:
+        // let (current, source_range) = self.current().unwrap();
+        // let source_range = source_range.clone();
+        //
+        // Faça:
+        let (current, source_range) = self.tokens[self.cursor].clone();
+    
         match current {
+            // Novo branch para blocos HTML (HTML block)
+            Event::Html(html) => {
+                self.cursor += 1;
+                return Some(vec![ParsedMarkdownElement::Html(html.to_string(), source_range)]);
+            }
             Event::Start(tag) => match tag {
                 Tag::Paragraph => {
                     self.cursor += 1;
@@ -135,7 +207,7 @@ impl<'a> MarkdownParser<'a> {
                     Some(vec![ParsedMarkdownElement::Paragraph(text)])
                 }
                 Tag::Heading { level, .. } => {
-                    let level = *level;
+                    let level = level;
                     self.cursor += 1;
                     let heading = self.parse_heading(level);
                     Some(vec![ParsedMarkdownElement::Heading(heading)])
@@ -147,7 +219,7 @@ impl<'a> MarkdownParser<'a> {
                     Some(vec![ParsedMarkdownElement::Table(table)])
                 }
                 Tag::List(order) => {
-                    let order = *order;
+                    let order = order;
                     self.cursor += 1;
                     let list = self.parse_list(order).await;
                     Some(list)
@@ -168,9 +240,9 @@ impl<'a> MarkdownParser<'a> {
                             }
                         }
                     };
-
+    
                     self.cursor += 1;
-
+    
                     let code_block = self.parse_code_block(language).await;
                     Some(vec![ParsedMarkdownElement::CodeBlock(code_block)])
                 }
@@ -184,6 +256,8 @@ impl<'a> MarkdownParser<'a> {
             _ => None,
         }
     }
+    
+
 
     fn parse_text(
         &mut self,
@@ -1527,3 +1601,8 @@ fn main() {
         }
     }
 }
+
+
+
+
+
