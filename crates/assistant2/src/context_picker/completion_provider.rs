@@ -745,12 +745,12 @@ mod tests {
             assert!(editor.has_visible_completions_menu());
         });
 
-        cx.simulate_input("thr");
+        cx.simulate_input("one");
 
         editor.update(&mut cx, |editor, cx| {
-            assert_eq!(editor.text(cx), "Lorem @file thr");
+            assert_eq!(editor.text(cx), "Lorem @file one");
             assert!(editor.has_visible_completions_menu());
-            assert_eq!(current_completion_labels(editor), vec!["three.txt dir/a"]);
+            assert_eq!(current_completion_labels(editor), vec!["one.txt dir/a"]);
         });
     }
 
