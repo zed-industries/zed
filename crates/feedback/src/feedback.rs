@@ -5,7 +5,7 @@ use workspace::Workspace;
 
 pub mod feedback_modal;
 
-mod system_specs;
+pub mod system_specs;
 
 actions!(
     zed,

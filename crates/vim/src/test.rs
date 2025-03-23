@@ -917,12 +917,11 @@ async fn test_rename(cx: &mut gpui::TestAppContext) {
     cx.set_state("const beˇfore = 2; console.log(before)", Mode::Normal);
     let def_range = cx.lsp_range("const «beforeˇ» = 2; console.log(before)");
     let tgt_range = cx.lsp_range("const before = 2; console.log(«beforeˇ»)");
-    let mut prepare_request =
-        cx.handle_request::<lsp::request::PrepareRenameRequest, _, _>(move |_, _, _| async move {
-            Ok(Some(lsp::PrepareRenameResponse::Range(def_range)))
-        });
+    let mut prepare_request = cx.set_request_handler::<lsp::request::PrepareRenameRequest, _, _>(
+        move |_, _, _| async move { Ok(Some(lsp::PrepareRenameResponse::Range(def_range))) },
+    );
     let mut rename_request =
-        cx.handle_request::<lsp::request::Rename, _, _>(move |url, params, _| async move {
+        cx.set_request_handler::<lsp::request::Rename, _, _>(move |url, params, _| async move {
             Ok(Some(lsp::WorkspaceEdit {
                 changes: Some(
                     [(

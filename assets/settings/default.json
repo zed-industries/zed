@@ -614,6 +614,37 @@
       "provider": "zed.dev",
       // The model to use.
       "model": "claude-3-5-sonnet-latest"
+    },
+    "profiles": {
+      "read-only": {
+        "name": "Read-only",
+        "tools": {
+          "diagnostics": true,
+          "fetch": true,
+          "list-directory": true,
+          "now": true,
+          "path-search": true,
+          "read-file": true,
+          "regex-search": true,
+          "thinking": true
+        }
+      },
+      "code-writer": {
+        "name": "Code Writer",
+        "tools": {
+          "bash": true,
+          "delete-path": true,
+          "diagnostics": true,
+          "edit-files": true,
+          "fetch": true,
+          "list-directory": true,
+          "now": true,
+          "path-search": true,
+          "read-file": true,
+          "regex-search": true,
+          "thinking": true
+        }
+      }
     }
   },
   // The settings for slash commands.
@@ -981,7 +1012,7 @@
     //         "alternate_scroll": "on",
     //  2. Default alternate scroll mode to off
     //         "alternate_scroll": "off",
-    "alternate_scroll": "off",
+    "alternate_scroll": "on",
     // Set whether the option key behaves as the meta key.
     // May take 2 values:
     //  1. Rely on default platform handling of option key, on macOS

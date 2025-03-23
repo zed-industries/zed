@@ -12,6 +12,7 @@ use gpui::{
 };
 use language_model::LanguageModelRegistry;
 use language_model_selector::ToggleModelSelector;
+use project::Project;
 use settings::Settings;
 use std::time::Duration;
 use theme::ThemeSettings;
@@ -35,6 +36,7 @@ pub struct MessageEditor {
     editor: Entity<Editor>,
     #[allow(dead_code)]
     workspace: WeakEntity<Workspace>,
+    project: Entity<Project>,
     context_store: Entity<ContextStore>,
     context_strip: Entity<ContextStrip>,
     context_picker_menu_handle: PopoverMenuHandle<ContextPicker>,
@@ -114,6 +116,7 @@ impl MessageEditor {
 
         Self {
             editor: editor.clone(),
+            project: thread.read(cx).project().clone(),
             thread,
             workspace,
             context_store,
@@ -212,7 +215,9 @@ impl MessageEditor {
 
         let thread = self.thread.clone();
         let context_store = self.context_store.clone();
+        let checkpoint = self.project.read(cx).git_store().read(cx).checkpoint(cx);
         cx.spawn(async move |_, cx| {
+            let checkpoint = checkpoint.await.ok();
             refresh_task.await;
             let (system_prompt_context, load_error) = system_prompt_context_task.await;
             thread
@@ -226,7 +231,7 @@ impl MessageEditor {
             thread
                 .update(cx, |thread, cx| {
                     let context = context_store.read(cx).snapshot(cx).collect::<Vec<_>>();
-                    thread.insert_user_message(user_message, context, cx);
+                    thread.insert_user_message(user_message, context, checkpoint, cx);
                     thread.send_to_model(model, request_kind, cx);
                 })
                 .ok();

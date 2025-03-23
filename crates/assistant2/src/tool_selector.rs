@@ -2,14 +2,14 @@ use std::sync::Arc;
 
 use assistant_settings::{AgentProfile, AssistantSettings};
 use assistant_tool::{ToolSource, ToolWorkingSet};
-use collections::HashMap;
 use gpui::{Entity, Subscription};
+use indexmap::IndexMap;
 use scripting_tool::ScriptingTool;
 use settings::{Settings as _, SettingsStore};
 use ui::{prelude::*, ContextMenu, PopoverMenu, Tooltip};
 
 pub struct ToolSelector {
-    profiles: HashMap<Arc<str>, AgentProfile>,
+    profiles: IndexMap<Arc<str>, AgentProfile>,
     tools: Arc<ToolWorkingSet>,
     _subscriptions: Vec<Subscription>,
 }
@@ -21,7 +21,7 @@ impl ToolSelector {
         });
 
         let mut this = Self {
-            profiles: HashMap::default(),
+            profiles: IndexMap::default(),
             tools,
             _subscriptions: vec![settings_subscription],
         };
@@ -32,19 +32,8 @@ impl ToolSelector {
 
     fn refresh_profiles(&mut self, cx: &mut Context<Self>) {
         let settings = AssistantSettings::get_global(cx);
-        let mut profiles = settings.profiles.clone();
 
-        let read_only = AgentProfile::read_only();
-        if !profiles.contains_key(read_only.name.as_ref()) {
-            profiles.insert(read_only.name.clone().into(), read_only);
-        }
-
-        let code_writer = AgentProfile::code_writer();
-        if !profiles.contains_key(code_writer.name.as_ref()) {
-            profiles.insert(code_writer.name.clone().into(), code_writer);
-        }
-
-        self.profiles = profiles;
+        self.profiles = settings.profiles.clone();
     }
 
     fn build_context_menu(
@@ -63,6 +52,7 @@ impl ToolSelector {
                     let tools = tool_set.clone();
                     move |_window, cx| {
                         tools.disable_source(ToolSource::Native, cx);
+                        tools.disable_scripting_tool();
                         tools.enable(
                             ToolSource::Native,
                             &profile
