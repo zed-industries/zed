@@ -7,7 +7,7 @@ use ::fs::Fs;
 use anyhow::{anyhow, Context as _, Result};
 use collections::{HashMap, HashSet};
 use command_palette_hooks::CommandPaletteFilter;
-use futures::{channel::oneshot, future::Shared, Future, FutureExt, TryFutureExt};
+use futures::{channel::oneshot, future::Shared, io::BufReader, Future, FutureExt, TryFutureExt};
 use gpui::{
     actions, App, AppContext as _, AsyncApp, Context, Entity, EntityId, EventEmitter, Global, Task,
     WeakEntity,
@@ -26,7 +26,6 @@ use parking_lot::Mutex;
 use request::StatusNotification;
 use serde_json::json;
 use settings::SettingsStore;
-use smol::io::AsyncReadExt;
 use smol::{fs, stream::StreamExt};
 use std::{
     any::TypeId,
@@ -1182,17 +1181,14 @@ async fn get_copilot_lsp(http: Arc<dyn HttpClient>) -> anyhow::Result<PathBuf> {
                 .await
                 .context("error downloading copilot release")?;
 
-            let mut body = Vec::new();
-            response
-                .body_mut()
-                .read_to_end(&mut body)
+            node_runtime::extract_zip(&dist_dir, BufReader::new(response.body_mut()))
                 .await
-                .context("error reading latest release")?;
-
-            // Using the zip crate for extraction
-            let reader = std::io::Cursor::new(body);
-            let mut archive = zip::ZipArchive::new(reader)?;
-            archive.extract(&dist_dir)?;
+                .with_context(|| {
+                    format!(
+                        "unzipping language server {} to {:?}",
+                        release.tag_name, dist_dir
+                    )
+                })?;
 
             remove_matching(paths::copilot_dir(), |entry| entry != version_dir).await;
         }
