@@ -38,9 +38,9 @@ pub fn init(http_client: Arc<HttpClientWithUrl>, cx: &mut App) {
 
     let registry = ToolRegistry::global(cx);
     registry.register_tool(BashTool);
+    registry.register_tool(CopyPathTool);
     registry.register_tool(DeletePathTool);
     registry.register_tool(MovePathTool);
-    registry.register_tool(CopyPathTool);
     registry.register_tool(DiagnosticsTool);
     registry.register_tool(EditFilesTool);
     registry.register_tool(ListDirectoryTool);
