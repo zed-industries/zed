@@ -189,7 +189,7 @@ pub fn toggle_modal(
 }
 
 fn spawn_tasks_filtered<F>(
-    predicate: F,
+    mut predicate: F,
     overrides: Option<TaskOverrides>,
     window: &mut Window,
     cx: &mut Context<Workspace>,
@@ -202,7 +202,7 @@ where
             task_contexts(workspace, window, cx)
         })?;
         let task_contexts = task_contexts.await;
-        let tasks = workspace.update(cx, |workspace, cx| {
+        let mut tasks = workspace.update(cx, |workspace, cx| {
             let Some(task_inventory) = workspace
                 .project()
                 .read(cx)
@@ -230,28 +230,35 @@ where
 
         let did_spawn = workspace
             .update(cx, |workspace, cx| {
-                let filtered_tasks: Vec<_> = tasks.into_iter().filter(predicate).collect();
-                if filtered_tasks.is_empty() {
-                    return None;
-                }
                 let default_context = TaskContext::default();
                 let active_context = task_contexts.active_context().unwrap_or(&default_context);
-                for (task_source_kind, mut target_task) in filtered_tasks {
-                    if let Some(overrides) = &overrides {
-                        if let Some(target_override) = overrides.reveal_target {
-                            target_task.reveal_target = target_override;
+
+                tasks.retain_mut(|(task_source_kind, target_task)| {
+                    if predicate(&(task_source_kind.clone(), target_task.clone())) {
+                        if let Some(overrides) = &overrides {
+                            if let Some(target_override) = overrides.reveal_target {
+                                target_task.reveal_target = target_override;
+                            }
                         }
+                        schedule_task(
+                            workspace,
+                            task_source_kind.clone(),
+                            target_task,
+                            active_context,
+                            false,
+                            cx,
+                        );
+                        true
+                    } else {
+                        false
                     }
-                    schedule_task(
-                        workspace,
-                        task_source_kind,
-                        &target_task,
-                        active_context,
-                        false,
-                        cx,
-                    );
+                });
+
+                if tasks.is_empty() {
+                    None
+                } else {
+                    Some(())
                 }
-                Some(())
             })?
             .is_some();
         if !did_spawn {
