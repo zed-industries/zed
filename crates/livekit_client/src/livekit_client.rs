@@ -101,7 +101,7 @@ impl Room {
         cx: &mut AsyncApp,
     ) -> Result<(LocalTrackPublication, playback::AudioStream)> {
         let (track, stream) =
-            capture_local_audio_track(self.apm.clone(), cx.background_executor())?.await;
+            capture_local_audio_track(self.apm.clone(), cx.background_executor())?;
         let publication = self
             .local_participant()
             .publish_track(

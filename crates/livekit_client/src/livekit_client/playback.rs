@@ -1,10 +1,12 @@
 use anyhow::{anyhow, Context as _, Result};
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait as _};
+use cpal::SupportedStreamConfig;
 use futures::{Stream, StreamExt as _};
 use gpui::{
     BackgroundExecutor, ScreenCaptureFrame, ScreenCaptureSource, ScreenCaptureStream, Task,
 };
+use libwebrtc::native::apm;
 use livekit::track;
 
 use livekit::webrtc::{
@@ -18,7 +20,7 @@ use livekit::webrtc::{
 use parking_lot::Mutex;
 use std::time::Duration;
 use std::{borrow::Cow, collections::VecDeque, sync::Arc, thread};
-use util::ResultExt as _;
+use util::{maybe, ResultExt as _};
 
 use crate::RemoteAudioTrack;
 
@@ -71,20 +73,15 @@ pub(crate) async fn capture_local_video_track(
     ))
 }
 
-pub(crate) fn capture_local_audio_track(
-    apm: Arc<Mutex<libwebrtc::native::apm::AudioProcessingModule>>,
+fn start_capture(
+    apm: Arc<Mutex<apm::AudioProcessingModule>>,
+    device: cpal::Device,
+    config: SupportedStreamConfig,
+    source: NativeAudioSource,
     background_executor: &BackgroundExecutor,
-) -> Result<Task<(crate::LocalAudioTrack, AudioStream)>> {
-    use util::maybe;
-
+) -> (Task<()>, std::sync::mpsc::Sender<()>) {
     let (frame_tx, mut frame_rx) = futures::channel::mpsc::unbounded();
     let (thread_handle, thread_kill_rx) = std::sync::mpsc::channel::<()>();
-    let sample_rate;
-    let channels;
-
-    let (device, config) = default_device(true)?;
-    sample_rate = config.sample_rate().0;
-    channels = config.channels() as u32;
     thread::spawn(move || {
         maybe!({
             if let Some(name) = device.name().ok() {
@@ -93,7 +90,11 @@ pub(crate) fn capture_local_audio_track(
                 log::info!("Using microphone: <unknown>");
             }
 
-            let mut buf: Vec<i16> = Vec::with_capacity((channels * sample_rate / 100) as usize);
+            let sample_rate = config.sample_rate().0;
+            let channels = config.channels() as u32;
+
+            let ten_ms_buffer_size = (channels * sample_rate / 100) as usize;
+            let mut buf: Vec<i16> = Vec::with_capacity(ten_ms_buffer_size);
 
             let stream = device
                 .build_input_stream_raw(
@@ -111,9 +112,7 @@ pub(crate) fn capture_local_audio_track(
                                     .unbounded_send(AudioFrame {
                                         data: Cow::Owned(std::mem::replace(
                                             &mut buf,
-                                            Vec::with_capacity(
-                                                (channels * sample_rate / 100) as usize,
-                                            ),
+                                            Vec::with_capacity(ten_ms_buffer_size),
                                         )),
                                         sample_rate,
                                         num_channels: channels,
@@ -136,53 +135,92 @@ pub(crate) fn capture_local_audio_track(
         .log_err();
     });
 
-    Ok(background_executor.spawn({
+    let background_executor = background_executor.clone();
+    let transmit_task = background_executor.spawn({
+        let source = source.clone();
+        async move {
+            while let Some(mut frame) = frame_rx.next().await {
+                apm.lock()
+                    .process_stream(
+                        frame.data.to_mut(),
+                        frame.sample_rate as i32,
+                        frame.num_channels as i32,
+                    )
+                    .log_err();
+                source.capture_frame(&frame).await.log_err();
+            }
+        }
+    });
+
+    return (transmit_task, thread_handle);
+}
+
+pub(crate) fn capture_local_audio_track(
+    apm: Arc<Mutex<apm::AudioProcessingModule>>,
+    background_executor: &BackgroundExecutor,
+) -> Result<(crate::LocalAudioTrack, AudioStream)> {
+    let sample_rate;
+    let channels;
+
+    let (device, config) = default_device(true)?;
+    sample_rate = config.sample_rate().0;
+    channels = config.channels() as u32;
+    let source = NativeAudioSource::new(
+        // n.b. this struct's options are always ignored, noise cancellation is provided by apm.
+        AudioSourceOptions::default(),
+        sample_rate,
+        channels,
+        10,
+    );
+    let track = track::LocalAudioTrack::create_audio_track(
+        "microphone",
+        RtcAudioSource::Native(source.clone()),
+    );
+    let mut default_change_listener = DeviceChangeListener::new(false)?;
+
+    let task = background_executor.spawn({
         let background_executor = background_executor.clone();
         async move {
-            let source = NativeAudioSource::new(
-                AudioSourceOptions {
-                    echo_cancellation: true,
-                    noise_suppression: true,
-                    auto_gain_control: true,
-                },
-                sample_rate,
-                channels,
-                10,
+            let (mut transmit_task, mut thread_handle) = start_capture(
+                apm.clone(),
+                device,
+                config,
+                source.clone(),
+                &background_executor,
             );
-            let transmit_task = background_executor.spawn({
-                let source = source.clone();
-                async move {
-                    while let Some(mut frame) = frame_rx.next().await {
-                        apm.lock()
-                            .process_stream(
-                                frame.data.to_mut(),
-                                sample_rate as i32,
-                                channels as i32,
-                            )
-                            .log_err();
-                        source.capture_frame(&frame).await.log_err();
-                    }
+
+            while let Some(_) = default_change_listener.next().await {
+                let Some((device, config)) = default_device(true).log_err() else {
+                    continue;
+                };
+
+                if let Ok(name) = device.name() {
+                    log::info!("Using speaker: {}", name)
+                } else {
+                    log::info!("Using speaker: <unknown>")
                 }
-            });
 
-            let track = track::LocalAudioTrack::create_audio_track(
-                "microphone",
-                RtcAudioSource::Native(source),
-            );
+                (transmit_task, thread_handle) = start_capture(
+                    apm.clone(),
+                    device,
+                    config,
+                    source.clone(),
+                    &background_executor,
+                );
+            }
 
-            (
-                super::LocalAudioTrack(track),
-                AudioStream::Input {
-                    _thread_handle: thread_handle,
-                    _transmit_task: transmit_task,
-                },
-            )
+            drop((transmit_task, thread_handle))
         }
-    }))
+    });
+
+    Ok((
+        super::LocalAudioTrack(track),
+        AudioStream::Output { _task: task },
+    ))
 }
 
 pub fn play_remote_audio_track(
-    apm: Arc<Mutex<libwebrtc::native::apm::AudioProcessingModule>>,
+    apm: Arc<Mutex<apm::AudioProcessingModule>>,
     track: &RemoteAudioTrack,
     background_executor: &BackgroundExecutor,
 ) -> Result<AudioStream> {
@@ -192,7 +230,7 @@ pub fn play_remote_audio_track(
     let mut default_change_listener = DeviceChangeListener::new(false)?;
     let (output_device, output_config) = default_device(false)?;
 
-    let _task = background_executor.spawn({
+    let task = background_executor.spawn({
         let background_executor = background_executor.clone();
         async move {
             let (mut _receive_task, mut _thread) = start_output_stream(
@@ -222,12 +260,10 @@ pub fn play_remote_audio_track(
                     &background_executor,
                 );
             }
-
-            futures::future::pending::<()>().await;
         }
     });
 
-    Ok(AudioStream::Output { _task })
+    Ok(AudioStream::Output { _task: task })
 }
 
 fn default_device(input: bool) -> anyhow::Result<(cpal::Device, cpal::SupportedStreamConfig)> {
@@ -261,7 +297,7 @@ fn get_default_output() -> anyhow::Result<(cpal::Device, cpal::SupportedStreamCo
 }
 
 fn start_output_stream(
-    apm: Arc<Mutex<libwebrtc::native::apm::AudioProcessingModule>>,
+    apm: Arc<Mutex<apm::AudioProcessingModule>>,
     output_config: cpal::SupportedStreamConfig,
     output_device: cpal::Device,
     track: &track::RemoteAudioTrack,
