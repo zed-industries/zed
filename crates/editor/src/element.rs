@@ -1558,9 +1558,16 @@ impl EditorElement {
 
                 let visible_lines = viewport_height / line_height;
                 let slider_height = px(visible_lines) * minimap_line_height;
+                let num_lines_minus_one = num_lines - 1.;
                 // Allows for overscrolling
-                let logical_minimap_scroll_height = num_lines + visible_lines - 1.;
-                let max_minimap_slider_top = px(f32::max(0., minimap_height.0 - slider_height.0));
+                let logical_minimap_scroll_height = num_lines_minus_one + visible_lines;
+                let max_minimap_slider_top = px(f32::max(
+                    0.,
+                    f32::min(
+                        minimap_height.0,
+                        num_lines_minus_one * minimap_line_height.0,
+                    ) - slider_height.0,
+                ));
                 show_slider &= max_minimap_slider_top.0 > 0.;
                 let slider_top =
                     (scroll_top_lines / logical_minimap_scroll_height) * max_minimap_slider_top;
