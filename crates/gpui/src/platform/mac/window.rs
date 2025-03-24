@@ -10,10 +10,11 @@ use crate::{
 use block::ConcreteBlock;
 use cocoa::{
     appkit::{
-        NSApplication, NSBackingStoreBuffered, NSColor, NSEvent, NSEventModifierFlags,
+        NSApplication, NSBackingStoreBuffered, NSColor, NSEventModifierFlags,
         NSFilenamesPboardType, NSPasteboard, NSScreen, NSView, NSViewHeightSizable,
-        NSViewWidthSizable, NSWindow, NSWindowButton, NSWindowCollectionBehavior,
-        NSWindowOcclusionState, NSWindowStyleMask, NSWindowTitleVisibility,
+        NSViewWidthSizable, NSVisualEffectMaterial, NSVisualEffectState, NSVisualEffectView,
+        NSWindow, NSWindowButton, NSWindowCollectionBehavior, NSWindowOcclusionState,
+        NSWindowOrderingMode, NSWindowStyleMask, NSWindowTitleVisibility,
     },
     base::{id, nil},
     foundation::{
@@ -52,6 +53,7 @@ const WINDOW_STATE_IVAR: &str = "windowState";
 static mut WINDOW_CLASS: *const Class = ptr::null();
 static mut PANEL_CLASS: *const Class = ptr::null();
 static mut VIEW_CLASS: *const Class = ptr::null();
+static mut BLURRED_VIEW_CLASS: *const Class = ptr::null();
 
 #[allow(non_upper_case_globals)]
 const NSWindowStyleMaskNonactivatingPanel: NSWindowStyleMask =
@@ -79,16 +81,6 @@ const NSDragOperationNone: NSDragOperation = 0;
 #[allow(non_upper_case_globals)]
 const NSDragOperationCopy: NSDragOperation = 1;
 
-#[link(name = "CoreGraphics", kind = "framework")]
-extern "C" {
-    // Widely used private APIs; Apple uses them for their Terminal.app.
-    fn CGSMainConnectionID() -> id;
-    fn CGSSetWindowBackgroundBlurRadius(
-        connection_id: id,
-        window_id: NSInteger,
-        radius: i64,
-    ) -> i32;
-}
 
 #[ctor]
 unsafe fn build_classes() {
@@ -234,6 +226,18 @@ unsafe fn build_classes() {
 
         decl.register()
     };
+    BLURRED_VIEW_CLASS = {
+        let mut decl = ClassDecl::new("BlurredView", class!(NSVisualEffectView)).unwrap();
+        decl.add_method(
+            sel!(initWithFrame:),
+            blurred_view_init_with_frame as extern "C" fn(&Object, Sel, NSRect) -> id
+        );
+        decl.add_method(
+            sel!(updateLayer),
+            blurred_view_update_layer as extern "C" fn(&Object, Sel)
+        );
+        decl.register()
+    };
 }
 
 pub(crate) fn convert_mouse_position(position: NSPoint, window_height: Pixels) -> Point<Pixels> {
@@ -324,6 +328,7 @@ struct MacWindowState {
     executor: ForegroundExecutor,
     native_window: id,
     native_view: NonNull<Object>,
+    blurred_view: Option<id>,
     display_link: Option<DisplayLink>,
     renderer: renderer::Renderer,
     request_frame_callback: Option<Box<dyn FnMut(RequestFrameOptions)>>,
@@ -589,8 +594,9 @@ impl MacWindow {
                 setReleasedWhenClosed: NO
             ];
 
+            let content_view = native_window.contentView();
             let native_view: id = msg_send![VIEW_CLASS, alloc];
-            let native_view = NSView::init(native_view);
+            let native_view = NSView::initWithFrame_(native_view, NSView::bounds(content_view));
             assert!(!native_view.is_null());
 
             let mut window = Self(Arc::new(Mutex::new(MacWindowState {
@@ -598,6 +604,7 @@ impl MacWindow {
                 executor,
                 native_window,
                 native_view: NonNull::new_unchecked(native_view),
+                blurred_view: None,
                 display_link: None,
                 renderer: renderer::new_renderer(
                     renderer_context,
@@ -664,7 +671,7 @@ impl MacWindow {
 
             native_view.setAutoresizingMask_(NSViewWidthSizable | NSViewHeightSizable);
             native_view.setWantsBestResolutionOpenGLSurface_(YES);
-
+            
             // From winit crate: On Mojave, views automatically become layer-backed shortly after
             // being added to a native_window. Changing the layer-backedness of a view breaks the
             // association between the view and its associated OpenGL context. To work around this,
@@ -674,9 +681,9 @@ impl MacWindow {
             let _: () = msg_send![
                 native_view,
                 setLayerContentsRedrawPolicy: NSViewLayerContentsRedrawDuringViewResize
-            ];
-
-            native_window.setContentView_(native_view.autorelease());
+                ];
+                
+            content_view.addSubview_(native_view.autorelease());
             native_window.makeFirstResponder_(native_view);
 
             match kind {
@@ -984,19 +991,12 @@ impl PlatformWindow for MacWindow {
 
     fn set_background_appearance(&self, background_appearance: WindowBackgroundAppearance) {
         let mut this = self.0.as_ref().lock();
-        this.renderer
-            .update_transparency(background_appearance != WindowBackgroundAppearance::Opaque);
 
-        let blur_radius = if background_appearance == WindowBackgroundAppearance::Blurred {
-            80
-        } else {
-            0
-        };
-        let opaque = if background_appearance == WindowBackgroundAppearance::Opaque {
-            YES
-        } else {
-            NO
-        };
+        // NSVisualEffectView takes realtime snapshots of the content behind the window
+        // and draws on it; it's safe for the window to be opaque.
+        let opaque = background_appearance != WindowBackgroundAppearance::Transparent;
+        this.renderer.update_transparency(!opaque);
+
         unsafe {
             this.native_window.setOpaque_(opaque);
             // Shadows for transparent windows cause artifacts and performance issues
@@ -1007,8 +1007,27 @@ impl PlatformWindow for MacWindow {
                 NSColor::clearColor(nil)
             };
             this.native_window.setBackgroundColor_(clear_color);
-            let window_number = this.native_window.windowNumber();
-            CGSSetWindowBackgroundBlurRadius(CGSMainConnectionID(), window_number, blur_radius);
+
+            if background_appearance != WindowBackgroundAppearance::Blurred {
+                if let Some(blur_view) = this.blurred_view {
+                    NSView::removeFromSuperview(blur_view);
+                    this.blurred_view = None;
+                }
+            } else if this.blurred_view == None {
+                let content_view = this.native_window.contentView();
+                let frame = NSView::bounds(content_view);
+                let mut blur_view: id = msg_send![BLURRED_VIEW_CLASS, alloc];
+                blur_view = NSView::initWithFrame_(blur_view, frame);
+                blur_view.setAutoresizingMask_(NSViewWidthSizable | NSViewHeightSizable);
+
+                let _: () = msg_send![
+                    content_view,
+                    addSubview: blur_view
+                    positioned: NSWindowOrderingMode::NSWindowBelow
+                    relativeTo: nil
+                ];
+                this.blurred_view = Some(blur_view.autorelease());
+            }
         }
     }
 
@@ -1654,7 +1673,12 @@ extern "C" fn set_frame_size(this: &Object, _: Sel, size: NSSize) {
     let mut lock = window_state.as_ref().lock();
 
     let new_size = Size::<Pixels>::from(size);
-    if lock.content_size() == new_size {
+    let old_size = unsafe {
+        let old_frame: NSRect = msg_send![this, frame];
+        Size::<Pixels>::from(old_frame.size)
+    }; 
+
+    if old_size == new_size {
         return;
     }
 
@@ -2039,4 +2063,53 @@ unsafe fn display_id_for_screen(screen: id) -> CGDirectDisplayID {
     let screen_number = device_description.objectForKey_(screen_number_key);
     let screen_number: NSUInteger = msg_send![screen_number, unsignedIntegerValue];
     screen_number as CGDirectDisplayID
+}
+
+extern "C" fn blurred_view_init_with_frame(this: &Object, _: Sel, frame: NSRect) -> id {
+    unsafe {
+        let view = msg_send![super(this, class!(NSVisualEffectView)), initWithFrame: frame];
+        NSVisualEffectView::setMaterial_(view, NSVisualEffectMaterial::Selection);
+        NSVisualEffectView::setState_(view, NSVisualEffectState::Active);
+        view
+    }
+}
+
+extern "C" fn blurred_view_update_layer(this: &Object, _: Sel) {
+    unsafe {
+        let _: () = msg_send![super(this, class!(NSVisualEffectView)), updateLayer];
+        let layer: id = msg_send![this, layer];
+        if !layer.is_null() {
+            remove_layer_background(layer);
+        }
+    }
+}
+
+unsafe fn remove_layer_background(layer: id) {
+    let _: () = msg_send![layer, setBackgroundColor:nil];
+
+    let filters: id = msg_send![layer, filters];
+    if !filters.is_null() {
+        // There should be only one layer that has the filter.
+        // The blurring layer also adjusts the saturation.
+        let test_string: id = NSString::alloc(nil).init_str("saturat");
+        let predicate = ConcreteBlock::new(move |filter: id, _: NSUInteger, _: *mut BOOL| -> BOOL {
+            let name: id = msg_send![filter, description];
+            let lowercased: id = msg_send![name, lowercaseString];
+            !msg_send![lowercased, containsString: test_string]
+        });
+        test_string.autorelease();
+
+        let indices: id = msg_send![filters, indexesOfObjectsPassingTest: predicate];
+        let filtered: id = msg_send![filters, objectsAtIndexes: indices];
+        let _: () = msg_send![layer, setFilters: filtered];
+    }
+
+    let sublayers: id = msg_send![layer, sublayers];
+    if !sublayers.is_null() {
+        let count = NSArray::count(sublayers);
+        for i in 0..count {
+            let sublayer = sublayers.objectAtIndex(i);
+            remove_layer_background(sublayer);
+        }
+    }
 }
