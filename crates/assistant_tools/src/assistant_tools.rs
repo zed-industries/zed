@@ -15,9 +15,9 @@ mod thinking_tool;
 use std::sync::Arc;
 
 use assistant_tool::ToolRegistry;
+use copy_path_tool::CopyPathTool;
 use gpui::App;
 use http_client::HttpClientWithUrl;
-use copy_path_tool::CopyPathTool;
 use move_path_tool::MovePathTool;
 
 use crate::bash_tool::BashTool;
