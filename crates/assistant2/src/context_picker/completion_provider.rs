@@ -741,13 +741,13 @@ mod tests {
         let mut cx = VisualTestContext::from_window(*window.deref(), cx);
 
         let paths = vec![
-            path!("a/one.txt"),
-            path!("a/two.txt"),
-            path!("a/three.txt"),
-            path!("a/four.txt"),
-            path!("b/five.txt"),
-            path!("b/six.txt"),
-            path!("b/seven.txt"),
+            "a/one.txt",
+            "a/two.txt",
+            "a/three.txt",
+            "a/four.txt",
+            "b/five.txt",
+            "b/six.txt",
+            "b/seven.txt",
         ];
         for path in paths {
             workspace
