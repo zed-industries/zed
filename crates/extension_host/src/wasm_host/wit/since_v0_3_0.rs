@@ -47,7 +47,7 @@ impl From<CodeLabel> for latest::CodeLabel {
         Self {
             code: value.code,
             spans: value.spans.into_iter().map(Into::into).collect(),
-            filter_range: value.filter_range.into(),
+            filter_range: value.filter_range,
         }
     }
 }
@@ -55,7 +55,7 @@ impl From<CodeLabel> for latest::CodeLabel {
 impl From<CodeLabelSpan> for latest::CodeLabelSpan {
     fn from(value: CodeLabelSpan) -> Self {
         match value {
-            CodeLabelSpan::CodeRange(range) => Self::CodeRange(range.into()),
+            CodeLabelSpan::CodeRange(range) => Self::CodeRange(range),
             CodeLabelSpan::Literal(literal) => Self::Literal(literal.into()),
         }
     }

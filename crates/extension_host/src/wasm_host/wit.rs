@@ -198,10 +198,10 @@ impl Extension {
                 ext.call_language_server_command(store, &language_server_id.0, resource)
                     .await
             }
-            Extension::V030(ext) => Ok(ext
-                .call_language_server_command(store, &language_server_id.0, resource)
-                .await?
-                .map(|command| command.into())),
+            Extension::V030(ext) => {
+                ext.call_language_server_command(store, &language_server_id.0, resource)
+                    .await
+            }
             Extension::V020(ext) => Ok(ext
                 .call_language_server_command(store, &language_server_id.0, resource)
                 .await?
@@ -567,10 +567,10 @@ impl Extension {
                 ext.call_context_server_command(store, &context_server_id, project)
                     .await
             }
-            Extension::V030(ext) => Ok(ext
-                .call_context_server_command(store, &context_server_id, project)
-                .await?
-                .map(Into::into)),
+            Extension::V030(ext) => {
+                ext.call_context_server_command(store, &context_server_id, project)
+                    .await
+            }
             Extension::V020(ext) => Ok(ext
                 .call_context_server_command(store, &context_server_id, project)
                 .await?
