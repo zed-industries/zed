@@ -68,9 +68,19 @@ impl Tool for PathSearchTool {
         cx: &mut App,
     ) -> Task<Result<String>> {
         let (offset, glob) = match serde_json::from_value::<PathSearchToolInput>(input) {
-            Ok(input) => (input.offset.unwrap_or(0), input.glob),
+            Ok(input) => {
+                // Sometimes models try to search for "". In this case, return all paths in the project.
+                let glob = if input.glob.is_empty() {
+                    "*".to_string()
+                } else {
+                    input.glob
+                };
+
+                (input.offset.unwrap_or(0), glob)
+            }
             Err(err) => return Task::ready(Err(anyhow!(err))),
         };
+
         let path_matcher = match PathMatcher::new(&[glob.clone()]) {
             Ok(matcher) => matcher,
             Err(err) => return Task::ready(Err(anyhow!("Invalid glob: {err}"))),
