@@ -628,6 +628,7 @@ mod tests {
     use serde_json::json;
     use settings::SettingsStore;
     use std::{ops::Deref, path::PathBuf};
+    use util::path;
     use workspace::AppState;
 
     #[test]
@@ -706,7 +707,7 @@ mod tests {
             .fs
             .as_fake()
             .insert_tree(
-                "/dir",
+                path!("/dir"),
                 json!({
                     "editor": "",
                     "a": {
@@ -724,7 +725,7 @@ mod tests {
             )
             .await;
 
-        let project = Project::test(app_state.fs.clone(), ["/dir".as_ref()], cx).await;
+        let project = Project::test(app_state.fs.clone(), [path!("/dir").as_ref()], cx).await;
         let window = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
         let workspace = window.root(cx).unwrap();
 
