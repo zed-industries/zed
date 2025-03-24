@@ -213,18 +213,30 @@ impl LanguageModelRequestMessage {
     }
 
     pub fn contents_empty(&self) -> bool {
-        self.content.is_empty()
-            || self
-                .content
-                .first()
-                .map(|content| match content {
-                    MessageContent::Text(text) => text.chars().all(|c| c.is_whitespace()),
-                    MessageContent::ToolResult(tool_result) => {
-                        tool_result.content.chars().all(|c| c.is_whitespace())
-                    }
-                    MessageContent::ToolUse(_) | MessageContent::Image(_) => true,
-                })
-                .unwrap_or(false)
+        if self.content.is_empty() {
+            return true;
+        }
+        
+        // Check if there are any image contents
+        let has_images = self.content.iter().any(|content| matches!(content, MessageContent::Image(_)));
+        
+        // If there are images, the message is not empty
+        if has_images {
+            return false;
+        }
+        
+        // Otherwise, check if the first content item is empty
+        self.content
+            .first()
+            .map(|content| match content {
+                MessageContent::Text(text) => text.chars().all(|c| c.is_whitespace()),
+                MessageContent::ToolResult(tool_result) => {
+                    tool_result.content.chars().all(|c| c.is_whitespace())
+                }
+                MessageContent::ToolUse(_) => true,
+                MessageContent::Image(_) => unreachable!("Already checked for images"),
+            })
+            .unwrap_or(false)
     }
 }
 

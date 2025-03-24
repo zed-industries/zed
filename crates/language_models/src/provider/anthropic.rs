@@ -525,7 +525,15 @@ pub fn into_anthropic(
 
         match message.role {
             Role::User | Role::Assistant => {
-                let anthropic_message_content: Vec<anthropic::RequestContent> = message
+                // Check if message only contains images and no text
+                // We still need this to handle image-only messages for Anthropic's API requirements
+                let contains_image = message.content.iter().any(|content| matches!(content, MessageContent::Image(_)));
+                let contains_text = message.content.iter().any(|content| matches!(content, MessageContent::Text(text) if !text.is_empty()));
+                
+                // Create a flag to determine if we need to add placeholder text at the end
+                let needs_placeholder = contains_image && !contains_text;
+                
+                let mut anthropic_message_content: Vec<anthropic::RequestContent> = message
                     .content
                     .into_iter()
                     .filter_map(|content| {
@@ -591,6 +599,23 @@ pub fn into_anthropic(
                     Role::Assistant => anthropic::Role::Assistant,
                     Role::System => unreachable!("System role should never occur here"),
                 };
+                // If we have images without text, add a non-empty placeholder text at the end
+                // to avoid Anthropic's "trailing whitespace" error
+                if needs_placeholder {
+                    let cache_control = if message.cache && processed_cacheable_blocks > blocks_to_skip {
+                        Some(anthropic::CacheControl {
+                            cache_type: anthropic::CacheControlType::Ephemeral,
+                        })
+                    } else {
+                        None
+                    };
+                    
+                    anthropic_message_content.push(anthropic::RequestContent::Text {
+                        text: "." .to_string(), // Minimal non-whitespace character
+                        cache_control,
+                    });
+                }
+                
                 if let Some(last_message) = new_messages.last_mut() {
                     if last_message.role == anthropic_role {
                         last_message.content.extend(anthropic_message_content);
