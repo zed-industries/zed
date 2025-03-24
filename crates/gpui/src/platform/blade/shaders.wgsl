@@ -543,8 +543,14 @@ fn fs_quad(input: QuadVarying) -> @location(0) vec4<f32> {
 
     // Whether the point is beyond the inner edge of the straight border.
     let is_beyond_inner_straight_border =
-            straight_border_inner_corner_to_point.x > antialias_threshold ||
-            straight_border_inner_corner_to_point.y > antialias_threshold;
+            straight_border_inner_corner_to_point.x > 0 ||
+            straight_border_inner_corner_to_point.y > 0;
+
+    // Whether the point is far enough from straight border that pixels are not
+    // affected by it.
+    let is_within_inner_straight_border =
+        straight_border_inner_corner_to_point.x < -antialias_threshold &&
+        straight_border_inner_corner_to_point.y < -antialias_threshold;
 
     // Fast path for points that must be part of the background.
     //
@@ -552,7 +558,7 @@ fn fs_quad(input: QuadVarying) -> @location(0) vec4<f32> {
     // points in an inscribed rectangle, or some other quick linear check.
     // However, that might negatively impact performance in the case of
     // reasonable rounding sizes.
-    if (!is_beyond_inner_straight_border && !is_near_rounded_corner) {
+    if (is_within_inner_straight_border && !is_near_rounded_corner) {
         return blend_color(background_color, 1.0);
     }
 
