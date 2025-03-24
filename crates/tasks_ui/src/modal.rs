@@ -17,7 +17,7 @@ use ui::{
     FluentBuilder as _, Icon, IconButton, IconButtonShape, IconName, IconSize, IntoElement,
     KeyBinding, Label, LabelSize, ListItem, ListItemSpacing, RenderOnce, Toggleable, Tooltip,
 };
-use util::ResultExt;
+use util::{truncate_and_trailoff, ResultExt};
 use workspace::{tasks::schedule_resolved_task, ModalView, Workspace};
 pub use zed_actions::{Rerun, Spawn};
 
@@ -185,6 +185,8 @@ impl Focusable for TasksModal {
 }
 
 impl ModalView for TasksModal {}
+
+const MAX_TAG_LEN: usize = 10;
 
 impl PickerDelegate for TasksModalDelegate {
     type ListItem = ListItem;
@@ -441,7 +443,12 @@ impl PickerDelegate for TasksModalDelegate {
                             template
                                 .tags
                                 .iter()
-                                .map(|tag| Label::new(format!("#{}", tag)))
+                                .map(|tag| {
+                                    Label::new(format!(
+                                        "#{}",
+                                        truncate_and_trailoff(tag, MAX_TAG_LEN)
+                                    ))
+                                })
                                 .collect::<Vec<_>>(),
                         )
                         .flex_none()
