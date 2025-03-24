@@ -170,7 +170,14 @@ fragment float4 quad_fragment(QuadFragmentInput input [[stage_in]],
   // Ellipse for the inner edge of the rounded border
   float2 ellipse_radii = max(float2(0.0), float2(corner_radius) - border);
 
-  // Approximate signed distance of the point to the inside edge of the quad's border
+  // Approximate signed distance of the point to the inside edge of the quad's
+  // border. It is negative outside this edge (within the border), and
+  // positive inside.
+  //
+  // This is not always an accurate signed distance:
+  // * The rounded portions with varying border width use an approximation of
+  //   nearest-point-on-ellipse.
+  // * When it is quickly known to be outside the edge, -1.0 is used.
   float inner_sdf = 0.0;
   if (corner_center_to_point.x <= 0.0 || corner_center_to_point.y <= 0.0) {
     // Fast paths for straight borders
@@ -201,7 +208,10 @@ fragment float4 quad_fragment(QuadFragmentInput input [[stage_in]],
       // adjusted to evenly divide it
       float max_t = 0.0;
 
-      // Dash velocity has units (dash period / pixel)
+      // Since border width affects the dash size, the density of dashes
+      // varies, and this is indicated by dash_velocity. It has units
+      // (dash period / pixel). So a dash velocity of (1 / 10) is 1 dash
+      // every 10 pixels.
       float dash_velocity = 0.0;
 
       // Dash pattern: (2 * border width) dash, (1 * border width) gap
@@ -214,7 +224,8 @@ fragment float4 quad_fragment(QuadFragmentInput input [[stage_in]],
 
       if (unrounded) {
         // When corners aren't rounded, the dashes are separately laid
-        // out on each straight line
+        // out on each straight line, rather than around the whole
+        // perimeter. This way each line starts and ends with a dash.
         bool is_horizontal = corner_center_to_point.x < corner_center_to_point.y;
         float border_width = is_horizontal ? border.x : border.y;
         dash_velocity = dv_numerator / border_width;
@@ -316,7 +327,8 @@ fragment float4 quad_fragment(QuadFragmentInput input [[stage_in]],
       float dash_length = dash_length_per_width / dash_period_per_width;
       float desired_dash_gap = dash_gap_per_width / dash_period_per_width;
 
-      // Straight borders should start and end with a dash
+      // Straight borders should start and end with a dash, so max_t is
+      // reduced to cause this.
       max_t -= unrounded ? dash_length : 0.0;
       if (max_t >= 1.0) {
         // Adjust dash gap to evenly divide max_t
@@ -327,7 +339,7 @@ fragment float4 quad_fragment(QuadFragmentInput input [[stage_in]],
       } else if (unrounded) {
         // When there isn't enough space for the full gap between the
         // two start / end dashes of a straight border, reduce gap to
-        // make them fit
+        // make them fit.
         float dash_gap = max_t - dash_length;
         if (dash_gap > 0.0) {
           float dash_period = dash_length + dash_gap;
@@ -338,7 +350,7 @@ fragment float4 quad_fragment(QuadFragmentInput input [[stage_in]],
     }
 
     // Blend the border on top of the background and then linearly interpolate
-    // between the two as we slide inside the background
+    // between the two as we slide inside the background.
     float4 blended_border = over(background_color, border_color);
     color = mix(background_color, blended_border,
                 saturate(antialias_threshold - inner_sdf));
@@ -347,7 +359,14 @@ fragment float4 quad_fragment(QuadFragmentInput input [[stage_in]],
   return color * float4(1.0, 1.0, 1.0, saturate(antialias_threshold - outer_sdf));
 }
 
-// Returns the dash velocity of a corner given the dash velocity of the two sides
+// Returns the dash velocity of a corner given the dash velocity of the two
+// sides, by returning the slower velocity (larger dashes).
+//
+// Since 0 is used for dash velocity when the border width is 0 (instead of
+// +inf), this returns the other dash velocity in that case.
+//
+// An alternative to this might be to appropriately interpolate the dash
+// velocity around the corner, but that seems overcomplicated.
 float corner_dash_velocity(float dv1, float dv2) {
   if (dv1 == 0.0) {
     return dv2;
@@ -358,7 +377,8 @@ float corner_dash_velocity(float dv1, float dv2) {
   }
 }
 
-// Returns alpha used to render antialiased dashes
+// Returns alpha used to render antialiased dashes.
+// `t` is within the dash when `fmod(t, period) < length`.
 float dash_alpha(
     float t, float period, float length, float dash_velocity,
     float antialias_threshold) {
@@ -373,12 +393,19 @@ float dash_alpha(
   return saturate(antialias_threshold - signed_distance / dash_velocity);
 }
 
-// Approximates distance to the nearest point to a quarter ellipse
+// This approximates distance to the nearest point to a quarter ellipse in a way
+// that is sufficient for anti-aliasing when the ellipse is not very eccentric.
+// The components of `point` are expected to be positive.
+//
+// Negative on the outside and positive on the inside.
 float quarter_ellipse_sdf(float2 point, float2 radii) {
   // Scale the space to treat the ellipse like a unit circle
   float2 circle_vec = point / radii;
   float unit_circle_sdf = length(circle_vec) - 1.0;
-  // Approximate up-scaling of the length by using the average of the radii
+  // Approximate up-scaling of the length by using the average of the radii.
+  //
+  // TODO: A better solution would be to use the gradient of the implicit
+  // function for an ellipse to approximate a scaling factor.
   return unit_circle_sdf * (radii.x + radii.y) * -0.5;
 }
 

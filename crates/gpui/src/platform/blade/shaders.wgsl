@@ -499,7 +499,7 @@ fn fs_quad(input: QuadVarying) -> @location(0) vec4<f32> {
         quad.corner_radii.top_right == 0.0 &&
         quad.corner_radii.bottom_right == 0.0;
 
-    // Fast path when the quad is not rounded and doesn't have any border.
+    // Fast path when the quad is not rounded and doesn't have any border
     if (quad.border_widths.top == 0.0 &&
             quad.border_widths.left == 0.0 &&
             quad.border_widths.right == 0.0 &&
@@ -518,10 +518,10 @@ fn fs_quad(input: QuadVarying) -> @location(0) vec4<f32> {
     // consistent with straight borders.
     let antialias_threshold = 0.5;
 
-    // Radius of the nearest corner.
+    // Radius of the nearest corner
     let corner_radius = pick_corner_radius(center_to_point, quad.corner_radii);
 
-    // Width of the nearest borders.
+    // Width of the nearest borders
     let border = vec2<f32>(
         select(
             quad.border_widths.right,
@@ -540,7 +540,7 @@ fn fs_quad(input: QuadVarying) -> @location(0) vec4<f32> {
     // mirrored into bottom right quadrant.
     let corner_center_to_point = corner_to_point + corner_radius;
 
-    // Whether the nearest point on the border is rounded.
+    // Whether the nearest point on the border is rounded
     let is_near_rounded_corner =
             corner_center_to_point.x >= 0 &&
             corner_center_to_point.y >= 0;
@@ -598,7 +598,7 @@ fn fs_quad(input: QuadVarying) -> @location(0) vec4<f32> {
         inner_sdf = quarter_ellipse_sdf(corner_center_to_point, ellipse_radii);
     }
 
-    // Negative when inside the border.
+    // Negative when inside the border
     let border_sdf = max(inner_sdf, outer_sdf);
 
     var color = background_color;
@@ -607,11 +607,11 @@ fn fs_quad(input: QuadVarying) -> @location(0) vec4<f32> {
 
         // Dashed border logic when border_style == 1
         if (quad.border_style == 1) {
-            // Position in "dash space", where each dash period has length 1.
+            // Position in "dash space", where each dash period has length 1
             var t = 0.0;
 
             // Total number of dash periods, so that the dash spacing can be
-            // adjusted to evenly divide it.
+            // adjusted to evenly divide it
             var max_t = 0.0;
 
             // Since border width affects the dash size, the density of dashes
@@ -625,7 +625,7 @@ fn fs_quad(input: QuadVarying) -> @location(0) vec4<f32> {
             let dash_gap_per_width = 1.0;
             let dash_period_per_width = dash_length_per_width + dash_gap_per_width;
 
-            // Dividing this by the border width gives the dash velocity.
+            // Dividing this by the border width gives the dash velocity
             let dv_numerator = 1.0 / dash_period_per_width;
 
             if (unrounded) {
@@ -653,13 +653,13 @@ fn fs_quad(input: QuadVarying) -> @location(0) vec4<f32> {
                 let w_b = quad.border_widths.bottom;
                 let w_l = quad.border_widths.left;
 
-                // Straight side dash velocities.
+                // Straight side dash velocities
                 let dv_t = select(dv_numerator / w_t, 0.0, w_t <= 0.0);
                 let dv_r = select(dv_numerator / w_r, 0.0, w_r <= 0.0);
                 let dv_b = select(dv_numerator / w_b, 0.0, w_b <= 0.0);
                 let dv_l = select(dv_numerator / w_l, 0.0, w_l <= 0.0);
 
-                // Straight side lengths in dash space.
+                // Straight side lengths in dash space
                 let s_t = (size.x - r_tl - r_tr) * dv_t;
                 let s_r = (size.y - r_tr - r_br) * dv_r;
                 let s_b = (size.x - r_br - r_bl) * dv_b;
@@ -670,13 +670,13 @@ fn fs_quad(input: QuadVarying) -> @location(0) vec4<f32> {
                 let corner_dash_velocity_bl = corner_dash_velocity(dv_b, dv_l);
                 let corner_dash_velocity_tl = corner_dash_velocity(dv_t, dv_l);
 
-                // Corner lengths in dash space.
+                // Corner lengths in dash space
                 let c_tr = r_tr * (M_PI_F / 2.0) * corner_dash_velocity_tr;
                 let c_br = r_br * (M_PI_F / 2.0) * corner_dash_velocity_br;
                 let c_bl = r_bl * (M_PI_F / 2.0) * corner_dash_velocity_bl;
                 let c_tl = r_tl * (M_PI_F / 2.0) * corner_dash_velocity_tl;
 
-                // Cumulative dash space upto each segment.
+                // Cumulative dash space upto each segment
                 let upto_tr = s_t;
                 let upto_r = upto_tr + c_tr;
                 let upto_br = upto_r + s_r;
