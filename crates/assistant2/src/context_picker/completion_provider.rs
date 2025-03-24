@@ -471,7 +471,6 @@ fn confirm_completion_callback(
 
         let crease_text = crease_text.clone();
         let crease_icon_path = crease_icon_path.clone();
-        let start = start.clone();
         let editor = editor.clone();
         window.defer(cx, move |window, cx| {
             crate::context_picker::insert_crease_for_mention(
