@@ -306,6 +306,29 @@
       "vertical": true
     }
   },
+  // Minimap related settings
+  "minimap": {
+    // When to show the minimap in the editor.
+    // This setting can take three values:
+    // 1. Show the minimap if the editor's scrollbar is visible:
+    //    "auto"
+    // 2. Always show the minimap:
+    //    "always"
+    // 3. Never show the minimap:
+    //    "never" (default)
+    "show": "never",
+    // When to show the minimap slider.
+    // This setting can take two values:
+    // 1. Show the minimap slider if the mouse is over the minimap:
+    //    "hover"
+    // 2. Always show the minimap slider:
+    //    "always"
+    "slider": "hover",
+    // The width of the minimap in pixels.
+    "width": 100,
+    // The font size of the minimap in pixels.
+    "font_size": 2
+  },
   // Enable middle-click paste on Linux.
   "middle_click_paste": true,
   // What to do when multibuffer is double clicked in some of its excerpts

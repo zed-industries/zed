@@ -2,7 +2,7 @@ mod actions;
 pub(crate) mod autoscroll;
 pub(crate) mod scroll_amount;
 
-use crate::editor_settings::{ScrollBeyondLastLine, ScrollbarAxes};
+use crate::editor_settings::{ScrollBeyondLastLine, ScrollbarAxes, ShowMinimap};
 use crate::{
     display_map::{DisplaySnapshot, ToDisplayPoint},
     hover_popover::hide_hover,
@@ -183,6 +183,10 @@ pub struct ScrollManager {
     dragging_scrollbar: AxisPair<bool>,
     visible_line_count: Option<f32>,
     forbid_vertical_scroll: bool,
+
+    dragging_minimap: bool,
+    show_minimap_slider: bool,
+    hide_minimap_slider_task: Option<Task<()>>,
 }
 
 impl ScrollManager {
@@ -198,6 +202,9 @@ impl ScrollManager {
             last_autoscroll: None,
             visible_line_count: None,
             forbid_vertical_scroll: false,
+            dragging_minimap: false,
+            show_minimap_slider: false,
+            hide_minimap_slider_task: None,
         }
     }
 
@@ -361,6 +368,29 @@ impl ScrollManager {
         self.show_scrollbars
     }
 
+    pub fn show_minimap_slider(&mut self, window: &mut Window, cx: &mut Context<Editor>) {
+        if !self.show_minimap_slider {
+            self.show_minimap_slider = true;
+            cx.notify();
+        }
+
+        self.hide_minimap_slider_task = Some(cx.spawn_in(window, |editor, mut cx| async move {
+            cx.background_executor()
+                .timer(SCROLLBAR_SHOW_INTERVAL)
+                .await;
+            editor
+                .update(&mut cx, |editor, cx| {
+                    editor.scroll_manager.show_minimap_slider = false;
+                    cx.notify();
+                })
+                .log_err();
+        }));
+    }
+
+    pub fn minimap_slider_visible(&mut self) -> bool {
+        self.show_minimap_slider
+    }
+
     pub fn autoscroll_request(&self) -> Option<Autoscroll> {
         self.autoscroll_request.map(|(autoscroll, _)| autoscroll)
     }
@@ -376,6 +406,15 @@ impl ScrollManager {
         cx: &mut Context<Editor>,
     ) {
         self.dragging_scrollbar = self.dragging_scrollbar.apply_along(axis, |_| dragging);
+        cx.notify();
+    }
+
+    pub fn is_dragging_minimap(&self) -> bool {
+        self.dragging_minimap
+    }
+
+    pub fn set_is_dragging_minimap(&mut self, dragging: bool, cx: &mut Context<Editor>) {
+        self.dragging_minimap = dragging;
         cx.notify();
     }
 
