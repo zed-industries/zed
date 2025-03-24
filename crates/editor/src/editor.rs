@@ -6134,12 +6134,10 @@ impl Editor {
             "Set Breakpoint"
         };
 
-        let toggle_state_msg = breakpoint.as_ref().map_or(None, |bp| {
-            if bp.is_enabled() {
-                Some("Disable")
-            } else {
-                Some("Enable")
-            }
+        let toggle_state_msg = breakpoint.as_ref().map_or(None, |bp| match bp.state {
+            BreakpointState::Enabled => Some("Disable"),
+            BreakpointState::Disabled => Some("Enable"),
+            BreakpointState::Hint => None,
         });
 
         let breakpoint = breakpoint.unwrap_or_else(|| {
@@ -6205,7 +6203,12 @@ impl Editor {
     ) -> IconButton {
         let (color, icon) = match breakpoint {
             Some(bp) => {
-                let color = if bp.is_disabled() {
+                let color = if self
+                    .gutter_breakpoint_indicator
+                    .is_some_and(|point| point.row() == row)
+                {
+                    Color::Hint
+                } else if bp.is_disabled() {
                     Color::Custom(Color::Debugger.color(cx).opacity(0.5))
                 } else {
                     Color::Debugger
@@ -8476,10 +8479,6 @@ impl Editor {
         cx: &mut Context<Self>,
     ) -> Option<(Anchor, Breakpoint)> {
         let snapshot = self.snapshot(window, cx);
-        // We Set the column position to zero so this function interacts correctly
-        // between calls by clicking on the gutter & using an action to toggle a
-        // breakpoint. Otherwise, toggling a breakpoint through an action wouldn't
-        // untoggle a breakpoint that was added through clicking on the gutter
         let breakpoint_position = snapshot
             .display_snapshot
             .buffer_snapshot

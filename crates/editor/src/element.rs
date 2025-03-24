@@ -2073,17 +2073,9 @@ impl EditorElement {
         cx: &mut App,
     ) -> Vec<AnyElement> {
         self.editor.update(cx, |editor, cx| {
-            let mut should_render_phantom_breakpoint = true;
-            let mut breakpoints = breakpoints
+            breakpoints
                 .into_iter()
                 .filter_map(|(display_row, (text_anchor, bp))| {
-                    if editor
-                        .gutter_breakpoint_indicator
-                        .is_some_and(|point| point.row() == display_row)
-                    {
-                        should_render_phantom_breakpoint = false;
-                    }
-
                     if row_infos
                         .get((display_row.0.saturating_sub(range.start.0)) as usize)
                         .is_some_and(|row_info| row_info.expand_info.is_some())
@@ -2116,27 +2108,7 @@ impl EditorElement {
                     );
                     Some(button)
                 })
-                .collect_vec();
-
-            if let Some(point) = editor
-                .gutter_breakpoint_indicator
-                .filter(|_| should_render_phantom_breakpoint)
-            {
-                let anchor = snapshot.display_point_to_anchor(point, Bias::Left);
-                let button = editor.render_breakpoint(anchor, point.row(), None, cx);
-                breakpoints.push(prepaint_gutter_button(
-                    button,
-                    point.row(),
-                    line_height,
-                    gutter_dimensions,
-                    scroll_pixel_position,
-                    gutter_hitbox,
-                    display_hunks,
-                    window,
-                    cx,
-                ));
-            }
-            breakpoints
+                .collect_vec()
         })
     }
 
@@ -7051,6 +7023,27 @@ impl Element for EditorElement {
                         window,
                         cx,
                     );
+
+                    // We add the gutter breakpoint indicator to breakpoint_rows after painting
+                    // line numbers so we don't paint a line number debug accent color if a user
+                    // has their mouse over that line when a breakpoint isn't there
+                    if cx.has_flag::<Debugger>() {
+                        let gutter_breakpoint_indicator =
+                            self.editor.read(cx).gutter_breakpoint_indicator;
+                        if let Some(gutter_breakpoint_point) = gutter_breakpoint_indicator {
+                            breakpoint_rows
+                                .entry(gutter_breakpoint_point.row())
+                                .or_insert_with(|| {
+                                    let position = snapshot.display_point_to_anchor(
+                                        gutter_breakpoint_point,
+                                        Bias::Left,
+                                    );
+                                    let breakpoint = Breakpoint::new_hover();
+
+                                    (position, breakpoint)
+                                });
+                        }
+                    }
 
                     let mut expand_toggles =
                         window.with_element_namespace("expand_toggles", |window| {
