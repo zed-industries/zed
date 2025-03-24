@@ -38,6 +38,7 @@ use workspace::{
     OpenChannelNotes, Workspace,
     dock::{DockPosition, Panel, PanelEvent},
     notifications::{DetachAndPromptErr, NotifyResultExt, NotifyTaskExt},
+    Deafen, LeaveCall, Mute, OpenChannelNotes, ScreenShare, ShareProject, Workspace,
 };
 
 actions!(
@@ -77,6 +78,57 @@ pub fn init(cx: &mut App) {
                 window.defer(cx, move |window, cx| {
                     ChannelView::open(channel_id, None, workspace, window, cx)
                         .detach_and_log_err(cx)
+                });
+            }
+        });
+        // TODO: make it possible to bind this one to a held key for push to talk?
+        // how to make "toggle_on_modifiers_press" contextual?
+        workspace.register_action(|_, _: &Mute, window, cx| {
+            let room = ActiveCall::global(cx).read(cx).room().cloned();
+            if let Some(room) = room {
+                window.defer(cx, move |_window, cx| {
+                    room.update(cx, |room, cx| room.toggle_mute(cx))
+                });
+            }
+        });
+        workspace.register_action(|_, _: &Deafen, window, cx| {
+            let room = ActiveCall::global(cx).read(cx).room().cloned();
+            if let Some(room) = room {
+                window.defer(cx, move |_window, cx| {
+                    room.update(cx, |room, cx| room.toggle_deafen(cx))
+                });
+            }
+        });
+        workspace.register_action(|_, _: &LeaveCall, window, cx| {
+            CollabPanel::leave_call(window, cx);
+        });
+        workspace.register_action(|_, _: &ShareProject, window, cx| {
+            let project = cx.entity().read(cx).project().clone();
+            println!("{project:?}");
+            window.defer(cx, move |_window, cx| {
+                ActiveCall::global(cx).update(cx, move |call, cx| {
+                    if let Some(room) = call.room() {
+                        println!("{room:?}");
+                        if room.read(cx).is_sharing_project() {
+                            call.unshare_project(project, cx).ok();
+                        } else {
+                            call.share_project(project, cx).detach_and_log_err(cx);
+                        }
+                    }
+                });
+            });
+        });
+        workspace.register_action(|_, _: &ScreenShare, window, cx| {
+            let room = ActiveCall::global(cx).read(cx).room().cloned();
+            if let Some(room) = room {
+                window.defer(cx, move |_window, cx| {
+                    room.update(cx, |room, cx| {
+                        if room.is_screen_sharing() {
+                            room.unshare_screen(cx).ok();
+                        } else {
+                            room.share_screen(cx).detach_and_log_err(cx);
+                        };
+                    });
                 });
             }
         });
