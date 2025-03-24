@@ -9,6 +9,7 @@ use anyhow::Result;
 use editor::{CompletionProvider, Editor, ExcerptId};
 use file_icons::FileIcons;
 use gpui::{App, Entity, Task, WeakEntity};
+use http_client::HttpClientWithUrl;
 use language::{Buffer, CodeLabel, HighlightId};
 use lsp::CompletionContext;
 use project::{Completion, CompletionIntent, ProjectPath, WorktreeId};
@@ -17,9 +18,11 @@ use text::{Anchor, ToPoint};
 use ui::prelude::*;
 use workspace::Workspace;
 
+use crate::context::AssistantContext;
 use crate::context_store::ContextStore;
 use crate::thread_store::ThreadStore;
 
+use super::fetch_context_picker::fetch_url_content;
 use super::thread_context_picker::ThreadContextEntry;
 use super::{recent_context_picker_entries, supported_context_picker_modes, ContextPickerMode};
 
@@ -221,6 +224,56 @@ impl ContextPickerCompletionProvider {
         }
     }
 
+    fn completion_for_fetch(
+        source_range: Range<Anchor>,
+        url_to_fetch: SharedString,
+        excerpt_id: ExcerptId,
+        editor: Entity<Editor>,
+        context_store: Entity<ContextStore>,
+        http_client: Arc<HttpClientWithUrl>,
+    ) -> Completion {
+        let new_text = format!("@fetch {}", url_to_fetch);
+        let new_text_len = new_text.len();
+        Completion {
+            old_range: source_range.clone(),
+            new_text,
+            label: CodeLabel::plain(url_to_fetch.to_string(), None),
+            documentation: None,
+            source: project::CompletionSource::Custom,
+            icon_path: Some(IconName::Globe.path().into()),
+            confirm: Some(confirm_completion_callback(
+                IconName::Globe.path().into(),
+                url_to_fetch.clone(),
+                excerpt_id,
+                source_range.start,
+                new_text_len,
+                editor.clone(),
+                move |cx| {
+                    let context_store = context_store.clone();
+                    let http_client = http_client.clone();
+                    let url_to_fetch = url_to_fetch.clone();
+                    cx.spawn(async move |cx| {
+                        if context_store.update(cx, |context_store, _| {
+                            context_store.includes_url(&url_to_fetch).is_some()
+                        })? {
+                            return Ok(());
+                        }
+                        let content = cx
+                            .background_spawn(fetch_url_content(
+                                http_client,
+                                url_to_fetch.to_string(),
+                            ))
+                            .await?;
+                        context_store.update(cx, |context_store, _| {
+                            context_store.add_fetched_url(url_to_fetch.to_string(), content)
+                        })
+                    })
+                    .detach_and_log_err(cx);
+                },
+            )),
+        }
+    }
+
     fn completion_for_path(
         project_path: ProjectPath,
         is_recent: bool,
@@ -324,6 +377,7 @@ impl CompletionProvider for ContextPickerCompletionProvider {
 
         let thread_store = self.thread_store.clone();
         let editor = self.editor.clone();
+        let http_client = workspace.read(cx).client().http_client().clone();
 
         cx.spawn(async move |_, cx| {
             let mut completions = Vec::new();
@@ -369,7 +423,40 @@ impl CompletionProvider for ContextPickerCompletionProvider {
                         }));
                     })?;
                 }
-                Some(ContextPickerMode::Fetch) => {}
+                Some(ContextPickerMode::Fetch) => {
+                    if let Some(editor) = editor.upgrade() {
+                        if !query.is_empty() {
+                            completions.push(Self::completion_for_fetch(
+                                source_range.clone(),
+                                query.into(),
+                                excerpt_id,
+                                editor.clone(),
+                                context_store.clone(),
+                                http_client.clone(),
+                            ));
+                        }
+
+                        context_store.update(cx, |store, _| {
+                            let urls = store.context().iter().filter_map(|context| {
+                                if let AssistantContext::FetchedUrl(context) = context {
+                                    Some(context.url.clone())
+                                } else {
+                                    None
+                                }
+                            });
+                            for url in urls {
+                                completions.push(Self::completion_for_fetch(
+                                    source_range.clone(),
+                                    url,
+                                    excerpt_id,
+                                    editor.clone(),
+                                    context_store.clone(),
+                                    http_client.clone(),
+                                ));
+                            }
+                        })?;
+                    }
+                }
                 Some(ContextPickerMode::Thread) => {
                     if let Some((thread_store, editor)) = thread_store
                         .and_then(|thread_store| thread_store.upgrade())
