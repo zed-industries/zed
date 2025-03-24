@@ -1001,6 +1001,7 @@ impl ActiveThread {
                     .id(("message-container", ix))
                     .ml_2()
                     .pl_2()
+                    .pr_4()
                     .border_l_1()
                     .border_color(cx.theme().colors().border_variant)
                     .child(message_content)
@@ -1169,7 +1170,7 @@ impl ActiveThread {
         let lighter_border = cx.theme().colors().border.opacity(0.5);
         let editor_bg = cx.theme().colors().editor_background;
 
-        div().py_2().pr_4().child(
+        div().py_2().child(
             v_flex()
                 .rounded_lg()
                 .border_1()
@@ -1337,7 +1338,7 @@ impl ActiveThread {
             _ => IconName::Terminal,
         };
 
-        div().py_2().pr_4().child(
+        div().py_2().child(
             v_flex()
                 .rounded_lg()
                 .border_1()
