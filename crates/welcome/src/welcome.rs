@@ -11,7 +11,7 @@ use gpui::{
 use language::language_settings::{all_language_settings, EditPredictionProvider};
 use settings::{Settings, SettingsStore};
 use std::sync::Arc;
-use ui::{prelude::*, CheckboxWithLabel, ElevationIndex, Tooltip};
+use ui::{prelude::*, CheckboxWithLabel, ElevationIndex, KeyBinding};
 use vim_mode_setting::VimModeSetting;
 use workspace::{
     dock::DockPosition,
@@ -21,6 +21,7 @@ use workspace::{
 
 pub use base_keymap_setting::BaseKeymap;
 pub use multibuffer_hint::*;
+use zed_actions::OpenRemote;
 
 actions!(welcome, [ResetHints]);
 
@@ -73,7 +74,7 @@ pub struct WelcomePage {
 }
 
 impl Render for WelcomePage {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let edit_prediction_provider_is_zed =
             all_language_settings(None, cx).edit_predictions.provider
                 == EditPredictionProvider::Zed;
@@ -148,11 +149,11 @@ impl Render for WelcomePage {
                                     // )
                                     // )
                                     .child(
-                                        div().pl_1().child(
                                         Label::new("Start a Project")
+                                            .ml_1()
                                             .size(LabelSize::XSmall)
                                             .color(Color::Muted)
-                                            .buffer_font(cx))
+                                            .buffer_font(cx)
                                     )
                                     .when(cfg!(target_os = "macos"), |el| {
                                         el.child(
@@ -161,13 +162,17 @@ impl Render for WelcomePage {
                                                 .icon_size(IconSize::Small)
                                                 .icon_color(Color::Muted)
                                                 .icon_position(IconPosition::Start)
-                                                .on_click(cx.listener(|_, _, _, cx| {
+                                                .key_binding(
+                                                    KeyBinding::for_action(
+                                                        &workspace::Open,
+                                                        window,
+                                                        cx,
+                                                    )
+                                                    .map(|kb| kb.size(rems_from_px(12.))),
+                                                )
+                                                .on_click(cx.listener(|_, _, window, cx| {
                                                     telemetry::event!("Welcome Project Opened");
-                                                    cx
-                                                        .spawn(async move |_, cx| {
-                                                            install_cli::install_cli(&cx).await
-                                                        })
-                                                        .detach_and_log_err(cx);
+                                                    window.dispatch_action(workspace::Open.boxed_clone(), cx)
                                                 })),
                                         )
                                     })
@@ -177,10 +182,19 @@ impl Render for WelcomePage {
                                             .icon_size(IconSize::Small)
                                             .icon_color(Color::Muted)
                                             .icon_position(IconPosition::Start)
-                                            .on_click(cx.listener(|_, _, _, cx| {
+                                            .key_binding(
+                                                KeyBinding::for_action(
+                                                    &OpenRemote,
+                                                    window,
+                                                    cx,
+                                                )
+                                                .map(|kb| kb.size(rems_from_px(12.))),
+                                            )
+                                            .on_click(cx.listener(|_, _, window, cx| {
                                                 telemetry::event!("Welcome Remote Connected");
-                                                cx.open_url(DOCS_URL);
+                                                window.dispatch_action(OpenRemote.boxed_clone(), cx)
                                             })),
+
                                     )
                                     .child(
                                         Button::new("clone-repo", "Clone Repo")
@@ -188,6 +202,15 @@ impl Render for WelcomePage {
                                             .icon_size(IconSize::Small)
                                             .icon_color(Color::Muted)
                                             .icon_position(IconPosition::Start)
+                                            // .key_binding(
+                                            //     KeyBinding::for_action(
+                                            //         &editor::actions::Cancel,
+                                            //         // &focus_handle,
+                                            //         window,
+                                            //         cx,
+                                            //     )
+                                            //     .map(|kb| kb.size(rems_from_px(10.))),
+                                            // )
                                             .on_click(cx.listener(|_, _, _, cx| {
                                                 telemetry::event!("Welcome Repo Cloned");
                                                 cx.open_url(DOCS_URL);
@@ -241,11 +264,11 @@ impl Render for WelcomePage {
                                     // )
 
                                     .child(
-                                        div().pl_1().child(
                                         Label::new("Make Yourself At Home")
+                                            .ml_1()
                                             .size(LabelSize::XSmall)
                                             .color(Color::Muted)
-                                            .buffer_font(cx))
+                                            .buffer_font(cx)
                                     )
                                     .child(
                                         Button::new("choose-theme", "Choose a Theme")
@@ -455,13 +478,6 @@ impl WelcomePage {
         });
 
         this
-    }
-
-    fn section_label(&self, cx: &mut App) -> Div {
-        div()
-            .pl_1()
-            .font_buffer(cx)
-            .text_color(Color::Muted.color(cx))
     }
 
     fn update_settings<T: Settings>(
