@@ -2,7 +2,7 @@ use std::{any::Any, cell::Cell, fmt::Debug, ops::Range, rc::Rc, sync::Arc};
 
 use crate::{prelude::*, px, relative, IntoElement};
 use gpui::{
-    point, quad, Along, App, Axis as ScrollbarAxis, Bounds, ContentMask, Corners, Edges, Element,
+    quad, Along, App, Axis as ScrollbarAxis, Bounds, ContentMask, Corners, Edges, Element,
     ElementId, Entity, EntityId, GlobalElementId, Hitbox, Hsla, IsZero, LayoutId, MouseDownEvent,
     MouseMoveEvent, MouseUpEvent, Pixels, Point, ScrollHandle, ScrollWheelEvent, Size, Style,
     UniformListScrollHandle, Window,
@@ -193,57 +193,38 @@ impl Element for Scrollbar {
         window: &mut Window,
         cx: &mut App,
     ) {
+        const EXTRA_PADDING: Pixels = px(5.0);
         window.with_content_mask(Some(ContentMask { bounds }), |window| {
+            let axis = self.kind;
             let colors = cx.theme().colors();
             let thumb_background = colors
                 .surface_background
                 .blend(colors.scrollbar_thumb_background);
-            let is_vertical = self.kind == ScrollbarAxis::Vertical;
-            let extra_padding = px(5.0);
-            let padded_bounds = if is_vertical {
-                Bounds::from_corners(
-                    bounds.origin + point(Pixels::ZERO, extra_padding),
-                    bounds.bottom_right() - point(Pixels::ZERO, extra_padding * 3),
-                )
-            } else {
-                Bounds::from_corners(
-                    bounds.origin + point(extra_padding, Pixels::ZERO),
-                    bounds.bottom_right() - point(extra_padding * 3, Pixels::ZERO),
-                )
-            };
 
-            let mut thumb_bounds = if is_vertical {
-                let thumb_offset = self.thumb.start * padded_bounds.size.height;
-                let thumb_end = self.thumb.end * padded_bounds.size.height;
-                let thumb_upper_left = point(
-                    padded_bounds.origin.x,
-                    padded_bounds.origin.y + thumb_offset,
-                );
-                let thumb_lower_right = point(
-                    padded_bounds.origin.x + padded_bounds.size.width,
-                    padded_bounds.origin.y + thumb_end,
-                );
-                Bounds::from_corners(thumb_upper_left, thumb_lower_right)
-            } else {
-                let thumb_offset = self.thumb.start * padded_bounds.size.width;
-                let thumb_end = self.thumb.end * padded_bounds.size.width;
-                let thumb_upper_left = point(
-                    padded_bounds.origin.x + thumb_offset,
-                    padded_bounds.origin.y,
-                );
-                let thumb_lower_right = point(
-                    padded_bounds.origin.x + thumb_end,
-                    padded_bounds.origin.y + padded_bounds.size.height,
-                );
-                Bounds::from_corners(thumb_upper_left, thumb_lower_right)
-            };
-            let corners = if is_vertical {
-                thumb_bounds.size.width /= 1.5;
-                Corners::all(thumb_bounds.size.width / 2.0)
-            } else {
-                thumb_bounds.size.height /= 1.5;
-                Corners::all(thumb_bounds.size.height / 2.0)
-            };
+            let padded_bounds = Bounds::from_corners(
+                bounds
+                    .origin
+                    .apply_along(axis, |origin| origin + EXTRA_PADDING),
+                bounds
+                    .bottom_right()
+                    .apply_along(axis, |track_end| track_end - 3.0 * EXTRA_PADDING),
+            );
+
+            let thumb_offset = self.thumb.start * padded_bounds.size.along(axis);
+            let thumb_end = self.thumb.end * padded_bounds.size.along(axis);
+
+            let thumb_bounds = Bounds::new(
+                padded_bounds
+                    .origin
+                    .apply_along(axis, |origin| origin + thumb_offset),
+                padded_bounds
+                    .size
+                    .apply_along(axis, |_| thumb_end - thumb_offset)
+                    .apply_along(axis.invert(), |width| width / 1.5),
+            );
+
+            let corners = Corners::all(thumb_bounds.size.along(axis.invert()) / 2.0);
+
             window.paint_quad(quad(
                 thumb_bounds,
                 corners,
@@ -253,7 +234,39 @@ impl Element for Scrollbar {
             ));
 
             let scroll = self.state.scroll_handle.clone();
-            let axis = self.kind;
+
+            enum ScrollbarMouseEvent {
+                GutterClick,
+                ThumbDrag(Pixels),
+            }
+
+            let compute_click_offset =
+                move |event_position: Point<Pixels>,
+                      item_size: Size<Pixels>,
+                      event_type: ScrollbarMouseEvent| {
+                    let viewport_size = padded_bounds.size.along(axis);
+
+                    let thumb_size = thumb_bounds.size.along(axis);
+
+                    let thumb_offset = match event_type {
+                        ScrollbarMouseEvent::GutterClick => thumb_size / 2.,
+                        ScrollbarMouseEvent::ThumbDrag(thumb_offset) => thumb_offset,
+                    };
+
+                    let thumb_start = (event_position.along(axis)
+                        - padded_bounds.origin.along(axis)
+                        - thumb_offset)
+                        .clamp(px(0.), viewport_size - thumb_size);
+
+                    let max_offset = (item_size.along(axis) - viewport_size).max(px(0.));
+                    let percentage = if viewport_size > thumb_size {
+                        thumb_start / (viewport_size - thumb_size)
+                    } else {
+                        0.
+                    };
+
+                    -max_offset * percentage
+                };
 
             window.on_mouse_event({
                 let scroll = scroll.clone();
@@ -267,37 +280,16 @@ impl Element for Scrollbar {
                         let offset = event.position.along(axis) - thumb_bounds.origin.along(axis);
                         state.drag.set(Some(offset));
                     } else {
-                        let item_size = scroll.content_size();
-
-                        let click_offset = {
-                            let viewport_size = padded_bounds.size.along(axis);
-
-                            let thumb_size = thumb_bounds.size.along(axis);
-                            let thumb_start = (event.position.along(axis)
-                                - padded_bounds.origin.along(axis)
-                                - (thumb_size / 2.))
-                                .clamp(px(0.), viewport_size - thumb_size);
-
-                            let max_offset = (item_size.along(axis) - viewport_size).max(px(0.));
-                            let percentage = if viewport_size > thumb_size {
-                                thumb_start / (viewport_size - thumb_size)
-                            } else {
-                                0.
-                            };
-
-                            -max_offset * percentage
-                        };
-                        match axis {
-                            ScrollbarAxis::Horizontal => {
-                                scroll.set_offset(point(click_offset, scroll.offset().y));
-                            }
-                            ScrollbarAxis::Vertical => {
-                                scroll.set_offset(point(scroll.offset().x, click_offset));
-                            }
-                        }
+                        let click_offset = compute_click_offset(
+                            event.position,
+                            scroll.content_size(),
+                            ScrollbarMouseEvent::GutterClick,
+                        );
+                        scroll.set_offset(scroll.offset().apply_along(axis, |_| click_offset));
                     }
                 }
             });
+
             window.on_mouse_event({
                 let scroll = scroll.clone();
                 move |event: &ScrollWheelEvent, phase, window, _| {
@@ -309,37 +301,16 @@ impl Element for Scrollbar {
                     }
                 }
             });
+
             let state = self.state.clone();
-            let axis = self.kind;
             window.on_mouse_event(move |event: &MouseMoveEvent, _, _, cx| {
                 if let Some(drag_state) = state.drag.get().filter(|_| event.dragging()) {
-                    let item_size = scroll.content_size();
-                    let drag_offset = {
-                        let viewport_size = padded_bounds.size.along(axis);
-
-                        let thumb_size = thumb_bounds.size.along(axis);
-                        let thumb_start = (event.position.along(axis)
-                            - padded_bounds.origin.along(axis)
-                            - drag_state)
-                            .clamp(px(0.), viewport_size - thumb_size);
-
-                        let max_offset = (item_size.along(axis) - viewport_size).max(px(0.));
-                        let percentage = if viewport_size > thumb_size {
-                            thumb_start / (viewport_size - thumb_size)
-                        } else {
-                            0.
-                        };
-
-                        -max_offset * percentage
-                    };
-                    match axis {
-                        ScrollbarAxis::Horizontal => {
-                            scroll.set_offset(point(drag_offset, scroll.offset().y));
-                        }
-                        ScrollbarAxis::Vertical => {
-                            scroll.set_offset(point(scroll.offset().x, drag_offset));
-                        }
-                    };
+                    let drag_offset = compute_click_offset(
+                        event.position,
+                        scroll.content_size(),
+                        ScrollbarMouseEvent::ThumbDrag(drag_state),
+                    );
+                    scroll.set_offset(scroll.offset().apply_along(axis, |_| drag_offset));
                     if let Some(id) = state.parent_id {
                         cx.notify(id);
                     }
