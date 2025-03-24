@@ -35,9 +35,9 @@ use git::{blame::BlameEntry, status::FileStatus, Oid};
 use gpui::{
     anchored, deferred, div, fill, linear_color_stop, linear_gradient, outline, point, px, quad,
     relative, size, solid_background, transparent_black, Action, AnyElement, App, AvailableSpace,
-    Axis, Bounds, ClickEvent, ClipboardItem, ContentMask, Context, Corner, Corners, CursorStyle,
-    DispatchPhase, Edges, Element, ElementInputHandler, Entity, Focusable as _, FontId,
-    GlobalElementId, Hitbox, Hsla, InteractiveElement, IntoElement, Keystroke, Length,
+    Axis, BorderStyle, Bounds, ClickEvent, ClipboardItem, ContentMask, Context, Corner, Corners,
+    CursorStyle, DispatchPhase, Edges, Element, ElementInputHandler, Entity, Focusable as _,
+    FontId, GlobalElementId, Hitbox, Hsla, InteractiveElement, IntoElement, Keystroke, Length,
     ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, PaintQuad,
     ParentElement, Pixels, ScrollDelta, ScrollWheelEvent, ShapedLine, SharedString, Size,
     StatefulInteractiveElement, Style, Styled, Subscription, TextRun, TextStyleRefinement, Window,
@@ -4510,6 +4510,7 @@ impl EditorElement {
                             flattened_background_color,
                             Edges::default(),
                             transparent_black(),
+                            BorderStyle::default(),
                         ));
                     } else {
                         let flattened_unstaged_background_color = cx
@@ -4524,6 +4525,7 @@ impl EditorElement {
                             flattened_unstaged_background_color,
                             Edges::all(Pixels(1.0)),
                             flattened_background_color,
+                            BorderStyle::Solid,
                         ));
                     }
                 }
@@ -4888,6 +4890,7 @@ impl EditorElement {
                             left: Pixels::ZERO,
                         },
                         cx.theme().colors().scrollbar_track_border,
+                        BorderStyle::Solid,
                     ));
 
                     window.paint_quad(quad(
@@ -4901,6 +4904,7 @@ impl EditorElement {
                             left: ScrollbarLayout::BORDER_WIDTH,
                         },
                         cx.theme().colors().scrollbar_thumb_border,
+                        BorderStyle::Solid,
                     ));
                 })
             }
@@ -5036,6 +5040,7 @@ impl EditorElement {
                             left: ScrollbarLayout::BORDER_WIDTH,
                         },
                         cx.theme().colors().scrollbar_track_border,
+                        BorderStyle::Solid,
                     ));
 
                     let fast_markers =
@@ -5061,6 +5066,7 @@ impl EditorElement {
                             left: ScrollbarLayout::BORDER_WIDTH,
                         },
                         cx.theme().colors().scrollbar_thumb_border,
+                        BorderStyle::Solid,
                     ));
                 });
             }
@@ -8024,6 +8030,7 @@ impl ScrollbarLayout {
                 pixel_range.color,
                 Edges::default(),
                 Hsla::transparent_black(),
+                BorderStyle::default(),
             ));
         }
 
@@ -8257,7 +8264,7 @@ impl CursorLayout {
 
         //Draw background or border quad
         let cursor = if matches!(self.shape, CursorShape::Hollow) {
-            outline(bounds, self.color)
+            outline(bounds, self.color, BorderStyle::Solid)
         } else {
             fill(bounds, self.color)
         };
