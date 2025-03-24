@@ -613,7 +613,7 @@ features = [
 ]
 
 [workspace.dependencies.windows]
-version = "0.60"
+version = "0.61"
 features = [
     "Foundation_Collections",
     "Foundation_Numerics",
