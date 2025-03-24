@@ -496,6 +496,46 @@ impl InlineCompletionButton {
                 }),
         );
 
+        menu = menu.separator().header("Select Prediction Model");
+        let selected_model = settings.edit_predictions_selected_model();
+
+        let copilot_codex_model = Some("copilot-codex".into());
+        let gpt_4o_copilot_model = Some("gpt-4o-copilot".into());
+
+        let is_copilot_codex_selected = selected_model == copilot_codex_model;
+        let is_gpt_4o_copilot_selected = selected_model == gpt_4o_copilot_model;
+
+        menu = menu.item(
+            ContextMenuEntry::new("Copilot Codex")
+                .toggleable(IconPosition::Start, is_copilot_codex_selected)
+                .documentation_aside(move |_| Label::new("Default").into_any_element())
+                .handler({
+                    let fs = fs.clone();
+                    move |_, cx| {
+                        toggle_edit_prediction_selected_model(
+                            fs.clone(),
+                            copilot_codex_model.clone(),
+                            cx,
+                        );
+                    }
+                }),
+        );
+
+        menu = menu.item(
+            ContextMenuEntry::new("GPT 4o")
+                .toggleable(IconPosition::Start, is_gpt_4o_copilot_selected)
+                .handler({
+                    let fs = fs.clone();
+                    move |_, cx| {
+                        toggle_edit_prediction_selected_model(
+                            fs.clone(),
+                            gpt_4o_copilot_model.clone(),
+                            cx,
+                        );
+                    }
+                }),
+        );
+
         menu = menu.separator().header("Privacy Settings");
         if let Some(provider) = &self.edit_prediction_provider {
             let data_collection = provider.data_collection_state(cx);
@@ -870,6 +910,28 @@ fn toggle_edit_prediction_mode(fs: Arc<dyn Fs>, mode: EditPredictionsMode, cx: &
                 settings.edit_predictions =
                     Some(language_settings::EditPredictionSettingsContent {
                         mode,
+                        ..Default::default()
+                    });
+            }
+        });
+    }
+}
+
+fn toggle_edit_prediction_selected_model(fs: Arc<dyn Fs>, model: Option<String>, cx: &mut App) {
+    let settings = AllLanguageSettings::get_global(cx);
+    let current_model = settings.edit_predictions_selected_model();
+
+    if current_model != model {
+        update_settings_file::<AllLanguageSettings>(fs, cx, move |settings, _cx| {
+            if let Some(edit_predictions) = settings.edit_predictions.as_mut() {
+                edit_predictions.copilot.selected_model = model;
+            } else {
+                settings.edit_predictions =
+                    Some(language_settings::EditPredictionSettingsContent {
+                        copilot: language_settings::CopilotSettingsContent {
+                            selected_model: model,
+                            ..Default::default()
+                        },
                         ..Default::default()
                     });
             }

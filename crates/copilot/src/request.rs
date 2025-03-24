@@ -174,6 +174,7 @@ pub enum SetEditorInfo {}
 pub struct SetEditorInfoParams {
     pub editor_info: EditorInfo,
     pub editor_plugin_info: EditorPluginInfo,
+    pub editor_configuration: EditorConfiguration,
 }
 
 impl lsp::request::Request for SetEditorInfo {
@@ -222,4 +223,31 @@ impl lsp::request::Request for NotifyRejected {
     type Params = NotifyRejectedParams;
     type Result = String;
     const METHOD: &'static str = "notifyRejected";
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct CopilotConfiguration {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub selected_completion_model: Option<String>,
+    pub enable_auto_completions: bool,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct GithubConfiguration {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub copilot: Option<CopilotConfiguration>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct EditorConfiguration {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub github: Option<GithubConfiguration>,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct DisabledLanguage {
+    pub language_id: String,
 }

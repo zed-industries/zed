@@ -24,11 +24,12 @@ use lsp::{LanguageServer, LanguageServerBinary, LanguageServerId, LanguageServer
 use node_runtime::NodeRuntime;
 use parking_lot::Mutex;
 use request::StatusNotification;
+use serde_json::json;
 use settings::SettingsStore;
-use smol::{fs, io::BufReader, stream::StreamExt};
+use smol::io::AsyncReadExt;
+use smol::{fs, stream::StreamExt};
 use std::{
     any::TypeId,
-    env,
     ffi::OsString,
     mem,
     ops::Range,
@@ -350,6 +351,13 @@ impl Copilot {
         this.start_copilot(true, false, cx);
         cx.observe_global::<SettingsStore>(move |this, cx| this.start_copilot(true, false, cx))
             .detach();
+        cx.observe_global::<SettingsStore>(move |this, cx| {
+            let settings = all_language_settings(None, cx);
+            if settings.edit_predictions.provider == EditPredictionProvider::Copilot {
+                this.update_prediction_model(cx).detach_and_log_err(cx);
+            }
+        })
+        .detach();
         this
     }
 
@@ -375,16 +383,23 @@ impl Copilot {
         if !matches!(self.server, CopilotServer::Disabled) {
             return;
         }
+
         let language_settings = all_language_settings(None, cx);
         if check_edit_prediction_provider
             && language_settings.edit_predictions.provider != EditPredictionProvider::Copilot
         {
             return;
         }
+
         let server_id = self.server_id;
         let http = self.http.clone();
         let node_runtime = self.node_runtime.clone();
         let env = self.build_env(&language_settings.edit_predictions.copilot);
+        let prediction_model = language_settings
+            .edit_predictions
+            .copilot
+            .selected_model
+            .clone();
         let start_task = cx
             .spawn(async move |this, cx| {
                 Self::start_language_server(
@@ -392,6 +407,7 @@ impl Copilot {
                     http,
                     node_runtime,
                     env,
+                    prediction_model,
                     this,
                     awaiting_sign_in_after_start,
                     cx,
@@ -465,6 +481,7 @@ impl Copilot {
         http: Arc<dyn HttpClient>,
         node_runtime: NodeRuntime,
         env: Option<HashMap<String, String>>,
+        prediction_model: Option<String>,
         this: WeakEntity<Self>,
         awaiting_sign_in_after_start: bool,
         cx: &mut AsyncApp,
@@ -506,17 +523,30 @@ impl Copilot {
             };
             let server = cx
                 .update(|cx| {
-                    let params = server.default_initialize_params(cx);
+                    let mut params = server.default_initialize_params(cx);
+                    params.initialization_options = Some(json!({
+                        "editorInfo": {
+                            "name": "zed",
+                            "version": env!("CARGO_PKG_VERSION")
+                        },
+                        "editorPluginInfo": {
+                            "name": "zed-copilot",
+                            "version": "0.0.1"
+                        },
+                    }));
                     server.initialize(params, configuration.into(), cx)
                 })?
                 .await?;
 
-            let status = server
-                .request::<request::CheckStatus>(request::CheckStatusParams {
-                    local_checks_only: false,
-                })
-                .await?;
-
+            let editor_config = request::EditorConfiguration {
+                github: Some(request::GithubConfiguration {
+                    copilot: Some(request::CopilotConfiguration {
+                        selected_completion_model: prediction_model,
+                        enable_auto_completions: true,
+                    }),
+                }),
+                ..Default::default()
+            };
             server
                 .request::<request::SetEditorInfo>(request::SetEditorInfoParams {
                     editor_info: request::EditorInfo {
@@ -527,6 +557,13 @@ impl Copilot {
                         name: "zed-copilot".into(),
                         version: "0.0.1".into(),
                     },
+                    editor_configuration: editor_config,
+                })
+                .await?;
+
+            let status = server
+                .request::<request::CheckStatus>(request::CheckStatusParams {
+                    local_checks_only: false,
                 })
                 .await?;
 
@@ -663,6 +700,11 @@ impl Copilot {
 
     pub fn reinstall(&mut self, cx: &mut Context<Self>) -> Task<()> {
         let language_settings = all_language_settings(None, cx);
+        let prediction_model = language_settings
+            .edit_predictions
+            .copilot
+            .selected_model
+            .clone();
         let env = self.build_env(&language_settings.edit_predictions.copilot);
         let start_task = cx
             .spawn({
@@ -671,8 +713,17 @@ impl Copilot {
                 let server_id = self.server_id;
                 async move |this, cx| {
                     clear_copilot_dir().await;
-                    Self::start_language_server(server_id, http, node_runtime, env, this, false, cx)
-                        .await
+                    Self::start_language_server(
+                        server_id,
+                        http,
+                        node_runtime,
+                        env,
+                        prediction_model,
+                        this,
+                        false,
+                        cx,
+                    )
+                    .await
                 }
             })
             .shared();
@@ -684,6 +735,49 @@ impl Copilot {
         cx.notify();
 
         cx.background_spawn(start_task)
+    }
+
+    pub fn update_prediction_model(&mut self, cx: &mut Context<Self>) -> Task<Result<()>> {
+        if let Ok(server) = self.server.as_authenticated() {
+            let language_settings = all_language_settings(None, cx);
+            let prediction_model = language_settings
+                .edit_predictions
+                .copilot
+                .selected_model
+                .clone();
+
+            let editor_config = request::EditorConfiguration {
+                github: Some(request::GithubConfiguration {
+                    copilot: Some(request::CopilotConfiguration {
+                        selected_completion_model: prediction_model,
+                        enable_auto_completions: true,
+                    }),
+                }),
+                ..Default::default()
+            };
+
+            let request =
+                server
+                    .lsp
+                    .request::<request::SetEditorInfo>(request::SetEditorInfoParams {
+                        editor_info: request::EditorInfo {
+                            name: "zed".into(),
+                            version: env!("CARGO_PKG_VERSION").into(),
+                        },
+                        editor_plugin_info: request::EditorPluginInfo {
+                            name: "zed-copilot".into(),
+                            version: "0.0.1".into(),
+                        },
+                        editor_configuration: editor_config,
+                    });
+
+            cx.background_spawn(async move {
+                request.await?;
+                Ok(())
+            })
+        } else {
+            Task::ready(Ok(()))
+        }
     }
 
     pub fn language_server(&self) -> Option<&Arc<LanguageServer>> {
