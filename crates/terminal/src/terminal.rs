@@ -46,7 +46,7 @@ use smol::channel::{Receiver, Sender};
 use task::{HideStrategy, Shell, TaskId};
 use terminal_settings::{AlternateScroll, CursorShape, TerminalSettings};
 use theme::{ActiveTheme, Theme};
-use util::{paths::home_dir, truncate_and_trailoff, ResultExt};
+use util::{paths::home_dir, truncate_and_trailoff};
 
 use std::{
     cmp::{self, min},
@@ -948,21 +948,9 @@ impl Terminal {
                 {
                     let matching_line =
                         term.bounds_to_string(*python_match.start(), *python_match.end());
-
-                    let file_and_line: Result<_, _> =
-                        python_extract_path_and_line(matching_line.as_str())
-                            .map(|(file_path, line_number)| {
-                                (
-                                    format!("{}:{}", file_path, line_number),
-                                    false,
-                                    python_match,
-                                )
-                            })
-                            .ok_or_else(|| {
-                                "Could not parse python file, line number reference".to_string()
-                            });
-
-                    file_and_line.log_err()
+                    python_extract_path_and_line(&matching_line).map(|(file_path, line_number)| {
+                        (format!("{file_path}:{line_number}"), false, python_match)
+                    })
                 } else if let Some(word_match) = regex_match_at(term, point, &mut self.word_regex) {
                     let file_path = term.bounds_to_string(*word_match.start(), *word_match.end());
 
