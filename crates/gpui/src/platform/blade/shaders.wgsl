@@ -598,130 +598,162 @@ fn fs_quad(input: QuadVarying) -> @location(0) vec4<f32> {
 
         // Dashed border logic when border_style == 1
         if (quad.border_style == 1) {
-            var perimeter = 0.0;
+            // Position in "dash space", where each dash period has length 1.
             var t = 0.0;
-            var border_width_for_dash_size = 0.0;
+
+            // Total number of dash periods, so that the dash spacing can be
+            // adjusted to evenly divide it.
+            var max_t = 0.0;
+
+            // Since border width affects the dash size, the density of dashes
+            // varies, and this is indicated by dash_velocity. It has units
+            // (dash period / pixel). So a dash velocity of (1 / 10) would be 1
+            // dash every 10 pixels.
+            var dash_velocity = 0.0;
+
+            // Dash pattern: (2 * border width) dash, (1 * border width) gap
+            let dash_length_per_width = 2.0;
+            let dash_gap_per_width = 1.0;
+            let dash_period_per_width = dash_length_per_width + dash_gap_per_width;
+
+            // Dividing this by the border width gives the dash velocity.
+            let dv_numerator = 1.0 / dash_period_per_width;
 
             if (unrounded) {
                 // When corners aren't rounded, the dashes for each straight
                 // line are laid out separately. This way each line starts and
                 // ends with a dash.
-                let is_horizontal = corner_center_to_point.x < corner_center_to_point.y;
-                t = select(point.y, point.x, is_horizontal);
-                perimeter = select(size.y, size.x, is_horizontal);
-                border_width_for_dash_size = select(border.y, border.x, is_horizontal);
+                let is_horizontal =
+                        corner_center_to_point.x <
+                        corner_center_to_point.y;
+                let border_width = select(border.y, border.x, is_horizontal);
+                dash_velocity = dv_numerator / border_width;
+                t = select(point.y, point.x, is_horizontal) * dash_velocity;
+                max_t = select(size.y, size.x, is_horizontal) * dash_velocity;
             } else {
-                // Handle rounded corners by calculating an arc length position
-                // `t` along the whole perimeter of the quad, so that spacing of
-                // the dashes is consistent throughout.
-
+                // When corners are rounded, the dashes are laid out around the
+                // whole perimeter.
 
                 let r1 = quad.corner_radii.top_right;
                 let r2 = quad.corner_radii.bottom_right;
                 let r3 = quad.corner_radii.bottom_left;
                 let r4 = quad.corner_radii.top_left;
 
-                // top, right, bottom, and left straight side lengths
-                let s1 = size.x - r4 - r1;
-                let s2 = size.y - r1 - r2;
-                let s3 = size.x - r2 - r3;
-                let s4 = size.y - r3 - r4;
+                let w1 = quad.border_widths.top;
+                let w2 = quad.border_widths.right;
+                let w3 = quad.border_widths.bottom;
+                let w4 = quad.border_widths.left;
 
-                // Corner arc lengths. `cN` comes after `sN`.
-                // top_right, bottom_right, bottom_left, and top_left
-                let c1 = r1 * (M_PI_F / 2.0);
-                let c2 = r2 * (M_PI_F / 2.0);
-                let c3 = r3 * (M_PI_F / 2.0);
-                let c4 = r4 * (M_PI_F / 2.0);
+                // Straight side dash velocities.
+                let dv1 = select(dv_numerator / w1, 0.0, w1 <= 0.0); // top
+                let dv2 = select(dv_numerator / w2, 0.0, w2 <= 0.0); // right
+                let dv3 = select(dv_numerator / w3, 0.0, w3 <= 0.0); // bottom
+                let dv4 = select(dv_numerator / w4, 0.0, w4 <= 0.0); // left
 
-                // Cumulative perimeter upto each segment.
-                let upto_c1 = s1;
-                let upto_s2 = upto_c1 + c1;
-                let upto_c2 = upto_s2 + s2;
-                let upto_s3 = upto_c2 + c2;
-                let upto_c3 = upto_s3 + s3;
-                let upto_s4 = upto_c3 + c3;
-                let upto_c4 = upto_s4 + s4;
-                perimeter = upto_c4 + c4;
+                // Straight side lengths in dash space.
+                let s1 = (size.x - r4 - r1) * dv1; // top
+                let s2 = (size.y - r1 - r2) * dv2; // right
+                let s3 = (size.x - r2 - r3) * dv3; // bottom
+                let s4 = (size.y - r3 - r4) * dv4; // left
+
+                // Corner dash velocities.
+                let corner_dash_velocity_1 = corner_dash_velocity(dv1, dv2);
+                let corner_dash_velocity_2 = corner_dash_velocity(dv2, dv3);
+                let corner_dash_velocity_3 = corner_dash_velocity(dv3, dv4);
+                let corner_dash_velocity_4 = corner_dash_velocity(dv4, dv1);
+
+                // Corner lengths in dash space. Corner `cN` is after side `sN`.
+                let c1 = r1 * (M_PI_F / 2.0) * corner_dash_velocity_1; // top_right
+                let c2 = r2 * (M_PI_F / 2.0) * corner_dash_velocity_2; // bottom_right
+                let c3 = r3 * (M_PI_F / 2.0) * corner_dash_velocity_3; // bottom_left
+                let c4 = r4 * (M_PI_F / 2.0) * corner_dash_velocity_4; // top_left
+
+                // Cumulative dash space upto each segment.
+                let upto_c1 = s1; // top_right
+                let upto_s2 = upto_c1 + c1; // right
+                let upto_c2 = upto_s2 + s2; // bottom_right
+                let upto_s3 = upto_c2 + c2; // bottom
+                let upto_c3 = upto_s3 + s3; // bottom_left
+                let upto_s4 = upto_c3 + c3; // left
+                let upto_c4 = upto_s4 + s4; // top_left
+                max_t = upto_c4 + c4; // top
 
                 if (is_near_rounded_corner) {
-                    let radians = atan2(corner_center_to_point.y, corner_center_to_point.x);
+                    let radians = atan2(corner_center_to_point.y,
+                                        corner_center_to_point.x);
                     let corner_t = radians * corner_radius;
-
-                    // An alternative to this might be to interpolate the width
-                    // around the arc, but that seems overcomplicated.
-                    border_width_for_dash_size = max(border.x, border.y);
 
                     if (center_to_point.x >= 0.0) {
                         if (center_to_point.y < 0.0) {
                             // Top-right (corner 1)
-                            t = upto_s2 - corner_t;
+                            dash_velocity = corner_dash_velocity_1;
+                            t = upto_s2 - corner_t * dash_velocity;
                         } else {
                             // Bottom-right (corner 2)
-                            t = upto_c2 + corner_t;
+                            dash_velocity = corner_dash_velocity_2;
+                            t = upto_c2 + corner_t * dash_velocity;
                         }
                     } else {
                         if (center_to_point.y >= 0.0) {
                             // Bottom-left (corner 3)
-                            t = upto_s4 - corner_t;
+                            dash_velocity = corner_dash_velocity_3;
+                            t = upto_s4 - corner_t * dash_velocity;
                         } else {
                             // Top-left (corner 4)
-                            t = upto_c4 + corner_t;
+                            dash_velocity = corner_dash_velocity_4;
+                            t = upto_c4 + corner_t * dash_velocity;
                         }
                     }
                 } else {
                     // Straight borders
-                    let is_horizontal = corner_center_to_point.x < corner_center_to_point.y;
+                    let is_horizontal =
+                            corner_center_to_point.x <
+                            corner_center_to_point.y;
                     if (is_horizontal) {
-                        border_width_for_dash_size = border.y;
                         if (center_to_point.y < 0.0) {
                             // Top (side 1)
-                            t = point.x - r4;
+                            dash_velocity = dv1;
+                            t = (point.x - r4) * dash_velocity;
                         } else {
                             // Bottom (side 3)
-                            t = upto_c3 - (point.x - r3);
+                            dash_velocity = dv3;
+                            t = upto_c3 - (point.x - r3) * dash_velocity;
                         }
                     } else {
-                        border_width_for_dash_size = border.x;
                         if (center_to_point.x < 0.0) {
                             // Left (side 4)
-                            t = upto_c4 - (point.y - r4);
+                            dash_velocity = dv4;
+                            t = upto_c4 - (point.y - r4) * dash_velocity;
                         } else {
                             // Right (side 2)
-                            t = upto_s2 + (point.y - r1);
+                            dash_velocity = dv2;
+                            t = upto_s2 + (point.y - r1) * dash_velocity;
                         }
                     }
                 }
             }
 
-            // Dash pattern: (2 * width) dash, (1 * width) gap
-            let dash_length = 2 * border_width_for_dash_size;
-            let desired_dash_gap = border_width_for_dash_size;
-            let desired_dash_period = dash_length + desired_dash_gap;
+            let dash_length = dash_length_per_width / dash_period_per_width;
+            let desired_dash_gap = dash_gap_per_width / dash_period_per_width;
 
-            // Straight borders should start and end with a dash, and rounded
-            // borders should start and end with a gap. The perimeter is reduced
-            // to cause this.
-            //
-            // todo! This is not really precise due to use of desired_dash_gap
-            var reduced_perimeter = perimeter - select(desired_dash_gap, dash_length, unrounded);
-            if (reduced_perimeter >= desired_dash_period) {
-                // Adjust dash gap to evenly divide this portion of the perimeter.
-                let dash_count = floor(reduced_perimeter / desired_dash_period);
-                let dash_period = reduced_perimeter / dash_count;
-
-                border_color.a *= dash_alpha(t, dash_period, dash_length);
-            } else if (is_near_rounded_corner) {
-                // No dash on rounded corners that don't have space for it.
-                border_color.a = 0.0;
-            } else {
+            // Straight borders should start and end with a dash, so max_t is
+            // reduced to cause this.
+            max_t -= select(0.0, dash_length, unrounded);
+            if (max_t >= 1.0) {
+                // Adjust dash gap to evenly divide max_t.
+                let dash_count = floor(max_t);
+                let dash_period = max_t / dash_count;
+                border_color.a *=
+                    dash_alpha(t, dash_period, dash_length, dash_velocity);
+            } else if (unrounded) {
                 // When there isn't enough space for the full gap between the
                 // two start / end dashes of a straight border, reduce gap to
                 // make them fit.
-                let dash_gap = perimeter - 2 * dash_length;
+                let dash_gap = max_t - dash_length;
                 if (dash_gap > 0.0) {
                     let dash_period = dash_length + dash_gap;
-                    border_color.a *= dash_alpha(t, dash_period, dash_length);
+                    border_color.a *=
+                        dash_alpha(t, dash_period, dash_length, dash_velocity);
                 }
             }
         }
@@ -736,8 +768,27 @@ fn fs_quad(input: QuadVarying) -> @location(0) vec4<f32> {
     return blend_color(color, saturate(antialias_threshold - outer_sdf));
 }
 
+// Returns the dash velocity of a corner given the dash velocity of the two
+// sides, by returning the slower velocity (larger dashes).
+//
+// Since 0 is used for dash velocity when the border width is 0 (instead of
+// +inf), this returns the other dash velocity in that case.
+//
+// An alternative to this might be to appropriately interpolate the dash
+// velocity around the corner, but that seems overcomplicated.
+fn corner_dash_velocity(dv1: f32, dv2: f32) -> f32 {
+    if (dv1 == 0.0) {
+        return dv2;
+    } else if (dv2 == 0.0) {
+        return dv1;
+    } else {
+        return min(dv1, dv2);
+    }
+}
+
 // Returns alpha used to render antialiased dashes.
-fn dash_alpha(t: f32, period: f32, length: f32) -> f32 {
+// `t` is within the dash when `fmod(t, period) < length`.
+fn dash_alpha(t: f32, period: f32, length: f32, dash_velocity: f32) -> f32 {
     let half_period = period / 2;
     let half_length = length / 2;
     // Value in [-half_period, half_period].
@@ -746,7 +797,7 @@ fn dash_alpha(t: f32, period: f32, length: f32) -> f32 {
     // Signed distance for the dash, negative values are inside the dash.
     let signed_distance = abs(centered) - half_length;
     // Antialiased alpha based on the signed distance.
-    return saturate(0.5 - signed_distance);
+    return saturate(0.5 - signed_distance / dash_velocity);
 }
 
 // This approximates distance to the nearest point to a quarter ellipse in a way
