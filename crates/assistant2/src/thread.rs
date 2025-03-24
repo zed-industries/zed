@@ -18,7 +18,7 @@ use language_model::{
     LanguageModelToolUseId, MaxMonthlySpendReachedError, MessageContent, PaymentRequiredError,
     Role, StopReason, TokenUsage,
 };
-use project::git_store::{GitStore, GitStoreCheckpoint};
+use project::git_store::{GitStore, GitStoreCheckpoint, GitStoreReviewBranch};
 use project::{Project, Worktree};
 use prompt_store::{
     AssistantSystemPromptContext, PromptBuilder, RulesFile, WorktreeInfoForSystemPrompt,
@@ -142,6 +142,12 @@ pub struct ThreadCheckpoint {
     git_checkpoint: GitStoreCheckpoint,
 }
 
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub enum ChangeSource {
+    User,
+    Assistant,
+}
+
 #[derive(Copy, Clone, Debug)]
 pub enum ThreadFeedback {
     Positive,
@@ -193,6 +199,8 @@ pub struct Thread {
     initial_project_snapshot: Shared<Task<Option<Arc<ProjectSnapshot>>>>,
     cumulative_token_usage: TokenUsage,
     feedback: Option<ThreadFeedback>,
+    last_changes_checkpoint: Option<Task<Result<GitStoreCheckpoint>>>,
+    review_branch: Shared<Task<Option<GitStoreReviewBranch>>>,
 }
 
 impl Thread {
@@ -202,7 +210,8 @@ impl Thread {
         prompt_builder: Arc<PromptBuilder>,
         cx: &mut Context<Self>,
     ) -> Self {
-        Self {
+        println!("NEW");
+        let mut this = Self {
             id: ThreadId::new(),
             updated_at: Utc::now(),
             summary: None,
@@ -225,14 +234,27 @@ impl Thread {
             scripting_tool_use: ToolUseState::new(tools),
             action_log: cx.new(|_| ActionLog::new()),
             initial_project_snapshot: {
-                let project_snapshot = Self::project_snapshot(project, cx);
+                let project_snapshot = Self::project_snapshot(project.clone(), cx);
                 cx.foreground_executor()
                     .spawn(async move { Some(project_snapshot.await) })
                     .shared()
             },
             cumulative_token_usage: TokenUsage::default(),
             feedback: None,
-        }
+            last_changes_checkpoint: None,
+            review_branch: cx
+                .background_spawn(
+                    project
+                        .read(cx)
+                        .git_store()
+                        .read(cx)
+                        .create_review_branch(cx)
+                        .log_err(),
+                )
+                .shared(),
+        };
+        this.compute_changes(ChangeSource::User, cx);
+        this
     }
 
     pub fn deserialize(
@@ -243,6 +265,7 @@ impl Thread {
         prompt_builder: Arc<PromptBuilder>,
         cx: &mut Context<Self>,
     ) -> Self {
+        println!("DESERIALIZE");
         let next_message_id = MessageId(
             serialized
                 .messages
@@ -260,7 +283,7 @@ impl Thread {
             });
         let scripting_session = cx.new(|cx| ScriptingSession::new(project.clone(), cx));
 
-        Self {
+        let mut this = Self {
             id,
             updated_at: serialized.updated_at,
             summary: Some(serialized.summary),
@@ -303,7 +326,11 @@ impl Thread {
             // TODO: persist token usage?
             cumulative_token_usage: TokenUsage::default(),
             feedback: None,
-        }
+            last_changes_checkpoint: None,
+            review_branch: Task::ready(None).shared(),
+        };
+        this.compute_changes(ChangeSource::User, cx);
+        this
     }
 
     pub fn id(&self) -> &ThreadId {
@@ -1315,6 +1342,8 @@ impl Thread {
         tool: Arc<dyn Tool>,
         cx: &mut Context<Thread>,
     ) -> Task<()> {
+        self.compute_changes(ChangeSource::User, cx);
+
         let run_tool = tool.run(
             input,
             messages,
@@ -1329,6 +1358,8 @@ impl Thread {
 
                 thread
                     .update(cx, |thread, cx| {
+                        thread.compute_changes(ChangeSource::Assistant, cx);
+
                         let pending_tool_use = thread
                             .tool_use
                             .insert_tool_output(tool_use_id.clone(), output);
@@ -1419,6 +1450,54 @@ impl Thread {
             None,
             cx,
         );
+    }
+
+    fn compute_changes(&mut self, source: ChangeSource, cx: &mut Context<Self>) {
+        dbg!(source);
+        let old_checkpoint = self.last_changes_checkpoint.take();
+        let git_store = self.project.read(cx).git_store().clone();
+        let new_checkpoint = git_store.read(cx).checkpoint(cx);
+        let review_branch = self.review_branch.clone();
+        self.last_changes_checkpoint = Some(cx.spawn(async move |_this, cx| {
+            let new_checkpoint = new_checkpoint.await?;
+
+            if source == ChangeSource::User {
+                if let Some(review_branch) = review_branch.await {
+                    println!("we have a review branch");
+                    if let Some(old_checkpoint) = old_checkpoint {
+                        println!("we have an old checkpoint");
+                        if let Ok(old_checkpoint) = old_checkpoint.await {
+                            println!("we awaited the old checkpoint");
+                            let diff = git_store
+                                .read_with(cx, |store, cx| {
+                                    store.diff_checkpoints(
+                                        old_checkpoint,
+                                        new_checkpoint.clone(),
+                                        cx,
+                                    )
+                                })
+                                .unwrap()
+                                .await;
+
+                            dbg!(source, &diff);
+                            if let Ok(diff) = diff {
+                                _ = git_store
+                                    .read_with(cx, |store, cx| {
+                                        store.apply_diff_to_review_branch(review_branch, diff, cx)
+                                    })?
+                                    .await;
+                            }
+                        } else {
+                            println!("the old checkpoint errored");
+                        }
+                    } else {
+                        println!("we don't have an old checkpoint");
+                    }
+                }
+            }
+
+            Ok(new_checkpoint)
+        }));
     }
 
     /// Cancels the last pending completion, if there are any pending.

@@ -5,11 +5,10 @@ use futures::future::{self, BoxFuture};
 use git::{
     blame::Blame,
     repository::{
-        AskPassSession, Branch, CommitDetails, GitRepository, GitRepositoryCheckpoint, PushOptions,
-        Remote, RepoPath, ResetMode,
+        AskPassSession, Branch, CommitDetails, GitRepository, GitRepositoryCheckpoint,
+        GitReviewBranch, PushOptions, Remote, RepoPath, ResetMode,
     },
     status::{FileStatus, GitStatus, StatusCode, TrackedStatus, UnmergedStatus},
-    GitDiff,
 };
 use gpui::{AsyncApp, BackgroundExecutor};
 use ignore::gitignore::GitignoreBuilder;
@@ -444,7 +443,20 @@ impl GitRepository for FakeGitRepository {
         _base_checkpoint: GitRepositoryCheckpoint,
         _target_checkpoint: GitRepositoryCheckpoint,
         _cx: AsyncApp,
-    ) -> BoxFuture<Result<GitDiff>> {
+    ) -> BoxFuture<Result<String>> {
+        unimplemented!()
+    }
+
+    fn create_review_branch(&self, _cx: AsyncApp) -> BoxFuture<Result<GitReviewBranch>> {
+        unimplemented!()
+    }
+
+    fn apply_diff_to_review_branch(
+        &self,
+        _review_branch: GitReviewBranch,
+        _diff: String,
+        _cx: AsyncApp,
+    ) -> BoxFuture<Result<()>> {
         unimplemented!()
     }
 }

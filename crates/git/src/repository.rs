@@ -1,5 +1,5 @@
 use crate::status::GitStatus;
-use crate::{GitDiff, Oid, SHORT_SHA_LENGTH};
+use crate::{Oid, SHORT_SHA_LENGTH};
 use anyhow::{anyhow, Context as _, Result};
 use collections::HashMap;
 use futures::future::BoxFuture;
@@ -322,7 +322,16 @@ pub trait GitRepository: Send + Sync {
         base_checkpoint: GitRepositoryCheckpoint,
         target_checkpoint: GitRepositoryCheckpoint,
         cx: AsyncApp,
-    ) -> BoxFuture<Result<GitDiff>>;
+    ) -> BoxFuture<Result<String>>;
+
+    fn create_review_branch(&self, cx: AsyncApp) -> BoxFuture<Result<GitReviewBranch>>;
+
+    fn apply_diff_to_review_branch(
+        &self,
+        review_branch: GitReviewBranch,
+        diff: String,
+        cx: AsyncApp,
+    ) -> BoxFuture<Result<()>>;
 }
 
 pub enum DiffType {
@@ -371,6 +380,11 @@ pub struct GitRepositoryCheckpoint {
     ref_name: String,
     head_sha: Option<Oid>,
     commit_sha: Oid,
+}
+
+#[derive(Copy, Clone)]
+pub struct GitReviewBranch {
+    id: Uuid,
 }
 
 // https://git-scm.com/book/en/v2/Git-Internals-Git-Objects
@@ -1212,7 +1226,7 @@ impl GitRepository for RealGitRepository {
         base_checkpoint: GitRepositoryCheckpoint,
         target_checkpoint: GitRepositoryCheckpoint,
         cx: AsyncApp,
-    ) -> BoxFuture<Result<GitDiff>> {
+    ) -> BoxFuture<Result<String>> {
         let working_directory = self.working_directory();
         let git_binary_path = self.git_binary_path.clone();
 
@@ -1220,19 +1234,54 @@ impl GitRepository for RealGitRepository {
         cx.background_spawn(async move {
             let working_directory = working_directory?;
             let git = GitBinary::new(git_binary_path, working_directory, executor);
+            git.run(&[
+                "diff",
+                "--find-renames",
+                "--patch",
+                &base_checkpoint.ref_name,
+                &target_checkpoint.ref_name,
+            ])
+            .await
+        })
+        .boxed()
+    }
 
-            // Run git diff with options to detect renames and show more context
-            let diff_output = git
-                .run(&[
-                    "diff",
-                    "--find-renames",
-                    "--patch",
-                    &base_checkpoint.ref_name,
-                    &target_checkpoint.ref_name,
-                ])
+    fn create_review_branch(&self, cx: AsyncApp) -> BoxFuture<Result<GitReviewBranch>> {
+        let working_directory = self.working_directory();
+        let git_binary_path = self.git_binary_path.clone();
+
+        let executor = cx.background_executor().clone();
+        cx.background_spawn(async move {
+            let working_directory = working_directory?;
+            let mut git = GitBinary::new(git_binary_path, working_directory, executor);
+            let id = Uuid::new_v4();
+            git.with_index(id, async |git| git.run(&["add", "--all"]).await)
                 .await?;
+            Ok(GitReviewBranch { id })
+        })
+        .boxed()
+    }
 
-            diff_output.parse()
+    fn apply_diff_to_review_branch(
+        &self,
+        review_branch: GitReviewBranch,
+        diff: String,
+        cx: AsyncApp,
+    ) -> BoxFuture<Result<()>> {
+        let working_directory = self.working_directory();
+        let git_binary_path = self.git_binary_path.clone();
+
+        let executor = cx.background_executor().clone();
+        cx.background_spawn(async move {
+            let working_directory = working_directory?;
+            let mut git = GitBinary::new(git_binary_path, working_directory, executor);
+            git.with_index(review_branch.id, async move |git| {
+                let x = git.run_with_stdin(&["apply", "--cached", "-"], diff).await;
+                dbg!(&x);
+                x
+            })
+            .await?;
+            Ok(())
         })
         .boxed()
     }
@@ -1270,7 +1319,7 @@ impl GitBinary {
         &mut self,
         f: impl AsyncFnOnce(&Self) -> Result<R>,
     ) -> Result<R> {
-        let index_file_path = self.working_directory.join(".git/index.tmp");
+        let index_file_path = self.path_for_index_id(Uuid::new_v4());
 
         let delete_temp_index = util::defer({
             let index_file_path = index_file_path.clone();
@@ -1295,14 +1344,25 @@ impl GitBinary {
         Ok(result)
     }
 
+    pub async fn with_index<R>(
+        &mut self,
+        id: Uuid,
+        f: impl AsyncFnOnce(&Self) -> Result<R>,
+    ) -> Result<R> {
+        self.index_file_path = Some(self.path_for_index_id(id));
+        let result = f(self).await;
+        self.index_file_path = None;
+        result
+    }
+
+    fn path_for_index_id(&self, id: Uuid) -> PathBuf {
+        self.working_directory
+            .join(".git")
+            .join(format!("index-{}.tmp", id.to_string()))
+    }
+
     pub async fn run(&self, args: &[&str]) -> Result<String> {
-        let mut command = new_smol_command(&self.git_binary_path);
-        command.current_dir(&self.working_directory);
-        command.args(args);
-        if let Some(index_file_path) = self.index_file_path.as_ref() {
-            command.env("GIT_INDEX_FILE", index_file_path);
-        }
-        command.envs(&self.envs);
+        let mut command = self.build_command(args);
         let output = command.output().await?;
         if output.status.success() {
             anyhow::Ok(String::from_utf8(output.stdout)?.trim_end().to_string())
@@ -1312,6 +1372,35 @@ impl GitBinary {
                 status: output.status,
             }))
         }
+    }
+
+    pub async fn run_with_stdin(&self, args: &[&str], stdin: String) -> Result<String> {
+        let mut command = self.build_command(args);
+        command.stdin(Stdio::piped());
+        let mut child = command.spawn()?;
+        let mut child_stdin = child.stdin.take().context("failed to write to stdin")?;
+        child_stdin.write_all(stdin.as_bytes()).await?;
+
+        let output = child.output().await?;
+        if output.status.success() {
+            anyhow::Ok(String::from_utf8(output.stdout)?.trim_end().to_string())
+        } else {
+            Err(anyhow!(GitBinaryCommandError {
+                stdout: String::from_utf8_lossy(&output.stdout).to_string(),
+                status: output.status,
+            }))
+        }
+    }
+
+    fn build_command(&self, args: &[&str]) -> smol::process::Command {
+        let mut command = new_smol_command(&self.git_binary_path);
+        command.current_dir(&self.working_directory);
+        command.args(args);
+        if let Some(index_file_path) = self.index_file_path.as_ref() {
+            command.env("GIT_INDEX_FILE", index_file_path);
+        }
+        command.envs(&self.envs);
+        command
     }
 }
 

@@ -1,12 +1,10 @@
 pub mod blame;
 pub mod commit;
-mod diff;
 mod hosting_provider;
 mod remote;
 pub mod repository;
 pub mod status;
 
-pub use crate::diff::*;
 pub use crate::hosting_provider::*;
 pub use crate::remote::*;
 use anyhow::{anyhow, Context as _, Result};
