@@ -1183,7 +1183,7 @@ impl ActiveThread {
                         .px_2()
                         .bg(cx.theme().colors().editor_foreground.opacity(0.025))
                         .map(|this| {
-                            if is_open {
+                            if pending || is_open {
                                 this.rounded_t_md()
                                     .border_b_1()
                                     .border_color(lighter_border)
@@ -1286,13 +1286,13 @@ impl ActiveThread {
                             .relative()
                             .bg(editor_bg)
                             .rounded_b_lg()
-                            .text_ui_sm(cx)
                             .child(
                                 div()
                                     .id(("thinking-content", ix))
                                     .p_2()
                                     .h_20()
                                     .track_scroll(scroll_handle)
+                                    .text_ui_sm(cx)
                                     .child(markdown.clone())
                                     .overflow_hidden(),
                             )
