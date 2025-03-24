@@ -2,7 +2,7 @@ use client::{Client, UserStore};
 use collections::HashMap;
 use copilot::{Copilot, CopilotCompletionProvider};
 use editor::{Editor, EditorMode};
-use feature_flags::{FeatureFlagAppExt, PredictEditsFeatureFlag};
+
 use gpui::{AnyWindowHandle, App, AppContext as _, Context, Entity, WeakEntity};
 use language::language_settings::{all_language_settings, EditPredictionProvider};
 use settings::SettingsStore;
@@ -72,7 +72,7 @@ pub fn init(client: Arc<Client>, user_store: Entity<UserStore>, cx: &mut App) {
     }
 
     cx.on_action(clear_zeta_edit_history);
-    let provider = all_language_settings(None, cx).edit_predictions.provider;
+    let mut provider = all_language_settings(None, cx).edit_predictions.provider;
     assign_edit_prediction_providers(&editors, provider, &client, user_store.clone(), cx);
 
     cx.observe_global::<SettingsStore>({
