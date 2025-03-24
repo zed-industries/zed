@@ -322,7 +322,8 @@ fragment float4 quad_fragment(QuadFragmentInput input [[stage_in]],
         // Adjust dash gap to evenly divide max_t
         float dash_count = floor(max_t);
         float dash_period = max_t / dash_count;
-        border_color.a *= dash_alpha(t, dash_period, dash_length, dash_velocity);
+        border_color.a *= dash_alpha(t, dash_period, dash_length, dash_velocity,
+                                     antialias_threshold);
       } else if (unrounded) {
         // When there isn't enough space for the full gap between the
         // two start / end dashes of a straight border, reduce gap to
@@ -330,7 +331,8 @@ fragment float4 quad_fragment(QuadFragmentInput input [[stage_in]],
         float dash_gap = max_t - dash_length;
         if (dash_gap > 0.0) {
           float dash_period = dash_length + dash_gap;
-          border_color.a *= dash_alpha(t, dash_period, dash_length, dash_velocity);
+          border_color.a *= dash_alpha(t, dash_period, dash_length, dash_velocity,
+                                       antialias_threshold);
         }
       }
     }
@@ -357,7 +359,9 @@ float corner_dash_velocity(float dv1, float dv2) {
 }
 
 // Returns alpha used to render antialiased dashes
-float dash_alpha(float t, float period, float length, float dash_velocity) {
+float dash_alpha(
+    float t, float period, float length, float dash_velocity,
+    float antialias_threshold) {
   float half_period = period / 2.0;
   float half_length = length / 2.0;
   // Value in [-half_period, half_period]
@@ -366,7 +370,7 @@ float dash_alpha(float t, float period, float length, float dash_velocity) {
   // Signed distance for the dash, negative values are inside the dash
   float signed_distance = abs(centered) - half_length;
   // Antialiased alpha based on the signed distance
-  return saturate(0.5 - signed_distance / dash_velocity);
+  return saturate(antialias_threshold - signed_distance / dash_velocity);
 }
 
 // Approximates distance to the nearest point to a quarter ellipse

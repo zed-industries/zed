@@ -743,8 +743,12 @@ fn fs_quad(input: QuadVarying) -> @location(0) vec4<f32> {
                 // Adjust dash gap to evenly divide max_t.
                 let dash_count = floor(max_t);
                 let dash_period = max_t / dash_count;
-                border_color.a *=
-                    dash_alpha(t, dash_period, dash_length, dash_velocity);
+                border_color.a *= dash_alpha(
+                    t,
+                    dash_period,
+                    dash_length,
+                    dash_velocity,
+                    antialias_threshold);
             } else if (unrounded) {
                 // When there isn't enough space for the full gap between the
                 // two start / end dashes of a straight border, reduce gap to
@@ -752,8 +756,12 @@ fn fs_quad(input: QuadVarying) -> @location(0) vec4<f32> {
                 let dash_gap = max_t - dash_length;
                 if (dash_gap > 0.0) {
                     let dash_period = dash_length + dash_gap;
-                    border_color.a *=
-                        dash_alpha(t, dash_period, dash_length, dash_velocity);
+                    border_color.a *= dash_alpha(
+                        t,
+                        dash_period,
+                        dash_length,
+                        dash_velocity,
+                        antialias_threshold);
                 }
             }
         }
@@ -788,7 +796,7 @@ fn corner_dash_velocity(dv1: f32, dv2: f32) -> f32 {
 
 // Returns alpha used to render antialiased dashes.
 // `t` is within the dash when `fmod(t, period) < length`.
-fn dash_alpha(t: f32, period: f32, length: f32, dash_velocity: f32) -> f32 {
+fn dash_alpha(t: f32, period: f32, length: f32, dash_velocity: f32, antialias_threshold: f32) -> f32 {
     let half_period = period / 2;
     let half_length = length / 2;
     // Value in [-half_period, half_period].
@@ -797,7 +805,7 @@ fn dash_alpha(t: f32, period: f32, length: f32, dash_velocity: f32) -> f32 {
     // Signed distance for the dash, negative values are inside the dash.
     let signed_distance = abs(centered) - half_length;
     // Antialiased alpha based on the signed distance.
-    return saturate(0.5 - signed_distance / dash_velocity);
+    return saturate(antialias_threshold - signed_distance / dash_velocity);
 }
 
 // This approximates distance to the nearest point to a quarter ellipse in a way
