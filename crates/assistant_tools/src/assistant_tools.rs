@@ -1,4 +1,5 @@
 mod bash_tool;
+mod copy_path_tool;
 mod delete_path_tool;
 mod diagnostics_tool;
 mod edit_files_tool;
@@ -16,6 +17,7 @@ use std::sync::Arc;
 use assistant_tool::ToolRegistry;
 use gpui::App;
 use http_client::HttpClientWithUrl;
+use copy_path_tool::CopyPathTool;
 use move_path_tool::MovePathTool;
 
 use crate::bash_tool::BashTool;
@@ -38,6 +40,7 @@ pub fn init(http_client: Arc<HttpClientWithUrl>, cx: &mut App) {
     registry.register_tool(BashTool);
     registry.register_tool(DeletePathTool);
     registry.register_tool(MovePathTool);
+    registry.register_tool(CopyPathTool);
     registry.register_tool(DiagnosticsTool);
     registry.register_tool(EditFilesTool);
     registry.register_tool(ListDirectoryTool);
