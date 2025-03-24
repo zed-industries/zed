@@ -409,12 +409,13 @@ pub mod scope_map {
         let mut scope_iter = scope_str.split(SCOPE_STRING_SEP);
         while index < SCOPE_DEPTH_MAX {
             let Some(scope) = scope_iter.next() else {
-                continue;
+                break;
             };
             if scope == "" {
                 continue;
             }
             scope_buf[index] = scope;
+            index += 1;
         }
         if index == 0 {
             return None;
@@ -528,38 +529,61 @@ pub mod scope_map {
 
             return this;
         }
+
+        pub fn is_enabled(&self, scope: &Scope, level: log_impl::Level) -> bool {
+            let mut enabled = None;
+            let mut cur_range = &self.entries[0..self.root_count];
+            let mut depth = 0;
+            while !cur_range.is_empty() && depth < SCOPE_DEPTH_MAX && scope[depth] != "" {
+                for entry in cur_range {
+                    if entry.scope == scope[depth] {
+                        enabled = enabled.or(entry.enabled);
+                        cur_range = &self.entries[entry.descendants.clone()];
+                        depth += 1;
+                    }
+                }
+            }
+            return enabled.is_some_and(|level_enabled| level <= level_enabled);
+        }
     }
 
     #[cfg(test)]
     mod tests {
         use super::*;
 
+        fn scope_map_from_keys(kv: &[(&str, &str)]) -> ScopeMap2 {
+            let hash_map: HashMap<String, String> = kv
+                .iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect();
+            ScopeMap2::new_from_settings(hash_map)
+        }
+
         #[test]
         fn test_initialization() {
-            let keys_to_map = |kv: &[(&str, &str)]| -> HashMap<String, String> {
-                kv.iter()
-                    .map(|(k, v)| (k.to_string(), v.to_string()))
-                    .collect()
-            };
-            let map = ScopeMap2::new_from_settings(keys_to_map(&[("a.b.c.d", "trace")]));
+            let map = scope_map_from_keys(&[("a.b.c.d", "trace")]);
             assert_eq!(map.root_count, 1);
             assert_eq!(map.entries.len(), 4);
 
-            let map = ScopeMap2::new_from_settings(keys_to_map(&[]));
+            let map = scope_map_from_keys(&[]);
             assert_eq!(map.root_count, 0);
             assert_eq!(map.entries.len(), 0);
 
-            let map = ScopeMap2::new_from_settings(keys_to_map(&[("", "trace")]));
+            let map = scope_map_from_keys(&[("", "trace")]);
             assert_eq!(map.root_count, 0);
             assert_eq!(map.entries.len(), 0);
 
-            let map = ScopeMap2::new_from_settings(keys_to_map(&[
+            let map = scope_map_from_keys(&[("foo..bar", "trace")]);
+            assert_eq!(map.root_count, 1);
+            assert_eq!(map.entries.len(), 2);
+
+            let map = scope_map_from_keys(&[
                 ("a.b.c.d", "trace"),
                 ("e.f.g.h", "debug"),
                 ("i.j.k.l", "info"),
                 ("m.n.o.p", "warn"),
                 ("q.r.s.t", "error"),
-            ]));
+            ]);
             assert_eq!(map.root_count, 5);
             assert_eq!(map.entries.len(), 20);
             assert_eq!(map.entries[0].scope, "a");
@@ -567,6 +591,54 @@ pub mod scope_map {
             assert_eq!(map.entries[2].scope, "i");
             assert_eq!(map.entries[3].scope, "m");
             assert_eq!(map.entries[4].scope, "q");
+        }
+
+        fn scope_from_scope_str(scope_str: &'static str) -> Scope {
+            let mut scope_buf = [""; SCOPE_DEPTH_MAX];
+            let mut index = 0;
+            let mut scope_iter = scope_str.split(SCOPE_STRING_SEP);
+            while index < SCOPE_DEPTH_MAX {
+                let Some(scope) = scope_iter.next() else {
+                    break;
+                };
+                if scope == "" {
+                    continue;
+                }
+                scope_buf[index] = scope;
+                index += 1;
+            }
+            assert_ne!(index, 0);
+            assert!(scope_iter.next().is_none());
+            return scope_buf;
+        }
+
+        #[test]
+        fn test_is_enabled() {
+            let map = scope_map_from_keys(&[
+                ("a.b.c.d", "trace"),
+                ("e.f.g.h", "debug"),
+                ("i.j.k.l", "info"),
+                ("m.n.o.p", "warn"),
+                ("q.r.s.t", "error"),
+            ]);
+            use log_impl::Level;
+            assert!(map.is_enabled(&scope_from_scope_str("a.b.c.d"), Level::Trace));
+            assert!(map.is_enabled(&scope_from_scope_str("a.b.c.d"), Level::Debug));
+
+            assert!(map.is_enabled(&scope_from_scope_str("e.f.g.h"), Level::Debug));
+            assert!(map.is_enabled(&scope_from_scope_str("e.f.g.h"), Level::Info));
+            assert!(!map.is_enabled(&scope_from_scope_str("e.f.g.h"), Level::Trace));
+
+            assert!(map.is_enabled(&scope_from_scope_str("i.j.k.l"), Level::Info));
+            assert!(map.is_enabled(&scope_from_scope_str("i.j.k.l"), Level::Warn));
+            assert!(!map.is_enabled(&scope_from_scope_str("i.j.k.l"), Level::Debug));
+
+            assert!(map.is_enabled(&scope_from_scope_str("m.n.o.p"), Level::Warn));
+            assert!(map.is_enabled(&scope_from_scope_str("m.n.o.p"), Level::Error));
+            assert!(!map.is_enabled(&scope_from_scope_str("m.n.o.p"), Level::Info));
+
+            assert!(map.is_enabled(&scope_from_scope_str("q.r.s.t"), Level::Error));
+            assert!(!map.is_enabled(&scope_from_scope_str("q.r.s.t"), Level::Warn));
         }
     }
 }
