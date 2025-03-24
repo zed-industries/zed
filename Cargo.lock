@@ -5887,6 +5887,7 @@ dependencies = [
  "wayland-protocols-plasma",
  "windows 0.61.1",
  "windows-core 0.61.0",
+ "windows-numerics",
  "x11-clipboard",
  "x11rb",
  "xim",
