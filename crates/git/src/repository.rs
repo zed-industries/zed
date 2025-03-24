@@ -332,6 +332,12 @@ pub trait GitRepository: Send + Sync {
         diff: String,
         cx: AsyncApp,
     ) -> BoxFuture<Result<()>>;
+
+    fn diff_review_branch(
+        &self,
+        review_branch: GitReviewBranch,
+        cx: AsyncApp,
+    ) -> BoxFuture<Result<String>>;
 }
 
 pub enum DiffType {
@@ -382,7 +388,7 @@ pub struct GitRepositoryCheckpoint {
     commit_sha: Oid,
 }
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Debug)]
 pub struct GitReviewBranch {
     id: Uuid,
 }
@@ -1276,12 +1282,30 @@ impl GitRepository for RealGitRepository {
             let working_directory = working_directory?;
             let mut git = GitBinary::new(git_binary_path, working_directory, executor);
             git.with_index(review_branch.id, async move |git| {
-                let x = git.run_with_stdin(&["apply", "--cached", "-"], diff).await;
-                dbg!(&x);
-                x
+                git.run_with_stdin(&["apply", "--cached", "-"], diff).await
             })
             .await?;
             Ok(())
+        })
+        .boxed()
+    }
+
+    fn diff_review_branch(
+        &self,
+        review_branch: GitReviewBranch,
+        cx: AsyncApp,
+    ) -> BoxFuture<Result<String>> {
+        let working_directory = self.working_directory();
+        let git_binary_path = self.git_binary_path.clone();
+
+        let executor = cx.background_executor().clone();
+        cx.background_spawn(async move {
+            let working_directory = working_directory?;
+            let mut git = GitBinary::new(git_binary_path, working_directory, executor);
+            git.with_index(review_branch.id, async move |git| {
+                git.run(&["diff", "--cached"]).await
+            })
+            .await
         })
         .boxed()
     }
@@ -1378,8 +1402,10 @@ impl GitBinary {
         let mut command = self.build_command(args);
         command.stdin(Stdio::piped());
         let mut child = command.spawn()?;
+
         let mut child_stdin = child.stdin.take().context("failed to write to stdin")?;
         child_stdin.write_all(stdin.as_bytes()).await?;
+        drop(child_stdin);
 
         let output = child.output().await?;
         if output.status.success() {
@@ -1907,6 +1933,56 @@ mod tests {
             .compare_checkpoints(checkpoint2, checkpoint3, cx.to_async())
             .await
             .unwrap());
+    }
+
+    #[gpui::test]
+    async fn test_review_branch(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+
+        let repo_dir = tempfile::tempdir().unwrap();
+        git2::Repository::init(repo_dir.path()).unwrap();
+        let repo = RealGitRepository::new(&repo_dir.path().join(".git"), None).unwrap();
+
+        // Create initial file
+        smol::fs::write(repo_dir.path().join("file"), "initial content")
+            .await
+            .unwrap();
+
+        // Create a review branch
+        let review_branch = repo.create_review_branch(cx.to_async()).await.unwrap();
+
+        // Apply a diff to the review branch
+        let diff = r#"diff --git a/file b/file
+index dd7e1c6..2a282ef 100644
+--- a/file
++++ b/file
+@@ -1 +1 @@
+-initial content
++modified content
+diff --git a/new_file b/new_file
+new file mode 100644
+index 0000000..9daeafb
+--- /dev/null
++++ b/new_file
+@@ -0,0 +1 @@
++test
+"#;
+
+        repo.apply_diff_to_review_branch(review_branch.clone(), diff.to_string(), cx.to_async())
+            .await
+            .unwrap();
+
+        // Get the diff from the review branch
+        let review_branch_diff = repo
+            .diff_review_branch(review_branch, cx.to_async())
+            .await
+            .unwrap();
+
+        // Verify the diff shows the expected changes
+        assert!(review_branch_diff.contains("-initial content"));
+        assert!(review_branch_diff.contains("+modified content"));
+        assert!(review_branch_diff.contains("+test"));
+        assert!(review_branch_diff.contains("new file mode"));
     }
 
     #[test]

@@ -137,7 +137,7 @@ pub struct GitStoreDiff {
     diffs_by_dot_git_abs_path: HashMap<PathBuf, String>,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct GitStoreReviewBranch {
     branches_by_dot_git_abs_path: HashMap<PathBuf, GitReviewBranch>,
 }
@@ -718,12 +718,14 @@ impl GitStore {
             .collect::<HashMap<_, _>>();
 
         let mut tasks = Vec::new();
+        dbg!(&review_branch, &diff);
         for (dot_git_abs_path, diff) in diff.diffs_by_dot_git_abs_path {
             if let Some(repository) = repositories_by_dot_git_abs_path.get(&dot_git_abs_path) {
                 if let Some(branch) = review_branch
                     .branches_by_dot_git_abs_path
                     .remove(&dot_git_abs_path)
                 {
+                    dbg!();
                     let apply = repository
                         .read(cx)
                         .apply_diff_to_review_branch(branch, diff);

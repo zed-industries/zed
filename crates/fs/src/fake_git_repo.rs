@@ -459,4 +459,12 @@ impl GitRepository for FakeGitRepository {
     ) -> BoxFuture<Result<()>> {
         unimplemented!()
     }
+
+    fn diff_review_branch(
+        &self,
+        _review_branch: GitReviewBranch,
+        _cx: AsyncApp,
+    ) -> BoxFuture<Result<String>> {
+        unimplemented!()
+    }
 }

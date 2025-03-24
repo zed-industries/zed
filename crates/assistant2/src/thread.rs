@@ -1453,7 +1453,6 @@ impl Thread {
     }
 
     fn compute_changes(&mut self, source: ChangeSource, cx: &mut Context<Self>) {
-        dbg!(source);
         let old_checkpoint = self.last_changes_checkpoint.take();
         let git_store = self.project.read(cx).git_store().clone();
         let new_checkpoint = git_store.read(cx).checkpoint(cx);
@@ -1461,13 +1460,10 @@ impl Thread {
         self.last_changes_checkpoint = Some(cx.spawn(async move |_this, cx| {
             let new_checkpoint = new_checkpoint.await?;
 
-            if source == ChangeSource::User {
-                if let Some(review_branch) = review_branch.await {
-                    println!("we have a review branch");
-                    if let Some(old_checkpoint) = old_checkpoint {
-                        println!("we have an old checkpoint");
-                        if let Ok(old_checkpoint) = old_checkpoint.await {
-                            println!("we awaited the old checkpoint");
+            if let Some(review_branch) = review_branch.await {
+                if let Some(old_checkpoint) = old_checkpoint {
+                    if let Ok(old_checkpoint) = old_checkpoint.await {
+                        if source == ChangeSource::User {
                             let diff = git_store
                                 .read_with(cx, |store, cx| {
                                     store.diff_checkpoints(
@@ -1475,23 +1471,18 @@ impl Thread {
                                         new_checkpoint.clone(),
                                         cx,
                                     )
-                                })
-                                .unwrap()
+                                })?
                                 .await;
 
-                            dbg!(source, &diff);
                             if let Ok(diff) = diff {
-                                _ = git_store
+                                git_store
                                     .read_with(cx, |store, cx| {
                                         store.apply_diff_to_review_branch(review_branch, diff, cx)
                                     })?
-                                    .await;
+                                    .await
+                                    .unwrap();
                             }
-                        } else {
-                            println!("the old checkpoint errored");
                         }
-                    } else {
-                        println!("we don't have an old checkpoint");
                     }
                 }
             }
