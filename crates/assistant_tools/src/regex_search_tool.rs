@@ -41,6 +41,10 @@ impl Tool for RegexSearchTool {
         "regex-search".into()
     }
 
+    fn needs_confirmation(&self) -> bool {
+        false
+    }
+
     fn description(&self) -> String {
         include_str!("./regex_search_tool/description.md").into()
     }

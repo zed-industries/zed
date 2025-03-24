@@ -38,6 +38,16 @@ impl Autoscroll {
         Self::Strategy(AutoscrollStrategy::TopRelative(n))
     }
 
+    /// Scrolls so that the newest cursor is at the top.
+    pub fn top() -> Self {
+        Self::Strategy(AutoscrollStrategy::Top)
+    }
+
+    /// Scrolls so that the newest cursor is roughly an n-th line from the bottom.
+    pub fn bottom_relative(n: usize) -> Self {
+        Self::Strategy(AutoscrollStrategy::BottomRelative(n))
+    }
+
     /// Scrolls so that the newest cursor is at the bottom.
     pub fn bottom() -> Self {
         Self::Strategy(AutoscrollStrategy::Bottom)
@@ -54,6 +64,7 @@ pub enum AutoscrollStrategy {
     Top,
     Bottom,
     TopRelative(usize),
+    BottomRelative(usize),
 }
 
 impl AutoscrollStrategy {
@@ -211,6 +222,10 @@ impl Editor {
             }
             AutoscrollStrategy::TopRelative(lines) => {
                 scroll_position.y = target_top - lines as f32;
+                self.set_scroll_position_internal(scroll_position, local, true, window, cx);
+            }
+            AutoscrollStrategy::BottomRelative(lines) => {
+                scroll_position.y = target_bottom + lines as f32;
                 self.set_scroll_position_internal(scroll_position, local, true, window, cx);
             }
         }

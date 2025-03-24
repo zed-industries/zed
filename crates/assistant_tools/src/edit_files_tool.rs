@@ -79,6 +79,10 @@ impl Tool for EditFilesTool {
         "edit-files".into()
     }
 
+    fn needs_confirmation(&self) -> bool {
+        true
+    }
+
     fn description(&self) -> String {
         include_str!("./edit_files_tool/description.md").into()
     }

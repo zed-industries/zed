@@ -513,21 +513,10 @@ impl TitleBar {
     }
 
     pub fn render_project_branch(&self, cx: &mut Context<Self>) -> Option<impl IntoElement> {
-        let entry = {
-            let mut names_and_branches =
-                self.project.read(cx).visible_worktrees(cx).map(|worktree| {
-                    let worktree = worktree.read(cx);
-                    worktree.root_git_entry()
-                });
-
-            names_and_branches.next().flatten()
-        };
+        let repository = self.project.read(cx).active_repository(cx)?;
         let workspace = self.workspace.upgrade()?;
-        let branch_name = entry
-            .as_ref()
-            .and_then(|entry| entry.branch())
-            .map(|branch| branch.name.clone())
-            .map(|branch| util::truncate_and_trailoff(&branch, MAX_BRANCH_NAME_LENGTH))?;
+        let branch_name = repository.read(cx).current_branch()?.name.clone();
+        let branch_name = util::truncate_and_trailoff(&branch_name, MAX_BRANCH_NAME_LENGTH);
         Some(
             Button::new("project_branch_trigger", branch_name)
                 .color(Color::Muted)

@@ -12,6 +12,7 @@ use anyhow::{anyhow, bail, Context, Result};
 use client::DevServerProjectId;
 use db::{define_connection, query, sqlez::connection::Connection, sqlez_macros::sql};
 use gpui::{point, size, Axis, Bounds, WindowBounds, WindowId};
+use itertools::Itertools;
 use project::debugger::breakpoint_store::{BreakpointKind, SerializedBreakpoint};
 
 use language::{LanguageName, Toolchain};
@@ -529,6 +530,11 @@ define_connection! {
                 ON UPDATE CASCADE
             );
         ),
+    sql!(
+        ALTER TABLE workspaces ADD COLUMN local_paths_array TEXT;
+        CREATE UNIQUE INDEX local_paths_array_uq ON workspaces(local_paths_array);
+        ALTER TABLE workspaces ADD COLUMN local_paths_order_array TEXT;
+    ),
     ];
 }
 
@@ -693,7 +699,7 @@ impl WorkspaceDb {
         match breakpoints {
             Ok(bp) => {
                 if bp.is_empty() {
-                    log::error!("Breakpoints are empty after querying database for them");
+                    log::debug!("Breakpoints are empty after querying database for them");
                 }
 
                 let mut map: BTreeMap<Arc<Path>, Vec<SerializedBreakpoint>> = Default::default();
@@ -779,9 +785,11 @@ impl WorkspaceDb {
                                 bottom_dock_zoom,
                                 session_id,
                                 window_id,
-                                timestamp
+                                timestamp,
+                                local_paths_array,
+                                local_paths_order_array
                             )
-                            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, CURRENT_TIMESTAMP)
+                            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, CURRENT_TIMESTAMP, ?15, ?16)
                             ON CONFLICT DO
                             UPDATE SET
                                 local_paths = ?2,
@@ -797,10 +805,12 @@ impl WorkspaceDb {
                                 bottom_dock_zoom = ?12,
                                 session_id = ?13,
                                 window_id = ?14,
-                                timestamp = CURRENT_TIMESTAMP
+                                timestamp = CURRENT_TIMESTAMP,
+                                local_paths_array = ?15,
+                                local_paths_order_array = ?16
                         );
                         let mut prepared_query = conn.exec_bound(query)?;
-                        let args = (workspace.id, &local_paths, &local_paths_order, workspace.docks, workspace.session_id, workspace.window_id);
+                        let args = (workspace.id, &local_paths, &local_paths_order, workspace.docks, workspace.session_id, workspace.window_id, local_paths.paths().iter().map(|path| path.to_string_lossy().to_string()).join(","), local_paths_order.order().iter().map(|order| order.to_string()).join(","));
 
                         prepared_query(args).context("Updating workspace")?;
                     }

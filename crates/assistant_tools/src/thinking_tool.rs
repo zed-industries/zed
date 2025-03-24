@@ -22,6 +22,10 @@ impl Tool for ThinkingTool {
         "thinking".to_string()
     }
 
+    fn needs_confirmation(&self) -> bool {
+        false
+    }
+
     fn description(&self) -> String {
         include_str!("./thinking_tool/description.md").to_string()
     }

@@ -1275,9 +1275,9 @@ impl LanguageServer {
                 name: String::default(),
             })
             .collect();
+        *workspace_folders = folders;
         let should_notify = !added.is_empty() || !removed.is_empty();
         if should_notify {
-            *workspace_folders = folders;
             drop(workspace_folders);
             let params = DidChangeWorkspaceFoldersParams {
                 event: WorkspaceFoldersChangeEvent { added, removed },
@@ -1440,7 +1440,7 @@ impl FakeLanguageServer {
             }),
             notifications_rx,
         };
-        fake.handle_request::<request::Initialize, _, _>({
+        fake.set_request_handler::<request::Initialize, _, _>({
             let capabilities = capabilities;
             move |_, _| {
                 let capabilities = capabilities.clone();
@@ -1524,7 +1524,7 @@ impl FakeLanguageServer {
     }
 
     /// Registers a handler for a specific kind of request. Removes any existing handler for specified request type.
-    pub fn handle_request<T, F, Fut>(
+    pub fn set_request_handler<T, F, Fut>(
         &self,
         mut handler: F,
     ) -> futures::channel::mpsc::UnboundedReceiver<()>
@@ -1699,7 +1699,7 @@ mod tests {
             "file://b/c"
         );
 
-        fake.handle_request::<request::Shutdown, _, _>(|_, _| async move { Ok(()) });
+        fake.set_request_handler::<request::Shutdown, _, _>(|_, _| async move { Ok(()) });
 
         drop(server);
         fake.receive_notification::<notification::Exit>().await;

@@ -287,7 +287,9 @@
     "context": "MessageEditor > Editor",
     "use_key_equivalents": true,
     "bindings": {
-      "enter": "assistant2::Chat"
+      "enter": "assistant2::Chat",
+      "cmd-g d": "git::Diff",
+      "shift-escape": "git::ExpandCommitEditor"
     }
   },
   {
@@ -801,9 +803,7 @@
       "shift-tab": "git_panel::FocusEditor",
       "escape": "git_panel::ToggleFocus",
       "cmd-enter": "git::Commit",
-      "delete": "git::RestoreFile",
-      "cmd-backspace": "git::RestoreFile",
-      "backspace": "git::RestoreFile"
+      "cmd-backspace": "git::RestoreFile"
     }
   },
   {

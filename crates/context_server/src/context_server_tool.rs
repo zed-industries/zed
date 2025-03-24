@@ -44,6 +44,10 @@ impl Tool for ContextServerTool {
         }
     }
 
+    fn needs_confirmation(&self) -> bool {
+        true
+    }
+
     fn input_schema(&self) -> serde_json::Value {
         match &self.tool.input_schema {
             serde_json::Value::Null => {

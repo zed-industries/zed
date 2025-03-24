@@ -445,6 +445,8 @@ messages!(
     (UpdateUserPlan, Foreground),
     (UpdateWorktree, Foreground),
     (UpdateWorktreeSettings, Foreground),
+    (UpdateRepository, Foreground),
+    (RemoveRepository, Foreground),
     (UsersResponse, Foreground),
     (GitReset, Background),
     (GitCheckoutFiles, Background),
@@ -573,6 +575,8 @@ request_messages!(
     (UpdateParticipantLocation, Ack),
     (UpdateProject, Ack),
     (UpdateWorktree, Ack),
+    (UpdateRepository, Ack),
+    (RemoveRepository, Ack),
     (LspExtExpandMacro, LspExtExpandMacroResponse),
     (LspExtOpenDocs, LspExtOpenDocsResponse),
     (SetRoomParticipantRole, Ack),
@@ -689,6 +693,8 @@ entity_messages!(
     UpdateProject,
     UpdateProjectCollaborator,
     UpdateWorktree,
+    UpdateRepository,
+    RemoveRepository,
     UpdateWorktreeSettings,
     LspExtExpandMacro,
     LspExtOpenDocs,
@@ -783,6 +789,31 @@ pub const MAX_WORKTREE_UPDATE_MAX_CHUNK_SIZE: usize = 2;
 #[cfg(not(any(test, feature = "test-support")))]
 pub const MAX_WORKTREE_UPDATE_MAX_CHUNK_SIZE: usize = 256;
 
+#[derive(Clone, Debug)]
+pub enum WorktreeRelatedMessage {
+    UpdateWorktree(UpdateWorktree),
+    UpdateRepository(UpdateRepository),
+    RemoveRepository(RemoveRepository),
+}
+
+impl From<UpdateWorktree> for WorktreeRelatedMessage {
+    fn from(value: UpdateWorktree) -> Self {
+        Self::UpdateWorktree(value)
+    }
+}
+
+impl From<UpdateRepository> for WorktreeRelatedMessage {
+    fn from(value: UpdateRepository) -> Self {
+        Self::UpdateRepository(value)
+    }
+}
+
+impl From<RemoveRepository> for WorktreeRelatedMessage {
+    fn from(value: RemoveRepository) -> Self {
+        Self::RemoveRepository(value)
+    }
+}
+
 pub fn split_worktree_update(mut message: UpdateWorktree) -> impl Iterator<Item = UpdateWorktree> {
     let mut done = false;
 
@@ -817,7 +848,6 @@ pub fn split_worktree_update(mut message: UpdateWorktree) -> impl Iterator<Item 
 
             updated_repositories.push(RepositoryEntry {
                 work_directory_id: repo.work_directory_id,
-                branch: repo.branch.clone(),
                 branch_summary: repo.branch_summary.clone(),
                 updated_statuses: repo
                     .updated_statuses
@@ -861,6 +891,47 @@ pub fn split_worktree_update(mut message: UpdateWorktree) -> impl Iterator<Item 
             removed_repositories,
         })
     })
+}
+
+pub fn split_repository_update(
+    mut update: UpdateRepository,
+) -> impl Iterator<Item = UpdateRepository> {
+    let mut updated_statuses_iter = mem::take(&mut update.updated_statuses).into_iter().fuse();
+    let mut removed_statuses_iter = mem::take(&mut update.removed_statuses).into_iter().fuse();
+    let mut is_first = true;
+    std::iter::from_fn(move || {
+        let updated_statuses = updated_statuses_iter
+            .by_ref()
+            .take(MAX_WORKTREE_UPDATE_MAX_CHUNK_SIZE)
+            .collect::<Vec<_>>();
+        let removed_statuses = removed_statuses_iter
+            .by_ref()
+            .take(MAX_WORKTREE_UPDATE_MAX_CHUNK_SIZE)
+            .collect::<Vec<_>>();
+        if updated_statuses.is_empty() && removed_statuses.is_empty() && !is_first {
+            return None;
+        }
+        is_first = false;
+        Some(UpdateRepository {
+            updated_statuses,
+            removed_statuses,
+            ..update.clone()
+        })
+    })
+}
+
+pub fn split_worktree_related_message(
+    message: WorktreeRelatedMessage,
+) -> Box<dyn Iterator<Item = WorktreeRelatedMessage> + Send> {
+    match message {
+        WorktreeRelatedMessage::UpdateWorktree(message) => {
+            Box::new(split_worktree_update(message).map(WorktreeRelatedMessage::UpdateWorktree))
+        }
+        WorktreeRelatedMessage::UpdateRepository(message) => {
+            Box::new(split_repository_update(message).map(WorktreeRelatedMessage::UpdateRepository))
+        }
+        WorktreeRelatedMessage::RemoveRepository(update) => Box::new([update.into()].into_iter()),
+    }
 }
 
 #[cfg(test)]
