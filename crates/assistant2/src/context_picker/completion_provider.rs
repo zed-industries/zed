@@ -849,7 +849,10 @@ mod tests {
         editor.update(&mut cx, |editor, cx| {
             assert_eq!(editor.text(cx), "Lorem @file one");
             assert!(editor.has_visible_completions_menu());
-            assert_eq!(current_completion_labels(editor), vec!["one.txt dir/a"]);
+            assert_eq!(
+                current_completion_labels(editor),
+                vec![format!("one.txt {}", path!("dir/a")).as_str(),]
+            );
         });
 
         editor.update_in(&mut cx, |editor, window, cx| {
