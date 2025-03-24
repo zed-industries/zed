@@ -142,7 +142,9 @@ impl PickerDelegate for ThreadContextPickerDelegate {
             this.update_in(cx, |this, window, cx| {
                 this.delegate
                     .context_store
-                    .update(cx, |context_store, cx| context_store.add_thread(thread, cx))
+                    .update(cx, |context_store, cx| {
+                        context_store.add_thread(thread, true, cx)
+                    })
                     .ok();
 
                 match this.delegate.confirm_behavior {

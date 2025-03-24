@@ -10,7 +10,9 @@ use std::sync::Arc;
 use anyhow::{anyhow, Result};
 use editor::actions::FoldAt;
 use editor::display_map::{Crease, FoldId};
-use editor::{Anchor, AnchorRangeExt as _, Editor, ExcerptId, FoldPlaceholder, ToPoint as _};
+use editor::{
+    Anchor, AnchorRangeExt as _, Editor, ExcerptId, FoldPlaceholder, ToOffset, ToPoint as _,
+};
 use file_context_picker::render_file_context_entry;
 use gpui::{
     App, DismissEvent, Empty, Entity, EventEmitter, FocusHandle, Focusable, Task, WeakEntity,
@@ -306,7 +308,7 @@ impl ContextPicker {
         };
 
         let task = context_store.update(cx, |context_store, cx| {
-            context_store.add_file_from_path(project_path.clone(), cx)
+            context_store.add_file_from_path(project_path.clone(), true, cx)
         });
 
         cx.spawn_in(window, async move |_, cx| task.await.notify_async_err(cx))
@@ -336,7 +338,7 @@ impl ContextPicker {
         cx.spawn(async move |this, cx| {
             let thread = open_thread_task.await?;
             context_store.update(cx, |context_store, cx| {
-                context_store.add_thread(thread, cx);
+                context_store.add_thread(thread, true, cx);
             })?;
 
             this.update(cx, |_this, cx| cx.notify())
@@ -532,7 +534,8 @@ fn recent_context_picker_entries(
 
 pub(crate) fn insert_crease_for_mention(
     excerpt_id: ExcerptId,
-    crease_range: Range<text::Anchor>,
+    crease_start: text::Anchor,
+    content_len: usize,
     crease_label: SharedString,
     crease_icon_path: SharedString,
     editor_entity: Entity<Editor>,
@@ -542,12 +545,11 @@ pub(crate) fn insert_crease_for_mention(
     editor_entity.update(cx, |editor, cx| {
         let snapshot = editor.buffer().read(cx).snapshot(cx);
 
-        let Some((start, end)) = snapshot
-            .anchor_in_excerpt(excerpt_id, crease_range.start)
-            .zip(snapshot.anchor_in_excerpt(excerpt_id, crease_range.end))
-        else {
+        let Some(start) = snapshot.anchor_in_excerpt(excerpt_id, crease_start) else {
             return;
         };
+
+        let end = snapshot.anchor_before(start.to_offset(&snapshot) + content_len);
 
         let placeholder = FoldPlaceholder {
             render: render_fold_icon_button(

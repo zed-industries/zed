@@ -185,9 +185,11 @@ impl ContextPickerCompletionProvider {
         } else {
             IconName::MessageCircle
         };
+        let new_text = format!("@thread {}", thread_entry.summary);
+        let new_text_len = new_text.len();
         Completion {
             old_range: source_range.clone(),
-            new_text: format!("@thread {}", thread_entry.summary),
+            new_text,
             label: CodeLabel::plain(thread_entry.summary.to_string(), None),
             documentation: None,
             source: project::CompletionSource::Custom,
@@ -196,7 +198,8 @@ impl ContextPickerCompletionProvider {
                 IconName::MessageCircle.path().into(),
                 thread_entry.summary.clone(),
                 excerpt_id,
-                source_range.clone(),
+                source_range.start,
+                new_text_len,
                 editor.clone(),
                 move |cx| {
                     let thread_id = thread_entry.id.clone();
@@ -208,8 +211,9 @@ impl ContextPickerCompletionProvider {
                                 thread_store.open_thread(&thread_id, cx)
                             })?
                             .await?;
-                        context_store
-                            .update(cx, |context_store, cx| context_store.add_thread(thread, cx))
+                        context_store.update(cx, |context_store, cx| {
+                            context_store.add_thread(thread, false, cx)
+                        })
                     })
                     .detach_and_log_err(cx);
                 },
@@ -254,9 +258,11 @@ impl ContextPickerCompletionProvider {
             .map(|file_name| file_name.to_string_lossy().to_string())
             .unwrap_or_else(|| "untitled".to_string());
 
+        let new_text = format!("@file {}", full_path.to_string_lossy());
+        let new_text_len = new_text.len();
         Some(Completion {
             old_range: source_range.clone(),
-            new_text: format!("@file {}", full_path.to_string_lossy()),
+            new_text,
             label,
             documentation: None,
             source: project::CompletionSource::Custom,
@@ -265,14 +271,15 @@ impl ContextPickerCompletionProvider {
                 crease_icon_path,
                 crease_name.into(),
                 excerpt_id,
-                source_range,
+                source_range.start,
+                new_text_len,
                 editor,
                 move |cx| {
                     context_store.update(cx, |context_store, cx| {
                         let task = if is_directory {
-                            context_store.add_directory(project_path.clone(), cx)
+                            context_store.add_directory(project_path.clone(), false, cx)
                         } else {
-                            context_store.add_file_from_path(project_path.clone(), cx)
+                            context_store.add_file_from_path(project_path.clone(), false, cx)
                         };
                         task.detach_and_log_err(cx);
                     })
@@ -295,9 +302,10 @@ impl CompletionProvider for ContextPickerCompletionProvider {
         let state = buffer.update(cx, |buffer, _cx| {
             let position = buffer_position.to_point(buffer);
             let line_start = Point::new(position.row, 0);
+            let offset_to_line = buffer.point_to_offset(line_start);
             let mut lines = buffer.text_for_range(line_start..position).lines();
             let line = lines.next()?;
-            MentionCompletion::try_parse(line)
+            MentionCompletion::try_parse(line, offset_to_line)
         });
         let Some(state) = state else {
             return Task::ready(Ok(None));
@@ -312,7 +320,7 @@ impl CompletionProvider for ContextPickerCompletionProvider {
 
         let snapshot = buffer.read(cx).snapshot();
         let source_range = snapshot.anchor_after(state.source_range.start)
-            ..snapshot.anchor_after(state.source_range.end);
+            ..snapshot.anchor_before(state.source_range.end);
 
         let thread_store = self.thread_store.clone();
         let editor = self.editor.clone();
@@ -430,12 +438,13 @@ impl CompletionProvider for ContextPickerCompletionProvider {
         let buffer = buffer.read(cx);
         let position = position.to_point(buffer);
         let line_start = Point::new(position.row, 0);
+        let offset_to_line = buffer.point_to_offset(line_start);
         let mut lines = buffer.text_for_range(line_start..position).lines();
         if let Some(line) = lines.next() {
-            MentionCompletion::try_parse(line)
+            MentionCompletion::try_parse(line, offset_to_line)
                 .map(|completion| {
-                    completion.source_range.start <= position.column as usize
-                        && completion.source_range.end >= position.column as usize
+                    completion.source_range.start <= offset_to_line + position.column as usize
+                        && completion.source_range.end >= offset_to_line + position.column as usize
                 })
                 .unwrap_or(false)
         } else {
@@ -452,7 +461,8 @@ fn confirm_completion_callback(
     crease_icon_path: SharedString,
     crease_text: SharedString,
     excerpt_id: ExcerptId,
-    source_range: Range<Anchor>,
+    start: Anchor,
+    content_len: usize,
     editor: Entity<Editor>,
     add_context_fn: impl Fn(&mut App) -> () + Send + Sync + 'static,
 ) -> Arc<dyn Fn(CompletionIntent, &mut Window, &mut App) -> bool + Send + Sync> {
@@ -461,12 +471,13 @@ fn confirm_completion_callback(
 
         let crease_text = crease_text.clone();
         let crease_icon_path = crease_icon_path.clone();
-        let source_range = source_range.clone();
+        let start = start.clone();
         let editor = editor.clone();
         window.defer(cx, move |window, cx| {
             crate::context_picker::insert_crease_for_mention(
                 excerpt_id,
-                source_range,
+                start,
+                content_len,
                 crease_text,
                 crease_icon_path,
                 editor,
@@ -486,7 +497,7 @@ struct MentionCompletion {
 }
 
 impl MentionCompletion {
-    fn try_parse(line: &str) -> Option<Self> {
+    fn try_parse(line: &str, offset_to_line: usize) -> Option<Self> {
         let last_mention_start = line.rfind('@')?;
         if last_mention_start >= line.len() {
             return Some(Self::default());
@@ -516,7 +527,7 @@ impl MentionCompletion {
         }
 
         Some(Self {
-            source_range: last_mention_start..end,
+            source_range: last_mention_start + offset_to_line..end + offset_to_line,
             mode,
             argument,
         })
@@ -536,10 +547,10 @@ mod tests {
 
     #[test]
     fn test_mention_completion_parse() {
-        assert_eq!(MentionCompletion::try_parse("Lorem Ipsum"), None);
+        assert_eq!(MentionCompletion::try_parse("Lorem Ipsum", 0), None);
 
         assert_eq!(
-            MentionCompletion::try_parse("Lorem @"),
+            MentionCompletion::try_parse("Lorem @", 0),
             Some(MentionCompletion {
                 source_range: 6..7,
                 mode: None,
@@ -548,7 +559,7 @@ mod tests {
         );
 
         assert_eq!(
-            MentionCompletion::try_parse("Lorem @file"),
+            MentionCompletion::try_parse("Lorem @file", 0),
             Some(MentionCompletion {
                 source_range: 6..11,
                 mode: Some(ContextPickerMode::File),
@@ -557,7 +568,7 @@ mod tests {
         );
 
         assert_eq!(
-            MentionCompletion::try_parse("Lorem @file "),
+            MentionCompletion::try_parse("Lorem @file ", 0),
             Some(MentionCompletion {
                 source_range: 6..12,
                 mode: Some(ContextPickerMode::File),
@@ -566,7 +577,7 @@ mod tests {
         );
 
         assert_eq!(
-            MentionCompletion::try_parse("Lorem @file main.rs"),
+            MentionCompletion::try_parse("Lorem @file main.rs", 0),
             Some(MentionCompletion {
                 source_range: 6..19,
                 mode: Some(ContextPickerMode::File),
@@ -575,7 +586,7 @@ mod tests {
         );
 
         assert_eq!(
-            MentionCompletion::try_parse("Lorem @file main.rs "),
+            MentionCompletion::try_parse("Lorem @file main.rs ", 0),
             Some(MentionCompletion {
                 source_range: 6..19,
                 mode: Some(ContextPickerMode::File),
@@ -584,7 +595,7 @@ mod tests {
         );
 
         assert_eq!(
-            MentionCompletion::try_parse("Lorem @file main.rs Ipsum"),
+            MentionCompletion::try_parse("Lorem @file main.rs Ipsum", 0),
             Some(MentionCompletion {
                 source_range: 6..19,
                 mode: Some(ContextPickerMode::File),
@@ -752,6 +763,126 @@ mod tests {
             assert!(editor.has_visible_completions_menu());
             assert_eq!(current_completion_labels(editor), vec!["one.txt dir/a"]);
         });
+
+        editor.update_in(&mut cx, |editor, window, cx| {
+            assert!(editor.has_visible_completions_menu());
+            editor.confirm_completion(&editor::actions::ConfirmCompletion::default(), window, cx);
+        });
+
+        editor.update(&mut cx, |editor, cx| {
+            assert_eq!(editor.text(cx), "Lorem @file dir/a/one.txt");
+            assert!(!editor.has_visible_completions_menu());
+            assert_eq!(
+                crease_ranges(editor, cx),
+                vec![Point::new(0, 6)..Point::new(0, 25)]
+            );
+        });
+
+        cx.simulate_input(" ");
+
+        editor.update(&mut cx, |editor, cx| {
+            assert_eq!(editor.text(cx), "Lorem @file dir/a/one.txt ");
+            assert!(!editor.has_visible_completions_menu());
+            assert_eq!(
+                crease_ranges(editor, cx),
+                vec![Point::new(0, 6)..Point::new(0, 25)]
+            );
+        });
+
+        cx.simulate_input("Ipsum ");
+
+        editor.update(&mut cx, |editor, cx| {
+            assert_eq!(editor.text(cx), "Lorem @file dir/a/one.txt Ipsum ");
+            assert!(!editor.has_visible_completions_menu());
+            assert_eq!(
+                crease_ranges(editor, cx),
+                vec![Point::new(0, 6)..Point::new(0, 25)]
+            );
+        });
+
+        cx.simulate_input("@file ");
+
+        editor.update(&mut cx, |editor, cx| {
+            assert_eq!(editor.text(cx), "Lorem @file dir/a/one.txt Ipsum @file ");
+            assert!(editor.has_visible_completions_menu());
+            assert_eq!(
+                crease_ranges(editor, cx),
+                vec![Point::new(0, 6)..Point::new(0, 25)]
+            );
+        });
+
+        editor.update_in(&mut cx, |editor, window, cx| {
+            editor.confirm_completion(&editor::actions::ConfirmCompletion::default(), window, cx);
+        });
+
+        cx.run_until_parked();
+
+        editor.update(&mut cx, |editor, cx| {
+            assert_eq!(
+                editor.text(cx),
+                "Lorem @file dir/a/one.txt Ipsum @file dir/b/seven.txt"
+            );
+            assert!(!editor.has_visible_completions_menu());
+            assert_eq!(
+                crease_ranges(editor, cx),
+                vec![
+                    Point::new(0, 6)..Point::new(0, 25),
+                    Point::new(0, 32)..Point::new(0, 53)
+                ]
+            );
+        });
+
+        cx.simulate_input("\n@");
+
+        editor.update(&mut cx, |editor, cx| {
+            assert_eq!(
+                editor.text(cx),
+                "Lorem @file dir/a/one.txt Ipsum @file dir/b/seven.txt\n@"
+            );
+            assert!(editor.has_visible_completions_menu());
+            assert_eq!(
+                crease_ranges(editor, cx),
+                vec![
+                    Point::new(0, 6)..Point::new(0, 25),
+                    Point::new(0, 32)..Point::new(0, 53)
+                ]
+            );
+        });
+
+        editor.update_in(&mut cx, |editor, window, cx| {
+            editor.confirm_completion(&editor::actions::ConfirmCompletion::default(), window, cx);
+        });
+
+        cx.run_until_parked();
+
+        editor.update(&mut cx, |editor, cx| {
+            assert_eq!(
+                editor.text(cx),
+                "Lorem @file dir/a/one.txt Ipsum @file dir/b/seven.txt\n@file dir/b/six.txt"
+            );
+            assert!(!editor.has_visible_completions_menu());
+            assert_eq!(
+                crease_ranges(editor, cx),
+                vec![
+                    Point::new(0, 6)..Point::new(0, 25),
+                    Point::new(0, 32)..Point::new(0, 53),
+                    Point::new(1, 0)..Point::new(1, 19)
+                ]
+            );
+        });
+    }
+
+    fn crease_ranges(editor: &Editor, cx: &mut App) -> Vec<Range<Point>> {
+        let snapshot = editor.buffer().read(cx).snapshot(cx);
+        editor.display_map.update(cx, |display_map, cx| {
+            display_map
+                .snapshot(cx)
+                .crease_snapshot
+                .crease_items_with_offsets(&snapshot)
+                .into_iter()
+                .map(|(_, range)| range)
+                .collect()
+        })
     }
 
     fn current_completion_labels(editor: &Editor) -> Vec<String> {

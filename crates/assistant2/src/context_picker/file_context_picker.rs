@@ -1,25 +1,16 @@
-use std::collections::BTreeSet;
-use std::ops::Range;
 use std::path::Path;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
-use editor::actions::FoldAt;
-use editor::display_map::{Crease, FoldId};
-use editor::scroll::Autoscroll;
-use editor::{Anchor, AnchorRangeExt, Editor, FoldPlaceholder, ToPoint};
+use editor::Editor;
 use file_icons::FileIcons;
 use fuzzy::PathMatch;
 use gpui::{
-    AnyElement, App, AppContext, DismissEvent, Empty, Entity, FocusHandle, Focusable, Stateful,
-    Task, WeakEntity,
+    App, AppContext, DismissEvent, Entity, FocusHandle, Focusable, Stateful, Task, WeakEntity,
 };
-use multi_buffer::{MultiBufferPoint, MultiBufferRow};
 use picker::{Picker, PickerDelegate};
 use project::{PathMatchCandidateSet, ProjectPath, WorktreeId};
-use rope::Point;
-use text::SelectionGoal;
-use ui::{prelude::*, ButtonLike, Disclosure, ListItem, TintColor, Tooltip};
+use ui::{prelude::*, ListItem, Tooltip};
 use util::ResultExt as _;
 use workspace::{notifications::NotifyResultExt, Workspace};
 
@@ -147,14 +138,6 @@ impl PickerDelegate for FileContextPickerDelegate {
             return;
         };
 
-        let file_name = mat
-            .path
-            .file_name()
-            .map(|os_str| os_str.to_string_lossy().into_owned())
-            .unwrap_or(mat.path_prefix.to_string());
-
-        let full_path = mat.path.display().to_string();
-
         let project_path = ProjectPath {
             worktree_id: WorktreeId::from_usize(mat.worktree_id),
             path: mat.path.clone(),
@@ -162,106 +145,13 @@ impl PickerDelegate for FileContextPickerDelegate {
 
         let is_directory = mat.is_dir;
 
-        let Some(editor_entity) = self.editor.upgrade() else {
-            return;
-        };
-
-        editor_entity.update(cx, |editor, cx| {
-            editor.transact(window, cx, |editor, window, cx| {
-                // Move empty selections left by 1 column to select the `@`s, so they get overwritten when we insert.
-                {
-                    let mut selections = editor.selections.all::<MultiBufferPoint>(cx);
-
-                    for selection in selections.iter_mut() {
-                        if selection.is_empty() {
-                            let old_head = selection.head();
-                            let new_head = MultiBufferPoint::new(
-                                old_head.row,
-                                old_head.column.saturating_sub(1),
-                            );
-                            selection.set_head(new_head, SelectionGoal::None);
-                        }
-                    }
-
-                    editor.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
-                        s.select(selections)
-                    });
-                }
-
-                let start_anchors = {
-                    let snapshot = editor.buffer().read(cx).snapshot(cx);
-                    editor
-                        .selections
-                        .all::<Point>(cx)
-                        .into_iter()
-                        .map(|selection| snapshot.anchor_before(selection.start))
-                        .collect::<Vec<_>>()
-                };
-
-                editor.insert(&full_path, window, cx);
-
-                let end_anchors = {
-                    let snapshot = editor.buffer().read(cx).snapshot(cx);
-                    editor
-                        .selections
-                        .all::<Point>(cx)
-                        .into_iter()
-                        .map(|selection| snapshot.anchor_after(selection.end))
-                        .collect::<Vec<_>>()
-                };
-
-                editor.insert("\n", window, cx); // Needed to end the fold
-
-                let file_icon = if is_directory {
-                    FileIcons::get_folder_icon(false, cx)
-                } else {
-                    FileIcons::get_icon(&Path::new(&full_path), cx)
-                }
-                .unwrap_or_else(|| SharedString::new(""));
-
-                let placeholder = FoldPlaceholder {
-                    render: render_fold_icon_button(
-                        file_icon,
-                        file_name.into(),
-                        editor_entity.downgrade(),
-                    ),
-                    ..Default::default()
-                };
-
-                let render_trailer =
-                    move |_row, _unfold, _window: &mut Window, _cx: &mut App| Empty.into_any();
-
-                let buffer = editor.buffer().read(cx).snapshot(cx);
-                let mut rows_to_fold = BTreeSet::new();
-                let crease_iter = start_anchors
-                    .into_iter()
-                    .zip(end_anchors)
-                    .map(|(start, end)| {
-                        rows_to_fold.insert(MultiBufferRow(start.to_point(&buffer).row));
-
-                        Crease::inline(
-                            start..end,
-                            placeholder.clone(),
-                            fold_toggle("tool-use"),
-                            render_trailer,
-                        )
-                    });
-
-                editor.insert_creases(crease_iter, cx);
-
-                for buffer_row in rows_to_fold {
-                    editor.fold_at(&FoldAt { buffer_row }, window, cx);
-                }
-            });
-        });
-
         let Some(task) = self
             .context_store
             .update(cx, |context_store, cx| {
                 if is_directory {
-                    context_store.add_directory(project_path, cx)
+                    context_store.add_directory(project_path, true, cx)
                 } else {
-                    context_store.add_file_from_path(project_path, cx)
+                    context_store.add_file_from_path(project_path, true, cx)
                 }
             })
             .ok()
@@ -482,86 +372,4 @@ pub fn render_file_context_entry(
                 .tooltip(Tooltip::text(format!("in {dir_name}")))
             }
         })
-}
-
-fn render_fold_icon_button(
-    icon: SharedString,
-    label: SharedString,
-    editor: WeakEntity<Editor>,
-) -> Arc<dyn Send + Sync + Fn(FoldId, Range<Anchor>, &mut App) -> AnyElement> {
-    Arc::new(move |fold_id, fold_range, cx| {
-        let is_in_text_selection = editor.upgrade().is_some_and(|editor| {
-            editor.update(cx, |editor, cx| {
-                let snapshot = editor
-                    .buffer()
-                    .update(cx, |multi_buffer, cx| multi_buffer.snapshot(cx));
-
-                let is_in_pending_selection = || {
-                    editor
-                        .selections
-                        .pending
-                        .as_ref()
-                        .is_some_and(|pending_selection| {
-                            pending_selection
-                                .selection
-                                .range()
-                                .includes(&fold_range, &snapshot)
-                        })
-                };
-
-                let mut is_in_complete_selection = || {
-                    editor
-                        .selections
-                        .disjoint_in_range::<usize>(fold_range.clone(), cx)
-                        .into_iter()
-                        .any(|selection| {
-                            // This is needed to cover a corner case, if we just check for an existing
-                            // selection in the fold range, having a cursor at the start of the fold
-                            // marks it as selected. Non-empty selections don't cause this.
-                            let length = selection.end - selection.start;
-                            length > 0
-                        })
-                };
-
-                is_in_pending_selection() || is_in_complete_selection()
-            })
-        });
-
-        ButtonLike::new(fold_id)
-            .style(ButtonStyle::Filled)
-            .selected_style(ButtonStyle::Tinted(TintColor::Accent))
-            .toggle_state(is_in_text_selection)
-            .child(
-                h_flex()
-                    .gap_1()
-                    .child(
-                        Icon::from_path(icon.clone())
-                            .size(IconSize::Small)
-                            .color(Color::Muted),
-                    )
-                    .child(
-                        Label::new(label.clone())
-                            .size(LabelSize::Small)
-                            .single_line(),
-                    ),
-            )
-            .into_any_element()
-    })
-}
-
-fn fold_toggle(
-    name: &'static str,
-) -> impl Fn(
-    MultiBufferRow,
-    bool,
-    Arc<dyn Fn(bool, &mut Window, &mut App) + Send + Sync>,
-    &mut Window,
-    &mut App,
-) -> AnyElement {
-    move |row, is_folded, fold, _window, _cx| {
-        Disclosure::new((name, row.0 as u64), !is_folded)
-            .toggle_state(is_folded)
-            .on_click(move |_e, window, cx| fold(!is_folded, window, cx))
-            .into_any_element()
-    }
 }
