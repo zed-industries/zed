@@ -351,9 +351,9 @@ impl Copilot {
         let mut prev_prediction_model = language_settings.edit_predictions_selected_model();
 
         this.start_copilot(true, false, cx);
-        cx.observe_global::<SettingsStore>(move |this, cx| this.start_copilot(true, false, cx))
-            .detach();
         cx.observe_global::<SettingsStore>(move |this, cx| {
+            this.start_copilot(true, false, cx);
+
             let language_settings = all_language_settings(None, cx);
             let current_prediction_model = language_settings.edit_predictions_selected_model();
             if prev_prediction_model != current_prediction_model {
@@ -774,7 +774,6 @@ impl Copilot {
                                         enable_auto_completions: true,
                                     }),
                                 }),
-                                ..Default::default()
                             },
                         });
 
