@@ -1761,9 +1761,10 @@ mod tests {
             assert_eq!(index_text, head_text);
 
             let hunk = diff.hunks(&buffer, &cx).next().unwrap();
+            // optimistically unstaged (fine, could also be HasSecondaryHunk)
             assert_eq!(
                 hunk.secondary_status,
-                DiffHunkSecondaryStatus::HasSecondaryHunk
+                DiffHunkSecondaryStatus::SecondaryHunkAdditionPending
             );
         });
     }
