@@ -536,7 +536,9 @@ fn fs_quad(input: QuadVarying) -> @location(0) vec4<f32> {
     let corner_center_to_point = corner_to_point + corner_radius;
 
     // Whether the nearest point on the border is rounded.
-    let is_near_rounded_corner = corner_center_to_point.x >= 0 && corner_center_to_point.y >= 0;
+    let is_near_rounded_corner =
+            corner_center_to_point.x >= 0 &&
+            corner_center_to_point.y >= 0;
 
     // Vector from straight border inner corner to point.
     let straight_border_inner_corner_to_point = corner_to_point + border;
@@ -579,7 +581,8 @@ fn fs_quad(input: QuadVarying) -> @location(0) vec4<f32> {
     var inner_sdf = 0.0;
     if (corner_center_to_point.x <= 0 || corner_center_to_point.y <= 0) {
         // Fast paths for straight borders.
-        inner_sdf = -max(straight_border_inner_corner_to_point.x, straight_border_inner_corner_to_point.y);
+        inner_sdf = -max(straight_border_inner_corner_to_point.x,
+                         straight_border_inner_corner_to_point.y);
     } else if (is_beyond_inner_straight_border) {
         // Fast path for points that must be outside the inner edge.
         inner_sdf = -1.0;
