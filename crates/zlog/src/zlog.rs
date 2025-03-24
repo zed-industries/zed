@@ -283,7 +283,6 @@ pub mod scope_map {
 
     use super::*;
 
-    type ScopeMap = HashMap<ScopeAlloc, log_impl::Level>;
     static SCOPE_MAP: RwLock<Option<ScopeMap>> = RwLock::new(None);
     static SCOPE_MAP_HASH: AtomicU64 = AtomicU64::new(0);
 
@@ -310,33 +309,24 @@ pub mod scope_map {
             // if no scopes are enabled, default to enabled detection done by `log` crate
             return (true, level);
         }
-        let mut scope_alloc = private::scope_to_alloc(scope);
-        let mut level_enabled = map.get(&scope_alloc);
-        if level_enabled.is_none() {
-            for i in (0..SCOPE_DEPTH_MAX).rev() {
-                if scope_alloc[i] == "" {
-                    continue;
-                }
-                scope_alloc[i].clear();
-                if let Some(level) = map.get(&scope_alloc) {
-                    level_enabled = Some(level);
-                    break;
-                }
+        let enabled_status = map.is_enabled(&scope, level);
+        match enabled_status {
+            EnabledStatus::NotConfigured => {
+                // if this scope isn't configured, default to enabled detection done by `log` crate
+                return (true, level);
+            }
+            EnabledStatus::Enabled => {
+                // if this scope is enabled, enable logging
+                // note: bumping level to min level that will be printed
+                // to work around log crate limitations
+                return (true, level_min);
+            }
+            EnabledStatus::Disabled => {
+                // if the configured level is lower than the requested level, disable logging
+                // note: err = 0, warn = 1, etc.
+                return (false, level);
             }
         }
-        let Some(level_enabled) = level_enabled else {
-            // if this scope isn't configured, default to enabled detection done by `log` crate
-            return (true, level);
-        };
-        if level_enabled < &level {
-            // if the configured level is lower than the requested level, disable logging
-            // note: err = 0, warn = 1, etc.
-            return (false, level);
-        }
-
-        // note: bumping level to min level that will be printed
-        // to work around log crate limitations
-        return (true, level_min);
     }
 
     fn hash_scope_map_settings(map: &HashMap<String, String>) -> u64 {
@@ -356,18 +346,7 @@ pub mod scope_map {
         if hash_old == hash_new && hash_old != 0 {
             return;
         }
-        // compute new scope map then atomically swap it, instead of
-        // updating in place to reduce contention
-        let mut map_new = ScopeMap::with_capacity(settings.len());
-        'settings: for (key, value) in settings {
-            let Some(level) = level_from_level_str(value) else {
-                continue 'settings;
-            };
-            let Some(scope) = scope_alloc_from_scope_str(key) else {
-                continue 'settings;
-            };
-            map_new.insert(scope, level);
-        }
+        let map_new = ScopeMap::new_from_settings(settings);
 
         if let Ok(_) = SCOPE_MAP_HASH.compare_exchange(
             hash_old,
@@ -379,7 +358,7 @@ pub mod scope_map {
                 SCOPE_MAP.clear_poison();
                 err.into_inner()
             });
-            *map = Some(map_new.clone());
+            *map = Some(map_new);
         }
     }
 
@@ -430,7 +409,7 @@ pub mod scope_map {
         return Some(scope);
     }
 
-    pub struct ScopeMap2 {
+    pub struct ScopeMap {
         entries: Vec<ScopeMapEntry>,
         root_count: usize,
     }
@@ -441,8 +420,15 @@ pub mod scope_map {
         descendants: std::ops::Range<usize>,
     }
 
-    impl ScopeMap2 {
-        pub fn new_from_settings(items_input_map: HashMap<String, String>) -> Self {
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub enum EnabledStatus {
+        Enabled,
+        Disabled,
+        NotConfigured,
+    }
+
+    impl ScopeMap {
+        pub fn new_from_settings(items_input_map: &HashMap<String, String>) -> Self {
             let mut items = items_input_map
                 .into_iter()
                 .filter_map(|(scope_str, level_str)| {
@@ -530,20 +516,38 @@ pub mod scope_map {
             return this;
         }
 
-        pub fn is_enabled(&self, scope: &Scope, level: log_impl::Level) -> bool {
+        pub fn is_empty(&self) -> bool {
+            self.entries.is_empty()
+        }
+
+        pub fn is_enabled<S>(
+            &self,
+            scope: &[S; SCOPE_DEPTH_MAX],
+            level: log_impl::Level,
+        ) -> EnabledStatus
+        where
+            S: AsRef<str>,
+        {
             let mut enabled = None;
             let mut cur_range = &self.entries[0..self.root_count];
             let mut depth = 0;
-            while !cur_range.is_empty() && depth < SCOPE_DEPTH_MAX && scope[depth] != "" {
+            while !cur_range.is_empty() && depth < SCOPE_DEPTH_MAX && scope[depth].as_ref() != "" {
                 for entry in cur_range {
-                    if entry.scope == scope[depth] {
-                        enabled = enabled.or(entry.enabled);
+                    if entry.scope == scope[depth].as_ref() {
+                        // note:
+                        enabled = entry.enabled.or(enabled);
                         cur_range = &self.entries[entry.descendants.clone()];
                         depth += 1;
                     }
                 }
             }
-            return enabled.is_some_and(|level_enabled| level <= level_enabled);
+            return enabled.map_or(EnabledStatus::NotConfigured, |level_enabled| {
+                if level <= level_enabled {
+                    EnabledStatus::Enabled
+                } else {
+                    EnabledStatus::Disabled
+                }
+            });
         }
     }
 
@@ -551,12 +555,12 @@ pub mod scope_map {
     mod tests {
         use super::*;
 
-        fn scope_map_from_keys(kv: &[(&str, &str)]) -> ScopeMap2 {
+        fn scope_map_from_keys(kv: &[(&str, &str)]) -> ScopeMap {
             let hash_map: HashMap<String, String> = kv
                 .iter()
                 .map(|(k, v)| (k.to_string(), v.to_string()))
                 .collect();
-            ScopeMap2::new_from_settings(hash_map)
+            ScopeMap::new_from_settings(&hash_map)
         }
 
         #[test]
@@ -622,23 +626,62 @@ pub mod scope_map {
                 ("q.r.s.t", "error"),
             ]);
             use log_impl::Level;
-            assert!(map.is_enabled(&scope_from_scope_str("a.b.c.d"), Level::Trace));
-            assert!(map.is_enabled(&scope_from_scope_str("a.b.c.d"), Level::Debug));
+            assert_eq!(
+                map.is_enabled(&scope_from_scope_str("a.b.c.d"), Level::Trace),
+                EnabledStatus::Enabled
+            );
+            assert_eq!(
+                map.is_enabled(&scope_from_scope_str("a.b.c.d"), Level::Debug),
+                EnabledStatus::Enabled
+            );
 
-            assert!(map.is_enabled(&scope_from_scope_str("e.f.g.h"), Level::Debug));
-            assert!(map.is_enabled(&scope_from_scope_str("e.f.g.h"), Level::Info));
-            assert!(!map.is_enabled(&scope_from_scope_str("e.f.g.h"), Level::Trace));
+            assert_eq!(
+                map.is_enabled(&scope_from_scope_str("e.f.g.h"), Level::Debug),
+                EnabledStatus::Enabled
+            );
+            assert_eq!(
+                map.is_enabled(&scope_from_scope_str("e.f.g.h"), Level::Info),
+                EnabledStatus::Enabled
+            );
+            assert_eq!(
+                map.is_enabled(&scope_from_scope_str("e.f.g.h"), Level::Trace),
+                EnabledStatus::Disabled
+            );
 
-            assert!(map.is_enabled(&scope_from_scope_str("i.j.k.l"), Level::Info));
-            assert!(map.is_enabled(&scope_from_scope_str("i.j.k.l"), Level::Warn));
-            assert!(!map.is_enabled(&scope_from_scope_str("i.j.k.l"), Level::Debug));
+            assert_eq!(
+                map.is_enabled(&scope_from_scope_str("i.j.k.l"), Level::Info),
+                EnabledStatus::Enabled
+            );
+            assert_eq!(
+                map.is_enabled(&scope_from_scope_str("i.j.k.l"), Level::Warn),
+                EnabledStatus::Enabled
+            );
+            assert_eq!(
+                map.is_enabled(&scope_from_scope_str("i.j.k.l"), Level::Debug),
+                EnabledStatus::Disabled
+            );
 
-            assert!(map.is_enabled(&scope_from_scope_str("m.n.o.p"), Level::Warn));
-            assert!(map.is_enabled(&scope_from_scope_str("m.n.o.p"), Level::Error));
-            assert!(!map.is_enabled(&scope_from_scope_str("m.n.o.p"), Level::Info));
+            assert_eq!(
+                map.is_enabled(&scope_from_scope_str("m.n.o.p"), Level::Warn),
+                EnabledStatus::Enabled
+            );
+            assert_eq!(
+                map.is_enabled(&scope_from_scope_str("m.n.o.p"), Level::Error),
+                EnabledStatus::Enabled
+            );
+            assert_eq!(
+                map.is_enabled(&scope_from_scope_str("m.n.o.p"), Level::Info),
+                EnabledStatus::Disabled
+            );
 
-            assert!(map.is_enabled(&scope_from_scope_str("q.r.s.t"), Level::Error));
-            assert!(!map.is_enabled(&scope_from_scope_str("q.r.s.t"), Level::Warn));
+            assert_eq!(
+                map.is_enabled(&scope_from_scope_str("q.r.s.t"), Level::Error),
+                EnabledStatus::Enabled
+            );
+            assert_eq!(
+                map.is_enabled(&scope_from_scope_str("q.r.s.t"), Level::Warn),
+                EnabledStatus::Disabled
+            );
         }
     }
 }
