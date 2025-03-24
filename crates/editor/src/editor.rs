@@ -531,6 +531,18 @@ impl EditPredictionPreview {
     }
 }
 
+pub struct ContextMenuOptions {
+    pub min_entries_visible: usize,
+    pub max_entries_visible: usize,
+    pub placement: Option<ContextMenuPlacement>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ContextMenuPlacement {
+    Above,
+    Below,
+}
+
 #[derive(Copy, Clone, Eq, PartialEq, PartialOrd, Ord, Debug, Default)]
 struct EditorActionId(usize);
 
@@ -677,6 +689,7 @@ pub struct Editor {
     active_indent_guides_state: ActiveIndentGuidesState,
     nav_history: Option<ItemNavHistory>,
     context_menu: RefCell<Option<CodeContextMenu>>,
+    context_menu_options: Option<ContextMenuOptions>,
     mouse_context_menu: Option<MouseContextMenu>,
     completion_tasks: Vec<(CompletionId, Task<Option<()>>)>,
     signature_help_state: SignatureHelpState,
@@ -1441,6 +1454,7 @@ impl Editor {
             active_indent_guides_state: ActiveIndentGuidesState::default(),
             nav_history: None,
             context_menu: RefCell::new(None),
+            context_menu_options: None,
             mouse_context_menu: None,
             completion_tasks: Default::default(),
             signature_help_state: SignatureHelpState::default(),
@@ -6451,6 +6465,10 @@ impl Editor {
             .borrow()
             .as_ref()
             .map(|menu| menu.origin())
+    }
+
+    pub fn set_context_menu_options(&mut self, options: ContextMenuOptions) {
+        self.context_menu_options = Some(options);
     }
 
     const EDIT_PREDICTION_POPOVER_PADDING_X: Pixels = Pixels(24.);

@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use collections::HashSet;
 use editor::actions::MoveUp;
-use editor::{Editor, EditorElement, EditorStyle};
+use editor::{ContextMenuOptions, ContextMenuPlacement, Editor, EditorElement, EditorStyle};
 use fs::Fs;
 use git::ExpandCommitEditor;
 use git_ui::git_panel;
@@ -66,6 +66,11 @@ impl MessageEditor {
             let mut editor = Editor::auto_height(10, window, cx);
             editor.set_placeholder_text("Ask anything, @ to mention, ↑ to select", cx);
             editor.set_show_indent_guides(false, cx);
+            editor.set_context_menu_options(ContextMenuOptions {
+                min_entries_visible: 12,
+                max_entries_visible: 12,
+                placement: Some(ContextMenuPlacement::Above),
+            });
 
             editor
         });
