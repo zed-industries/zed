@@ -99,7 +99,11 @@ profiling.workspace = true
 rand = { optional = true, workspace = true }
 raw-window-handle = "0.6"
 refineable.workspace = true
-resvg = { version = "0.45.0", default-features = false, features = ["text", "system-fonts", "memmap-fonts"] }
+resvg = { version = "0.45.0", default-features = false, features = [
+    "text",
+    "system-fonts",
+    "memmap-fonts",
+] }
 usvg = { version = "0.45.0", default-features = false }
 schemars.workspace = true
 seahash = "4.1"
@@ -208,7 +212,7 @@ blade-macros.workspace = true
 flume = "0.11"
 rand.workspace = true
 windows.workspace = true
-windows-core = "0.60"
+windows-core = "0.61"
 
 [dev-dependencies]
 backtrace = "0.3"
