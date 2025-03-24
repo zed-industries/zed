@@ -1,4 +1,6 @@
-// A heat map color gradient for debugging (blue -> cyan -> green -> yellow -> red).
+/* Functions useful for debugging:
+
+// A heat map color for debugging (blue -> cyan -> green -> yellow -> red).
 fn heat_map_color(value: f32, minValue: f32, maxValue: f32, position: vec2<f32>) -> vec4<f32> {
     // Normalize value to 0-1 range
     let t = clamp((value - minValue) / (maxValue - minValue), 0.0, 1.0);
@@ -23,6 +25,8 @@ fn heat_map_color(value: f32, minValue: f32, maxValue: f32, position: vec2<f32>)
 
     return vec4<f32>(final_color, 1.0);
 }
+
+*/
 
 struct GlobalParams {
     viewport_size: vec2<f32>,
