@@ -272,12 +272,13 @@ impl Timer {
 
 pub mod scope_map {
     use std::{
-        collections::HashMap,
+        collections::{HashMap, VecDeque},
         hash::{DefaultHasher, Hasher},
         sync::{
             atomic::{AtomicU64, Ordering},
             RwLock,
         },
+        usize,
     };
 
     use super::*;
@@ -359,31 +360,12 @@ pub mod scope_map {
         // updating in place to reduce contention
         let mut map_new = ScopeMap::with_capacity(settings.len());
         'settings: for (key, value) in settings {
-            let level = match value.to_ascii_lowercase().as_str() {
-                "" => log_impl::Level::Trace,
-                "trace" => log_impl::Level::Trace,
-                "debug" => log_impl::Level::Debug,
-                "info" => log_impl::Level::Info,
-                "warn" => log_impl::Level::Warn,
-                "error" => log_impl::Level::Error,
-                "off" | "disable" | "no" | "none" | "disabled" => {
-                    crate::warn!("Invalid log level \"{value}\", set to error to disable non-error logging. Defaulting to error");
-                    log_impl::Level::Error
-                }
-                _ => {
-                    crate::warn!("Invalid log level \"{value}\", ignoring");
-                    continue 'settings;
-                }
+            let Some(level) = level_from_level_str(value) else {
+                continue 'settings;
             };
-            let mut scope_buf = [""; SCOPE_DEPTH_MAX];
-            for (index, scope) in key.split(SCOPE_STRING_SEP).enumerate() {
-                let Some(scope_ptr) = scope_buf.get_mut(index) else {
-                    crate::warn!("Invalid scope key, too many nested scopes: '{key}'");
-                    continue 'settings;
-                };
-                *scope_ptr = scope;
-            }
-            let scope = scope_buf.map(|s| s.to_string());
+            let Some(scope) = scope_alloc_from_scope_str(key) else {
+                continue 'settings;
+            };
             map_new.insert(scope, level);
         }
 
@@ -398,7 +380,180 @@ pub mod scope_map {
                 err.into_inner()
             });
             *map = Some(map_new.clone());
-            // note: hash update done here to ensure consistency with scope map
+        }
+    }
+
+    fn level_from_level_str(level_str: &String) -> Option<log_impl::Level> {
+        let level = match level_str.to_ascii_lowercase().as_str() {
+            "" => log_impl::Level::Trace,
+            "trace" => log_impl::Level::Trace,
+            "debug" => log_impl::Level::Debug,
+            "info" => log_impl::Level::Info,
+            "warn" => log_impl::Level::Warn,
+            "error" => log_impl::Level::Error,
+            "off" | "disable" | "no" | "none" | "disabled" => {
+                crate::warn!("Invalid log level \"{level_str}\", set to error to disable non-error logging. Defaulting to error");
+                log_impl::Level::Error
+            }
+            _ => {
+                crate::warn!("Invalid log level \"{level_str}\", ignoring");
+                return None;
+            }
+        };
+        return Some(level);
+    }
+
+    fn scope_alloc_from_scope_str(scope_str: &String) -> Option<ScopeAlloc> {
+        let mut scope_buf = [""; SCOPE_DEPTH_MAX];
+        for (index, scope) in scope_str.split(SCOPE_STRING_SEP).enumerate() {
+            let Some(scope_ptr) = scope_buf.get_mut(index) else {
+                crate::warn!("Invalid scope key, too many nested scopes: '{scope_str}'");
+                return None;
+            };
+            *scope_ptr = scope;
+        }
+        let scope = scope_buf.map(|s| s.to_string());
+        return Some(scope);
+    }
+
+    pub struct ScopeMap2 {
+        entries: Vec<ScopeMapEntry>,
+        root_count: usize,
+    }
+
+    pub struct ScopeMapEntry {
+        scope: String,
+        enabled: Option<log_impl::Level>,
+        descendants: std::ops::Range<usize>,
+    }
+
+    impl ScopeMap2 {
+        pub fn new_from_settings(items_input_map: HashMap<String, String>) -> Self {
+            let mut items = items_input_map
+                .into_iter()
+                .filter_map(|(scope_str, level_str)| {
+                    let scope = scope_alloc_from_scope_str(&scope_str)?;
+                    let level = level_from_level_str(&level_str)?;
+                    return Some((scope, level));
+                })
+                .collect::<Vec<_>>();
+
+            items.sort_by(|a, b| a.0.cmp(&b.0));
+
+            let mut this = Self {
+                entries: Vec::with_capacity(items.len() * SCOPE_DEPTH_MAX),
+                root_count: 0,
+            };
+
+            let items_count = items.len();
+
+            struct ProcessQueueEntry {
+                parent_index: usize,
+                depth: usize,
+                items_range: std::ops::Range<usize>,
+            }
+            let mut process_queue = VecDeque::new();
+            process_queue.push_back(ProcessQueueEntry {
+                parent_index: usize::MAX,
+                depth: 0,
+                items_range: 0..items_count,
+            });
+
+            let empty_range = 0..0;
+
+            while let Some(process_entry) = process_queue.pop_front() {
+                let ProcessQueueEntry {
+                    items_range,
+                    depth,
+                    parent_index,
+                } = process_entry;
+                let mut cursor = items_range.start;
+                let res_entries_start = this.entries.len();
+                while cursor < items_range.end {
+                    let sub_items_start = cursor;
+                    cursor += 1;
+                    let scope_name = &items[sub_items_start].0[depth];
+                    while cursor < items_range.end && &items[cursor].0[depth] == scope_name {
+                        cursor += 1;
+                    }
+                    let sub_items_end = cursor;
+                    if scope_name == "" {
+                        assert_eq!(sub_items_start + 1, sub_items_end);
+                        assert_ne!(depth, 0);
+                        assert_ne!(parent_index, usize::MAX);
+                        assert!(this.entries[parent_index].enabled.is_none());
+                        this.entries[parent_index].enabled = Some(items[sub_items_start].1);
+                        continue;
+                    }
+                    let is_valid_scope = scope_name != "";
+                    let is_last = depth + 1 == SCOPE_DEPTH_MAX || !is_valid_scope;
+                    let mut enabled = None;
+                    if is_last {
+                        assert_eq!(sub_items_start + 1, sub_items_end);
+                        enabled = Some(items[sub_items_start].1);
+                    } else {
+                        let entry_index = this.entries.len();
+                        process_queue.push_back(ProcessQueueEntry {
+                            items_range: sub_items_start..sub_items_end,
+                            parent_index: entry_index,
+                            depth: depth + 1,
+                        });
+                    }
+                    this.entries.push(ScopeMapEntry {
+                        scope: scope_name.to_owned(),
+                        enabled,
+                        descendants: empty_range.clone(),
+                    });
+                }
+                let res_entries_end = this.entries.len();
+                if parent_index != usize::MAX {
+                    this.entries[parent_index].descendants = res_entries_start..res_entries_end;
+                } else {
+                    this.root_count = res_entries_end;
+                }
+            }
+
+            return this;
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn test_initialization() {
+            let keys_to_map = |kv: &[(&str, &str)]| -> HashMap<String, String> {
+                kv.iter()
+                    .map(|(k, v)| (k.to_string(), v.to_string()))
+                    .collect()
+            };
+            let map = ScopeMap2::new_from_settings(keys_to_map(&[("a.b.c.d", "trace")]));
+            assert_eq!(map.root_count, 1);
+            assert_eq!(map.entries.len(), 4);
+
+            let map = ScopeMap2::new_from_settings(keys_to_map(&[]));
+            assert_eq!(map.root_count, 0);
+            assert_eq!(map.entries.len(), 0);
+
+            let map = ScopeMap2::new_from_settings(keys_to_map(&[("", "trace")]));
+            assert_eq!(map.root_count, 0);
+            assert_eq!(map.entries.len(), 0);
+
+            let map = ScopeMap2::new_from_settings(keys_to_map(&[
+                ("a.b.c.d", "trace"),
+                ("e.f.g.h", "debug"),
+                ("i.j.k.l", "info"),
+                ("m.n.o.p", "warn"),
+                ("q.r.s.t", "error"),
+            ]));
+            assert_eq!(map.root_count, 5);
+            assert_eq!(map.entries.len(), 20);
+            assert_eq!(map.entries[0].scope, "a");
+            assert_eq!(map.entries[1].scope, "e");
+            assert_eq!(map.entries[2].scope, "i");
+            assert_eq!(map.entries[3].scope, "m");
+            assert_eq!(map.entries[4].scope, "q");
         }
     }
 }
