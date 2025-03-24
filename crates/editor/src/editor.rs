@@ -5961,7 +5961,7 @@ impl Editor {
         let color = Color::Muted;
 
         let position = breakpoint.as_ref().map(|(anchor, _)| *anchor);
-        let breakpoint = Arc::new(breakpoint.map(|(_, bp)| bp.clone()).unwrap_or_default());
+        let breakpoint = breakpoint.map(|(_, bp)| Arc::new(bp.clone()));
 
         if self.available_code_actions.is_some() {
             Some(
@@ -6128,34 +6128,48 @@ impl Editor {
     fn breakpoint_context_menu(
         &self,
         anchor: Anchor,
-        breakpoint: Arc<Breakpoint>,
+        breakpoint: Option<Arc<Breakpoint>>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Entity<ui::ContextMenu> {
         let weak_editor = cx.weak_entity();
         let focus_handle = self.focus_handle(cx);
 
-        let log_breakpoint_msg = if breakpoint.kind.log_message().is_some() {
+        let log_breakpoint_msg = if breakpoint
+            .as_ref()
+            .is_some_and(|bp| bp.kind.log_message().is_some())
+        {
             "Edit Log Breakpoint"
         } else {
-            "Add Log Breakpoint"
+            "Set Log Breakpoint"
         };
 
-        let toggle_state_msg = if breakpoint.is_enabled() {
-            "Disable"
+        let set_breakpoint_msg = if breakpoint.as_ref().is_some() {
+            "Unset Breakpoint"
         } else {
-            "Enable"
+            "Set Breakpoint"
         };
 
-        let snapshot = self.buffer.read(cx).snapshot(cx);
-        let point = anchor.to_point(&snapshot);
-        let show_toggle_state = self.breakpoint_at_row(point.row, window, cx).is_some();
+        let toggle_state_msg = breakpoint.as_ref().map_or(None, |bp| {
+            if bp.is_enabled() {
+                Some("Disable")
+            } else {
+                Some("Enable")
+            }
+        });
+
+        let breakpoint = breakpoint.unwrap_or_else(|| {
+            Arc::new(Breakpoint {
+                state: BreakpointState::Enabled,
+                kind: BreakpointKind::Standard,
+            })
+        });
 
         ui::ContextMenu::build(window, cx, |menu, _, _cx| {
             menu.on_blur_subscription(Subscription::new(|| {}))
                 .context(focus_handle)
-                .when(show_toggle_state, |this| {
-                    this.entry(toggle_state_msg, None, {
+                .when_some(toggle_state_msg, |this, msg| {
+                    this.entry(msg, None, {
                         let weak_editor = weak_editor.clone();
                         let breakpoint = breakpoint.clone();
                         move |_window, cx| {
@@ -6172,7 +6186,7 @@ impl Editor {
                         }
                     })
                 })
-                .entry("Toggle Breakpoint", None, {
+                .entry(set_breakpoint_msg, None, {
                     let weak_editor = weak_editor.clone();
                     let breakpoint = breakpoint.clone();
                     move |_window, cx| {
@@ -6202,25 +6216,26 @@ impl Editor {
         &self,
         position: Anchor,
         row: DisplayRow,
-        breakpoint: &Breakpoint,
+        breakpoint: Option<&Breakpoint>,
         cx: &mut Context<Self>,
     ) -> IconButton {
-        let color = if self
-            .gutter_breakpoint_indicator
-            .is_some_and(|gutter_bp| gutter_bp.row() == row)
-        {
-            Color::Hint
-        } else if breakpoint.is_disabled() {
-            Color::Custom(Color::Debugger.color(cx).opacity(0.5))
-        } else {
-            Color::Debugger
+        let (color, icon) = match breakpoint {
+            Some(bp) => {
+                let color = if bp.is_disabled() {
+                    Color::Custom(Color::Debugger.color(cx).opacity(0.5))
+                } else {
+                    Color::Debugger
+                };
+                let icon = match &bp.kind {
+                    BreakpointKind::Standard => ui::IconName::DebugBreakpoint,
+                    BreakpointKind::Log(_) => ui::IconName::DebugLogBreakpoint,
+                };
+                (color, icon)
+            }
+            None => (Color::Hint, ui::IconName::DebugBreakpoint),
         };
 
-        let icon = match &breakpoint.kind {
-            BreakpointKind::Standard => ui::IconName::DebugBreakpoint,
-            BreakpointKind::Log(_) => ui::IconName::DebugLogBreakpoint,
-        };
-        let breakpoint = Arc::new(breakpoint.clone());
+        let breakpoint = breakpoint.map(|bp| Arc::new(bp.clone()));
 
         IconButton::new(("breakpoint_indicator", row.0 as usize), icon)
             .icon_size(IconSize::XSmall)
@@ -6234,7 +6249,7 @@ impl Editor {
                     window.focus(&editor.focus_handle(cx));
                     editor.edit_breakpoint_at_anchor(
                         position,
-                        breakpoint.as_ref().clone(),
+                        breakpoint.clone().unwrap_or_default().as_ref().clone(),
                         BreakpointEditAction::Toggle,
                         cx,
                     );
@@ -6394,7 +6409,7 @@ impl Editor {
         let color = Color::Muted;
 
         let position = breakpoint.as_ref().map(|(anchor, _)| *anchor);
-        let breakpoint = Arc::new(breakpoint.map(|(_, bp)| bp).unwrap_or_default());
+        let breakpoint = breakpoint.map(|(_, bp)| Arc::new(bp));
 
         IconButton::new(("run_indicator", row.0 as usize), ui::IconName::Play)
             .shape(ui::IconButtonShape::Square)
@@ -8396,8 +8411,8 @@ impl Editor {
     fn set_breakpoint_context_menu(
         &mut self,
         row: DisplayRow,
-        mut position: Option<Anchor>,
-        breakpoint: Arc<Breakpoint>,
+        position: Option<Anchor>,
+        breakpoint: Option<Arc<Breakpoint>>,
         clicked_point: gpui::Point<Pixels>,
         window: &mut Window,
         cx: &mut Context<Self>,
