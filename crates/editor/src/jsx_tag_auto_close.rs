@@ -114,7 +114,13 @@ pub(crate) fn generate_auto_close_edits(
         assert!(open_tag.kind() == config.open_tag_node_name);
         let tag_name = open_tag
             .named_child(TS_NODE_TAG_NAME_CHILD_INDEX)
-            .filter(|node| node.kind() == config.tag_name_node_name)
+            .filter(|node| {
+                node.kind() == config.tag_name_node_name
+                    || config
+                        .tag_name_node_name_alternates
+                        .iter()
+                        .any(|alternate| alternate == node.kind())
+            })
             .map_or("".to_string(), |node| {
                 buffer.text_for_range(node.byte_range()).collect::<String>()
             });

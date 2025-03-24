@@ -18142,6 +18142,11 @@ mod autoclose_tags {
     );
 
     check!(
+        test_autocloses_dot_separated_component,
+        "<Component.Fooˇ" + ">" => "<Component.Foo>ˇ</Component.Foo>"
+    );
+
+    check!(
         test_multi_cursor_autoclose_same_tag,
         r#"
         <divˇ
