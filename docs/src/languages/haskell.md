@@ -23,7 +23,7 @@ If you need to configure haskell-language-server (hls) you can add configuration
 {
   "lsp": {
     "hls": {
-      "settings": {
+      "initialization_options": {
         "haskell": {
           "formattingProvider": "fourmolu"
         }
