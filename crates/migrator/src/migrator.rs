@@ -469,4 +469,54 @@ mod tests {
             ),
         )
     }
+
+    #[test]
+    fn test_replace_settings_value() {
+        assert_migrate_settings(
+            r#"
+                {
+                    "scrollbar": {
+                        "diagnostics": true
+                    },
+                    "chat_panel": {
+                        "button": true
+                    }
+                }
+            "#,
+            Some(
+                r#"
+                {
+                    "scrollbar": {
+                        "diagnostics": "all"
+                    },
+                    "chat_panel": {
+                        "button": "always"
+                    }
+                }
+            "#,
+            ),
+        )
+    }
+
+    #[test]
+    fn test_replace_settings_name_and_value() {
+        assert_migrate_settings(
+            r#"
+                {
+                    "tabs": {
+                        "always_show_close_button": true
+                    }
+                }
+            "#,
+            Some(
+                r#"
+                {
+                    "tabs": {
+                        "show_close_button": "always"
+                    }
+                }
+            "#,
+            ),
+        )
+    }
 }
