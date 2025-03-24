@@ -3,8 +3,9 @@ use crate::thread::{
     ThreadEvent, ThreadFeedback,
 };
 use crate::thread_store::ThreadStore;
-use crate::tool_use::{PendingToolUseStatus, ToolType, ToolUse, ToolUseStatus};
+use crate::tool_use::{PendingToolUseStatus, ToolUse, ToolUseStatus};
 use crate::ui::ContextPill;
+
 use collections::HashMap;
 use editor::{Editor, MultiBuffer};
 use gpui::{
@@ -16,7 +17,6 @@ use gpui::{
 use language::{Buffer, LanguageRegistry};
 use language_model::{LanguageModelRegistry, LanguageModelToolUseId, Role};
 use markdown::{Markdown, MarkdownStyle};
-use scripting_tool::{ScriptingTool, ScriptingToolInput};
 use settings::Settings as _;
 use std::sync::Arc;
 use std::time::Duration;
@@ -37,7 +37,6 @@ pub struct ActiveThread {
     messages: Vec<MessageId>,
     list_state: ListState,
     rendered_messages_by_id: HashMap<MessageId, RenderedMessage>,
-    rendered_scripting_tool_uses: HashMap<LanguageModelToolUseId, Entity<Markdown>>,
     rendered_tool_use_labels: HashMap<LanguageModelToolUseId, Entity<Markdown>>,
     editing_message: Option<(MessageId, EditMessageState)>,
     expanded_tool_uses: HashMap<LanguageModelToolUseId, bool>,
@@ -233,7 +232,6 @@ impl ActiveThread {
             save_thread_task: None,
             messages: Vec::new(),
             rendered_messages_by_id: HashMap::default(),
-            rendered_scripting_tool_uses: HashMap::default(),
             rendered_tool_use_labels: HashMap::default(),
             expanded_tool_uses: HashMap::default(),
             expanded_thinking_segments: HashMap::default(),
@@ -256,26 +254,6 @@ impl ActiveThread {
                 this.render_tool_use_label_markdown(
                     tool_use.id.clone(),
                     tool_use.ui_text.clone(),
-                    window,
-                    cx,
-                );
-            }
-
-            for tool_use in thread
-                .read(cx)
-                .scripting_tool_uses_for_message(message.id, cx)
-            {
-                this.render_tool_use_label_markdown(
-                    tool_use.id.clone(),
-                    tool_use.ui_text.clone(),
-                    window,
-                    cx,
-                );
-
-                this.render_scripting_tool_use_markdown(
-                    tool_use.id.clone(),
-                    tool_use.ui_text.as_ref(),
-                    tool_use.input.clone(),
                     window,
                     cx,
                 );
@@ -358,36 +336,6 @@ impl ActiveThread {
         self.messages.remove(index);
         self.list_state.splice(index..index + 1, 0);
         self.rendered_messages_by_id.remove(id);
-    }
-
-    /// Renders the input of a scripting tool use to Markdown.
-    ///
-    /// Does nothing if the tool use does not correspond to the scripting tool.
-    fn render_scripting_tool_use_markdown(
-        &mut self,
-        tool_use_id: LanguageModelToolUseId,
-        tool_name: &str,
-        tool_input: serde_json::Value,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        if tool_name != ScriptingTool::NAME {
-            return;
-        }
-
-        let lua_script = serde_json::from_value::<ScriptingToolInput>(tool_input)
-            .map(|input| input.lua_script)
-            .unwrap_or_default();
-
-        let lua_script = render_markdown(
-            format!("```lua\n{lua_script}\n```").into(),
-            self.language_registry.clone(),
-            window,
-            cx,
-        );
-
-        self.rendered_scripting_tool_uses
-            .insert(tool_use_id, lua_script);
     }
 
     fn render_tool_use_label_markdown(
@@ -473,13 +421,6 @@ impl ActiveThread {
                     self.render_tool_use_label_markdown(
                         tool_use.id.clone(),
                         tool_use.ui_text.clone(),
-                        window,
-                        cx,
-                    );
-                    self.render_scripting_tool_use_markdown(
-                        tool_use.id,
-                        tool_use.name.as_ref(),
-                        tool_use.input.clone(),
                         window,
                         cx,
                     );
@@ -725,13 +666,9 @@ impl ActiveThread {
         let checkpoint = thread.checkpoint_for_message(message_id);
         let context = thread.context_for_message(message_id);
         let tool_uses = thread.tool_uses_for_message(message_id, cx);
-        let scripting_tool_uses = thread.scripting_tool_uses_for_message(message_id, cx);
 
         // Don't render user messages that are just there for returning tool results.
-        if message.role == Role::User
-            && (thread.message_has_tool_results(message_id)
-                || thread.message_has_scripting_tool_results(message_id))
-        {
+        if message.role == Role::User && thread.message_has_tool_results(message_id) {
             return Empty.into_any();
         }
 
@@ -996,32 +933,23 @@ impl ActiveThread {
                         )
                         .child(div().p_2().child(message_content)),
                 ),
-            Role::Assistant => {
-                v_flex()
-                    .id(("message-container", ix))
-                    .ml_2()
-                    .pl_2()
-                    .pr_4()
-                    .border_l_1()
-                    .border_color(cx.theme().colors().border_variant)
-                    .child(message_content)
-                    .when(
-                        !tool_uses.is_empty() || !scripting_tool_uses.is_empty(),
-                        |parent| {
-                            parent.child(
-                                v_flex()
-                                    .children(
-                                        tool_uses
-                                            .into_iter()
-                                            .map(|tool_use| self.render_tool_use(tool_use, cx)),
-                                    )
-                                    .children(scripting_tool_uses.into_iter().map(|tool_use| {
-                                        self.render_scripting_tool_use(tool_use, cx)
-                                    })),
-                            )
-                        },
+            Role::Assistant => v_flex()
+                .id(("message-container", ix))
+                .ml_2()
+                .pl_2()
+                .pr_4()
+                .border_l_1()
+                .border_color(cx.theme().colors().border_variant)
+                .child(message_content)
+                .when(!tool_uses.is_empty(), |parent| {
+                    parent.child(
+                        v_flex().children(
+                            tool_uses
+                                .into_iter()
+                                .map(|tool_use| self.render_tool_use(tool_use, cx)),
+                        ),
                     )
-            }
+                }),
             Role::System => div().id(("message-container", ix)).py_1().px_2().child(
                 v_flex()
                     .bg(colors.editor_background)
@@ -1537,145 +1465,6 @@ impl ActiveThread {
         )
     }
 
-    fn render_scripting_tool_use(
-        &self,
-        tool_use: ToolUse,
-        cx: &mut Context<Self>,
-    ) -> impl IntoElement {
-        let is_open = self
-            .expanded_tool_uses
-            .get(&tool_use.id)
-            .copied()
-            .unwrap_or_default();
-
-        div().px_2p5().child(
-            v_flex()
-                .gap_1()
-                .rounded_lg()
-                .border_1()
-                .border_color(cx.theme().colors().border)
-                .child(
-                    h_flex()
-                        .justify_between()
-                        .py_0p5()
-                        .pl_1()
-                        .pr_2()
-                        .bg(cx.theme().colors().editor_foreground.opacity(0.02))
-                        .map(|element| {
-                            if is_open {
-                                element.border_b_1().rounded_t_md()
-                            } else {
-                                element.rounded_md()
-                            }
-                        })
-                        .border_color(cx.theme().colors().border)
-                        .child(
-                            h_flex()
-                                .gap_1()
-                                .child(Disclosure::new("tool-use-disclosure", is_open).on_click(
-                                    cx.listener({
-                                        let tool_use_id = tool_use.id.clone();
-                                        move |this, _event, _window, _cx| {
-                                            let is_open = this
-                                                .expanded_tool_uses
-                                                .entry(tool_use_id.clone())
-                                                .or_insert(false);
-
-                                            *is_open = !*is_open;
-                                        }
-                                    }),
-                                ))
-                                .child(
-                                    h_flex()
-                                        .gap_1p5()
-                                        .child(
-                                            Icon::new(IconName::Terminal)
-                                                .size(IconSize::XSmall)
-                                                .color(Color::Muted),
-                                        )
-                                        .child(
-                                            div()
-                                                .text_ui_sm(cx)
-                                                .children(
-                                                    self.rendered_tool_use_labels
-                                                        .get(&tool_use.id)
-                                                        .cloned(),
-                                                )
-                                                .truncate(),
-                                        ),
-                                ),
-                        )
-                        .child(
-                            Label::new(match tool_use.status {
-                                ToolUseStatus::Pending => "Pending",
-                                ToolUseStatus::Running => "Running",
-                                ToolUseStatus::Finished(_) => "Finished",
-                                ToolUseStatus::Error(_) => "Error",
-                                ToolUseStatus::NeedsConfirmation => "Asking Permission",
-                            })
-                            .size(LabelSize::XSmall)
-                            .buffer_font(cx),
-                        ),
-                )
-                .map(|parent| {
-                    if !is_open {
-                        return parent;
-                    }
-
-                    let lua_script_markdown =
-                        self.rendered_scripting_tool_uses.get(&tool_use.id).cloned();
-
-                    parent.child(
-                        v_flex()
-                            .child(
-                                v_flex()
-                                    .gap_0p5()
-                                    .py_1()
-                                    .px_2p5()
-                                    .border_b_1()
-                                    .border_color(cx.theme().colors().border)
-                                    .child(Label::new("Input:"))
-                                    .map(|parent| {
-                                        if let Some(markdown) = lua_script_markdown {
-                                            parent.child(markdown)
-                                        } else {
-                                            parent.child(Label::new(
-                                                "Failed to render script input to Markdown",
-                                            ))
-                                        }
-                                    }),
-                            )
-                            .map(|parent| match tool_use.status {
-                                ToolUseStatus::Finished(output) => parent.child(
-                                    v_flex()
-                                        .gap_0p5()
-                                        .py_1()
-                                        .px_2p5()
-                                        .child(Label::new("Result:"))
-                                        .child(Label::new(output)),
-                                ),
-                                ToolUseStatus::Error(err) => parent.child(
-                                    v_flex()
-                                        .gap_0p5()
-                                        .py_1()
-                                        .px_2p5()
-                                        .child(Label::new("Error:"))
-                                        .child(Label::new(err)),
-                                ),
-                                ToolUseStatus::Pending | ToolUseStatus::Running => parent,
-                                ToolUseStatus::NeedsConfirmation => parent.child(
-                                    v_flex()
-                                        .gap_0p5()
-                                        .py_1()
-                                        .px_2p5()
-                                        .child(Label::new("Asking Permission")),
-                                ),
-                            }),
-                    )
-                }),
-        )
-    }
-
     fn render_rules_item(&self, cx: &Context<Self>) -> AnyElement {
         let Some(system_prompt_context) = self.thread.read(cx).system_prompt_context().as_ref()
         else {
@@ -1751,7 +1540,7 @@ impl ActiveThread {
                     c.ui_text.clone(),
                     c.input.clone(),
                     &c.messages,
-                    c.tool_type.clone(),
+                    c.tool.clone(),
                     cx,
                 );
             });
@@ -1761,13 +1550,12 @@ impl ActiveThread {
     fn handle_deny_tool(
         &mut self,
         tool_use_id: LanguageModelToolUseId,
-        tool_type: ToolType,
         _: &ClickEvent,
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         self.thread.update(cx, |thread, cx| {
-            thread.deny_tool_use(tool_use_id, tool_type, cx);
+            thread.deny_tool_use(tool_use_id, cx);
         });
     }
 
@@ -1802,7 +1590,7 @@ impl ActiveThread {
 
         thread
             .tools_needing_confirmation()
-            .map(|(tool_type, tool)| {
+            .map(|tool| {
                 div()
                     .m_3()
                     .p_2()
@@ -1844,7 +1632,6 @@ impl ActiveThread {
                                             move |this, event, window, cx| {
                                                 this.handle_deny_tool(
                                                     tool_id.clone(),
-                                                    tool_type.clone(),
                                                     event,
                                                     window,
                                                     cx,

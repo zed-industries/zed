@@ -16,15 +16,15 @@ use crate::{
     items::BufferSearchHighlights,
     mouse_context_menu::{self, MenuPosition, MouseContextMenu},
     scroll::{axis_pair, scroll_amount::ScrollAmount, AxisPair},
-    BlockId, ChunkReplacement, CursorShape, CustomBlockId, DisplayDiffHunk, DisplayPoint,
-    DisplayRow, DocumentHighlightRead, DocumentHighlightWrite, EditDisplayMode, Editor, EditorMode,
-    EditorSettings, EditorSnapshot, EditorStyle, FocusedBlock, GoToHunk, GoToPreviousHunk,
-    GutterDimensions, HalfPageDown, HalfPageUp, HandleInput, HoveredCursor, InlayHintRefreshReason,
-    InlineCompletion, JumpData, LineDown, LineHighlight, LineUp, OpenExcerpts, PageDown, PageUp,
-    Point, RowExt, RowRangeExt, SelectPhase, SelectedTextHighlight, Selection, SoftWrap,
-    StickyHeaderExcerpt, ToPoint, ToggleFold, COLUMNAR_SELECTION_MODIFIERS, CURSORS_VISIBLE_FOR,
-    FILE_HEADER_HEIGHT, GIT_BLAME_MAX_AUTHOR_CHARS_DISPLAYED, MAX_LINE_LEN, MIN_LINE_NUMBER_DIGITS,
-    MULTI_BUFFER_EXCERPT_HEADER_HEIGHT,
+    BlockId, ChunkReplacement, ContextMenuPlacement, CursorShape, CustomBlockId, DisplayDiffHunk,
+    DisplayPoint, DisplayRow, DocumentHighlightRead, DocumentHighlightWrite, EditDisplayMode,
+    Editor, EditorMode, EditorSettings, EditorSnapshot, EditorStyle, FocusedBlock, GoToHunk,
+    GoToPreviousHunk, GutterDimensions, HalfPageDown, HalfPageUp, HandleInput, HoveredCursor,
+    InlayHintRefreshReason, InlineCompletion, JumpData, LineDown, LineHighlight, LineUp,
+    OpenExcerpts, PageDown, PageUp, Point, RowExt, RowRangeExt, SelectPhase, SelectedTextHighlight,
+    Selection, SoftWrap, StickyHeaderExcerpt, ToPoint, ToggleFold, COLUMNAR_SELECTION_MODIFIERS,
+    CURSORS_VISIBLE_FOR, FILE_HEADER_HEIGHT, GIT_BLAME_MAX_AUTHOR_CHARS_DISPLAYED, MAX_LINE_LEN,
+    MIN_LINE_NUMBER_DIGITS, MULTI_BUFFER_EXCERPT_HEADER_HEIGHT,
 };
 use buffer_diff::{DiffHunkStatus, DiffHunkStatusKind};
 use client::ParticipantIndex;
@@ -3338,6 +3338,7 @@ impl EditorElement {
         let height_below_menu = Pixels::ZERO;
         let mut edit_prediction_popover_visible = false;
         let mut context_menu_visible = false;
+        let context_menu_placement;
 
         {
             let editor = self.editor.read(cx);
@@ -3351,11 +3352,22 @@ impl EditorElement {
 
             if editor.context_menu_visible() {
                 if let Some(crate::ContextMenuOrigin::Cursor) = editor.context_menu_origin() {
-                    min_menu_height += line_height * 3. + POPOVER_Y_PADDING;
-                    max_menu_height += line_height * 12. + POPOVER_Y_PADDING;
+                    let (min_height_in_lines, max_height_in_lines) = editor
+                        .context_menu_options
+                        .as_ref()
+                        .map_or((3, 12), |options| {
+                            (options.min_entries_visible, options.max_entries_visible)
+                        });
+
+                    min_menu_height += line_height * min_height_in_lines as f32 + POPOVER_Y_PADDING;
+                    max_menu_height += line_height * max_height_in_lines as f32 + POPOVER_Y_PADDING;
                     context_menu_visible = true;
                 }
             }
+            context_menu_placement = editor
+                .context_menu_options
+                .as_ref()
+                .and_then(|options| options.placement.clone());
         }
 
         let visible = edit_prediction_popover_visible || context_menu_visible;
@@ -3390,6 +3402,7 @@ impl EditorElement {
             line_height,
             min_height,
             max_height,
+            context_menu_placement,
             text_hitbox,
             viewport_bounds,
             window,
@@ -3532,8 +3545,16 @@ impl EditorElement {
                 x: -gutter_overshoot,
                 y: gutter_row.next_row().as_f32() * line_height - scroll_pixel_position.y,
             };
-        let min_height = line_height * 3. + POPOVER_Y_PADDING;
-        let max_height = line_height * 12. + POPOVER_Y_PADDING;
+
+        let (min_height_in_lines, max_height_in_lines) = editor
+            .context_menu_options
+            .as_ref()
+            .map_or((3, 12), |options| {
+                (options.min_entries_visible, options.max_entries_visible)
+            });
+
+        let min_height = line_height * min_height_in_lines as f32 + POPOVER_Y_PADDING;
+        let max_height = line_height * max_height_in_lines as f32 + POPOVER_Y_PADDING;
         let viewport_bounds =
             Bounds::new(Default::default(), window.viewport_size()).extend(Edges {
                 right: -Self::SCROLLBAR_WIDTH - MENU_GAP,
@@ -3544,6 +3565,10 @@ impl EditorElement {
             line_height,
             min_height,
             max_height,
+            editor
+                .context_menu_options
+                .as_ref()
+                .and_then(|options| options.placement.clone()),
             text_hitbox,
             viewport_bounds,
             window,
@@ -3564,6 +3589,7 @@ impl EditorElement {
         line_height: Pixels,
         min_height: Pixels,
         max_height: Pixels,
+        placement: Option<ContextMenuPlacement>,
         text_hitbox: &Hitbox,
         viewport_bounds: Bounds<Pixels>,
         window: &mut Window,
@@ -3588,7 +3614,11 @@ impl EditorElement {
             let available_above = bottom_y_when_flipped - text_hitbox.top();
             let available_below = text_hitbox.bottom() - target_position.y;
             let y_overflows_below = max_height > available_below;
-            let mut y_flipped = y_overflows_below && available_above > available_below;
+            let mut y_flipped = match placement {
+                Some(ContextMenuPlacement::Above) => true,
+                Some(ContextMenuPlacement::Below) => false,
+                None => y_overflows_below && available_above > available_below,
+            };
             let mut height = cmp::min(
                 max_height,
                 if y_flipped {
@@ -3602,19 +3632,27 @@ impl EditorElement {
             if height < min_height {
                 let available_above = bottom_y_when_flipped;
                 let available_below = viewport_bounds.bottom() - target_position.y;
-                if available_below > min_height {
-                    y_flipped = false;
-                    height = min_height;
-                } else if available_above > min_height {
-                    y_flipped = true;
-                    height = min_height;
-                } else if available_above > available_below {
-                    y_flipped = true;
-                    height = available_above;
-                } else {
-                    y_flipped = false;
-                    height = available_below;
-                }
+                let (y_flipped_override, height_override) = match placement {
+                    Some(ContextMenuPlacement::Above) => {
+                        (true, cmp::min(available_above, min_height))
+                    }
+                    Some(ContextMenuPlacement::Below) => {
+                        (false, cmp::min(available_below, min_height))
+                    }
+                    None => {
+                        if available_below > min_height {
+                            (false, min_height)
+                        } else if available_above > min_height {
+                            (true, min_height)
+                        } else if available_above > available_below {
+                            (true, available_above)
+                        } else {
+                            (false, available_below)
+                        }
+                    }
+                };
+                y_flipped = y_flipped_override;
+                height = height_override;
             }
 
             let max_width_for_stable_x = viewport_bounds.right() - target_position.x;

@@ -531,6 +531,18 @@ impl EditPredictionPreview {
     }
 }
 
+pub struct ContextMenuOptions {
+    pub min_entries_visible: usize,
+    pub max_entries_visible: usize,
+    pub placement: Option<ContextMenuPlacement>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ContextMenuPlacement {
+    Above,
+    Below,
+}
+
 #[derive(Copy, Clone, Eq, PartialEq, PartialOrd, Ord, Debug, Default)]
 struct EditorActionId(usize);
 
@@ -677,6 +689,7 @@ pub struct Editor {
     active_indent_guides_state: ActiveIndentGuidesState,
     nav_history: Option<ItemNavHistory>,
     context_menu: RefCell<Option<CodeContextMenu>>,
+    context_menu_options: Option<ContextMenuOptions>,
     mouse_context_menu: Option<MouseContextMenu>,
     completion_tasks: Vec<(CompletionId, Task<Option<()>>)>,
     signature_help_state: SignatureHelpState,
@@ -1441,6 +1454,7 @@ impl Editor {
             active_indent_guides_state: ActiveIndentGuidesState::default(),
             nav_history: None,
             context_menu: RefCell::new(None),
+            context_menu_options: None,
             mouse_context_menu: None,
             completion_tasks: Default::default(),
             signature_help_state: SignatureHelpState::default(),
@@ -4251,8 +4265,14 @@ impl Editor {
 
         let (mut words, provided_completions) = match provider {
             Some(provider) => {
-                let completions =
-                    provider.completions(&buffer, buffer_position, completion_context, window, cx);
+                let completions = provider.completions(
+                    position.excerpt_id,
+                    &buffer,
+                    buffer_position,
+                    completion_context,
+                    window,
+                    cx,
+                );
 
                 let words = match completion_settings.words {
                     WordsCompletionMode::Disabled => Task::ready(HashMap::default()),
@@ -4310,6 +4330,7 @@ impl Editor {
                     old_range: old_range.clone(),
                     new_text: word.clone(),
                     label: CodeLabel::plain(word, None),
+                    icon_path: None,
                     documentation: None,
                     source: CompletionSource::BufferWord {
                         word_range,
@@ -4382,6 +4403,17 @@ impl Editor {
         });
 
         self.completion_tasks.push((id, task));
+    }
+
+    #[cfg(feature = "test-support")]
+    pub fn current_completions(&self) -> Option<Vec<project::Completion>> {
+        let menu = self.context_menu.borrow();
+        if let CodeContextMenu::Completions(menu) = menu.as_ref()? {
+            let completions = menu.completions.borrow();
+            Some(completions.to_vec())
+        } else {
+            None
+        }
     }
 
     pub fn confirm_completion(
@@ -6433,6 +6465,10 @@ impl Editor {
             .borrow()
             .as_ref()
             .map(|menu| menu.origin())
+    }
+
+    pub fn set_context_menu_options(&mut self, options: ContextMenuOptions) {
+        self.context_menu_options = Some(options);
     }
 
     const EDIT_PREDICTION_POPOVER_PADDING_X: Pixels = Pixels(24.);
@@ -17857,6 +17893,7 @@ pub trait SemanticsProvider {
 pub trait CompletionProvider {
     fn completions(
         &self,
+        excerpt_id: ExcerptId,
         buffer: &Entity<Buffer>,
         buffer_position: text::Anchor,
         trigger: CompletionContext,
@@ -18090,6 +18127,7 @@ fn snippet_completions(
                         runs: Vec::new(),
                         filter_range: 0..matching_prefix.len(),
                     },
+                    icon_path: None,
                     documentation: snippet
                         .description
                         .clone()
@@ -18106,6 +18144,7 @@ fn snippet_completions(
 impl CompletionProvider for Entity<Project> {
     fn completions(
         &self,
+        _excerpt_id: ExcerptId,
         buffer: &Entity<Buffer>,
         buffer_position: text::Anchor,
         options: CompletionContext,
