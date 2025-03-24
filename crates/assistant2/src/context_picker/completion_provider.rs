@@ -630,7 +630,7 @@ mod tests {
     use serde_json::json;
     use settings::SettingsStore;
     use std::{ops::Deref, path::PathBuf};
-    use util::path;
+    use util::{path, separator};
     use workspace::AppState;
 
     #[test]
@@ -741,13 +741,13 @@ mod tests {
         let mut cx = VisualTestContext::from_window(*window.deref(), cx);
 
         let paths = vec![
-            "a/one.txt",
-            "a/two.txt",
-            "a/three.txt",
-            "a/four.txt",
-            "b/five.txt",
-            "b/six.txt",
-            "b/seven.txt",
+            separator!("a/one.txt"),
+            separator!("a/two.txt"),
+            separator!("a/three.txt"),
+            separator!("a/four.txt"),
+            separator!("b/five.txt"),
+            separator!("b/six.txt"),
+            separator!("b/seven.txt"),
         ];
         for path in paths {
             workspace
@@ -817,10 +817,10 @@ mod tests {
             assert_eq!(
                 current_completion_labels(editor),
                 &[
-                    format!("seven.txt {}", path!("dir/b")).as_str(),
-                    format!("six.txt {}", path!("dir/b")).as_str(),
-                    format!("five.txt {}", path!("dir/b")).as_str(),
-                    format!("four.txt {}", path!("dir/a")).as_str(),
+                    format!("seven.txt {}", separator!("dir/b")).as_str(),
+                    format!("six.txt {}", separator!("dir/b")).as_str(),
+                    format!("five.txt {}", separator!("dir/b")).as_str(),
+                    format!("four.txt {}", separator!("dir/a")).as_str(),
                     "File/Directory",
                     "Fetch"
                 ]
@@ -851,7 +851,7 @@ mod tests {
             assert!(editor.has_visible_completions_menu());
             assert_eq!(
                 current_completion_labels(editor),
-                vec![format!("one.txt {}", path!("dir/a")).as_str(),]
+                vec![format!("one.txt {}", separator!("dir/a")).as_str(),]
             );
         });
 
@@ -863,7 +863,7 @@ mod tests {
         editor.update(&mut cx, |editor, cx| {
             assert_eq!(
                 editor.text(cx),
-                format!("Lorem @file {}", path!("dir/a/one.txt"))
+                format!("Lorem @file {}", separator!("dir/a/one.txt"))
             );
             assert!(!editor.has_visible_completions_menu());
             assert_eq!(
@@ -877,7 +877,7 @@ mod tests {
         editor.update(&mut cx, |editor, cx| {
             assert_eq!(
                 editor.text(cx),
-                format!("Lorem @file {} ", path!("dir/a/one.txt"))
+                format!("Lorem @file {} ", separator!("dir/a/one.txt"))
             );
             assert!(!editor.has_visible_completions_menu());
             assert_eq!(
@@ -891,7 +891,7 @@ mod tests {
         editor.update(&mut cx, |editor, cx| {
             assert_eq!(
                 editor.text(cx),
-                format!("Lorem @file {} Ipsum ", path!("dir/a/one.txt"))
+                format!("Lorem @file {} Ipsum ", separator!("dir/a/one.txt"))
             );
             assert!(!editor.has_visible_completions_menu());
             assert_eq!(
@@ -905,7 +905,7 @@ mod tests {
         editor.update(&mut cx, |editor, cx| {
             assert_eq!(
                 editor.text(cx),
-                format!("Lorem @file {} Ipsum @file ", path!("dir/a/one.txt"))
+                format!("Lorem @file {} Ipsum @file ", separator!("dir/a/one.txt"))
             );
             assert!(editor.has_visible_completions_menu());
             assert_eq!(
@@ -925,8 +925,8 @@ mod tests {
                 editor.text(cx),
                 format!(
                     "Lorem @file {} Ipsum @file {}",
-                    path!("dir/a/one.txt"),
-                    path!("dir/b/seven.txt")
+                    separator!("dir/a/one.txt"),
+                    separator!("dir/b/seven.txt")
                 )
             );
             assert!(!editor.has_visible_completions_menu());
@@ -946,8 +946,8 @@ mod tests {
                 editor.text(cx),
                 format!(
                     "Lorem @file {} Ipsum @file {}\n@",
-                    path!("dir/a/one.txt"),
-                    path!("dir/b/seven.txt")
+                    separator!("dir/a/one.txt"),
+                    separator!("dir/b/seven.txt")
                 )
             );
             assert!(editor.has_visible_completions_menu());
@@ -971,9 +971,9 @@ mod tests {
                 editor.text(cx),
                 format!(
                     "Lorem @file {} Ipsum @file {}\n@file {}",
-                    path!("dir/a/one.txt"),
-                    path!("dir/b/seven.txt"),
-                    path!("dir/b/six.txt"),
+                    separator!("dir/a/one.txt"),
+                    separator!("dir/b/seven.txt"),
+                    separator!("dir/b/six.txt"),
                 )
             );
             assert!(!editor.has_visible_completions_menu());
