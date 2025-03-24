@@ -547,7 +547,8 @@ impl CompletionsMenu {
                             .or_else(|| {
                                 completion.icon_path.as_ref().map(|path| {
                                     Icon::from_path(path)
-                                        .size(IconSize::Small)
+                                        .size(IconSize::XSmall)
+                                        .color(Color::Muted)
                                         .into_any_element()
                                 })
                             });
