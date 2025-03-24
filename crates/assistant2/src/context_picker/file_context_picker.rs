@@ -2,7 +2,6 @@ use std::path::Path;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
-use editor::Editor;
 use file_icons::FileIcons;
 use fuzzy::PathMatch;
 use gpui::{
@@ -25,7 +24,6 @@ impl FileContextPicker {
     pub fn new(
         context_picker: WeakEntity<ContextPicker>,
         workspace: WeakEntity<Workspace>,
-        editor: WeakEntity<Editor>,
         context_store: WeakEntity<ContextStore>,
         confirm_behavior: ConfirmBehavior,
         window: &mut Window,
@@ -34,7 +32,6 @@ impl FileContextPicker {
         let delegate = FileContextPickerDelegate::new(
             context_picker,
             workspace,
-            editor,
             context_store,
             confirm_behavior,
         );
@@ -59,7 +56,6 @@ impl Render for FileContextPicker {
 pub struct FileContextPickerDelegate {
     context_picker: WeakEntity<ContextPicker>,
     workspace: WeakEntity<Workspace>,
-    editor: WeakEntity<Editor>,
     context_store: WeakEntity<ContextStore>,
     confirm_behavior: ConfirmBehavior,
     matches: Vec<PathMatch>,
@@ -70,14 +66,12 @@ impl FileContextPickerDelegate {
     pub fn new(
         context_picker: WeakEntity<ContextPicker>,
         workspace: WeakEntity<Workspace>,
-        editor: WeakEntity<Editor>,
         context_store: WeakEntity<ContextStore>,
         confirm_behavior: ConfirmBehavior,
     ) -> Self {
         Self {
             context_picker,
             workspace,
-            editor,
             context_store,
             confirm_behavior,
             matches: Vec::new(),

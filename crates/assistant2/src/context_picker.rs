@@ -8,11 +8,8 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use anyhow::{anyhow, Result};
-use editor::actions::FoldAt;
 use editor::display_map::{Crease, FoldId};
-use editor::{
-    Anchor, AnchorRangeExt as _, Editor, ExcerptId, FoldPlaceholder, ToOffset, ToPoint as _,
-};
+use editor::{Anchor, AnchorRangeExt as _, Editor, ExcerptId, FoldPlaceholder, ToOffset};
 use file_context_picker::render_file_context_entry;
 use gpui::{
     App, DismissEvent, Empty, Entity, EventEmitter, FocusHandle, Focusable, Task, WeakEntity,
@@ -96,7 +93,6 @@ enum ContextPickerState {
 pub(super) struct ContextPicker {
     mode: ContextPickerState,
     workspace: WeakEntity<Workspace>,
-    editor: WeakEntity<Editor>,
     context_store: WeakEntity<ContextStore>,
     thread_store: Option<WeakEntity<ThreadStore>>,
     confirm_behavior: ConfirmBehavior,
@@ -107,7 +103,6 @@ impl ContextPicker {
         workspace: WeakEntity<Workspace>,
         thread_store: Option<WeakEntity<ThreadStore>>,
         context_store: WeakEntity<ContextStore>,
-        editor: WeakEntity<Editor>,
         confirm_behavior: ConfirmBehavior,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -121,7 +116,6 @@ impl ContextPicker {
             workspace,
             context_store,
             thread_store,
-            editor,
             confirm_behavior,
         }
     }
@@ -204,7 +198,6 @@ impl ContextPicker {
                     FileContextPicker::new(
                         context_picker.clone(),
                         self.workspace.clone(),
-                        self.editor.clone(),
                         self.context_store.clone(),
                         self.confirm_behavior,
                         window,
@@ -563,9 +556,6 @@ pub(crate) fn insert_crease_for_mention(
         let render_trailer =
             move |_row, _unfold, _window: &mut Window, _cx: &mut App| Empty.into_any();
 
-        let buffer = editor.buffer().read(cx).snapshot(cx);
-        let buffer_row = MultiBufferRow(start.to_point(&buffer).row);
-
         let crease = Crease::inline(
             start..end,
             placeholder.clone(),
@@ -573,8 +563,8 @@ pub(crate) fn insert_crease_for_mention(
             render_trailer,
         );
 
-        editor.insert_creases(vec![crease], cx);
-        editor.fold_at(&FoldAt { buffer_row }, window, cx);
+        editor.insert_creases(vec![crease.clone()], cx);
+        editor.fold_creases(vec![crease], false, window, cx);
     });
 }
 
