@@ -180,12 +180,9 @@ pub(crate) fn generate_auto_close_edits(
          * given that the naive algorithm is sufficient in the majority of cases.
          */
         {
-            let tag_node_name_equals = |node: &Node, tag_name_node_name: &str, name: &str| {
+            let tag_node_name_equals = |node: &Node, name: &str| {
                 let is_empty = name.len() == 0;
                 if let Some(node_name) = node.named_child(TS_NODE_TAG_NAME_CHILD_INDEX) {
-                    if node_name.kind() != tag_name_node_name {
-                        return is_empty;
-                    }
                     let range = node_name.byte_range();
                     return buffer.text_for_range(range).equals_str(name);
                 }
@@ -231,11 +228,7 @@ pub(crate) fn generate_auto_close_edits(
                                 .named_child(0)
                                 .filter(|n| n.kind() == config.open_tag_node_name)
                                 .map_or(false, |element_open_tag_node| {
-                                    tag_node_name_equals(
-                                        &element_open_tag_node,
-                                        &config.tag_name_node_name,
-                                        &tag_name,
-                                    )
+                                    tag_node_name_equals(&element_open_tag_node, &tag_name)
                                 });
                             if has_open_tag_with_same_tag_name {
                                 doing_deep_search = true;
@@ -264,14 +257,9 @@ pub(crate) fn generate_auto_close_edits(
 
             let mut has_erroneous_close_tag = false;
             let mut erroneous_close_tag_node_name = "";
-            let mut erroneous_close_tag_name_node_name = "";
             if let Some(name) = config.erroneous_close_tag_node_name.as_deref() {
                 has_erroneous_close_tag = true;
                 erroneous_close_tag_node_name = name;
-                erroneous_close_tag_name_node_name = config
-                    .erroneous_close_tag_name_node_name
-                    .as_deref()
-                    .unwrap_or(&config.tag_name_node_name);
             }
 
             let is_after_open_tag = |node: &Node| {
@@ -287,15 +275,15 @@ pub(crate) fn generate_auto_close_edits(
             while let Some(node) = stack.pop() {
                 let kind = node.kind();
                 if kind == config.open_tag_node_name {
-                    if tag_node_name_equals(&node, &config.tag_name_node_name, &tag_name) {
+                    if tag_node_name_equals(&node, &tag_name) {
                         unclosed_open_tag_count += 1;
                     }
                 } else if kind == config.close_tag_node_name {
-                    if tag_node_name_equals(&node, &config.tag_name_node_name, &tag_name) {
+                    if tag_node_name_equals(&node, &tag_name) {
                         unclosed_open_tag_count -= 1;
                     }
                 } else if has_erroneous_close_tag && kind == erroneous_close_tag_node_name {
-                    if tag_node_name_equals(&node, erroneous_close_tag_name_node_name, &tag_name) {
+                    if tag_node_name_equals(&node, &tag_name) {
                         if !is_after_open_tag(&node) {
                             unclosed_open_tag_count -= 1;
                         }
