@@ -44,6 +44,10 @@ impl Tool for ReadFileTool {
         "read-file".into()
     }
 
+    fn needs_confirmation(&self) -> bool {
+        false
+    }
+
     fn description(&self) -> String {
         include_str!("./read_file_tool/description.md").into()
     }

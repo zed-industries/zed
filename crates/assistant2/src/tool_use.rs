@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use anyhow::Result;
-use assistant_tool::ToolWorkingSet;
+use assistant_tool::{Tool, ToolWorkingSet};
 use collections::HashMap;
 use futures::future::Shared;
 use futures::FutureExt as _;
@@ -10,6 +10,7 @@ use language_model::{
     LanguageModelRequestMessage, LanguageModelToolResult, LanguageModelToolUse,
     LanguageModelToolUseId, MessageContent, Role,
 };
+use scripting_tool::ScriptingTool;
 
 use crate::thread::MessageId;
 use crate::thread_store::SerializedMessage;
@@ -25,6 +26,7 @@ pub struct ToolUse {
 
 #[derive(Debug, Clone)]
 pub enum ToolUseStatus {
+    NeedsConfirmation,
     Pending,
     Running,
     Finished(SharedString),
@@ -163,16 +165,19 @@ impl ToolUseState {
                 }
 
                 if let Some(pending_tool_use) = self.pending_tool_uses_by_id.get(&tool_use.id) {
-                    return match pending_tool_use.status {
+                    match pending_tool_use.status {
                         PendingToolUseStatus::Idle => ToolUseStatus::Pending,
+                        PendingToolUseStatus::NeedsConfirmation { .. } => {
+                            ToolUseStatus::NeedsConfirmation
+                        }
                         PendingToolUseStatus::Running { .. } => ToolUseStatus::Running,
                         PendingToolUseStatus::Error(ref err) => {
                             ToolUseStatus::Error(err.clone().into())
                         }
-                    };
+                    }
+                } else {
+                    ToolUseStatus::Pending
                 }
-
-                ToolUseStatus::Pending
             })();
 
             tool_uses.push(ToolUse {
@@ -195,6 +200,8 @@ impl ToolUseState {
     ) -> SharedString {
         if let Some(tool) = self.tools.tool(tool_name, cx) {
             tool.ui_text(input).into()
+        } else if tool_name == ScriptingTool::NAME {
+            "Run Lua Script".into()
         } else {
             "Unknown tool".into()
         }
@@ -269,6 +276,28 @@ impl ToolUseState {
             tool_use.status = PendingToolUseStatus::Running {
                 _task: task.shared(),
             };
+        }
+    }
+
+    pub fn confirm_tool_use(
+        &mut self,
+        tool_use_id: LanguageModelToolUseId,
+        ui_text: impl Into<Arc<str>>,
+        input: serde_json::Value,
+        messages: Arc<Vec<LanguageModelRequestMessage>>,
+        tool_type: ToolType,
+    ) {
+        if let Some(tool_use) = self.pending_tool_uses_by_id.get_mut(&tool_use_id) {
+            let ui_text = ui_text.into();
+            tool_use.ui_text = ui_text.clone();
+            let confirmation = Confirmation {
+                tool_use_id,
+                input,
+                messages,
+                tool_type,
+                ui_text,
+            };
+            tool_use.status = PendingToolUseStatus::NeedsConfirmation(Arc::new(confirmation));
         }
     }
 
@@ -370,8 +399,24 @@ pub struct PendingToolUse {
 }
 
 #[derive(Debug, Clone)]
+pub enum ToolType {
+    ScriptingTool,
+    NonScriptingTool(Arc<dyn Tool>),
+}
+
+#[derive(Debug, Clone)]
+pub struct Confirmation {
+    pub tool_use_id: LanguageModelToolUseId,
+    pub input: serde_json::Value,
+    pub ui_text: Arc<str>,
+    pub messages: Arc<Vec<LanguageModelRequestMessage>>,
+    pub tool_type: ToolType,
+}
+
+#[derive(Debug, Clone)]
 pub enum PendingToolUseStatus {
     Idle,
+    NeedsConfirmation(Arc<Confirmation>),
     Running { _task: Shared<Task<()>> },
     Error(#[allow(unused)] Arc<str>),
 }
@@ -383,5 +428,9 @@ impl PendingToolUseStatus {
 
     pub fn is_error(&self) -> bool {
         matches!(self, PendingToolUseStatus::Error(_))
+    }
+
+    pub fn needs_confirmation(&self) -> bool {
+        matches!(self, PendingToolUseStatus::NeedsConfirmation { .. })
     }
 }

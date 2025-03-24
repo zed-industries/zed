@@ -400,7 +400,6 @@ pub mod scope_map {
             *map = Some(map_new.clone());
             // note: hash update done here to ensure consistency with scope map
         }
-        eprintln!("Updated log scope settings :: map = {:?}", map_new);
     }
 }
 
