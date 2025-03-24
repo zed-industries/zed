@@ -2151,11 +2151,13 @@ async fn test_rename_work_directory(cx: &mut TestAppContext) {
             WorkDirectory::in_project("projects/project1")
         );
         assert_eq!(
-            tree.status_for_file(Path::new("projects/project1/a")),
+            repo.status_for_path(&"projects/project1/a".into())
+                .map(|entry| entry.status),
             Some(StatusCode::Modified.worktree()),
         );
         assert_eq!(
-            tree.status_for_file(Path::new("projects/project1/b")),
+            repo.status_for_path(&"projects/project1/b".into())
+                .map(|entry| entry.status),
             Some(FileStatus::Untracked),
         );
     });
@@ -2242,7 +2244,7 @@ async fn test_home_dir_as_git_repository(cx: &mut TestAppContext) {
     home_tree.read_with(cx, |home_tree, _cx| {
         let home_tree = home_tree.as_local().unwrap();
 
-        let repo = home_tree.repository_for_path(path!("project/a.txt").as_ref());
+        let repo = home_tree.local_repo_for_path(path!("project/a.txt").as_ref());
         assert_eq!(
             repo.map(|repo| &repo.work_directory),
             Some(&WorkDirectory::InProject {

@@ -1448,9 +1448,10 @@ impl GitStore {
                             // When syncing repository entries from a peer, we don't need
                             // the location_in_repo field, since git operations don't happen locally
                             // anyway.
-                            work_directory: WorkDirectory::InProject {
-                                relative_path: work_dir_entry.path.clone(),
-                            },
+                            // TODO can this just be none in the remote case?
+                            //work_directory: WorkDirectory::InProject {
+                            //    relative_path: work_dir_entry.path.clone(),
+                            //},
                             current_branch: None,
                             statuses_by_path: Default::default(),
                             current_merge_conflicts: Default::default(),
@@ -1476,17 +1477,18 @@ impl GitStore {
         envelope: TypedEnvelope<proto::RemoveRepository>,
         mut cx: AsyncApp,
     ) -> Result<()> {
-        this.update(&mut cx, |this, cx| {
-            if let Some(worktree) =
-                this.worktree_for_entry(ProjectEntryId::from_proto(envelope.payload.id), cx)
-            {
-                worktree.update(cx, |worktree, _| {
-                    let worktree = worktree.as_remote_mut().unwrap();
-                    worktree.update_from_remote(envelope.payload);
-                });
-            }
-            Ok(())
-        })?
+        todo!("just use the payload's id to look up a repository")
+        //this.update(&mut cx, |this, cx| {
+        //    if let Some(worktree) =
+        //        this.worktree_for_entry(ProjectEntryId::from_proto(envelope.payload.id), cx)
+        //    {
+        //        worktree.update(cx, |worktree, _| {
+        //            let worktree = worktree.as_remote_mut().unwrap();
+        //            worktree.update_from_remote(envelope.payload);
+        //        });
+        //    }
+        //    Ok(())
+        //})?
     }
 
     async fn handle_git_init(
@@ -2598,31 +2600,12 @@ impl Repository {
         self.worktree_id_path_to_repo_path(path.worktree_id, &path.path)
     }
 
-    // note: callers must verify these come from the same worktree
     pub fn contains_sub_repo(&self, other: &Entity<Self>, cx: &App) -> bool {
-        let other_work_dir = &other.read(cx).repository_entry.work_directory;
-        match (&self.repository_entry.work_directory, other_work_dir) {
-            (WorkDirectory::InProject { .. }, WorkDirectory::AboveProject { .. }) => false,
-            (WorkDirectory::AboveProject { .. }, WorkDirectory::InProject { .. }) => true,
-            (
-                WorkDirectory::InProject {
-                    relative_path: this_path,
-                },
-                WorkDirectory::InProject {
-                    relative_path: other_path,
-                },
-            ) => other_path.starts_with(this_path),
-            (
-                WorkDirectory::AboveProject {
-                    absolute_path: this_path,
-                    ..
-                },
-                WorkDirectory::AboveProject {
-                    absolute_path: other_path,
-                    ..
-                },
-            ) => other_path.starts_with(this_path),
-        }
+        other
+            .read(cx)
+            .repository_entry
+            .work_directory_abs_path
+            .starts_with(&self.repository_entry.work_directory_abs_path)
     }
 
     pub fn worktree_id_path_to_repo_path(
