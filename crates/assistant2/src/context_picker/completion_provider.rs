@@ -707,7 +707,7 @@ mod tests {
             .fs
             .as_fake()
             .insert_tree(
-                path!("/dir"),
+                "/dir",
                 json!({
                     "editor": "",
                     "a": {
@@ -725,7 +725,7 @@ mod tests {
             )
             .await;
 
-        let project = Project::test(app_state.fs.clone(), [path!("/dir").as_ref()], cx).await;
+        let project = Project::test(app_state.fs.clone(), ["/dir".as_ref()], cx).await;
         let window = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
         let workspace = window.root(cx).unwrap();
 
