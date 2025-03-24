@@ -105,16 +105,16 @@ pub fn migrate_keymap(text: &str) -> Result<Option<String>> {
 pub fn migrate_settings(text: &str) -> Result<Option<String>> {
     let migrations: &[(MigrationPatterns, &Query)] = &[
         (
+            migrations::m_2025_01_02::SETTINGS_PATTERNS,
+            &SETTINGS_QUERY_2025_01_02,
+        ),
+        (
             migrations::m_2025_01_29::SETTINGS_PATTERNS,
             &SETTINGS_QUERY_2025_01_29,
         ),
         (
             migrations::m_2025_01_30::SETTINGS_PATTERNS,
             &SETTINGS_QUERY_2025_01_30,
-        ),
-        (
-            migrations::m_2025_03_24::SETTINGS_PATTERNS,
-            &SETTINGS_QUERY_2025_03_24,
         ),
     ];
     run_migrations(text, migrations)
@@ -171,16 +171,16 @@ define_query!(
 
 // settings
 define_query!(
+    SETTINGS_QUERY_2025_01_02,
+    migrations::m_2025_01_02::SETTINGS_PATTERNS
+);
+define_query!(
     SETTINGS_QUERY_2025_01_29,
     migrations::m_2025_01_29::SETTINGS_PATTERNS
 );
 define_query!(
     SETTINGS_QUERY_2025_01_30,
     migrations::m_2025_01_30::SETTINGS_PATTERNS
-);
-define_query!(
-    SETTINGS_QUERY_2025_03_24,
-    migrations::m_2025_03_24::SETTINGS_PATTERNS
 );
 
 // custom query
