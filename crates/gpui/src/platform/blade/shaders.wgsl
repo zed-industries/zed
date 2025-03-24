@@ -290,7 +290,8 @@ fn pick_corner_radius(center_to_point: vec2<f32>, radii: Corners) -> f32 {
 // Signed distance of the point to the quad's border - positive outside the
 // border, and negative inside.
 //
-// See comments on similar code `quad_sdf_impl` in `fs_quad` for explanation.
+// See comments on similar code using `quad_sdf_impl` in `fs_quad` for
+// explanation.
 fn quad_sdf(point: vec2<f32>, bounds: Bounds, corner_radii: Corners) -> f32 {
     let half_size = bounds.size / 2.0;
     let center = bounds.origin + half_size;
@@ -552,8 +553,8 @@ fn fs_quad(input: QuadVarying) -> @location(0) vec4<f32> {
             straight_border_inner_corner_to_point.x > 0 ||
             straight_border_inner_corner_to_point.y > 0;
 
-    // Whether the point is far enough from straight border that pixels are not
-    // affected by it.
+    // Whether the point is far enough inside the straight border such that
+    // pixels are not affected by it.
     let is_within_inner_straight_border =
         straight_border_inner_corner_to_point.x < -antialias_threshold &&
         straight_border_inner_corner_to_point.y < -antialias_threshold;
@@ -563,20 +564,21 @@ fn fs_quad(input: QuadVarying) -> @location(0) vec4<f32> {
     // This could be optimized further for large rounded corners by including
     // points in an inscribed rectangle, or some other quick linear check.
     // However, that might negatively impact performance in the case of
-    // reasonable rounding sizes.
+    // reasonable sizes for rounded corners.
     if (is_within_inner_straight_border && !is_near_rounded_corner) {
         return blend_color(background_color, 1.0);
     }
 
-    // Signed distance of the point to the outside of the quad's border. It is
-    // positive outside this edge, and negative inside.
+    // Signed distance of the point to the outside edge of the quad's border. It
+    // is positive outside this edge, and negative inside.
     let outer_sdf = quad_sdf_impl(corner_center_to_point, corner_radius);
 
     // Ellipse for the inner edge of the rounded border.
     let ellipse_radii = max(vec2<f32>(0.0), corner_radius - border);
 
-    // Approximate signed distance of the point to the inside of the quad's
-    // border. It is negative outside this edge, and positive inside.
+    // Approximate signed distance of the point to the inside edge of the quad's
+    // border. It is negative outside this edge (within the border), and
+    // positive inside.
     //
     // This is not always an accurate signed distance:
     // * The rounded portions with varying border width use an approximation of
@@ -597,10 +599,10 @@ fn fs_quad(input: QuadVarying) -> @location(0) vec4<f32> {
     }
 
     // Negative when inside the border.
-    let sdf = max(inner_sdf, outer_sdf);
+    let border_sdf = max(inner_sdf, outer_sdf);
 
     var color = background_color;
-    if (sdf < antialias_threshold) {
+    if (border_sdf < antialias_threshold) {
         var border_color = input.border_color;
 
         // Dashed border logic when border_style == 1
@@ -614,8 +616,8 @@ fn fs_quad(input: QuadVarying) -> @location(0) vec4<f32> {
 
             // Since border width affects the dash size, the density of dashes
             // varies, and this is indicated by dash_velocity. It has units
-            // (dash period / pixel). So a dash velocity of (1 / 10) would be 1
-            // dash every 10 pixels.
+            // (dash period / pixel). So a dash velocity of (1 / 10) is 1 dash
+            // every 10 pixels.
             var dash_velocity = 0.0;
 
             // Dash pattern: (2 * border width) dash, (1 * border width) gap
@@ -627,9 +629,9 @@ fn fs_quad(input: QuadVarying) -> @location(0) vec4<f32> {
             let dv_numerator = 1.0 / dash_period_per_width;
 
             if (unrounded) {
-                // When corners aren't rounded, the dashes for each straight
-                // line are laid out separately. This way each line starts and
-                // ends with a dash.
+                // When corners aren't rounded, the dashes are separately laid
+                // out on each straight line, rather than around the whole
+                // perimeter. This way each line starts and ends with a dash.
                 let is_horizontal =
                         corner_center_to_point.x <
                         corner_center_to_point.y;
@@ -663,7 +665,6 @@ fn fs_quad(input: QuadVarying) -> @location(0) vec4<f32> {
                 let s3 = (size.x - r2 - r3) * dv3; // bottom
                 let s4 = (size.y - r3 - r4) * dv4; // left
 
-                // Corner dash velocities.
                 let corner_dash_velocity_1 = corner_dash_velocity(dv1, dv2);
                 let corner_dash_velocity_2 = corner_dash_velocity(dv2, dv3);
                 let corner_dash_velocity_3 = corner_dash_velocity(dv3, dv4);
@@ -720,21 +721,29 @@ fn fs_quad(input: QuadVarying) -> @location(0) vec4<f32> {
                         if (center_to_point.y < 0.0) {
                             // Top (side 1)
                             dash_velocity = dv1;
-                            t = (point.x - r4) * dash_velocity;
+                            // x - top_left corner radius
+                            let offset = point.x - r4;
+                            t = offset * dash_velocity;
                         } else {
                             // Bottom (side 3)
                             dash_velocity = dv3;
-                            t = upto_c3 - (point.x - r3) * dash_velocity;
+                            // x - bottom_left corner radius
+                            let offset = point.x - r3;
+                            t = upto_c3 - offset * dash_velocity;
                         }
                     } else {
                         if (center_to_point.x < 0.0) {
                             // Left (side 4)
                             dash_velocity = dv4;
-                            t = upto_c4 - (point.y - r4) * dash_velocity;
+                            // y - top_left corner radius
+                            let offset = point.y - r4;
+                            t = upto_c4 - offset * dash_velocity;
                         } else {
                             // Right (side 2)
                             dash_velocity = dv2;
-                            t = upto_s2 + (point.y - r1) * dash_velocity;
+                            // y - top_right corner radius
+                            let offset = point.y - r2;
+                            t = upto_s2 + offset * dash_velocity;
                         }
                     }
                 }
@@ -819,7 +828,7 @@ fn quarter_ellipse_sdf(point: vec2<f32>, radii: vec2<f32>) -> f32 {
     // Approximate up-scaling of the length by using the average of the radii.
     //
     // TODO: A better solution would be to use the gradient of the implicit
-    // function for an ellipse to approximate a better scaling factor.
+    // function for an ellipse to approximate a scaling factor.
     return unit_circle_sdf * (radii.x + radii.y) * -0.5;
 }
 
