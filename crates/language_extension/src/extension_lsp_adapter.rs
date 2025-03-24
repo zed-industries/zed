@@ -267,6 +267,30 @@ impl LspAdapter for ExtensionLspAdapter {
         })
     }
 
+    async fn additional_workspace_configuration(
+        self: Arc<Self>,
+        _: &dyn Fs,
+        delegate: &Arc<dyn LspAdapterDelegate>,
+        _: Arc<dyn LanguageToolchainStore>,
+        _cx: &mut AsyncApp,
+    ) -> Result<Option<serde_json::Value>> {
+        let delegate = Arc::new(WorktreeDelegateAdapter(delegate.clone())) as _;
+        let json_options: Option<String> = self
+            .extension
+            .additional_language_server_workspace_configuration(
+                self.language_server_id.clone(),
+                delegate,
+            )
+            .await?;
+        Ok(if let Some(json_options) = json_options {
+            serde_json::from_str(&json_options).with_context(|| {
+                format!("failed to parse workspace_configuration from extension: {json_options}")
+            })?
+        } else {
+            None
+        })
+    }
+
     async fn labels_for_completions(
         self: Arc<Self>,
         completions: &[lsp::CompletionItem],

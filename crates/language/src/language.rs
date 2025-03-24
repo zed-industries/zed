@@ -515,6 +515,16 @@ pub trait LspAdapter: 'static + Send + Sync {
         Ok(serde_json::json!({}))
     }
 
+    async fn additional_workspace_configuration(
+        self: Arc<Self>,
+        _: &dyn Fs,
+        _: &Arc<dyn LspAdapterDelegate>,
+        _: Arc<dyn LanguageToolchainStore>,
+        _cx: &mut AsyncApp,
+    ) -> Result<Option<Value>> {
+        Ok(None)
+    }
+
     /// Returns a list of code actions supported by a given LspAdapter
     fn code_action_kinds(&self) -> Option<Vec<CodeActionKind>> {
         Some(vec![

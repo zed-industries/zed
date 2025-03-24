@@ -251,11 +251,15 @@ impl LocalLspStore {
                     let toolchains = this.update(cx, |this, cx| this.toolchain_store(cx))?;
                     let language_server = pending_server.await?;
 
-                    let workspace_config = adapter
-                        .adapter
-                        .clone()
-                        .workspace_configuration(fs.as_ref(), &delegate, toolchains.clone(), cx)
-                        .await?;
+                    let workspace_config = Self::workspace_configuration_for_adapter(
+                        adapter.adapter.clone(),
+                        fs.as_ref(),
+                        &delegate,
+                        toolchains.clone(),
+                        &this,
+                        cx,
+                    )
+                    .await?;
 
                     let mut initialization_options = adapter
                         .adapter
@@ -478,9 +482,17 @@ impl LocalLspStore {
                     async move {
                         let toolchains =
                             this.update(&mut cx, |this, cx| this.toolchain_store(cx))?;
-                        let workspace_config = adapter
-                            .workspace_configuration(fs.as_ref(), &delegate, toolchains, &mut cx)
-                            .await?;
+
+                        let workspace_config = Self::workspace_configuration_for_adapter(
+                            adapter.clone(),
+                            fs.as_ref(),
+                            &delegate,
+                            toolchains.clone(),
+                            &this,
+                            &mut cx,
+                        )
+                        .await?;
+
                         Ok(params
                             .items
                             .into_iter()
@@ -3225,6 +3237,55 @@ impl LocalLspStore {
 
         self.rebuild_watched_paths(language_server_id, cx);
     }
+
+    async fn workspace_configuration_for_adapter(
+        adapter: Arc<dyn LspAdapter>,
+        fs: &dyn Fs,
+        delegate: &Arc<dyn LspAdapterDelegate>,
+        toolchains: Arc<dyn LanguageToolchainStore>,
+        this: &WeakEntity<LspStore>,
+        cx: &mut AsyncApp,
+    ) -> Result<serde_json::Value> {
+        let mut workspace_config = adapter
+            .clone()
+            .workspace_configuration(fs, delegate, toolchains.clone(), cx)
+            .await?;
+
+        let other_adapters: Vec<Arc<CachedLspAdapter>> = this.update(cx, |this, _| {
+            let Some(local) = this.as_local() else {
+                return Ok::<Vec<Arc<CachedLspAdapter>>, anyhow::Error>(Vec::new());
+            };
+            let mut others: Vec<Arc<CachedLspAdapter>> = Vec::new();
+            for (_, state) in &local.language_servers {
+                if let LanguageServerState::Running {
+                    adapter: other_adapter,
+                    ..
+                } = state
+                {
+                    if other_adapter.name == adapter.name() {
+                        continue;
+                    }
+                    others.push(other_adapter.clone());
+                }
+            }
+            Ok(others)
+        })??;
+
+        for other_adapter in other_adapters {
+            if let Ok(Some(config)) = other_adapter
+                .adapter
+                .clone()
+                .additional_workspace_configuration(fs, delegate, toolchains.clone(), cx)
+                .await
+            {
+                if let Some(target_config) = config.get(adapter.name().to_string()) {
+                    merge_json_value_into(target_config.clone(), &mut workspace_config);
+                }
+            }
+        }
+
+        Ok(workspace_config)
+    }
 }
 
 #[derive(Debug)]
@@ -3764,11 +3825,12 @@ impl LspStore {
             for (adapter, server, delegate) in servers {
                 adapter.clear_zed_json_schema_cache().await;
 
-                let Some(json_workspace_config) = adapter
-                    .workspace_configuration(
+                let Some(json_workspace_config) = LocalLspStore::workspace_configuration_for_adapter(
+                        adapter.clone(),
                         fs.as_ref(),
                         &delegate,
                         toolchain_store.clone(),
+                        &this,
                         cx,
                     )
                     .await
@@ -6065,10 +6127,16 @@ impl LspStore {
 
             let toolchain_store = this.update(cx, |this, cx| this.toolchain_store(cx)).ok()?;
             for (adapter, server, delegate) in servers {
-                let settings = adapter
-                    .workspace_configuration(fs.as_ref(), &delegate, toolchain_store.clone(), cx)
-                    .await
-                    .ok()?;
+                let settings = LocalLspStore::workspace_configuration_for_adapter(
+                    adapter.clone(),
+                    fs.as_ref(),
+                    &delegate,
+                    toolchain_store.clone(),
+                    &this,
+                    cx,
+                )
+                .await
+                .ok()?;
 
                 server
                     .notify::<lsp::notification::DidChangeConfiguration>(
