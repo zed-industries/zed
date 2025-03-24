@@ -257,8 +257,6 @@ impl ActiveThread {
                     cx,
                 );
             }
-
-
         }
 
         this
@@ -669,9 +667,7 @@ impl ActiveThread {
         let tool_uses = thread.tool_uses_for_message(message_id, cx);
 
         // Don't render user messages that are just there for returning tool results.
-        if message.role == Role::User
-            && thread.message_has_tool_results(message_id)
-        {
+        if message.role == Role::User && thread.message_has_tool_results(message_id) {
             return Empty.into_any();
         }
 
@@ -936,29 +932,23 @@ impl ActiveThread {
                         )
                         .child(div().p_2().child(message_content)),
                 ),
-            Role::Assistant => {
-                v_flex()
-                    .id(("message-container", ix))
-                    .ml_2()
-                    .pl_2()
-                    .pr_4()
-                    .border_l_1()
-                    .border_color(cx.theme().colors().border_variant)
-                    .child(message_content)
-                    .when(
-                        !tool_uses.is_empty(),
-                        |parent| {
-                            parent.child(
-                                v_flex()
-                                    .children(
-                                        tool_uses
-                                            .into_iter()
-                                            .map(|tool_use| self.render_tool_use(tool_use, cx)),
-                                    ),
-                            )
-                        },
+            Role::Assistant => v_flex()
+                .id(("message-container", ix))
+                .ml_2()
+                .pl_2()
+                .pr_4()
+                .border_l_1()
+                .border_color(cx.theme().colors().border_variant)
+                .child(message_content)
+                .when(!tool_uses.is_empty(), |parent| {
+                    parent.child(
+                        v_flex().children(
+                            tool_uses
+                                .into_iter()
+                                .map(|tool_use| self.render_tool_use(tool_use, cx)),
+                        ),
                     )
-            }
+                }),
             Role::System => div().id(("message-container", ix)).py_1().px_2().child(
                 v_flex()
                     .bg(colors.editor_background)
@@ -1473,7 +1463,6 @@ impl ActiveThread {
                 }),
         )
     }
-
 
     fn render_rules_item(&self, cx: &Context<Self>) -> AnyElement {
         let Some(system_prompt_context) = self.thread.read(cx).system_prompt_context().as_ref()
