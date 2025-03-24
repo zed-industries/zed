@@ -643,48 +643,48 @@ fn fs_quad(input: QuadVarying) -> @location(0) vec4<f32> {
                 // When corners are rounded, the dashes are laid out around the
                 // whole perimeter.
 
-                let r1 = quad.corner_radii.top_right;
-                let r2 = quad.corner_radii.bottom_right;
-                let r3 = quad.corner_radii.bottom_left;
-                let r4 = quad.corner_radii.top_left;
+                let r_tr = quad.corner_radii.top_right;
+                let r_br = quad.corner_radii.bottom_right;
+                let r_bl = quad.corner_radii.bottom_left;
+                let r_tl = quad.corner_radii.top_left;
 
-                let w1 = quad.border_widths.top;
-                let w2 = quad.border_widths.right;
-                let w3 = quad.border_widths.bottom;
-                let w4 = quad.border_widths.left;
+                let w_t = quad.border_widths.top;
+                let w_r = quad.border_widths.right;
+                let w_b = quad.border_widths.bottom;
+                let w_l = quad.border_widths.left;
 
                 // Straight side dash velocities.
-                let dv1 = select(dv_numerator / w1, 0.0, w1 <= 0.0); // top
-                let dv2 = select(dv_numerator / w2, 0.0, w2 <= 0.0); // right
-                let dv3 = select(dv_numerator / w3, 0.0, w3 <= 0.0); // bottom
-                let dv4 = select(dv_numerator / w4, 0.0, w4 <= 0.0); // left
+                let dv_t = select(dv_numerator / w_t, 0.0, w_t <= 0.0);
+                let dv_r = select(dv_numerator / w_r, 0.0, w_r <= 0.0);
+                let dv_b = select(dv_numerator / w_b, 0.0, w_b <= 0.0);
+                let dv_l = select(dv_numerator / w_l, 0.0, w_l <= 0.0);
 
                 // Straight side lengths in dash space.
-                let s1 = (size.x - r4 - r1) * dv1; // top
-                let s2 = (size.y - r1 - r2) * dv2; // right
-                let s3 = (size.x - r2 - r3) * dv3; // bottom
-                let s4 = (size.y - r3 - r4) * dv4; // left
+                let s_t = (size.x - r_tl - r_tr) * dv_t;
+                let s_r = (size.y - r_tr - r_br) * dv_r;
+                let s_b = (size.x - r_br - r_bl) * dv_b;
+                let s_l = (size.y - r_bl - r_tl) * dv_l;
 
-                let corner_dash_velocity_1 = corner_dash_velocity(dv1, dv2);
-                let corner_dash_velocity_2 = corner_dash_velocity(dv2, dv3);
-                let corner_dash_velocity_3 = corner_dash_velocity(dv3, dv4);
-                let corner_dash_velocity_4 = corner_dash_velocity(dv4, dv1);
+                let corner_dash_velocity_tr = corner_dash_velocity(dv_t, dv_r);
+                let corner_dash_velocity_br = corner_dash_velocity(dv_b, dv_r);
+                let corner_dash_velocity_bl = corner_dash_velocity(dv_b, dv_l);
+                let corner_dash_velocity_tl = corner_dash_velocity(dv_t, dv_l);
 
-                // Corner lengths in dash space. Corner `cN` is after side `sN`.
-                let c1 = r1 * (M_PI_F / 2.0) * corner_dash_velocity_1; // top_right
-                let c2 = r2 * (M_PI_F / 2.0) * corner_dash_velocity_2; // bottom_right
-                let c3 = r3 * (M_PI_F / 2.0) * corner_dash_velocity_3; // bottom_left
-                let c4 = r4 * (M_PI_F / 2.0) * corner_dash_velocity_4; // top_left
+                // Corner lengths in dash space.
+                let c_tr = r_tr * (M_PI_F / 2.0) * corner_dash_velocity_tr;
+                let c_br = r_br * (M_PI_F / 2.0) * corner_dash_velocity_br;
+                let c_bl = r_bl * (M_PI_F / 2.0) * corner_dash_velocity_bl;
+                let c_tl = r_tl * (M_PI_F / 2.0) * corner_dash_velocity_tl;
 
                 // Cumulative dash space upto each segment.
-                let upto_c1 = s1; // top_right
-                let upto_s2 = upto_c1 + c1; // right
-                let upto_c2 = upto_s2 + s2; // bottom_right
-                let upto_s3 = upto_c2 + c2; // bottom
-                let upto_c3 = upto_s3 + s3; // bottom_left
-                let upto_s4 = upto_c3 + c3; // left
-                let upto_c4 = upto_s4 + s4; // top_left
-                max_t = upto_c4 + c4; // top
+                let upto_tr = s_t;
+                let upto_r = upto_tr + c_tr;
+                let upto_br = upto_r + s_r;
+                let upto_b = upto_br + c_br;
+                let upto_bl = upto_b + s_b;
+                let upto_l = upto_bl + c_bl;
+                let upto_tl = upto_l + s_l;
+                max_t = upto_tl + c_tl;
 
                 if (is_near_rounded_corner) {
                     let radians = atan2(corner_center_to_point.y,
@@ -693,23 +693,19 @@ fn fs_quad(input: QuadVarying) -> @location(0) vec4<f32> {
 
                     if (center_to_point.x >= 0.0) {
                         if (center_to_point.y < 0.0) {
-                            // Top-right (corner 1)
-                            dash_velocity = corner_dash_velocity_1;
-                            t = upto_s2 - corner_t * dash_velocity;
+                            dash_velocity = corner_dash_velocity_tr;
+                            t = upto_r - corner_t * dash_velocity;
                         } else {
-                            // Bottom-right (corner 2)
-                            dash_velocity = corner_dash_velocity_2;
-                            t = upto_c2 + corner_t * dash_velocity;
+                            dash_velocity = corner_dash_velocity_br;
+                            t = upto_br + corner_t * dash_velocity;
                         }
                     } else {
                         if (center_to_point.y >= 0.0) {
-                            // Bottom-left (corner 3)
-                            dash_velocity = corner_dash_velocity_3;
-                            t = upto_s4 - corner_t * dash_velocity;
+                            dash_velocity = corner_dash_velocity_bl;
+                            t = upto_l - corner_t * dash_velocity;
                         } else {
-                            // Top-left (corner 4)
-                            dash_velocity = corner_dash_velocity_4;
-                            t = upto_c4 + corner_t * dash_velocity;
+                            dash_velocity = corner_dash_velocity_tl;
+                            t = upto_tl + corner_t * dash_velocity;
                         }
                     }
                 } else {
@@ -719,31 +715,19 @@ fn fs_quad(input: QuadVarying) -> @location(0) vec4<f32> {
                             corner_center_to_point.y;
                     if (is_horizontal) {
                         if (center_to_point.y < 0.0) {
-                            // Top (side 1)
-                            dash_velocity = dv1;
-                            // x - top_left corner radius
-                            let offset = point.x - r4;
-                            t = offset * dash_velocity;
+                            dash_velocity = dv_t;
+                            t = (point.x - r_tl) * dash_velocity;
                         } else {
-                            // Bottom (side 3)
-                            dash_velocity = dv3;
-                            // x - bottom_left corner radius
-                            let offset = point.x - r3;
-                            t = upto_c3 - offset * dash_velocity;
+                            dash_velocity = dv_b;
+                            t = upto_bl - (point.x - r_bl) * dash_velocity;
                         }
                     } else {
                         if (center_to_point.x < 0.0) {
-                            // Left (side 4)
-                            dash_velocity = dv4;
-                            // y - top_left corner radius
-                            let offset = point.y - r4;
-                            t = upto_c4 - offset * dash_velocity;
+                            dash_velocity = dv_l;
+                            t = upto_tl - (point.y - r_tl) * dash_velocity;
                         } else {
-                            // Right (side 2)
-                            dash_velocity = dv2;
-                            // y - top_right corner radius
-                            let offset = point.y - r2;
-                            t = upto_s2 + offset * dash_velocity;
+                            dash_velocity = dv_r;
+                            t = upto_r + (point.y - r_tr) * dash_velocity;
                         }
                     }
                 }
