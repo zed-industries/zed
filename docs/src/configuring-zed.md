@@ -63,7 +63,7 @@ Extensions that provide language servers may also provide default settings for t
 
 **Options**
 
-`float` values
+Non-negative `float` values
 
 ### Inactive Opacity
 
