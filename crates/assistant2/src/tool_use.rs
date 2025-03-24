@@ -10,7 +10,6 @@ use language_model::{
     LanguageModelRequestMessage, LanguageModelToolResult, LanguageModelToolUse,
     LanguageModelToolUseId, MessageContent, Role,
 };
-use scripting_tool::ScriptingTool;
 
 use crate::thread::MessageId;
 use crate::thread_store::SerializedMessage;
@@ -200,8 +199,6 @@ impl ToolUseState {
     ) -> SharedString {
         if let Some(tool) = self.tools.tool(tool_name, cx) {
             tool.ui_text(input).into()
-        } else if tool_name == ScriptingTool::NAME {
-            "Run Lua Script".into()
         } else {
             "Unknown tool".into()
         }

@@ -19,7 +19,6 @@ struct WorkingSetState {
     context_server_tools_by_id: HashMap<ToolId, Arc<dyn Tool>>,
     context_server_tools_by_name: HashMap<String, Arc<dyn Tool>>,
     disabled_tools_by_source: HashMap<ToolSource, HashSet<Arc<str>>>,
-    is_scripting_tool_disabled: bool,
     next_tool_id: ToolId,
 }
 
@@ -29,7 +28,6 @@ impl Default for WorkingSetState {
             context_server_tools_by_id: HashMap::default(),
             context_server_tools_by_name: HashMap::default(),
             disabled_tools_by_source: HashMap::default(),
-            is_scripting_tool_disabled: true,
             next_tool_id: ToolId::default(),
         }
     }
@@ -55,7 +53,7 @@ impl ToolWorkingSet {
 
     pub fn are_all_tools_enabled(&self) -> bool {
         let state = self.state.lock();
-        state.disabled_tools_by_source.is_empty() && !state.is_scripting_tool_disabled
+        state.disabled_tools_by_source.is_empty()
     }
 
     pub fn are_all_tools_from_source_enabled(&self, source: &ToolSource) -> bool {
@@ -70,7 +68,6 @@ impl ToolWorkingSet {
     pub fn enable_all_tools(&self) {
         let mut state = self.state.lock();
         state.disabled_tools_by_source.clear();
-        state.enable_scripting_tool();
     }
 
     pub fn disable_all_tools(&self, cx: &App) {
@@ -125,20 +122,7 @@ impl ToolWorkingSet {
         state.tools_changed();
     }
 
-    pub fn is_scripting_tool_enabled(&self) -> bool {
-        let state = self.state.lock();
-        !state.is_scripting_tool_disabled
-    }
 
-    pub fn enable_scripting_tool(&self) {
-        let mut state = self.state.lock();
-        state.enable_scripting_tool();
-    }
-
-    pub fn disable_scripting_tool(&self) {
-        let mut state = self.state.lock();
-        state.disable_scripting_tool();
-    }
 }
 
 impl WorkingSetState {
@@ -240,15 +224,5 @@ impl WorkingSetState {
 
             self.disable(source, &tool_names);
         }
-
-        self.disable_scripting_tool();
-    }
-
-    fn enable_scripting_tool(&mut self) {
-        self.is_scripting_tool_disabled = false;
-    }
-
-    fn disable_scripting_tool(&mut self) {
-        self.is_scripting_tool_disabled = true;
     }
 }
