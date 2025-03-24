@@ -14,7 +14,6 @@ use gpui::{
 };
 use http_client::github::get_release_by_tag_name;
 use http_client::HttpClient;
-use language::language_settings::CopilotSettings;
 use language::{
     language_settings::{all_language_settings, language_settings, EditPredictionProvider},
     point_from_lsp, point_to_lsp, Anchor, Bias, Buffer, BufferSnapshot, Language, PointUtf16,
@@ -347,13 +346,19 @@ impl Copilot {
             buffers: Default::default(),
             _subscription: cx.on_app_quit(Self::shutdown_language_server),
         };
+
+        let language_settings = all_language_settings(None, cx);
+        let mut prev_prediction_model = language_settings.edit_predictions_selected_model();
+
         this.start_copilot(true, false, cx);
         cx.observe_global::<SettingsStore>(move |this, cx| this.start_copilot(true, false, cx))
             .detach();
         cx.observe_global::<SettingsStore>(move |this, cx| {
-            let settings = all_language_settings(None, cx);
-            if settings.edit_predictions.provider == EditPredictionProvider::Copilot {
-                this.update_prediction_model(cx).detach_and_log_err(cx);
+            let language_settings = all_language_settings(None, cx);
+            let current_prediction_model = language_settings.edit_predictions_selected_model();
+            if prev_prediction_model != current_prediction_model {
+                prev_prediction_model = current_prediction_model;
+                this.update_prediction_model(cx).detach()
             }
         })
         .detach();
@@ -737,45 +742,48 @@ impl Copilot {
     }
 
     pub fn update_prediction_model(&mut self, cx: &mut Context<Self>) -> Task<Result<()>> {
-        if let Ok(server) = self.server.as_authenticated() {
-            let language_settings = all_language_settings(None, cx);
-            let prediction_model = language_settings
-                .edit_predictions
-                .copilot
-                .selected_model
-                .clone();
+        let language_settings = all_language_settings(None, cx);
+        if language_settings.edit_predictions.provider != EditPredictionProvider::Copilot {
+            return Task::ready(Ok(()));
+        }
 
-            let editor_config = request::EditorConfiguration {
-                github: Some(request::GithubConfiguration {
-                    copilot: Some(request::CopilotConfiguration {
-                        selected_completion_model: prediction_model,
-                        enable_auto_completions: true,
-                    }),
-                }),
-                ..Default::default()
-            };
+        match self.server.as_authenticated() {
+            Ok(server) => {
+                let prediction_model = language_settings
+                    .edit_predictions
+                    .copilot
+                    .selected_model
+                    .clone();
 
-            let request =
-                server
-                    .lsp
-                    .request::<request::SetEditorInfo>(request::SetEditorInfoParams {
-                        editor_info: request::EditorInfo {
-                            name: "zed".into(),
-                            version: env!("CARGO_PKG_VERSION").into(),
-                        },
-                        editor_plugin_info: request::EditorPluginInfo {
-                            name: "zed-copilot".into(),
-                            version: "0.0.1".into(),
-                        },
-                        editor_configuration: editor_config,
-                    });
+                let request =
+                    server
+                        .lsp
+                        .request::<request::SetEditorInfo>(request::SetEditorInfoParams {
+                            editor_info: request::EditorInfo {
+                                name: "zed".into(),
+                                version: env!("CARGO_PKG_VERSION").into(),
+                            },
+                            editor_plugin_info: request::EditorPluginInfo {
+                                name: "zed-copilot".into(),
+                                version: "0.0.1".into(),
+                            },
+                            editor_configuration: request::EditorConfiguration {
+                                github: Some(request::GithubConfiguration {
+                                    copilot: Some(request::CopilotConfiguration {
+                                        selected_completion_model: prediction_model,
+                                        enable_auto_completions: true,
+                                    }),
+                                }),
+                                ..Default::default()
+                            },
+                        });
 
-            cx.background_spawn(async move {
-                request.await?;
-                Ok(())
-            })
-        } else {
-            Task::ready(Ok(()))
+                cx.background_spawn(async move {
+                    request.await?;
+                    Ok(())
+                })
+            }
+            Err(_) => Task::ready(Ok(())),
         }
     }
 
