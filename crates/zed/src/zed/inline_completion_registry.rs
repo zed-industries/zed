@@ -54,7 +54,7 @@ pub fn init(client: Arc<Client>, user_store: Entity<UserStore>, cx: &mut App) {
     })
     .detach();
 
-    let provider = all_language_settings(None, cx).edit_predictions.provider;
+    let mut provider = all_language_settings(None, cx).edit_predictions.provider;
     for (editor, window) in editors.borrow().iter() {
         _ = window.update(cx, |_window, window, cx| {
             _ = editor.update(cx, |editor, cx| {
@@ -71,7 +71,6 @@ pub fn init(client: Arc<Client>, user_store: Entity<UserStore>, cx: &mut App) {
     }
 
     cx.on_action(clear_zeta_edit_history);
-    let mut provider = all_language_settings(None, cx).edit_predictions.provider;
     assign_edit_prediction_providers(&editors, provider, &client, user_store.clone(), cx);
 
     cx.observe_global::<SettingsStore>({
