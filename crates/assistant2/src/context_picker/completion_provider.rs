@@ -161,13 +161,11 @@ impl ContextPickerCompletionProvider {
             label.push_str(" ", None);
         };
 
-        let mut path_hint = String::new();
-        path_hint.push_str(worktree.read(cx).root_name());
-        if let Some(path_to_entry) = path.parent().and_then(|parent| parent.to_str()) {
-            path_hint.push_str("/");
-            path_hint.push_str(path_to_entry);
+        let mut path_hint = PathBuf::from(worktree.read(cx).root_name());
+        if let Some(path_to_entry) = path.parent() {
+            path_hint.push(path_to_entry);
         }
-        label.push_str(&path_hint, comment_id);
+        label.push_str(&path_hint.to_string_lossy(), comment_id);
 
         label.filter_range = 0..label.text().len();
 
@@ -298,13 +296,17 @@ impl ContextPickerCompletionProvider {
             cx,
         )?;
 
-        let crease_icon_path = if is_recent {
-            IconName::HistoryRerun.path().into()
-        } else if is_directory {
+        let crease_icon_path = if is_directory {
             FileIcons::get_folder_icon(false, cx).unwrap_or_else(|| IconName::Folder.path().into())
         } else {
             FileIcons::get_icon(&full_path, cx).unwrap_or_else(|| IconName::File.path().into())
         };
+        let completion_icon_path = if is_recent {
+            IconName::HistoryRerun.path().into()
+        } else {
+            crease_icon_path.clone()
+        };
+
         let crease_name = project_path
             .path
             .file_name()
@@ -319,7 +321,7 @@ impl ContextPickerCompletionProvider {
             label,
             documentation: None,
             source: project::CompletionSource::Custom,
-            icon_path: Some(crease_icon_path.clone()),
+            icon_path: Some(completion_icon_path),
             confirm: Some(confirm_completion_callback(
                 crease_icon_path,
                 crease_name.into(),
@@ -739,13 +741,13 @@ mod tests {
         let mut cx = VisualTestContext::from_window(*window.deref(), cx);
 
         let paths = vec![
-            "a/one.txt",
-            "a/two.txt",
-            "a/three.txt",
-            "a/four.txt",
-            "b/five.txt",
-            "b/six.txt",
-            "b/seven.txt",
+            path!("a/one.txt"),
+            path!("a/two.txt"),
+            path!("a/three.txt"),
+            path!("a/four.txt"),
+            path!("b/five.txt"),
+            path!("b/six.txt"),
+            path!("b/seven.txt"),
         ];
         for path in paths {
             workspace
@@ -815,10 +817,10 @@ mod tests {
             assert_eq!(
                 current_completion_labels(editor),
                 &[
-                    "seven.txt dir/b",
-                    "six.txt dir/b",
-                    "five.txt dir/b",
-                    "four.txt dir/a",
+                    format!("seven.txt {}", path!("dir/b")).as_str(),
+                    format!("six.txt {}", path!("dir/b")).as_str(),
+                    format!("five.txt {}", path!("dir/b")).as_str(),
+                    format!("four.txt {}", path!("dir/a")).as_str(),
                     "File/Directory",
                     "Fetch"
                 ]
@@ -856,7 +858,10 @@ mod tests {
         });
 
         editor.update(&mut cx, |editor, cx| {
-            assert_eq!(editor.text(cx), "Lorem @file dir/a/one.txt");
+            assert_eq!(
+                editor.text(cx),
+                format!("Lorem @file {}", path!("dir/a/one.txt"))
+            );
             assert!(!editor.has_visible_completions_menu());
             assert_eq!(
                 crease_ranges(editor, cx),
@@ -867,7 +872,10 @@ mod tests {
         cx.simulate_input(" ");
 
         editor.update(&mut cx, |editor, cx| {
-            assert_eq!(editor.text(cx), "Lorem @file dir/a/one.txt ");
+            assert_eq!(
+                editor.text(cx),
+                format!("Lorem @file {} ", path!("dir/a/one.txt"))
+            );
             assert!(!editor.has_visible_completions_menu());
             assert_eq!(
                 crease_ranges(editor, cx),
@@ -878,7 +886,10 @@ mod tests {
         cx.simulate_input("Ipsum ");
 
         editor.update(&mut cx, |editor, cx| {
-            assert_eq!(editor.text(cx), "Lorem @file dir/a/one.txt Ipsum ");
+            assert_eq!(
+                editor.text(cx),
+                format!("Lorem @file {} Ipsum ", path!("dir/a/one.txt"))
+            );
             assert!(!editor.has_visible_completions_menu());
             assert_eq!(
                 crease_ranges(editor, cx),
@@ -889,7 +900,10 @@ mod tests {
         cx.simulate_input("@file ");
 
         editor.update(&mut cx, |editor, cx| {
-            assert_eq!(editor.text(cx), "Lorem @file dir/a/one.txt Ipsum @file ");
+            assert_eq!(
+                editor.text(cx),
+                format!("Lorem @file {} Ipsum @file ", path!("dir/a/one.txt"))
+            );
             assert!(editor.has_visible_completions_menu());
             assert_eq!(
                 crease_ranges(editor, cx),
@@ -906,7 +920,11 @@ mod tests {
         editor.update(&mut cx, |editor, cx| {
             assert_eq!(
                 editor.text(cx),
-                "Lorem @file dir/a/one.txt Ipsum @file dir/b/seven.txt"
+                format!(
+                    "Lorem @file {} Ipsum @file {}",
+                    path!("dir/a/one.txt"),
+                    path!("dir/b/seven.txt")
+                )
             );
             assert!(!editor.has_visible_completions_menu());
             assert_eq!(
@@ -923,7 +941,11 @@ mod tests {
         editor.update(&mut cx, |editor, cx| {
             assert_eq!(
                 editor.text(cx),
-                "Lorem @file dir/a/one.txt Ipsum @file dir/b/seven.txt\n@"
+                format!(
+                    "Lorem @file {} Ipsum @file {}\n@",
+                    path!("dir/a/one.txt"),
+                    path!("dir/b/seven.txt")
+                )
             );
             assert!(editor.has_visible_completions_menu());
             assert_eq!(
@@ -944,7 +966,12 @@ mod tests {
         editor.update(&mut cx, |editor, cx| {
             assert_eq!(
                 editor.text(cx),
-                "Lorem @file dir/a/one.txt Ipsum @file dir/b/seven.txt\n@file dir/b/six.txt"
+                format!(
+                    "Lorem @file {} Ipsum @file {}\n@file {}",
+                    path!("dir/a/one.txt"),
+                    path!("dir/b/seven.txt"),
+                    path!("dir/b/six.txt"),
+                )
             );
             assert!(!editor.has_visible_completions_menu());
             assert_eq!(
