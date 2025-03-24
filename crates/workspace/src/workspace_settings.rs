@@ -53,20 +53,20 @@ pub struct ActivePanelModifiers {
     /// When set to 1.0, the active pane has the same size as others,
     /// but when set to a larger value, the active pane takes up more space.
     ///
-    /// Default: 1.0
+    /// Default: `1.0`
     pub magnification: Option<f32>,
     /// Size of the border surrounding the active pane.
     /// When set to 0, the active pane doesn't have any border.
     /// The border is drawn inset.
     ///
-    /// Default: 0.0
+    /// Default: `0.0`
     pub border_size: Option<f32>,
     /// Opacity of inactive panels.
     /// When set to 1.0, the inactive panes have the same opacity as the active one.
     /// If set to 0, the inactive panes content will not be visible at all.
     /// Values are clamped to the [0.0, 1.0] range.
     ///
-    /// Default: 1.0
+    /// Default: `1.0`
     pub inactive_opacity: Option<f32>,
 }
 
