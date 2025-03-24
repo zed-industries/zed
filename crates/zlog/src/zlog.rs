@@ -405,12 +405,25 @@ pub mod scope_map {
 
     fn scope_alloc_from_scope_str(scope_str: &String) -> Option<ScopeAlloc> {
         let mut scope_buf = [""; SCOPE_DEPTH_MAX];
-        for (index, scope) in scope_str.split(SCOPE_STRING_SEP).enumerate() {
-            let Some(scope_ptr) = scope_buf.get_mut(index) else {
-                crate::warn!("Invalid scope key, too many nested scopes: '{scope_str}'");
-                return None;
+        let mut index = 0;
+        let mut scope_iter = scope_str.split(SCOPE_STRING_SEP);
+        while index < SCOPE_DEPTH_MAX {
+            let Some(scope) = scope_iter.next() else {
+                continue;
             };
-            *scope_ptr = scope;
+            if scope == "" {
+                continue;
+            }
+            scope_buf[index] = scope;
+        }
+        if index == 0 {
+            return None;
+        }
+        if let Some(_) = scope_iter.next() {
+            crate::warn!(
+                "Invalid scope key, too many nested scopes: '{scope_str}'. Max depth is {SCOPE_DEPTH_MAX}",
+            );
+            return None;
         }
         let scope = scope_buf.map(|s| s.to_string());
         return Some(scope);
