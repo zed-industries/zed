@@ -755,7 +755,7 @@ mod tests {
                     workspace.open_path(
                         ProjectPath {
                             worktree_id,
-                            path: PathBuf::from(path).into(),
+                            path: Path::new(path).into(),
                         },
                         None,
                         false,
