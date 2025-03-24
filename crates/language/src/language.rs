@@ -727,6 +727,11 @@ pub struct JsxTagAutoCloseConfig {
     /// The name of the node found within both opening and closing
     /// tags that describes the tag name
     pub tag_name_node_name: String,
+    /// Alternate Node names for tag names.
+    /// Specifically needed as TSX represents the name in `<Foo.Bar>`
+    /// as `member_expression` rather than `identifier` as usual
+    #[serde(default)]
+    pub tag_name_node_name_alternates: Vec<String>,
     /// Some grammars are smart enough to detect a closing tag
     /// that is not valid i.e. doesn't match it's corresponding
     /// opening tag or does not have a corresponding opening tag
