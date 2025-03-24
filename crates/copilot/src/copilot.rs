@@ -5,8 +5,6 @@ mod sign_in;
 
 use ::fs::Fs;
 use anyhow::{anyhow, Context as _, Result};
-use async_compression::futures::bufread::GzipDecoder;
-use async_tar::Archive;
 use collections::{HashMap, HashSet};
 use command_palette_hooks::CommandPaletteFilter;
 use futures::{channel::oneshot, future::Shared, Future, FutureExt, TryFutureExt};
@@ -1061,8 +1059,12 @@ async fn get_copilot_lsp(http: Arc<dyn HttpClient>) -> anyhow::Result<PathBuf> {
 
     ///Check for the latest copilot language server and download it if we haven't already
     async fn fetch_latest(http: Arc<dyn HttpClient>) -> anyhow::Result<PathBuf> {
-        let release =
-            get_release_by_tag_name("zed-industries/copilot", "v0.7.0", http.clone()).await?;
+        let release = get_release_by_tag_name(
+            "github/copilot-language-server-release",
+            "1.290.0",
+            http.clone(),
+        )
+        .await?;
 
         let version_dir = &paths::copilot_dir().join(format!("copilot-{}", release.tag_name));
 
@@ -1076,7 +1078,8 @@ async fn get_copilot_lsp(http: Arc<dyn HttpClient>) -> anyhow::Result<PathBuf> {
 
             let url = &release
                 .assets
-                .first()
+                .iter()
+                .find(|asset| asset.name.contains("copilot-language-server-js"))
                 .context("Github release for copilot contained no assets")?
                 .browser_download_url;
 
@@ -1084,9 +1087,18 @@ async fn get_copilot_lsp(http: Arc<dyn HttpClient>) -> anyhow::Result<PathBuf> {
                 .get(url, Default::default(), true)
                 .await
                 .context("error downloading copilot release")?;
-            let decompressed_bytes = GzipDecoder::new(BufReader::new(response.body_mut()));
-            let archive = Archive::new(decompressed_bytes);
-            archive.unpack(dist_dir).await?;
+
+            let mut body = Vec::new();
+            response
+                .body_mut()
+                .read_to_end(&mut body)
+                .await
+                .context("error reading latest release")?;
+
+            // Using the zip crate for extraction
+            let reader = std::io::Cursor::new(body);
+            let mut archive = zip::ZipArchive::new(reader)?;
+            archive.extract(&dist_dir)?;
 
             remove_matching(paths::copilot_dir(), |entry| entry != version_dir).await;
         }
