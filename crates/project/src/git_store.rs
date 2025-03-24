@@ -664,19 +664,27 @@ impl GitStore {
         mut right: GitStoreCheckpoint,
         cx: &App,
     ) -> Task<Result<bool>> {
-        let repositories_by_dot_git_abs_path = self
+        let repositories_by_work_dir_abs_path = self
             .repositories
             .values()
-            .map(|repo| (repo.read(cx).dot_git_abs_path.clone(), repo))
+            .map(|repo| {
+                (
+                    repo.read(cx)
+                        .repository_entry
+                        .work_directory_abs_path
+                        .clone(),
+                    repo,
+                )
+            })
             .collect::<HashMap<_, _>>();
 
         let mut tasks = Vec::new();
-        for (dot_git_abs_path, left_checkpoint) in left.checkpoints_by_dot_git_abs_path {
+        for (dot_git_abs_path, left_checkpoint) in left.checkpoints_by_work_dir_abs_path {
             if let Some(right_checkpoint) = right
-                .checkpoints_by_dot_git_abs_path
+                .checkpoints_by_work_dir_abs_path
                 .remove(&dot_git_abs_path)
             {
-                if let Some(repository) = repositories_by_dot_git_abs_path.get(&dot_git_abs_path) {
+                if let Some(repository) = repositories_by_work_dir_abs_path.get(&dot_git_abs_path) {
                     let compare = repository
                         .read(cx)
                         .compare_checkpoints(left_checkpoint, right_checkpoint);
@@ -698,11 +706,11 @@ impl GitStore {
         let repositories_by_dot_git_abs_path = self
             .repositories
             .values()
-            .map(|repo| (repo.read(cx).dot_git_abs_path.clone(), repo))
+            .map(|repo| (repo.read(cx).repository.clone(), repo))
             .collect::<HashMap<_, _>>();
 
         let mut tasks = Vec::new();
-        for (dot_git_abs_path, checkpoint) in checkpoint.checkpoints_by_dot_git_abs_path {
+        for (dot_git_abs_path, checkpoint) in checkpoint.checkpoints_by_work_dir_abs {
             if let Some(repository) = repositories_by_dot_git_abs_path.get(&dot_git_abs_path) {
                 let delete = repository.read(cx).delete_checkpoint(checkpoint);
                 tasks.push(async move { delete.await? });
