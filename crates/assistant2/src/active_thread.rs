@@ -339,8 +339,6 @@ impl ActiveThread {
         self.rendered_messages_by_id.remove(id);
     }
 
-    /// Renders the input of a scripting tool use to Markdown.
-
     fn render_tool_use_label_markdown(
         &mut self,
         tool_use_id: LanguageModelToolUseId,
