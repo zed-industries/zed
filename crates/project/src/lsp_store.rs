@@ -455,9 +455,8 @@ impl LocalLspStore {
                                     .to_file_path()
                                     .map(|file_path| this.get_buffer(&file_path, cx))
                                     .ok()
-                                    .flatten()
-                                    .map(|v| (server_id, v));
-                                adapter.process_diagnostics(&mut params, buffer);
+                                    .flatten();
+                                adapter.process_diagnostics(&mut params, server_id, buffer);
                             }
 
                             this.update_diagnostics(
@@ -5895,7 +5894,7 @@ impl LspStore {
         version: Option<i32>,
         diagnostics: Vec<DiagnosticEntry<Unclipped<PointUtf16>>>,
         cx: &mut Context<Self>,
-    ) -> Result<(), anyhow::Error> {
+    ) -> anyhow::Result<()> {
         self.merge_diagnostic_entries(server_id, abs_path, version, diagnostics, |_| false, cx)
     }
 
@@ -5935,9 +5934,8 @@ impl LspStore {
                         diag.iter().filter(|v| filter(&v.diagnostic)).map(|v| {
                             let start = Unclipped(v.range.start.to_point_utf16(&snapshot));
                             let end = Unclipped(v.range.end.to_point_utf16(&snapshot));
-                            let range = start..end;
                             DiagnosticEntry {
-                                range,
+                                range: start..end,
                                 diagnostic: v.diagnostic.clone(),
                             }
                         })

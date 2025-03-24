@@ -296,9 +296,10 @@ impl super::LspAdapter for CLspAdapter {
     fn process_diagnostics(
         &self,
         params: &mut lsp::PublishDiagnosticsParams,
-        buffer_access: Option<(LanguageServerId, &'_ Buffer)>,
+        server_id: LanguageServerId,
+        buffer_access: Option<&'_ Buffer>,
     ) {
-        if let Some((server_id, buffer)) = buffer_access {
+        if let Some(buffer) = buffer_access {
             let snapshot = buffer.snapshot();
             let inactive_regions = buffer
                 .get_diagnostics(server_id)
@@ -306,7 +307,6 @@ impl super::LspAdapter for CLspAdapter {
                 .flat_map(|v| v.iter())
                 .filter(|diag| clangd_ext::is_inactive_region(&diag.diagnostic))
                 .map(move |diag| {
-                    // try to reconstruct inactiveRegion diagnostic messages...
                     let range =
                         language::range_to_lsp(diag.range.to_point_utf16(&snapshot)).unwrap();
                     let mut tags = vec![];

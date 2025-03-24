@@ -228,10 +228,11 @@ impl CachedLspAdapter {
     pub fn process_diagnostics(
         &self,
         params: &mut lsp::PublishDiagnosticsParams,
-        existing_diagnostics: Option<(LanguageServerId, &'_ Buffer)>,
+        server_id: LanguageServerId,
+        existing_diagnostics: Option<&'_ Buffer>,
     ) {
         self.adapter
-            .process_diagnostics(params, existing_diagnostics)
+            .process_diagnostics(params, server_id, existing_diagnostics)
     }
 
     pub async fn process_completions(&self, completion_items: &mut [lsp::CompletionItem]) {
@@ -450,7 +451,8 @@ pub trait LspAdapter: 'static + Send + Sync {
     fn process_diagnostics(
         &self,
         _: &mut lsp::PublishDiagnosticsParams,
-        _: Option<(LanguageServerId, &'_ Buffer)>,
+        _: LanguageServerId,
+        _: Option<&'_ Buffer>,
     ) {
     }
 
@@ -2025,13 +2027,6 @@ impl LspAdapter for FakeLspAdapter {
         _: &dyn LspAdapterDelegate,
     ) -> Option<LanguageServerBinary> {
         unreachable!();
-    }
-
-    fn process_diagnostics(
-        &self,
-        _: &mut lsp::PublishDiagnosticsParams,
-        _: Option<(LanguageServerId, &'_ Buffer)>,
-    ) {
     }
 
     fn disk_based_diagnostic_sources(&self) -> Vec<String> {
