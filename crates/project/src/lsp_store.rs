@@ -40,7 +40,7 @@ use language::{
     point_to_lsp,
     proto::{deserialize_anchor, deserialize_version, serialize_anchor, serialize_version},
     range_from_lsp, range_to_lsp, Bias, BinaryStatus, Buffer, BufferSnapshot, CachedLspAdapter,
-    CodeLabel, Diagnostic, DiagnosticEntry, DiagnosticSet, Diff, File as _, Language,
+    CodeLabel, Diagnostic, DiagnosticEntry, DiagnosticSet, Diff, File as _, Language, LanguageName,
     LanguageRegistry, LanguageToolchainStore, LocalFile, LspAdapter, LspAdapterDelegate, Patch,
     PointUtf16, TextBufferSnapshot, ToOffset, ToPointUtf16, Transaction, Unclipped,
 };
@@ -3255,19 +3255,19 @@ impl LocalLspStore {
             let Some(local) = this.as_local() else {
                 return Ok::<Vec<Arc<CachedLspAdapter>>, anyhow::Error>(Vec::new());
             };
-            let mut others: Vec<Arc<CachedLspAdapter>> = Vec::new();
-            for (_, state) in &local.language_servers {
-                if let LanguageServerState::Running {
-                    adapter: other_adapter,
-                    ..
-                } = state
-                {
-                    if other_adapter.name == adapter.name() {
-                        continue;
-                    }
-                    others.push(other_adapter.clone());
-                }
-            }
+            let mut others = local
+                .languages
+                .language_names()
+                .into_iter()
+                .flat_map(|language_name| {
+                    local
+                        .languages
+                        .lsp_adapters(&LanguageName::new(&language_name))
+                })
+                .filter(|other_adapter| other_adapter.name != adapter.name())
+                .collect::<Vec<_>>();
+            others.sort_by(|a, b| a.name.0.cmp(&b.name.0));
+            others.dedup_by(|a, b| a.name.0 == b.name.0);
             Ok(others)
         })??;
 

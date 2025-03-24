@@ -372,7 +372,7 @@ impl Extension {
         resource: Resource<Arc<dyn WorktreeDelegate>>,
     ) -> Result<Result<Option<String>, String>> {
         match self {
-            Extension::V030(ext) => {
+            Extension::V040(ext) => {
                 ext.call_additional_language_server_workspace_configuration(
                     store,
                     &language_server_id.0,
@@ -380,7 +380,8 @@ impl Extension {
                 )
                 .await
             }
-            Extension::V020(_)
+            Extension::V030(_)
+            | Extension::V020(_)
             | Extension::V010(_)
             | Extension::V006(_)
             | Extension::V004(_)
