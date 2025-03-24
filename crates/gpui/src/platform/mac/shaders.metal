@@ -19,12 +19,13 @@ float2 to_tile_position(float2 unit_vertex, AtlasTile tile,
 float4 distance_from_clip_rect(float2 unit_vertex, Bounds_ScaledPixels bounds,
                                Bounds_ScaledPixels clip_bounds);
 float corner_dash_velocity(float dv1, float dv2);
-float dash_alpha(float t, float period, float length, float dash_velocity);
+float dash_alpha(float t, float period, float length, float dash_velocity,
+                 float antialias_threshold);
 float quarter_ellipse_sdf(float2 point, float2 radii);
 float pick_corner_radius(float2 center_to_point, Corners_ScaledPixels corner_radii);
 float quad_sdf(float2 point, Bounds_ScaledPixels bounds,
                Corners_ScaledPixels corner_radii);
-float quad_sdf_impl(float2 center_to_point, float2 half_size, float corner_radius);
+float quad_sdf_impl(float2 center_to_point, float corner_radius);
 float gaussian(float x, float sigma);
 float2 erf(float2 x);
 float blur_along_x(float x, float y, float sigma, float corner,
