@@ -2147,8 +2147,8 @@ async fn test_rename_work_directory(cx: &mut TestAppContext) {
         let tree = tree.read(cx);
         let repo = tree.repositories.iter().next().unwrap();
         assert_eq!(
-            repo.work_directory,
-            WorkDirectory::in_project("projects/project1")
+            repo.work_directory_abs_path,
+            root_path.join("projects/project1")
         );
         assert_eq!(
             repo.status_for_path(&"projects/project1/a".into())
@@ -2173,16 +2173,20 @@ async fn test_rename_work_directory(cx: &mut TestAppContext) {
         let tree = tree.read(cx);
         let repo = tree.repositories.iter().next().unwrap();
         assert_eq!(
-            repo.work_directory,
-            WorkDirectory::in_project("projects/project2")
+            repo.work_directory_abs_path,
+            root_path.join("projects/project2")
         );
         assert_eq!(
-            tree.status_for_file(Path::new("projects/project2/a")),
-            Some(StatusCode::Modified.worktree()),
+            repo.status_for_path(&"projects/project2/a".into())
+                .unwrap()
+                .status,
+            StatusCode::Modified.worktree(),
         );
         assert_eq!(
-            tree.status_for_file(Path::new("projects/project2/b")),
-            Some(FileStatus::Untracked),
+            repo.status_for_path(&"projects/project2/b".into())
+                .unwrap()
+                .status,
+            FileStatus::Untracked,
         );
     });
 }
@@ -2223,7 +2227,7 @@ async fn test_home_dir_as_git_repository(cx: &mut TestAppContext) {
     tree.read_with(cx, |tree, _cx| {
         let tree = tree.as_local().unwrap();
 
-        let repo = tree.repository_for_path(path!("a.txt").as_ref());
+        let repo = tree.local_repo_for_path(path!("a.txt").as_ref());
         assert!(repo.is_none());
     });
 
@@ -2293,13 +2297,13 @@ async fn test_git_repository_for_path(cx: &mut TestAppContext) {
     tree.read_with(cx, |tree, _cx| {
         let tree = tree.as_local().unwrap();
 
-        assert!(tree.repository_for_path("c.txt".as_ref()).is_none());
+        assert!(tree.local_repo_for_path("c.txt".as_ref()).is_none());
 
-        let repo = tree.repository_for_path("dir1/src/b.txt".as_ref()).unwrap();
+        let repo = tree.local_repo_for_path("dir1/src/b.txt".as_ref()).unwrap();
         assert_eq!(repo.work_directory, WorkDirectory::in_project("dir1"));
 
         let repo = tree
-            .repository_for_path("dir1/deps/dep1/src/a.txt".as_ref())
+            .local_repo_for_path("dir1/deps/dep1/src/a.txt".as_ref())
             .unwrap();
         assert_eq!(
             repo.work_directory,
@@ -2313,7 +2317,7 @@ async fn test_git_repository_for_path(cx: &mut TestAppContext) {
             .map(|(entry, repo)| {
                 (
                     entry.path.as_ref(),
-                    repo.map(|repo| repo.work_directory.clone()),
+                    repo.map(|repo| repo.work_directory_abs_path.clone()),
                 )
             })
             .collect::<Vec<_>>();
@@ -2324,12 +2328,9 @@ async fn test_git_repository_for_path(cx: &mut TestAppContext) {
                 (Path::new("c.txt"), None),
                 (
                     Path::new("dir1/deps/dep1/src/a.txt"),
-                    Some(WorkDirectory::in_project("dir1/deps/dep1"))
+                    Some(root.path().join("dir1/deps/dep1")),
                 ),
-                (
-                    Path::new("dir1/src/b.txt"),
-                    Some(WorkDirectory::in_project("dir1"))
-                ),
+                (Path::new("dir1/src/b.txt"), Some(root.path().join("dir1"))),
             ]
         );
     });
@@ -2363,7 +2364,7 @@ async fn test_git_repository_for_path(cx: &mut TestAppContext) {
         let tree = tree.as_local().unwrap();
 
         assert!(tree
-            .repository_for_path("dir1/src/b.txt".as_ref())
+            .local_repo_for_path("dir1/src/b.txt".as_ref())
             .is_none());
     });
 }
@@ -2423,6 +2424,7 @@ async fn test_file_status(cx: &mut TestAppContext) {
     )
     .await
     .unwrap();
+    let root_path = root.path();
 
     tree.flush_fs_events(cx).await;
     cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
@@ -2435,17 +2437,23 @@ async fn test_file_status(cx: &mut TestAppContext) {
         assert_eq!(snapshot.repositories.iter().count(), 1);
         let repo_entry = snapshot.repositories.iter().next().unwrap();
         assert_eq!(
-            repo_entry.work_directory,
-            WorkDirectory::in_project("project")
+            repo_entry.work_directory_abs_path,
+            root_path.join("project")
         );
 
         assert_eq!(
-            snapshot.status_for_file(project_path.join(B_TXT)),
-            Some(FileStatus::Untracked),
+            repo_entry
+                .status_for_path(&project_path.join(B_TXT).into())
+                .unwrap()
+                .status,
+            FileStatus::Untracked,
         );
         assert_eq!(
-            snapshot.status_for_file(project_path.join(F_TXT)),
-            Some(FileStatus::Untracked),
+            repo_entry
+                .status_for_path(&project_path.join(F_TXT).into())
+                .unwrap()
+                .status,
+            FileStatus::Untracked,
         );
     });
 
@@ -2457,9 +2465,14 @@ async fn test_file_status(cx: &mut TestAppContext) {
     // The worktree detects that the file's git status has changed.
     tree.read_with(cx, |tree, _cx| {
         let snapshot = tree.snapshot();
+        assert_eq!(snapshot.repositories.iter().count(), 1);
+        let repo_entry = snapshot.repositories.iter().next().unwrap();
         assert_eq!(
-            snapshot.status_for_file(project_path.join(A_TXT)),
-            Some(StatusCode::Modified.worktree()),
+            repo_entry
+                .status_for_path(&project_path.join(A_TXT).into())
+                .unwrap()
+                .status,
+            StatusCode::Modified.worktree(),
         );
     });
 
@@ -2473,12 +2486,23 @@ async fn test_file_status(cx: &mut TestAppContext) {
     // The worktree detects that the files' git status have changed.
     tree.read_with(cx, |tree, _cx| {
         let snapshot = tree.snapshot();
+        assert_eq!(snapshot.repositories.iter().count(), 1);
+        let repo_entry = snapshot.repositories.iter().next().unwrap();
         assert_eq!(
-            snapshot.status_for_file(project_path.join(F_TXT)),
-            Some(FileStatus::Untracked),
+            repo_entry
+                .status_for_path(&project_path.join(F_TXT).into())
+                .unwrap()
+                .status,
+            FileStatus::Untracked,
         );
-        assert_eq!(snapshot.status_for_file(project_path.join(B_TXT)), None);
-        assert_eq!(snapshot.status_for_file(project_path.join(A_TXT)), None);
+        assert_eq!(
+            repo_entry.status_for_path(&project_path.join(B_TXT).into()),
+            None
+        );
+        assert_eq!(
+            repo_entry.status_for_path(&project_path.join(A_TXT).into()),
+            None
+        );
     });
 
     // Modify files in the working copy and perform git operations on other files.
@@ -2493,15 +2517,26 @@ async fn test_file_status(cx: &mut TestAppContext) {
     // Check that more complex repo changes are tracked
     tree.read_with(cx, |tree, _cx| {
         let snapshot = tree.snapshot();
+        assert_eq!(snapshot.repositories.iter().count(), 1);
+        let repo_entry = snapshot.repositories.iter().next().unwrap();
 
-        assert_eq!(snapshot.status_for_file(project_path.join(A_TXT)), None);
         assert_eq!(
-            snapshot.status_for_file(project_path.join(B_TXT)),
-            Some(FileStatus::Untracked),
+            repo_entry.status_for_path(&project_path.join(A_TXT).into()),
+            None
         );
         assert_eq!(
-            snapshot.status_for_file(project_path.join(E_TXT)),
-            Some(StatusCode::Modified.worktree()),
+            repo_entry
+                .status_for_path(&project_path.join(B_TXT).into())
+                .unwrap()
+                .status,
+            FileStatus::Untracked,
+        );
+        assert_eq!(
+            repo_entry
+                .status_for_path(&project_path.join(E_TXT).into())
+                .unwrap()
+                .status,
+            StatusCode::Modified.worktree(),
         );
     });
 
@@ -2534,9 +2569,19 @@ async fn test_file_status(cx: &mut TestAppContext) {
 
     tree.read_with(cx, |tree, _cx| {
         let snapshot = tree.snapshot();
+        assert_eq!(snapshot.repositories.iter().count(), 1);
+        let repo_entry = snapshot.repositories.iter().next().unwrap();
         assert_eq!(
-            snapshot.status_for_file(project_path.join(renamed_dir_name).join(RENAMED_FILE)),
-            Some(FileStatus::Untracked),
+            repo_entry
+                .status_for_path(
+                    &project_path
+                        .join(renamed_dir_name)
+                        .join(RENAMED_FILE)
+                        .into()
+                )
+                .unwrap()
+                .status,
+            FileStatus::Untracked,
         );
     });
 
@@ -2553,14 +2598,20 @@ async fn test_file_status(cx: &mut TestAppContext) {
 
     tree.read_with(cx, |tree, _cx| {
         let snapshot = tree.snapshot();
+        assert_eq!(snapshot.repositories.iter().count(), 1);
+        let repo_entry = snapshot.repositories.iter().next().unwrap();
 
         assert_eq!(
-            snapshot.status_for_file(
-                project_path
-                    .join(Path::new(renamed_dir_name))
-                    .join(RENAMED_FILE)
-            ),
-            Some(FileStatus::Untracked),
+            repo_entry
+                .status_for_path(
+                    &project_path
+                        .join(Path::new(renamed_dir_name))
+                        .join(RENAMED_FILE)
+                        .into()
+                )
+                .unwrap()
+                .status,
+            FileStatus::Untracked,
         );
     });
 }
@@ -2788,20 +2839,12 @@ async fn test_repository_subfolder_git_status(cx: &mut TestAppContext) {
         let snapshot = tree.snapshot();
         assert_eq!(snapshot.repositories.iter().count(), 1);
         let repo = snapshot.repositories.iter().next().unwrap();
-        assert_eq!(
-            repo.work_directory.canonicalize(),
-            WorkDirectory::AboveProject {
-                absolute_path: Arc::from(root.path().join("my-repo").canonicalize().unwrap()),
-                location_in_repo: Arc::from(Path::new(util::separator!(
-                    "sub-folder-1/sub-folder-2"
-                )))
-            }
-        );
+        assert_eq!(repo.work_directory_abs_path, root.path().join("my-repo"),);
 
-        assert_eq!(snapshot.status_for_file("c.txt"), None);
+        assert_eq!(repo.status_for_path(&"c.txt".into()), None);
         assert_eq!(
-            snapshot.status_for_file("d/e.txt"),
-            Some(FileStatus::Untracked)
+            repo.status_for_path(&"d/e.txt".into()).unwrap().status,
+            FileStatus::Untracked
         );
     });
 
@@ -2815,11 +2858,14 @@ async fn test_repository_subfolder_git_status(cx: &mut TestAppContext) {
 
     tree.read_with(cx, |tree, _cx| {
         let snapshot = tree.snapshot();
+        let repos = snapshot.repositories().iter().cloned().collect::<Vec<_>>();
+        assert_eq!(repos.len(), 1);
+        let repo_entry = repos.into_iter().next().unwrap();
 
         assert!(snapshot.repositories.iter().next().is_some());
 
-        assert_eq!(snapshot.status_for_file("c.txt"), None);
-        assert_eq!(snapshot.status_for_file("d/e.txt"), None);
+        assert_eq!(repo_entry.status_for_path(&"c.txt".into()), None);
+        assert_eq!(repo_entry.status_for_path(&"d/e.txt".into()), None);
     });
 }
 
@@ -3132,7 +3178,12 @@ fn assert_entry_git_state(
     is_ignored: bool,
 ) {
     let entry = tree.entry_for_path(path).expect("entry {path} not found");
-    let status = tree.status_for_file(Path::new(path));
+    let repos = tree.repositories().iter().cloned().collect::<Vec<_>>();
+    assert_eq!(repos.len(), 1);
+    let repo_entry = repos.into_iter().next().unwrap();
+    let status = repo_entry
+        .status_for_path(&path.into())
+        .map(|entry| entry.status);
     let expected = index_status.map(|index_status| {
         TrackedStatus {
             index_status,

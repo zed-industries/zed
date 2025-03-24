@@ -2,6 +2,7 @@ use git::status::GitSummary;
 use std::{ops::Deref, path::Path};
 use sum_tree::Cursor;
 use text::Bias;
+use util::ResultExt as _;
 use worktree::{Entry, PathProgress, PathTarget, RepositoryEntry, StatusEntry, Traversal};
 
 /// Walks the worktree entries and their associated git statuses.
@@ -32,7 +33,10 @@ impl<'a> GitTraversal<'a> {
             return;
         };
 
-        let Some(repo) = self.traversal.snapshot().repository_for_path(&entry.path) else {
+        let Some(abs_path) = self.traversal.snapshot().absolutize(&entry.path).log_err() else {
+            return;
+        };
+        let Some(repo) = self.traversal.snapshot().repository_for_abs_path(&abs_path) else {
             self.repo_location = None;
             return;
         };
@@ -42,8 +46,8 @@ impl<'a> GitTraversal<'a> {
             || self
                 .repo_location
                 .as_ref()
-                .map(|(prev_repo, _)| &prev_repo.work_directory)
-                != Some(&repo.work_directory)
+                .map(|(prev_repo, _)| prev_repo.work_directory_id)
+                != Some(repo.work_directory_id)
         {
             self.repo_location = Some((repo, repo.statuses_by_path.cursor::<PathProgress>(&())));
         }
@@ -52,7 +56,7 @@ impl<'a> GitTraversal<'a> {
             return;
         };
 
-        let repo_path = repo.relativize(&entry.path).unwrap();
+        let repo_path = repo.relativize_abs_path(&abs_path).unwrap();
 
         if entry.is_dir() {
             let mut statuses = statuses.clone();

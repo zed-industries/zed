@@ -3022,11 +3022,20 @@ async fn test_git_status_sync(
         cx: &App,
     ) {
         let file = file.as_ref();
-        let worktrees = project.visible_worktrees(cx).collect::<Vec<_>>();
-        assert_eq!(worktrees.len(), 1);
-        let worktree = worktrees[0].clone();
-        let snapshot = worktree.read(cx).snapshot();
-        assert_eq!(snapshot.status_for_file(file), status);
+        let repos = project
+            .repositories(cx)
+            .values()
+            .cloned()
+            .collect::<Vec<_>>();
+        assert_eq!(repos.len(), 1);
+        let repo = repos.into_iter().next().unwrap();
+        assert_eq!(
+            repo.read(cx)
+                .repository_entry
+                .status_for_path(&file.into())
+                .map(|entry| entry.status),
+            status
+        );
     }
 
     project_local.read_with(cx_a, |project, cx| {

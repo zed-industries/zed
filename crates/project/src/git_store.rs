@@ -53,7 +53,7 @@ use text::BufferId;
 use util::{debug_panic, maybe, ResultExt};
 use worktree::{
     proto_to_branch, File, PathKey, ProjectEntryId, RepositoryEntry, StatusEntry,
-    UpdatedGitRepositoriesSet, WorkDirectory, Worktree,
+    UpdatedGitRepositoriesSet, Worktree,
 };
 
 pub struct GitStore {
@@ -734,13 +734,17 @@ impl GitStore {
 
         match file.worktree.read(cx) {
             Worktree::Local(worktree) => {
-                let worktree_path = worktree.abs_path().clone();
-                let Some((repo_entry, repo)) =
-                    worktree.repository_for_path(&file.path).and_then(|entry| {
-                        let repo = worktree.get_local_repo(&entry)?.repo().clone();
-                        Some((entry, repo))
-                    })
-                else {
+                let repository = self
+                    .repository_and_path_for_project_path(
+                        &(worktree.id(), file.path.clone()).into(),
+                        cx,
+                    )
+                    .map(|(repository, _)| repository);
+                let Some((local_repo_entry, repo_entry)) = repository.and_then(|repository| {
+                    let repository = repository.read(cx);
+                    let repo_entry = repository.repository_entry.clone();
+                    Some((worktree.get_local_repo(&repo_entry)?, repo_entry))
+                }) else {
                     // If we're not in a Git repo, check whether this is a Rust source
                     // file in the Cargo registry (presumably opened with go-to-definition
                     // from a normal Rust file). If so, we can put together a permalink
@@ -751,7 +755,9 @@ impl GitStore {
                     {
                         return Task::ready(Err(anyhow!("no permalink available")));
                     }
-                    let file_path = worktree_path.join(&file.path);
+                    let Some(file_path) = worktree.absolutize(&file.path).ok() else {
+                        return Task::ready(Err(anyhow!("no permalink available")));
+                    };
                     return cx.spawn(async move |cx| {
                         let provider_registry =
                             cx.update(GitHostingProviderRegistry::default_global)?;
@@ -760,7 +766,7 @@ impl GitStore {
                     });
                 };
 
-                let path = match repo_entry.relativize(&file.path) {
+                let path = match local_repo_entry.relativize(&file.path) {
                     Ok(RepoPath(path)) => path,
                     Err(e) => return Task::ready(Err(e)),
                 };
@@ -772,6 +778,7 @@ impl GitStore {
                     .unwrap_or("origin")
                     .to_string();
 
+                let repo = local_repo_entry.repo().clone();
                 cx.spawn(async move |cx| {
                     let origin_url = repo
                         .remote_url(&remote)
@@ -1304,21 +1311,15 @@ impl GitStore {
         path: &ProjectPath,
         cx: &App,
     ) -> Option<(Entity<Repository>, RepoPath)> {
-        let mut result: Option<(Entity<Repository>, RepoPath)> = None;
-        for repo_handle in self.repositories.values() {
-            let repo = repo_handle.read(cx);
-            if repo.worktree_id == path.worktree_id {
-                if let Ok(relative_path) = repo.repository_entry.relativize(&path.path) {
-                    if result
-                        .as_ref()
-                        .is_none_or(|(result, _)| !repo.contains_sub_repo(result, cx))
-                    {
-                        result = Some((repo_handle.clone(), relative_path))
-                    }
-                }
-            }
-        }
-        result
+        let abs_path = self.worktree_store.read(cx).absolutize(path, cx)?;
+        self.repositories
+            .values()
+            .filter_map(|repo_handle| {
+                let repo = repo_handle.read(cx);
+                let relative_path = repo.repository_entry.relativize_abs_path(&abs_path)?;
+                Some((repo_handle.clone(), relative_path))
+            })
+            .min_by_key(|(_, relative_path)| relative_path.clone())
     }
 
     fn spawn_git_worker(cx: &mut Context<GitStore>) -> mpsc::UnboundedSender<GitJob> {
@@ -1390,34 +1391,6 @@ impl GitStore {
         }
     }
 
-    fn worktree_for_repository_path(
-        &self,
-        abs_path: &Path,
-        cx: &App,
-    ) -> Option<(Entity<Worktree>, WorkDirectory)> {
-        let worktree_store = self.worktree_store.read(cx);
-        if let Some((worktree, relative_path)) = worktree_store.find_worktree(abs_path, cx) {
-            return Some((
-                worktree,
-                WorkDirectory::InProject {
-                    relative_path: relative_path.into(),
-                },
-            ));
-        }
-
-        worktree_store.worktrees().find_map(|worktree| {
-            let worktree_path = worktree.read(cx).abs_path();
-            let relative_path = worktree_path.strip_prefix(abs_path).ok()?;
-            Some((
-                worktree,
-                WorkDirectory::AboveProject {
-                    absolute_path: abs_path.into(),
-                    location_in_repo: relative_path.into(),
-                },
-            ))
-        })
-    }
-
     async fn handle_update_repository(
         this: Entity<Self>,
         envelope: TypedEnvelope<proto::UpdateRepository>,
@@ -1431,11 +1404,6 @@ impl GitStore {
                 .repositories
                 .entry(work_directory_id)
                 .or_insert_with(|| {
-                    let worktree = this
-                        .worktree_store
-                        .read(cx)
-                        .find_worktree(&update.abs_path, cx);
-
                     let git_store = cx.weak_entity();
 
                     cx.new(|_| Repository {
@@ -1445,17 +1413,10 @@ impl GitStore {
                         worktree_id: todo!(),
                         repository_entry: RepositoryEntry {
                             work_directory_id,
-                            // When syncing repository entries from a peer, we don't need
-                            // the location_in_repo field, since git operations don't happen locally
-                            // anyway.
-                            // TODO can this just be none in the remote case?
-                            //work_directory: WorkDirectory::InProject {
-                            //    relative_path: work_dir_entry.path.clone(),
-                            //},
                             current_branch: None,
                             statuses_by_path: Default::default(),
                             current_merge_conflicts: Default::default(),
-                            work_directory_abs_path: update.abs_path.into(),
+                            work_directory_abs_path: update.abs_path.clone().into(),
                             worktree_scan_id: update.scan_id as usize,
                         },
                         merge_message: None,
@@ -1467,7 +1428,7 @@ impl GitStore {
                     })
                 });
 
-            repo.update(cx, |repo, _cx| repo.apply_remote_update(envelope.payload));
+            repo.update(cx, |repo, _cx| repo.apply_remote_update(update));
             Ok(())
         })?
     }
@@ -2544,23 +2505,15 @@ impl Repository {
         result_rx
     }
 
+    /// This is the name that will be displayed in the repository selector for this repository.
     pub fn display_name(&self, project: &Project, cx: &App) -> SharedString {
-        maybe!({
-            let project_path = self.repo_path_to_project_path(&"".into())?;
-            let worktree_name = project
-                .worktree_for_id(project_path.worktree_id, cx)?
-                .read(cx)
-                .root_name();
-
-            let mut path = PathBuf::new();
-            path = path.join(worktree_name);
-            if project_path.path.components().count() > 0 {
-                path = path.join(project_path.path);
-            }
-            Some(path.to_string_lossy().to_string())
-        })
-        .unwrap_or_else(|| self.repository_entry.work_directory.display_name())
-        .into()
+        self.repository_entry
+            .work_directory_abs_path
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_string()
+            .into()
     }
 
     pub fn set_as_active_repository(&self, cx: &mut Context<Self>) {
@@ -2591,13 +2544,22 @@ impl Repository {
             .contains(&path)
     }
 
-    pub fn repo_path_to_project_path(&self, path: &RepoPath) -> Option<ProjectPath> {
-        let path = self.repository_entry.try_unrelativize(path)?;
-        Some((self.worktree_id, path).into())
+    pub fn repo_path_to_project_path(&self, path: &RepoPath, cx: &App) -> Option<ProjectPath> {
+        let git_store = self.git_store.upgrade()?;
+        let worktree_store = git_store.read(cx).worktree_store.read(cx);
+        let abs_path = self.repository_entry.work_directory_abs_path.join(&path.0);
+        let (worktree, relative_path) = worktree_store.find_worktree(abs_path, cx)?;
+        Some(ProjectPath {
+            worktree_id: worktree.read(cx).id(),
+            path: relative_path.into(),
+        })
     }
 
-    pub fn project_path_to_repo_path(&self, path: &ProjectPath) -> Option<RepoPath> {
-        self.worktree_id_path_to_repo_path(path.worktree_id, &path.path)
+    pub fn project_path_to_repo_path(&self, path: &ProjectPath, cx: &App) -> Option<RepoPath> {
+        let git_store = self.git_store.upgrade()?;
+        let worktree_store = git_store.read(cx).worktree_store.read(cx);
+        let abs_path = worktree_store.absolutize(path, cx)?;
+        self.repository_entry.relativize_abs_path(&abs_path)
     }
 
     pub fn contains_sub_repo(&self, other: &Entity<Self>, cx: &App) -> bool {
@@ -2606,17 +2568,6 @@ impl Repository {
             .repository_entry
             .work_directory_abs_path
             .starts_with(&self.repository_entry.work_directory_abs_path)
-    }
-
-    pub fn worktree_id_path_to_repo_path(
-        &self,
-        worktree_id: WorktreeId,
-        path: &Path,
-    ) -> Option<RepoPath> {
-        if worktree_id != self.worktree_id {
-            return None;
-        }
-        self.repository_entry.relativize(path).log_err()
     }
 
     pub fn local_repository(&self) -> Option<Arc<dyn GitRepository>> {
@@ -2824,10 +2775,9 @@ impl Repository {
         if let Some(buffer_store) = self.buffer_store(cx) {
             buffer_store.update(cx, |buffer_store, cx| {
                 for path in &entries {
-                    let Some(path) = self.repository_entry.try_unrelativize(path) else {
+                    let Some(project_path) = self.repo_path_to_project_path(path, cx) else {
                         continue;
                     };
-                    let project_path = (self.worktree_id, path).into();
                     if let Some(buffer) = buffer_store.get_by_path(&project_path, cx) {
                         if buffer
                             .read(cx)
@@ -2895,10 +2845,9 @@ impl Repository {
         if let Some(buffer_store) = self.buffer_store(cx) {
             buffer_store.update(cx, |buffer_store, cx| {
                 for path in &entries {
-                    let Some(path) = self.repository_entry.try_unrelativize(path) else {
+                    let Some(project_path) = self.repo_path_to_project_path(path, cx) else {
                         continue;
                     };
-                    let project_path = (self.worktree_id, path).into();
                     if let Some(buffer) = buffer_store.get_by_path(&project_path, cx) {
                         if buffer
                             .read(cx)

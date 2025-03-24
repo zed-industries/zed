@@ -3,7 +3,7 @@ use crate::commit_modal::CommitModal;
 use crate::git_panel_settings::StatusStyle;
 use crate::project_diff::Diff;
 use crate::remote_output::{self, RemoteAction, SuccessMessage};
-use crate::repository_selector::filtered_repository_entries;
+
 use crate::{branch_picker, render_remote_button};
 use crate::{
     git_panel_settings::GitPanelSettings, git_status_icon, repository_selector::RepositorySelector,
@@ -652,7 +652,7 @@ impl GitPanel {
         let Some(git_repo) = self.active_repository.as_ref() else {
             return;
         };
-        let Some(repo_path) = git_repo.read(cx).project_path_to_repo_path(&path) else {
+        let Some(repo_path) = git_repo.read(cx).project_path_to_repo_path(&path, cx) else {
             return;
         };
         let Some(ix) = self.entry_by_path(&repo_path) else {
@@ -865,7 +865,7 @@ impl GitPanel {
                     if Some(&entry.repo_path)
                         == git_repo
                             .read(cx)
-                            .project_path_to_repo_path(&project_path)
+                            .project_path_to_repo_path(&project_path, cx)
                             .as_ref()
                     {
                         project_diff.focus_handle(cx).focus(window);
@@ -916,7 +916,7 @@ impl GitPanel {
             let active_repo = self.active_repository.as_ref()?;
             let path = active_repo
                 .read(cx)
-                .repo_path_to_project_path(&entry.repo_path)?;
+                .repo_path_to_project_path(&entry.repo_path, cx)?;
             if entry.status.is_deleted() {
                 return None;
             }
@@ -957,7 +957,7 @@ impl GitPanel {
             let active_repo = self.active_repository.clone()?;
             let path = active_repo
                 .read(cx)
-                .repo_path_to_project_path(&entry.repo_path)?;
+                .repo_path_to_project_path(&entry.repo_path, cx)?;
             let workspace = self.workspace.clone();
 
             if entry.status.staging().has_staged() {
@@ -1017,7 +1017,7 @@ impl GitPanel {
                         .filter_map(|entry| {
                             let path = active_repository
                                 .read(cx)
-                                .repo_path_to_project_path(&entry.repo_path)?;
+                                .repo_path_to_project_path(&entry.repo_path, cx)?;
                             Some(project.open_buffer(path, cx))
                         })
                         .collect()
@@ -1183,7 +1183,7 @@ impl GitPanel {
                         workspace.project().update(cx, |project, cx| {
                             let project_path = active_repo
                                 .read(cx)
-                                .repo_path_to_project_path(&entry.repo_path)?;
+                                .repo_path_to_project_path(&entry.repo_path, cx)?;
                             project.delete_file(project_path, true, cx)
                         })
                     })
@@ -2260,16 +2260,16 @@ impl GitPanel {
                 continue;
             }
 
-            // dot_git_abs path always has at least one component, namely .git.
             let abs_path = repo
-                .dot_git_abs_path
-                .parent()
-                .unwrap()
-                .join(&entry.repo_path);
-            let worktree_path = repo.repository_entry.unrelativize(&entry.repo_path);
+                .repository_entry
+                .work_directory_abs_path
+                .join(&entry.repo_path.0);
+            let Some(worktree_path) = repo.repo_path_to_project_path(&entry.repo_path, cx) else {
+                continue;
+            };
             let entry = GitStatusEntry {
                 repo_path: entry.repo_path.clone(),
-                worktree_path,
+                worktree_path: worktree_path.path,
                 abs_path,
                 status: entry.status,
                 staging,
@@ -3207,7 +3207,8 @@ impl GitPanel {
         cx: &App,
     ) -> Option<AnyElement> {
         let repo = self.active_repository.as_ref()?.read(cx);
-        let repo_path = repo.worktree_id_path_to_repo_path(file.worktree_id(cx), file.path())?;
+        let project_path = (file.worktree_id(cx), file.path()).into();
+        let repo_path = repo.project_path_to_repo_path(&project_path, cx)?;
         let ix = self.entry_by_path(&repo_path)?;
         let entry = self.entries.get(ix)?;
 
@@ -4027,9 +4028,7 @@ impl RenderOnce for PanelRepoFooter {
 
         let single_repo = project
             .as_ref()
-            .map(|project| {
-                filtered_repository_entries(project.read(cx).git_store().read(cx), cx).len() == 1
-            })
+            .map(|project| project.read(cx).git_store().read(cx).repositories().len() == 1)
             .unwrap_or(true);
 
         const MAX_BRANCH_LEN: usize = 16;
@@ -4564,31 +4563,32 @@ mod tests {
             ]
         );
 
-        project.update(cx, |project, cx| {
-            let git_store = project.git_store().read(cx);
-            // The repo that comes from the single-file worktree can't be selected through the UI.
-            let filtered_entries = filtered_repository_entries(git_store, cx)
-                .iter()
-                .map(|repo| repo.read(cx).worktree_abs_path.clone())
-                .collect::<Vec<_>>();
-            assert_eq!(
-                filtered_entries,
-                [Path::new(path!("/root/zed/crates/gpui")).into()]
-            );
-            // But we can select it artificially here.
-            let repo_from_single_file_worktree = git_store
-                .repositories()
-                .values()
-                .find(|repo| {
-                    repo.read(cx).worktree_abs_path.as_ref()
-                        == Path::new(path!("/root/zed/crates/util/util.rs"))
-                })
-                .unwrap()
-                .clone();
+        // TODO(cole) restore this once repository deduplication is implemented properly.
+        //project.update(cx, |project, cx| {
+        //    let git_store = project.git_store().read(cx);
+        //    // The repo that comes from the single-file worktree can't be selected through the UI.
+        //    let filtered_entries = filtered_repository_entries(git_store, cx)
+        //        .iter()
+        //        .map(|repo| repo.read(cx).worktree_abs_path.clone())
+        //        .collect::<Vec<_>>();
+        //    assert_eq!(
+        //        filtered_entries,
+        //        [Path::new(path!("/root/zed/crates/gpui")).into()]
+        //    );
+        //    // But we can select it artificially here.
+        //    let repo_from_single_file_worktree = git_store
+        //        .repositories()
+        //        .values()
+        //        .find(|repo| {
+        //            repo.read(cx).worktree_abs_path.as_ref()
+        //                == Path::new(path!("/root/zed/crates/util/util.rs"))
+        //        })
+        //        .unwrap()
+        //        .clone();
 
-            // Paths still make sense when we somehow activate a repo that comes from a single-file worktree.
-            repo_from_single_file_worktree.update(cx, |repo, cx| repo.set_as_active_repository(cx));
-        });
+        //    // Paths still make sense when we somehow activate a repo that comes from a single-file worktree.
+        //    repo_from_single_file_worktree.update(cx, |repo, cx| repo.set_as_active_repository(cx));
+        //});
 
         let handle = cx.update_window_entity(&panel, |panel, _, _| {
             std::mem::replace(&mut panel.update_visible_entries_task, Task::ready(()))

@@ -159,6 +159,11 @@ impl WorktreeStore {
         None
     }
 
+    pub fn absolutize(&self, project_path: &ProjectPath, cx: &App) -> Option<PathBuf> {
+        let worktree = self.worktree_for_id(project_path.worktree_id, cx)?;
+        worktree.read(cx).absolutize(&project_path.path).ok()
+    }
+
     pub fn find_or_create_worktree(
         &mut self,
         abs_path: impl AsRef<Path>,
