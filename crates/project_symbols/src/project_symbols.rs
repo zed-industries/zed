@@ -316,7 +316,7 @@ mod tests {
             symbol("uno", path!("/dir/test.rs")),
         ];
         let fake_server = fake_servers.next().await.unwrap();
-        fake_server.handle_request::<lsp::WorkspaceSymbolRequest, _, _>(
+        fake_server.set_request_handler::<lsp::WorkspaceSymbolRequest, _, _>(
             move |params: lsp::WorkspaceSymbolParams, cx| {
                 let executor = cx.background_executor().clone();
                 let fake_symbols = fake_symbols.clone();

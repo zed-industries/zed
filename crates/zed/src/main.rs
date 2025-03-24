@@ -215,6 +215,16 @@ fn main() {
         session_id.clone(),
     );
 
+    if args.system_specs {
+        let system_specs = feedback::system_specs::SystemSpecs::new_stateless(
+            app_version,
+            app_commit_sha.clone(),
+            *release_channel::RELEASE_CHANNEL,
+        );
+        println!("Zed System Specs (from CLI):\n{}", system_specs);
+        return;
+    }
+
     let (open_listener, mut open_rx) = OpenListener::new();
 
     let failed_single_instance_check = if *db::ZED_STATELESS
@@ -302,6 +312,7 @@ fn main() {
             AppCommitSha::set_global(app_commit_sha, cx);
         }
         settings::init(cx);
+        zlog_settings::init(cx);
         handle_settings_file_changes(user_settings_file_rx, cx, handle_settings_changed);
         handle_keymap_file_changes(user_keymap_file_rx, cx);
         client::init_settings(cx);
@@ -951,6 +962,11 @@ struct Args {
     /// Instructs zed to run as a dev server on this machine. (not implemented)
     #[arg(long)]
     dev_server_token: Option<String>,
+
+    /// Prints system specs. Useful for submitting issues on GitHub when encountering a bug
+    /// that prevents Zed from starting, so you can't run `zed: copy system specs to clipboard`
+    #[arg(long)]
+    system_specs: bool,
 
     /// Run zed in the foreground, only used on Windows, to match the behavior of the behavior on macOS.
     #[arg(long)]

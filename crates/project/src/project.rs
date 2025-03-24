@@ -7,9 +7,9 @@ pub mod git_store;
 pub mod image_store;
 pub mod lsp_command;
 pub mod lsp_store;
+mod manifest_tree;
 pub mod prettier_store;
 pub mod project_settings;
-mod project_tree;
 pub mod search;
 mod task_inventory;
 pub mod task_store;
@@ -73,6 +73,7 @@ use lsp::{
 };
 use lsp_command::*;
 use lsp_store::{CompletionDocumentation, LspFormatTarget, OpenLspBufferHandle};
+pub use manifest_tree::ManifestProviders;
 use node_runtime::NodeRuntime;
 use parking_lot::Mutex;
 pub use prettier_store::PrettierStore;
@@ -389,6 +390,8 @@ pub struct Completion {
     pub documentation: Option<CompletionDocumentation>,
     /// Completion data source which it was constructed from.
     pub source: CompletionSource,
+    /// A path to an icon for this completion that is shown in the menu.
+    pub icon_path: Option<SharedString>,
     /// An optional callback to invoke when this completion is confirmed.
     /// Returns, whether new completions should be retriggered after the current one.
     /// If `true` is returned, the editor will show a new completion menu after this completion is confirmed.

@@ -1,7 +1,9 @@
-//! This module defines a Project Tree.
+//! This module defines a Manifest Tree.
 //!
-//! A Project Tree is responsible for determining where the roots of subprojects are located in a project.
+//! A Manifest Tree is responsible for determining where the manifests for subprojects are located in a project.
+//! This then is used to provide those locations to language servers & determine locations eligible for toolchain selection.
 
+mod manifest_store;
 mod path_trie;
 mod server_tree;
 
@@ -14,8 +16,8 @@ use std::{
 
 use collections::HashMap;
 use gpui::{App, AppContext as _, Context, Entity, EventEmitter, Subscription};
-use language::{CachedLspAdapter, LspAdapterDelegate};
-use lsp::LanguageServerName;
+use language::{LspAdapterDelegate, ManifestName, ManifestQuery};
+pub use manifest_store::ManifestProviders;
 use path_trie::{LabelPresence, RootPathTrie, TriePath};
 use settings::{SettingsStore, WorktreeId};
 use worktree::{Event as WorktreeEvent, Worktree};
@@ -28,7 +30,7 @@ use crate::{
 pub(crate) use server_tree::{AdapterQuery, LanguageServerTree, LaunchDisposition};
 
 struct WorktreeRoots {
-    roots: RootPathTrie<LanguageServerName>,
+    roots: RootPathTrie<ManifestName>,
     worktree_store: Entity<WorktreeStore>,
     _worktree_subscription: Subscription,
 }
@@ -70,55 +72,21 @@ impl WorktreeRoots {
     }
 }
 
-pub struct ProjectTree {
+pub struct ManifestTree {
     root_points: HashMap<WorktreeId, Entity<WorktreeRoots>>,
     worktree_store: Entity<WorktreeStore>,
     _subscriptions: [Subscription; 2],
 }
 
-#[derive(Debug, Clone)]
-struct AdapterWrapper(Arc<CachedLspAdapter>);
-impl PartialEq for AdapterWrapper {
-    fn eq(&self, other: &Self) -> bool {
-        self.0.name.eq(&other.0.name)
-    }
-}
-
-impl Eq for AdapterWrapper {}
-
-impl std::hash::Hash for AdapterWrapper {
-    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        self.0.name.hash(state);
-    }
-}
-
-impl PartialOrd for AdapterWrapper {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(self.0.name.cmp(&other.0.name))
-    }
-}
-
-impl Ord for AdapterWrapper {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.0.name.cmp(&other.0.name)
-    }
-}
-
-impl Borrow<LanguageServerName> for AdapterWrapper {
-    fn borrow(&self) -> &LanguageServerName {
-        &self.0.name
-    }
-}
-
 #[derive(PartialEq)]
-pub(crate) enum ProjectTreeEvent {
+pub(crate) enum ManifestTreeEvent {
     WorktreeRemoved(WorktreeId),
     Cleared,
 }
 
-impl EventEmitter<ProjectTreeEvent> for ProjectTree {}
+impl EventEmitter<ManifestTreeEvent> for ManifestTree {}
 
-impl ProjectTree {
+impl ManifestTree {
     pub(crate) fn new(worktree_store: Entity<WorktreeStore>, cx: &mut App) -> Entity<Self> {
         cx.new(|cx| Self {
             root_points: Default::default(),
@@ -130,26 +98,22 @@ impl ProjectTree {
                             worktree_roots.roots = RootPathTrie::new();
                         })
                     }
-                    cx.emit(ProjectTreeEvent::Cleared);
+                    cx.emit(ManifestTreeEvent::Cleared);
                 }),
             ],
             worktree_store,
         })
     }
-    #[allow(clippy::mutable_key_type)]
     fn root_for_path(
         &mut self,
         ProjectPath { worktree_id, path }: ProjectPath,
-        adapters: Vec<Arc<CachedLspAdapter>>,
+        manifests: &mut dyn Iterator<Item = ManifestName>,
         delegate: Arc<dyn LspAdapterDelegate>,
         cx: &mut App,
-    ) -> BTreeMap<AdapterWrapper, ProjectPath> {
+    ) -> BTreeMap<ManifestName, ProjectPath> {
         debug_assert_eq!(delegate.worktree_id(), worktree_id);
-        #[allow(clippy::mutable_key_type)]
         let mut roots = BTreeMap::from_iter(
-            adapters
-                .into_iter()
-                .map(|adapter| (AdapterWrapper(adapter), (None, LabelPresence::KnownAbsent))),
+            manifests.map(|manifest| (manifest, (None, LabelPresence::KnownAbsent))),
         );
         let worktree_roots = match self.root_points.entry(worktree_id) {
             Entry::Occupied(occupied_entry) => occupied_entry.get().clone(),
@@ -182,7 +146,8 @@ impl ProjectTree {
                 ControlFlow::Continue(())
             });
         });
-        for (adapter, (root_path, presence)) in &mut roots {
+
+        for (manifest_name, (root_path, presence)) in &mut roots {
             if *presence == LabelPresence::Present {
                 continue;
             }
@@ -198,12 +163,22 @@ impl ProjectTree {
                 .unwrap_or_else(|| path.components().count() + 1);
 
             if depth > 0 {
-                let root = adapter.0.find_project_root(&path, depth, &delegate);
+                let Some(provider) = ManifestProviders::global(cx).get(manifest_name.borrow())
+                else {
+                    log::warn!("Manifest provider `{}` not found", manifest_name.as_ref());
+                    continue;
+                };
+
+                let root = provider.search(ManifestQuery {
+                    path: path.clone(),
+                    depth,
+                    delegate: delegate.clone(),
+                });
                 match root {
                     Some(known_root) => worktree_roots.update(cx, |this, _| {
                         let root = TriePath::from(&*known_root);
                         this.roots
-                            .insert(&root, adapter.0.name(), LabelPresence::Present);
+                            .insert(&root, manifest_name.clone(), LabelPresence::Present);
                         *presence = LabelPresence::Present;
                         *root_path = Some(ProjectPath {
                             worktree_id,
@@ -212,7 +187,7 @@ impl ProjectTree {
                     }),
                     None => worktree_roots.update(cx, |this, _| {
                         this.roots
-                            .insert(&key, adapter.0.name(), LabelPresence::KnownAbsent);
+                            .insert(&key, manifest_name.clone(), LabelPresence::KnownAbsent);
                     }),
                 }
             }
@@ -235,7 +210,7 @@ impl ProjectTree {
         match evt {
             WorktreeStoreEvent::WorktreeRemoved(_, worktree_id) => {
                 self.root_points.remove(&worktree_id);
-                cx.emit(ProjectTreeEvent::WorktreeRemoved(*worktree_id));
+                cx.emit(ManifestTreeEvent::WorktreeRemoved(*worktree_id));
             }
             _ => {}
         }

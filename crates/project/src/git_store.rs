@@ -619,8 +619,7 @@ impl GitStore {
         }
 
         cx.background_executor().spawn(async move {
-            let checkpoints: Vec<GitRepositoryCheckpoint> =
-                future::try_join_all(checkpoints).await?;
+            let checkpoints = future::try_join_all(checkpoints).await?;
             Ok(GitStoreCheckpoint {
                 checkpoints_by_work_dir_abs_path: dot_git_abs_paths
                     .into_iter()
@@ -658,6 +657,64 @@ impl GitStore {
         })
     }
 
+    /// Compares two checkpoints, returning true if they are equal.
+    pub fn compare_checkpoints(
+        &self,
+        left: GitStoreCheckpoint,
+        mut right: GitStoreCheckpoint,
+        cx: &App,
+    ) -> Task<Result<bool>> {
+        let repositories_by_dot_git_abs_path = self
+            .repositories
+            .values()
+            .map(|repo| (repo.read(cx).dot_git_abs_path.clone(), repo))
+            .collect::<HashMap<_, _>>();
+
+        let mut tasks = Vec::new();
+        for (dot_git_abs_path, left_checkpoint) in left.checkpoints_by_dot_git_abs_path {
+            if let Some(right_checkpoint) = right
+                .checkpoints_by_dot_git_abs_path
+                .remove(&dot_git_abs_path)
+            {
+                if let Some(repository) = repositories_by_dot_git_abs_path.get(&dot_git_abs_path) {
+                    let compare = repository
+                        .read(cx)
+                        .compare_checkpoints(left_checkpoint, right_checkpoint);
+                    tasks.push(async move { compare.await? });
+                }
+            } else {
+                return Task::ready(Ok(false));
+            }
+        }
+        cx.background_spawn(async move {
+            Ok(future::try_join_all(tasks)
+                .await?
+                .into_iter()
+                .all(|result| result))
+        })
+    }
+
+    pub fn delete_checkpoint(&self, checkpoint: GitStoreCheckpoint, cx: &App) -> Task<Result<()>> {
+        let repositories_by_dot_git_abs_path = self
+            .repositories
+            .values()
+            .map(|repo| (repo.read(cx).dot_git_abs_path.clone(), repo))
+            .collect::<HashMap<_, _>>();
+
+        let mut tasks = Vec::new();
+        for (dot_git_abs_path, checkpoint) in checkpoint.checkpoints_by_dot_git_abs_path {
+            if let Some(repository) = repositories_by_dot_git_abs_path.get(&dot_git_abs_path) {
+                let delete = repository.read(cx).delete_checkpoint(checkpoint);
+                tasks.push(async move { delete.await? });
+            }
+        }
+        cx.background_spawn(async move {
+            future::try_join_all(tasks).await?;
+            Ok(())
+        })
+    }
+
+    /// Blames a buffer.
     pub fn blame_buffer(
         &self,
         buffer: &Entity<Buffer>,
@@ -3429,6 +3486,35 @@ impl Repository {
             .collect::<Vec<_>>();
         self.repository_entry.statuses_by_path.edit(edits, &());
         Ok(())
+    }
+
+    pub fn compare_checkpoints(
+        &self,
+        left: GitRepositoryCheckpoint,
+        right: GitRepositoryCheckpoint,
+    ) -> oneshot::Receiver<Result<bool>> {
+        self.send_job(move |repo, cx| async move {
+            match repo {
+                RepositoryState::Local(git_repository) => {
+                    git_repository.compare_checkpoints(left, right, cx).await
+                }
+                RepositoryState::Remote { .. } => Err(anyhow!("not implemented yet")),
+            }
+        })
+    }
+
+    pub fn delete_checkpoint(
+        &self,
+        checkpoint: GitRepositoryCheckpoint,
+    ) -> oneshot::Receiver<Result<()>> {
+        self.send_job(move |repo, cx| async move {
+            match repo {
+                RepositoryState::Local(git_repository) => {
+                    git_repository.delete_checkpoint(checkpoint, cx).await
+                }
+                RepositoryState::Remote { .. } => Err(anyhow!("not implemented yet")),
+            }
+        })
     }
 }
 

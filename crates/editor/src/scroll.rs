@@ -462,6 +462,28 @@ impl Editor {
         self.set_scroll_position_internal(scroll_position, true, false, window, cx);
     }
 
+    /// Scrolls so that `row` is at the top of the editor view.
+    pub fn set_scroll_top_row(
+        &mut self,
+        row: DisplayRow,
+        window: &mut Window,
+        cx: &mut Context<Editor>,
+    ) {
+        let snapshot = self.snapshot(window, cx).display_snapshot;
+        let new_screen_top = DisplayPoint::new(row, 0);
+        let new_screen_top = new_screen_top.to_offset(&snapshot, Bias::Left);
+        let new_anchor = snapshot.buffer_snapshot.anchor_before(new_screen_top);
+
+        self.set_scroll_anchor(
+            ScrollAnchor {
+                anchor: new_anchor,
+                offset: Default::default(),
+            },
+            window,
+            cx,
+        );
+    }
+
     pub(crate) fn set_scroll_position_internal(
         &mut self,
         scroll_position: gpui::Point<f32>,
