@@ -13,7 +13,7 @@ use client::DevServerProjectId;
 use db::{define_connection, query, sqlez::connection::Connection, sqlez_macros::sql};
 use gpui::{point, size, Axis, Bounds, WindowBounds, WindowId};
 use itertools::Itertools;
-use project::debugger::breakpoint_store::{BreakpointKind, SerializedBreakpoint};
+use project::debugger::breakpoint_store::{BreakpointKind, BreakpointState, SerializedBreakpoint};
 
 use language::{LanguageName, Toolchain};
 use project::WorktreeId;
@@ -712,6 +712,7 @@ impl WorkspaceDb {
                             position: breakpoint.position,
                             path,
                             kind: breakpoint.kind,
+                            state: BreakpointState::Enabled,
                         });
                 }
 
@@ -1439,11 +1440,13 @@ mod tests {
                             position: breakpoint.position,
                             path: Arc::from(path),
                             kind: breakpoint.kind.clone(),
+                            state: BreakpointState::Enabled,
                         },
                         SerializedBreakpoint {
                             position: log_breakpoint.position,
                             path: Arc::from(path),
                             kind: log_breakpoint.kind.clone(),
+                            state: BreakpointState::Enabled,
                         },
                     ],
                 );

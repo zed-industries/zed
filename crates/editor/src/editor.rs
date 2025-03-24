@@ -6051,7 +6051,7 @@ impl Editor {
             for breakpoint in
                 breakpoint_store
                     .read(cx)
-                    .breakpoints(&buffer, None, buffer_snapshot.clone(), cx)
+                    .breakpoints(&buffer, None, &buffer_snapshot, cx)
             {
                 let point = buffer_snapshot.summary_for_anchor::<Point>(&breakpoint.0);
                 let mut anchor = multi_buffer_snapshot.anchor_before(point);
@@ -6076,49 +6076,33 @@ impl Editor {
 
         let range = snapshot.display_point_to_point(DisplayPoint::new(range.start, 0), Bias::Left)
             ..snapshot.display_point_to_point(DisplayPoint::new(range.end, 0), Bias::Right);
-        for excerpt_boundary in multi_buffer_snapshot.excerpt_boundaries_in_range(range) {
-            let info = excerpt_boundary.next;
 
-            let Some(excerpt_ranges) = multi_buffer_snapshot.range_for_excerpt(info.id) else {
+        for (buffer_snapshot, range, excerpt_id) in
+            multi_buffer_snapshot.range_to_buffer_ranges(range)
+        {
+            let Some(buffer) = project.read_with(cx, |this, cx| {
+                this.buffer_for_id(buffer_snapshot.remote_id(), cx)
+            }) else {
                 continue;
             };
-
-            let Some(buffer) =
-                project.read_with(cx, |this, cx| this.buffer_for_id(info.buffer_id, cx))
-            else {
-                continue;
-            };
-
-            if buffer.read(cx).file().is_none() {
-                continue;
-            }
             let breakpoints = breakpoint_store.read(cx).breakpoints(
                 &buffer,
-                Some(info.range.context.start..info.range.context.end),
-                info.buffer.clone(),
+                Some(
+                    buffer_snapshot.anchor_before(range.start)
+                        ..buffer_snapshot.anchor_after(range.end),
+                ),
+                buffer_snapshot,
                 cx,
             );
-
-            // To translate a breakpoint's position within a singular buffer to a multi buffer
-            // position we need to know it's excerpt starting location, it's position within
-            // the singular buffer, and if that position is within the excerpt's range.
-            let excerpt_head = excerpt_ranges
-                .start
-                .to_display_point(&snapshot.display_snapshot);
-
-            let buffer_start = info
-                .buffer
-                .summary_for_anchor::<Point>(&info.range.context.start);
-
             for (anchor, breakpoint) in breakpoints {
-                let as_row = info.buffer.summary_for_anchor::<Point>(&anchor).row;
-                let delta = as_row - buffer_start.row;
+                let multi_buffer_anchor =
+                    Anchor::in_buffer(excerpt_id, buffer_snapshot.remote_id(), *anchor);
+                let position = multi_buffer_anchor
+                    .to_point(&multi_buffer_snapshot)
+                    .to_display_point(&snapshot);
 
-                let position = excerpt_head + DisplayPoint::new(DisplayRow(delta), 0);
-
-                let anchor = snapshot.display_point_to_anchor(position, Bias::Left);
-
-                breakpoint_display_points.insert(position.row(), (anchor, breakpoint.clone()));
+                breakpoint_display_points
+                    .insert(position.row(), (multi_buffer_anchor, breakpoint.clone()));
             }
         }
 
@@ -8523,11 +8507,11 @@ impl Editor {
                     .breakpoints(
                         &buffer,
                         Some(breakpoint_position.text_anchor..(text::Anchor::MAX)),
-                        buffer_snapshot.clone(),
+                        &buffer_snapshot,
                         cx,
                     )
                     .next()
-                    .and_then(move |(anchor, bp)| {
+                    .and_then(|(anchor, bp)| {
                         let breakpoint_row = buffer_snapshot
                             .summary_for_anchor::<text::PointUtf16>(anchor)
                             .row;

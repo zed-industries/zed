@@ -360,7 +360,7 @@ impl BreakpointStore {
         &'a self,
         buffer: &'a Entity<Buffer>,
         range: Option<Range<text::Anchor>>,
-        buffer_snapshot: BufferSnapshot,
+        buffer_snapshot: &'a BufferSnapshot,
         cx: &App,
     ) -> impl Iterator<Item = &'a (text::Anchor, Breakpoint)> + 'a {
         let abs_path = Self::abs_path_from_buffer(buffer, cx);
@@ -370,11 +370,10 @@ impl BreakpointStore {
             .flat_map(move |file_breakpoints| {
                 file_breakpoints.breakpoints.iter().filter({
                     let range = range.clone();
-                    let buffer_snapshot = buffer_snapshot.clone();
                     move |(position, _)| {
                         if let Some(range) = &range {
-                            position.cmp(&range.start, &buffer_snapshot).is_ge()
-                                && position.cmp(&range.end, &buffer_snapshot).is_le()
+                            position.cmp(&range.start, buffer_snapshot).is_ge()
+                                && position.cmp(&range.end, buffer_snapshot).is_le()
                         } else {
                             true
                         }
@@ -426,6 +425,7 @@ impl BreakpointStore {
                             position,
                             path: path.clone(),
                             kind: breakpoint.kind.clone(),
+                            state: breakpoint.state,
                         }
                     })
                     .collect()
@@ -448,6 +448,7 @@ impl BreakpointStore {
                                 position,
                                 path: path.clone(),
                                 kind: breakpoint.kind.clone(),
+                                state: breakpoint.state,
                             }
                         })
                         .collect(),
@@ -579,11 +580,23 @@ impl Hash for BreakpointKind {
     }
 }
 
-#[derive(Default, Clone, Debug, Hash, PartialEq, Eq)]
+#[derive(Default, Copy, Clone, Debug, Hash, PartialEq, Eq)]
 pub enum BreakpointState {
     #[default]
     Enabled,
     Disabled,
+}
+
+impl BreakpointState {
+    #[inline]
+    pub fn is_enabled(&self) -> bool {
+        matches!(self, BreakpointState::Enabled)
+    }
+
+    #[inline]
+    pub fn is_disabled(&self) -> bool {
+        matches!(self, BreakpointState::Disabled)
+    }
 }
 
 #[derive(Clone, Default, Debug, Hash, PartialEq, Eq)]
@@ -627,12 +640,14 @@ impl Breakpoint {
         })
     }
 
+    #[inline]
     pub fn is_enabled(&self) -> bool {
-        matches!(self.state, BreakpointState::Enabled)
+        self.state.is_enabled()
     }
 
+    #[inline]
     pub fn is_disabled(&self) -> bool {
-        matches!(self.state, BreakpointState::Disabled)
+        self.state.is_disabled()
     }
 }
 
@@ -641,6 +656,7 @@ pub struct SerializedBreakpoint {
     pub position: u32,
     pub path: Arc<Path>,
     pub kind: BreakpointKind,
+    pub state: BreakpointState,
 }
 
 impl From<SerializedBreakpoint> for dap::SourceBreakpoint {

@@ -2083,7 +2083,6 @@ impl EditorElement {
                     {
                         should_render_phantom_breakpoint = false;
                     }
-                    let row = MultiBufferRow { 0: display_row.0 };
 
                     if row_infos
                         .get((display_row.0.saturating_sub(range.start.0)) as usize)
@@ -2096,6 +2095,8 @@ impl EditorElement {
                         return None;
                     }
 
+                    let row =
+                        MultiBufferRow(DisplayPoint::new(display_row, 0).to_point(&snapshot).row);
                     if snapshot.is_line_folded(row) {
                         return None;
                     }
@@ -2218,6 +2219,7 @@ impl EditorElement {
                     {
                         return None;
                     }
+
                     let button = editor.render_run_indicator(
                         &self.style,
                         Some(display_row) == active_task_indicator_row,
