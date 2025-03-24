@@ -4441,6 +4441,8 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Editor>,
     ) -> Option<Task<Result<()>>> {
+        use language::ToOffset as _;
+
         let completions_menu =
             if let CodeContextMenu::Completions(menu) = self.hide_context_menu(window, cx)? {
                 menu
@@ -4465,12 +4467,6 @@ impl Editor {
             .clone();
         cx.stop_propagation();
 
-        if self.selections.newest_anchor().start.buffer_id
-            != Some(buffer_handle.read(cx).remote_id())
-        {
-            return None;
-        }
-
         let snippet;
         let new_text;
         if completion.is_snippet() {
@@ -4480,15 +4476,24 @@ impl Editor {
             snippet = None;
             new_text = completion.new_text.clone();
         };
-
-        let newest_selection = self.selections.newest::<usize>(cx);
         let selections = self.selections.all::<usize>(cx);
         let buffer = buffer_handle.read(cx);
         let old_range = completion.old_range.to_offset(buffer);
         let old_text = buffer.text_for_range(old_range.clone()).collect::<String>();
 
-        let start_distance = newest_selection.start.saturating_sub(old_range.start);
-        let end_distance = old_range.end.saturating_sub(newest_selection.end);
+        let newest_selection = self.selections.newest_anchor();
+        if newest_selection.start.buffer_id != Some(buffer_handle.read(cx).remote_id()) {
+            return None;
+        }
+
+        let lookbehind = newest_selection
+            .start
+            .text_anchor
+            .to_offset(buffer)
+            .saturating_sub(old_range.start);
+        let lookahead = old_range
+            .end
+            .saturating_sub(newest_selection.end.text_anchor.to_offset(buffer));
         let mut common_prefix_len = old_text
             .bytes()
             .zip(new_text.bytes())
@@ -4500,9 +4505,9 @@ impl Editor {
         let mut ranges = Vec::new();
         let mut linked_edits = HashMap::<_, Vec<_>>::default();
         for selection in &selections {
-            if snapshot.contains_str_at(selection.start.saturating_sub(start_distance), &old_text) {
-                let start = selection.start.saturating_sub(start_distance);
-                let end = selection.end + end_distance;
+            if snapshot.contains_str_at(selection.start.saturating_sub(lookbehind), &old_text) {
+                let start = selection.start.saturating_sub(lookbehind);
+                let end = selection.end + lookahead;
                 if selection.id == newest_selection.id {
                     range_to_replace = Some(
                         ((start + common_prefix_len) as isize - selection.start as isize)
