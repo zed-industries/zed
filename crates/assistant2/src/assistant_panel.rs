@@ -46,7 +46,7 @@ use crate::{
 action_with_deprecated_aliases!(
     assistant,
     OpenPromptLibrary,
-    ["zed_actions::assistant::DeployPromptLibrary"]
+    ["assistant::DeployPromptLibrary"]
 );
 
 pub fn init(cx: &mut App) {
