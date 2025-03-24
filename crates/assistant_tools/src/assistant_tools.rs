@@ -4,6 +4,7 @@ mod diagnostics_tool;
 mod edit_files_tool;
 mod fetch_tool;
 mod list_directory_tool;
+mod move_path_tool;
 mod now_tool;
 mod path_search_tool;
 mod read_file_tool;
@@ -15,6 +16,7 @@ use std::sync::Arc;
 use assistant_tool::ToolRegistry;
 use gpui::App;
 use http_client::HttpClientWithUrl;
+use move_path_tool::MovePathTool;
 
 use crate::bash_tool::BashTool;
 use crate::delete_path_tool::DeletePathTool;
@@ -35,6 +37,7 @@ pub fn init(http_client: Arc<HttpClientWithUrl>, cx: &mut App) {
     let registry = ToolRegistry::global(cx);
     registry.register_tool(BashTool);
     registry.register_tool(DeletePathTool);
+    registry.register_tool(MovePathTool);
     registry.register_tool(DiagnosticsTool);
     registry.register_tool(EditFilesTool);
     registry.register_tool(ListDirectoryTool);
