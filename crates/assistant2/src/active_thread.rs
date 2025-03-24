@@ -752,7 +752,7 @@ impl ActiveThread {
         let editor_bg_color = colors.editor_background;
         let bg_user_message_header = editor_bg_color.blend(active_color.opacity(0.25));
 
-        let feedback_container = h_flex().pb_4().px_4().gap_1().justify_between();
+        let feedback_container = h_flex().pt_2().pb_4().px_4().gap_1().justify_between();
         let feedback_items = match self.thread.read(cx).feedback() {
             Some(feedback) => feedback_container
                 .child(
@@ -1001,6 +1001,7 @@ impl ActiveThread {
                     .id(("message-container", ix))
                     .ml_2()
                     .pl_2()
+                    .pr_4()
                     .border_l_1()
                     .border_color(cx.theme().colors().border_variant)
                     .child(message_content)
@@ -1169,129 +1170,148 @@ impl ActiveThread {
         let lighter_border = cx.theme().colors().border.opacity(0.5);
         let editor_bg = cx.theme().colors().editor_background;
 
-        v_flex()
-            .rounded_lg()
-            .border_1()
-            .border_color(lighter_border)
-            .child(
-                h_flex()
-                    .justify_between()
-                    .py_1()
-                    .pl_1()
-                    .pr_2()
-                    .bg(cx.theme().colors().editor_foreground.opacity(0.025))
-                    .map(|this| {
-                        if is_open {
-                            this.rounded_t_md()
-                                .border_b_1()
-                                .border_color(lighter_border)
-                        } else {
-                            this.rounded_md()
-                        }
-                    })
-                    .child(
-                        h_flex()
-                            .gap_1()
-                            .child(Disclosure::new("thinking-disclosure", is_open).on_click(
-                                cx.listener({
-                                    move |this, _event, _window, _cx| {
-                                        let is_open = this
-                                            .expanded_thinking_segments
-                                            .entry((message_id, ix))
-                                            .or_insert(false);
-
-                                        *is_open = !*is_open;
+        div().py_2().child(
+            v_flex()
+                .rounded_lg()
+                .border_1()
+                .border_color(lighter_border)
+                .child(
+                    h_flex()
+                        .group("disclosure-header")
+                        .justify_between()
+                        .py_1()
+                        .px_2()
+                        .bg(cx.theme().colors().editor_foreground.opacity(0.025))
+                        .map(|this| {
+                            if pending || is_open {
+                                this.rounded_t_md()
+                                    .border_b_1()
+                                    .border_color(lighter_border)
+                            } else {
+                                this.rounded_md()
+                            }
+                        })
+                        .child(
+                            h_flex()
+                                .gap_1p5()
+                                .child(
+                                    Icon::new(IconName::Brain)
+                                        .size(IconSize::XSmall)
+                                        .color(Color::Muted),
+                                )
+                                .child({
+                                    if pending {
+                                        Label::new("Thinking…")
+                                            .size(LabelSize::Small)
+                                            .buffer_font(cx)
+                                            .with_animation(
+                                                "pulsating-label",
+                                                Animation::new(Duration::from_secs(2))
+                                                    .repeat()
+                                                    .with_easing(pulsating_between(0.4, 0.8)),
+                                                |label, delta| label.alpha(delta),
+                                            )
+                                            .into_any_element()
+                                    } else {
+                                        Label::new("Thought Process")
+                                            .size(LabelSize::Small)
+                                            .buffer_font(cx)
+                                            .into_any_element()
                                     }
                                 }),
-                            ))
-                            .child({
-                                if pending {
-                                    Label::new("Thinking…")
-                                        .size(LabelSize::Small)
-                                        .buffer_font(cx)
-                                        .with_animation(
-                                            "pulsating-label",
-                                            Animation::new(Duration::from_secs(2))
-                                                .repeat()
-                                                .with_easing(pulsating_between(0.4, 0.8)),
-                                            |label, delta| label.alpha(delta),
+                        )
+                        .child(
+                            h_flex()
+                                .gap_1()
+                                .child(
+                                    div().visible_on_hover("disclosure-header").child(
+                                        Disclosure::new("thinking-disclosure", is_open)
+                                            .opened_icon(IconName::ChevronUp)
+                                            .closed_icon(IconName::ChevronDown)
+                                            .on_click(cx.listener({
+                                                move |this, _event, _window, _cx| {
+                                                    let is_open = this
+                                                        .expanded_thinking_segments
+                                                        .entry((message_id, ix))
+                                                        .or_insert(false);
+
+                                                    *is_open = !*is_open;
+                                                }
+                                            })),
+                                    ),
+                                )
+                                .child({
+                                    let (icon_name, color, animated) = if pending {
+                                        (IconName::ArrowCircle, Color::Accent, true)
+                                    } else {
+                                        (IconName::Check, Color::Success, false)
+                                    };
+
+                                    let icon =
+                                        Icon::new(icon_name).color(color).size(IconSize::Small);
+
+                                    if animated {
+                                        icon.with_animation(
+                                            "arrow-circle",
+                                            Animation::new(Duration::from_secs(2)).repeat(),
+                                            |icon, delta| {
+                                                icon.transform(Transformation::rotate(percentage(
+                                                    delta,
+                                                )))
+                                            },
                                         )
                                         .into_any_element()
-                                } else {
-                                    Label::new("Thought Process")
-                                        .size(LabelSize::Small)
-                                        .buffer_font(cx)
-                                        .into_any_element()
-                                }
-                            }),
-                    )
-                    .child({
-                        let (icon_name, color, animated) = if pending {
-                            (IconName::ArrowCircle, Color::Accent, true)
-                        } else {
-                            (IconName::Check, Color::Success, false)
-                        };
+                                    } else {
+                                        icon.into_any_element()
+                                    }
+                                }),
+                        ),
+                )
+                .when(pending && !is_open, |this| {
+                    let gradient_overlay = div()
+                        .rounded_b_lg()
+                        .h_20()
+                        .absolute()
+                        .w_full()
+                        .bottom_0()
+                        .left_0()
+                        .bg(linear_gradient(
+                            180.,
+                            linear_color_stop(editor_bg, 1.),
+                            linear_color_stop(editor_bg.opacity(0.2), 0.),
+                        ));
 
-                        let icon = Icon::new(icon_name).color(color).size(IconSize::Small);
-
-                        if animated {
-                            icon.with_animation(
-                                "arrow-circle",
-                                Animation::new(Duration::from_secs(2)).repeat(),
-                                |icon, delta| {
-                                    icon.transform(Transformation::rotate(percentage(delta)))
-                                },
+                    this.child(
+                        div()
+                            .relative()
+                            .bg(editor_bg)
+                            .rounded_b_lg()
+                            .child(
+                                div()
+                                    .id(("thinking-content", ix))
+                                    .p_2()
+                                    .h_20()
+                                    .track_scroll(scroll_handle)
+                                    .text_ui_sm(cx)
+                                    .child(markdown.clone())
+                                    .overflow_hidden(),
                             )
-                            .into_any_element()
-                        } else {
-                            icon.into_any_element()
-                        }
-                    }),
-            )
-            .when(pending && !is_open, |this| {
-                let gradient_overlay = div()
-                    .rounded_b_lg()
-                    .h_20()
-                    .absolute()
-                    .w_full()
-                    .bottom_0()
-                    .left_0()
-                    .bg(linear_gradient(
-                        180.,
-                        linear_color_stop(editor_bg, 1.),
-                        linear_color_stop(editor_bg.opacity(0.2), 0.),
-                    ));
-
-                this.child(
-                    div()
-                        .relative()
-                        .bg(editor_bg)
-                        .rounded_b_lg()
-                        .text_ui_sm(cx)
-                        .child(
-                            div()
-                                .id(("thinking-content", ix))
-                                .p_2()
-                                .h_20()
-                                .track_scroll(scroll_handle)
-                                .child(markdown.clone())
-                                .overflow_hidden(),
-                        )
-                        .child(gradient_overlay),
-                )
-            })
-            .when(is_open, |this| {
-                this.child(
-                    div()
-                        .id(("thinking-content", ix))
-                        .h_full()
-                        .p_2()
-                        .rounded_b_lg()
-                        .bg(editor_bg)
-                        .text_ui_sm(cx)
-                        .child(markdown.clone()),
-                )
-            })
+                            .child(gradient_overlay),
+                    )
+                })
+                .when(is_open, |this| {
+                    this.child(
+                        div()
+                            .id(("thinking-content", ix))
+                            .h_full()
+                            .p_2()
+                            .rounded_b_lg()
+                            .bg(editor_bg)
+                            .text_ui_sm(cx)
+                            .child(markdown.clone()),
+                    )
+                }),
+        )
     }
 
     fn render_tool_use(&self, tool_use: ToolUse, cx: &mut Context<Self>) -> impl IntoElement {
@@ -1318,7 +1338,7 @@ impl ActiveThread {
             _ => IconName::Terminal,
         };
 
-        div().py_2().pr_4().child(
+        div().py_2().child(
             v_flex()
                 .rounded_lg()
                 .border_1()
