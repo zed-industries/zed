@@ -29,7 +29,7 @@ use ui::{prelude::*, ContextMenu, KeyBinding, PopoverMenu, PopoverMenuHandle, Ta
 use util::ResultExt as _;
 use workspace::dock::{DockPosition, Panel, PanelEvent};
 use workspace::Workspace;
-use zed_actions::assistant::{DeployPromptLibrary, ToggleFocus};
+use zed_actions::assistant::{OpenPromptLibrary, ToggleFocus};
 
 use crate::active_thread::ActiveThread;
 use crate::assistant_configuration::{AssistantConfiguration, AssistantConfigurationEvent};
@@ -65,11 +65,11 @@ pub fn init(cx: &mut App) {
                         panel.update(cx, |panel, cx| panel.new_prompt_editor(window, cx));
                     }
                 })
-                .register_action(|workspace, _: &DeployPromptLibrary, window, cx| {
+                .register_action(|workspace, _: &OpenPromptLibrary, window, cx| {
                     if let Some(panel) = workspace.panel::<AssistantPanel>(cx) {
                         workspace.focus_panel::<AssistantPanel>(window, cx);
                         panel.update(cx, |panel, cx| {
-                            panel.deploy_prompt_library(&DeployPromptLibrary, window, cx)
+                            panel.deploy_prompt_library(&OpenPromptLibrary, window, cx)
                         });
                     }
                 })
@@ -311,7 +311,7 @@ impl AssistantPanel {
 
     fn deploy_prompt_library(
         &mut self,
-        _: &DeployPromptLibrary,
+        _: &OpenPromptLibrary,
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
