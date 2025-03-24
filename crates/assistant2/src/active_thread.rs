@@ -3,8 +3,9 @@ use crate::thread::{
     ThreadEvent, ThreadFeedback,
 };
 use crate::thread_store::ThreadStore;
-use crate::tool_use::{PendingToolUseStatus, ToolType, ToolUse, ToolUseStatus};
+use crate::tool_use::{PendingToolUseStatus, ToolUse, ToolUseStatus};
 use crate::ui::ContextPill;
+
 use collections::HashMap;
 use editor::{Editor, MultiBuffer};
 use gpui::{
@@ -1539,7 +1540,7 @@ impl ActiveThread {
                     c.ui_text.clone(),
                     c.input.clone(),
                     &c.messages,
-                    c.tool_type.clone(),
+                    c.tool.clone(),
                     cx,
                 );
             });
@@ -1549,13 +1550,12 @@ impl ActiveThread {
     fn handle_deny_tool(
         &mut self,
         tool_use_id: LanguageModelToolUseId,
-        tool_type: ToolType,
         _: &ClickEvent,
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         self.thread.update(cx, |thread, cx| {
-            thread.deny_tool_use(tool_use_id, tool_type, cx);
+            thread.deny_tool_use(tool_use_id, cx);
         });
     }
 
@@ -1590,7 +1590,7 @@ impl ActiveThread {
 
         thread
             .tools_needing_confirmation()
-            .map(|(tool_type, tool)| {
+            .map(|tool| {
                 div()
                     .m_3()
                     .p_2()
@@ -1632,7 +1632,6 @@ impl ActiveThread {
                                             move |this, event, window, cx| {
                                                 this.handle_deny_tool(
                                                     tool_id.clone(),
-                                                    tool_type.clone(),
                                                     event,
                                                     window,
                                                     cx,

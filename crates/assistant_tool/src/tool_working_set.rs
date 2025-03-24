@@ -15,22 +15,12 @@ pub struct ToolWorkingSet {
     state: Mutex<WorkingSetState>,
 }
 
+#[derive(Default)]
 struct WorkingSetState {
     context_server_tools_by_id: HashMap<ToolId, Arc<dyn Tool>>,
     context_server_tools_by_name: HashMap<String, Arc<dyn Tool>>,
     disabled_tools_by_source: HashMap<ToolSource, HashSet<Arc<str>>>,
     next_tool_id: ToolId,
-}
-
-impl Default for WorkingSetState {
-    fn default() -> Self {
-        Self {
-            context_server_tools_by_id: HashMap::default(),
-            context_server_tools_by_name: HashMap::default(),
-            disabled_tools_by_source: HashMap::default(),
-            next_tool_id: ToolId::default(),
-        }
-    }
 }
 
 impl ToolWorkingSet {
@@ -121,8 +111,6 @@ impl ToolWorkingSet {
             .retain(|id, _| !tool_ids_to_remove.contains(id));
         state.tools_changed();
     }
-
-
 }
 
 impl WorkingSetState {

@@ -33,7 +33,7 @@ use crate::thread_store::{
     SerializedMessage, SerializedMessageSegment, SerializedThread, SerializedToolResult,
     SerializedToolUse,
 };
-use crate::tool_use::{PendingToolUse, PendingToolUseStatus, ToolType, ToolUse, ToolUseState};
+use crate::tool_use::{PendingToolUse, ToolUse, ToolUseState};
 
 #[derive(Debug, Clone, Copy)]
 pub enum RequestKind {
@@ -345,17 +345,11 @@ impl Thread {
             .find(|tool_use| &tool_use.id == id)
     }
 
-    pub fn tools_needing_confirmation(&self) -> impl Iterator<Item = (ToolType, &PendingToolUse)> {
+    pub fn tools_needing_confirmation(&self) -> impl Iterator<Item = &PendingToolUse> {
         self.tool_use
             .pending_tool_uses()
             .into_iter()
-            .filter_map(|tool_use| {
-                if let PendingToolUseStatus::NeedsConfirmation(confirmation) = &tool_use.status {
-                    Some((confirmation.tool_type.clone(), tool_use))
-                } else {
-                    None
-                }
-            })
+            .filter(|tool_use| tool_use.status.needs_confirmation())
     }
 
     pub fn checkpoint_for_message(&self, id: MessageId) -> Option<ThreadCheckpoint> {
@@ -1164,7 +1158,7 @@ impl Thread {
                         tool_use.ui_text.clone(),
                         tool_use.input.clone(),
                         messages.clone(),
-                        ToolType::NonScriptingTool(tool),
+                        tool,
                     );
                 } else {
                     self.run_tool(
@@ -1172,7 +1166,7 @@ impl Thread {
                         tool_use.ui_text.clone(),
                         tool_use.input.clone(),
                         &messages,
-                        ToolType::NonScriptingTool(tool),
+                        tool,
                         cx,
                     );
                 }
@@ -1182,7 +1176,7 @@ impl Thread {
                     tool_use.ui_text.clone(),
                     tool_use.input.clone(),
                     &messages,
-                    ToolType::NonScriptingTool(tool),
+                    tool,
                     cx,
                 );
             }
@@ -1197,20 +1191,12 @@ impl Thread {
         ui_text: impl Into<SharedString>,
         input: serde_json::Value,
         messages: &[LanguageModelRequestMessage],
-        tool_type: ToolType,
+        tool: Arc<dyn Tool>,
         cx: &mut Context<'_, Thread>,
     ) {
-        match tool_type {
-            ToolType::ScriptingTool => {
-                // ScriptingTool functionality has been removed
-                log::warn!("ScriptingTool functionality has been removed");
-            }
-            ToolType::NonScriptingTool(tool) => {
-                let task = self.spawn_tool_use(tool_use_id.clone(), messages, input, tool, cx);
-                self.tool_use
-                    .run_pending_tool(tool_use_id, ui_text.into(), task);
-            }
-        }
+        let task = self.spawn_tool_use(tool_use_id.clone(), messages, input, tool, cx);
+        self.tool_use
+            .run_pending_tool(tool_use_id, ui_text.into(), task);
     }
 
     fn spawn_tool_use(
@@ -1249,8 +1235,6 @@ impl Thread {
             }
         })
     }
-
-
 
     pub fn attach_tool_results(
         &mut self,
@@ -1508,20 +1492,11 @@ impl Thread {
         self.cumulative_token_usage.clone()
     }
 
-    pub fn deny_tool_use(
-        &mut self,
-        tool_use_id: LanguageModelToolUseId,
-        tool_type: ToolType,
-        cx: &mut Context<Self>,
-    ) {
+    pub fn deny_tool_use(&mut self, tool_use_id: LanguageModelToolUseId, cx: &mut Context<Self>) {
         let err = Err(anyhow::anyhow!(
             "Permission to run tool action denied by user"
         ));
 
-        if let ToolType::ScriptingTool = tool_type {
-            // ScriptingTool functionality has been removed
-            log::warn!("ScriptingTool functionality has been removed");
-        }
         self.tool_use.insert_tool_output(tool_use_id.clone(), err);
 
         cx.emit(ThreadEvent::ToolFinished {
