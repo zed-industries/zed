@@ -628,7 +628,6 @@ mod tests {
     use serde_json::json;
     use settings::SettingsStore;
     use std::{ops::Deref, path::PathBuf};
-    use util::path;
     use workspace::AppState;
 
     #[test]
