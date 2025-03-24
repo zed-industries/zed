@@ -489,21 +489,24 @@ fn fs_quad(input: QuadVarying) -> @location(0) vec4<f32> {
     let background_color = gradient_color(quad.background, input.position.xy, quad.bounds,
         input.background_solid, input.background_color0, input.background_color1);
 
+    let unrounded = quad.corner_radii.top_left == 0.0 &&
+        quad.corner_radii.bottom_left == 0.0 &&
+        quad.corner_radii.top_right == 0.0 &&
+        quad.corner_radii.bottom_right == 0.0;
+
     // Fast path when the quad is not rounded and doesn't have any border.
-    if (quad.corner_radii.top_left == 0.0 &&
-            quad.corner_radii.bottom_left == 0.0 &&
-            quad.corner_radii.top_right == 0.0 &&
-            quad.corner_radii.bottom_right == 0.0 &&
-            quad.border_widths.top == 0.0 &&
+    if (quad.border_widths.top == 0.0 &&
             quad.border_widths.left == 0.0 &&
             quad.border_widths.right == 0.0 &&
-            quad.border_widths.bottom == 0.0) {
+            quad.border_widths.bottom == 0.0 &&
+            unrounded) {
         return blend_color(background_color, 1.0);
     }
 
-    let half_size = quad.bounds.size / 2.0;
-    let center = quad.bounds.origin + half_size;
-    let center_to_point = input.position.xy - center;
+    let size = quad.bounds.size;
+    let half_size = size / 2.0;
+    let point = input.position.xy - quad.bounds.origin;
+    let center_to_point = point - half_size;
 
     // Signed distance field threshold for inclusion of pixels. Use of 0.5
     // instead of 1.0 causes the width of rounded borders to appear more
@@ -592,45 +595,97 @@ fn fs_quad(input: QuadVarying) -> @location(0) vec4<f32> {
             var perimeter = 0.0;
             var t = 0.0;
             var border_width_for_dash_size = 0.0;
-            if (is_near_rounded_corner) {
-                perimeter = (M_PI_F / 2.0) * corner_radius;
-                let angle = atan2(corner_center_to_point.y, corner_center_to_point.x);
-                t = angle * corner_radius;
 
-                // An alternative to this might be to interpolate the width
-                // around the arc, but that seems overcomplicated.
-                border_width_for_dash_size = max(border.x, border.y);
-            } else {
+            if (unrounded) {
+                // When corners aren't rounded, the dashes for each straight
+                // line are laid out separately. This way each line starts and
+                // ends with a dash.
                 let is_horizontal = corner_center_to_point.x < corner_center_to_point.y;
+                t = select(point.y, point.x, is_horizontal);
+                perimeter = select(size.y, size.x, is_horizontal);
+                border_width_for_dash_size = select(border.y, border.x, is_horizontal);
+            } else {
+                // Handle rounded corners by calculating an arc length position
+                // `t` along the whole perimeter of the quad, so that spacing of
+                // the dashes is consistent throughout.
 
-                perimeter = max(0.0, select(
-                    quad.bounds.size.y - select(
-                        quad.corner_radii.top_right + quad.corner_radii.bottom_right,
-                        quad.corner_radii.top_left + quad.corner_radii.bottom_left,
-                        center_to_point.x < 0.0,
-                    ),
-                    quad.bounds.size.x - select(
-                        quad.corner_radii.bottom_left + quad.corner_radii.bottom_right,
-                        quad.corner_radii.top_left + quad.corner_radii.top_right,
-                        center_to_point.y < 0.0,
-                    ),
-                    is_horizontal));
 
-                let point = input.position.xy - quad.bounds.origin;
-                t = select(
-                    point.y - select(
-                        quad.corner_radii.top_right,
-                        quad.corner_radii.top_left,
-                        center_to_point.x < 0.0,
-                    ),
-                    point.x - select(
-                        quad.corner_radii.bottom_left,
-                        quad.corner_radii.top_left,
-                        center_to_point.y < 0.0,
-                    ),
-                    is_horizontal);
+                let r1 = quad.corner_radii.top_right;
+                let r2 = quad.corner_radii.bottom_right;
+                let r3 = quad.corner_radii.bottom_left;
+                let r4 = quad.corner_radii.top_left;
 
-                border_width_for_dash_size = select(border.x, border.y, is_horizontal);
+                // top, right, bottom, and left straight side lengths
+                let s1 = size.x - r4 - r1;
+                let s2 = size.y - r1 - r2;
+                let s3 = size.x - r2 - r3;
+                let s4 = size.y - r3 - r4;
+
+                // Corner arc lengths. `cN` comes after `sN`.
+                // top_right, bottom_right, bottom_left, and top_left
+                let c1 = r1 * (M_PI_F / 2.0);
+                let c2 = r2 * (M_PI_F / 2.0);
+                let c3 = r3 * (M_PI_F / 2.0);
+                let c4 = r4 * (M_PI_F / 2.0);
+
+                // Cumulative perimeter upto each segment.
+                let upto_c1 = s1;
+                let upto_s2 = upto_c1 + c1;
+                let upto_c2 = upto_s2 + s2;
+                let upto_s3 = upto_c2 + c2;
+                let upto_c3 = upto_s3 + s3;
+                let upto_s4 = upto_c3 + c3;
+                let upto_c4 = upto_s4 + s4;
+                perimeter = upto_c4 + c4;
+
+                if (is_near_rounded_corner) {
+                    let radians = atan2(corner_center_to_point.y, corner_center_to_point.x);
+                    let corner_t = radians * corner_radius;
+
+                    // An alternative to this might be to interpolate the width
+                    // around the arc, but that seems overcomplicated.
+                    border_width_for_dash_size = max(border.x, border.y);
+
+                    if (center_to_point.x >= 0.0) {
+                        if (center_to_point.y < 0.0) {
+                            // Top-right (corner 1)
+                            t = upto_s2 - corner_t;
+                        } else {
+                            // Bottom-right (corner 2)
+                            t = upto_c2 + corner_t;
+                        }
+                    } else {
+                        if (center_to_point.y >= 0.0) {
+                            // Bottom-left (corner 3)
+                            t = upto_s4 - corner_t;
+                        } else {
+                            // Top-left (corner 4)
+                            t = upto_c4 + corner_t;
+                        }
+                    }
+                } else {
+                    // Straight borders
+                    let is_horizontal = corner_center_to_point.x < corner_center_to_point.y;
+                    if (is_horizontal) {
+                        border_width_for_dash_size = border.y;
+                        if (center_to_point.y < 0.0) {
+                            // Top (side 1)
+                            t = point.x - r4;
+                        } else {
+                            // Bottom (side 3)
+                            t = upto_c3 - (point.x - r3);
+                        }
+                    } else {
+                        border_width_for_dash_size = border.x;
+                        if (center_to_point.x < 0.0) {
+                            // Left (side 4)
+                            t = upto_c4 - (point.y - r4);
+                        } else {
+                            // Right (side 2)
+                            t = upto_s2 + (point.y - r1);
+                        }
+                    }
+                }
             }
 
             // Dash pattern: (2 * width) dash, (1 * width) gap
@@ -641,19 +696,13 @@ fn fs_quad(input: QuadVarying) -> @location(0) vec4<f32> {
             // Straight borders should start and end with a dash, and rounded
             // borders should start and end with a gap. The perimeter is reduced
             // to cause this.
-            let reduced_perimeter = perimeter - select(dash_length, desired_dash_gap, is_near_rounded_corner);
+            //
+            // todo! This is not really precise due to use of desired_dash_gap
+            var reduced_perimeter = perimeter - select(desired_dash_gap, dash_length, unrounded);
             if (reduced_perimeter >= desired_dash_period) {
                 // Adjust dash gap to evenly divide this portion of the perimeter.
                 let dash_count = floor(reduced_perimeter / desired_dash_period);
                 let dash_period = reduced_perimeter / dash_count;
-
-                // This offset causes there to be a gap at the start and end of
-                // the rounded borders.
-                if (is_near_rounded_corner) {
-                    let dash_gap = dash_period - dash_length;
-                    // todo! why does 1.5 work well?
-                    t += dash_gap * 1.5;
-                }
 
                 border_color.a *= dash_alpha(t, dash_period, dash_length);
             } else if (is_near_rounded_corner) {
