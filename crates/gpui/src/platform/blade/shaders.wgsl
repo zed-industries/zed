@@ -573,9 +573,6 @@ fn fs_quad(input: QuadVarying) -> @location(0) vec4<f32> {
     // is positive outside this edge, and negative inside.
     let outer_sdf = quad_sdf_impl(corner_center_to_point, corner_radius);
 
-    // Ellipse for the inner edge of the rounded border.
-    let ellipse_radii = max(vec2<f32>(0.0), corner_radius - border);
-
     // Approximate signed distance of the point to the inside edge of the quad's
     // border. It is negative outside this edge (within the border), and
     // positive inside.
@@ -592,9 +589,11 @@ fn fs_quad(input: QuadVarying) -> @location(0) vec4<f32> {
     } else if (is_beyond_inner_straight_border) {
         // Fast path for points that must be outside the inner edge.
         inner_sdf = -1.0;
-    } else if (ellipse_radii.x == ellipse_radii.y) {
-        inner_sdf = ellipse_radii.x - length(corner_center_to_point);
+    } else if (border.x == border.y) {
+        // Fast path for circular inner edge.
+        inner_sdf = -(outer_sdf + border.x);
     } else {
+        let ellipse_radii = max(vec2<f32>(0.0), corner_radius - border);
         inner_sdf = quarter_ellipse_sdf(corner_center_to_point, ellipse_radii);
     }
 

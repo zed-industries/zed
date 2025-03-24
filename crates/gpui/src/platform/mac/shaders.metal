@@ -168,9 +168,6 @@ fragment float4 quad_fragment(QuadFragmentInput input [[stage_in]],
   // Signed distance of the point to the outside edge of the quad's border
   float outer_sdf = quad_sdf_impl(corner_center_to_point, corner_radius);
 
-  // Ellipse for the inner edge of the rounded border
-  float2 ellipse_radii = max(float2(0.0), float2(corner_radius) - border);
-
   // Approximate signed distance of the point to the inside edge of the quad's
   // border. It is negative outside this edge (within the border), and
   // positive inside.
@@ -187,9 +184,11 @@ fragment float4 quad_fragment(QuadFragmentInput input [[stage_in]],
   } else if (is_beyond_inner_straight_border) {
     // Fast path for points that must be outside the inner edge
     inner_sdf = -1.0;
-  } else if (ellipse_radii.x == ellipse_radii.y) {
-    inner_sdf = ellipse_radii.x - length(corner_center_to_point);
+  } else if (border.x == border.y) {
+    // Fast path for circular inner edge.
+    inner_sdf = -(outer_sdf + border.x);
   } else {
+    float2 ellipse_radii = max(float2(0.0), float2(corner_radius) - border);
     inner_sdf = quarter_ellipse_sdf(corner_center_to_point, ellipse_radii);
   }
 
