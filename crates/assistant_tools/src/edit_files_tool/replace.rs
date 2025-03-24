@@ -1,5 +1,6 @@
 use language::{BufferSnapshot, Diff, Point, ToOffset};
 use project::search::SearchQuery;
+use std::iter;
 use util::{paths::PathMatcher, ResultExt as _};
 
 /// Performs an exact string replacement in a buffer, requiring precise character-for-character matching.
@@ -11,8 +12,8 @@ pub async fn replace_exact(old: &str, new: &str, snapshot: &BufferSnapshot) -> O
         false,
         true,
         true,
-        PathMatcher::new(&[]).ok()?,
-        PathMatcher::new(&[]).ok()?,
+        PathMatcher::new(iter::empty::<&str>()).ok()?,
+        PathMatcher::new(iter::empty::<&str>()).ok()?,
         None,
     )
     .log_err()?;
