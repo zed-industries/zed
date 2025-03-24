@@ -54,6 +54,7 @@ strum.workspace = true
 task.workspace = true
 ui.workspace = true
 util.workspace = true
+zip.workspace = true
 workspace.workspace = true
 
 [target.'cfg(windows)'.dependencies]
