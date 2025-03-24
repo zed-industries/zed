@@ -2,4 +2,4 @@ Moves or rename a file or directory in the project, and returns confirmation tha
 If the source and destination directories are the same, but the filename is different, this performs
 a rename. Otherwise, it performs a move.
 
-This tool should be used when it's desirabale to move or rename a file or directory without changing its contents at all.
+This tool should be used when it's desirable to move or rename a file or directory without changing its contents at all.
