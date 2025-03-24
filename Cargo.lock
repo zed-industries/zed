@@ -3421,7 +3421,8 @@ dependencies = [
 [[package]]
 name = "cosmic-text"
 version = "0.13.2"
-source = "git+https://github.com/pop-os/cosmic-text?rev=0483999#048399979914b0201b0fce45ece7c1c6f61cff58"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e418dd4f5128c3e93eab12246391c54a20c496811131f85754dc8152ee207892"
 dependencies = [
  "bitflags 2.8.0",
  "fontdb 0.16.2",
