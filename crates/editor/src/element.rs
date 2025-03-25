@@ -1562,7 +1562,7 @@ impl EditorElement {
 
         editor.mode = EditorMode::Minimap;
         editor.set_text_style_refinement(TextStyleRefinement {
-            font_size: Some(px(2.).into()),
+            font_size: Some(px(minimap_settings.font_size).into()),
             font_weight: Some(gpui::FontWeight(900.)),
             ..Default::default()
         });
