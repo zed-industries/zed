@@ -1,6 +1,6 @@
 mod application_menu;
-mod banner;
 mod collab;
+mod onboarding_banner;
 mod platforms;
 mod window_controls;
 
@@ -16,15 +16,15 @@ use crate::application_menu::{
 
 use crate::platforms::{platform_linux, platform_mac, platform_windows};
 use auto_update::AutoUpdateStatus;
-use banner::{Banner, BannerDetails};
 use call::ActiveCall;
 use client::{Client, UserStore};
 use feature_flags::{FeatureFlagAppExt, ZedPro};
 use gpui::{
-    actions, div, px, Action, AnyElement, App, Context, Decorations, Element, Entity,
+    actions, div, px, Action, AnyElement, App, Context, Corner, Decorations, Element, Entity,
     InteractiveElement, Interactivity, IntoElement, MouseButton, ParentElement, Render, Stateful,
     StatefulInteractiveElement, Styled, Subscription, WeakEntity, Window,
 };
+use onboarding_banner::OnboardingBanner;
 use project::Project;
 use rpc::proto;
 use settings::Settings as _;
@@ -39,7 +39,7 @@ use util::ResultExt;
 use workspace::{notifications::NotifyResultExt, Workspace};
 use zed_actions::{OpenBrowser, OpenRecent, OpenRemote};
 
-pub use banner::restore_banner;
+pub use onboarding_banner::restore_banner;
 
 #[cfg(feature = "stories")]
 pub use stories::*;
@@ -128,7 +128,7 @@ pub struct TitleBar {
     should_move: bool,
     application_menu: Option<Entity<ApplicationMenu>>,
     _subscriptions: Vec<Subscription>,
-    banner: Entity<Banner>,
+    banner: Entity<OnboardingBanner>,
 }
 
 impl Render for TitleBar {
@@ -316,29 +316,12 @@ impl TitleBar {
         subscriptions.push(cx.observe(&user_store, |_, _, cx| cx.notify()));
 
         let banner = cx.new(|cx| {
-            Banner::new(
+            OnboardingBanner::new(
                 "Git Onboarding",
-                BannerDetails {
-                    action: zed_actions::OpenGitIntegrationOnboarding.boxed_clone(),
-                    banner_label: Box::new(|_, _| {
-                        h_flex()
-                            .h_full()
-                            .items_center()
-                            .gap_1()
-                            .child(Icon::new(IconName::GitBranchSmall).size(IconSize::Small))
-                            .child(
-                                h_flex()
-                                    .gap_0p5()
-                                    .child(
-                                        Label::new("Introducing:")
-                                            .size(LabelSize::Small)
-                                            .color(Color::Muted),
-                                    )
-                                    .child(Label::new("Git Support").size(LabelSize::Small)),
-                            )
-                            .into_any_element()
-                    }),
-                },
+                IconName::GitBranchSmall,
+                "Git Support",
+                None,
+                zed_actions::OpenGitIntegrationOnboarding.boxed_clone(),
                 cx,
             )
         });
@@ -670,6 +653,7 @@ impl TitleBar {
         if let Some(user) = user_store.current_user() {
             let plan = user_store.current_plan();
             PopoverMenu::new("user-menu")
+                .anchor(Corner::TopRight)
                 .menu(move |window, cx| {
                     ContextMenu::build(window, cx, |menu, _, cx| {
                         menu.when(cx.has_flag::<ZedPro>(), |menu| {
@@ -734,6 +718,7 @@ impl TitleBar {
                 .anchor(gpui::Corner::TopRight)
         } else {
             PopoverMenu::new("user-menu")
+                .anchor(Corner::TopRight)
                 .menu(|window, cx| {
                     ContextMenu::build(window, cx, |menu, _, _| {
                         menu.action("Settings", zed_actions::OpenSettings.boxed_clone())

@@ -35,9 +35,9 @@ use git::{blame::BlameEntry, status::FileStatus, Oid};
 use gpui::{
     anchored, deferred, div, fill, linear_color_stop, linear_gradient, outline, point, px, quad,
     relative, size, solid_background, transparent_black, Action, AnyElement, App, AvailableSpace,
-    Axis, Bounds, ClickEvent, ClipboardItem, ContentMask, Context, Corner, Corners, CursorStyle,
-    DispatchPhase, Edges, Element, ElementInputHandler, Entity, Focusable as _, FontId,
-    GlobalElementId, Hitbox, Hsla, InteractiveElement, IntoElement, Keystroke, Length,
+    Axis, BorderStyle, Bounds, ClickEvent, ClipboardItem, ContentMask, Context, Corner, Corners,
+    CursorStyle, DispatchPhase, Edges, Element, ElementInputHandler, Entity, Focusable as _,
+    FontId, GlobalElementId, Hitbox, Hsla, InteractiveElement, IntoElement, Keystroke, Length,
     ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, PaintQuad,
     ParentElement, Pixels, ScrollDelta, ScrollWheelEvent, ShapedLine, SharedString, Size,
     StatefulInteractiveElement, Style, Styled, Subscription, TextRun, TextStyleRefinement, Window,
@@ -3303,7 +3303,7 @@ impl EditorElement {
             let offset = scroll_position - max_row as f32;
 
             if offset > 0.0 {
-                origin.y -= Pixels(offset) * line_height;
+                origin.y -= offset * line_height;
             }
             break;
         }
@@ -4524,7 +4524,7 @@ impl EditorElement {
                                     hunk_hitbox.origin.x - hunk_hitbox.size.width,
                                     hunk_hitbox.origin.y,
                                 ),
-                                size(hunk_hitbox.size.width * px(2.), hunk_hitbox.size.height),
+                                size(hunk_hitbox.size.width * 2., hunk_hitbox.size.height),
                             ),
                             cx.theme().colors().version_control_deleted,
                             Corners::all(1. * line_height),
@@ -4549,6 +4549,7 @@ impl EditorElement {
                             flattened_background_color,
                             Edges::default(),
                             transparent_black(),
+                            BorderStyle::default(),
                         ));
                     } else {
                         let flattened_unstaged_background_color = cx
@@ -4563,6 +4564,7 @@ impl EditorElement {
                             flattened_unstaged_background_color,
                             Edges::all(Pixels(1.0)),
                             flattened_background_color,
+                            BorderStyle::Solid,
                         ));
                     }
                 }
@@ -4927,6 +4929,7 @@ impl EditorElement {
                             left: Pixels::ZERO,
                         },
                         cx.theme().colors().scrollbar_track_border,
+                        BorderStyle::Solid,
                     ));
 
                     window.paint_quad(quad(
@@ -4940,6 +4943,7 @@ impl EditorElement {
                             left: ScrollbarLayout::BORDER_WIDTH,
                         },
                         cx.theme().colors().scrollbar_thumb_border,
+                        BorderStyle::Solid,
                     ));
                 })
             }
@@ -5075,6 +5079,7 @@ impl EditorElement {
                             left: ScrollbarLayout::BORDER_WIDTH,
                         },
                         cx.theme().colors().scrollbar_track_border,
+                        BorderStyle::Solid,
                     ));
 
                     let fast_markers =
@@ -5100,6 +5105,7 @@ impl EditorElement {
                             left: ScrollbarLayout::BORDER_WIDTH,
                         },
                         cx.theme().colors().scrollbar_thumb_border,
+                        BorderStyle::Solid,
                     ));
                 });
             }
@@ -7853,10 +7859,10 @@ impl ScrollbarRangeData {
         let text_bounds_size = size(longest_line_width, max_row.0 as f32 * letter_size.height);
 
         let settings = EditorSettings::get_global(cx);
-        let scroll_beyond_last_line: Pixels = match settings.scroll_beyond_last_line {
-            ScrollBeyondLastLine::OnePage => px(scrollbar_bounds.size.height / letter_size.height),
-            ScrollBeyondLastLine::Off => px(1.),
-            ScrollBeyondLastLine::VerticalScrollMargin => px(1.0 + settings.vertical_scroll_margin),
+        let scroll_beyond_last_line: f32 = match settings.scroll_beyond_last_line {
+            ScrollBeyondLastLine::OnePage => scrollbar_bounds.size.height / letter_size.height,
+            ScrollBeyondLastLine::Off => 1.0,
+            ScrollBeyondLastLine::VerticalScrollMargin => 1.0 + settings.vertical_scroll_margin,
         };
 
         let right_margin = if longest_line_width + longest_line_blame_width >= editor_width {
@@ -8063,6 +8069,7 @@ impl ScrollbarLayout {
                 pixel_range.color,
                 Edges::default(),
                 Hsla::transparent_black(),
+                BorderStyle::default(),
             ));
         }
 
@@ -8296,7 +8303,7 @@ impl CursorLayout {
 
         //Draw background or border quad
         let cursor = if matches!(self.shape, CursorShape::Hollow) {
-            outline(bounds, self.color)
+            outline(bounds, self.color, BorderStyle::Solid)
         } else {
             fill(bounds, self.color)
         };
@@ -8527,7 +8534,7 @@ fn compute_auto_height_layout(
         snapshot = editor.snapshot(window, cx);
     }
 
-    let scroll_height = Pixels::from(snapshot.max_point().row().next_row().0) * line_height;
+    let scroll_height = (snapshot.max_point().row().next_row().0 as f32) * line_height;
     let height = scroll_height
         .max(line_height)
         .min(line_height * max_lines as f32);

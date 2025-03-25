@@ -3,7 +3,7 @@ use std::time::Duration;
 use std::{ops::Range, path::PathBuf};
 
 use anyhow::Result;
-use editor::scroll::{Autoscroll, AutoscrollStrategy};
+use editor::scroll::Autoscroll;
 use editor::{Editor, EditorEvent};
 use gpui::{
     list, App, ClickEvent, Context, Entity, EventEmitter, FocusHandle, Focusable,
@@ -408,12 +408,9 @@ impl MarkdownPreviewView {
     ) {
         if let Some(state) = &self.active_editor {
             state.editor.update(cx, |editor, cx| {
-                editor.change_selections(
-                    Some(Autoscroll::Strategy(AutoscrollStrategy::Center)),
-                    window,
-                    cx,
-                    |selections| selections.select_ranges(vec![selection]),
-                );
+                editor.change_selections(Some(Autoscroll::center()), window, cx, |selections| {
+                    selections.select_ranges(vec![selection])
+                });
                 window.focus(&editor.focus_handle(cx));
             });
         }

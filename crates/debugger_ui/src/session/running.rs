@@ -16,8 +16,8 @@ use settings::Settings;
 use stack_frame_list::StackFrameList;
 use ui::{
     div, h_flex, v_flex, ActiveTheme, AnyElement, App, Button, ButtonCommon, Clickable, Context,
-    ContextMenu, Disableable, DropdownMenu, FluentBuilder, IconButton, IconName, IconSize,
-    Indicator, InteractiveElement, IntoElement, ParentElement, Render, SharedString,
+    ContextMenu, Disableable, Divider, DropdownMenu, FluentBuilder, IconButton, IconName, IconSize,
+    Indicator, InteractiveElement, IntoElement, Label, ParentElement, Render, SharedString,
     StatefulInteractiveElement, Styled, Tooltip, Window,
 };
 use util::ResultExt;
@@ -85,9 +85,10 @@ impl Render for RunningState {
                             .justify_between()
                             .child(
                                 h_flex()
-                                    .p_1()
+                                    .px_1()
+                                    .py_0p5()
                                     .w_full()
-                                    .gap_2()
+                                    .gap_1()
                                     .map(|this| {
                                         if thread_status == ThreadStatus::Running {
                                             this.child(
@@ -95,7 +96,7 @@ impl Render for RunningState {
                                                     "debug-pause",
                                                     IconName::DebugPause,
                                                 )
-                                                .icon_size(IconSize::Small)
+                                                .icon_size(IconSize::XSmall)
                                                 .on_click(cx.listener(|this, _, _window, cx| {
                                                     this.pause_thread(cx);
                                                 }))
@@ -109,7 +110,7 @@ impl Render for RunningState {
                                                     "debug-continue",
                                                     IconName::DebugContinue,
                                                 )
-                                                .icon_size(IconSize::Small)
+                                                .icon_size(IconSize::XSmall)
                                                 .on_click(cx.listener(|this, _, _window, cx| {
                                                     this.continue_thread(cx)
                                                 }))
@@ -120,61 +121,9 @@ impl Render for RunningState {
                                             )
                                         }
                                     })
-                                    .when(
-                                        capabilities.supports_step_back.unwrap_or(false),
-                                        |this| {
-                                            this.child(
-                                                IconButton::new(
-                                                    "debug-step-back",
-                                                    IconName::DebugStepBack,
-                                                )
-                                                .icon_size(IconSize::Small)
-                                                .on_click(cx.listener(|this, _, _window, cx| {
-                                                    this.step_back(cx);
-                                                }))
-                                                .disabled(thread_status != ThreadStatus::Stopped)
-                                                .tooltip(move |window, cx| {
-                                                    Tooltip::text("Step back")(window, cx)
-                                                }),
-                                            )
-                                        },
-                                    )
-                                    .child(
-                                        IconButton::new("debug-step-over", IconName::DebugStepOver)
-                                            .icon_size(IconSize::Small)
-                                            .on_click(cx.listener(|this, _, _window, cx| {
-                                                this.step_over(cx);
-                                            }))
-                                            .disabled(thread_status != ThreadStatus::Stopped)
-                                            .tooltip(move |window, cx| {
-                                                Tooltip::text("Step over")(window, cx)
-                                            }),
-                                    )
-                                    .child(
-                                        IconButton::new("debug-step-in", IconName::DebugStepInto)
-                                            .icon_size(IconSize::Small)
-                                            .on_click(cx.listener(|this, _, _window, cx| {
-                                                this.step_in(cx);
-                                            }))
-                                            .disabled(thread_status != ThreadStatus::Stopped)
-                                            .tooltip(move |window, cx| {
-                                                Tooltip::text("Step in")(window, cx)
-                                            }),
-                                    )
-                                    .child(
-                                        IconButton::new("debug-step-out", IconName::DebugStepOut)
-                                            .icon_size(IconSize::Small)
-                                            .on_click(cx.listener(|this, _, _window, cx| {
-                                                this.step_out(cx);
-                                            }))
-                                            .disabled(thread_status != ThreadStatus::Stopped)
-                                            .tooltip(move |window, cx| {
-                                                Tooltip::text("Step out")(window, cx)
-                                            }),
-                                    )
                                     .child(
                                         IconButton::new("debug-restart", IconName::DebugRestart)
-                                            .icon_size(IconSize::Small)
+                                            .icon_size(IconSize::XSmall)
                                             .on_click(cx.listener(|this, _, _window, cx| {
                                                 this.restart_session(cx);
                                             }))
@@ -189,7 +138,7 @@ impl Render for RunningState {
                                     )
                                     .child(
                                         IconButton::new("debug-stop", IconName::DebugStop)
-                                            .icon_size(IconSize::Small)
+                                            .icon_size(IconSize::XSmall)
                                             .on_click(cx.listener(|this, _, _window, cx| {
                                                 this.stop_thread(cx);
                                             }))
@@ -214,7 +163,7 @@ impl Render for RunningState {
                                             "debug-disconnect",
                                             IconName::DebugDisconnect,
                                         )
-                                        .icon_size(IconSize::Small)
+                                        .icon_size(IconSize::XSmall)
                                         .on_click(cx.listener(|this, _, _window, cx| {
                                             this.disconnect_client(cx);
                                         }))
@@ -222,12 +171,62 @@ impl Render for RunningState {
                                             thread_status == ThreadStatus::Exited
                                                 || thread_status == ThreadStatus::Ended,
                                         )
-                                        .tooltip(
-                                            move |window, cx| {
-                                                Tooltip::text("Disconnect")(window, cx)
-                                            },
-                                        ),
+                                        .tooltip(Tooltip::text("Disconnect")),
                                     )
+                                    .child(Divider::vertical())
+                                    .when(
+                                        capabilities.supports_step_back.unwrap_or(false),
+                                        |this| {
+                                            this.child(
+                                                IconButton::new(
+                                                    "debug-step-back",
+                                                    IconName::DebugStepBack,
+                                                )
+                                                .icon_size(IconSize::XSmall)
+                                                .on_click(cx.listener(|this, _, _window, cx| {
+                                                    this.step_back(cx);
+                                                }))
+                                                .disabled(thread_status != ThreadStatus::Stopped)
+                                                .tooltip(move |window, cx| {
+                                                    Tooltip::text("Step back")(window, cx)
+                                                }),
+                                            )
+                                        },
+                                    )
+                                    .child(
+                                        IconButton::new("debug-step-over", IconName::DebugStepOver)
+                                            .icon_size(IconSize::XSmall)
+                                            .on_click(cx.listener(|this, _, _window, cx| {
+                                                this.step_over(cx);
+                                            }))
+                                            .disabled(thread_status != ThreadStatus::Stopped)
+                                            .tooltip(move |window, cx| {
+                                                Tooltip::text("Step over")(window, cx)
+                                            }),
+                                    )
+                                    .child(
+                                        IconButton::new("debug-step-in", IconName::DebugStepInto)
+                                            .icon_size(IconSize::XSmall)
+                                            .on_click(cx.listener(|this, _, _window, cx| {
+                                                this.step_in(cx);
+                                            }))
+                                            .disabled(thread_status != ThreadStatus::Stopped)
+                                            .tooltip(move |window, cx| {
+                                                Tooltip::text("Step in")(window, cx)
+                                            }),
+                                    )
+                                    .child(
+                                        IconButton::new("debug-step-out", IconName::DebugStepOut)
+                                            .icon_size(IconSize::XSmall)
+                                            .on_click(cx.listener(|this, _, _window, cx| {
+                                                this.step_out(cx);
+                                            }))
+                                            .disabled(thread_status != ThreadStatus::Stopped)
+                                            .tooltip(move |window, cx| {
+                                                Tooltip::text("Step out")(window, cx)
+                                            }),
+                                    )
+                                    .child(Divider::vertical())
                                     .child(
                                         IconButton::new(
                                             "debug-ignore-breakpoints",
@@ -237,7 +236,7 @@ impl Render for RunningState {
                                                 IconName::DebugIgnoreBreakpoints
                                             },
                                         )
-                                        .icon_size(IconSize::Small)
+                                        .icon_size(IconSize::XSmall)
                                         .on_click(cx.listener(|this, _, _window, cx| {
                                             this.toggle_ignore_breakpoints(cx);
                                         }))
@@ -252,33 +251,47 @@ impl Render for RunningState {
                                         ),
                                     ),
                             )
-                            //.child(h_flex())
                             .child(
-                                h_flex().p_1().mx_2().w_3_4().justify_end().child(
-                                    DropdownMenu::new(
-                                        ("thread-list", self.session_id.0),
-                                        selected_thread_name,
-                                        ContextMenu::build(window, cx, move |mut this, _, _| {
-                                            for (thread, _) in threads {
-                                                let state = state.clone();
-                                                let thread_id = thread.id;
-                                                this =
-                                                    this.entry(thread.name, None, move |_, cx| {
-                                                        state.update(cx, |state, cx| {
-                                                            state.select_thread(
-                                                                ThreadId(thread_id),
-                                                                cx,
-                                                            );
-                                                        });
-                                                    });
-                                            }
-                                            this
-                                        }),
-                                    )
-                                    .disabled(
-                                        has_no_threads || thread_status != ThreadStatus::Stopped,
+                                h_flex()
+                                    .px_1()
+                                    .py_0p5()
+                                    .gap_2()
+                                    .w_3_4()
+                                    .justify_end()
+                                    .child(Label::new("Thread:"))
+                                    .child(
+                                        DropdownMenu::new(
+                                            ("thread-list", self.session_id.0),
+                                            selected_thread_name,
+                                            ContextMenu::build(
+                                                window,
+                                                cx,
+                                                move |mut this, _, _| {
+                                                    for (thread, _) in threads {
+                                                        let state = state.clone();
+                                                        let thread_id = thread.id;
+                                                        this = this.entry(
+                                                            thread.name,
+                                                            None,
+                                                            move |_, cx| {
+                                                                state.update(cx, |state, cx| {
+                                                                    state.select_thread(
+                                                                        ThreadId(thread_id),
+                                                                        cx,
+                                                                    );
+                                                                });
+                                                            },
+                                                        );
+                                                    }
+                                                    this
+                                                },
+                                            ),
+                                        )
+                                        .disabled(
+                                            has_no_threads
+                                                || thread_status != ThreadStatus::Stopped,
+                                        ),
                                     ),
-                                ),
                             ),
                     )
                     .child(

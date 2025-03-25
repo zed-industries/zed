@@ -1662,7 +1662,7 @@ impl Interactivity {
         window: &mut Window,
         cx: &mut App,
     ) {
-        use crate::TextAlign;
+        use crate::{BorderStyle, TextAlign};
 
         if global_id.is_some()
             && (style.debug || style.debug_below || cx.has_global::<crate::DebugBelow>())
@@ -1753,6 +1753,7 @@ impl Interactivity {
                                 },
                             },
                             crate::red(),
+                            BorderStyle::default(),
                         ))
                     }
                 }

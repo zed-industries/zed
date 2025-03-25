@@ -6,6 +6,7 @@ use project::Project;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::{path::PathBuf, sync::Arc};
+use ui::IconName;
 use util::paths::PathMatcher;
 use worktree::Snapshot;
 
@@ -47,6 +48,10 @@ impl Tool for PathSearchTool {
         include_str!("./path_search_tool/description.md").into()
     }
 
+    fn icon(&self) -> IconName {
+        IconName::SearchCode
+    }
+
     fn input_schema(&self) -> serde_json::Value {
         let schema = schemars::schema_for!(PathSearchToolInput);
         serde_json::to_value(&schema).unwrap()
@@ -71,7 +76,11 @@ impl Tool for PathSearchTool {
             Ok(input) => (input.offset.unwrap_or(0), input.glob),
             Err(err) => return Task::ready(Err(anyhow!(err))),
         };
-        let path_matcher = match PathMatcher::new(&[glob.clone()]) {
+
+        let path_matcher = match PathMatcher::new([
+            // Sometimes models try to search for "". In this case, return all paths in the project.
+            if glob.is_empty() { "*" } else { &glob },
+        ]) {
             Ok(matcher) => matcher,
             Err(err) => return Task::ready(Err(anyhow!("Invalid glob: {err}"))),
         };

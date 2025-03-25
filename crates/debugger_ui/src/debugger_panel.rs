@@ -24,7 +24,7 @@ use ui::prelude::*;
 use util::ResultExt;
 use workspace::{
     dock::{DockPosition, Panel, PanelEvent},
-    pane, ClearBreakpoints, Continue, Disconnect, Pane, Pause, Restart, StepBack, StepInto,
+    pane, ClearAllBreakpoints, Continue, Disconnect, Pane, Pause, Restart, StepBack, StepInto,
     StepOut, StepOver, Stop, ToggleIgnoreBreakpoints, Workspace,
 };
 
@@ -174,7 +174,7 @@ impl DebugPanel {
             workspace.update_in(cx, |workspace, window, cx| {
                 let debug_panel = DebugPanel::new(workspace, window, cx);
 
-                workspace.register_action(|workspace, _: &ClearBreakpoints, _, cx| {
+                workspace.register_action(|workspace, _: &ClearAllBreakpoints, _, cx| {
                     workspace.project().read(cx).breakpoint_store().update(
                         cx,
                         |breakpoint_store, cx| {

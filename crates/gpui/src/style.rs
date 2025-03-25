@@ -5,11 +5,11 @@ use std::{
 };
 
 use crate::{
-    black, phi, point, quad, rems, size, AbsoluteLength, App, Background, BackgroundTag, Bounds,
-    ContentMask, Corners, CornersRefinement, CursorStyle, DefiniteLength, DevicePixels, Edges,
-    EdgesRefinement, Font, FontFallbacks, FontFeatures, FontStyle, FontWeight, Hsla, Length,
-    Pixels, Point, PointRefinement, Rgba, SharedString, Size, SizeRefinement, Styled, TextRun,
-    Window,
+    black, phi, point, quad, rems, size, AbsoluteLength, App, Background, BackgroundTag,
+    BorderStyle, Bounds, ContentMask, Corners, CornersRefinement, CursorStyle, DefiniteLength,
+    DevicePixels, Edges, EdgesRefinement, Font, FontFallbacks, FontFeatures, FontStyle, FontWeight,
+    Hsla, Length, Pixels, Point, PointRefinement, Rgba, SharedString, Size, SizeRefinement, Styled,
+    TextRun, Window,
 };
 use collections::HashSet;
 use refineable::Refineable;
@@ -244,11 +244,14 @@ pub struct Style {
     /// The border color of this element
     pub border_color: Option<Hsla>,
 
+    /// The border style of this element
+    pub border_style: BorderStyle,
+
     /// The radius of the corners of this element
     #[refineable]
     pub corner_radii: Corners<AbsoluteLength>,
 
-    /// Box Shadow of the element
+    /// Box shadow of the element
     pub box_shadow: SmallVec<[BoxShadow; 2]>,
 
     /// The text style of this element
@@ -602,7 +605,7 @@ impl Style {
 
         #[cfg(debug_assertions)]
         if self.debug || cx.has_global::<DebugBelow>() {
-            window.paint_quad(crate::outline(bounds, crate::red()));
+            window.paint_quad(crate::outline(bounds, crate::red(), BorderStyle::default()));
         }
 
         let rem_size = window.rem_size();
@@ -634,6 +637,7 @@ impl Style {
                 background_color.unwrap_or_default(),
                 Edges::default(),
                 border_color,
+                self.border_style,
             ));
         }
 
@@ -670,6 +674,7 @@ impl Style {
                 background,
                 border_widths,
                 self.border_color.unwrap_or_default(),
+                self.border_style,
             );
 
             window.with_content_mask(Some(ContentMask { bounds: top_bounds }), |window| {
@@ -749,6 +754,7 @@ impl Default for Style {
             flex_basis: Length::Auto,
             background: None,
             border_color: None,
+            border_style: BorderStyle::default(),
             corner_radii: Corners::default(),
             box_shadow: Default::default(),
             text: TextStyleRefinement::default(),

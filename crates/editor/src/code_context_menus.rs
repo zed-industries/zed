@@ -543,7 +543,14 @@ impl CompletionsMenu {
 
                         let start_slot = completion
                             .color()
-                            .map(|color| div().size_4().bg(color).rounded_xs().into_any_element())
+                            .map(|color| {
+                                div()
+                                    .flex_shrink_0()
+                                    .size_3p5()
+                                    .rounded_xs()
+                                    .bg(color)
+                                    .into_any_element()
+                            })
                             .or_else(|| {
                                 completion.icon_path.as_ref().map(|path| {
                                     Icon::from_path(path)

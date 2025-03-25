@@ -11,6 +11,7 @@ use project::{
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::{cmp, fmt::Write, sync::Arc};
+use ui::IconName;
 use util::paths::PathMatcher;
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
@@ -47,6 +48,10 @@ impl Tool for RegexSearchTool {
 
     fn description(&self) -> String {
         include_str!("./regex_search_tool/description.md").into()
+    }
+
+    fn icon(&self) -> IconName {
+        IconName::Regex
     }
 
     fn input_schema(&self) -> serde_json::Value {
