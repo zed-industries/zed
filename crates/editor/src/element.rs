@@ -1570,30 +1570,35 @@ impl EditorElement {
         let editor_entity = cx.new(|_| editor);
 
         let minimap_bounds = Self::get_minimap_bounds(&scrollbar, &minimap_settings);
-
         let minimap_line_height = self.get_minimap_line_height(window, &minimap_settings, cx);
-
-        let scroll_top_lines = visible_range.start.0 as f32;
-        let viewport_height = bounds.size.height;
         let minimap_height = minimap_bounds.size.height;
 
-        let visible_lines = viewport_height / line_height;
-        let slider_height = px(visible_lines) * minimap_line_height;
-        let num_lines_minus_one = num_lines - 1.;
-        // Allows for overscrolling
-        let logical_minimap_scroll_height = num_lines_minus_one + visible_lines;
-        let max_minimap_slider_top = px(f32::max(
+        let editor_scroll_top = visible_range.start.0 as f32;
+        let editor_viewport_height = bounds.size.height;
+        let editor_visible_lines = editor_viewport_height / line_height;
+
+        let slider_height = px(editor_visible_lines) * minimap_line_height;
+
+        // The actual maximum scroll_top we allow. Ensures the slider doesn't go past the last line.
+        let max_scroll_top = num_lines - 1.;
+
+        // The total line height of the contents of the minimap. This ensures we can overscroll the contents until only the
+        // last line is visible, matching the behavior of the main editor.
+        let minimap_contents_full_height = max_scroll_top + editor_visible_lines;
+
+        // Clamp the slider to the bounds of the minimap, or the height of the minimap contents, whichever is smaller.
+        let slider_top_max = px(f32::max(
             0.,
             f32::min(
                 minimap_height.0,
-                num_lines_minus_one * minimap_line_height.0,
+                minimap_contents_full_height * minimap_line_height.0,
             ) - slider_height.0,
         ));
-        show_slider &= max_minimap_slider_top.0 > 0.;
+        show_slider &= slider_top_max.0 > 0.;
         let slider_top =
-            (scroll_top_lines / logical_minimap_scroll_height) * max_minimap_slider_top;
+            (editor_scroll_top / minimap_contents_full_height) * slider_top_max;
         let slider_lines_from_top = slider_top.0 / minimap_line_height.0;
-        let minimap_scroll_top_lines = scroll_top_lines - slider_lines_from_top;
+        let minimap_scroll_top = editor_scroll_top - slider_lines_from_top;
 
         let slider_bounds = Bounds::new(
             point(
@@ -1604,7 +1609,7 @@ impl EditorElement {
         );
 
         editor_entity.update(cx, |editor, cx| {
-            editor.set_scroll_position(point(0., minimap_scroll_top_lines), window, cx)
+            editor.set_scroll_position(point(0., minimap_scroll_top), window, cx)
         });
 
         let mut minimap_elem = editor_entity.update(cx, |editor, cx| {
@@ -1620,9 +1625,9 @@ impl EditorElement {
             slider_hitbox: window.insert_hitbox(slider_bounds, false),
             show_slider,
             minimap_line_height,
-            minimap_scroll_top: minimap_scroll_top_lines,
-            num_lines_minus_one,
-            logical_height: logical_minimap_scroll_height,
+            minimap_scroll_top,
+            max_scroll_top,
+            contents_full_height: minimap_contents_full_height,
         })
     }
 
@@ -5691,7 +5696,7 @@ impl EditorElement {
                                 let pct_progress = slider_top
                                     / (minimap_hitbox.bounds.size.height.0
                                         - slider_hitbox.bounds.size.height.0);
-                                position.y = pct_progress * layout.logical_height;
+                                position.y = pct_progress * layout.contents_full_height;
                                 editor.set_scroll_position(position, window, cx);
                             }
 
@@ -5743,7 +5748,7 @@ impl EditorElement {
                                 - (slider_hitbox.bounds.size.height / 2.);
                             position.y = (layout.minimap_scroll_top
                                 + (slider_top.0 / layout.minimap_line_height.0))
-                                .clamp(0., layout.num_lines_minus_one);
+                                .clamp(0., layout.max_scroll_top);
                             editor.set_scroll_position(position, window, cx);
                             cx.stop_propagation();
                         });
@@ -8361,8 +8366,8 @@ struct MinimapLayout {
     pub minimap_scroll_top: f32,
     pub minimap_line_height: Pixels,
     pub show_slider: bool,
-    pub num_lines_minus_one: f32,
-    pub logical_height: f32,
+    pub max_scroll_top: f32,
+    pub contents_full_height: f32,
 }
 
 struct CreaseTrailerLayout {
