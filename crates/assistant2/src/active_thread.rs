@@ -514,12 +514,12 @@ impl ActiveThread {
         window: &mut Window,
         cx: &mut Context<'_, ActiveThread>,
     ) {
-        let caption = caption.into();
-
         if !window.is_window_active()
             && self.pop_ups.is_empty()
             && AssistantSettings::get_global(cx).notify_when_agent_waiting
         {
+            let caption = caption.into();
+
             for screen in cx.displays() {
                 let options = ToolReadyPopUp::window_options(screen, cx);
 
