@@ -9,6 +9,7 @@ use ui::{
     prelude::*, Disclosure, Divider, DividerColor, ElevationIndex, Indicator, Switch, Tooltip,
 };
 use util::ResultExt as _;
+use zed_actions::assistant::OpenPromptLibrary;
 use zed_actions::ExtensionCategoryFilter;
 
 pub struct AssistantConfiguration {
