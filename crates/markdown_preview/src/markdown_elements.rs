@@ -88,6 +88,7 @@ pub struct ParsedMarkdownHeading {
     pub source_range: Range<usize>,
     pub level: HeadingLevel,
     pub contents: MarkdownParagraph,
+    pub alignment: ParsedMarkdownTableAlignment,
 }
 
 #[derive(Debug, PartialEq)]

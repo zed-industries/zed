@@ -11,13 +11,12 @@ use gpui::{
     SharedString, Styled, StyledText, TextStyle, WeakEntity, Window,
 };
 use settings::Settings;
-use core::hash;
+
 use std::{
     ops::{Mul, Range},
     sync::Arc,
     vec,
 };
-use gpui::AbsoluteLength::Pixels;
 use theme::{ActiveTheme, SyntaxTheme, ThemeSettings};
 use ui::{
     h_flex, relative, tooltip_container, v_flex, ButtonCommon, Checkbox, Clickable, Color,
@@ -28,89 +27,7 @@ use ui::{
 use workspace::{OpenOptions, OpenVisible, Workspace};
 
 type CheckboxClickedCallback = Arc<Box<dyn Fn(bool, Range<usize>, &mut Window, &mut App)>>;
-//
-// #[derive(Clone)]
-// pub struct RenderContext {
-//     workspace: Option<WeakEntity<Workspace>>,
-//     next_id: usize,
-//     buffer_font_family: SharedString,
-//     buffer_text_style: TextStyle,
-//     text_style: TextStyle,
-//     border_color: Hsla,
-//     text_color: Hsla,
-//     text_muted_color: Hsla,
-//     code_block_background_color: Hsla,
-//     code_span_background_color: Hsla,
-//     syntax_theme: Arc<SyntaxTheme>,
-//     indent: usize,
-//     checkbox_clicked_callback: Option<CheckboxClickedCallback>,
-// }
-//
-// impl RenderContext {
-//     pub fn new(
-//         workspace: Option<WeakEntity<Workspace>>,
-//         window: &mut Window,
-//         cx: &mut App,
-//     ) -> RenderContext {
-//         let theme = cx.theme().clone();
-//
-//         let settings = ThemeSettings::get_global(cx);
-//         let buffer_font_family = settings.buffer_font.family.clone();
-//         let mut buffer_text_style = window.text_style();
-//         buffer_text_style.font_family = buffer_font_family.clone();
-//
-//         RenderContext {
-//             workspace,
-//             next_id: 0,
-//             indent: 0,
-//             buffer_font_family,
-//             buffer_text_style,
-//             text_style: window.text_style(),
-//             syntax_theme: theme.syntax().clone(),
-//             border_color: theme.colors().border,
-//             text_color: theme.colors().text,
-//             text_muted_color: theme.colors().text_muted,
-//             code_block_background_color: theme.colors().surface_background,
-//             code_span_background_color: theme.colors().editor_document_highlight_read_background,
-//             checkbox_clicked_callback: None,
-//         }
-//     }
-//
-//     pub fn with_checkbox_clicked_callback(
-//         mut self,
-//         callback: impl Fn(bool, Range<usize>, &mut Window, &mut App) + 'static,
-//     ) -> Self {
-//         self.checkbox_clicked_callback = Some(Arc::new(Box::new(callback)));
-//         self
-//     }
-//
-//     fn next_id(&mut self, span: &Range<usize>) -> ElementId {
-//         let id = format!("markdown-{}-{}-{}", self.next_id, span.start, span.end);
-//         self.next_id += 1;
-//         ElementId::from(SharedString::from(id))
-//     }
-//
-//     /// This ensures that children inside of block quotes
-//     /// have padding between them.
-//     ///
-//     /// For example, for this markdown:
-//     ///
-//     /// ```markdown
-//     /// > This is a block quote.
-//     /// >
-//     /// > And this is the next paragraph.
-//     /// ```
-//     ///
-//     /// We give padding between "This is a block quote."
-//     /// and "And this is the next paragraph."
-//     fn with_common_p(&self, element: Div) -> Div {
-//         if self.indent > 0 {
-//             element.pb_3()
-//         } else {
-//             element
-//         }
-//     }
-// }
+
 
 #[derive(Clone)]
 pub struct RenderContext {
@@ -183,7 +100,6 @@ impl RenderContext {
         }
     }
 
-    /// Renderiza uma imagem a partir do caminho fornecido.
 
     pub fn render_image(&mut self, src: &str) -> AnyElement {
         let link = if src.starts_with("http://") || src.starts_with("https://") {
@@ -202,12 +118,16 @@ impl RenderContext {
             Link::Path { path, .. } => Resource::Path(Arc::from(path)),
         };
 
-        img(ImageSource::Resource(resource))
-            .max_w(px(500.0))
+        div().overflow_hidden().child(
+            img(ImageSource::Resource(resource))
+                .w_auto()
+                .max_w_full()
+        )
             .into_any()
     }
 
-    pub fn render_empty(&mut self) -> AnyElement {
+
+pub fn render_empty(&mut self) -> AnyElement {
         div().into_element().into_any()
     }
 }
@@ -229,45 +149,7 @@ pub fn render_parsed_markdown(
     )
 }
 
-//pub fn render_markdown_block(block: &ParsedMarkdownElement, cx: &mut RenderContext) -> AnyElement {
-//  use ParsedMarkdownElement::*;
-// match block {
-//   Paragraph(text) => render_markdown_paragraph(text, cx),
-// Heading(heading) => render_markdown_heading(heading, cx),
-//  ListItem(list_item) => render_markdown_list_item(list_item, cx),
-// Table(table) => render_markdown_table(table, cx),
-// BlockQuote(block_quote) => render_markdown_block_quote(block_quote, cx),
-//CodeBlock(code_block) => render_markdown_code_block(code_block, cx),
-//HorizontalRule(_) => render_markdown_rule(cx),
-//Html(content, _range) => {
-// Cria um container div com o conteúdo HTML injetado diretamente.
-// Atenção: garanta que o HTML seja seguro para evitar XSS.
-//  div().child(content.clone()).into_any()
 
-//}
-
-//}
-//}
-
-// pub fn render_markdown_block(block: &ParsedMarkdownElement, cx: &mut RenderContext) -> AnyElement {
-//     use ParsedMarkdownElement::*;
-//     match block {
-//         Paragraph(text) => render_markdown_paragraph(text, cx),
-//         Heading(heading) => render_markdown_heading(heading, cx),
-//         ListItem(list_item) => render_markdown_list_item(list_item, cx),
-//         Table(table) => render_markdown_table(table, cx),
-//         BlockQuote(block_quote) => render_markdown_block_quote(block_quote, cx),
-//         CodeBlock(code_block) => render_markdown_code_block(code_block, cx),
-//         HorizontalRule(_) => render_markdown_rule(cx),
-//         Html(content, _range) => {
-//             // Create a div container with the HTML content injected directly.
-//             // Attention: make sure the HTML is safe to avoid XSS.
-//             div().child(content.clone()).into_any()
-//         }
-//
-//
-//     }
-// }
 
 pub fn render_markdown_block(block: &ParsedMarkdownElement, cx: &mut RenderContext) -> AnyElement {
     use ParsedMarkdownElement::*;
