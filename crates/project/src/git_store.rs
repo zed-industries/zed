@@ -749,7 +749,7 @@ impl GitStore {
             Worktree::Local(worktree) => {
                 let worktree = worktree.snapshot();
                 let blame_params = maybe!({
-                    let local_repo = match worktree.local_repo_for_path(&file.path) {
+                    let local_repo = match worktree.local_repo_containing_path(&file.path) {
                         Some(repo_for_path) => repo_for_path,
                         None => return Ok(None),
                     };
@@ -1250,7 +1250,7 @@ impl GitStore {
                     for (buffer, path, current_index_text, current_head_text) in
                         &repo_diff_state_updates
                     {
-                        let Some(local_repo) = snapshot.local_repo_for_path(&path) else {
+                        let Some(local_repo) = snapshot.local_repo_containing_path(&path) else {
                             continue;
                         };
                         let Some(relative_path) = local_repo.relativize(&path).ok() else {

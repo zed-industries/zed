@@ -6769,6 +6769,188 @@ async fn test_single_file_diffs(cx: &mut gpui::TestAppContext) {
     });
 }
 
+#[gpui::test]
+async fn test_project_path_to_repo_path(_cx: &mut gpui::TestAppContext) {
+    todo!("restore this now at the proper layer")
+    //init_test(cx);
+    //cx.executor().allow_parking();
+    //let root = TempTree::new(json!({
+    //    "c.txt": "",
+    //    "dir1": {
+    //        ".git": {},
+    //        "deps": {
+    //            "dep1": {
+    //                ".git": {},
+    //                "src": {
+    //                    "a.txt": ""
+    //                }
+    //            }
+    //        },
+    //        "src": {
+    //            "b.txt": ""
+    //        }
+    //    },
+    //}));
+
+    //let tree = Worktree::local(
+    //    root.path(),
+    //    true,
+    //    Arc::new(RealFs::default()),
+    //    Default::default(),
+    //    &mut cx.to_async(),
+    //)
+    //.await
+    //.unwrap();
+
+    //cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
+    //    .await;
+    //tree.flush_fs_events(cx).await;
+
+    //tree.read_with(cx, |tree, _cx| {
+    //    let tree = tree.as_local().unwrap();
+
+    //    assert!(tree.local_repo_containing_path("c.txt".as_ref()).is_none());
+
+    //    let repo = tree
+    //        .local_repo_containing_path("dir1/src/b.txt".as_ref())
+    //        .unwrap();
+    //    assert_eq!(repo.work_directory, WorkDirectory::in_project("dir1"));
+
+    //    let repo = tree
+    //        .local_repo_containing_path("dir1/deps/dep1/src/a.txt".as_ref())
+    //        .unwrap();
+    //    assert_eq!(
+    //        repo.work_directory,
+    //        WorkDirectory::in_project("dir1/deps/dep1")
+    //    );
+
+    //    let entries = tree.files(false, 0);
+
+    //    let paths_with_repos = tree
+    //        .entries_with_repositories(entries)
+    //        .map(|(entry, repo)| {
+    //            (
+    //                entry.path.as_ref(),
+    //                repo.map(|repo| repo.work_directory_abs_path.clone()),
+    //            )
+    //        })
+    //        .collect::<Vec<_>>();
+
+    //    assert_eq!(
+    //        paths_with_repos,
+    //        &[
+    //            (Path::new("c.txt"), None),
+    //            (
+    //                Path::new("dir1/deps/dep1/src/a.txt"),
+    //                Some(root.path().join("dir1/deps/dep1")),
+    //            ),
+    //            (Path::new("dir1/src/b.txt"), Some(root.path().join("dir1"))),
+    //        ]
+    //    );
+    //});
+
+    //let repo_update_events = Arc::new(Mutex::new(vec![]));
+    //tree.update(cx, |_, cx| {
+    //    let repo_update_events = repo_update_events.clone();
+    //    cx.subscribe(&tree, move |_, _, event, _| {
+    //        if let Event::UpdatedGitRepositories(update) = event {
+    //            repo_update_events.lock().push(update.clone());
+    //        }
+    //    })
+    //    .detach();
+    //});
+
+    //std::fs::write(root.path().join("dir1/.git/random_new_file"), "hello").unwrap();
+    //tree.flush_fs_events(cx).await;
+
+    //assert_eq!(
+    //    repo_update_events.lock()[0]
+    //        .iter()
+    //        .map(|(entry, _)| entry.path.clone())
+    //        .collect::<Vec<Arc<Path>>>(),
+    //    vec![Path::new("dir1").into()]
+    //);
+
+    //std::fs::remove_dir_all(root.path().join("dir1/.git")).unwrap();
+    //tree.flush_fs_events(cx).await;
+
+    //tree.read_with(cx, |tree, _cx| {
+    //    let tree = tree.as_local().unwrap();
+
+    //    assert!(tree
+    //        .local_repo_containing_path("dir1/src/b.txt".as_ref())
+    //        .is_none());
+    //});
+}
+
+#[gpui::test]
+async fn test_home_dir_as_git_repository(_cx: &mut gpui::TestAppContext) {
+    todo!("restore this one too")
+    //init_test(cx);
+    //cx.executor().allow_parking();
+    //let fs = FakeFs::new(cx.background_executor.clone());
+    //fs.insert_tree(
+    //    "/root",
+    //    json!({
+    //        "home": {
+    //            ".git": {},
+    //            "project": {
+    //                "a.txt": "A"
+    //            },
+    //        },
+    //    }),
+    //)
+    //.await;
+    //fs.set_home_dir(Path::new(path!("/root/home")).to_owned());
+
+    //let tree = Worktree::local(
+    //    Path::new(path!("/root/home/project")),
+    //    true,
+    //    fs.clone(),
+    //    Default::default(),
+    //    &mut cx.to_async(),
+    //)
+    //.await
+    //.unwrap();
+
+    //cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
+    //    .await;
+    //tree.flush_fs_events(cx).await;
+
+    //tree.read_with(cx, |tree, _cx| {
+    //    let tree = tree.as_local().unwrap();
+
+    //    let repo = tree.local_repo_containing_path(path!("a.txt").as_ref());
+    //    assert!(repo.is_none());
+    //});
+
+    //let home_tree = Worktree::local(
+    //    Path::new(path!("/root/home")),
+    //    true,
+    //    fs.clone(),
+    //    Default::default(),
+    //    &mut cx.to_async(),
+    //)
+    //.await
+    //.unwrap();
+
+    //cx.read(|cx| home_tree.read(cx).as_local().unwrap().scan_complete())
+    //    .await;
+    //home_tree.flush_fs_events(cx).await;
+
+    //home_tree.read_with(cx, |home_tree, _cx| {
+    //    let home_tree = home_tree.as_local().unwrap();
+
+    //    let repo = home_tree.local_repo_containing_path(path!("project/a.txt").as_ref());
+    //    assert_eq!(
+    //        repo.map(|repo| &repo.work_directory),
+    //        Some(&WorkDirectory::InProject {
+    //            relative_path: Path::new("").into()
+    //        })
+    //    );
+    //})
+}
+
 async fn search(
     project: &Entity<Project>,
     query: SearchQuery,
