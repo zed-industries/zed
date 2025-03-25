@@ -186,7 +186,6 @@ pub struct ScrollManager {
 
     dragging_minimap: bool,
     show_minimap_slider: bool,
-    hide_minimap_slider_task: Option<Task<()>>,
 }
 
 impl ScrollManager {
@@ -204,7 +203,6 @@ impl ScrollManager {
             forbid_vertical_scroll: false,
             dragging_minimap: false,
             show_minimap_slider: false,
-            hide_minimap_slider_task: None,
         }
     }
 
@@ -377,19 +375,7 @@ impl ScrollManager {
 
     pub fn hide_minimap_slider(&mut self, window: &mut Window, cx: &mut Context<Editor>) {
         if self.show_minimap_slider && self.hide_minimap_slider_task.is_none() {
-            self.hide_minimap_slider_task =
-                Some(cx.spawn_in(window, |editor, mut cx| async move {
-                    cx.background_executor()
-                        .timer(SCROLLBAR_SHOW_INTERVAL)
-                        .await;
-                    editor
-                        .update(&mut cx, |editor, cx| {
-                            editor.scroll_manager.show_minimap_slider = false;
-                            editor.scroll_manager.hide_minimap_slider_task = None;
-                            cx.notify();
-                        })
-                        .log_err();
-                }));
+            self.show_minimap_slider = false;
         }
     }
 
