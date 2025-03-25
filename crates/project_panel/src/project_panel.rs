@@ -1544,6 +1544,7 @@ impl ProjectPanel {
         sanitized_entries: BTreeSet<SelectedEntry>,
         cx: &mut Context<Self>,
     ) -> Option<SelectedEntry> {
+        let hide_gitignore = ProjectPanelSettings::get_global(cx).hide_gitignore;
         if sanitized_entries.is_empty() {
             return None;
         }
@@ -1581,11 +1582,11 @@ impl ProjectPanel {
         let snapshot = worktree.snapshot();
         let mut siblings: Vec<_> = ChildEntriesGitIter::new(&snapshot, parent_path)
             .filter(|sibling| {
-                sibling.id == latest_entry.id
-                    || !marked_entries_in_worktree.contains(&&SelectedEntry {
+                (sibling.id == latest_entry.id)
+                    || (!marked_entries_in_worktree.contains(&&SelectedEntry {
                         worktree_id,
                         entry_id: sibling.id,
-                    })
+                    }) && (!hide_gitignore || !sibling.is_ignored))
             })
             .map(|entry| entry.to_owned())
             .collect();
