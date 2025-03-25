@@ -251,7 +251,6 @@ impl Render for RunningState {
                                         ),
                                     ),
                             )
-                            //.child(h_flex())
                             .child(
                                 h_flex()
                                     .px_1()
