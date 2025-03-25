@@ -1536,101 +1536,94 @@ impl EditorElement {
         line_height: Pixels,
         visible_range: Range<DisplayRow>,
     ) -> Option<MinimapLayout> {
-        match snapshot.mode {
-            EditorMode::Full => {
-                // We shouldn't render the minimap if the vertical scrollbar doesn't exist. This should only occur when the editor is not in Full mode.
-                if scrollbars_layout.vertical.is_none() {
-                    return None;
-                }
-                let scrollbar = scrollbars_layout.vertical.unwrap();
-                let minimap_visible = match minimap_settings.show {
-                    ShowMinimap::Always => true,
-                    ShowMinimap::Never => false,
-                    ShowMinimap::Auto => scrollbar.visible,
-                };
-                if !minimap_visible {
-                    return None;
-                }
-
-                let mut editor = self
-                    .editor
-                    .update(cx, |editor, cx| editor.clone(window, cx));
-
-                let mut show_slider = match minimap_settings.slider {
-                    MinimapSlider::Always => true,
-                    MinimapSlider::Hover => self.editor.update(cx, |editor, _| {
-                        editor.scroll_manager.minimap_slider_visible()
-                    }),
-                };
-
-                editor.mode = EditorMode::Minimap;
-                editor.set_text_style_refinement(TextStyleRefinement {
-                    font_size: Some(px(2.).into()),
-                    font_weight: Some(gpui::FontWeight(900.)),
-                    ..Default::default()
-                });
-
-                let editor_entity = cx.new(|_| editor);
-
-                let minimap_bounds = Self::get_minimap_bounds(&scrollbar, &minimap_settings);
-
-                let minimap_line_height =
-                    self.get_minimap_line_height(window, &minimap_settings, cx);
-
-                let scroll_top_lines = visible_range.start.0 as f32;
-                let viewport_height = bounds.size.height;
-                let minimap_height = minimap_bounds.size.height;
-
-                let visible_lines = viewport_height / line_height;
-                let slider_height = px(visible_lines) * minimap_line_height;
-                let num_lines_minus_one = num_lines - 1.;
-                // Allows for overscrolling
-                let logical_minimap_scroll_height = num_lines_minus_one + visible_lines;
-                let max_minimap_slider_top = px(f32::max(
-                    0.,
-                    f32::min(
-                        minimap_height.0,
-                        num_lines_minus_one * minimap_line_height.0,
-                    ) - slider_height.0,
-                ));
-                show_slider &= max_minimap_slider_top.0 > 0.;
-                let slider_top =
-                    (scroll_top_lines / logical_minimap_scroll_height) * max_minimap_slider_top;
-                let slider_lines_from_top = slider_top.0 / minimap_line_height.0;
-                let minimap_scroll_top_lines = scroll_top_lines - slider_lines_from_top;
-
-                let slider_bounds = Bounds::new(
-                    point(
-                        minimap_bounds.origin.x,
-                        minimap_bounds.origin.y + slider_top,
-                    ),
-                    size(minimap_bounds.size.width, slider_height),
-                );
-
-                editor_entity.update(cx, |editor, cx| {
-                    editor.set_scroll_position(point(0., minimap_scroll_top_lines), window, cx)
-                });
-
-                let mut minimap_elem = editor_entity.update(cx, |editor, cx| {
-                    editor.render(window, cx).into_any_element()
-                });
-                _ = minimap_elem.layout_as_root(minimap_bounds.size.into(), window, cx);
-                window.with_absolute_element_offset(minimap_bounds.origin, |window| {
-                    minimap_elem.prepaint(window, cx)
-                });
-                Some(MinimapLayout {
-                    minimap: minimap_elem,
-                    hitbox: window.insert_hitbox(minimap_bounds, false),
-                    slider_hitbox: window.insert_hitbox(slider_bounds, false),
-                    show_slider,
-                    minimap_line_height,
-                    minimap_scroll_top: minimap_scroll_top_lines,
-                    num_lines_minus_one,
-                    logical_height: logical_minimap_scroll_height,
-                })
-            }
-            _ => None,
+        if snapshot.mode != EditorMode::Full || scrollbars_layout.vertical.is_none() {
+            return None;
         }
+        let scrollbar = scrollbars_layout.vertical.unwrap();
+        let minimap_visible = match minimap_settings.show {
+            ShowMinimap::Always => true,
+            ShowMinimap::Never => false,
+            ShowMinimap::Auto => scrollbar.visible,
+        };
+        if !minimap_visible {
+            return None;
+        }
+
+        let mut editor = self
+            .editor
+            .update(cx, |editor, cx| editor.clone(window, cx));
+
+        let mut show_slider = match minimap_settings.slider {
+            MinimapSlider::Always => true,
+            MinimapSlider::Hover => self.editor.update(cx, |editor, _| {
+                editor.scroll_manager.minimap_slider_visible()
+            }),
+        };
+
+        editor.mode = EditorMode::Minimap;
+        editor.set_text_style_refinement(TextStyleRefinement {
+            font_size: Some(px(2.).into()),
+            font_weight: Some(gpui::FontWeight(900.)),
+            ..Default::default()
+        });
+
+        let editor_entity = cx.new(|_| editor);
+
+        let minimap_bounds = Self::get_minimap_bounds(&scrollbar, &minimap_settings);
+
+        let minimap_line_height = self.get_minimap_line_height(window, &minimap_settings, cx);
+
+        let scroll_top_lines = visible_range.start.0 as f32;
+        let viewport_height = bounds.size.height;
+        let minimap_height = minimap_bounds.size.height;
+
+        let visible_lines = viewport_height / line_height;
+        let slider_height = px(visible_lines) * minimap_line_height;
+        let num_lines_minus_one = num_lines - 1.;
+        // Allows for overscrolling
+        let logical_minimap_scroll_height = num_lines_minus_one + visible_lines;
+        let max_minimap_slider_top = px(f32::max(
+            0.,
+            f32::min(
+                minimap_height.0,
+                num_lines_minus_one * minimap_line_height.0,
+            ) - slider_height.0,
+        ));
+        show_slider &= max_minimap_slider_top.0 > 0.;
+        let slider_top =
+            (scroll_top_lines / logical_minimap_scroll_height) * max_minimap_slider_top;
+        let slider_lines_from_top = slider_top.0 / minimap_line_height.0;
+        let minimap_scroll_top_lines = scroll_top_lines - slider_lines_from_top;
+
+        let slider_bounds = Bounds::new(
+            point(
+                minimap_bounds.origin.x,
+                minimap_bounds.origin.y + slider_top,
+            ),
+            size(minimap_bounds.size.width, slider_height),
+        );
+
+        editor_entity.update(cx, |editor, cx| {
+            editor.set_scroll_position(point(0., minimap_scroll_top_lines), window, cx)
+        });
+
+        let mut minimap_elem = editor_entity.update(cx, |editor, cx| {
+            editor.render(window, cx).into_any_element()
+        });
+        _ = minimap_elem.layout_as_root(minimap_bounds.size.into(), window, cx);
+        window.with_absolute_element_offset(minimap_bounds.origin, |window| {
+            minimap_elem.prepaint(window, cx)
+        });
+        Some(MinimapLayout {
+            minimap: minimap_elem,
+            hitbox: window.insert_hitbox(minimap_bounds, false),
+            slider_hitbox: window.insert_hitbox(slider_bounds, false),
+            show_slider,
+            minimap_line_height,
+            minimap_scroll_top: minimap_scroll_top_lines,
+            num_lines_minus_one,
+            logical_height: logical_minimap_scroll_height,
+        })
     }
 
     fn get_minimap_bounds(
@@ -1795,7 +1788,6 @@ impl EditorElement {
         window: &mut Window,
         cx: &mut App,
     ) -> HashMap<DisplayRow, AnyElement> {
-        // Don't show inline diagnostics in minimap
         if self.editor.read(cx).mode() == EditorMode::Minimap {
             return HashMap::default();
         }
