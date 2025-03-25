@@ -2278,7 +2278,6 @@ async fn test_file_status(cx: &mut TestAppContext) {
         let snapshot = tree.snapshot();
         assert_eq!(snapshot.repositories.iter().count(), 1);
         let repo_entry = snapshot.repositories.iter().next().unwrap();
-        dbg!(&repo_entry);
         assert_eq!(
             repo_entry.status_for_path(&A_TXT.into()).unwrap().status,
             StatusCode::Modified.worktree(),
@@ -2364,7 +2363,7 @@ async fn test_file_status(cx: &mut TestAppContext) {
         let repo_entry = snapshot.repositories.iter().next().unwrap();
         assert_eq!(
             repo_entry
-                .status_for_path(&RENAMED_FILE.into())
+                .status_for_path(&Path::new(renamed_dir_name).join(RENAMED_FILE).into())
                 .unwrap()
                 .status,
             FileStatus::Untracked,
@@ -2422,8 +2421,6 @@ async fn test_git_repository_status(cx: &mut TestAppContext) {
     std::fs::remove_file(work_dir.join("d.txt")).unwrap();
     std::fs::write(work_dir.join("a.txt"), "aa").unwrap();
 
-    eprintln!("<<<<<<<<<<<<<< building worktree");
-
     let tree = Worktree::local(
         root.path(),
         true,
@@ -2438,8 +2435,6 @@ async fn test_git_repository_status(cx: &mut TestAppContext) {
     cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
         .await;
     cx.executor().run_until_parked();
-
-    eprintln!("<<<<<<<<<<<<<< finished building worktree");
 
     // Check that the right git state is observed on startup
     tree.read_with(cx, |tree, _cx| {
@@ -2466,9 +2461,7 @@ async fn test_git_repository_status(cx: &mut TestAppContext) {
         );
     });
 
-    eprintln!(">>>>>>>>>>>>>>> write c.txt");
     std::fs::write(work_dir.join("c.txt"), "some changes").unwrap();
-    eprintln!("<<<<<<<<<<<<<<< write c.txt");
 
     tree.flush_fs_events(cx).await;
     cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())

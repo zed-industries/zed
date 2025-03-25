@@ -215,7 +215,6 @@ impl RepositoryEntry {
     }
 
     pub fn directory_contains_abs_path(&self, abs_path: impl AsRef<Path>) -> bool {
-        dbg!(&self.work_directory_abs_path, abs_path.as_ref());
         abs_path.as_ref().starts_with(&self.work_directory_abs_path)
     }
 
@@ -2802,11 +2801,10 @@ impl Snapshot {
 
     /// Get the repository whose work directory contains the given path.
     pub fn repository_containing_abs_path(&self, abs_path: &Path) -> Option<&RepositoryEntry> {
-        dbg!(self
-            .repositories
+        self.repositories
             .iter()
             .filter(|repo| repo.directory_contains_abs_path(abs_path))
-            .last())
+            .last()
     }
 
     pub fn repository_for_id(&self, id: ProjectEntryId) -> Option<&RepositoryEntry> {
@@ -3446,7 +3444,6 @@ impl BackgroundScannerState {
         }
 
         let work_directory_id = work_dir_entry.id;
-        dbg!(&work_directory_abs_path);
         self.snapshot.repositories.insert_or_replace(
             RepositoryEntry {
                 work_directory_id,
@@ -4988,7 +4985,7 @@ impl BackgroundScanner {
         // refreshed. Do this before adding any new entries, so that renames can be
         // detected regardless of the order of the paths.
         for (path, metadata) in relative_paths.iter().zip(metadata.iter()) {
-            if dbg!(matches!(metadata, Ok(None))) || dbg!(doing_recursive_update) {
+            if matches!(metadata, Ok(None)) || doing_recursive_update {
                 log::trace!("remove path {:?}", path);
                 state.remove_path(path);
             }
@@ -4999,12 +4996,8 @@ impl BackgroundScanner {
         for (relative_path, abs_path) in relative_paths.iter().zip(&abs_paths) {
             let repository_data = state
                 .snapshot
-                .local_repo_containing_path(dbg!(relative_path))
-                .zip(
-                    state
-                        .snapshot
-                        .repository_containing_abs_path(dbg!(abs_path)),
-                );
+                .local_repo_containing_path(relative_path)
+                .zip(state.snapshot.repository_containing_abs_path(abs_path));
             if let Some((local_repo, entry)) = repository_data {
                 eprintln!("one");
                 if let Ok(repo_path) = local_repo.relativize(relative_path) {
@@ -5020,7 +5013,6 @@ impl BackgroundScanner {
                 }
             }
         }
-        dbg!(&paths_by_git_repo);
 
         for (_work_directory, mut paths) in paths_by_git_repo {
             if let Ok(status) = paths.repo.status(&paths.repo_paths) {
@@ -5532,7 +5524,6 @@ async fn do_git_status_update(
     else {
         return;
     };
-    dbg!(&statuses);
     log::trace!(
         "computed git statuses for repo {repository_name} in {:?}",
         t0.elapsed()
