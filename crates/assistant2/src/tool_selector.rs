@@ -50,7 +50,8 @@ impl ToolSelector {
                 menu = menu.toggleable_entry(profile.name.clone(), false, icon_position, None, {
                     let tools = tool_set.clone();
                     move |_window, cx| {
-                        tools.disable_source(ToolSource::Native, cx);
+                        tools.disable_all_tools(cx);
+
                         tools.enable(
                             ToolSource::Native,
                             &profile
@@ -59,6 +60,19 @@ impl ToolSelector {
                                 .filter_map(|(tool, enabled)| enabled.then(|| tool.clone()))
                                 .collect::<Vec<_>>(),
                         );
+
+                        for (context_server_id, preset) in &profile.context_servers {
+                            tools.enable(
+                                ToolSource::ContextServer {
+                                    id: context_server_id.clone().into(),
+                                },
+                                &preset
+                                    .tools
+                                    .iter()
+                                    .filter_map(|(tool, enabled)| enabled.then(|| tool.clone()))
+                                    .collect::<Vec<_>>(),
+                            )
+                        }
                     }
                 });
             }
