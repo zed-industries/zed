@@ -515,15 +515,7 @@ impl Copilot {
                 .on_notification::<StatusNotification, _>(|_, _| { /* Silence the notification */ })
                 .detach();
 
-            let configuration = lsp::DidChangeConfigurationParams {
-                settings: json!({
-                    "github": {
-                        "copilot": {
-                            "selectedCompletionModel": prediction_model,
-                        }
-                    }
-                }),
-            };
+            let configuration = get_set_prediction_model_notification(prediction_model);
 
             let editor_info = request::SetEditorInfoParams {
                 editor_info: request::EditorInfo {
@@ -735,15 +727,7 @@ impl Copilot {
             server
                 .lsp
                 .notify::<lsp::notification::DidChangeConfiguration>(
-                    &lsp::DidChangeConfigurationParams {
-                        settings: json!({
-                            "github": {
-                                "copilot": {
-                                    "selectedCompletionModel": prediction_model,
-                                }
-                            }
-                        }),
-                    },
+                    &get_set_prediction_model_notification(prediction_model),
                 )
                 .ok();
         }
@@ -1142,6 +1126,20 @@ async fn get_copilot_lsp(node_runtime: NodeRuntime) -> anyhow::Result<PathBuf> {
     }
 
     Ok(server_path)
+}
+
+fn get_set_prediction_model_notification(
+    prediction_model: CopilotPredictionModel,
+) -> lsp::DidChangeConfigurationParams {
+    lsp::DidChangeConfigurationParams {
+        settings: json!({
+            "github": {
+                "copilot": {
+                    "selectedCompletionModel": prediction_model,
+                }
+            }
+        }),
+    }
 }
 
 #[cfg(test)]
