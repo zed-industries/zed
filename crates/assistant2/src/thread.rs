@@ -352,6 +352,10 @@ impl Thread {
             .filter(|tool_use| tool_use.status.needs_confirmation())
     }
 
+    pub fn has_pending_tool_uses(&self) -> bool {
+        !self.tool_use.pending_tool_uses().is_empty()
+    }
+
     pub fn checkpoint_for_message(&self, id: MessageId) -> Option<ThreadCheckpoint> {
         self.checkpoints_by_message.get(&id).cloned()
     }

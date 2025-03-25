@@ -57,7 +57,6 @@ multi_buffer.workspace = true
 parking_lot.workspace = true
 paths.workspace = true
 picker.workspace = true
-pop_up.workspace = true
 project.workspace = true
 prompt_library.workspace = true
 prompt_store.workspace = true
