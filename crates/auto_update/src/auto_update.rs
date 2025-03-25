@@ -512,7 +512,7 @@ impl AutoUpdater {
         let filename = match OS {
             "macos" => Ok("Zed.dmg"),
             "linux" => Ok("zed.tar.gz"),
-            "windows" => Ok("Installer.exe"),
+            "windows" => Ok("ZedUpdateInstaller.exe"),
             _ => Err(anyhow!("not supported: {:?}", OS)),
         }?;
 
