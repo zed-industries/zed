@@ -142,7 +142,7 @@ actions!(
         StepBack,
         Stop,
         ToggleIgnoreBreakpoints,
-        ClearBreakpoints
+        ClearAllBreakpoints
     ]
 );
 
