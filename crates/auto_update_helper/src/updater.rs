@@ -156,13 +156,11 @@ pub(crate) async fn perform_update(app_dir: &Path, hwnd: Option<isize>) -> Resul
                     Ok(())
                 }
                 Err(err) => {
-                    log::error!("Update failed: {:?}", err);
                     Err(err)
                 }
             }
         }
         _ = FutureExt::fuse(smol::Timer::after(std::time::Duration::from_secs(10))) => {
-            log::error!("Update timed out");
             Err(anyhow::anyhow!("Update timed out"))
         }
     }
