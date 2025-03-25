@@ -1,23 +1,25 @@
 use git::status::GitSummary;
+use gpui::App;
 use std::{ops::Deref, path::Path};
 use sum_tree::Cursor;
 use text::Bias;
 use util::ResultExt as _;
 use worktree::{Entry, PathProgress, PathTarget, RepositoryEntry, StatusEntry, Traversal};
 
+use super::GitStore;
+
 /// Walks the worktree entries and their associated git statuses.
 pub struct GitTraversal<'a> {
+    git_store: &'a GitStore,
     traversal: Traversal<'a>,
     current_entry_summary: Option<GitSummary>,
-    repo_location: Option<(
-        &'a RepositoryEntry,
-        Cursor<'a, StatusEntry, PathProgress<'a>>,
-    )>,
+    repo_location: Option<(RepositoryEntry, Cursor<'a, StatusEntry, PathProgress<'a>>)>,
 }
 
 impl<'a> GitTraversal<'a> {
-    pub fn new(traversal: Traversal<'a>) -> GitTraversal<'a> {
+    pub fn new(git_store: &'a GitStore, traversal: Traversal<'a>) -> GitTraversal<'a> {
         let mut this = GitTraversal {
+            git_store,
             traversal,
             current_entry_summary: None,
             repo_location: None,
@@ -26,24 +28,22 @@ impl<'a> GitTraversal<'a> {
         this
     }
 
-    fn synchronize_statuses(&mut self, reset: bool) {
+    fn synchronize_statuses(&mut self, reset: bool, cx: &App) {
         self.current_entry_summary = None;
 
         let Some(entry) = self.entry() else {
             return;
         };
+        let entry_path = (self.traversal.snapshot().id(), &entry.path).into();
 
-        let Some(abs_path) = self.traversal.snapshot().absolutize(&entry.path).log_err() else {
-            return;
-        };
-        let Some(repo) = self
-            .traversal
-            .snapshot()
-            .repository_containing_abs_path(&abs_path)
+        let Some((repo, repo_path)) = self
+            .git_store
+            .repository_and_path_for_project_path(&entry_path, cx)
         else {
             self.repo_location = None;
             return;
         };
+        let repo = repo.read(cx).repository_entry.clone();
 
         // Update our state if we changed repositories.
         if reset
@@ -59,8 +59,6 @@ impl<'a> GitTraversal<'a> {
         let Some((repo, statuses)) = &mut self.repo_location else {
             return;
         };
-
-        let repo_path = repo.relativize_abs_path(&abs_path).unwrap();
 
         if entry.is_dir() {
             let mut statuses = statuses.clone();

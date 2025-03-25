@@ -2799,14 +2799,14 @@ impl Snapshot {
     }
 
     /// Get the repository whose work directory contains the given path.
-    pub fn repository_containing_abs_path(&self, abs_path: &Path) -> Option<&RepositoryEntry> {
+    fn repository_containing_abs_path(&self, abs_path: &Path) -> Option<&RepositoryEntry> {
         self.repositories
             .iter()
             .filter(|repo| repo.directory_contains_abs_path(abs_path))
             .last()
     }
 
-    pub fn repository_for_id(&self, id: ProjectEntryId) -> Option<&RepositoryEntry> {
+    fn repository_for_id(&self, id: ProjectEntryId) -> Option<&RepositoryEntry> {
         self.repositories
             .iter()
             .find(|repo| repo.work_directory_id == id)
