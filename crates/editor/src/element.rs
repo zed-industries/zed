@@ -5688,7 +5688,9 @@ impl EditorElement {
                                         - (slider_hitbox.bounds.size.height.0 / 2.),
                                     0.,
                                 );
-                                let pct_progress = slider_top / minimap_hitbox.bounds.size.height.0;
+                                let pct_progress = slider_top
+                                    / (minimap_hitbox.bounds.size.height.0
+                                        - slider_hitbox.bounds.size.height.0);
                                 position.y = pct_progress * layout.logical_height;
                                 editor.set_scroll_position(position, window, cx);
                             }
