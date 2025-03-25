@@ -1253,6 +1253,7 @@ impl ActiveThread {
 
         let tool_icon = match tool_use.name.as_ref() {
             "bash" => IconName::Terminal,
+            "copy-path" => IconName::Clipboard,
             "delete-path" => IconName::Trash,
             "diagnostics" => IconName::Warning,
             "edit-files" => IconName::Pencil,

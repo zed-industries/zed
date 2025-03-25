@@ -169,6 +169,7 @@ pub enum IconName {
     ChevronUp,
     ChevronUpDown,
     Circle,
+    Clipboard,
     Close,
     Code,
     Cog,
