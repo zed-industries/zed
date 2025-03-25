@@ -748,7 +748,7 @@ impl WorkspaceDb {
                             position: breakpoint.position,
                             path,
                             kind: breakpoint.kind,
-                            state: BreakpointState::Enabled,
+                            state: breakpoint.state,
                         });
                 }
 
@@ -1464,7 +1464,7 @@ mod tests {
         };
 
         let disable_breakpoint = Breakpoint {
-            position: 123,
+            position: 578,
             kind: BreakpointKind::Standard,
             state: BreakpointState::Disabled,
         };
@@ -1486,19 +1486,19 @@ mod tests {
                             position: breakpoint.position,
                             path: Arc::from(path),
                             kind: breakpoint.kind.clone(),
-                            state: BreakpointState::Enabled,
+                            state: breakpoint.state,
                         },
                         SerializedBreakpoint {
                             position: log_breakpoint.position,
                             path: Arc::from(path),
                             kind: log_breakpoint.kind.clone(),
-                            state: BreakpointState::Enabled,
+                            state: log_breakpoint.state,
                         },
                         SerializedBreakpoint {
                             position: disable_breakpoint.position,
                             path: Arc::from(path),
                             kind: disable_breakpoint.kind.clone(),
-                            state: BreakpointState::Disabled,
+                            state: disable_breakpoint.state,
                         },
                     ],
                 );
@@ -1514,12 +1514,21 @@ mod tests {
         let loaded_breakpoints = loaded.breakpoints.get(&Arc::from(path)).unwrap();
 
         assert_eq!(loaded_breakpoints.len(), 3);
+
         assert_eq!(loaded_breakpoints[0].position, breakpoint.position);
         assert_eq!(loaded_breakpoints[0].kind, breakpoint.kind);
+        assert_eq!(loaded_breakpoints[0].state, breakpoint.state);
+        assert_eq!(loaded_breakpoints[0].path, Arc::from(path));
+
         assert_eq!(loaded_breakpoints[1].position, log_breakpoint.position);
         assert_eq!(loaded_breakpoints[1].kind, log_breakpoint.kind);
-        assert_eq!(loaded_breakpoints[0].path, Arc::from(path));
+        assert_eq!(loaded_breakpoints[1].state, log_breakpoint.state);
         assert_eq!(loaded_breakpoints[1].path, Arc::from(path));
+
+        assert_eq!(loaded_breakpoints[2].position, disable_breakpoint.position);
+        assert_eq!(loaded_breakpoints[2].kind, disable_breakpoint.kind);
+        assert_eq!(loaded_breakpoints[2].state, disable_breakpoint.state);
+        assert_eq!(loaded_breakpoints[2].path, Arc::from(path));
     }
 
     #[gpui::test]
