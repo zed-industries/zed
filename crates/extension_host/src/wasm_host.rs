@@ -140,18 +140,20 @@ impl extension::Extension for WasmExtension {
         .await
     }
 
-    async fn additional_language_server_workspace_configuration(
+    async fn language_server_additional_workspace_configuration(
         &self,
         language_server_id: LanguageServerName,
+        target_language_server_id: LanguageServerName,
         worktree: Arc<dyn WorktreeDelegate>,
     ) -> Result<Option<String>> {
         self.call(|extension, store| {
             async move {
                 let resource = store.data_mut().table().push(worktree)?;
                 let options = extension
-                    .call_additional_language_server_workspace_configuration(
+                    .call_language_server_additional_workspace_configuration(
                         store,
                         &language_server_id,
+                        &target_language_server_id,
                         resource,
                     )
                     .await?

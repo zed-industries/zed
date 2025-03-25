@@ -518,6 +518,7 @@ pub trait LspAdapter: 'static + Send + Sync {
 
     async fn additional_workspace_configuration(
         self: Arc<Self>,
+        _target_language_server_id: LanguageServerName,
         _: &dyn Fs,
         _: &Arc<dyn LspAdapterDelegate>,
         _: Arc<dyn LanguageToolchainStore>,

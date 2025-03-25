@@ -269,6 +269,7 @@ impl LspAdapter for ExtensionLspAdapter {
 
     async fn additional_workspace_configuration(
         self: Arc<Self>,
+        target_language_server_id: LanguageServerName,
         _: &dyn Fs,
         delegate: &Arc<dyn LspAdapterDelegate>,
         _: Arc<dyn LanguageToolchainStore>,
@@ -277,8 +278,9 @@ impl LspAdapter for ExtensionLspAdapter {
         let delegate = Arc::new(WorktreeDelegateAdapter(delegate.clone())) as _;
         let json_options: Option<String> = self
             .extension
-            .additional_language_server_workspace_configuration(
+            .language_server_additional_workspace_configuration(
                 self.language_server_id.clone(),
+                target_language_server_id.clone(),
                 delegate,
             )
             .await?;

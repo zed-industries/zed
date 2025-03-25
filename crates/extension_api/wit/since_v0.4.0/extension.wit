@@ -96,7 +96,7 @@ world extension {
     export language-server-workspace-configuration: func(language-server-id: string, worktree: borrow<worktree>) -> result<option<string>, string>;
 
     /// Returns the workspace configuration options to pass to the other language server.
-    export additional-language-server-workspace-configuration: func(language-server-id: string, worktree: borrow<worktree>) -> result<option<string>, string>;
+    export language-server-additional-workspace-configuration: func(language-server-id: string, target-language-server-id: string, worktree: borrow<worktree>) -> result<option<string>, string>;
 
     /// A label containing some code.
     record code-label {

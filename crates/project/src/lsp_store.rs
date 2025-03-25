@@ -3252,14 +3252,18 @@ impl LocalLspStore {
             if other_adapter.name() == adapter.name() {
                 continue;
             }
-            if let Ok(Some(config)) = other_adapter
+            if let Ok(Some(target_config)) = other_adapter
                 .clone()
-                .additional_workspace_configuration(fs, delegate, toolchains.clone(), cx)
+                .additional_workspace_configuration(
+                    adapter.name(),
+                    fs,
+                    delegate,
+                    toolchains.clone(),
+                    cx,
+                )
                 .await
             {
-                if let Some(target_config) = config.get(adapter.name().to_string()) {
-                    merge_json_value_into(target_config.clone(), &mut workspace_config);
-                }
+                merge_json_value_into(target_config.clone(), &mut workspace_config);
             }
         }
 

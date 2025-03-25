@@ -94,9 +94,10 @@ pub trait Extension: Send + Sync {
     }
 
     /// Returns the workspace configuration options to pass to the other language server.
-    fn additional_language_server_workspace_configuration(
+    fn language_server_additional_workspace_configuration(
         &mut self,
         _language_server_id: &LanguageServerId,
+        _target_language_server_id: &LanguageServerId,
         _worktree: &Worktree,
     ) -> Result<Option<serde_json::Value>> {
         Ok(None)
@@ -244,13 +245,19 @@ impl wit::Guest for Component {
             .and_then(|value| serde_json::to_string(&value).ok()))
     }
 
-    fn additional_language_server_workspace_configuration(
+    fn language_server_additional_workspace_configuration(
         language_server_id: String,
+        target_language_server_id: String,
         worktree: &Worktree,
     ) -> Result<Option<String>, String> {
         let language_server_id = LanguageServerId(language_server_id);
+        let target_language_server_id = LanguageServerId(target_language_server_id);
         Ok(extension()
-            .additional_language_server_workspace_configuration(&language_server_id, worktree)?
+            .language_server_additional_workspace_configuration(
+                &language_server_id,
+                &target_language_server_id,
+                worktree,
+            )?
             .and_then(|value| serde_json::to_string(&value).ok()))
     }
 

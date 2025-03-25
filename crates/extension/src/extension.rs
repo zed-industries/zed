@@ -76,9 +76,10 @@ pub trait Extension: Send + Sync + 'static {
         worktree: Arc<dyn WorktreeDelegate>,
     ) -> Result<Option<String>>;
 
-    async fn additional_language_server_workspace_configuration(
+    async fn language_server_additional_workspace_configuration(
         &self,
         language_server_id: LanguageServerName,
+        target_language_server_id: LanguageServerName,
         worktree: Arc<dyn WorktreeDelegate>,
     ) -> Result<Option<String>>;
 

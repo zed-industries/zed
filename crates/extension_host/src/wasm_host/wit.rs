@@ -365,17 +365,19 @@ impl Extension {
         }
     }
 
-    pub async fn call_additional_language_server_workspace_configuration(
+    pub async fn call_language_server_additional_workspace_configuration(
         &self,
         store: &mut Store<WasmState>,
         language_server_id: &LanguageServerName,
+        target_language_server_id: &LanguageServerName,
         resource: Resource<Arc<dyn WorktreeDelegate>>,
     ) -> Result<Result<Option<String>, String>> {
         match self {
             Extension::V040(ext) => {
-                ext.call_additional_language_server_workspace_configuration(
+                ext.call_language_server_additional_workspace_configuration(
                     store,
                     &language_server_id.0,
+                    &target_language_server_id.0,
                     resource,
                 )
                 .await
