@@ -505,8 +505,7 @@ impl BreakpointStore {
                             position,
                             Breakpoint {
                                 kind: bp.kind,
-                                // todo(debugger): We should be deriving this from database
-                                state: BreakpointState::Enabled,
+                                state: bp.state,
                             },
                         ))
                     }
@@ -601,6 +600,15 @@ impl BreakpointState {
     #[inline]
     pub fn is_disabled(&self) -> bool {
         matches!(self, BreakpointState::Disabled)
+    }
+
+    #[inline]
+    pub fn to_int(&self) -> i32 {
+        match self {
+            BreakpointState::Enabled => 0,
+            BreakpointState::Disabled => 1,
+            BreakpointState::Hint => unreachable!("We should never try to serialize this data"),
+        }
     }
 }
 
