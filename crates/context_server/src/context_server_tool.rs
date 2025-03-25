@@ -3,9 +3,9 @@ use std::sync::Arc;
 use anyhow::{anyhow, bail, Result};
 use assistant_tool::{ActionLog, Tool, ToolSource};
 use gpui::{App, Entity, Task};
+use icons::IconName;
 use language_model::LanguageModelRequestMessage;
 use project::Project;
-use ui::IconName;
 
 use crate::manager::ContextServerManager;
 use crate::types;
