@@ -4,7 +4,8 @@ use futures::StreamExt;
 use gpui::AsyncApp;
 use http_client::github::{latest_github_release, GitHubLspBinaryVersion};
 pub use language::*;
-use lsp::{InitializeParams, LanguageServerBinary, LanguageServerName};
+use lsp::{DiagnosticTag, InitializeParams, LanguageServerBinary, LanguageServerName};
+use project::lsp_store::clangd_ext;
 use serde_json::json;
 use smol::fs::{self, File};
 use std::{any::Any, env::consts, path::PathBuf, sync::Arc};
@@ -279,10 +280,9 @@ impl super::LspAdapter for CLspAdapter {
                     // enable clangd's dot-to-arrow feature.
                     "editsNearCursor": true
                 },
-                // TODO: inactiveRegions support needs an implementation in clangd_ext.rs
-                // "inactiveRegionsCapabilities": {
-                //     "inactiveRegions": true,
-                // }
+                "inactiveRegionsCapabilities": {
+                    "inactiveRegions": true,
+                }
             }
         });
         if let Some(ref mut original_experimental) = original.capabilities.experimental {
@@ -291,6 +291,40 @@ impl super::LspAdapter for CLspAdapter {
             original.capabilities.experimental = Some(experimental);
         }
         Ok(original)
+    }
+
+    fn process_diagnostics(
+        &self,
+        params: &mut lsp::PublishDiagnosticsParams,
+        server_id: LanguageServerId,
+        buffer_access: Option<&'_ Buffer>,
+    ) {
+        if let Some(buffer) = buffer_access {
+            let snapshot = buffer.snapshot();
+            let inactive_regions = buffer
+                .get_diagnostics(server_id)
+                .into_iter()
+                .flat_map(|v| v.iter())
+                .filter(|diag| clangd_ext::is_inactive_region(&diag.diagnostic))
+                .map(move |diag| {
+                    let range =
+                        language::range_to_lsp(diag.range.to_point_utf16(&snapshot)).unwrap();
+                    let mut tags = vec![];
+                    if diag.diagnostic.is_unnecessary {
+                        tags.push(DiagnosticTag::UNNECESSARY);
+                    }
+                    lsp::Diagnostic {
+                        range,
+                        severity: Some(diag.diagnostic.severity),
+                        source: diag.diagnostic.source.clone(),
+                        tags: Some(tags),
+                        message: diag.diagnostic.message.clone(),
+                        code: diag.diagnostic.code.clone(),
+                        ..Default::default()
+                    }
+                });
+            params.diagnostics.extend(inactive_regions);
+        }
     }
 }
 

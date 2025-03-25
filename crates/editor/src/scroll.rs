@@ -341,12 +341,12 @@ impl ScrollManager {
         }
 
         if cx.default_global::<ScrollbarAutoHide>().0 {
-            self.hide_scrollbar_task = Some(cx.spawn_in(window, |editor, mut cx| async move {
+            self.hide_scrollbar_task = Some(cx.spawn_in(window, async move |editor, cx| {
                 cx.background_executor()
                     .timer(SCROLLBAR_SHOW_INTERVAL)
                     .await;
                 editor
-                    .update(&mut cx, |editor, cx| {
+                    .update(cx, |editor, cx| {
                         editor.scroll_manager.show_scrollbars = false;
                         cx.notify();
                     })
@@ -425,9 +425,9 @@ impl Editor {
         let opened_first_time = self.scroll_manager.visible_line_count.is_none();
         self.scroll_manager.visible_line_count = Some(lines);
         if opened_first_time {
-            cx.spawn_in(window, |editor, mut cx| async move {
+            cx.spawn_in(window, async move |editor, cx| {
                 editor
-                    .update(&mut cx, |editor, cx| {
+                    .update(cx, |editor, cx| {
                         editor.refresh_inlay_hints(InlayHintRefreshReason::NewLinesShown, cx)
                     })
                     .ok()
@@ -460,6 +460,28 @@ impl Editor {
             return;
         }
         self.set_scroll_position_internal(scroll_position, true, false, window, cx);
+    }
+
+    /// Scrolls so that `row` is at the top of the editor view.
+    pub fn set_scroll_top_row(
+        &mut self,
+        row: DisplayRow,
+        window: &mut Window,
+        cx: &mut Context<Editor>,
+    ) {
+        let snapshot = self.snapshot(window, cx).display_snapshot;
+        let new_screen_top = DisplayPoint::new(row, 0);
+        let new_screen_top = new_screen_top.to_offset(&snapshot, Bias::Left);
+        let new_anchor = snapshot.buffer_snapshot.anchor_before(new_screen_top);
+
+        self.set_scroll_anchor(
+            ScrollAnchor {
+                anchor: new_anchor,
+                offset: Default::default(),
+            },
+            window,
+            cx,
+        );
     }
 
     pub(crate) fn set_scroll_position_internal(

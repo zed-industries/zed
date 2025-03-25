@@ -357,7 +357,7 @@ impl Element for Img {
                                     }
                                 } else {
                                     let current_view = window.current_view();
-                                    let task = window.spawn(cx, |mut cx| async move {
+                                    let task = window.spawn(cx, async move |cx| {
                                         cx.background_executor().timer(LOADING_DELAY).await;
                                         cx.update(move |_, cx| {
                                             cx.notify(current_view);

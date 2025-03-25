@@ -109,9 +109,9 @@ impl SlashCommand for SearchSlashCommand {
             return Task::ready(Err(anyhow::anyhow!("no project indexer")));
         };
 
-        window.spawn(cx, |cx| async move {
+        window.spawn(cx, async move |cx| {
             let results = project_index
-                .read_with(&cx, |project_index, cx| {
+                .read_with(cx, |project_index, cx| {
                     project_index.search(vec![query.clone()], limit.unwrap_or(5), cx)
                 })?
                 .await?;

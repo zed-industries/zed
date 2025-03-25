@@ -113,6 +113,7 @@ pub fn panel_editor_style(monospace: bool, window: &Window, cx: &App) -> EditorS
             line_height: line_height.into(),
             ..Default::default()
         },
+        syntax: cx.theme().syntax().clone(),
         ..Default::default()
     }
 }

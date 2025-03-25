@@ -272,7 +272,7 @@ fn start_server(
     })
     .detach();
 
-    cx.spawn(|cx| async move {
+    cx.spawn(async move |cx| {
         let mut stdin_incoming = listeners.stdin.incoming();
         let mut stdout_incoming = listeners.stdout.incoming();
         let mut stderr_incoming = listeners.stderr.incoming();
@@ -827,7 +827,7 @@ pub fn handle_settings_file_changes(
             .set_server_settings(&server_settings_content, cx)
             .log_err();
     });
-    cx.spawn(move |cx| async move {
+    cx.spawn(async move |cx| {
         while let Some(server_settings_content) = server_settings_file.next().await {
             let result = cx.update_global(|store: &mut SettingsStore, cx| {
                 let result = store.set_server_settings(&server_settings_content, cx);

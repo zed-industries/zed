@@ -161,14 +161,14 @@ impl PickerDelegate for OpenPathDelegate {
         self.cancel_flag = Arc::new(AtomicBool::new(false));
         let cancel_flag = self.cancel_flag.clone();
 
-        cx.spawn_in(window, |this, mut cx| async move {
+        cx.spawn_in(window, async move |this, cx| {
             if let Some(query) = query {
                 let paths = query.await;
                 if cancel_flag.load(atomic::Ordering::Relaxed) {
                     return;
                 }
 
-                this.update(&mut cx, |this, _| {
+                this.update(cx, |this, _| {
                     this.delegate.directory_state = Some(match paths {
                         Ok(mut paths) => {
                             paths.sort_by(|a, b| compare_paths((&a.path, true), (&b.path, true)));
@@ -201,7 +201,7 @@ impl PickerDelegate for OpenPathDelegate {
             }
 
             let match_candidates = this
-                .update(&mut cx, |this, cx| {
+                .update(cx, |this, cx| {
                     let directory_state = this.delegate.directory_state.as_ref()?;
                     if directory_state.error.is_some() {
                         this.delegate.matches.clear();
@@ -223,7 +223,7 @@ impl PickerDelegate for OpenPathDelegate {
             }
 
             if suffix == "" {
-                this.update(&mut cx, |this, cx| {
+                this.update(cx, |this, cx| {
                     this.delegate.matches.clear();
                     this.delegate.string_matches.clear();
                     this.delegate
@@ -250,7 +250,7 @@ impl PickerDelegate for OpenPathDelegate {
                 return;
             }
 
-            this.update(&mut cx, |this, cx| {
+            this.update(cx, |this, cx| {
                 this.delegate.matches.clear();
                 this.delegate.string_matches = matches.clone();
                 this.delegate
@@ -266,6 +266,7 @@ impl PickerDelegate for OpenPathDelegate {
                         *m,
                     )
                 });
+                this.delegate.selected_index = 0;
                 cx.notify();
             })
             .ok();

@@ -27,12 +27,61 @@ impl Render for HelloWorld {
                 div()
                     .flex()
                     .gap_2()
-                    .child(div().size_8().bg(gpui::red()))
-                    .child(div().size_8().bg(gpui::green()))
-                    .child(div().size_8().bg(gpui::blue()))
-                    .child(div().size_8().bg(gpui::yellow()))
-                    .child(div().size_8().bg(gpui::black()))
-                    .child(div().size_8().bg(gpui::white())),
+                    .child(
+                        div()
+                            .size_8()
+                            .bg(gpui::red())
+                            .border_1()
+                            .border_dashed()
+                            .rounded_md()
+                            .border_color(gpui::white()),
+                    )
+                    .child(
+                        div()
+                            .size_8()
+                            .bg(gpui::green())
+                            .border_1()
+                            .border_dashed()
+                            .rounded_md()
+                            .border_color(gpui::white()),
+                    )
+                    .child(
+                        div()
+                            .size_8()
+                            .bg(gpui::blue())
+                            .border_1()
+                            .border_dashed()
+                            .rounded_md()
+                            .border_color(gpui::white()),
+                    )
+                    .child(
+                        div()
+                            .size_8()
+                            .bg(gpui::yellow())
+                            .border_1()
+                            .border_dashed()
+                            .rounded_md()
+                            .border_color(gpui::white()),
+                    )
+                    .child(
+                        div()
+                            .size_8()
+                            .bg(gpui::black())
+                            .border_1()
+                            .border_dashed()
+                            .rounded_md()
+                            .rounded_md()
+                            .border_color(gpui::white()),
+                    )
+                    .child(
+                        div()
+                            .size_8()
+                            .bg(gpui::white())
+                            .border_1()
+                            .border_dashed()
+                            .rounded_md()
+                            .border_color(gpui::black()),
+                    ),
             )
     }
 }
@@ -52,5 +101,6 @@ fn main() {
             },
         )
         .unwrap();
+        cx.activate(true);
     });
 }

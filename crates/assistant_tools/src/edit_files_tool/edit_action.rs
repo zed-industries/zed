@@ -190,11 +190,6 @@ impl EditActionParser {
 
         let file_path = PathBuf::from(file_path_bytes);
 
-        if old_range.is_empty() && new_range.is_empty() {
-            self.push_error(ParseErrorKind::NoOp);
-            return None;
-        }
-
         if old_range.is_empty() {
             return Some((
                 EditAction::Write {
@@ -232,23 +227,18 @@ impl EditActionParser {
         self.to_state(State::Default);
     }
 
-    fn push_error(&mut self, kind: ParseErrorKind) {
-        self.errors.push(ParseError {
-            line: self.line,
-            column: self.column,
-            kind,
-        });
-    }
-
     fn expect_marker(&mut self, byte: u8, marker: &'static [u8], trailing_newline: bool) -> bool {
         match self.match_marker(byte, marker, trailing_newline) {
             MarkerMatch::Complete => true,
             MarkerMatch::Partial => false,
             MarkerMatch::None => {
-                self.push_error(ParseErrorKind::ExpectedMarker {
+                self.errors.push(ParseError {
+                    line: self.line,
+                    column: self.column,
                     expected: marker,
                     found: byte,
                 });
+
                 self.reset();
                 false
             }
@@ -331,36 +321,20 @@ enum MarkerMatch {
 pub struct ParseError {
     line: usize,
     column: usize,
-    kind: ParseErrorKind,
-}
-
-#[derive(Debug, PartialEq, Eq)]
-pub enum ParseErrorKind {
-    ExpectedMarker { expected: &'static [u8], found: u8 },
-    NoOp,
-}
-
-impl std::fmt::Display for ParseErrorKind {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            ParseErrorKind::ExpectedMarker { expected, found } => {
-                write!(
-                    f,
-                    "Expected marker {:?}, found {:?}",
-                    String::from_utf8_lossy(expected),
-                    *found as char
-                )
-            }
-            ParseErrorKind::NoOp => {
-                write!(f, "No search or replace")
-            }
-        }
-    }
+    expected: &'static [u8],
+    found: u8,
 }
 
 impl std::fmt::Display for ParseError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "input:{}:{}: {}", self.line, self.column, self.kind)
+        write!(
+            f,
+            "input:{}:{}: Expected marker {:?}, found {:?}",
+            self.line,
+            self.column,
+            String::from_utf8_lossy(self.expected),
+            self.found as char
+        )
     }
 }
 
@@ -634,15 +608,15 @@ fn this_will_be_deleted() {
         let mut parser = EditActionParser::new();
         let actions = parser.parse_chunk(input);
 
-        // Should not create an action when both sections are empty
-        assert_eq!(actions.len(), 0);
-
-        // Check that the NoOp error was added
-        assert_eq!(parser.errors().len(), 1);
-        match parser.errors()[0].kind {
-            ParseErrorKind::NoOp => {}
-            _ => panic!("Expected NoOp error"),
-        }
+        assert_eq!(actions.len(), 1);
+        assert_eq!(
+            actions[0].0,
+            EditAction::Write {
+                file_path: PathBuf::from("src/main.rs"),
+                content: String::new(),
+            }
+        );
+        assert_no_errors(&parser);
     }
 
     #[test]
@@ -786,7 +760,7 @@ fn new_utils_func() {}
         assert_eq!(parser.errors().len(), 1);
         assert_eq!(
             parser.errors()[0].to_string(),
-            "input:8:1: Expected marker \"```\", found '<'".to_string()
+            "input:8:1: Expected marker \"```\", found '<'"
         );
 
         // The parser should continue after an error

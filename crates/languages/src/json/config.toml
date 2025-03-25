@@ -10,8 +10,6 @@ brackets = [
 ]
 tab_size = 2
 prettier_parser_name = "json"
-scope_opt_in_language_servers = ["json-language-server"]
 
 [overrides.string]
-word_characters = [":"]
-opt_into_language_servers = ["json-language-server"]
+completion_query_characters = [":", " "]

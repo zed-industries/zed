@@ -132,14 +132,14 @@ impl Cell {
                         let languages = languages.clone();
                         let source = source.clone();
 
-                        cx.spawn_in(window, |this, mut cx| async move {
+                        cx.spawn_in(window, async move |this, cx| {
                             let parsed_markdown = cx
                                 .background_spawn(async move {
                                     parse_markdown(&source, None, Some(languages)).await
                                 })
                                 .await;
 
-                            this.update(&mut cx, |cell: &mut MarkdownCell, _| {
+                            this.update(cx, |cell: &mut MarkdownCell, _| {
                                 cell.parsed_markdown = Some(parsed_markdown);
                             })
                             .log_err();
@@ -200,10 +200,10 @@ impl Cell {
                 });
 
                 let buffer = buffer.clone();
-                let language_task = cx.spawn_in(window, |this, mut cx| async move {
+                let language_task = cx.spawn_in(window, async move |this, cx| {
                     let language = notebook_language.await;
 
-                    buffer.update(&mut cx, |buffer, cx| {
+                    buffer.update(cx, |buffer, cx| {
                         buffer.set_language(language.clone(), cx);
                     });
                 });

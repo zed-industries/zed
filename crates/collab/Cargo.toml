@@ -89,8 +89,11 @@ channel.workspace = true
 client = { workspace = true, features = ["test-support"] }
 collab_ui = { workspace = true, features = ["test-support"] }
 collections = { workspace = true, features = ["test-support"] }
+command_palette_hooks.workspace = true
 context_server.workspace = true
 ctor.workspace = true
+dap = { workspace = true, features = ["test-support"] }
+debugger_ui = { workspace = true, features = ["test-support"] }
 editor = { workspace = true, features = ["test-support"] }
 env_logger.workspace = true
 extension.workspace = true

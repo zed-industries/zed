@@ -47,13 +47,13 @@ impl StdioTransport {
         let (stdout_sender, stdout_receiver) = channel::unbounded::<String>();
         let (stderr_sender, stderr_receiver) = channel::unbounded::<String>();
 
-        cx.spawn(|_| Self::handle_output(stdin, stdout_receiver).log_err())
+        cx.spawn(async move |_| Self::handle_output(stdin, stdout_receiver).log_err().await)
             .detach();
 
-        cx.spawn(|_| async move { Self::handle_input(stdout, stdin_sender).await })
+        cx.spawn(async move |_| Self::handle_input(stdout, stdin_sender).await)
             .detach();
 
-        cx.spawn(|_| async move { Self::handle_err(stderr, stderr_sender).await })
+        cx.spawn(async move |_| Self::handle_err(stderr, stderr_sender).await)
             .detach();
 
         Ok(Self {

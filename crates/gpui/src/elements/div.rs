@@ -1240,20 +1240,11 @@ impl Element for Div {
             let mut state = scroll_handle.0.borrow_mut();
             state.child_bounds = Vec::with_capacity(request_layout.child_layout_ids.len());
             state.bounds = bounds;
-            let requested = state.requested_scroll_top.take();
-
-            for (ix, child_layout_id) in request_layout.child_layout_ids.iter().enumerate() {
+            for child_layout_id in &request_layout.child_layout_ids {
                 let child_bounds = window.layout_bounds(*child_layout_id);
                 child_min = child_min.min(&child_bounds.origin);
                 child_max = child_max.max(&child_bounds.bottom_right());
                 state.child_bounds.push(child_bounds);
-
-                if let Some(requested) = requested.as_ref() {
-                    if requested.0 == ix {
-                        *state.offset.borrow_mut() =
-                            bounds.origin - (child_bounds.origin - point(px(0.), requested.1));
-                    }
-                }
             }
             (child_max - child_min).into()
         } else {
@@ -1528,8 +1519,11 @@ impl Interactivity {
         _cx: &mut App,
     ) -> Point<Pixels> {
         if let Some(scroll_offset) = self.scroll_offset.as_ref() {
+            let mut scroll_to_bottom = false;
             if let Some(scroll_handle) = &self.tracked_scroll_handle {
-                scroll_handle.0.borrow_mut().overflow = style.overflow;
+                let mut state = scroll_handle.0.borrow_mut();
+                state.overflow = style.overflow;
+                scroll_to_bottom = mem::take(&mut state.scroll_to_bottom);
             }
 
             let rem_size = window.rem_size();
@@ -1555,8 +1549,14 @@ impl Interactivity {
             // Clamp scroll offset in case scroll max is smaller now (e.g., if children
             // were removed or the bounds became larger).
             let mut scroll_offset = scroll_offset.borrow_mut();
+
             scroll_offset.x = scroll_offset.x.clamp(-scroll_max.width, px(0.));
-            scroll_offset.y = scroll_offset.y.clamp(-scroll_max.height, px(0.));
+            if scroll_to_bottom {
+                scroll_offset.y = -scroll_max.height;
+            } else {
+                scroll_offset.y = scroll_offset.y.clamp(-scroll_max.height, px(0.));
+            }
+
             *scroll_offset
         } else {
             Point::default()
@@ -1662,7 +1662,7 @@ impl Interactivity {
         window: &mut Window,
         cx: &mut App,
     ) {
-        use crate::TextAlign;
+        use crate::{BorderStyle, TextAlign};
 
         if global_id.is_some()
             && (style.debug || style.debug_below || cx.has_global::<crate::DebugBelow>())
@@ -1708,13 +1708,14 @@ impl Interactivity {
                         });
 
                         let was_hovered = hitbox.is_hovered(window);
+                        let current_view = window.current_view();
                         window.on_mouse_event({
                             let hitbox = hitbox.clone();
-                            move |_: &MouseMoveEvent, phase, window, _| {
+                            move |_: &MouseMoveEvent, phase, window, cx| {
                                 if phase == DispatchPhase::Capture {
                                     let hovered = hitbox.is_hovered(window);
                                     if hovered != was_hovered {
-                                        window.refresh();
+                                        cx.notify(current_view)
                                     }
                                 }
                             }
@@ -1752,6 +1753,7 @@ impl Interactivity {
                                 },
                             },
                             crate::red(),
+                            BorderStyle::default(),
                         ))
                     }
                 }
@@ -1828,10 +1830,11 @@ impl Interactivity {
         {
             let hitbox = hitbox.clone();
             let was_hovered = hitbox.is_hovered(window);
-            window.on_mouse_event(move |_: &MouseMoveEvent, phase, window, _cx| {
+            let current_view = window.current_view();
+            window.on_mouse_event(move |_: &MouseMoveEvent, phase, window, cx| {
                 let hovered = hitbox.is_hovered(window);
                 if phase == DispatchPhase::Capture && hovered != was_hovered {
-                    window.refresh();
+                    cx.notify(current_view);
                 }
             });
         }
@@ -2117,10 +2120,11 @@ impl Interactivity {
 
         if let Some(group_hitbox) = group_hitbox {
             let was_hovered = group_hitbox.is_hovered(window);
-            window.on_mouse_event(move |_: &MouseMoveEvent, phase, window, _cx| {
+            let current_view = window.current_view();
+            window.on_mouse_event(move |_: &MouseMoveEvent, phase, window, cx| {
                 let hovered = group_hitbox.is_hovered(window);
                 if phase == DispatchPhase::Capture && hovered != was_hovered {
-                    window.refresh();
+                    cx.notify(current_view);
                 }
             });
         }
@@ -2139,6 +2143,7 @@ impl Interactivity {
             let restrict_scroll_to_axis = style.restrict_scroll_to_axis;
             let line_height = window.line_height();
             let hitbox = hitbox.clone();
+            let current_view = window.current_view();
             window.on_mouse_event(move |event: &ScrollWheelEvent, phase, window, cx| {
                 if phase == DispatchPhase::Bubble && hitbox.is_hovered(window) {
                     let mut scroll_offset = scroll_offset.borrow_mut();
@@ -2172,7 +2177,7 @@ impl Interactivity {
                     scroll_offset.x += delta_x;
                     cx.stop_propagation();
                     if *scroll_offset != old_scroll_offset {
-                        window.refresh();
+                        cx.notify(current_view);
                     }
                 }
             });
@@ -2481,7 +2486,7 @@ fn handle_tooltip_mouse_move(
                 let active_tooltip = active_tooltip.clone();
                 let build_tooltip = build_tooltip.clone();
                 let check_is_hovered_during_prepaint = check_is_hovered_during_prepaint.clone();
-                move |mut cx| async move {
+                async move |cx| {
                     cx.background_executor().timer(TOOLTIP_SHOW_DELAY).await;
                     cx.update(|window, cx| {
                         let new_tooltip =
@@ -2572,7 +2577,7 @@ fn handle_tooltip_check_visible_and_update(
         Action::ScheduleHide(tooltip) => {
             let delayed_hide_task = window.spawn(cx, {
                 let active_tooltip = active_tooltip.clone();
-                move |mut cx| async move {
+                async move |cx| {
                     cx.background_executor()
                         .timer(HOVERABLE_TOOLTIP_HIDE_DELAY)
                         .await;
@@ -2857,12 +2862,13 @@ impl ScrollAnchor {
         });
     }
 }
+
 #[derive(Default, Debug)]
 struct ScrollHandleState {
     offset: Rc<RefCell<Point<Pixels>>>,
     bounds: Bounds<Pixels>,
     child_bounds: Vec<Bounds<Pixels>>,
-    requested_scroll_top: Option<(usize, Pixels)>,
+    scroll_to_bottom: bool,
     overflow: Point<Overflow>,
 }
 
@@ -2951,6 +2957,12 @@ impl ScrollHandle {
         }
     }
 
+    /// Scrolls to the bottom.
+    pub fn scroll_to_bottom(&self) {
+        let mut state = self.0.borrow_mut();
+        state.scroll_to_bottom = true;
+    }
+
     /// Set the offset explicitly. The offset is the distance from the top left of the
     /// parent container to the top left of the first child.
     /// As you scroll further down the offset becomes more negative.
@@ -2972,11 +2984,6 @@ impl ScrollHandle {
         } else {
             (ix, px(0.))
         }
-    }
-
-    /// Set the logical scroll top, based on a child index and a pixel offset.
-    pub fn set_logical_scroll_top(&self, ix: usize, px: Pixels) {
-        self.0.borrow_mut().requested_scroll_top = Some((ix, px));
     }
 
     /// Get the count of children for scrollable item.

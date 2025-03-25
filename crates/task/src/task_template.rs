@@ -9,8 +9,8 @@ use sha2::{Digest, Sha256};
 use util::{truncate_and_remove_front, ResultExt};
 
 use crate::{
-    ResolvedTask, RevealTarget, Shell, SpawnInTerminal, TaskContext, TaskId, VariableName,
-    ZED_VARIABLE_NAME_PREFIX,
+    debug_format::DebugAdapterConfig, ResolvedTask, RevealTarget, Shell, SpawnInTerminal,
+    TaskContext, TaskId, VariableName, ZED_VARIABLE_NAME_PREFIX,
 };
 
 /// A template definition of a Zed task to run.
@@ -58,6 +58,9 @@ pub struct TaskTemplate {
     /// * `on_success` — hide the terminal tab on task success only, otherwise behaves similar to `always`.
     #[serde(default)]
     pub hide: HideStrategy,
+    /// If this task should start a debugger or not
+    #[serde(default, skip)]
+    pub task_type: TaskType,
     /// Represents the tags which this template attaches to. Adding this removes this task from other UI.
     #[serde(default)]
     pub tags: Vec<String>,
@@ -70,6 +73,72 @@ pub struct TaskTemplate {
     /// Whether to show the command line in the task output.
     #[serde(default = "default_true")]
     pub show_command: bool,
+}
+
+/// Represents the type of task that is being ran
+#[derive(Default, Deserialize, Serialize, Eq, PartialEq, JsonSchema, Clone, Debug)]
+#[serde(rename_all = "snake_case", tag = "type")]
+#[expect(clippy::large_enum_variant)]
+pub enum TaskType {
+    /// Act like a typically task that runs commands
+    #[default]
+    Script,
+    /// This task starts the debugger for a language
+    Debug(DebugAdapterConfig),
+}
+
+#[cfg(test)]
+mod deserialization_tests {
+    use crate::{DebugAdapterKind, TCPHost};
+
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn deserialize_task_type_script() {
+        let json = json!({"type": "script"});
+
+        let task_type: TaskType =
+            serde_json::from_value(json).expect("Failed to deserialize TaskType::Script");
+        assert_eq!(task_type, TaskType::Script);
+    }
+
+    #[test]
+    fn deserialize_task_type_debug() {
+        let adapter_config = DebugAdapterConfig {
+            label: "test config".into(),
+            kind: DebugAdapterKind::Python(TCPHost::default()),
+            request: crate::DebugRequestType::Launch,
+            program: Some("main".to_string()),
+            supports_attach: false,
+            cwd: None,
+            initialize_args: None,
+        };
+        let json = json!({
+            "label": "test config",
+            "type": "debug",
+            "adapter": "python",
+            "program": "main",
+            "supports_attach": false,
+        });
+
+        let task_type: TaskType =
+            serde_json::from_value(json).expect("Failed to deserialize TaskType::Debug");
+        if let TaskType::Debug(config) = task_type {
+            assert_eq!(config, adapter_config);
+        } else {
+            panic!("Expected TaskType::Debug");
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+/// The type of task modal to spawn
+pub enum TaskModal {
+    /// Show regular tasks
+    ScriptModal,
+    /// Show debug tasks
+    DebugModal,
 }
 
 /// What to do with the terminal pane and tab, after the command was started.
@@ -122,7 +191,9 @@ impl TaskTemplate {
     /// Every [`ResolvedTask`] gets a [`TaskId`], based on the `id_base` (to avoid collision with various task sources),
     /// and hashes of its template and [`TaskContext`], see [`ResolvedTask`] fields' documentation for more details.
     pub fn resolve_task(&self, id_base: &str, cx: &TaskContext) -> Option<ResolvedTask> {
-        if self.label.trim().is_empty() || self.command.trim().is_empty() {
+        if self.label.trim().is_empty()
+            || (self.command.trim().is_empty() && matches!(self.task_type, TaskType::Script))
+        {
             return None;
         }
 
@@ -198,6 +269,22 @@ impl TaskTemplate {
             &mut substituted_variables,
         )?;
 
+        let program = match &self.task_type {
+            TaskType::Script => None,
+            TaskType::Debug(adapter_config) => {
+                if let Some(program) = &adapter_config.program {
+                    Some(substitute_all_template_variables_in_str(
+                        program,
+                        &task_variables,
+                        &variable_names,
+                        &mut substituted_variables,
+                    )?)
+                } else {
+                    None
+                }
+            }
+        };
+
         let task_hash = to_hex_hash(self)
             .context("hashing task template")
             .log_err()?;
@@ -253,6 +340,7 @@ impl TaskTemplate {
                 reveal_target: self.reveal_target,
                 hide: self.hide,
                 shell: self.shell.clone(),
+                program,
                 show_summary: self.show_summary,
                 show_command: self.show_command,
                 show_rerun: true,

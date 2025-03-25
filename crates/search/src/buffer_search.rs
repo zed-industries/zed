@@ -693,13 +693,13 @@ impl BufferSearchBar {
                 query_buffer.set_language_registry(languages.clone());
             });
 
-            cx.spawn(|buffer_search_bar, mut cx| async move {
+            cx.spawn(async move |buffer_search_bar, cx| {
                 let regex_language = languages
                     .language_for_name("regex")
                     .await
                     .context("loading regex language")?;
                 buffer_search_bar
-                    .update(&mut cx, |buffer_search_bar, cx| {
+                    .update(cx, |buffer_search_bar, cx| {
                         buffer_search_bar.regex_language = Some(regex_language);
                         buffer_search_bar.adjust_query_regex_language(cx);
                     })
@@ -848,9 +848,9 @@ impl BufferSearchBar {
             .map(|suggestion| self.search(&suggestion, Some(self.default_options), window, cx));
 
         if let Some(search) = search {
-            cx.spawn_in(window, |this, mut cx| async move {
+            cx.spawn_in(window, async move |this, cx| {
                 search.await?;
-                this.update_in(&mut cx, |this, window, cx| {
+                this.update_in(cx, |this, window, cx| {
                     this.activate_current_match(window, cx)
                 })
             })
@@ -1097,9 +1097,9 @@ impl BufferSearchBar {
                 self.editor_needed_width = width;
                 cx.notify();
 
-                cx.spawn_in(window, |this, mut cx| async move {
+                cx.spawn_in(window, async move |this, cx| {
                     search.await?;
-                    this.update_in(&mut cx, |this, window, cx| {
+                    this.update_in(cx, |this, window, cx| {
                         this.activate_current_match(window, cx)
                     })
                 })
@@ -1271,10 +1271,10 @@ impl BufferSearchBar {
                 let matches = active_searchable_item.find_matches(query, window, cx);
 
                 let active_searchable_item = active_searchable_item.downgrade();
-                self.pending_search = Some(cx.spawn_in(window, |this, mut cx| async move {
+                self.pending_search = Some(cx.spawn_in(window, async move |this, cx| {
                     let matches = matches.await;
 
-                    this.update_in(&mut cx, |this, window, cx| {
+                    this.update_in(cx, |this, window, cx| {
                         if let Some(active_searchable_item) =
                             WeakSearchableItemHandle::upgrade(active_searchable_item.as_ref(), cx)
                         {

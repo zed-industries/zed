@@ -1,4 +1,4 @@
-use anthropic::AnthropicError;
+use anthropic::{AnthropicError, AnthropicModelMode};
 use anyhow::{anyhow, Result};
 use client::{
     zed_urls, Client, PerformCompletionParams, UserStore, EXPIRED_LLM_TOKEN_HEADER_NAME,
@@ -91,6 +91,28 @@ pub struct AvailableModel {
     /// Any extra beta headers to provide when using the model.
     #[serde(default)]
     pub extra_beta_headers: Vec<String>,
+    /// The model's mode (e.g. thinking)
+    pub mode: Option<ModelMode>,
+}
+
+#[derive(Default, Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "type", rename_all = "lowercase")]
+pub enum ModelMode {
+    #[default]
+    Default,
+    Thinking {
+        /// The maximum number of tokens to use for reasoning. Must be lower than the model's `max_output_tokens`.
+        budget_tokens: Option<u32>,
+    },
+}
+
+impl From<ModelMode> for AnthropicModelMode {
+    fn from(value: ModelMode) -> Self {
+        match value {
+            ModelMode::Default => AnthropicModelMode::Default,
+            ModelMode::Thinking { budget_tokens } => AnthropicModelMode::Thinking { budget_tokens },
+        }
+    }
 }
 
 pub struct CloudLanguageModelProvider {
@@ -132,7 +154,7 @@ impl State {
                 |this, _listener, _event, cx| {
                     let client = this.client.clone();
                     let llm_api_token = this.llm_api_token.clone();
-                    cx.spawn(|_this, _cx| async move {
+                    cx.spawn(async move |_this, _cx| {
                         llm_api_token.refresh(&client).await?;
                         anyhow::Ok(())
                     })
@@ -148,9 +170,9 @@ impl State {
 
     fn authenticate(&self, cx: &mut Context<Self>) -> Task<Result<()>> {
         let client = self.client.clone();
-        cx.spawn(move |this, mut cx| async move {
+        cx.spawn(async move |this, cx| {
             client.authenticate_and_connect(true, &cx).await?;
-            this.update(&mut cx, |_, cx| cx.notify())
+            this.update(cx, |_, cx| cx.notify())
         })
     }
 
@@ -163,11 +185,11 @@ impl State {
 
     fn accept_terms_of_service(&mut self, cx: &mut Context<Self>) {
         let user_store = self.user_store.clone();
-        self.accept_terms = Some(cx.spawn(move |this, mut cx| async move {
+        self.accept_terms = Some(cx.spawn(async move |this, cx| {
             let _ = user_store
-                .update(&mut cx, |store, cx| store.accept_terms_of_service(cx))?
+                .update(cx, |store, cx| store.accept_terms_of_service(cx))?
                 .await;
-            this.update(&mut cx, |this, cx| {
+            this.update(cx, |this, cx| {
                 this.accept_terms = None;
                 cx.notify()
             })
@@ -183,10 +205,10 @@ impl CloudLanguageModelProvider {
         let state = cx.new(|cx| State::new(client.clone(), user_store.clone(), status, cx));
 
         let state_ref = state.downgrade();
-        let maintain_client_status = cx.spawn(|mut cx| async move {
+        let maintain_client_status = cx.spawn(async move |cx| {
             while let Some(status) = status_rx.next().await {
                 if let Some(this) = state_ref.upgrade() {
-                    _ = this.update(&mut cx, |this, cx| {
+                    _ = this.update(cx, |this, cx| {
                         if this.status != status {
                             this.status = status;
                             cx.notify();
@@ -267,6 +289,10 @@ impl LanguageModelProvider for CloudLanguageModelProvider {
                 anthropic::Model::Claude3_7Sonnet.id().to_string(),
                 CloudModel::Anthropic(anthropic::Model::Claude3_7Sonnet),
             );
+            models.insert(
+                anthropic::Model::Claude3_7SonnetThinking.id().to_string(),
+                CloudModel::Anthropic(anthropic::Model::Claude3_7SonnetThinking),
+            );
         }
 
         let llm_closed_beta_models = if cx.has_flag::<LlmClosedBeta>() {
@@ -299,6 +325,7 @@ impl LanguageModelProvider for CloudLanguageModelProvider {
                     default_temperature: model.default_temperature,
                     max_output_tokens: model.max_output_tokens,
                     extra_beta_headers: model.extra_beta_headers.clone(),
+                    mode: model.mode.unwrap_or_default().into(),
                 }),
                 AvailableProvider::OpenAi => CloudModel::OpenAi(open_ai::Model::Custom {
                     name: model.name.clone(),
@@ -567,9 +594,10 @@ impl LanguageModel for CloudLanguageModel {
             CloudModel::Anthropic(model) => {
                 let request = into_anthropic(
                     request,
-                    model.id().into(),
+                    model.request_id().into(),
                     model.default_temperature(),
                     model.max_output_tokens(),
+                    model.mode(),
                 );
                 let client = self.client.clone();
                 let llm_api_token = self.llm_api_token.clone();
@@ -669,6 +697,7 @@ impl LanguageModel for CloudLanguageModel {
                     model.tool_model_id().into(),
                     model.default_temperature(),
                     model.max_output_tokens(),
+                    model.mode(),
                 );
                 request.tool_choice = Some(anthropic::ToolChoice::Tool {
                     name: tool_name.clone(),

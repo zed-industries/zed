@@ -494,12 +494,10 @@ impl TerminalView {
             cx.notify();
 
             let epoch = self.next_blink_epoch();
-            cx.spawn_in(window, |this, mut cx| async move {
+            cx.spawn_in(window, async move |this, cx| {
                 Timer::after(CURSOR_BLINK_INTERVAL).await;
-                this.update_in(&mut cx, |this, window, cx| {
-                    this.blink_cursors(epoch, window, cx)
-                })
-                .ok();
+                this.update_in(cx, |this, window, cx| this.blink_cursors(epoch, window, cx))
+                    .ok();
             })
             .detach();
         }
@@ -510,9 +508,9 @@ impl TerminalView {
         cx.notify();
 
         let epoch = self.next_blink_epoch();
-        cx.spawn_in(window, |this, mut cx| async move {
+        cx.spawn_in(window, async move |this, cx| {
             Timer::after(CURSOR_BLINK_INTERVAL).await;
-            this.update_in(&mut cx, |this, window, cx| {
+            this.update_in(cx, |this, window, cx| {
                 this.resume_cursor_blinking(epoch, window, cx)
             })
             .ok();
@@ -727,12 +725,12 @@ impl TerminalView {
         if !Self::should_autohide_scrollbar(cx) {
             return;
         }
-        self.hide_scrollbar_task = Some(cx.spawn(|panel, mut cx| async move {
+        self.hide_scrollbar_task = Some(cx.spawn(async move |panel, cx| {
             cx.background_executor()
                 .timer(SCROLLBAR_SHOW_INTERVAL)
                 .await;
             panel
-                .update(&mut cx, |panel, cx| {
+                .update(cx, |panel, cx| {
                     panel.show_scrollbar = false;
                     cx.notify();
                 })
@@ -900,9 +898,9 @@ fn subscribe_for_terminal_events(
                     }
                     let task_workspace = workspace.clone();
                     let path_like_target = path_like_target.clone();
-                    cx.spawn_in(window, |terminal_view, mut cx| async move {
+                    cx.spawn_in(window, async move |terminal_view, cx| {
                         let open_target = terminal_view
-                            .update(&mut cx, |_, cx| {
+                            .update(cx, |_, cx| {
                                 possible_open_target(
                                     &task_workspace,
                                     &path_like_target.terminal_dir,
@@ -914,7 +912,7 @@ fn subscribe_for_terminal_events(
                         if let Some(open_target) = open_target {
                             let path_to_open = open_target.path();
                             let opened_items = task_workspace
-                                .update_in(&mut cx, |workspace, window, cx| {
+                                .update_in(cx, |workspace, window, cx| {
                                     workspace.open_paths(
                                         vec![path_to_open.path.clone()],
                                         OpenOptions {
@@ -945,7 +943,7 @@ fn subscribe_for_terminal_events(
                                             {
                                                 active_editor
                                                     .downgrade()
-                                                    .update_in(&mut cx, |editor, window, cx| {
+                                                    .update_in(cx, |editor, window, cx| {
                                                         editor.go_to_singleton_buffer_point(
                                                             language::Point::new(
                                                                 row.saturating_sub(1),
@@ -960,7 +958,7 @@ fn subscribe_for_terminal_events(
                                         }
                                     }
                                 } else if open_target.is_dir() {
-                                    task_workspace.update(&mut cx, |workspace, cx| {
+                                    task_workspace.update(cx, |workspace, cx| {
                                         workspace.project().update(cx, |_, cx| {
                                             cx.emit(project::Event::ActivateProjectPanel);
                                         })
@@ -1349,6 +1347,9 @@ impl Item for TerminalView {
                     }
                 }
             },
+            None if self.terminal.read(cx).debug_terminal() => {
+                (IconName::Debug, Color::Muted, None)
+            }
             None => (IconName::Terminal, Color::Muted, None),
         };
 
@@ -1493,8 +1494,10 @@ impl SerializableItem for TerminalView {
         window: &mut Window,
         cx: &mut App,
     ) -> Task<gpui::Result<()>> {
-        window.spawn(cx, |_| {
-            TERMINAL_DB.delete_unloaded_items(workspace_id, alive_items)
+        window.spawn(cx, async move |_| {
+            TERMINAL_DB
+                .delete_unloaded_items(workspace_id, alive_items)
+                .await
         })
     }
 
@@ -1507,7 +1510,7 @@ impl SerializableItem for TerminalView {
         cx: &mut Context<Self>,
     ) -> Option<Task<gpui::Result<()>>> {
         let terminal = self.terminal().read(cx);
-        if terminal.task().is_some() {
+        if terminal.task().is_some() || terminal.debug_terminal() {
             return None;
         }
 
@@ -1535,7 +1538,7 @@ impl SerializableItem for TerminalView {
         cx: &mut App,
     ) -> Task<anyhow::Result<Entity<Self>>> {
         let window_handle = window.window_handle();
-        window.spawn(cx, |mut cx| async move {
+        window.spawn(cx, async move |cx| {
             let cwd = cx
                 .update(|_window, cx| {
                     let from_db = TERMINAL_DB
@@ -1557,7 +1560,7 @@ impl SerializableItem for TerminalView {
                 .flatten();
 
             let terminal = project
-                .update(&mut cx, |project, cx| {
+                .update(cx, |project, cx| {
                     project.create_terminal(TerminalKind::Shell(cwd), window_handle, cx)
                 })?
                 .await?;

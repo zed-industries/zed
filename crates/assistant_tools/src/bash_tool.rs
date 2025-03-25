@@ -23,6 +23,10 @@ impl Tool for BashTool {
         "bash".to_string()
     }
 
+    fn needs_confirmation(&self) -> bool {
+        true
+    }
+
     fn description(&self) -> String {
         include_str!("./bash_tool/description.md").to_string()
     }
@@ -30,6 +34,13 @@ impl Tool for BashTool {
     fn input_schema(&self) -> serde_json::Value {
         let schema = schemars::schema_for!(BashToolInput);
         serde_json::to_value(&schema).unwrap()
+    }
+
+    fn ui_text(&self, input: &serde_json::Value) -> String {
+        match serde_json::from_value::<BashToolInput>(input.clone()) {
+            Ok(input) => format!("`{}`", input.command),
+            Err(_) => "Run bash command".to_string(),
+        }
     }
 
     fn run(
@@ -50,7 +61,7 @@ impl Tool for BashTool {
         };
         let working_directory = worktree.read(cx).abs_path();
 
-        cx.spawn(|_| async move {
+        cx.spawn(async move |_| {
             // Add 2>&1 to merge stderr into stdout for proper interleaving.
             let command = format!("({}) 2>&1", input.command);
 

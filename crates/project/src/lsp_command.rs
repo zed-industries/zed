@@ -2957,14 +2957,14 @@ impl LspCommand for InlayHints {
             };
 
             let buffer = buffer.clone();
-            cx.spawn(move |mut cx| async move {
+            cx.spawn(async move |cx| {
                 InlayHints::lsp_to_project_hint(
                     lsp_hint,
                     &buffer,
                     server_id,
                     resolve_state,
                     force_no_type_left_padding,
-                    &mut cx,
+                    cx,
                 )
                 .await
             })

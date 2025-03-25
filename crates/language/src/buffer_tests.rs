@@ -2539,7 +2539,7 @@ fn test_branch_and_merge(cx: &mut TestAppContext) {
         assert_eq!(buffer.text(), "one\n1.5\ntwo\nTHREE\n");
     });
 
-    // Convert from branch buffer ranges to the corresoponing ranges in the
+    // Convert from branch buffer ranges to the corresponding ranges in the
     // base buffer.
     branch.read_with(cx, |buffer, cx| {
         assert_eq!(

@@ -290,7 +290,7 @@ impl MacPlatform {
                 action,
                 os_action,
             } => {
-                let keystrokes = crate::Keymap::binding_to_display_from_bindings(
+                let keystrokes = crate::Keymap::binding_to_display_from_bindings_iterator(
                     keymap.bindings_for_action(action.as_ref()),
                 )
                 .map(|binding| binding.keystrokes());

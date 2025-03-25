@@ -121,9 +121,9 @@ impl ToolbarItemView for MigrationBanner {
             self.migration_type = Some(MigrationType::Keymap);
             let fs = <dyn Fs>::global(cx);
             let should_migrate = should_migrate_keymap(fs);
-            cx.spawn_in(window, |this, mut cx| async move {
+            cx.spawn_in(window, async move |this, cx| {
                 if let Ok(true) = should_migrate.await {
-                    this.update(&mut cx, |_, cx| {
+                    this.update(cx, |_, cx| {
                         cx.emit(ToolbarItemEvent::ChangeLocation(
                             ToolbarItemLocation::Secondary,
                         ));
@@ -137,9 +137,9 @@ impl ToolbarItemView for MigrationBanner {
             self.migration_type = Some(MigrationType::Settings);
             let fs = <dyn Fs>::global(cx);
             let should_migrate = should_migrate_settings(fs);
-            cx.spawn_in(window, |this, mut cx| async move {
+            cx.spawn_in(window, async move |this, cx| {
                 if let Ok(true) = should_migrate.await {
-                    this.update(&mut cx, |_, cx| {
+                    this.update(cx, |_, cx| {
                         cx.emit(ToolbarItemEvent::ChangeLocation(
                             ToolbarItemLocation::Secondary,
                         ));
@@ -213,16 +213,12 @@ impl Render for MigrationBanner {
                     let fs = <dyn Fs>::global(cx);
                     match migration_type {
                         Some(MigrationType::Keymap) => {
-                            cx.spawn(
-                                move |_| async move { write_keymap_migration(&fs).await.ok() },
-                            )
-                            .detach();
+                            cx.spawn(async move |_| write_keymap_migration(&fs).await.ok())
+                                .detach();
                         }
                         Some(MigrationType::Settings) => {
-                            cx.spawn(
-                                move |_| async move { write_settings_migration(&fs).await.ok() },
-                            )
-                            .detach();
+                            cx.spawn(async move |_| write_settings_migration(&fs).await.ok())
+                                .detach();
                         }
                         None => unreachable!(),
                     }

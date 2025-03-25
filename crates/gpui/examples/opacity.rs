@@ -50,25 +50,23 @@ impl HelloWorld {
         self.opacity = 0.0;
         cx.notify();
 
-        self._task = Some(cx.spawn_in(window, |view, mut cx| async move {
-            loop {
-                Timer::after(Duration::from_secs_f32(0.05)).await;
-                let mut stop = false;
-                let _ = cx.update(|_, cx| {
-                    view.update(cx, |view, cx| {
-                        if view.opacity >= 1.0 {
-                            stop = true;
-                            return;
-                        }
+        self._task = Some(cx.spawn_in(window, async move |view, cx| loop {
+            Timer::after(Duration::from_secs_f32(0.05)).await;
+            let mut stop = false;
+            let _ = cx.update(|_, cx| {
+                view.update(cx, |view, cx| {
+                    if view.opacity >= 1.0 {
+                        stop = true;
+                        return;
+                    }
 
-                        view.opacity += 0.1;
-                        cx.notify();
-                    })
-                });
+                    view.opacity += 0.1;
+                    cx.notify();
+                })
+            });
 
-                if stop {
-                    break;
-                }
+            if stop {
+                break;
             }
         }));
     }

@@ -31,6 +31,10 @@ impl Tool for NowTool {
         "now".into()
     }
 
+    fn needs_confirmation(&self) -> bool {
+        false
+    }
+
     fn description(&self) -> String {
         "Returns the current datetime in RFC 3339 format. Only use this tool when the user specifically asks for it or the current task would benefit from knowing the current datetime.".into()
     }
@@ -38,6 +42,10 @@ impl Tool for NowTool {
     fn input_schema(&self) -> serde_json::Value {
         let schema = schemars::schema_for!(NowToolInput);
         serde_json::to_value(&schema).unwrap()
+    }
+
+    fn ui_text(&self, _input: &serde_json::Value) -> String {
+        "Get current time".to_string()
     }
 
     fn run(

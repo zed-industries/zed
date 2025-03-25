@@ -1,6 +1,6 @@
 name = "JSONC"
 grammar = "jsonc"
-path_suffixes = ["jsonc", "tsconfig.json", "pyrightconfig.json"]
+path_suffixes = ["jsonc", "bun.lock", "tsconfig.json", "pyrightconfig.json"]
 line_comments = ["// "]
 autoclose_before = ",]}"
 brackets = [
@@ -11,7 +11,5 @@ brackets = [
 tab_size = 2
 prettier_parser_name = "jsonc"
 
-scope_opt_in_language_servers = ["json-language-server"]
 [overrides.string]
-word_characters = [":"]
-opt_into_language_servers = ["json-language-server"]
+completion_query_characters = [":", " "]

@@ -1645,7 +1645,11 @@ impl MultiBuffer {
             };
             let locator = snapshot.excerpt_locator_for_id(*existing);
             excerpts_cursor.seek_forward(&Some(locator), Bias::Left, &());
-            let existing_excerpt = excerpts_cursor.item().unwrap();
+            let Some(existing_excerpt) = excerpts_cursor.item() else {
+                to_remove.push(existing_iter.next().unwrap());
+                to_insert.push(new_iter.next().unwrap());
+                continue;
+            };
             if existing_excerpt.buffer_id != buffer_snapshot.remote_id() {
                 to_remove.push(existing_iter.next().unwrap());
                 to_insert.push(new_iter.next().unwrap());
@@ -1752,7 +1756,7 @@ impl MultiBuffer {
             .detach()
         }
 
-        cx.spawn(move |this, mut cx| async move {
+        cx.spawn(async move |this, cx| {
             let mut results_by_buffer_id = HashMap::default();
             while let Some((buffer_id, buffer, ranges, excerpt_ranges, range_counts)) =
                 excerpt_ranges_rx.next().await
@@ -1772,7 +1776,7 @@ impl MultiBuffer {
                 let mut ranges = ranges.into_iter();
                 let mut range_counts = range_counts.into_iter();
                 for excerpt_ranges in excerpt_ranges.chunks(100) {
-                    let excerpt_ids = match this.update(&mut cx, |this, cx| {
+                    let excerpt_ids = match this.update(cx, |this, cx| {
                         this.push_excerpts(buffer.clone(), excerpt_ranges.iter().cloned(), cx)
                     }) {
                         Ok(excerpt_ids) => excerpt_ids,

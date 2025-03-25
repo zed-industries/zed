@@ -51,7 +51,7 @@ pub fn switch_source_header(
             cx,
         )
     });
-    cx.spawn_in(window, |_editor, mut cx| async move {
+    cx.spawn_in(window, async move |_editor, cx| {
         let switch_source_header = switch_source_header_task
             .await
             .with_context(|| format!("Switch source/header LSP request for path \"{source_file}\" failed"))?;
@@ -72,7 +72,7 @@ pub fn switch_source_header(
         })?;
 
         workspace
-            .update_in(&mut cx, |workspace, window, cx| {
+            .update_in(cx, |workspace, window, cx| {
                 workspace.open_abs_path(path, OpenOptions { visible: Some(OpenVisible::None), ..Default::default() }, window, cx)
             })
             .with_context(|| {

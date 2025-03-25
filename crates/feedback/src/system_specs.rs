@@ -1,5 +1,5 @@
 use client::telemetry;
-use gpui::{App, AppContext as _, Task, Window};
+use gpui::{App, AppContext as _, SemanticVersion, Task, Window};
 use human_bytes::human_bytes;
 use release_channel::{AppCommitSha, AppVersion, ReleaseChannel};
 use serde::Serialize;
@@ -35,14 +35,12 @@ impl SystemSpecs {
             _ => None,
         };
 
-        let gpu_specs = if let Some(specs) = window.gpu_specs() {
-            Some(format!(
+        let gpu_specs = window.gpu_specs().map(|specs| {
+            format!(
                 "{} || {} || {}",
                 specs.device_name, specs.driver_name, specs.driver_info
-            ))
-        } else {
-            None
-        };
+            )
+        });
 
         cx.background_spawn(async move {
             let os_version = telemetry::os_version();
@@ -57,6 +55,37 @@ impl SystemSpecs {
                 gpu_specs,
             }
         })
+    }
+
+    pub fn new_stateless(
+        app_version: SemanticVersion,
+        app_commit_sha: Option<AppCommitSha>,
+        release_channel: ReleaseChannel,
+    ) -> Self {
+        let os_name = telemetry::os_name();
+        let os_version = telemetry::os_version();
+        let system = System::new_with_specifics(
+            RefreshKind::new().with_memory(MemoryRefreshKind::everything()),
+        );
+        let memory = system.total_memory();
+        let architecture = env::consts::ARCH;
+        let commit_sha = match release_channel {
+            ReleaseChannel::Dev | ReleaseChannel::Nightly => {
+                app_commit_sha.map(|sha| sha.0.clone())
+            }
+            _ => None,
+        };
+
+        Self {
+            app_version: app_version.to_string(),
+            release_channel: release_channel.display_name(),
+            os_name,
+            os_version,
+            memory,
+            architecture,
+            commit_sha,
+            gpu_specs: try_determine_available_gpus(),
+        }
     }
 }
 
@@ -92,5 +121,31 @@ impl Display for SystemSpecs {
         .join("\n");
 
         write!(f, "{system_specs}")
+    }
+}
+
+fn try_determine_available_gpus() -> Option<String> {
+    #[cfg(target_os = "linux")]
+    {
+        return std::process::Command::new("vulkaninfo")
+            .args(&["--summary"])
+            .output()
+            .ok()
+            .map(|output| {
+                [
+                    "<details><summary>`vulkaninfo --summary` output</summary>",
+                    "",
+                    "```",
+                    String::from_utf8_lossy(&output.stdout).as_ref(),
+                    "```",
+                    "</details>",
+                ]
+                .join("\n")
+            })
+            .or(Some("Failed to run `vulkaninfo --summary`".to_string()));
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        return None;
     }
 }

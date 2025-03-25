@@ -4,7 +4,7 @@ use gpui::{
 use itertools::Itertools;
 use picker::{Picker, PickerDelegate};
 use project::{
-    git::{GitStore, Repository},
+    git_store::{GitStore, Repository},
     Project,
 };
 use std::sync::Arc;
@@ -75,28 +75,30 @@ pub(crate) fn filtered_repository_entries(
     git_store: &GitStore,
     cx: &App,
 ) -> Vec<Entity<Repository>> {
-    let mut repository_entries = git_store.all_repositories();
-    repository_entries.sort_by_key(|repo| {
-        let repo = repo.read(cx);
-        (
-            repo.dot_git_abs_path.clone(),
-            repo.worktree_abs_path.clone(),
-        )
-    });
-    // Remove any entry that comes from a single file worktree and represents a repository that is also represented by a non-single-file worktree.
-    repository_entries
+    let repositories = git_store
+        .repositories()
+        .values()
+        .sorted_by_key(|repo| {
+            let repo = repo.read(cx);
+            (
+                repo.dot_git_abs_path.clone(),
+                repo.worktree_abs_path.clone(),
+            )
+        })
+        .collect::<Vec<&Entity<Repository>>>();
+
+    repositories
         .chunk_by(|a, b| a.read(cx).dot_git_abs_path == b.read(cx).dot_git_abs_path)
         .flat_map(|chunk| {
             let has_non_single_file_worktree = chunk
                 .iter()
                 .any(|repo| !repo.read(cx).is_from_single_file_worktree);
-            chunk
-                .iter()
-                .filter(move |repo| {
-                    !repo.read(cx).is_from_single_file_worktree || !has_non_single_file_worktree
-                })
-                .cloned()
+            chunk.iter().filter(move |repo| {
+                // Remove any entry that comes from a single file worktree and represents a repository that is also represented by a non-single-file worktree.
+                !repo.read(cx).is_from_single_file_worktree || !has_non_single_file_worktree
+            })
         })
+        .map(|&repo| repo.clone())
         .collect()
 }
 
@@ -165,7 +167,7 @@ impl PickerDelegate for RepositorySelectorDelegate {
     ) -> Task<()> {
         let all_repositories = self.repository_entries.clone();
 
-        cx.spawn_in(window, |this, mut cx| async move {
+        cx.spawn_in(window, async move |this, cx| {
             let filtered_repositories = cx
                 .background_spawn(async move {
                     if query.is_empty() {
@@ -182,7 +184,7 @@ impl PickerDelegate for RepositorySelectorDelegate {
                 })
                 .await;
 
-            this.update_in(&mut cx, |this, window, cx| {
+            this.update_in(cx, |this, window, cx| {
                 this.delegate.filtered_repositories = filtered_repositories;
                 this.delegate.set_selected_index(0, window, cx);
                 cx.notify();
@@ -195,7 +197,9 @@ impl PickerDelegate for RepositorySelectorDelegate {
         let Some(selected_repo) = self.filtered_repositories.get(self.selected_index) else {
             return;
         };
-        selected_repo.update(cx, |selected_repo, cx| selected_repo.activate(cx));
+        selected_repo.update(cx, |selected_repo, cx| {
+            selected_repo.set_as_active_repository(cx)
+        });
         self.dismissed(window, cx);
     }
 

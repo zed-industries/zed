@@ -89,7 +89,7 @@ impl HeadlessAssistant {
             ThreadEvent::DoneStreaming => {
                 let thread = thread.read(cx);
                 if let Some(message) = thread.messages().last() {
-                    println!("Message: {}", message.text,);
+                    println!("Message: {}", message.to_string());
                 }
                 if thread.all_tools_finished() {
                     self.done_tx.send_blocking(Ok(())).unwrap()
@@ -128,12 +128,7 @@ impl HeadlessAssistant {
                     }
                 }
             }
-            ThreadEvent::StreamedCompletion
-            | ThreadEvent::SummaryChanged
-            | ThreadEvent::StreamedAssistantText(_, _)
-            | ThreadEvent::MessageAdded(_)
-            | ThreadEvent::MessageEdited(_)
-            | ThreadEvent::MessageDeleted(_) => {}
+            _ => {}
         }
     }
 }
@@ -163,7 +158,7 @@ pub fn init(cx: &mut App) -> Arc<HeadlessAppState> {
     language::init(cx);
     language_model::init(client.clone(), cx);
     language_models::init(user_store.clone(), client.clone(), fs.clone(), cx);
-    assistant_tools::init(cx);
+    assistant_tools::init(client.http_client().clone(), cx);
     context_server::init(cx);
     let stdout_is_a_pty = false;
     let prompt_builder = PromptBuilder::load(fs.clone(), stdout_is_a_pty, cx);
@@ -212,7 +207,7 @@ pub fn authenticate_model_provider(
 pub async fn send_language_model_request(
     model: Arc<dyn LanguageModel>,
     request: LanguageModelRequest,
-    cx: AsyncApp,
+    cx: &mut AsyncApp,
 ) -> anyhow::Result<String> {
     match model.stream_completion_text(request, &cx).await {
         Ok(mut stream) => {

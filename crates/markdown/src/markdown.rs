@@ -9,11 +9,11 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use gpui::{
-    actions, point, quad, AnyElement, App, Bounds, ClipboardItem, CursorStyle, DispatchPhase,
-    Edges, Entity, FocusHandle, Focusable, FontStyle, FontWeight, GlobalElementId, Hitbox, Hsla,
-    KeyContext, Length, MouseDownEvent, MouseEvent, MouseMoveEvent, MouseUpEvent, Point, Render,
-    Stateful, StrikethroughStyle, StyleRefinement, StyledText, Task, TextLayout, TextRun,
-    TextStyle, TextStyleRefinement,
+    actions, point, quad, AnyElement, App, BorderStyle, Bounds, ClipboardItem, CursorStyle,
+    DispatchPhase, Edges, Entity, FocusHandle, Focusable, FontStyle, FontWeight, GlobalElementId,
+    Hitbox, Hsla, KeyContext, Length, MouseDownEvent, MouseEvent, MouseMoveEvent, MouseUpEvent,
+    Point, Render, Stateful, StrikethroughStyle, StyleRefinement, StyledText, Task, TextLayout,
+    TextRun, TextStyle, TextStyleRefinement,
 };
 use language::{Language, LanguageRegistry, Rope};
 use parser::{parse_links_only, parse_markdown, MarkdownEvent, MarkdownTag, MarkdownTagEnd};
@@ -231,10 +231,10 @@ impl Markdown {
         });
 
         self.should_reparse = false;
-        self.pending_parse = Some(cx.spawn(|this, mut cx| {
+        self.pending_parse = Some(cx.spawn(async move |this, cx| {
             async move {
                 let parsed = parsed.await?;
-                this.update(&mut cx, |this, cx| {
+                this.update(cx, |this, cx| {
                     this.parsed_markdown = parsed;
                     this.pending_parse.take();
                     if this.should_reparse {
@@ -246,6 +246,7 @@ impl Markdown {
                 anyhow::Ok(())
             }
             .log_err()
+            .await
         }));
     }
 
@@ -352,6 +353,7 @@ impl MarkdownElement {
                     self.style.selection_background_color,
                     Edges::default(),
                     Hsla::transparent_black(),
+                    BorderStyle::default(),
                 ));
             } else {
                 window.paint_quad(quad(
@@ -363,6 +365,7 @@ impl MarkdownElement {
                     self.style.selection_background_color,
                     Edges::default(),
                     Hsla::transparent_black(),
+                    BorderStyle::default(),
                 ));
 
                 if end_position.y > start_position.y + start_line_height {
@@ -375,6 +378,7 @@ impl MarkdownElement {
                         self.style.selection_background_color,
                         Edges::default(),
                         Hsla::transparent_black(),
+                        BorderStyle::default(),
                     ));
                 }
 
@@ -387,6 +391,7 @@ impl MarkdownElement {
                     self.style.selection_background_color,
                     Edges::default(),
                     Hsla::transparent_black(),
+                    BorderStyle::default(),
                 ));
             }
         }
@@ -795,7 +800,7 @@ impl Element for MarkdownElement {
                                                     code.clone(),
                                                 ));
 
-                                                cx.spawn(|this, cx| async move {
+                                                cx.spawn(async move |this, cx| {
                                                     cx.background_executor()
                                                         .timer(Duration::from_secs(2))
                                                         .await;

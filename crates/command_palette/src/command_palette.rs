@@ -327,13 +327,13 @@ impl PickerDelegate for CommandPaletteDelegate {
         });
         self.updating_matches = Some((task, rx.clone()));
 
-        cx.spawn_in(window, move |picker, mut cx| async move {
+        cx.spawn_in(window, async move |picker, cx| {
             let Some((commands, matches)) = rx.recv().await else {
                 return;
             };
 
             picker
-                .update(&mut cx, |picker, cx| {
+                .update(cx, |picker, cx| {
                     picker
                         .delegate
                         .matches_updated(query, commands, matches, cx)

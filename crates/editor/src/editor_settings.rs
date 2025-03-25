@@ -117,6 +117,7 @@ pub struct Gutter {
     pub line_numbers: bool,
     pub code_actions: bool,
     pub runnables: bool,
+    pub breakpoints: bool,
     pub folds: bool,
 }
 
@@ -155,7 +156,7 @@ pub struct ScrollbarAxes {
 /// Which diagnostic indicators to show in the scrollbar.
 ///
 /// Default: all
-#[derive(Copy, Clone, Debug, Serialize, JsonSchema, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum ScrollbarDiagnostics {
     /// Show all diagnostic levels: hint, information, warnings, error.
@@ -168,55 +169,6 @@ pub enum ScrollbarDiagnostics {
     Error,
     /// Do not show diagnostics.
     None,
-}
-
-impl<'de> Deserialize<'de> for ScrollbarDiagnostics {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        struct Visitor;
-
-        impl serde::de::Visitor<'_> for Visitor {
-            type Value = ScrollbarDiagnostics;
-
-            fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-                write!(
-                    f,
-                    r#"a boolean or one of "all", "information", "warning", "error", "none""#
-                )
-            }
-
-            fn visit_bool<E>(self, b: bool) -> Result<Self::Value, E>
-            where
-                E: serde::de::Error,
-            {
-                match b {
-                    false => Ok(ScrollbarDiagnostics::None),
-                    true => Ok(ScrollbarDiagnostics::All),
-                }
-            }
-
-            fn visit_str<E>(self, s: &str) -> Result<Self::Value, E>
-            where
-                E: serde::de::Error,
-            {
-                match s {
-                    "all" => Ok(ScrollbarDiagnostics::All),
-                    "information" => Ok(ScrollbarDiagnostics::Information),
-                    "warning" => Ok(ScrollbarDiagnostics::Warning),
-                    "error" => Ok(ScrollbarDiagnostics::Error),
-                    "none" => Ok(ScrollbarDiagnostics::None),
-                    _ => Err(E::unknown_variant(
-                        s,
-                        &["all", "information", "warning", "error", "none"],
-                    )),
-                }
-            }
-        }
-
-        deserializer.deserialize_any(Visitor)
-    }
 }
 
 /// The key to use for adding multiple cursors
@@ -464,6 +416,10 @@ pub struct GutterContent {
     ///
     /// Default: true
     pub runnables: Option<bool>,
+    /// Whether to show breakpoints in the gutter.
+    ///
+    /// Default: true
+    pub breakpoints: Option<bool>,
     /// Whether to show fold buttons in the gutter.
     ///
     /// Default: true

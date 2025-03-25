@@ -97,7 +97,7 @@ impl ProjectEnvironment {
 
         if let Some(cli_environment) = self.get_cli_environment() {
             return cx
-                .spawn(|_, _| async move {
+                .spawn(async move |_, _| {
                     let path = cli_environment
                         .get("PATH")
                         .map(|path| path.as_str())
@@ -144,7 +144,7 @@ impl ProjectEnvironment {
     ) -> Task<Option<HashMap<String, String>>> {
         let load_direnv = ProjectSettings::get_global(cx).load_direnv.clone();
 
-        cx.spawn(|this, mut cx| async move {
+        cx.spawn(async move |this, cx| {
             let (mut shell_env, error_message) = cx
                 .background_spawn({
                     let worktree_abs_path = worktree_abs_path.clone();
@@ -169,7 +169,7 @@ impl ProjectEnvironment {
             }
 
             if let Some(error) = error_message {
-                this.update(&mut cx, |this, cx| {
+                this.update(cx, |this, cx| {
                     this.environment_error_messages.insert(worktree_id, error);
                     cx.emit(ProjectEnvironmentEvent::ErrorsUpdated)
                 })

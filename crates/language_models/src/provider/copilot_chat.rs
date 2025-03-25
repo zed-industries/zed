@@ -186,6 +186,7 @@ impl LanguageModel for CopilotChatLanguageModel {
         match self.model {
             CopilotChatModel::Claude3_5Sonnet => count_anthropic_tokens(request, cx),
             CopilotChatModel::Claude3_7Sonnet => count_anthropic_tokens(request, cx),
+            CopilotChatModel::Claude3_7SonnetThinking => count_anthropic_tokens(request, cx),
             CopilotChatModel::Gemini20Flash => count_google_tokens(request, cx),
             _ => {
                 let model = match self.model {
@@ -195,6 +196,7 @@ impl LanguageModel for CopilotChatLanguageModel {
                     CopilotChatModel::O1 | CopilotChatModel::O3Mini => open_ai::Model::Four,
                     CopilotChatModel::Claude3_5Sonnet
                     | CopilotChatModel::Claude3_7Sonnet
+                    | CopilotChatModel::Claude3_7SonnetThinking
                     | CopilotChatModel::Gemini20Flash => {
                         unreachable!()
                     }
@@ -229,8 +231,8 @@ impl LanguageModel for CopilotChatLanguageModel {
         let is_streaming = copilot_request.stream;
 
         let request_limiter = self.request_limiter.clone();
-        let future = cx.spawn(|cx| async move {
-            let response = CopilotChat::stream_completion(copilot_request, cx);
+        let future = cx.spawn(async move |cx| {
+            let response = CopilotChat::stream_completion(copilot_request, cx.clone());
             request_limiter.stream(async move {
                 let response = response.await?;
                 let stream = response
@@ -264,6 +266,7 @@ impl LanguageModel for CopilotChatLanguageModel {
                         }
                     })
                     .boxed();
+
                 Ok(stream)
             }).await
         });
