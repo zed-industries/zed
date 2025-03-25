@@ -633,6 +633,8 @@
         "name": "Code Writer",
         "tools": {
           "bash": true,
+          "copy-path": true,
+          "create-file": true,
           "delete-path": true,
           "diagnostics": true,
           "edit-files": true,
