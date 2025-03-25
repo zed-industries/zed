@@ -1808,6 +1808,20 @@ impl LocalWorktree {
 
         cx.spawn(async move |this, _cx| {
             let abs_path = abs_path?;
+            // WARN: Temporary workaround for #27283.
+            //       We are not efficient with our memory usage per file, and use in excess of 64GB for a 10GB file
+            //       Therefore, as a temporary workaround to prevent system freezes, we just bail before opening a file
+            //       if it is too large
+            //       5GB seems to be more reasonable, peaking at ~16GB, while 6GB jumps up to >24GB which seems like a
+            //       reasonable limit
+            {
+                const FILE_SIZE_MAX: u64 = 6 * 1024 * 1024 * 1024; // 6GB
+                if let Ok(Some(metadata)) = fs.metadata(&abs_path).await {
+                    if metadata.len >= FILE_SIZE_MAX {
+                        anyhow::bail!("File is too large to load");
+                    }
+                }
+            }
             let text = fs.load(&abs_path).await?;
 
             let worktree = this
