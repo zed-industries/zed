@@ -1,5 +1,6 @@
-#[cfg_attr(test, allow(unused_macros))]
-#[cfg_attr(test, allow(dead_code))]
+#![cfg_attr(test, allow(unused_macros))]
+#![cfg_attr(test, allow(dead_code))]
+
 use std::path::Path;
 
 use anyhow::Result;
