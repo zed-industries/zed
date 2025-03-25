@@ -1288,9 +1288,10 @@ extern "C" fn handle_key_event(this: &Object, native_event: id, key_equivalent: 
 
             drop(lock);
 
-            let is_composing = with_input_handler(this, |input_handler| input_handler.marked_text_range())
-                .flatten()
-                .is_some();
+            let is_composing =
+                with_input_handler(this, |input_handler| input_handler.marked_text_range())
+                    .flatten()
+                    .is_some();
 
             // If we're composing, send the key to the input handler first;
             // otherwise we only send to the input handler if we don't have a matching binding.
@@ -1357,16 +1358,14 @@ extern "C" fn handle_key_event(this: &Object, native_event: id, key_equivalent: 
                 let input_context: id = msg_send![this, inputContext];
                 msg_send![input_context, handleEvent: native_event]
             }
-        },
+        }
 
         PlatformInput::KeyUp(_) => {
             drop(lock);
             run_callback(event)
-        },
-
-        _ => {
-            NO
         }
+
+        _ => NO,
     }
 }
 
