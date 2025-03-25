@@ -6,6 +6,7 @@ use crate::thread_store::ThreadStore;
 use crate::tool_use::{PendingToolUseStatus, ToolUse, ToolUseStatus};
 use crate::ui::{ContextPill, ToolReadyPopUp};
 
+use assistant_settings::AssistantSettings;
 use collections::HashMap;
 use editor::{Editor, MultiBuffer};
 use gpui::{
@@ -374,7 +375,9 @@ impl ActiveThread {
                 self.save_thread(cx);
             }
             ThreadEvent::DoneStreaming => {
-                if !window.is_window_active() {
+                if !window.is_window_active()
+                    && AssistantSettings::get_global(cx).notify_when_agent_waiting
+                {
                     self.pop_up.open(cx, |_| ToolReadyPopUp::default())
                 }
             }
