@@ -9,7 +9,7 @@ use ui::{
     prelude::*, Disclosure, Divider, DividerColor, ElevationIndex, Indicator, Switch, Tooltip,
 };
 use util::ResultExt as _;
-use zed_actions::assistant::DeployPromptLibrary;
+use zed_actions::assistant::OpenPromptLibrary;
 use zed_actions::ExtensionCategoryFilter;
 
 pub struct AssistantConfiguration {
@@ -374,7 +374,7 @@ impl Render for AssistantConfiguration {
                             .icon_size(IconSize::Small)
                             .icon_position(IconPosition::Start)
                             .on_click(|_event, window, cx| {
-                                window.dispatch_action(DeployPromptLibrary.boxed_clone(), cx)
+                                window.dispatch_action(OpenPromptLibrary.boxed_clone(), cx)
                             }),
                     ),
             )

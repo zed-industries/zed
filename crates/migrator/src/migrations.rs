@@ -1,3 +1,9 @@
+pub(crate) mod m_2025_01_02 {
+    mod settings;
+
+    pub(crate) use settings::SETTINGS_PATTERNS;
+}
+
 pub(crate) mod m_2025_01_29 {
     mod keymap;
     mod settings;

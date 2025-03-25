@@ -22,6 +22,7 @@ use windows::{
         UI::WindowsAndMessaging::*,
     },
 };
+use windows_numerics::Vector2;
 
 use crate::*;
 
@@ -668,7 +669,7 @@ impl DirectWriteState {
         };
         let bounds = unsafe {
             render_target.GetGlyphRunWorldBounds(
-                D2D_POINT_2F { x: 0.0, y: 0.0 },
+                Vector2 { X: 0.0, Y: 0.0 },
                 &glyph_run,
                 DWRITE_MEASURING_MODE_NATURAL,
             )?
@@ -802,9 +803,9 @@ impl DirectWriteState {
             let subpixel_shift = params
                 .subpixel_variant
                 .map(|v| v as f32 / SUBPIXEL_VARIANTS as f32);
-            let baseline_origin = D2D_POINT_2F {
-                x: subpixel_shift.x / params.scale_factor,
-                y: subpixel_shift.y / params.scale_factor,
+            let baseline_origin = Vector2 {
+                X: subpixel_shift.x / params.scale_factor,
+                Y: subpixel_shift.y / params.scale_factor,
             };
 
             // This `cast()` action here should never fail since we are running on Win10+, and
@@ -1477,7 +1478,7 @@ fn is_color_glyph(
     };
     unsafe {
         factory.TranslateColorGlyphRun(
-            D2D_POINT_2F::default(),
+            Vector2::default(),
             &glyph_run as _,
             None,
             DWRITE_GLYPH_IMAGE_FORMATS_COLR

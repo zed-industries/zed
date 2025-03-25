@@ -1,4 +1,5 @@
 mod bash_tool;
+mod copy_path_tool;
 mod create_file_tool;
 mod delete_path_tool;
 mod diagnostics_tool;
@@ -15,6 +16,7 @@ mod thinking_tool;
 use std::sync::Arc;
 
 use assistant_tool::ToolRegistry;
+use copy_path_tool::CopyPathTool;
 use gpui::App;
 use http_client::HttpClientWithUrl;
 use move_path_tool::MovePathTool;
@@ -39,6 +41,7 @@ pub fn init(http_client: Arc<HttpClientWithUrl>, cx: &mut App) {
     let registry = ToolRegistry::global(cx);
     registry.register_tool(BashTool);
     registry.register_tool(CreateFileTool);
+    registry.register_tool(CopyPathTool);
     registry.register_tool(DeletePathTool);
     registry.register_tool(MovePathTool);
     registry.register_tool(DiagnosticsTool);

@@ -38,7 +38,7 @@ use workspace::{
     dock::{DockPosition, Panel, PanelEvent},
     pane, DraggedSelection, Pane, ShowConfiguration, ToggleZoom, Workspace,
 };
-use zed_actions::assistant::{DeployPromptLibrary, InlineAssist, ToggleFocus};
+use zed_actions::assistant::{InlineAssist, OpenPromptLibrary, ToggleFocus};
 
 pub fn init(cx: &mut App) {
     workspace::FollowableViewRegistry::register::<ContextEditor>(cx);
@@ -259,7 +259,7 @@ impl AssistantPanel {
                                     menu.context(focus_handle.clone())
                                         .action("New Chat", Box::new(NewChat))
                                         .action("History", Box::new(DeployHistory))
-                                        .action("Prompt Library", Box::new(DeployPromptLibrary))
+                                        .action("Prompt Library", Box::new(OpenPromptLibrary))
                                         .action("Configure", Box::new(ShowConfiguration))
                                         .action(zoom_label, Box::new(ToggleZoom))
                                 }))
@@ -1028,7 +1028,7 @@ impl AssistantPanel {
 
     fn deploy_prompt_library(
         &mut self,
-        _: &DeployPromptLibrary,
+        _: &OpenPromptLibrary,
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
