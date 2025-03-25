@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use coreaudio::sys::exit;
 use futures::StreamExt;
 use gpui::{
     actions, bounds, div, point,
@@ -99,7 +100,24 @@ impl LivekitWindow {
         bounds: Bounds<Pixels>,
         cx: &mut AsyncApp,
     ) -> WindowHandle<Self> {
-        let (room, mut events) = Room::connect(url, token, cx).await.unwrap();
+        unsafe {
+            dbg!("world!");
+            let mut m = webrtc_sys::audio_mixer::ffi::create_audio_mixer();
+            dbg!("hello!");
+            dbg!(m.pin_mut().mix(2));
+            dbg!("world!");
+            dbg!(m.data());
+            drop(m)
+        }
+        let (room, mut events) =
+            Room::connect(url.clone(), token, cx)
+                .await
+                .unwrap_or_else(|err| {
+                    eprintln!(
+                "Failed to connect to {url}: {err}.\nTry `foreman start` to run the livekit server"
+            );
+                    unsafe { exit(1) }
+                });
 
         cx.update(|cx| {
             cx.open_window(

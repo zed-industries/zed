@@ -7868,6 +7868,7 @@ dependencies = [
  "smallvec",
  "tokio-tungstenite 0.26.2",
  "util",
+ "webrtc-sys",
 ]
 
 [[package]]
