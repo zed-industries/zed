@@ -5,7 +5,7 @@ use super::{
 use anyhow::Result;
 use collections::HashMap;
 use dap::OutputEvent;
-use editor::{CompletionProvider, Editor, EditorElement, EditorStyle};
+use editor::{CompletionProvider, Editor, EditorElement, EditorStyle, ExcerptId};
 use fuzzy::StringMatchCandidate;
 use gpui::{Context, Entity, Render, Subscription, Task, TextStyle, WeakEntity};
 use language::{Buffer, CodeLabel};
@@ -246,6 +246,7 @@ struct ConsoleQueryBarCompletionProvider(WeakEntity<Console>);
 impl CompletionProvider for ConsoleQueryBarCompletionProvider {
     fn completions(
         &self,
+        _excerpt_id: ExcerptId,
         buffer: &Entity<Buffer>,
         buffer_position: language::Anchor,
         _trigger: editor::CompletionContext,
@@ -367,6 +368,7 @@ impl ConsoleQueryBarCompletionProvider {
                                 text: format!("{} {}", string_match.string.clone(), variable_value),
                                 runs: Vec::new(),
                             },
+                            icon_path: None,
                             documentation: None,
                             confirm: None,
                             source: project::CompletionSource::Custom,
@@ -408,6 +410,7 @@ impl ConsoleQueryBarCompletionProvider {
                             text: completion.label.clone(),
                             runs: Vec::new(),
                         },
+                        icon_path: None,
                         documentation: None,
                         confirm: None,
                         source: project::CompletionSource::Custom,

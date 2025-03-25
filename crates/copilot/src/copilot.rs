@@ -4,7 +4,7 @@ pub mod request;
 mod sign_in;
 
 use ::fs::Fs;
-use anyhow::{anyhow, Context as _, Result};
+use anyhow::{anyhow, Result};
 use collections::{HashMap, HashSet};
 use command_palette_hooks::CommandPaletteFilter;
 use futures::{channel::oneshot, future::Shared, io::BufReader, Future, FutureExt, TryFutureExt};
@@ -12,7 +12,6 @@ use gpui::{
     actions, App, AppContext as _, AsyncApp, Context, Entity, EntityId, EventEmitter, Global, Task,
     WeakEntity,
 };
-use http_client::github::get_release_by_tag_name;
 use http_client::HttpClient;
 use language::{
     language_settings::{
@@ -28,7 +27,6 @@ use parking_lot::Mutex;
 use request::StatusNotification;
 use serde_json::json;
 use settings::SettingsStore;
-use smol::{fs, stream::StreamExt};
 use std::{
     any::TypeId,
     ffi::OsString,
@@ -37,7 +35,7 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
-use util::{fs::remove_matching, maybe, ResultExt};
+use util::{fs::remove_matching, ResultExt};
 
 pub use crate::copilot_completion_provider::CopilotCompletionProvider;
 pub use crate::sign_in::{initiate_sign_in, CopilotCodeVerification};
@@ -65,7 +63,7 @@ pub fn init(
 
     let copilot = cx.new({
         let node_runtime = node_runtime.clone();
-        move |cx| Copilot::start(new_server_id, http, node_runtime, cx)
+        move |cx| Copilot::start(new_server_id, node_runtime, cx)
     });
     Copilot::set_global(copilot.clone(), cx);
     cx.observe(&copilot, |handle, cx| {
@@ -305,7 +303,6 @@ pub struct Completion {
 }
 
 pub struct Copilot {
-    http: Arc<dyn HttpClient>,
     node_runtime: NodeRuntime,
     server: CopilotServer,
     buffers: HashSet<WeakEntity<Buffer>>,
@@ -337,13 +334,11 @@ impl Copilot {
 
     fn start(
         new_server_id: LanguageServerId,
-        http: Arc<dyn HttpClient>,
         node_runtime: NodeRuntime,
         cx: &mut Context<Self>,
     ) -> Self {
         let mut this = Self {
             server_id: new_server_id,
-            http,
             node_runtime,
             server: CopilotServer::Disabled,
             buffers: Default::default(),
@@ -399,7 +394,6 @@ impl Copilot {
         }
 
         let server_id = self.server_id;
-        let http = self.http.clone();
         let node_runtime = self.node_runtime.clone();
         let env = self.build_env(&language_settings.edit_predictions.copilot);
         let prediction_model = language_settings
@@ -411,7 +405,6 @@ impl Copilot {
             .spawn(async move |this, cx| {
                 Self::start_language_server(
                     server_id,
-                    http,
                     node_runtime,
                     env,
                     prediction_model,
@@ -466,11 +459,9 @@ impl Copilot {
             Default::default(),
             &mut cx.to_async(),
         );
-        let http = http_client::FakeHttpClient::create(|_| async { unreachable!() });
         let node_runtime = NodeRuntime::unavailable();
         let this = cx.new(|cx| Self {
             server_id: LanguageServerId(0),
-            http: http.clone(),
             node_runtime,
             server: CopilotServer::Running(RunningCopilotServer {
                 lsp: Arc::new(server),
@@ -485,7 +476,6 @@ impl Copilot {
 
     async fn start_language_server(
         new_server_id: LanguageServerId,
-        http: Arc<dyn HttpClient>,
         node_runtime: NodeRuntime,
         env: Option<HashMap<String, String>>,
         prediction_model: CopilotPredictionModel,
@@ -494,7 +484,7 @@ impl Copilot {
         cx: &mut AsyncApp,
     ) {
         let start_language_server = async {
-            let server_path = get_copilot_lsp(http).await?;
+            let server_path = get_copilot_lsp(node_runtime.clone()).await?;
             let node_path = node_runtime.binary_path().await?;
             let arguments: Vec<OsString> = vec![server_path.into(), "--stdio".into()];
             let binary = LanguageServerBinary {
@@ -528,19 +518,23 @@ impl Copilot {
             let configuration = lsp::DidChangeConfigurationParams {
                 settings: Default::default(),
             };
+
+            let editor_info = request::SetEditorInfoParams {
+                editor_info: request::EditorInfo {
+                    name: "zed".into(),
+                    version: env!("CARGO_PKG_VERSION").into(),
+                },
+                editor_plugin_info: request::EditorPluginInfo {
+                    name: "zed-copilot".into(),
+                    version: "0.0.1".into(),
+                },
+            };
+            let editor_info_json = serde_json::to_value(&editor_info)?;
+
             let server = cx
                 .update(|cx| {
                     let mut params = server.default_initialize_params(cx);
-                    params.initialization_options = Some(json!({
-                        "editorInfo": {
-                            "name": "zed",
-                            "version": env!("CARGO_PKG_VERSION")
-                        },
-                        "editorPluginInfo": {
-                            "name": "zed-copilot",
-                            "version": "0.0.1"
-                        },
-                    }));
+                    params.initialization_options = Some(editor_info_json);
                     server.initialize(params, configuration.into(), cx)
                 })?
                 .await?;
@@ -555,23 +549,7 @@ impl Copilot {
                 ..Default::default()
             };
             server
-                .request::<request::SetEditorInfo>(request::SetEditorInfoParams {
-                    editor_info: request::EditorInfo {
-                        name: "zed".into(),
-                        version: env!("CARGO_PKG_VERSION").into(),
-                    },
-                    editor_plugin_info: request::EditorPluginInfo {
-                        name: "zed-copilot".into(),
-                        version: "0.0.1".into(),
-                    },
-                    editor_configuration: editor_config,
-                })
-                .await?;
-
-            let status = server
-                .request::<request::CheckStatus>(request::CheckStatusParams {
-                    local_checks_only: false,
-                })
+                .request::<request::SetEditorInfo>(editor_info)
                 .await?;
 
             anyhow::Ok((server, status))
@@ -715,22 +693,11 @@ impl Copilot {
         let env = self.build_env(&language_settings.edit_predictions.copilot);
         let start_task = cx
             .spawn({
-                let http = self.http.clone();
                 let node_runtime = self.node_runtime.clone();
                 let server_id = self.server_id;
                 async move |this, cx| {
                     clear_copilot_dir().await;
-                    Self::start_language_server(
-                        server_id,
-                        http,
-                        node_runtime,
-                        env,
-                        prediction_model,
-                        this,
-                        false,
-                        cx,
-                    )
-                    .await
+                    Self::start_language_server(server_id, node_runtime, env, prediction_model, this, false, cx).await
                 }
             })
             .shared();
@@ -1156,84 +1123,31 @@ async fn clear_copilot_config_dir() {
     remove_matching(copilot_chat::copilot_chat_config_dir(), |_| true).await
 }
 
-async fn get_copilot_lsp(http: Arc<dyn HttpClient>) -> anyhow::Result<PathBuf> {
-    const SERVER_PATH: &str = "dist/language-server.js";
+async fn get_copilot_lsp(node_runtime: NodeRuntime) -> anyhow::Result<PathBuf> {
+    const PACKAGE_NAME: &str = "@github/copilot-language-server";
+    const SERVER_PATH: &str =
+        "node_modules/@github/copilot-language-server/dist/language-server.js";
 
-    ///Check for the latest copilot language server and download it if we haven't already
-    async fn fetch_latest(http: Arc<dyn HttpClient>) -> anyhow::Result<PathBuf> {
-        let release = get_release_by_tag_name(
-            "github/copilot-language-server-release",
-            "1.290.0",
-            http.clone(),
-        )
+    let latest_version = node_runtime
+        .npm_package_latest_version(PACKAGE_NAME)
         .await?;
+    let server_path = paths::copilot_dir().join(SERVER_PATH);
 
-        let version_dir = &paths::copilot_dir().join(format!("copilot-{}", release.tag_name));
-
-        fs::create_dir_all(version_dir).await?;
-        let server_path = version_dir.join(SERVER_PATH);
-
-        if fs::metadata(&server_path).await.is_err() {
-            // Copilot LSP looks for this dist dir specifically, so lets add it in.
-            let dist_dir = version_dir.join("dist");
-            fs::create_dir_all(dist_dir.as_path()).await?;
-
-            let url = &release
-                .assets
-                .iter()
-                .find(|asset| asset.name.contains("copilot-language-server-js"))
-                .context("Github release for copilot contained no assets")?
-                .browser_download_url;
-
-            let mut response = http
-                .get(url, Default::default(), true)
-                .await
-                .context("error downloading copilot release")?;
-
-            node_runtime::extract_zip(&dist_dir, BufReader::new(response.body_mut()))
-                .await
-                .with_context(|| {
-                    format!(
-                        "unzipping language server {} to {:?}",
-                        release.tag_name, dist_dir
-                    )
-                })?;
-
-            remove_matching(paths::copilot_dir(), |entry| entry != version_dir).await;
-        }
-
-        Ok(server_path)
+    let should_install = node_runtime
+        .should_install_npm_package(
+            PACKAGE_NAME,
+            &server_path,
+            paths::copilot_dir(),
+            &latest_version,
+        )
+        .await;
+    if should_install {
+        node_runtime
+            .npm_install_packages(paths::copilot_dir(), &[(PACKAGE_NAME, &latest_version)])
+            .await?;
     }
 
-    match fetch_latest(http).await {
-        ok @ Result::Ok(..) => ok,
-        e @ Err(..) => {
-            e.log_err();
-            // Fetch a cached binary, if it exists
-            maybe!(async {
-                let mut last_version_dir = None;
-                let mut entries = fs::read_dir(paths::copilot_dir()).await?;
-                while let Some(entry) = entries.next().await {
-                    let entry = entry?;
-                    if entry.file_type().await?.is_dir() {
-                        last_version_dir = Some(entry.path());
-                    }
-                }
-                let last_version_dir =
-                    last_version_dir.ok_or_else(|| anyhow!("no cached binary"))?;
-                let server_path = last_version_dir.join(SERVER_PATH);
-                if server_path.exists() {
-                    Ok(server_path)
-                } else {
-                    Err(anyhow!(
-                        "missing executable in directory {:?}",
-                        last_version_dir
-                    ))
-                }
-            })
-            .await
-        }
-    }
+    Ok(server_path)
 }
 
 #[cfg(test)]

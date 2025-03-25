@@ -24,9 +24,7 @@ use pretty_assertions::{assert_eq, assert_matches};
 use serde_json::json;
 #[cfg(not(windows))]
 use std::os;
-use std::{str::FromStr, sync::OnceLock};
-
-use std::{mem, num::NonZeroU32, ops::Range, task::Poll};
+use std::{mem, num::NonZeroU32, ops::Range, str::FromStr, sync::OnceLock, task::Poll};
 use task::{ResolvedTask, TaskContext};
 use unindent::Unindent as _;
 use util::{
@@ -6359,7 +6357,7 @@ async fn test_staging_hunks(cx: &mut gpui::TestAppContext) {
     });
 }
 
-#[gpui::test(iterations = 10, seeds(340, 472))]
+#[gpui::test(seeds(340, 472))]
 async fn test_staging_hunks_with_delayed_fs_event(cx: &mut gpui::TestAppContext) {
     use DiffHunkSecondaryStatus::*;
     init_test(cx);

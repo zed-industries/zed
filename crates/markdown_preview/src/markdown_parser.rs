@@ -100,6 +100,7 @@ impl<'a> MarkdownParser<'a> {
             // Represent an inline code block
             | Event::Code(_)
             | Event::Html(_)
+            | Event::InlineHtml(_)
             | Event::FootnoteReference(_)
             | Event::Start(Tag::Link { .. })
             | Event::Start(Tag::Emphasis)

@@ -31,10 +31,10 @@ task.workspace = true
 theme.workspace = true
 thiserror.workspace = true
 util.workspace = true
+regex.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 windows.workspace = true
 
 [dev-dependencies]
 rand.workspace = true
-regex.workspace = true

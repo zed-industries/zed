@@ -4,7 +4,6 @@ use assistant_settings::{AgentProfile, AssistantSettings};
 use assistant_tool::{ToolSource, ToolWorkingSet};
 use gpui::{Entity, Subscription};
 use indexmap::IndexMap;
-use scripting_tool::ScriptingTool;
 use settings::{Settings as _, SettingsStore};
 use ui::{prelude::*, ContextMenu, PopoverMenu, Tooltip};
 
@@ -52,7 +51,6 @@ impl ToolSelector {
                     let tools = tool_set.clone();
                     move |_window, cx| {
                         tools.disable_source(ToolSource::Native, cx);
-                        tools.disable_scripting_tool();
                         tools.enable(
                             ToolSource::Native,
                             &profile
@@ -61,10 +59,6 @@ impl ToolSelector {
                                 .filter_map(|(tool, enabled)| enabled.then(|| tool.clone()))
                                 .collect::<Vec<_>>(),
                         );
-
-                        if profile.tools.contains_key(ScriptingTool::NAME) {
-                            tools.enable_scripting_tool();
-                        }
                     }
                 });
             }
@@ -98,11 +92,6 @@ impl ToolSelector {
                     .collect::<Vec<_>>();
 
                 if ToolSource::Native == source {
-                    tools.push((
-                        ToolSource::Native,
-                        ScriptingTool::NAME.into(),
-                        tool_set.is_scripting_tool_enabled(),
-                    ));
                     tools.sort_by(|(_, name_a, _), (_, name_b, _)| name_a.cmp(name_b));
                 }
 
@@ -136,18 +125,10 @@ impl ToolSelector {
                     menu = menu.toggleable_entry(name.clone(), is_enabled, icon_position, None, {
                         let tools = tool_set.clone();
                         move |_window, _cx| {
-                            if name.as_ref() == ScriptingTool::NAME {
-                                if is_enabled {
-                                    tools.disable_scripting_tool();
-                                } else {
-                                    tools.enable_scripting_tool();
-                                }
+                            if is_enabled {
+                                tools.disable(source.clone(), &[name.clone()]);
                             } else {
-                                if is_enabled {
-                                    tools.disable(source.clone(), &[name.clone()]);
-                                } else {
-                                    tools.enable(source.clone(), &[name.clone()]);
-                                }
+                                tools.enable(source.clone(), &[name.clone()]);
                             }
                         }
                     });
