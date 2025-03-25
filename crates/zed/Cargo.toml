@@ -122,6 +122,7 @@ theme.workspace = true
 theme_extension.workspace = true
 theme_selector.workspace = true
 time.workspace = true
+title_bar.workspace = true
 toolchain_selector.workspace = true
 ui.workspace = true
 ui_prompt.workspace = true

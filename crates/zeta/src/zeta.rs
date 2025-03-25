@@ -2,7 +2,6 @@ mod completion_diff_element;
 mod init;
 mod input_excerpt;
 mod license_detection;
-mod onboarding_banner;
 mod onboarding_modal;
 mod onboarding_telemetry;
 mod rate_completion_modal;
@@ -13,7 +12,6 @@ pub use init::*;
 use inline_completion::DataCollectionState;
 pub use license_detection::is_license_eligible_for_data_collection;
 use license_detection::LICENSE_FILES_TO_CHECK;
-pub use onboarding_banner::*;
 pub use rate_completion_modal::*;
 
 use anyhow::{anyhow, Context as _, Result};
