@@ -5547,7 +5547,7 @@ impl EditorElement {
                             if minimap_hitbox.is_hovered(window) {
                                 editor.scroll_manager.show_minimap_slider(cx);
                             } else {
-                                editor.scroll_manager.hide_minimap_slider(window, cx);
+                                editor.scroll_manager.hide_minimap_slider(cx);
                             }
                         }
                         mouse_position = event.position;

@@ -373,9 +373,10 @@ impl ScrollManager {
         }
     }
 
-    pub fn hide_minimap_slider(&mut self, window: &mut Window, cx: &mut Context<Editor>) {
-        if self.show_minimap_slider && self.hide_minimap_slider_task.is_none() {
+    pub fn hide_minimap_slider(&mut self, cx: &mut Context<Editor>) {
+        if self.show_minimap_slider {
             self.show_minimap_slider = false;
+            cx.notify();
         }
     }
 
