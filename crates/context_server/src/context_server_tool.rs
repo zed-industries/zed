@@ -5,6 +5,7 @@ use assistant_tool::{ActionLog, Tool, ToolSource};
 use gpui::{App, Entity, Task};
 use language_model::LanguageModelRequestMessage;
 use project::Project;
+use ui::IconName;
 
 use crate::manager::ContextServerManager;
 use crate::types;
@@ -36,6 +37,10 @@ impl Tool for ContextServerTool {
 
     fn description(&self) -> String {
         self.tool.description.clone().unwrap_or_default()
+    }
+
+    fn icon(&self) -> IconName {
+        IconName::Cog
     }
 
     fn source(&self) -> ToolSource {

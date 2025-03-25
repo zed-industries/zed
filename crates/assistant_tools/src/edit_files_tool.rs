@@ -17,6 +17,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::fmt::Write;
 use std::sync::Arc;
+use ui::IconName;
 use util::ResultExt;
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
@@ -84,6 +85,10 @@ impl Tool for EditFilesTool {
 
     fn description(&self) -> String {
         include_str!("./edit_files_tool/description.md").into()
+    }
+
+    fn icon(&self) -> IconName {
+        IconName::Pencil
     }
 
     fn input_schema(&self) -> serde_json::Value {

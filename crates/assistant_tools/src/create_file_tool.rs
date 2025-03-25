@@ -6,6 +6,7 @@ use project::Project;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
+use ui::IconName;
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct CreateFileToolInput {
@@ -42,6 +43,10 @@ impl Tool for CreateFileTool {
 
     fn description(&self) -> String {
         include_str!("./create_file_tool/description.md").into()
+    }
+
+    fn icon(&self) -> IconName {
+        IconName::File
     }
 
     fn input_schema(&self) -> serde_json::Value {

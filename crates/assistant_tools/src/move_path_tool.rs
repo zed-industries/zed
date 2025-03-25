@@ -6,6 +6,7 @@ use project::Project;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::{path::Path, sync::Arc};
+use ui::IconName;
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct MovePathToolInput {
@@ -45,6 +46,10 @@ impl Tool for MovePathTool {
 
     fn description(&self) -> String {
         include_str!("./move_path_tool/description.md").into()
+    }
+
+    fn icon(&self) -> IconName {
+        IconName::ArrowRightLeft
     }
 
     fn input_schema(&self) -> serde_json::Value {

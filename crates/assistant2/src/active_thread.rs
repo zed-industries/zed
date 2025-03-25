@@ -1251,23 +1251,6 @@ impl ActiveThread {
 
         let lighter_border = cx.theme().colors().border.opacity(0.5);
 
-        let tool_icon = match tool_use.name.as_ref() {
-            "bash" => IconName::Terminal,
-            "copy-path" => IconName::Clipboard,
-            "delete-path" => IconName::Trash,
-            "diagnostics" => IconName::Warning,
-            "edit-files" | "find-replace-file" => IconName::Pencil,
-            "fetch" => IconName::Globe,
-            "list-directory" => IconName::Folder,
-            "move-path" => IconName::ArrowRightLeft,
-            "now" => IconName::Info,
-            "path-search" => IconName::SearchCode,
-            "read-file" => IconName::Eye,
-            "regex-search" => IconName::Regex,
-            "thinking" => IconName::Brain,
-            _ => IconName::Cog,
-        };
-
         div().py_2().child(
             v_flex()
                 .rounded_lg()
@@ -1293,7 +1276,7 @@ impl ActiveThread {
                             h_flex()
                                 .gap_1p5()
                                 .child(
-                                    Icon::new(tool_icon)
+                                    Icon::new(tool_use.icon)
                                         .size(IconSize::XSmall)
                                         .color(Color::Muted),
                                 )

@@ -704,6 +704,7 @@ dependencies = [
  "project",
  "serde",
  "serde_json",
+ "ui",
 ]
 
 [[package]]
@@ -3206,6 +3207,7 @@ dependencies = [
  "serde_json",
  "settings",
  "smol",
+ "ui",
  "url",
  "util",
 ]

@@ -9,6 +9,7 @@ use language_model::LanguageModelRequestMessage;
 use project::Project;
 use std::fmt::{self, Debug, Formatter};
 use std::sync::Arc;
+use ui::IconName;
 
 pub use crate::tool_registry::*;
 pub use crate::tool_working_set::*;
@@ -32,6 +33,9 @@ pub trait Tool: 'static + Send + Sync {
 
     /// Returns the description of the tool.
     fn description(&self) -> String;
+
+    /// Returns the icon for the tool.
+    fn icon(&self) -> IconName;
 
     /// Returns the source of the tool.
     fn source(&self) -> ToolSource {

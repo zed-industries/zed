@@ -6,6 +6,7 @@ use project::Project;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
+use ui::IconName;
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct CopyPathToolInput {
@@ -45,6 +46,10 @@ impl Tool for CopyPathTool {
 
     fn description(&self) -> String {
         include_str!("./copy_path_tool/description.md").into()
+    }
+
+    fn icon(&self) -> IconName {
+        IconName::Clipboard
     }
 
     fn input_schema(&self) -> serde_json::Value {

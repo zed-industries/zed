@@ -6,6 +6,7 @@ use project::Project;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::{fmt::Write, path::Path, sync::Arc};
+use ui::IconName;
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct ListDirectoryToolInput {
@@ -47,6 +48,10 @@ impl Tool for ListDirectoryTool {
 
     fn description(&self) -> String {
         include_str!("./list_directory_tool/description.md").into()
+    }
+
+    fn icon(&self) -> IconName {
+        IconName::Folder
     }
 
     fn input_schema(&self) -> serde_json::Value {

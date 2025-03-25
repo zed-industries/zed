@@ -6,6 +6,7 @@ use project::Project;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::{collections::HashSet, path::PathBuf, sync::Arc};
+use ui::IconName;
 
 use crate::replace::replace_exact;
 
@@ -133,6 +134,10 @@ impl Tool for FindReplaceFileTool {
 
     fn description(&self) -> String {
         include_str!("find_replace_tool/description.md").to_string()
+    }
+
+    fn icon(&self) -> IconName {
+        IconName::Pencil
     }
 
     fn input_schema(&self) -> serde_json::Value {
