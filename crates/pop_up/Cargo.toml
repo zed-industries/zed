@@ -1,0 +1,22 @@
+[package]
+name = "pop_up"
+version = "0.1.0"
+edition.workspace = true
+publish.workspace = true
+license = "GPL-3.0-or-later"
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/pop_up.rs"
+
+[features]
+default = []
+
+[dependencies]
+anyhow.workspace = true
+gpui.workspace = true
+release_channel.workspace = true
+ui.workspace = true
+util.workspace = true

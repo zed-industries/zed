@@ -4,7 +4,7 @@ use crate::thread::{
 };
 use crate::thread_store::ThreadStore;
 use crate::tool_use::{PendingToolUseStatus, ToolUse, ToolUseStatus};
-use crate::ui::ContextPill;
+use crate::ui::{ContextPill, ToolReadyPopUp};
 
 use collections::HashMap;
 use editor::{Editor, MultiBuffer};
@@ -17,6 +17,7 @@ use gpui::{
 use language::{Buffer, LanguageRegistry};
 use language_model::{LanguageModelRegistry, LanguageModelToolUseId, Role};
 use markdown::{Markdown, MarkdownStyle};
+use pop_up::PopUp;
 use settings::Settings as _;
 use std::sync::Arc;
 use std::time::Duration;
@@ -42,6 +43,7 @@ pub struct ActiveThread {
     expanded_tool_uses: HashMap<LanguageModelToolUseId, bool>,
     expanded_thinking_segments: HashMap<(MessageId, usize), bool>,
     last_error: Option<ThreadError>,
+    pop_up: PopUp<ToolReadyPopUp>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -244,6 +246,7 @@ impl ActiveThread {
             }),
             editing_message: None,
             last_error: None,
+            pop_up: PopUp::default(),
             _subscriptions: subscriptions,
         };
 
@@ -370,7 +373,11 @@ impl ActiveThread {
             ThreadEvent::StreamedCompletion | ThreadEvent::SummaryChanged => {
                 self.save_thread(cx);
             }
-            ThreadEvent::DoneStreaming => {}
+            ThreadEvent::DoneStreaming => {
+                if !window.is_window_active() {
+                    self.pop_up.open(cx, |_| ToolReadyPopUp::default())
+                }
+            }
             ThreadEvent::StreamedAssistantText(message_id, text) => {
                 if let Some(rendered_message) = self.rendered_messages_by_id.get_mut(&message_id) {
                     rendered_message.append_text(text, window, cx);

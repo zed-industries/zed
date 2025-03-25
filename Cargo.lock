@@ -486,11 +486,13 @@ dependencies = [
  "parking_lot",
  "paths",
  "picker",
+ "pop_up",
  "project",
  "prompt_library",
  "prompt_store",
  "proto",
  "rand 0.8.5",
+ "release_channel",
  "rope",
  "serde",
  "serde_json",
@@ -10306,6 +10308,17 @@ name = "pollster"
 version = "0.2.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5da3b0203fd7ee5720aa0b5e790b591aa5d3f41c3ed2c34a3a393382198af2f7"
+
+[[package]]
+name = "pop_up"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "gpui",
+ "release_channel",
+ "ui",
+ "util",
+]
 
 [[package]]
 name = "portable-atomic"
