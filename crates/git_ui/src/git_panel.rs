@@ -3023,6 +3023,23 @@ impl GitPanel {
                                 .truncate(),
                         )
                         .id("commit-msg-hover")
+                        .on_click({
+                            let repo = active_repository.downgrade();
+                            let sha = commit.sha.clone();
+                            move |_, _, cx| {
+                                repo.update(cx, |repo, cx| {
+                                    dbg!("loading commit", &sha);
+                                    let commit = repo.load_commit(sha.to_string());
+                                    cx.spawn(async move |this, cx| {
+                                        let commit = commit.await.ok()?.log_err();
+                                        dbg!(&commit);
+                                        Some(())
+                                    })
+                                    .detach()
+                                })
+                                .ok();
+                            }
+                        })
                         .hoverable_tooltip(move |window, cx| {
                             GitPanelMessageTooltip::new(
                                 this.clone(),

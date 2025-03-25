@@ -20,8 +20,8 @@ use git::{
     blame::Blame,
     parse_git_remote_url,
     repository::{
-        Branch, CommitDetails, DiffType, GitIndex, GitRepository, GitRepositoryCheckpoint,
-        PushOptions, Remote, RemoteCommandOutput, RepoPath, ResetMode,
+        Branch, CommitDetails, CommitDiff, DiffType, GitIndex, GitRepository,
+        GitRepositoryCheckpoint, PushOptions, Remote, RemoteCommandOutput, RepoPath, ResetMode,
     },
     status::{FileStatus, GitStatus},
     BuildPermalinkParams, GitHostingProviderRegistry,
@@ -3081,6 +3081,19 @@ impl Repository {
                         committer_email: resp.committer_email.into(),
                         committer_name: resp.committer_name.into(),
                     })
+                }
+            }
+        })
+    }
+
+    pub fn load_commit(&self, commit: String) -> oneshot::Receiver<Result<CommitDiff>> {
+        self.send_job(|git_repo, cx| async move {
+            match git_repo {
+                RepositoryState::Local(git_repository) => {
+                    git_repository.load_commit(commit, cx).await
+                }
+                RepositoryState::Remote { .. } => {
+                    todo!()
                 }
             }
         })
