@@ -96,7 +96,7 @@ let
         ++ lib.optionals stdenv.hostPlatform.isDarwin [
           # TODO: move to overlay so it's usable in the shell
           (cargo-bundle.overrideAttrs (old: {
-            version = "0.6.1-zed";
+            version = "0.6.0-zed";
             src = fetchFromGitHub {
               owner = "zed-industries";
               repo = "cargo-bundle";
