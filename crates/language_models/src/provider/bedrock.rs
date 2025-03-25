@@ -455,7 +455,7 @@ impl BedrockModel {
                 futures::stream::once(async move { Err(BedrockError::ClientError(e)) }).boxed()
             })
         }
-            .boxed())
+        .boxed())
     }
 }
 
@@ -514,7 +514,7 @@ impl LanguageModel for BedrockModel {
             return async move { Err(anyhow!("App State Dropped")) }.boxed();
         };
 
-        let model_id = match self.model.cross_region_inference_id(&*region) {
+        let model_id = match self.model.cross_region_inference_id(&region) {
             Ok(s) => s,
             Err(e) => {
                 return async move { Err(e) }.boxed();
@@ -721,18 +721,18 @@ pub fn get_bedrock_tokens(
 
 pub async fn extract_tool_args_from_events(
     name: String,
-    mut events: Pin<Box<dyn Send + Stream<Item=Result<BedrockStreamingResponse, BedrockError>>>>,
+    mut events: Pin<Box<dyn Send + Stream<Item = Result<BedrockStreamingResponse, BedrockError>>>>,
     handle: Handle,
-) -> Result<impl Send + Stream<Item=Result<String>>> {
+) -> Result<impl Send + Stream<Item = Result<String>>> {
     handle
         .spawn(async move {
             let mut tool_use_index = None;
             while let Some(event) = events.next().await {
                 if let BedrockStreamingResponse::ContentBlockStart(ContentBlockStartEvent {
-                                                                       content_block_index,
-                                                                       start,
-                                                                       ..
-                                                                   }) = event?
+                    content_block_index,
+                    start,
+                    ..
+                }) = event?
                 {
                     match start {
                         None => {
@@ -784,9 +784,9 @@ pub async fn extract_tool_args_from_events(
 }
 
 pub fn map_to_language_model_completion_events(
-    events: Pin<Box<dyn Send + Stream<Item=Result<BedrockStreamingResponse, BedrockError>>>>,
+    events: Pin<Box<dyn Send + Stream<Item = Result<BedrockStreamingResponse, BedrockError>>>>,
     handle: Handle,
-) -> impl Stream<Item=Result<LanguageModelCompletionEvent>> {
+) -> impl Stream<Item = Result<LanguageModelCompletionEvent>> {
     struct RawToolUse {
         id: String,
         name: String,
@@ -794,7 +794,7 @@ pub fn map_to_language_model_completion_events(
     }
 
     struct State {
-        events: Pin<Box<dyn Send + Stream<Item=Result<BedrockStreamingResponse, BedrockError>>>>,
+        events: Pin<Box<dyn Send + Stream<Item = Result<BedrockStreamingResponse, BedrockError>>>>,
         tool_uses_by_index: HashMap<i32, RawToolUse>,
     }
 
@@ -896,7 +896,7 @@ pub fn map_to_language_model_completion_events(
             }
         },
     )
-        .filter_map(|event| async move { event })
+    .filter_map(|event| async move { event })
 }
 
 struct ConfigurationView {
@@ -928,7 +928,7 @@ impl ConfigurationView {
         cx.observe(&state, |_, _, cx| {
             cx.notify();
         })
-            .detach();
+        .detach();
 
         let load_credentials_task = Some(cx.spawn({
             let state = state.clone();
@@ -944,7 +944,7 @@ impl ConfigurationView {
                     this.load_credentials_task = None;
                     cx.notify();
                 })
-                    .log_err();
+                .log_err();
             }
         }));
 
@@ -1099,7 +1099,7 @@ impl ConfigurationView {
                 })?
                 .await
         })
-            .detach_and_log_err(cx);
+        .detach_and_log_err(cx);
     }
 
     fn reset_credentials(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -1120,7 +1120,7 @@ impl ConfigurationView {
                 .update(cx, |state, cx| state.reset_credentials(cx))?
                 .await
         })
-            .detach_and_log_err(cx);
+        .detach_and_log_err(cx);
     }
 
     fn make_text_style(&self, cx: &Context<Self>) -> TextStyle {
@@ -1496,7 +1496,7 @@ impl ConfigurationView {
                 Label::new(
                     "This method uses AWS IAM Identity Center (formerly SSO) to authenticate.",
                 )
-                    .size(LabelSize::Small),
+                .size(LabelSize::Small),
             )
             .child(
                 List::new()
