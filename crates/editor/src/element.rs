@@ -3303,7 +3303,7 @@ impl EditorElement {
             let offset = scroll_position - max_row as f32;
 
             if offset > 0.0 {
-                origin.y -= Pixels(offset) * line_height;
+                origin.y -= offset * line_height;
             }
             break;
         }
@@ -4524,7 +4524,7 @@ impl EditorElement {
                                     hunk_hitbox.origin.x - hunk_hitbox.size.width,
                                     hunk_hitbox.origin.y,
                                 ),
-                                size(hunk_hitbox.size.width * px(2.), hunk_hitbox.size.height),
+                                size(hunk_hitbox.size.width * 2., hunk_hitbox.size.height),
                             ),
                             cx.theme().colors().version_control_deleted,
                             Corners::all(1. * line_height),
@@ -7859,10 +7859,10 @@ impl ScrollbarRangeData {
         let text_bounds_size = size(longest_line_width, max_row.0 as f32 * letter_size.height);
 
         let settings = EditorSettings::get_global(cx);
-        let scroll_beyond_last_line: Pixels = match settings.scroll_beyond_last_line {
-            ScrollBeyondLastLine::OnePage => px(scrollbar_bounds.size.height / letter_size.height),
-            ScrollBeyondLastLine::Off => px(1.),
-            ScrollBeyondLastLine::VerticalScrollMargin => px(1.0 + settings.vertical_scroll_margin),
+        let scroll_beyond_last_line: f32 = match settings.scroll_beyond_last_line {
+            ScrollBeyondLastLine::OnePage => scrollbar_bounds.size.height / letter_size.height,
+            ScrollBeyondLastLine::Off => 1.0,
+            ScrollBeyondLastLine::VerticalScrollMargin => 1.0 + settings.vertical_scroll_margin,
         };
 
         let right_margin = if longest_line_width + longest_line_blame_width >= editor_width {
@@ -8534,7 +8534,7 @@ fn compute_auto_height_layout(
         snapshot = editor.snapshot(window, cx);
     }
 
-    let scroll_height = Pixels::from(snapshot.max_point().row().next_row().0) * line_height;
+    let scroll_height = (snapshot.max_point().row().next_row().0 as f32) * line_height;
     let height = scroll_height
         .max(line_height)
         .min(line_height * max_lines as f32);

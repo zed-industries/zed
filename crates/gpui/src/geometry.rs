@@ -2468,7 +2468,7 @@ impl std::fmt::Display for Pixels {
     }
 }
 
-impl std::ops::Div for Pixels {
+impl Div for Pixels {
     type Output = f32;
 
     fn div(self, rhs: Self) -> Self::Output {
@@ -2497,18 +2497,10 @@ impl std::ops::Rem for Pixels {
 }
 
 impl Mul<f32> for Pixels {
-    type Output = Pixels;
+    type Output = Self;
 
-    fn mul(self, other: f32) -> Pixels {
-        Pixels(self.0 * other)
-    }
-}
-
-impl Mul<usize> for Pixels {
-    type Output = Pixels;
-
-    fn mul(self, other: usize) -> Pixels {
-        Pixels(self.0 * other as f32)
+    fn mul(self, rhs: f32) -> Self {
+        Self(self.0 * rhs)
     }
 }
 
@@ -2516,13 +2508,29 @@ impl Mul<Pixels> for f32 {
     type Output = Pixels;
 
     fn mul(self, rhs: Pixels) -> Self::Output {
-        Pixels(self * rhs.0)
+        rhs * self
+    }
+}
+
+impl Mul<usize> for Pixels {
+    type Output = Self;
+
+    fn mul(self, rhs: usize) -> Self {
+        self * (rhs as f32)
+    }
+}
+
+impl Mul<Pixels> for usize {
+    type Output = Pixels;
+
+    fn mul(self, rhs: Pixels) -> Pixels {
+        rhs * self
     }
 }
 
 impl MulAssign<f32> for Pixels {
-    fn mul_assign(&mut self, other: f32) {
-        self.0 *= other;
+    fn mul_assign(&mut self, rhs: f32) {
+        self.0 *= rhs;
     }
 }
 
@@ -2614,14 +2622,6 @@ impl Pixels {
     /// A f64 value of the `Pixels`.
     pub fn to_f64(self) -> f64 {
         self.0 as f64
-    }
-}
-
-impl Mul<Pixels> for Pixels {
-    type Output = Pixels;
-
-    fn mul(self, rhs: Pixels) -> Self::Output {
-        Pixels(self.0 * rhs.0)
     }
 }
 
@@ -2821,7 +2821,9 @@ impl From<usize> for DevicePixels {
 /// a single logical pixel may correspond to multiple physical pixels. By using `ScaledPixels`,
 /// dimensions and positions can be specified in a way that scales appropriately across different
 /// display resolutions.
-#[derive(Clone, Copy, Default, Add, AddAssign, Sub, SubAssign, Div, PartialEq, PartialOrd)]
+#[derive(
+    Clone, Copy, Default, Add, AddAssign, Sub, SubAssign, Div, DivAssign, PartialEq, PartialOrd,
+)]
 #[repr(transparent)]
 pub struct ScaledPixels(pub(crate) f32);
 
@@ -2874,6 +2876,72 @@ impl From<ScaledPixels> for f64 {
 impl From<ScaledPixels> for u32 {
     fn from(pixels: ScaledPixels) -> Self {
         pixels.0 as u32
+    }
+}
+
+impl Div for ScaledPixels {
+    type Output = f32;
+
+    fn div(self, rhs: Self) -> Self::Output {
+        self.0 / rhs.0
+    }
+}
+
+impl std::ops::DivAssign for ScaledPixels {
+    fn div_assign(&mut self, rhs: Self) {
+        *self = Self(self.0 / rhs.0);
+    }
+}
+
+impl std::ops::RemAssign for ScaledPixels {
+    fn rem_assign(&mut self, rhs: Self) {
+        self.0 %= rhs.0;
+    }
+}
+
+impl std::ops::Rem for ScaledPixels {
+    type Output = Self;
+
+    fn rem(self, rhs: Self) -> Self {
+        Self(self.0 % rhs.0)
+    }
+}
+
+impl Mul<f32> for ScaledPixels {
+    type Output = Self;
+
+    fn mul(self, rhs: f32) -> Self {
+        Self(self.0 * rhs)
+    }
+}
+
+impl Mul<ScaledPixels> for f32 {
+    type Output = ScaledPixels;
+
+    fn mul(self, rhs: ScaledPixels) -> Self::Output {
+        rhs * self
+    }
+}
+
+impl Mul<usize> for ScaledPixels {
+    type Output = Self;
+
+    fn mul(self, rhs: usize) -> Self {
+        self * (rhs as f32)
+    }
+}
+
+impl Mul<ScaledPixels> for usize {
+    type Output = ScaledPixels;
+
+    fn mul(self, rhs: ScaledPixels) -> ScaledPixels {
+        rhs * self
+    }
+}
+
+impl MulAssign<f32> for ScaledPixels {
+    fn mul_assign(&mut self, rhs: f32) {
+        self.0 *= rhs;
     }
 }
 

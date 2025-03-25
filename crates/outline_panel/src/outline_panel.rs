@@ -4586,7 +4586,7 @@ impl OutlinePanel {
                         .with_render_fn(
                             cx.entity().clone(),
                             move |outline_panel, params, _, _| {
-                                const LEFT_OFFSET: f32 = 14.;
+                                const LEFT_OFFSET: Pixels = px(14.);
 
                                 let indent_size = params.indent_size;
                                 let item_height = params.item_height;
@@ -4602,11 +4602,10 @@ impl OutlinePanel {
                                     .map(|(ix, layout)| {
                                         let bounds = Bounds::new(
                                             point(
-                                                px(layout.offset.x as f32) * indent_size
-                                                    + px(LEFT_OFFSET),
-                                                px(layout.offset.y as f32) * item_height,
+                                                layout.offset.x * indent_size + LEFT_OFFSET,
+                                                layout.offset.y * item_height,
                                             ),
-                                            size(px(1.), px(layout.length as f32) * item_height),
+                                            size(px(1.), layout.length * item_height),
                                         );
                                         ui::RenderedIndentGuide {
                                             bounds,
