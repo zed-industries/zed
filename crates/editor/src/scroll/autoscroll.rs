@@ -54,6 +54,8 @@ impl Autoscroll {
         Self::Strategy(AutoscrollStrategy::Bottom, None)
     }
 
+    /// Applies a given auto-scroll strategy to a given anchor instead of a cursor.
+    /// E.G: Autoscroll::center().for_anchor(...) results in the anchor being at the center of the screen.
     pub fn for_anchor(self, anchor: Anchor) -> Self {
         match self {
             Autoscroll::Next => self,
