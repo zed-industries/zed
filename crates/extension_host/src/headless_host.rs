@@ -84,20 +84,17 @@ impl HeadlessExtensionStore {
             })
             .collect();
 
-        cx.spawn(|this, mut cx| async move {
+        cx.spawn(async move |this, cx| {
             let mut missing = Vec::new();
 
             for extension_id in to_remove {
                 log::info!("removing extension: {}", extension_id);
-                this.update(&mut cx, |this, cx| {
-                    this.uninstall_extension(&extension_id, cx)
-                })?
-                .await?;
+                this.update(cx, |this, cx| this.uninstall_extension(&extension_id, cx))?
+                    .await?;
             }
 
             for extension in to_load {
-                if let Err(e) = Self::load_extension(this.clone(), extension.clone(), &mut cx).await
-                {
+                if let Err(e) = Self::load_extension(this.clone(), extension.clone(), cx).await {
                     log::info!("failed to load extension: {}, {:?}", extension.id, e);
                     missing.push(extension)
                 } else if extension.dev {
@@ -218,7 +215,7 @@ impl HeadlessExtensionStore {
 
         let path = self.extension_dir.join(&extension_id.to_string());
         let fs = self.fs.clone();
-        cx.spawn(|_, _| async move {
+        cx.spawn(async move |_, _| {
             fs.remove_dir(
                 &path,
                 RemoveOptions {
@@ -239,9 +236,9 @@ impl HeadlessExtensionStore {
         let path = self.extension_dir.join(&extension.id);
         let fs = self.fs.clone();
 
-        cx.spawn(|this, mut cx| async move {
+        cx.spawn(async move |this, cx| {
             if fs.is_dir(&path).await {
-                this.update(&mut cx, |this, cx| {
+                this.update(cx, |this, cx| {
                     this.uninstall_extension(&extension.id.clone().into(), cx)
                 })?
                 .await?;
@@ -250,7 +247,7 @@ impl HeadlessExtensionStore {
             fs.rename(&tmp_path, &path, RenameOptions::default())
                 .await?;
 
-            Self::load_extension(this, extension, &mut cx).await
+            Self::load_extension(this, extension, cx).await
         })
     }
 

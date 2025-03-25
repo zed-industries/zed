@@ -87,7 +87,7 @@ impl FollowableItem for Editor {
                 .collect::<Result<Vec<_>>>()
         });
 
-        Some(window.spawn(cx, |mut cx| async move {
+        Some(window.spawn(cx, async move |cx| {
             let mut buffers = futures::future::try_join_all(buffers?)
                 .await
                 .debug_assert_ok("leaders don't share views for unshared buffers")?;
@@ -147,7 +147,7 @@ impl FollowableItem for Editor {
                     scroll_y: state.scroll_y,
                     ..Default::default()
                 },
-                &mut cx,
+                cx,
             )
             .await?;
 
@@ -319,8 +319,8 @@ impl FollowableItem for Editor {
     ) -> Task<Result<()>> {
         let update_view::Variant::Editor(message) = message;
         let project = project.clone();
-        cx.spawn_in(window, |this, mut cx| async move {
-            update_editor_from_message(this, project, message, &mut cx).await
+        cx.spawn_in(window, async move |this, cx| {
+            update_editor_from_message(this, project, message, cx).await
         })
     }
 
@@ -629,18 +629,20 @@ impl Item for Editor {
             self.buffer()
                 .read(cx)
                 .as_singleton()
-                .and_then(|buffer| buffer.read(cx).project_path(cx))
-                .and_then(|path| {
+                .and_then(|buffer| {
+                    let buffer = buffer.read(cx);
+                    let path = buffer.project_path(cx)?;
+                    let buffer_id = buffer.remote_id();
                     let project = self.project.as_ref()?.read(cx);
                     let entry = project.entry_for_path(&path, cx)?;
-                    let git_status = project
-                        .worktree_for_id(path.worktree_id, cx)?
+                    let (repo, repo_path) = project
+                        .git_store()
                         .read(cx)
-                        .snapshot()
-                        .status_for_file(path.path)?;
+                        .repository_and_path_for_buffer_id(buffer_id, cx)?;
+                    let status = repo.read(cx).status_for_path(&repo_path)?.status;
 
                     Some(entry_git_aware_label_color(
-                        git_status.summary(),
+                        status.summary(),
                         entry.is_ignored,
                         params.selected,
                     ))
@@ -735,7 +737,7 @@ impl Item for Editor {
 
     fn deactivated(&mut self, _: &mut Window, cx: &mut Context<Self>) {
         let selection = self.selections.newest_anchor();
-        self.push_to_nav_history(selection.head(), None, cx);
+        self.push_to_nav_history(selection.head(), None, true, cx);
     }
 
     fn workspace_deactivated(&mut self, _: &mut Window, cx: &mut Context<Self>) {
@@ -776,9 +778,9 @@ impl Item for Editor {
             .into_iter()
             .map(|handle| handle.read(cx).base_buffer().unwrap_or(handle.clone()))
             .collect::<HashSet<_>>();
-        cx.spawn_in(window, |this, mut cx| async move {
+        cx.spawn_in(window, async move |this, cx| {
             if format {
-                this.update_in(&mut cx, |editor, window, cx| {
+                this.update_in(cx, |editor, window, cx| {
                     editor.perform_format(
                         project.clone(),
                         FormatTrigger::Save,
@@ -793,7 +795,7 @@ impl Item for Editor {
             if buffers.len() == 1 {
                 // Apply full save routine for singleton buffers, to allow to `touch` the file via the editor.
                 project
-                    .update(&mut cx, |project, cx| project.save_buffers(buffers, cx))?
+                    .update(cx, |project, cx| project.save_buffers(buffers, cx))?
                     .await?;
             } else {
                 // For multi-buffers, only format and save the buffers with changes.
@@ -801,20 +803,16 @@ impl Item for Editor {
                 // so that language servers or other downstream listeners of save events get notified.
                 let (dirty_buffers, clean_buffers) = buffers.into_iter().partition(|buffer| {
                     buffer
-                        .update(&mut cx, |buffer, _| {
-                            buffer.is_dirty() || buffer.has_conflict()
-                        })
+                        .update(cx, |buffer, _| buffer.is_dirty() || buffer.has_conflict())
                         .unwrap_or(false)
                 });
 
                 project
-                    .update(&mut cx, |project, cx| {
-                        project.save_buffers(dirty_buffers, cx)
-                    })?
+                    .update(cx, |project, cx| project.save_buffers(dirty_buffers, cx))?
                     .await?;
                 for buffer in clean_buffers {
                     buffer
-                        .update(&mut cx, |buffer, cx| {
+                        .update(cx, |buffer, cx| {
                             let version = buffer.saved_version().clone();
                             let mtime = buffer.saved_mtime();
                             buffer.did_save(version, mtime, cx);
@@ -859,13 +857,13 @@ impl Item for Editor {
         let buffers = self.buffer.read(cx).all_buffers();
         let reload_buffers =
             project.update(cx, |project, cx| project.reload_buffers(buffers, true, cx));
-        cx.spawn_in(window, |this, mut cx| async move {
+        cx.spawn_in(window, async move |this, cx| {
             let transaction = reload_buffers.log_err().await;
-            this.update(&mut cx, |editor, cx| {
+            this.update(cx, |editor, cx| {
                 editor.request_autoscroll(Autoscroll::fit(), cx)
             })?;
             buffer
-                .update(&mut cx, |buffer, cx| {
+                .update(cx, |buffer, cx| {
                     if let Some(transaction) = transaction {
                         if !buffer.is_singleton() {
                             buffer.push_transaction(&transaction.0, cx);
@@ -996,7 +994,9 @@ impl SerializableItem for Editor {
         window: &mut Window,
         cx: &mut App,
     ) -> Task<Result<()>> {
-        window.spawn(cx, |_| DB.delete_unloaded_items(workspace_id, alive_items))
+        window.spawn(cx, async move |_| {
+            DB.delete_unloaded_items(workspace_id, alive_items).await
+        })
     }
 
     fn deserialize(
@@ -1040,11 +1040,11 @@ impl SerializableItem for Editor {
                 contents: Some(contents),
                 language,
                 ..
-            } => window.spawn(cx, |mut cx| {
+            } => window.spawn(cx, {
                 let project = project.clone();
-                async move {
+                async move |cx| {
                     let language_registry =
-                        project.update(&mut cx, |project, _| project.languages().clone())?;
+                        project.update(cx, |project, _| project.languages().clone())?;
 
                     let language = if let Some(language_name) = language {
                         // We don't fail here, because we'd rather not set the language if the name changed
@@ -1059,11 +1059,11 @@ impl SerializableItem for Editor {
 
                     // First create the empty buffer
                     let buffer = project
-                        .update(&mut cx, |project, cx| project.create_buffer(cx))?
+                        .update(cx, |project, cx| project.create_buffer(cx))?
                         .await?;
 
                     // Then set the text so that the dirty bit is set correctly
-                    buffer.update(&mut cx, |buffer, cx| {
+                    buffer.update(cx, |buffer, cx| {
                         buffer.set_language_registry(language_registry);
                         if let Some(language) = language {
                             buffer.set_language(Some(language), cx);
@@ -1078,8 +1078,7 @@ impl SerializableItem for Editor {
                         cx.new(|cx| {
                             let mut editor = Editor::for_buffer(buffer, Some(project), window, cx);
 
-                            editor.read_selections_from_db(item_id, workspace_id, window, cx);
-                            editor.read_scroll_position_from_db(item_id, workspace_id, window, cx);
+                            editor.read_metadata_from_db(item_id, workspace_id, window, cx);
                             editor
                         })
                     })
@@ -1102,7 +1101,7 @@ impl SerializableItem for Editor {
 
                 match project_item {
                     Some(project_item) => {
-                        window.spawn(cx, |mut cx| async move {
+                        window.spawn(cx, async move |cx| {
                             let (_, project_item) = project_item.await?;
                             let buffer = project_item.downcast::<Buffer>().map_err(|_| {
                                 anyhow!("Project item at stored path was not a buffer")
@@ -1114,7 +1113,7 @@ impl SerializableItem for Editor {
                             // simple, because we don't have to persist all of the metadata that we get
                             // by loading the file (git diff base, ...).
                             if let Some(buffer_text) = contents {
-                                buffer.update(&mut cx, |buffer, cx| {
+                                buffer.update(cx, |buffer, cx| {
                                     // If we did restore an mtime, we want to store it on the buffer
                                     // so that the next edit will mark the buffer as dirty/conflicted.
                                     if mtime.is_some() {
@@ -1137,18 +1136,7 @@ impl SerializableItem for Editor {
                                     let mut editor =
                                         Editor::for_buffer(buffer, Some(project), window, cx);
 
-                                    editor.read_selections_from_db(
-                                        item_id,
-                                        workspace_id,
-                                        window,
-                                        cx,
-                                    );
-                                    editor.read_scroll_position_from_db(
-                                        item_id,
-                                        workspace_id,
-                                        window,
-                                        cx,
-                                    );
+                                    editor.read_metadata_from_db(item_id, workspace_id, window, cx);
                                     editor
                                 })
                             })
@@ -1166,11 +1154,10 @@ impl SerializableItem for Editor {
                                 cx,
                             )
                         });
-                        window.spawn(cx, |mut cx| async move {
+                        window.spawn(cx, async move |cx| {
                             let editor = open_by_abs_path?.await?.downcast::<Editor>().with_context(|| format!("Failed to downcast to Editor after opening abs path {abs_path:?}"))?;
-                            editor.update_in(&mut cx, |editor, window, cx| {
-                                editor.read_selections_from_db(item_id, workspace_id, window, cx);
-                                editor.read_scroll_position_from_db(item_id, workspace_id, window, cx);
+                            editor.update_in(cx, |editor, window, cx| {
+                                editor.read_metadata_from_db(item_id, workspace_id, window, cx);
                             })?;
                             Ok(editor)
                         })
@@ -1228,7 +1215,7 @@ impl SerializableItem for Editor {
 
         let snapshot = buffer.read(cx).snapshot();
 
-        Some(cx.spawn_in(window, |_this, cx| async move {
+        Some(cx.spawn_in(window, async move |_this, cx| {
             cx.background_spawn(async move {
                 let (contents, language) = if serialize_dirty_buffers && is_dirty {
                     let contents = snapshot.text();

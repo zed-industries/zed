@@ -47,7 +47,7 @@ impl ChannelBuffer {
         client: Arc<Client>,
         user_store: Entity<UserStore>,
         channel_store: Entity<ChannelStore>,
-        mut cx: AsyncApp,
+        cx: &mut AsyncApp,
     ) -> Result<Entity<Self>> {
         let response = client
             .request(proto::JoinChannelBuffer {
@@ -66,7 +66,7 @@ impl ChannelBuffer {
             let capability = channel_store.read(cx).channel_capability(channel.id);
             language::Buffer::remote(buffer_id, response.replica_id as u16, capability, base_text)
         })?;
-        buffer.update(&mut cx, |buffer, cx| buffer.apply_ops(operations, cx))?;
+        buffer.update(cx, |buffer, cx| buffer.apply_ops(operations, cx))?;
 
         let subscription = client.subscribe_to_entity(channel.id.0)?;
 
@@ -208,7 +208,7 @@ impl ChannelBuffer {
         let client = self.client.clone();
         let epoch = self.epoch();
 
-        self.acknowledge_task = Some(cx.spawn(move |_, cx| async move {
+        self.acknowledge_task = Some(cx.spawn(async move |_, cx| {
             cx.background_executor()
                 .timer(ACKNOWLEDGE_DEBOUNCE_INTERVAL)
                 .await;

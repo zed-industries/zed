@@ -59,6 +59,7 @@ pub struct LanguageModelCacheConfiguration {
 pub enum LanguageModelCompletionEvent {
     Stop(StopReason),
     Text(String),
+    Thinking(String),
     ToolUse(LanguageModelToolUse),
     StartMessage { message_id: String },
     UsageUpdate(TokenUsage),
@@ -217,6 +218,7 @@ pub trait LanguageModel: Send + Sync {
                     match result {
                         Ok(LanguageModelCompletionEvent::StartMessage { .. }) => None,
                         Ok(LanguageModelCompletionEvent::Text(text)) => Some(Ok(text)),
+                        Ok(LanguageModelCompletionEvent::Thinking(_)) => None,
                         Ok(LanguageModelCompletionEvent::Stop(_)) => None,
                         Ok(LanguageModelCompletionEvent::ToolUse(_)) => None,
                         Ok(LanguageModelCompletionEvent::UsageUpdate(_)) => None,

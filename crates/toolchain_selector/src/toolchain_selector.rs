@@ -57,14 +57,14 @@ impl ToolchainSelector {
             .abs_path();
         let workspace_id = workspace.database_id()?;
         let weak = workspace.weak_handle();
-        cx.spawn_in(window, move |workspace, mut cx| async move {
+        cx.spawn_in(window, async move |workspace, cx| {
             let active_toolchain = workspace::WORKSPACE_DB
                 .toolchain(workspace_id, worktree_id, language_name.clone())
                 .await
                 .ok()
                 .flatten();
             workspace
-                .update_in(&mut cx, |this, window, cx| {
+                .update_in(cx, |this, window, cx| {
                     this.toggle_modal(window, cx, move |window, cx| {
                         ToolchainSelector::new(
                             weak,
@@ -155,26 +155,26 @@ impl ToolchainSelectorDelegate {
     ) -> Self {
         let _fetch_candidates_task = cx.spawn_in(window, {
             let project = project.clone();
-            move |this, mut cx| async move {
+            async move |this, cx| {
                 let term = project
-                    .update(&mut cx, |this, _| {
+                    .update(cx, |this, _| {
                         Project::toolchain_term(this.languages().clone(), language_name.clone())
                     })
                     .ok()?
                     .await?;
                 let placeholder_text = format!("Select a {}…", term.to_lowercase()).into();
-                let _ = this.update_in(&mut cx, move |this, window, cx| {
+                let _ = this.update_in(cx, move |this, window, cx| {
                     this.delegate.placeholder_text = placeholder_text;
                     this.refresh_placeholder(window, cx);
                 });
                 let available_toolchains = project
-                    .update(&mut cx, |this, cx| {
+                    .update(cx, |this, cx| {
                         this.available_toolchains(worktree_id, language_name, cx)
                     })
                     .ok()?
                     .await?;
 
-                let _ = this.update_in(&mut cx, move |this, window, cx| {
+                let _ = this.update_in(cx, move |this, window, cx| {
                     this.delegate.candidates = available_toolchains;
 
                     if let Some(active_toolchain) = active_toolchain {
@@ -239,13 +239,13 @@ impl PickerDelegate for ToolchainSelectorDelegate {
             {
                 let workspace = self.workspace.clone();
                 let worktree_id = self.worktree_id;
-                cx.spawn_in(window, |_, mut cx| async move {
+                cx.spawn_in(window, async move |_, cx| {
                     workspace::WORKSPACE_DB
                         .set_toolchain(workspace_id, worktree_id, toolchain.clone())
                         .await
                         .log_err();
                     workspace
-                        .update(&mut cx, |this, cx| {
+                        .update(cx, |this, cx| {
                             this.project().update(cx, |this, cx| {
                                 this.activate_toolchain(worktree_id, toolchain, cx)
                             })
@@ -288,7 +288,7 @@ impl PickerDelegate for ToolchainSelectorDelegate {
         let background = cx.background_executor().clone();
         let candidates = self.candidates.clone();
         let worktree_root_path = self.worktree_abs_path_root.clone();
-        cx.spawn_in(window, |this, mut cx| async move {
+        cx.spawn_in(window, async move |this, cx| {
             let matches = if query.is_empty() {
                 candidates
                     .toolchains
@@ -327,7 +327,7 @@ impl PickerDelegate for ToolchainSelectorDelegate {
                 .await
             };
 
-            this.update(&mut cx, |this, cx| {
+            this.update(cx, |this, cx| {
                 let delegate = &mut this.delegate;
                 delegate.matches = matches;
                 delegate.selected_index = delegate

@@ -152,7 +152,7 @@ pub fn init(cx: &mut App) {
 }
 
 fn quit(_: &Quit, cx: &mut App) {
-    cx.spawn(|cx| async move {
+    cx.spawn(async move |cx| {
         cx.update(|cx| cx.quit())?;
         anyhow::Ok(())
     })

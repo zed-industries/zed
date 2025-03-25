@@ -276,7 +276,7 @@ impl InlineAssistant {
         if is_authenticated() {
             handle_assist(window, cx);
         } else {
-            cx.spawn_in(window, |_workspace, mut cx| async move {
+            cx.spawn_in(window, async move |_workspace, cx| {
                 let Some(task) = cx.update(|_, cx| {
                     LanguageModelRegistry::read_global(cx)
                         .active_provider()
@@ -324,7 +324,7 @@ impl InlineAssistant {
     ) {
         let (snapshot, initial_selections) = editor.update(cx, |editor, cx| {
             (
-                editor.buffer().read(cx).snapshot(cx),
+                editor.snapshot(window, cx),
                 editor.selections.all::<Point>(cx),
             )
         });
@@ -338,7 +338,37 @@ impl InlineAssistant {
                 if selection.end.column == 0 {
                     selection.end.row -= 1;
                 }
-                selection.end.column = snapshot.line_len(MultiBufferRow(selection.end.row));
+                selection.end.column = snapshot
+                    .buffer_snapshot
+                    .line_len(MultiBufferRow(selection.end.row));
+            } else if let Some(fold) =
+                snapshot.crease_for_buffer_row(MultiBufferRow(selection.end.row))
+            {
+                selection.start = fold.range().start;
+                selection.end = fold.range().end;
+                if MultiBufferRow(selection.end.row) < snapshot.buffer_snapshot.max_row() {
+                    let chars = snapshot
+                        .buffer_snapshot
+                        .chars_at(Point::new(selection.end.row + 1, 0));
+
+                    for c in chars {
+                        if c == '\n' {
+                            break;
+                        }
+                        if c.is_whitespace() {
+                            continue;
+                        }
+                        if snapshot
+                            .language_at(selection.end)
+                            .is_some_and(|language| language.config().brackets.is_closing_brace(c))
+                        {
+                            selection.end.row += 1;
+                            selection.end.column = snapshot
+                                .buffer_snapshot
+                                .line_len(MultiBufferRow(selection.end.row));
+                        }
+                    }
+                }
             }
 
             if let Some(prev_selection) = selections.last_mut() {
@@ -354,6 +384,7 @@ impl InlineAssistant {
             }
             selections.push(selection);
         }
+        let snapshot = &snapshot.buffer_snapshot;
         let newest_selection = newest_selection.unwrap();
 
         let mut codegen_ranges = Vec::new();
@@ -1456,9 +1487,9 @@ impl EditorInlineAssists {
             assist_ids: Vec::new(),
             scroll_lock: None,
             highlight_updates: highlight_updates_tx,
-            _update_highlights: cx.spawn(|cx| {
+            _update_highlights: cx.spawn({
                 let editor = editor.downgrade();
-                async move {
+                async move |cx| {
                     while let Ok(()) = highlight_updates_rx.changed().await {
                         let editor = editor.upgrade().context("editor was dropped")?;
                         cx.update_global(|assistant: &mut InlineAssistant, cx| {
@@ -1729,6 +1760,7 @@ impl CodeActionProvider for AssistantCodeActionProvider {
                     title: "Fix with Assistant".into(),
                     ..Default::default()
                 })),
+                resolved: true,
             }]))
         } else {
             Task::ready(Ok(Vec::new()))
@@ -1747,10 +1779,10 @@ impl CodeActionProvider for AssistantCodeActionProvider {
         let editor = self.editor.clone();
         let workspace = self.workspace.clone();
         let thread_store = self.thread_store.clone();
-        window.spawn(cx, |mut cx| async move {
+        window.spawn(cx, async move |cx| {
             let editor = editor.upgrade().context("editor was released")?;
             let range = editor
-                .update(&mut cx, |editor, cx| {
+                .update(cx, |editor, cx| {
                     editor.buffer().update(cx, |multibuffer, cx| {
                         let buffer = buffer.read(cx);
                         let multibuffer_snapshot = multibuffer.read(cx);

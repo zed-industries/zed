@@ -163,12 +163,12 @@ impl DiagnosticIndicator {
             .map(|entry| entry.diagnostic);
         if new_diagnostic != self.current_diagnostic {
             self.diagnostics_update =
-                cx.spawn_in(window, |diagnostics_indicator, mut cx| async move {
+                cx.spawn_in(window, async move |diagnostics_indicator, cx| {
                     cx.background_executor()
                         .timer(Duration::from_millis(50))
                         .await;
                     diagnostics_indicator
-                        .update(&mut cx, |diagnostics_indicator, cx| {
+                        .update(cx, |diagnostics_indicator, cx| {
                             diagnostics_indicator.current_diagnostic = new_diagnostic;
                             cx.notify();
                         })

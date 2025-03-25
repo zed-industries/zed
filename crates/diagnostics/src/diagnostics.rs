@@ -251,12 +251,12 @@ impl ProjectDiagnosticsEditor {
             return;
         }
         let project_handle = self.project.clone();
-        self.update_excerpts_task = Some(cx.spawn_in(window, |this, mut cx| async move {
+        self.update_excerpts_task = Some(cx.spawn_in(window, async move |this, cx| {
             cx.background_executor()
                 .timer(DIAGNOSTICS_UPDATE_DEBOUNCE)
                 .await;
             loop {
-                let Some((path, language_server_id)) = this.update(&mut cx, |this, _| {
+                let Some((path, language_server_id)) = this.update(cx, |this, _| {
                     let Some((path, language_server_id)) = this.paths_to_update.pop_first() else {
                         this.update_excerpts_task.take();
                         return None;
@@ -268,11 +268,11 @@ impl ProjectDiagnosticsEditor {
                 };
 
                 if let Some(buffer) = project_handle
-                    .update(&mut cx, |project, cx| project.open_buffer(path.clone(), cx))?
+                    .update(cx, |project, cx| project.open_buffer(path.clone(), cx))?
                     .await
                     .log_err()
                 {
-                    this.update_in(&mut cx, |this, window, cx| {
+                    this.update_in(cx, |this, window, cx| {
                         this.update_excerpts(path, language_server_id, buffer, window, cx)
                     })?
                     .await?;
@@ -419,9 +419,9 @@ impl ProjectDiagnosticsEditor {
         let excerpts = self.excerpts.clone().downgrade();
         let context = self.context;
         let editor = self.editor.clone().downgrade();
-        cx.spawn_in(window, move |this, mut cx| async move {
+        cx.spawn_in(window, async move |this, cx| {
             let mut old_groups = this
-                .update(&mut cx, |this, _| {
+                .update(cx, |this, _| {
                     mem::take(&mut this.path_states[path_ix].diagnostic_groups)
                 })?
                 .into_iter()
@@ -491,7 +491,7 @@ impl ProjectDiagnosticsEditor {
                                     entry.range.clone(),
                                     context,
                                     snapshot.clone(),
-                                    (*cx).clone(),
+                                    (**cx).clone(),
                                 )
                                 .await,
                             )
@@ -507,7 +507,7 @@ impl ProjectDiagnosticsEditor {
                                 }
                             }
 
-                            let excerpt_id = excerpts.update(&mut cx, |excerpts, cx| {
+                            let excerpt_id = excerpts.update(cx, |excerpts, cx| {
                                 excerpts
                                     .insert_excerpts_after(
                                         prev_excerpt_id,
@@ -575,14 +575,14 @@ impl ProjectDiagnosticsEditor {
                         }
                     }
 
-                    this.update(&mut cx, |this, _| {
+                    this.update(cx, |this, _| {
                         new_group_ixs.push(this.path_states[path_ix].diagnostic_groups.len());
                         this.path_states[path_ix]
                             .diagnostic_groups
                             .push(group_state);
                     })?;
                 } else if let Some((_, group_state)) = to_remove {
-                    excerpts.update(&mut cx, |excerpts, cx| {
+                    excerpts.update(cx, |excerpts, cx| {
                         excerpts.remove_excerpts(group_state.excerpts.iter().copied(), cx)
                     })?;
                     blocks_to_remove.extend(group_state.blocks.iter().copied());
@@ -590,7 +590,7 @@ impl ProjectDiagnosticsEditor {
                     prev_excerpt_id = *group_state.excerpts.last().unwrap();
                     first_excerpt_id.get_or_insert(prev_excerpt_id);
 
-                    this.update(&mut cx, |this, _| {
+                    this.update(cx, |this, _| {
                         this.path_states[path_ix]
                             .diagnostic_groups
                             .push(group_state)
@@ -598,9 +598,8 @@ impl ProjectDiagnosticsEditor {
                 }
             }
 
-            let excerpts_snapshot =
-                excerpts.update(&mut cx, |excerpts, cx| excerpts.snapshot(cx))?;
-            editor.update(&mut cx, |editor, cx| {
+            let excerpts_snapshot = excerpts.update(cx, |excerpts, cx| excerpts.snapshot(cx))?;
+            editor.update(cx, |editor, cx| {
                 editor.remove_blocks(blocks_to_remove, None, cx);
                 let block_ids = editor.insert_blocks(
                     blocks_to_add.into_iter().flat_map(|block| {
@@ -644,7 +643,7 @@ impl ProjectDiagnosticsEditor {
                 Result::<(), anyhow::Error>::Ok(())
             })??;
 
-            this.update_in(&mut cx, |this, window, cx| {
+            this.update_in(cx, |this, window, cx| {
                 if this.path_states[path_ix].diagnostic_groups.is_empty() {
                     this.path_states.remove(path_ix);
                 }
@@ -709,7 +708,7 @@ impl ProjectDiagnosticsEditor {
                 });
             })?;
 
-            this.update_in(&mut cx, |this, window, cx| {
+            this.update_in(cx, |this, window, cx| {
                 if this.path_states.is_empty() {
                     if this.editor.focus_handle(cx).is_focused(window) {
                         window.focus(&this.focus_handle);
@@ -1053,7 +1052,7 @@ fn context_range_for_entry(
     snapshot: BufferSnapshot,
     cx: AsyncApp,
 ) -> Task<Range<Point>> {
-    cx.spawn(move |cx| async move {
+    cx.spawn(async move |cx| {
         if let Some(rows) = heuristic_syntactic_expand(
             range.clone(),
             DIAGNOSTIC_EXPANSION_ROW_LIMIT,
@@ -1083,7 +1082,7 @@ async fn heuristic_syntactic_expand(
     input_range: Range<Point>,
     max_row_count: u32,
     snapshot: BufferSnapshot,
-    cx: AsyncApp,
+    cx: &mut AsyncApp,
 ) -> Option<RangeInclusive<BufferRow>> {
     let input_row_count = input_range.end.row - input_range.start.row;
     if input_row_count > max_row_count {

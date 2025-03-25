@@ -26,8 +26,6 @@ test-support = [
 
 [dependencies]
 anyhow.workspace = true
-async-compression.workspace = true
-async-tar.workspace = true
 chrono.workspace = true
 client.workspace = true
 collections.workspace = true
@@ -49,7 +47,6 @@ schemars = { workspace = true, optional = true }
 serde.workspace = true
 serde_json.workspace = true
 settings.workspace = true
-smol.workspace = true
 strum.workspace = true
 task.workspace = true
 ui.workspace = true

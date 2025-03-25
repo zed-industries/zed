@@ -99,7 +99,7 @@ impl SlashCommand for ProjectSlashCommand {
             return Task::ready(Err(anyhow::anyhow!("no project indexer")));
         };
 
-        window.spawn(cx, |mut cx| async move {
+        window.spawn(cx, async move |cx| {
             let current_model = current_model.ok_or_else(|| anyhow!("no model selected"))?;
 
             let prompt =
@@ -123,7 +123,7 @@ impl SlashCommand for ProjectSlashCommand {
                 .search_queries;
 
             let results = project_index
-                .read_with(&cx, |project_index, cx| {
+                .read_with(cx, |project_index, cx| {
                     project_index.search(search_queries.clone(), 25, cx)
                 })?
                 .await?;

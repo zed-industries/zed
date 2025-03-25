@@ -130,7 +130,7 @@ impl PickerDelegate for BaseKeymapSelectorDelegate {
             .map(|(id, name)| StringMatchCandidate::new(id, name))
             .collect::<Vec<_>>();
 
-        cx.spawn_in(window, |this, mut cx| async move {
+        cx.spawn_in(window, async move |this, cx| {
             let matches = if query.is_empty() {
                 candidates
                     .into_iter()
@@ -154,7 +154,7 @@ impl PickerDelegate for BaseKeymapSelectorDelegate {
                 .await
             };
 
-            this.update(&mut cx, |this, _| {
+            this.update(cx, |this, _| {
                 this.delegate.matches = matches;
                 this.delegate.selected_index = this
                     .delegate

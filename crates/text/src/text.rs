@@ -94,6 +94,7 @@ impl BufferId {
         self.into()
     }
 }
+
 impl From<BufferId> for u64 {
     fn from(id: BufferId) -> Self {
         id.0.get()
@@ -2204,7 +2205,7 @@ impl BufferSnapshot {
         })
     }
 
-    fn summary_for_anchor<D>(&self, anchor: &Anchor) -> D
+    pub fn summary_for_anchor<D>(&self, anchor: &Anchor) -> D
     where
         D: TextDimension,
     {

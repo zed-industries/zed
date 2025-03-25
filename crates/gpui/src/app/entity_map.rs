@@ -7,6 +7,7 @@ use slotmap::{KeyData, SecondaryMap, SlotMap};
 use std::{
     any::{type_name, Any, TypeId},
     cell::RefCell,
+    cmp::Ordering,
     fmt::{self, Display},
     hash::{Hash, Hasher},
     marker::PhantomData,
@@ -350,6 +351,18 @@ impl PartialEq for AnyEntity {
 
 impl Eq for AnyEntity {}
 
+impl Ord for AnyEntity {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.entity_id.cmp(&other.entity_id)
+    }
+}
+
+impl PartialOrd for AnyEntity {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
 impl std::fmt::Debug for AnyEntity {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("AnyEntity")
@@ -495,6 +508,18 @@ impl<T> PartialEq<WeakEntity<T>> for Entity<T> {
     }
 }
 
+impl<T: 'static> Ord for Entity<T> {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.entity_id().cmp(&other.entity_id())
+    }
+}
+
+impl<T: 'static> PartialOrd for Entity<T> {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
 /// A type erased, weak reference to a entity.
 #[derive(Clone)]
 pub struct AnyWeakEntity {
@@ -598,6 +623,18 @@ impl PartialEq for AnyWeakEntity {
 }
 
 impl Eq for AnyWeakEntity {}
+
+impl Ord for AnyWeakEntity {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.entity_id.cmp(&other.entity_id)
+    }
+}
+
+impl PartialOrd for AnyWeakEntity {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
 
 /// A weak reference to a entity of the given type.
 #[derive(Deref, DerefMut)]
@@ -708,6 +745,18 @@ impl<T> Eq for WeakEntity<T> {}
 impl<T> PartialEq<Entity<T>> for WeakEntity<T> {
     fn eq(&self, other: &Entity<T>) -> bool {
         self.entity_id() == other.any_entity.entity_id()
+    }
+}
+
+impl<T: 'static> Ord for WeakEntity<T> {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.entity_id().cmp(&other.entity_id())
+    }
+}
+
+impl<T: 'static> PartialOrd for WeakEntity<T> {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
     }
 }
 

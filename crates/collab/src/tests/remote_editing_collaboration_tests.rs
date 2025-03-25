@@ -258,7 +258,7 @@ async fn test_ssh_collaboration_git_branches(
     });
 
     let client_ssh = SshRemoteClient::fake_client(opts, cx_a).await;
-    let (project_a, worktree_id) = client_a
+    let (project_a, _) = client_a
         .build_ssh_project("/project", client_ssh, cx_a)
         .await;
 
@@ -277,7 +277,6 @@ async fn test_ssh_collaboration_git_branches(
     executor.run_until_parked();
 
     let repo_b = cx_b.update(|cx| project_b.read(cx).active_repository(cx).unwrap());
-    let root_path = ProjectPath::root_path(worktree_id);
 
     let branches_b = cx_b
         .update(|cx| repo_b.read(cx).branches())
@@ -303,13 +302,17 @@ async fn test_ssh_collaboration_git_branches(
 
     let server_branch = server_cx.update(|cx| {
         headless_project.update(cx, |headless_project, cx| {
-            headless_project
-                .worktree_store
-                .update(cx, |worktree_store, cx| {
-                    worktree_store
-                        .current_branch(root_path.clone(), cx)
-                        .unwrap()
-                })
+            headless_project.git_store.update(cx, |git_store, cx| {
+                git_store
+                    .repositories()
+                    .values()
+                    .next()
+                    .unwrap()
+                    .read(cx)
+                    .current_branch()
+                    .unwrap()
+                    .clone()
+            })
         })
     });
 
@@ -338,11 +341,17 @@ async fn test_ssh_collaboration_git_branches(
 
     let server_branch = server_cx.update(|cx| {
         headless_project.update(cx, |headless_project, cx| {
-            headless_project
-                .worktree_store
-                .update(cx, |worktree_store, cx| {
-                    worktree_store.current_branch(root_path, cx).unwrap()
-                })
+            headless_project.git_store.update(cx, |git_store, cx| {
+                git_store
+                    .repositories()
+                    .values()
+                    .next()
+                    .unwrap()
+                    .read(cx)
+                    .current_branch()
+                    .unwrap()
+                    .clone()
+            })
         })
     });
 
@@ -473,7 +482,7 @@ async fn test_ssh_collaboration_formatting_with_prettier(
         });
     });
     let fake_language_server = fake_language_servers.next().await.unwrap();
-    fake_language_server.handle_request::<lsp::request::Formatting, _, _>(|_, _| async move {
+    fake_language_server.set_request_handler::<lsp::request::Formatting, _, _>(|_, _| async move {
         panic!(
             "Unexpected: prettier should be preferred since it's enabled and language supports it"
         )

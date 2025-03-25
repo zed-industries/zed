@@ -300,9 +300,9 @@ impl PickerDelegate for ChannelModalDelegate {
                         cx.background_executor().clone(),
                     ));
 
-                    cx.spawn_in(window, |picker, mut cx| async move {
+                    cx.spawn_in(window, async move |picker, cx| {
                         picker
-                            .update(&mut cx, |picker, cx| {
+                            .update(cx, |picker, cx| {
                                 let delegate = &mut picker.delegate;
                                 delegate.matching_member_indices.clear();
                                 delegate
@@ -316,10 +316,10 @@ impl PickerDelegate for ChannelModalDelegate {
                     let search_members = self.channel_store.update(cx, |store, cx| {
                         store.fuzzy_search_members(self.channel_id, query.clone(), 100, cx)
                     });
-                    cx.spawn_in(window, |picker, mut cx| async move {
+                    cx.spawn_in(window, async move |picker, cx| {
                         async {
                             let members = search_members.await?;
-                            picker.update(&mut cx, |picker, cx| {
+                            picker.update(cx, |picker, cx| {
                                 picker.delegate.has_all_members =
                                     query.is_empty() && members.len() < 100;
                                 picker.delegate.matching_member_indices =
@@ -338,10 +338,10 @@ impl PickerDelegate for ChannelModalDelegate {
                 let search_users = self
                     .user_store
                     .update(cx, |store, cx| store.fuzzy_search_users(query, cx));
-                cx.spawn_in(window, |picker, mut cx| async move {
+                cx.spawn_in(window, async move |picker, cx| {
                     async {
                         let users = search_users.await?;
-                        picker.update(&mut cx, |picker, cx| {
+                        picker.update(cx, |picker, cx| {
                             picker.delegate.matching_users = users;
                             cx.notify();
                         })?;
@@ -489,9 +489,9 @@ impl ChannelModalDelegate {
         let update = self.channel_store.update(cx, |store, cx| {
             store.set_member_role(self.channel_id, user_id, new_role, cx)
         });
-        cx.spawn_in(window, |picker, mut cx| async move {
+        cx.spawn_in(window, async move |picker, cx| {
             update.await?;
-            picker.update_in(&mut cx, |picker, window, cx| {
+            picker.update_in(cx, |picker, window, cx| {
                 let this = &mut picker.delegate;
                 if let Some(member) = this.members.iter_mut().find(|m| m.user.id == user_id) {
                     member.role = new_role;
@@ -513,9 +513,9 @@ impl ChannelModalDelegate {
         let update = self.channel_store.update(cx, |store, cx| {
             store.remove_member(self.channel_id, user_id, cx)
         });
-        cx.spawn_in(window, |picker, mut cx| async move {
+        cx.spawn_in(window, async move |picker, cx| {
             update.await?;
-            picker.update_in(&mut cx, |picker, window, cx| {
+            picker.update_in(cx, |picker, window, cx| {
                 let this = &mut picker.delegate;
                 if let Some(ix) = this.members.iter_mut().position(|m| m.user.id == user_id) {
                     this.members.remove(ix);
@@ -551,10 +551,10 @@ impl ChannelModalDelegate {
             store.invite_member(self.channel_id, user.id, ChannelRole::Member, cx)
         });
 
-        cx.spawn_in(window, |this, mut cx| async move {
+        cx.spawn_in(window, async move |this, cx| {
             invite_member.await?;
 
-            this.update(&mut cx, |this, cx| {
+            this.update(cx, |this, cx| {
                 let new_member = ChannelMembership {
                     user,
                     kind: proto::channel_member::Kind::Invitee,

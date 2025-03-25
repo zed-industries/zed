@@ -8,12 +8,12 @@ pub mod terminal_settings;
 use alacritty_terminal::{
     event::{Event as AlacTermEvent, EventListener, Notify, WindowSize},
     event_loop::{EventLoop, Msg, Notifier},
-    grid::{Dimensions, Scroll as AlacScroll},
+    grid::{Dimensions, Grid, Row, Scroll as AlacScroll},
     index::{Boundary, Column, Direction as AlacDirection, Line, Point as AlacPoint},
     selection::{Selection, SelectionRange, SelectionType},
     sync::FairMutex,
     term::{
-        cell::Cell,
+        cell::{Cell, Flags},
         search::{Match, RegexIter, RegexSearch},
         Config, RenderableCursor, TermMode,
     },
@@ -39,6 +39,7 @@ use mappings::mouse::{
 use collections::{HashMap, VecDeque};
 use futures::StreamExt;
 use pty_info::PtyProcessInfo;
+use regex::Regex;
 use serde::{Deserialize, Serialize};
 use settings::Settings;
 use smol::channel::{Receiver, Sender};
@@ -52,7 +53,7 @@ use std::{
     fmt::Display,
     ops::{Deref, Index, RangeInclusive},
     path::PathBuf,
-    sync::Arc,
+    sync::{Arc, LazyLock},
     time::Duration,
 };
 use thiserror::Error;
@@ -318,6 +319,20 @@ const URL_REGEX: &str = r#"(ipfs:|ipns:|magnet:|mailto:|gemini://|gopher://|http
 // https://learn.microsoft.com/en-us/visualstudio/msbuild/msbuild-diagnostic-format-for-tasks
 const WORD_REGEX: &str =
     r#"[\$\+\w.\[\]:/\\@\-~()]+(?:\((?:\d+|\d+,\d+)\))|[\$\+\w.\[\]:/\\@\-~()]+"#;
+const PYTHON_FILE_LINE_REGEX: &str = r#"File "(?P<file>[^"]+)", line (?P<line>\d+)"#;
+
+static PYTHON_FILE_LINE_MATCHER: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(PYTHON_FILE_LINE_REGEX).unwrap());
+
+fn python_extract_path_and_line(input: &str) -> Option<(&str, u32)> {
+    if let Some(captures) = PYTHON_FILE_LINE_MATCHER.captures(input) {
+        let path_part = captures.name("file")?.as_str();
+
+        let line_number: u32 = captures.name("line")?.as_str().parse().ok()?;
+        return Some((path_part, line_number));
+    }
+    None
+}
 
 pub struct TerminalBuilder {
     terminal: Terminal,
@@ -337,6 +352,7 @@ impl TerminalBuilder {
         is_ssh_terminal: bool,
         window: AnyWindowHandle,
         completion_tx: Sender<()>,
+        debug_terminal: bool,
         cx: &App,
     ) -> Result<TerminalBuilder> {
         // If the parent environment doesn't have a locale set
@@ -360,7 +376,19 @@ impl TerminalBuilder {
 
         let pty_options = {
             let alac_shell = match shell.clone() {
-                Shell::System => None,
+                Shell::System => {
+                    #[cfg(target_os = "windows")]
+                    {
+                        Some(alacritty_terminal::tty::Shell::new(
+                            util::retrieve_system_shell(),
+                            Vec::new(),
+                        ))
+                    }
+                    #[cfg(not(target_os = "windows"))]
+                    {
+                        None
+                    }
+                }
                 Shell::Program(program) => {
                     Some(alacritty_terminal::tty::Shell::new(program, Vec::new()))
                 }
@@ -472,7 +500,9 @@ impl TerminalBuilder {
             // hovered_word: false,
             url_regex: RegexSearch::new(URL_REGEX).unwrap(),
             word_regex: RegexSearch::new(WORD_REGEX).unwrap(),
+            python_file_line_regex: RegexSearch::new(PYTHON_FILE_LINE_REGEX).unwrap(),
             vi_mode_enabled: false,
+            debug_terminal,
             is_ssh_terminal,
             python_venv_directory,
         };
@@ -485,9 +515,9 @@ impl TerminalBuilder {
 
     pub fn subscribe(mut self, cx: &Context<Terminal>) -> Terminal {
         //Event loop
-        cx.spawn(|terminal, mut cx| async move {
+        cx.spawn(async move |terminal, cx| {
             while let Some(event) = self.events_rx.next().await {
-                terminal.update(&mut cx, |terminal, cx| {
+                terminal.update(cx, |terminal, cx| {
                     //Process the first event immediately for lowered latency
                     terminal.process_event(&event, cx);
                 })?;
@@ -525,7 +555,7 @@ impl TerminalBuilder {
                         break 'outer;
                     }
 
-                    terminal.update(&mut cx, |this, cx| {
+                    terminal.update(cx, |this, cx| {
                         if wakeup {
                             this.process_event(&AlacTermEvent::Wakeup, cx);
                         }
@@ -627,8 +657,10 @@ pub struct Terminal {
     selection_phase: SelectionPhase,
     url_regex: RegexSearch,
     word_regex: RegexSearch,
+    python_file_line_regex: RegexSearch,
     task: Option<TaskState>,
     vi_mode_enabled: bool,
+    debug_terminal: bool,
     is_ssh_terminal: bool,
 }
 
@@ -926,6 +958,14 @@ impl Terminal {
                 } else if let Some(url_match) = regex_match_at(term, point, &mut self.url_regex) {
                     let url = term.bounds_to_string(*url_match.start(), *url_match.end());
                     Some((url, true, url_match))
+                } else if let Some(python_match) =
+                    regex_match_at(term, point, &mut self.python_file_line_regex)
+                {
+                    let matching_line =
+                        term.bounds_to_string(*python_match.start(), *python_match.end());
+                    python_extract_path_and_line(&matching_line).map(|(file_path, line_number)| {
+                        (format!("{file_path}:{line_number}"), false, python_match)
+                    })
                 } else if let Some(word_match) = regex_match_at(term, point, &mut self.word_regex) {
                     let file_path = term.bounds_to_string(*word_match.start(), *word_match.end());
 
@@ -1386,26 +1426,57 @@ impl Terminal {
     pub fn last_n_non_empty_lines(&self, n: usize) -> Vec<String> {
         let term = self.term.clone();
         let terminal = term.lock_unfair();
-
+        let grid = terminal.grid();
         let mut lines = Vec::new();
-        let mut current_line = terminal.bottommost_line();
-        while lines.len() < n {
-            let mut line_buffer = String::new();
-            for cell in &terminal.grid()[current_line] {
-                line_buffer.push(cell.c);
-            }
-            let line = line_buffer.trim_end();
-            if !line.is_empty() {
-                lines.push(line.to_string());
+
+        let mut current_line = grid.bottommost_line().0;
+        let topmost_line = grid.topmost_line().0;
+
+        while current_line >= topmost_line && lines.len() < n {
+            let logical_line_start = self.find_logical_line_start(grid, current_line, topmost_line);
+            let logical_line = self.construct_logical_line(grid, logical_line_start, current_line);
+
+            if let Some(line) = self.process_line(logical_line) {
+                lines.push(line);
             }
 
-            if current_line == terminal.topmost_line() {
-                break;
-            }
-            current_line = Line(current_line.0 - 1);
+            // Move to the line above the start of the current logical line
+            current_line = logical_line_start - 1;
         }
+
         lines.reverse();
         lines
+    }
+
+    fn find_logical_line_start(&self, grid: &Grid<Cell>, current: i32, topmost: i32) -> i32 {
+        let mut line_start = current;
+        while line_start > topmost {
+            let prev_line = Line(line_start - 1);
+            let last_cell = &grid[prev_line][Column(grid.columns() - 1)];
+            if !last_cell.flags.contains(Flags::WRAPLINE) {
+                break;
+            }
+            line_start -= 1;
+        }
+        line_start
+    }
+
+    fn construct_logical_line(&self, grid: &Grid<Cell>, start: i32, end: i32) -> String {
+        let mut logical_line = String::new();
+        for row in start..=end {
+            let grid_row = &grid[Line(row)];
+            logical_line.push_str(&row_to_string(grid_row));
+        }
+        logical_line
+    }
+
+    fn process_line(&self, line: String) -> Option<String> {
+        let trimmed = line.trim_end().to_string();
+        if !trimmed.is_empty() {
+            Some(trimmed)
+        } else {
+            None
+        }
     }
 
     pub fn focus_in(&self) {
@@ -1492,13 +1563,10 @@ impl Terminal {
 
             // Doesn't make sense to scroll the alt screen
             if !self.last_content.mode.contains(TermMode::ALT_SCREEN) {
-                let scroll_delta = match self.drag_line_delta(e, region) {
+                let scroll_lines = match self.drag_line_delta(e, region) {
                     Some(value) => value,
                     None => return,
                 };
-
-                let scroll_lines =
-                    (scroll_delta / self.last_content.terminal_bounds.line_height) as i32;
 
                 self.events
                     .push_back(InternalEvent::Scroll(AlacScroll::Delta(scroll_lines)));
@@ -1508,18 +1576,21 @@ impl Terminal {
         }
     }
 
-    fn drag_line_delta(&self, e: &MouseMoveEvent, region: Bounds<Pixels>) -> Option<Pixels> {
-        //TODO: Why do these need to be doubled? Probably the same problem that the IME has
-        let top = region.origin.y + (self.last_content.terminal_bounds.line_height * 2.);
-        let bottom = region.bottom_left().y - (self.last_content.terminal_bounds.line_height * 2.);
-        let scroll_delta = if e.position.y < top {
-            (top - e.position.y).pow(1.1)
+    fn drag_line_delta(&self, e: &MouseMoveEvent, region: Bounds<Pixels>) -> Option<i32> {
+        let top = region.origin.y;
+        let bottom = region.bottom_left().y;
+
+        let scroll_lines = if e.position.y < top {
+            let scroll_delta = (top - e.position.y).pow(1.1);
+            (scroll_delta / self.last_content.terminal_bounds.line_height).ceil() as i32
         } else if e.position.y > bottom {
-            -((e.position.y - bottom).pow(1.1))
+            let scroll_delta = -((e.position.y - bottom).pow(1.1));
+            (scroll_delta / self.last_content.terminal_bounds.line_height).floor() as i32
         } else {
-            return None; //Nothing to do
+            return None;
         };
-        Some(scroll_delta)
+
+        Some(scroll_lines)
     }
 
     pub fn mouse_down(&mut self, e: &MouseDownEvent, _cx: &mut Context<Self>) {
@@ -1772,11 +1843,15 @@ impl Terminal {
         self.task.as_ref()
     }
 
+    pub fn debug_terminal(&self) -> bool {
+        self.debug_terminal
+    }
+
     pub fn wait_for_completed_task(&self, cx: &App) -> Task<()> {
         if let Some(task) = self.task() {
             if task.status == TaskStatus::Running {
                 let completion_receiver = task.completion_rx.clone();
-                return cx.spawn(|_| async move {
+                return cx.spawn(async move |_| {
                     let _ = completion_receiver.recv().await;
                 });
             }
@@ -1836,6 +1911,14 @@ impl Terminal {
             }
         }
     }
+}
+
+// Helper function to convert a grid row to a string
+pub fn row_to_string(row: &Row<Cell>) -> String {
+    row[..Column(row.len())]
+        .iter()
+        .map(|cell| cell.c)
+        .collect::<String>()
 }
 
 fn is_path_surrounded_by_common_symbols(path: &str) -> bool {
@@ -2051,7 +2134,8 @@ mod tests {
     use rand::{distributions::Alphanumeric, rngs::ThreadRng, thread_rng, Rng};
 
     use crate::{
-        content_index_for_mouse, rgb_for_index, IndexedCell, TerminalBounds, TerminalContent,
+        content_index_for_mouse, python_extract_path_and_line, rgb_for_index, IndexedCell,
+        TerminalBounds, TerminalContent,
     };
 
     #[test]
@@ -2238,5 +2322,34 @@ mod tests {
             "Main.cs:20:5:Error desc",
             vec!["Main.cs:20:5:Error", "desc"],
         );
+    }
+
+    #[test]
+    fn test_python_file_line_regex() {
+        re_test(
+            crate::PYTHON_FILE_LINE_REGEX,
+            "hay File \"/zed/bad_py.py\", line 8 stack",
+            vec!["File \"/zed/bad_py.py\", line 8"],
+        );
+        re_test(crate::PYTHON_FILE_LINE_REGEX, "unrelated", vec![]);
+    }
+
+    #[test]
+    fn test_python_file_line() {
+        let inputs: Vec<(&str, Option<(&str, u32)>)> = vec![
+            (
+                "File \"/zed/bad_py.py\", line 8",
+                Some(("/zed/bad_py.py", 8u32)),
+            ),
+            ("File \"path/to/zed/bad_py.py\"", None),
+            ("unrelated", None),
+            ("", None),
+        ];
+        let actual = inputs
+            .iter()
+            .map(|input| python_extract_path_and_line(input.0))
+            .collect::<Vec<_>>();
+        let expected = inputs.iter().map(|(_, output)| *output).collect::<Vec<_>>();
+        assert_eq!(actual, expected);
     }
 }

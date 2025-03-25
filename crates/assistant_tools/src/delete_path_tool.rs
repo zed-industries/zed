@@ -1,16 +1,16 @@
 use anyhow::{anyhow, Result};
-use assistant_tool::Tool;
-use gpui::{App, Entity, Task};
+use assistant_tool::{ActionLog, Tool};
+use gpui::{App, AppContext, Entity, Task};
 use language_model::LanguageModelRequestMessage;
 use project::Project;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use std::{fs, path::PathBuf, sync::Arc};
-use util::paths::PathMatcher;
+use std::sync::Arc;
+use ui::IconName;
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct DeletePathToolInput {
-    /// The glob to match files in the project to delete.
+    /// The path of the file or directory to delete.
     ///
     /// <example>
     /// If the project has the following files:
@@ -19,9 +19,9 @@ pub struct DeletePathToolInput {
     /// - directory2/a/things.txt
     /// - directory3/a/other.txt
     ///
-    /// You can delete the first two files by providing a glob of "*thing*.txt"
+    /// You can delete the first file by providing a path of "directory1/a/something.txt"
     /// </example>
-    pub glob: String,
+    pub path: String,
 }
 
 pub struct DeletePathTool;
@@ -31,8 +31,16 @@ impl Tool for DeletePathTool {
         "delete-path".into()
     }
 
+    fn needs_confirmation(&self) -> bool {
+        true
+    }
+
     fn description(&self) -> String {
         include_str!("./delete_path_tool/description.md").into()
+    }
+
+    fn icon(&self) -> IconName {
+        IconName::Trash
     }
 
     fn input_schema(&self) -> serde_json::Value {
@@ -40,126 +48,40 @@ impl Tool for DeletePathTool {
         serde_json::to_value(&schema).unwrap()
     }
 
+    fn ui_text(&self, input: &serde_json::Value) -> String {
+        match serde_json::from_value::<DeletePathToolInput>(input.clone()) {
+            Ok(input) => format!("Delete “`{}`”", input.path),
+            Err(_) => "Delete path".to_string(),
+        }
+    }
+
     fn run(
         self: Arc<Self>,
         input: serde_json::Value,
         _messages: &[LanguageModelRequestMessage],
         project: Entity<Project>,
+        _action_log: Entity<ActionLog>,
         cx: &mut App,
     ) -> Task<Result<String>> {
-        let glob = match serde_json::from_value::<DeletePathToolInput>(input) {
-            Ok(input) => input.glob,
+        let path_str = match serde_json::from_value::<DeletePathToolInput>(input) {
+            Ok(input) => input.path,
             Err(err) => return Task::ready(Err(anyhow!(err))),
         };
-        let path_matcher = match PathMatcher::new(&[glob.clone()]) {
-            Ok(matcher) => matcher,
-            Err(err) => return Task::ready(Err(anyhow!("Invalid glob: {}", err))),
-        };
 
-        struct Match {
-            display_path: String,
-            path: PathBuf,
-        }
-
-        let mut matches = Vec::new();
-        let mut deleted_paths = Vec::new();
-        let mut errors = Vec::new();
-
-        for worktree_handle in project.read(cx).worktrees(cx) {
-            let worktree = worktree_handle.read(cx);
-            let worktree_root = worktree.abs_path().to_path_buf();
-
-            // Don't consider ignored entries.
-            for entry in worktree.entries(false, 0) {
-                if path_matcher.is_match(&entry.path) {
-                    matches.push(Match {
-                        path: worktree_root.join(&entry.path),
-                        display_path: entry.path.display().to_string(),
-                    });
+        match project
+            .read(cx)
+            .find_project_path(&path_str, cx)
+            .and_then(|path| project.update(cx, |project, cx| project.delete_file(path, false, cx)))
+        {
+            Some(deletion_task) => cx.background_spawn(async move {
+                match deletion_task.await {
+                    Ok(()) => Ok(format!("Deleted {path_str}")),
+                    Err(err) => Err(anyhow!("Failed to delete {path_str}: {err}")),
                 }
-            }
-        }
-
-        if matches.is_empty() {
-            return Task::ready(Ok(format!("No paths in the project matched {glob:?}")));
-        }
-
-        let paths_matched = matches.len();
-
-        // Delete the files
-        for Match { path, display_path } in matches {
-            match fs::remove_file(&path) {
-                Ok(()) => {
-                    deleted_paths.push(display_path);
-                }
-                Err(file_err) => {
-                    // Try to remove directory if it's not a file. Retrying as a directory
-                    // on error saves a syscall compared to checking whether it's
-                    // a directory up front for every single file.
-                    if let Err(dir_err) = fs::remove_dir_all(&path) {
-                        let error = if path.is_dir() {
-                            format!("Failed to delete directory {}: {dir_err}", display_path)
-                        } else {
-                            format!("Failed to delete file {}: {file_err}", display_path)
-                        };
-
-                        errors.push(error);
-                    } else {
-                        deleted_paths.push(display_path);
-                    }
-                }
-            }
-        }
-
-        if errors.is_empty() {
-            // 0 deleted paths should never happen if there were no errors;
-            // we already returned if matches was empty.
-            let answer = if deleted_paths.len() == 1 {
-                format!(
-                    "Deleted {}",
-                    deleted_paths.first().unwrap_or(&String::new())
-                )
-            } else {
-                // Sort to group entries in the same directory together
-                deleted_paths.sort();
-
-                let mut buf = format!("Deleted these {} paths:\n", deleted_paths.len());
-
-                for path in deleted_paths.iter() {
-                    buf.push('\n');
-                    buf.push_str(path);
-                }
-
-                buf
-            };
-
-            Task::ready(Ok(answer))
-        } else {
-            if deleted_paths.is_empty() {
-                Task::ready(Err(anyhow!(
-                    "{glob:?} matched {} deleted because of {}:\n{}",
-                    if paths_matched == 1 {
-                        "1 path, but it was not".to_string()
-                    } else {
-                        format!("{} paths, but none were", paths_matched)
-                    },
-                    if errors.len() == 1 {
-                        "this error".to_string()
-                    } else {
-                        format!("{} errors", errors.len())
-                    },
-                    errors.join("\n")
-                )))
-            } else {
-                // Sort to group entries in the same directory together
-                deleted_paths.sort();
-                Task::ready(Ok(format!(
-                    "Deleted {} paths matching glob {glob:?}:\n{}\n\nErrors:\n{}",
-                    deleted_paths.len(),
-                    deleted_paths.join("\n"),
-                    errors.join("\n")
-                )))
-            }
+            }),
+            None => Task::ready(Err(anyhow!(
+                "Couldn't delete {path_str} because that path isn't in this project."
+            ))),
         }
     }
 }
