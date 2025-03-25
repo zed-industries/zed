@@ -1382,7 +1382,7 @@ impl EditorElement {
                 }
                 ShowScrollbar::System => self.editor.read(cx).scroll_manager.scrollbars_visible(),
                 ShowScrollbar::Always => true,
-                ShowScrollbar::Never => false,
+                ShowScrollbar::Never => return None,
             };
 
         Some(EditorScrollbars::from_scrollbar_axes(
