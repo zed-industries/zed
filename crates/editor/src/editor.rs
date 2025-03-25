@@ -8481,13 +8481,16 @@ impl Editor {
         let snapshot = self.snapshot(window, cx);
         let breakpoint_position = snapshot.buffer_snapshot.anchor_before(Point::new(row, 0));
 
-        let project = self.project.clone();
+        let project = self.project.clone()?;
 
-        let buffer_id = snapshot
-            .buffer_snapshot
-            .buffer_id_for_excerpt(breakpoint_position.excerpt_id)?;
+        let buffer_id = breakpoint_position.buffer_id.or_else(|| {
+            snapshot
+                .buffer_snapshot
+                .buffer_id_for_excerpt(breakpoint_position.excerpt_id)
+        })?;
+
         let enclosing_excerpt = breakpoint_position.excerpt_id;
-        let buffer = project?.read_with(cx, |project, cx| project.buffer_for_id(buffer_id, cx))?;
+        let buffer = project.read_with(cx, |project, cx| project.buffer_for_id(buffer_id, cx))?;
         let buffer_snapshot = buffer.read(cx).snapshot();
 
         let row = buffer_snapshot
