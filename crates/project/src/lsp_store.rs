@@ -5361,7 +5361,7 @@ impl LspStore {
         cx: &mut Context<Self>,
     ) -> Task<anyhow::Result<Vec<SemanticToken>>> {
         let buffer = buffer_handle.read(cx);
-        let lsp_request = SemanticTokens;
+        let lsp_request = SemanticTokensFull;
         if let Some((client, project_id)) = self.upstream_client() {
             todo!("rpc not implemented yet")
         } else {

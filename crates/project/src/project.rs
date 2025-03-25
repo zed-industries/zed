@@ -356,8 +356,8 @@ pub struct InlayHint {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SemanticToken {
     pub range: Range<Anchor>,
-    pub token_type: u32,
-    pub token_modifiers: u32,
+    pub r#type: lsp::SemanticTokenType,
+    pub modifiers: Vec<lsp::SemanticTokenModifier>,
 }
 
 /// The user's intent behind a given completion confirmation

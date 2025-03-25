@@ -25,6 +25,7 @@ use lsp::{
     AdapterServerCapabilities, CodeActionKind, CodeActionOptions, CompletionContext,
     CompletionListItemDefaultsEditRange, CompletionTriggerKind, DocumentHighlightKind,
     LanguageServer, LanguageServerId, LinkedEditingRangeServerCapabilities, OneOf, RenameOptions,
+    SemanticTokensOptions, SemanticTokensRegistrationOptions, SemanticTokensServerCapabilities,
     ServerCapabilities,
 };
 use signature_help::{lsp_to_proto_signature, proto_to_lsp_signature};
@@ -235,7 +236,7 @@ pub(crate) struct InlayHints {
 }
 
 #[derive(Debug)]
-pub(crate) struct SemanticTokens;
+pub(crate) struct SemanticTokensFull;
 
 #[derive(Debug, Copy, Clone)]
 pub(crate) struct GetCodeLens;
@@ -3350,7 +3351,7 @@ impl LspCommand for LinkedEditingRange {
 }
 
 #[async_trait(?Send)]
-impl LspCommand for SemanticTokens {
+impl LspCommand for SemanticTokensFull {
     type Response = Vec<SemanticToken>;
     type LspRequest = lsp::request::SemanticTokensFullRequest;
     type ProtoRequest = proto::SemanticTokensFullRequest;
@@ -3380,12 +3381,33 @@ impl LspCommand for SemanticTokens {
     async fn response_from_lsp(
         mut self,
         message: <Self::LspRequest as lsp::request::Request>::Result,
-        _: Entity<LspStore>,
+        lsp_store: Entity<LspStore>,
         buffer: Entity<Buffer>,
-        _: LanguageServerId,
+        server_id: LanguageServerId,
         mut cx: AsyncApp,
     ) -> Result<Self::Response> {
         let snapshot = buffer.update(&mut cx, |buffer, _| buffer.snapshot())?;
+        let language_server = cx.update(|cx| {
+            lsp_store
+                .read(cx)
+                .language_server_for_id(server_id)
+                .with_context(|| {
+                    format!("Missing the language server that just returned a response {server_id}")
+                })
+        })??;
+        let server_capabilities = language_server.capabilities();
+        let legend = match server_capabilities.semantic_tokens_provider {
+            Some(SemanticTokensServerCapabilities::SemanticTokensOptions(
+                SemanticTokensOptions { legend, .. },
+            )) => legend,
+            Some(SemanticTokensServerCapabilities::SemanticTokensRegistrationOptions(
+                SemanticTokensRegistrationOptions {
+                    semantic_tokens_options: SemanticTokensOptions { legend, .. },
+                    ..
+                },
+            )) => legend,
+            None => anyhow::bail!("Missing semantic tokens provider in the server"),
+        };
         let tokens = match message {
             Some(lsp::SemanticTokensResult::Partial(tokens)) => tokens.data,
             Some(lsp::SemanticTokensResult::Tokens(tokens)) => tokens.data,
@@ -3417,8 +3439,12 @@ impl LspCommand for SemanticTokens {
             line_acc += token.delta_start;
             SemanticToken {
                 range,
-                token_modifiers: token.token_modifiers_bitset,
-                token_type: token.token_type,
+                modifiers: vec![],
+                r#type: legend
+                    .token_types
+                    .get(token.token_type as usize)
+                    .cloned()
+                    .expect("cant find the token in the legend"),
             }
         });
         Ok(new_tokens.collect())
