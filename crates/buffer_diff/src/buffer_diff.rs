@@ -3,9 +3,7 @@ use git2::{DiffLineType as GitDiffLineType, DiffOptions as GitOptions, Patch as 
 use gpui::{App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, Task};
 use language::{Language, LanguageRegistry};
 use rope::Rope;
-use std::cmp::Ordering;
-use std::mem;
-use std::{future::Future, iter, ops::Range, sync::Arc};
+use std::{cmp::Ordering, future::Future, iter, mem, ops::Range, sync::Arc};
 use sum_tree::SumTree;
 use text::{Anchor, Bias, BufferId, OffsetRangeExt, Point, ToOffset as _};
 use util::ResultExt;
@@ -189,7 +187,7 @@ impl BufferDiffSnapshot {
 impl BufferDiffInner {
     /// Returns the new index text and new pending hunks.
     fn stage_or_unstage_hunks_impl(
-        &mut self,
+        &self,
         unstaged_diff: &Self,
         stage: bool,
         hunks: &[DiffHunk],
@@ -261,7 +259,6 @@ impl BufferDiffInner {
                 old_pending_hunks.next(buffer);
             }
 
-            // merge into pending hunks
             if (stage && secondary_status == DiffHunkSecondaryStatus::NoSecondaryHunk)
                 || (!stage && secondary_status == DiffHunkSecondaryStatus::HasSecondaryHunk)
             {
