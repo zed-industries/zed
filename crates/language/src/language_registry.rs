@@ -912,6 +912,15 @@ impl LanguageRegistry {
             .unwrap_or_default()
     }
 
+    pub fn all_lsp_adapters(&self) -> Vec<Arc<CachedLspAdapter>> {
+        self.state
+            .read()
+            .all_lsp_adapters
+            .values()
+            .cloned()
+            .collect()
+    }
+
     pub fn adapter_for_name(&self, name: &LanguageServerName) -> Option<Arc<CachedLspAdapter>> {
         self.state.read().all_lsp_adapters.get(name).cloned()
     }

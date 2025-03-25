@@ -256,7 +256,6 @@ impl LocalLspStore {
                         fs.as_ref(),
                         &delegate,
                         toolchains.clone(),
-                        &this,
                         cx,
                     )
                     .await?;
@@ -488,7 +487,6 @@ impl LocalLspStore {
                             fs.as_ref(),
                             &delegate,
                             toolchains.clone(),
-                            &this,
                             &mut cx,
                         )
                         .await?;
@@ -3243,7 +3241,6 @@ impl LocalLspStore {
         fs: &dyn Fs,
         delegate: &Arc<dyn LspAdapterDelegate>,
         toolchains: Arc<dyn LanguageToolchainStore>,
-        this: &WeakEntity<LspStore>,
         cx: &mut AsyncApp,
     ) -> Result<serde_json::Value> {
         let mut workspace_config = adapter
@@ -3251,34 +3248,17 @@ impl LocalLspStore {
             .workspace_configuration(fs, delegate, toolchains.clone(), cx)
             .await?;
 
-        let other_adapters: Vec<Arc<CachedLspAdapter>> = this.update(cx, |this, _| {
-            let Some(local) = this.as_local() else {
-                return Ok::<Vec<Arc<CachedLspAdapter>>, anyhow::Error>(Vec::new());
-            };
-            let mut others = local
-                .languages
-                .language_names()
-                .into_iter()
-                .flat_map(|language_name| {
-                    local
-                        .languages
-                        .lsp_adapters(&LanguageName::new(&language_name))
-                })
-                .filter(|other_adapter| other_adapter.name != adapter.name())
-                .collect::<Vec<_>>();
-            others.sort_by(|a, b| a.name.0.cmp(&b.name.0));
-            others.dedup_by(|a, b| a.name.0 == b.name.0);
-            Ok(others)
-        })??;
-
-        for other_adapter in other_adapters {
+        for other_adapter in delegate.registered_lsp_adapters() {
+            if other_adapter.name() == adapter.name() {
+                continue;
+            }
             if let Ok(Some(config)) = other_adapter
-                .adapter
                 .clone()
                 .additional_workspace_configuration(fs, delegate, toolchains.clone(), cx)
                 .await
             {
                 if let Some(target_config) = config.get(adapter.name().to_string()) {
+                    dbg!(target_config);
                     merge_json_value_into(target_config.clone(), &mut workspace_config);
                 }
             }
@@ -3826,11 +3806,10 @@ impl LspStore {
                 adapter.clear_zed_json_schema_cache().await;
 
                 let Some(json_workspace_config) = LocalLspStore::workspace_configuration_for_adapter(
-                        adapter.clone(),
+                        adapter,
                         fs.as_ref(),
                         &delegate,
                         toolchain_store.clone(),
-                        &this,
                         cx,
                     )
                     .await
@@ -6128,11 +6107,10 @@ impl LspStore {
             let toolchain_store = this.update(cx, |this, cx| this.toolchain_store(cx)).ok()?;
             for (adapter, server, delegate) in servers {
                 let settings = LocalLspStore::workspace_configuration_for_adapter(
-                    adapter.clone(),
+                    adapter,
                     fs.as_ref(),
                     &delegate,
                     toolchain_store.clone(),
-                    &this,
                     cx,
                 )
                 .await
@@ -9877,6 +9855,14 @@ impl LspAdapterDelegate for LocalLspAdapterDelegate {
     fn update_status(&self, server_name: LanguageServerName, status: language::BinaryStatus) {
         self.language_registry
             .update_lsp_status(server_name, status);
+    }
+
+    fn registered_lsp_adapters(&self) -> Vec<Arc<dyn LspAdapter>> {
+        self.language_registry
+            .all_lsp_adapters()
+            .into_iter()
+            .map(|adapter| adapter.adapter.clone() as Arc<dyn LspAdapter>)
+            .collect()
     }
 
     async fn language_server_download_dir(&self, name: &LanguageServerName) -> Option<Arc<Path>> {
