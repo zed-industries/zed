@@ -5,7 +5,6 @@ use collections::HashMap;
 use gpui::{App, Task};
 use gpui::{AsyncApp, SharedString};
 use language::language_settings::language_settings;
-use language::LanguageName;
 use language::LanguageToolchainStore;
 use language::Toolchain;
 use language::ToolchainList;
@@ -370,7 +369,7 @@ impl ContextProvider for PythonContextProvider {
         let module_target = self.build_module_target(variables);
         let worktree_id = location.buffer.read(cx).file().map(|f| f.worktree_id(cx));
 
-        cx.spawn(move |mut cx| async move {
+        cx.spawn(async move |cx| {
             let active_toolchain = if let Some(worktree_id) = worktree_id {
                 toolchains
                     .active_toolchain(worktree_id, "Python".into(), cx)
@@ -383,11 +382,13 @@ impl ContextProvider for PythonContextProvider {
                 String::from("python3")
             };
             let toolchain = (PYTHON_ACTIVE_TOOLCHAIN_PATH, active_toolchain);
-            Ok(task::TaskVariables::from_iter([
-                test_target?,
-                module_target?,
-                toolchain,
-            ]))
+
+            Ok(task::TaskVariables::from_iter(
+                test_target
+                    .into_iter()
+                    .chain(module_target.into_iter())
+                    .chain([toolchain]),
+            ))
         })
     }
 
