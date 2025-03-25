@@ -24,7 +24,7 @@ mod direnv;
 mod environment;
 use buffer_diff::BufferDiff;
 pub use environment::{EnvironmentErrorMessage, ProjectEnvironmentEvent};
-use git_store::Repository;
+use git_store::{GitEvent, Repository};
 pub mod search_history;
 mod yarn;
 
@@ -270,7 +270,6 @@ pub enum Event {
     WorktreeOrderChanged,
     WorktreeRemoved(WorktreeId),
     WorktreeUpdatedEntries(WorktreeId, UpdatedEntriesSet),
-    WorktreeUpdatedGitRepositories(WorktreeId),
     DiskBasedDiagnosticsStarted {
         language_server_id: LanguageServerId,
     },
@@ -300,6 +299,8 @@ pub enum Event {
     RevealInProjectPanel(ProjectEntryId),
     SnippetEdit(BufferId, Vec<(lsp::Range, Snippet)>),
     ExpandedAllForEntry(WorktreeId, ProjectEntryId),
+    GitStateUpdated,
+    ActiveRepositoryChanged,
 }
 
 pub enum DebugAdapterClientState {
@@ -911,6 +912,7 @@ impl Project {
                     cx,
                 )
             });
+            cx.subscribe(&git_store, Self::on_git_store_event).detach();
 
             cx.subscribe(&lsp_store, Self::on_lsp_store_event).detach();
 
@@ -2699,6 +2701,19 @@ impl Project {
         }
     }
 
+    fn on_git_store_event(
+        &mut self,
+        _: Entity<GitStore>,
+        event: &GitEvent,
+        cx: &mut Context<Self>,
+    ) {
+        match event {
+            GitEvent::GitStateUpdated => cx.emit(Event::GitStateUpdated),
+            GitEvent::ActiveRepositoryChanged => cx.emit(Event::ActiveRepositoryChanged),
+            GitEvent::FileSystemUpdated | GitEvent::IndexWriteError(_) => {}
+        }
+    }
+
     fn on_ssh_event(
         &mut self,
         _: Entity<SshRemoteClient>,
@@ -2784,12 +2799,11 @@ impl Project {
                     .report_discovered_project_events(*worktree_id, changes);
                 cx.emit(Event::WorktreeUpdatedEntries(*worktree_id, changes.clone()))
             }
-            WorktreeStoreEvent::WorktreeUpdatedGitRepositories(worktree_id, _) => {
-                cx.emit(Event::WorktreeUpdatedGitRepositories(*worktree_id))
-            }
             WorktreeStoreEvent::WorktreeDeletedEntry(worktree_id, id) => {
                 cx.emit(Event::DeletedEntry(*worktree_id, *id))
             }
+            // Listen to the GitStore instead.
+            WorktreeStoreEvent::WorktreeUpdatedGitRepositories(_, _) => {}
         }
     }
 

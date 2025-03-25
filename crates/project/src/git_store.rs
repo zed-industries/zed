@@ -150,11 +150,13 @@ pub struct Repository {
     pub merge_message: Option<String>,
     // FIXME remove, already have it in the snapshot??
     pub completed_scan_id: usize,
-    pub worktree_id: Option<WorktreeId>,
     commit_message_buffer: Option<Entity<Buffer>>,
     git_store: WeakEntity<GitStore>,
-    // The next two fields are always None for non-local repositories.
+    // FIXME remove, put it on the state instead (for local only)
+    // FIXME need to have a way to get the environment for something that's not a worktree root
     project_environment: Option<WeakEntity<ProjectEnvironment>>,
+    // FIXME should go in the state for local repositories and then be eliminated entirely
+    pub worktree_id: Option<WorktreeId>,
     state: RepositoryState,
     job_sender: mpsc::UnboundedSender<GitJob>,
     askpass_delegates: Arc<Mutex<HashMap<u64, AskPassDelegate>>>,
@@ -342,6 +344,8 @@ impl GitStore {
                                         {
                                             let update =
                                                 snapshot.build_update(old_snapshot, remote_id);
+                                            eprintln!("sending update repository");
+                                            dbg!(&update);
                                             *old_snapshot = snapshot;
                                             client.send(update)?;
                                         } else {
@@ -957,6 +961,7 @@ impl GitStore {
     ) {
         match event {
             WorktreeStoreEvent::WorktreeUpdatedGitRepositories(worktree_id, changed_repos) => {
+                // We should only get this event for a local project.
                 self.update_repositories(&worktree_store, cx);
                 if self.is_local() {
                     if let Some(worktree) =
@@ -1474,6 +1479,7 @@ impl GitStore {
     ) -> Result<()> {
         this.update(&mut cx, |this, cx| {
             let update = envelope.payload;
+            dbg!(&update);
             let work_directory_id = ProjectEntryId::from_proto(update.id);
             let client = this
                 .upstream_client()
@@ -1513,6 +1519,11 @@ impl GitStore {
                 });
 
             repo.update(cx, |repo, _cx| repo.apply_remote_update(update))?;
+            cx.emit(GitEvent::GitStateUpdated);
+            this.active_repo_id.get_or_insert_with(|| {
+                cx.emit(GitEvent::ActiveRepositoryChanged);
+                work_directory_id
+            });
             Ok(())
         })?
     }
@@ -3428,6 +3439,7 @@ impl Repository {
             )
             .collect::<Vec<_>>();
         self.repository_entry.statuses_by_path.edit(edits, &());
+        dbg!(&self.repository_entry.statuses_by_path);
         Ok(())
     }
 

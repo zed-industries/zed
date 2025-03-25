@@ -197,7 +197,6 @@ pub struct RepositoryEntry {
     ///     - my_sub_folder_2/changed_file_2
     pub statuses_by_path: SumTree<StatusEntry>,
     pub work_directory_id: ProjectEntryId,
-    //pub work_directory: WorkDirectory,
     pub work_directory_abs_path: PathBuf,
     pub worktree_scan_id: usize,
     pub current_branch: Option<Branch>,
@@ -4999,9 +4998,7 @@ impl BackgroundScanner {
                 .local_repo_containing_path(relative_path)
                 .zip(state.snapshot.repository_containing_abs_path(abs_path));
             if let Some((local_repo, entry)) = repository_data {
-                eprintln!("one");
                 if let Ok(repo_path) = local_repo.relativize(relative_path) {
-                    eprintln!("two");
                     paths_by_git_repo
                         .entry(local_repo.work_directory.clone())
                         .or_insert_with(|| RepoPaths {
