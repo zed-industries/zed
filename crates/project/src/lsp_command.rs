@@ -17,7 +17,9 @@ use gpui::{App, AsyncApp, Entity};
 use language::{
     Anchor, Bias, Buffer, BufferSnapshot, CachedLspAdapter, CharKind, OffsetRangeExt, PointUtf16,
     ToOffset, ToPointUtf16, Transaction, Unclipped,
-    language_settings::{InlayHintKind, LanguageSettings, language_settings},
+    language_settings::{
+        AllLanguageSettings, CompletionMode, InlayHintKind, LanguageSettings, language_settings,
+    },
     point_from_lsp, point_to_lsp,
     proto::{deserialize_anchor, deserialize_version, serialize_anchor, serialize_version},
     range_from_lsp, range_to_lsp,
@@ -28,6 +30,7 @@ use lsp::{
     LanguageServer, LanguageServerId, LinkedEditingRangeServerCapabilities, OneOf, RenameOptions,
     ServerCapabilities,
 };
+use settings::Settings as _;
 use signature_help::{lsp_to_proto_signature, proto_to_lsp_signature};
 use std::{cmp::Reverse, mem, ops::Range, path::Path, sync::Arc};
 use text::{BufferId, LineEnding};
@@ -2085,7 +2088,7 @@ impl LspCommand for GetCompletions {
             .map(Arc::new);
 
         let mut completion_edits = Vec::new();
-        buffer.update(&mut cx, |buffer, _cx| {
+        buffer.update(&mut cx, |buffer, cx| {
             let snapshot = buffer.snapshot();
             let clipped_position = buffer.clip_point_utf16(Unclipped(self.position), Bias::Left);
 
@@ -2122,7 +2125,16 @@ impl LspCommand for GetCompletions {
                     // If the language server provides a range to overwrite, then
                     // check that the range is valid.
                     Some(completion_text_edit) => {
-                        match parse_completion_text_edit(&completion_text_edit, &snapshot) {
+                        let completion_mode = AllLanguageSettings::get_global(cx)
+                            .defaults
+                            .completions
+                            .completion_mode;
+
+                        match parse_completion_text_edit(
+                            &completion_text_edit,
+                            &snapshot,
+                            completion_mode,
+                        ) {
                             Some(edit) => edit,
                             None => return false,
                         }
@@ -2303,6 +2315,7 @@ impl LspCommand for GetCompletions {
 pub(crate) fn parse_completion_text_edit(
     edit: &lsp::CompletionTextEdit,
     snapshot: &BufferSnapshot,
+    completion_mode: CompletionMode,
 ) -> Option<(Range<Anchor>, String)> {
     match edit {
         lsp::CompletionTextEdit::Edit(edit) => {
@@ -2321,20 +2334,26 @@ pub(crate) fn parse_completion_text_edit(
         }
 
         lsp::CompletionTextEdit::InsertAndReplace(edit) => {
-            let replace = {
-                let mut range = edit.replace;
-                range.start = edit.insert.end;
-                let range = range_from_lsp(range);
+            let replace = match completion_mode {
+                CompletionMode::Insert => false,
+                CompletionMode::Replace => true,
+                CompletionMode::Smart => {
+                    let mut range = edit.replace;
+                    range.start = edit.insert.end;
+                    let range = range_from_lsp(range);
 
-                let start = snapshot.clip_point_utf16(range.start, Bias::Left);
-                let end = snapshot.clip_point_utf16(range.end, Bias::Left);
-                if start != range.start.0 || end != range.end.0 {
-                    false
-                } else {
-                    let v = snapshot
-                        .text_for_range(snapshot.anchor_before(start)..snapshot.anchor_after(end))
-                        .collect::<String>();
-                    edit.new_text.ends_with(&v)
+                    let start = snapshot.clip_point_utf16(range.start, Bias::Left);
+                    let end = snapshot.clip_point_utf16(range.end, Bias::Left);
+                    if start != range.start.0 || end != range.end.0 {
+                        false
+                    } else {
+                        let v = snapshot
+                            .text_for_range(
+                                snapshot.anchor_before(start)..snapshot.anchor_after(end),
+                            )
+                            .collect::<String>();
+                        edit.new_text.ends_with(&v)
+                    }
                 }
             };
 

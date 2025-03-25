@@ -1199,7 +1199,19 @@
     // When set to 0, waits indefinitely.
     //
     // Default: 0
-    "lsp_fetch_timeout_ms": 0
+    "lsp_fetch_timeout_ms": 0,
+    // Controls how the completions are inserted
+    //
+    // Possible values:
+    // 1. "insert"
+    //   Removes text left from the cursor
+    // 2. "replace"
+    //   Replace the word
+    // 3. "smart"
+    //   removes text left from the cursor and text right from the cursor if the completion ends with it
+    //
+    // Default: insert
+    "completion_mode": "insert"
   },
   // Different settings for specific languages.
   "languages": {

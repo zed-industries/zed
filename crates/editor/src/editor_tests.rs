@@ -22,7 +22,7 @@ use language::{
     FakeLspAdapter, LanguageConfig, LanguageConfigOverride, LanguageMatcher, LanguageName,
     Override, Point,
     language_settings::{
-        AllLanguageSettings, AllLanguageSettingsContent, CompletionSettings,
+        AllLanguageSettings, AllLanguageSettingsContent, CompletionMode, CompletionSettings,
         LanguageSettingsContent, PrettierSettings,
     },
 };
@@ -9419,6 +9419,7 @@ async fn test_word_completion(cx: &mut TestAppContext) {
             words: WordsCompletionMode::Fallback,
             lsp: true,
             lsp_fetch_timeout_ms: 10,
+            completion_mode: CompletionMode::Insert,
         });
     });
 
@@ -9514,6 +9515,7 @@ async fn test_word_completions_do_not_duplicate_lsp_ones(cx: &mut TestAppContext
             words: WordsCompletionMode::Enabled,
             lsp: true,
             lsp_fetch_timeout_ms: 0,
+            completion_mode: CompletionMode::Insert,
         });
     });
 
@@ -9576,6 +9578,7 @@ async fn test_word_completions_continue_on_typing(cx: &mut TestAppContext) {
             words: WordsCompletionMode::Disabled,
             lsp: true,
             lsp_fetch_timeout_ms: 0,
+            completion_mode: CompletionMode::Insert,
         });
     });
 
@@ -9648,6 +9651,7 @@ async fn test_word_completions_usually_skip_digits(cx: &mut TestAppContext) {
             words: WordsCompletionMode::Fallback,
             lsp: false,
             lsp_fetch_timeout_ms: 0,
+            completion_mode: CompletionMode::Insert,
         });
     });
 
