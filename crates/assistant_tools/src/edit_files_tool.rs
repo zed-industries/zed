@@ -230,6 +230,18 @@ impl EditToolRequest {
 
             let (mut tx, mut rx) = mpsc::channel::<String>(32);
 
+            let reader_task = cx.background_spawn(async move {
+                while let Some(chunk) = chunks.stream.next().await {
+                    if let Some(chunk) = chunk.log_err() {
+                        // we don't process here because the API fails
+                        // if we take too long between reads
+                        tx.send(chunk).await?
+                    }
+                }
+                tx.close().await?;
+                anyhow::Ok(())
+            });
+
             let mut request = Self {
                 parser: EditActionParser::new(),
                 output: Self::SUCCESS_OUTPUT_HEADER.to_string(),
@@ -239,16 +251,6 @@ impl EditToolRequest {
                 project,
                 tool_log,
             };
-
-            let reader_task = cx.background_spawn(async move {
-                while let Some(chunk) = chunks.stream.next().await {
-                    if let Some(chunk) = chunk.log_err() {
-                        tx.send(chunk).await?
-                    }
-                }
-                tx.close().await?;
-                anyhow::Ok(())
-            });
 
             while let Some(chunk) = rx.next().await {
                 request.process_response_chunk(&chunk, cx).await?;
