@@ -2321,7 +2321,27 @@ pub(crate) fn parse_completion_text_edit(
         }
 
         lsp::CompletionTextEdit::InsertAndReplace(edit) => {
-            let range = range_from_lsp(edit.replace);
+            let replace = {
+                let mut range = edit.replace.clone();
+                range.start = edit.insert.end;
+                let range = range_from_lsp(range);
+
+                let start = snapshot.clip_point_utf16(range.start, Bias::Left);
+                let end = snapshot.clip_point_utf16(range.end, Bias::Left);
+                if start != range.start.0 || end != range.end.0 {
+                    false
+                } else {
+                    let v = snapshot
+                        .text_for_range(snapshot.anchor_before(start)..snapshot.anchor_after(end))
+                        .collect::<String>();
+                    edit.new_text.ends_with(&v)
+                }
+            };
+
+            let range = range_from_lsp(match replace {
+                true => edit.replace,
+                false => edit.insert,
+            });
 
             let start = snapshot.clip_point_utf16(range.start, Bias::Left);
             let end = snapshot.clip_point_utf16(range.end, Bias::Left);
