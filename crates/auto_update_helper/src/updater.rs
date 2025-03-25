@@ -113,7 +113,7 @@ pub(crate) async fn perform_update(app_dir: &Path, hwnd: Option<isize>) -> Resul
                 unsafe { PostMessageW(hwnd, WM_JOB_UPDATED, WPARAM(0), LPARAM(0))? };
             }
         }
-        Ok(())
+        Ok::<(), anyhow::Error>(())
     }
     .fuse();
     #[cfg(test)]
@@ -142,23 +142,17 @@ pub(crate) async fn perform_update(app_dir: &Path, hwnd: Option<isize>) -> Resul
                 unsafe { PostMessageW(hwnd, WM_JOB_UPDATED, WPARAM(0), LPARAM(0))? };
             }
         }
-        Ok(())
+        Ok::<(), anyhow::Error>(())
     }
     .fuse();
     futures::pin_mut!(work);
 
     futures::select_biased! {
         result = work => {
-            match result {
-                Ok(_) => {
-                    let _ = smol::process::Command::new(app_dir.join("Zed.exe")).spawn();
-                    log::info!("Update completed successfully");
-                    Ok(())
-                }
-                Err(err) => {
-                    Err(err)
-                }
-            }
+            result?;
+            let _ = smol::process::Command::new(app_dir.join("Zed.exe")).spawn();
+            log::info!("Update completed successfully");
+            Ok(())
         }
         _ = FutureExt::fuse(smol::Timer::after(std::time::Duration::from_secs(10))) => {
             Err(anyhow::anyhow!("Update timed out"))
