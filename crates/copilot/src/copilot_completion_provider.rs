@@ -272,7 +272,7 @@ mod tests {
     use indoc::indoc;
     use language::{
         language_settings::{
-            AllLanguageSettings, AllLanguageSettingsContent, CompletionSettings,
+            AllLanguageSettings, AllLanguageSettingsContent, CompletionMode, CompletionSettings,
             WordsCompletionMode,
         },
         Point,
@@ -294,6 +294,7 @@ mod tests {
                 words: WordsCompletionMode::Disabled,
                 lsp: true,
                 lsp_fetch_timeout_ms: 0,
+                completion_mode: CompletionMode::Insert,
             });
         });
 
@@ -525,6 +526,7 @@ mod tests {
                 words: WordsCompletionMode::Disabled,
                 lsp: true,
                 lsp_fetch_timeout_ms: 0,
+                completion_mode: CompletionMode::Insert,
             });
         });
 

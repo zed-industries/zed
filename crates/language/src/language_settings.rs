@@ -61,7 +61,7 @@ pub fn all_language_settings<'a>(
 pub struct AllLanguageSettings {
     /// The edit prediction settings.
     pub edit_predictions: EditPredictionSettings,
-    defaults: LanguageSettings,
+    pub defaults: LanguageSettings,
     languages: HashMap<LanguageName, LanguageSettings>,
     pub(crate) file_types: HashMap<Arc<str>, GlobSet>,
 }
@@ -329,6 +329,19 @@ pub struct CompletionSettings {
     /// Default: 0
     #[serde(default = "default_lsp_fetch_timeout_ms")]
     pub lsp_fetch_timeout_ms: u64,
+    /// Controls how the completions are inserted
+    ///
+    /// Possible values:
+    /// 1. "insert"
+    ///   Removes text left from the cursor
+    /// 2. "replace"
+    ///   Replace the word
+    /// 3. "smart"
+    ///   removes text left from the cursor and text right from the cursor if the completion ends with it
+    ///
+    /// Default: insert,
+    #[serde(default = "default_completion_mode")]
+    pub completion_mode: CompletionMode,
 }
 
 /// Controls how document's words are completed.
@@ -345,8 +358,25 @@ pub enum WordsCompletionMode {
     Disabled,
 }
 
+/// Controls what is replaced by the lsp
+
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum CompletionMode {
+    /// uses lsp insert range
+    Insert,
+    /// uses lsp replace range
+    Replace,
+    /// uses lsp insert range & truncates the right side if the completion ends with it
+    Smart,
+}
+
 fn default_words_completion_mode() -> WordsCompletionMode {
     WordsCompletionMode::Fallback
+}
+
+fn default_completion_mode() -> CompletionMode {
+    CompletionMode::Insert
 }
 
 fn default_lsp_fetch_timeout_ms() -> u64 {

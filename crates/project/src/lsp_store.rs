@@ -35,7 +35,8 @@ use http_client::HttpClient;
 use itertools::Itertools as _;
 use language::{
     language_settings::{
-        language_settings, FormatOnSave, Formatter, LanguageSettings, SelectedFormatter,
+        language_settings, AllLanguageSettings, CompletionMode, FormatOnSave, Formatter,
+        LanguageSettings, SelectedFormatter,
     },
     point_to_lsp,
     proto::{deserialize_anchor, deserialize_version, serialize_anchor, serialize_version},
@@ -5140,6 +5141,7 @@ impl LspStore {
                             &buffer_snapshot,
                             completions.clone(),
                             completion_index,
+                            cx,
                         )
                         .await
                         .log_err()
@@ -5173,6 +5175,7 @@ impl LspStore {
         snapshot: &BufferSnapshot,
         completions: Rc<RefCell<Box<[Completion]>>>,
         completion_index: usize,
+        cx: &mut AsyncApp,
     ) -> Result<()> {
         let server_id = server.server_id();
         let can_resolve = server
@@ -5215,7 +5218,15 @@ impl LspStore {
             // language server we currently use that does update `text_edit` in `completionItem/resolve`
             // is `typescript-language-server` and they only update `text_edit.new_text`.
             // But we should not rely on that.
-            let edit = parse_completion_text_edit(text_edit, snapshot);
+            let completion_mode = cx
+                .read_global(|_: &SettingsStore, cx| {
+                    AllLanguageSettings::get_global(cx)
+                        .defaults
+                        .completions
+                        .completion_mode
+                })
+                .unwrap_or(CompletionMode::Insert);
+            let edit = parse_completion_text_edit(text_edit, snapshot, completion_mode);
 
             if let Some((old_range, mut new_text)) = edit {
                 LineEnding::normalize(&mut new_text);
@@ -5471,6 +5482,7 @@ impl LspStore {
                     &snapshot,
                     completions.clone(),
                     completion_index,
+                    cx,
                 )
                 .await
                 .context("resolving completion")?;
@@ -7675,7 +7687,16 @@ impl LspStore {
             })??;
 
             if let Some(text_edit) = completion.text_edit.as_ref() {
-                let edit = parse_completion_text_edit(text_edit, &buffer_snapshot);
+                let completion_mode = cx
+                    .read_global(|_: &SettingsStore, cx| {
+                        AllLanguageSettings::get_global(cx)
+                            .defaults
+                            .completions
+                            .completion_mode
+                    })
+                    .unwrap_or(CompletionMode::Insert);
+
+                let edit = parse_completion_text_edit(text_edit, &buffer_snapshot, completion_mode);
 
                 if let Some((old_range, mut text_edit_new_text)) = edit {
                     LineEnding::normalize(&mut text_edit_new_text);
