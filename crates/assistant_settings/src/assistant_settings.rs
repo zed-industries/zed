@@ -412,6 +412,13 @@ impl Default for LanguageModelSelection {
 pub struct AgentProfileContent {
     pub name: Arc<str>,
     pub tools: IndexMap<Arc<str>, bool>,
+    #[serde(default)]
+    pub context_servers: IndexMap<Arc<str>, ContextServerPresetContent>,
+}
+
+#[derive(Debug, PartialEq, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct ContextServerPresetContent {
+    pub tools: IndexMap<Arc<str>, bool>,
 }
 
 #[derive(Clone, Serialize, Deserialize, JsonSchema, Debug)]
@@ -522,7 +529,18 @@ impl Settings for AssistantSettings {
                             AgentProfile {
                                 name: profile.name.into(),
                                 tools: profile.tools,
-                                context_servers: IndexMap::default(),
+                                context_servers: profile
+                                    .context_servers
+                                    .into_iter()
+                                    .map(|(context_server_id, preset)| {
+                                        (
+                                            context_server_id,
+                                            ContextServerPreset {
+                                                tools: preset.tools.clone(),
+                                            },
+                                        )
+                                    })
+                                    .collect(),
                             },
                         )
                     }));
