@@ -19,7 +19,7 @@ The Git Panel gives you a birds-eye view of the state of your working tree and o
 
 You can open the Git Panel using {#action git_panel::ToggleFocus}, or by clicking the Git icon in the status bar.
 
-In the panel you can see  the state of your project at a glance—which repository and branch are active, what files have changed and the current staging state of each file.
+In the panel you can see the state of your project at a glance—which repository and branch are active, what files have changed and the current staging state of each file.
 
 Zed monitors your repository so that changes you make on the command line are instantly reflected.
 
@@ -45,7 +45,7 @@ Zed has two primary staging workflows, using either the Project Diff or the pane
 
 In the Project Diff view, you can focus on each hunk and stage them individually by clicking on the tab bar buttons or via the keybindings {#action git::StageAndNext} ({#kb git::StageAndNext}).
 
-Similarly, stage all hunks at the same time with the {#action git::StageAll} ({#kb git::StageAll}) keybinding and then immediatelly commit with {#action git::Commit} ({#kb git::Commit}).
+Similarly, stage all hunks at the same time with the {#action git::StageAll} ({#kb git::StageAll}) keybinding and then immediately commit with {#action git::Commit} ({#kb git::Commit}).
 
 ### Using the Git Panel
 
@@ -61,7 +61,7 @@ Entries can be staged using each individual entry's checkbox. All changes can be
 
 Zed offers two commit textareas:
 
-1. The first one is available right at the bottom of the Git Panel. Hitting {#kb git::Commit} immediatelly commit all of your staged changes.
+1. The first one is available right at the bottom of the Git Panel. Hitting {#kb git::Commit} immediately commits all of your staged changes.
 2. The second is available via the action {#action git::ExpandCommitEditor} or via hitting the {#kb git::ExpandCommitEditor} while focused in the Git Panel commit textarea.
 
 ### Undoing a Commit
@@ -84,7 +84,7 @@ More advanced AI integration with Git features may come in the future.
 
 Zed integrates with popular Git hosting services to ensure that Git commit hashes and references to Issues, Pull Requests, and Merge Requests become clickable links.
 
-Zed currently support links to the hosted versions of
+Zed currently supports links to the hosted versions of
 [GitHub](https://github.com),
 [GitLab](https://gitlab.com),
 [Bitbucket](https://bitbucket.org),
