@@ -240,7 +240,9 @@ impl EditToolRequest {
             };
 
             while let Some(chunk) = chunks.stream.next().await {
-                request.process_response_chunk(&chunk?, cx).await?;
+                if let Some(chunk) = chunk.log_err() {
+                    request.process_response_chunk(&chunk, cx).await?;
+                }
             }
 
             request.finalize(cx).await
