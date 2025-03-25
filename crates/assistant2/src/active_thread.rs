@@ -1256,7 +1256,7 @@ impl ActiveThread {
             "copy-path" => IconName::Clipboard,
             "delete-path" => IconName::Trash,
             "diagnostics" => IconName::Warning,
-            "edit-files" => IconName::Pencil,
+            "edit-files" | "find-replace-file" => IconName::Pencil,
             "fetch" => IconName::Globe,
             "list-directory" => IconName::Folder,
             "move-path" => IconName::ArrowRightLeft,
