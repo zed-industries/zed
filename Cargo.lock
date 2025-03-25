@@ -5639,7 +5639,6 @@ dependencies = [
  "askpass",
  "assistant_settings",
  "buffer_diff",
- "chrono",
  "collections",
  "command_palette_hooks",
  "component",
@@ -14223,7 +14222,6 @@ dependencies = [
  "windows 0.61.1",
  "workspace",
  "zed_actions",
- "zeta",
 ]
 
 [[package]]
@@ -17634,7 +17632,6 @@ dependencies = [
  "anyhow",
  "arrayvec",
  "call",
- "chrono",
  "client",
  "clock",
  "collections",
