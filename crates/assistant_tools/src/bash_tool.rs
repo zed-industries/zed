@@ -38,7 +38,7 @@ impl Tool for BashTool {
 
     fn ui_text(&self, input: &serde_json::Value) -> String {
         match serde_json::from_value::<BashToolInput>(input.clone()) {
-            Ok(input) => format!("`$ {}`", input.command),
+            Ok(input) => format!("`{}`", input.command),
             Err(_) => "Run bash command".to_string(),
         }
     }
