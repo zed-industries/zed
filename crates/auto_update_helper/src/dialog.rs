@@ -27,7 +27,7 @@ use windows::{
 };
 
 use crate::{
-    updater::total_jobs_count,
+    updater::JOBS_COUNT,
     windows_impl::{show_error, WM_JOB_UPDATED, WM_TERMINATE},
 };
 
@@ -141,7 +141,7 @@ unsafe extern "system" fn wnd_proc(
                 progress_bar,
                 PBM_SETRANGE,
                 None,
-                Some(make_lparam!(0, total_jobs_count() * 10)),
+                Some(make_lparam!(0, JOBS_COUNT * 10)),
             );
             SendMessageW(progress_bar, PBM_SETSTEP, Some(WPARAM(10)), None);
             with_dialog_data(hwnd, |data| {

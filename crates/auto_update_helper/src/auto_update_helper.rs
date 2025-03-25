@@ -52,7 +52,8 @@ mod windows_impl {
         let (tx, rx) = std::sync::mpsc::channel();
         let hwnd = create_dialog_window(rx)?.0 as isize;
         std::thread::spawn(move || {
-            tx.send(perform_update(app_dir.as_path(), hwnd)).ok();
+            let result = smol::block_on(perform_update(app_dir.as_path(), hwnd));
+            tx.send(result).ok();
             unsafe { PostMessageW(Some(HWND(hwnd as _)), WM_TERMINATE, WPARAM(0), LPARAM(0)) }.ok();
         });
         unsafe {
