@@ -7311,6 +7311,7 @@ dependencies = [
  "google_ai",
  "gpui",
  "http_client",
+ "icons",
  "image",
  "log",
  "open_ai",
@@ -7323,7 +7324,6 @@ dependencies = [
  "strum",
  "telemetry_events",
  "thiserror 2.0.12",
- "ui",
  "util",
 ]
 
