@@ -6,8 +6,8 @@ use anyhow::{anyhow, Context, Result};
 use assistant_tool::{ActionLog, Tool};
 use collections::HashSet;
 use edit_action::{EditAction, EditActionParser};
-use futures::StreamExt;
-use gpui::{App, AsyncApp, Entity, Task};
+use futures::{channel::mpsc, SinkExt, StreamExt};
+use gpui::{App, AppContext, AsyncApp, Entity, Task};
 use language_model::{
     LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage, MessageContent, Role,
 };
@@ -225,12 +225,24 @@ impl EditToolRequest {
                 temperature: Some(0.0),
             };
 
+            let (mut tx, mut rx) = mpsc::channel::<String>(32);
             let stream = model.stream_completion_text(llm_request, &cx);
-            let mut chunks = stream.await?;
+            let reader_task = cx.background_spawn(async move {
+                let mut chunks = stream.await?;
+
+                while let Some(chunk) = chunks.stream.next().await {
+                    if let Some(chunk) = chunk.log_err() {
+                        // we don't process here because the API fails
+                        // if we take too long between reads
+                        tx.send(chunk).await?
+                    }
+                }
+                tx.close().await?;
+                anyhow::Ok(())
+            });
 
             let mut request = Self {
                 parser: EditActionParser::new(),
-                // we start with the success header so we don't need to shift the output in the common case
                 output: Self::SUCCESS_OUTPUT_HEADER.to_string(),
                 changed_buffers: HashSet::default(),
                 bad_searches: Vec::new(),
@@ -239,9 +251,11 @@ impl EditToolRequest {
                 tool_log,
             };
 
-            while let Some(chunk) = chunks.stream.next().await {
-                request.process_response_chunk(&chunk?, cx).await?;
+            while let Some(chunk) = rx.next().await {
+                request.process_response_chunk(&chunk, cx).await?;
             }
+
+            reader_task.await?;
 
             request.finalize(cx).await
         })
