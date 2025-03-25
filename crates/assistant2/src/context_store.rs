@@ -268,36 +268,36 @@ impl ContextStore {
             )));
     }
 
-    pub fn add_symbol(&mut self, symbol: &Symbol, cx: &mut Context<Self>) -> Task<Result<()>> {
+    pub fn add_symbol(
+        &mut self,
+        path: ProjectPath,
+        symbol_range: Range<Anchor>,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<()>> {
         let Some(workspace) = self.workspace.upgrade() else {
             return Task::ready(Err(anyhow!("Cannot add symbol: Workspace was dropped")));
         };
 
-        let symbol_range = symbol.range.clone();
-
         let open_buffer_task = workspace.update(cx, |workspace, cx| {
-            workspace.project().update(cx, |project, cx| {
-                project.open_buffer(symbol.path.clone(), cx)
-            })
+            workspace
+                .project()
+                .update(cx, |project, cx| project.open_buffer(path.clone(), cx))
         });
 
         cx.spawn(async move |this, cx| {
             let buffer_entity = open_buffer_task.await?;
             let (range, (buffer_info, text_task)) = this.update(cx, |_, cx| {
                 let buffer = buffer_entity.read(cx);
-                let range =
-                    buffer.anchor_after(symbol_range.start)..buffer.anchor_before(symbol_range.end);
-
                 let Some(file) = buffer.file() else {
                     return Err(anyhow!("Buffer has no path."));
                 };
                 Ok((
-                    range.clone(),
+                    symbol_range.clone(),
                     collect_buffer_info_and_text(
                         file.path().clone(),
                         buffer_entity,
                         buffer,
-                        Some(range),
+                        Some(symbol_range),
                         cx.to_async(),
                     ),
                 ))
