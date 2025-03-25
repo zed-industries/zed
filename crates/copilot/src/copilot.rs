@@ -528,6 +528,14 @@ impl Copilot {
                     name: "zed-copilot".into(),
                     version: "0.0.1".into(),
                 },
+                editor_configuration: request::EditorConfiguration {
+                    github: Some(request::GithubConfiguration {
+                        copilot: Some(request::CopilotConfiguration {
+                            selected_completion_model: prediction_model,
+                            enable_auto_completions: true,
+                        }),
+                    }),
+                },
             };
             let editor_info_json = serde_json::to_value(&editor_info)?;
 
@@ -539,15 +547,12 @@ impl Copilot {
                 })?
                 .await?;
 
-            let editor_config = request::EditorConfiguration {
-                github: Some(request::GithubConfiguration {
-                    copilot: Some(request::CopilotConfiguration {
-                        selected_completion_model: prediction_model,
-                        enable_auto_completions: true,
-                    }),
-                }),
-                ..Default::default()
-            };
+            let status = server
+                .request::<request::CheckStatus>(request::CheckStatusParams {
+                    local_checks_only: false,
+                })
+                .await?;
+
             server
                 .request::<request::SetEditorInfo>(editor_info)
                 .await?;
@@ -697,7 +702,16 @@ impl Copilot {
                 let server_id = self.server_id;
                 async move |this, cx| {
                     clear_copilot_dir().await;
-                    Self::start_language_server(server_id, node_runtime, env, prediction_model, this, false, cx).await
+                    Self::start_language_server(
+                        server_id,
+                        node_runtime,
+                        env,
+                        prediction_model,
+                        this,
+                        false,
+                        cx,
+                    )
+                    .await
                 }
             })
             .shared();
