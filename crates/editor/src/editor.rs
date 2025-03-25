@@ -492,6 +492,8 @@ enum EditPredictionSettings {
 
 enum InlineCompletionHighlight {}
 
+enum SemanticHighlight {}
+
 #[derive(Debug, Clone)]
 struct InlineDiagnostic {
     message: SharedString,
@@ -4012,18 +4014,36 @@ impl Editor {
             let semantic_tokens = project.update(cx, |project, cx| {
                 project.semantic_tokens(buffer.clone(), cx)
             });
-            let task: Task<Result<()>> = cx.spawn_in(window, async move |project, cx| {
+            let snapshot = buffer.read(cx).snapshot();
+            let multibuffer = self.buffer.clone();
+            let display_map = self.display_map.clone();
+            let task: Task<Result<()>> = cx.spawn_in(window, async move |_, cx| {
                 let tokens = semantic_tokens.await?;
+                let multibuffer = multibuffer.clone();
+                let display_map = display_map.clone();
                 log::error!("file semantic tokens count: {}", tokens.len());
-                for token in tokens {
-                    log::error!("token {token:?}");
-                }
-                buffer.update(cx, |buffer, cx| {}).unwrap();
-
+                let tokens = cx.update(|_, cx| {
+                    let multibuffer = multibuffer.read(cx);
+                    let iter = tokens.into_iter().filter_map(|token| {
+                        let Range { start, end } = token.range.to_point(&snapshot);
+                        let start = multibuffer.buffer_point_to_anchor(&buffer, start, cx)?;
+                        let end = multibuffer.buffer_point_to_anchor(&buffer, end, cx)?;
+                        Some((start..end, token.r#type, token.modifiers))
+                    });
+                    iter.collect_vec()
+                })?;
+                display_map.update(cx, |map, _| {
+                    for (range, r#type, modifiers) in tokens {
+                        let range = vec![range];
+                        let style = HighlightStyle::color(Hsla::green());
+                        map.highlight_text(TypeId::of::<SemanticHighlight>(), range, style)
+                    }
+                })?;
                 Ok(())
             });
             task.detach_and_log_err(cx);
         }
+        cx.notify();
         Some(())
     }
 
