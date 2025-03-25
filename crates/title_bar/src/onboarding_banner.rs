@@ -2,8 +2,8 @@ use gpui::{Action, Entity, Global, Render, SharedString};
 use ui::{prelude::*, ButtonLike, Tooltip};
 use util::ResultExt;
 
-/// Prompts the user to try Zed's features
-pub struct Banner {
+/// Prompts the user to try newly released Zed's features
+pub struct OnboardingBanner {
     dismissed: bool,
     source: String,
     details: BannerDetails,
@@ -11,7 +11,7 @@ pub struct Banner {
 
 #[derive(Clone)]
 struct BannerGlobal {
-    entity: Entity<Banner>,
+    entity: Entity<OnboardingBanner>,
 }
 impl Global for BannerGlobal {}
 
@@ -22,7 +22,7 @@ pub struct BannerDetails {
     pub subtitle: Option<SharedString>,
 }
 
-impl Banner {
+impl OnboardingBanner {
     pub fn new(
         source: &str,
         icon_name: IconName,
@@ -104,7 +104,7 @@ pub fn restore_banner(cx: &mut App) {
         .detach_and_log_err(cx);
 }
 
-impl Render for Banner {
+impl Render for OnboardingBanner {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         if !self.should_show(cx) {
             return div();

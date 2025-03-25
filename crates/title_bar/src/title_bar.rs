@@ -1,6 +1,6 @@
 mod application_menu;
-mod banner;
 mod collab;
+mod onboarding_banner;
 mod platforms;
 mod window_controls;
 
@@ -16,7 +16,6 @@ use crate::application_menu::{
 
 use crate::platforms::{platform_linux, platform_mac, platform_windows};
 use auto_update::AutoUpdateStatus;
-use banner::Banner;
 use call::ActiveCall;
 use client::{Client, UserStore};
 use feature_flags::{FeatureFlagAppExt, ZedPro};
@@ -25,6 +24,7 @@ use gpui::{
     InteractiveElement, Interactivity, IntoElement, MouseButton, ParentElement, Render, Stateful,
     StatefulInteractiveElement, Styled, Subscription, WeakEntity, Window,
 };
+use onboarding_banner::OnboardingBanner;
 use project::Project;
 use rpc::proto;
 use settings::Settings as _;
@@ -39,7 +39,7 @@ use util::ResultExt;
 use workspace::{notifications::NotifyResultExt, Workspace};
 use zed_actions::{OpenBrowser, OpenRecent, OpenRemote};
 
-pub use banner::restore_banner;
+pub use onboarding_banner::restore_banner;
 
 #[cfg(feature = "stories")]
 pub use stories::*;
@@ -128,7 +128,7 @@ pub struct TitleBar {
     should_move: bool,
     application_menu: Option<Entity<ApplicationMenu>>,
     _subscriptions: Vec<Subscription>,
-    banner: Entity<Banner>,
+    banner: Entity<OnboardingBanner>,
 }
 
 impl Render for TitleBar {
@@ -316,7 +316,7 @@ impl TitleBar {
         subscriptions.push(cx.observe(&user_store, |_, _, cx| cx.notify()));
 
         let banner = cx.new(|cx| {
-            Banner::new(
+            OnboardingBanner::new(
                 "Git Onboarding",
                 IconName::GitBranchSmall,
                 "Git Support",
