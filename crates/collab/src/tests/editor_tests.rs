@@ -21,7 +21,7 @@ use language::{
 };
 use project::{
     project_settings::{InlineBlameSettings, ProjectSettings},
-    SERVER_PROGRESS_THROTTLE_TIMEOUT,
+    ProjectPath, SERVER_PROGRESS_THROTTLE_TIMEOUT,
 };
 use recent_projects::disconnected_overlay::DisconnectedOverlay;
 use rpc::RECEIVE_TIMEOUT;
@@ -348,7 +348,7 @@ async fn test_collaborating_with_completion(cx_a: &mut TestAppContext, cx_b: &mu
     // Return some completions from the host's language server.
     cx_a.executor().start_waiting();
     fake_language_server
-        .handle_request::<lsp::request::Completion, _, _>(|params, _| async move {
+        .set_request_handler::<lsp::request::Completion, _, _>(|params, _| async move {
             assert_eq!(
                 params.text_document_position.text_document.uri,
                 lsp::Url::from_file_path("/a/main.rs").unwrap(),
@@ -412,7 +412,7 @@ async fn test_collaborating_with_completion(cx_a: &mut TestAppContext, cx_b: &mu
 
     // Return a resolved completion from the host's language server.
     // The resolved completion has an additional text edit.
-    fake_language_server.handle_request::<lsp::request::ResolveCompletionItem, _, _>(
+    fake_language_server.set_request_handler::<lsp::request::ResolveCompletionItem, _, _>(
         |params, _| async move {
             assert_eq!(params.label, "first_method(…)");
             Ok(lsp::CompletionItem {
@@ -465,7 +465,7 @@ async fn test_collaborating_with_completion(cx_a: &mut TestAppContext, cx_b: &mu
     });
 
     let mut completion_response = fake_language_server
-        .handle_request::<lsp::request::Completion, _, _>(|params, _| async move {
+        .set_request_handler::<lsp::request::Completion, _, _>(|params, _| async move {
             assert_eq!(
                 params.text_document_position.text_document.uri,
                 lsp::Url::from_file_path("/a/main.rs").unwrap(),
@@ -496,7 +496,7 @@ async fn test_collaborating_with_completion(cx_a: &mut TestAppContext, cx_b: &mu
 
     // The completion now gets a new `text_edit.new_text` when resolving the completion item
     let mut resolve_completion_response = fake_language_server
-        .handle_request::<lsp::request::ResolveCompletionItem, _, _>(|params, _| async move {
+        .set_request_handler::<lsp::request::ResolveCompletionItem, _, _>(|params, _| async move {
             assert_eq!(params.label, "third_method(…)");
             Ok(lsp::CompletionItem {
                 label: "third_method(…)".into(),
@@ -589,7 +589,7 @@ async fn test_collaborating_with_code_actions(
 
     let mut fake_language_server = fake_language_servers.next().await.unwrap();
     let mut requests = fake_language_server
-        .handle_request::<lsp::request::CodeActionRequest, _, _>(|params, _| async move {
+        .set_request_handler::<lsp::request::CodeActionRequest, _, _>(|params, _| async move {
             assert_eq!(
                 params.text_document.uri,
                 lsp::Url::from_file_path("/a/main.rs").unwrap(),
@@ -611,7 +611,7 @@ async fn test_collaborating_with_code_actions(
     cx_b.focus(&editor_b);
 
     let mut requests = fake_language_server
-        .handle_request::<lsp::request::CodeActionRequest, _, _>(|params, _| async move {
+        .set_request_handler::<lsp::request::CodeActionRequest, _, _>(|params, _| async move {
             assert_eq!(
                 params.text_document.uri,
                 lsp::Url::from_file_path("/a/main.rs").unwrap(),
@@ -689,7 +689,7 @@ async fn test_collaborating_with_code_actions(
             Editor::confirm_code_action(editor, &ConfirmCodeAction { item_ix: Some(0) }, window, cx)
         })
         .unwrap();
-    fake_language_server.handle_request::<lsp::request::CodeActionResolveRequest, _, _>(
+    fake_language_server.set_request_handler::<lsp::request::CodeActionResolveRequest, _, _>(
         |_, _| async move {
             Ok(lsp::CodeAction {
                 title: "Inline into all callers".to_string(),
@@ -812,7 +812,7 @@ async fn test_collaborating_with_renames(cx_a: &mut TestAppContext, cx_b: &mut T
     });
 
     fake_language_server
-        .handle_request::<lsp::request::PrepareRenameRequest, _, _>(|params, _| async move {
+        .set_request_handler::<lsp::request::PrepareRenameRequest, _, _>(|params, _| async move {
             assert_eq!(params.text_document.uri.as_str(), "file:///dir/one.rs");
             assert_eq!(params.position, lsp::Position::new(0, 7));
             Ok(Some(lsp::PrepareRenameResponse::Range(lsp::Range::new(
@@ -855,7 +855,7 @@ async fn test_collaborating_with_renames(cx_a: &mut TestAppContext, cx_b: &mut T
     });
 
     fake_language_server
-        .handle_request::<lsp::request::PrepareRenameRequest, _, _>(|params, _| async move {
+        .set_request_handler::<lsp::request::PrepareRenameRequest, _, _>(|params, _| async move {
             assert_eq!(params.text_document.uri.as_str(), "file:///dir/one.rs");
             assert_eq!(params.position, lsp::Position::new(0, 8));
             Ok(Some(lsp::PrepareRenameResponse::Range(lsp::Range::new(
@@ -891,7 +891,7 @@ async fn test_collaborating_with_renames(cx_a: &mut TestAppContext, cx_b: &mut T
         Editor::confirm_rename(editor, &ConfirmRename, window, cx).unwrap()
     });
     fake_language_server
-        .handle_request::<lsp::request::Rename, _, _>(|params, _| async move {
+        .set_request_handler::<lsp::request::Rename, _, _>(|params, _| async move {
             assert_eq!(
                 params.text_document_position.text_document.uri.as_str(),
                 "file:///dir/one.rs"
@@ -1321,7 +1321,7 @@ async fn test_on_input_format_from_host_to_guest(
 
     // Receive an OnTypeFormatting request as the host's language server.
     // Return some formatting from the host's language server.
-    fake_language_server.handle_request::<lsp::request::OnTypeFormatting, _, _>(
+    fake_language_server.set_request_handler::<lsp::request::OnTypeFormatting, _, _>(
         |params, _| async move {
             assert_eq!(
                 params.text_document_position.text_document.uri,
@@ -1452,7 +1452,7 @@ async fn test_on_input_format_from_guest_to_host(
     // Return some formatting from the host's language server.
     executor.start_waiting();
     fake_language_server
-        .handle_request::<lsp::request::OnTypeFormatting, _, _>(|params, _| async move {
+        .set_request_handler::<lsp::request::OnTypeFormatting, _, _>(|params, _| async move {
             assert_eq!(
                 params.text_document_position.text_document.uri,
                 lsp::Url::from_file_path("/a/main.rs").unwrap(),
@@ -1624,7 +1624,7 @@ async fn test_mutual_editor_inlay_hint_cache_update(
     let edits_made = Arc::new(AtomicUsize::new(0));
     let closure_edits_made = Arc::clone(&edits_made);
     fake_language_server
-        .handle_request::<lsp::request::InlayHintRequest, _, _>(move |params, _| {
+        .set_request_handler::<lsp::request::InlayHintRequest, _, _>(move |params, _| {
             let task_edits_made = Arc::clone(&closure_edits_made);
             async move {
                 assert_eq!(
@@ -1859,7 +1859,7 @@ async fn test_inlay_hint_refresh_is_forwarded(
     let fake_language_server = fake_language_servers.next().await.unwrap();
     let closure_other_hints = Arc::clone(&other_hints);
     fake_language_server
-        .handle_request::<lsp::request::InlayHintRequest, _, _>(move |params, _| {
+        .set_request_handler::<lsp::request::InlayHintRequest, _, _>(move |params, _| {
             let task_other_hints = Arc::clone(&closure_other_hints);
             async move {
                 assert_eq!(
@@ -2406,6 +2406,209 @@ fn main() { let foo = other::foo(); }"};
         third_tabbed_other,
         false,
     );
+}
+
+#[gpui::test]
+async fn test_add_breakpoints(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext) {
+    let executor = cx_a.executor();
+    let mut server = TestServer::start(executor.clone()).await;
+    let client_a = server.create_client(cx_a, "user_a").await;
+    let client_b = server.create_client(cx_b, "user_b").await;
+    server
+        .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
+        .await;
+    let active_call_a = cx_a.read(ActiveCall::global);
+    let active_call_b = cx_b.read(ActiveCall::global);
+    cx_a.update(editor::init);
+    cx_b.update(editor::init);
+    client_a
+        .fs()
+        .insert_tree(
+            "/a",
+            json!({
+                "test.txt": "one\ntwo\nthree\nfour\nfive",
+            }),
+        )
+        .await;
+    let (project_a, worktree_id) = client_a.build_local_project("/a", cx_a).await;
+    let project_path = ProjectPath {
+        worktree_id,
+        path: Arc::from(Path::new(&"test.txt")),
+    };
+    let abs_path = project_a.read_with(cx_a, |project, cx| {
+        project
+            .absolute_path(&project_path, cx)
+            .map(|path_buf| Arc::from(path_buf.to_owned()))
+            .unwrap()
+    });
+
+    active_call_a
+        .update(cx_a, |call, cx| call.set_location(Some(&project_a), cx))
+        .await
+        .unwrap();
+    let project_id = active_call_a
+        .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
+        .await
+        .unwrap();
+    let project_b = client_b.join_remote_project(project_id, cx_b).await;
+    active_call_b
+        .update(cx_b, |call, cx| call.set_location(Some(&project_b), cx))
+        .await
+        .unwrap();
+    let (workspace_a, cx_a) = client_a.build_workspace(&project_a, cx_a);
+    let (workspace_b, cx_b) = client_b.build_workspace(&project_b, cx_b);
+
+    // Client A opens an editor.
+    let editor_a = workspace_a
+        .update_in(cx_a, |workspace, window, cx| {
+            workspace.open_path(project_path.clone(), None, true, window, cx)
+        })
+        .await
+        .unwrap()
+        .downcast::<Editor>()
+        .unwrap();
+
+    // Client B opens same editor as A.
+    let editor_b = workspace_b
+        .update_in(cx_b, |workspace, window, cx| {
+            workspace.open_path(project_path.clone(), None, true, window, cx)
+        })
+        .await
+        .unwrap()
+        .downcast::<Editor>()
+        .unwrap();
+
+    cx_a.run_until_parked();
+    cx_b.run_until_parked();
+
+    // Client A adds breakpoint on line (1)
+    editor_a.update_in(cx_a, |editor, window, cx| {
+        editor.toggle_breakpoint(&editor::actions::ToggleBreakpoint, window, cx);
+    });
+
+    cx_a.run_until_parked();
+    cx_b.run_until_parked();
+
+    let breakpoints_a = editor_a.update(cx_a, |editor, cx| {
+        editor
+            .breakpoint_store()
+            .clone()
+            .unwrap()
+            .read(cx)
+            .all_breakpoints(cx)
+            .clone()
+    });
+    let breakpoints_b = editor_b.update(cx_b, |editor, cx| {
+        editor
+            .breakpoint_store()
+            .clone()
+            .unwrap()
+            .read(cx)
+            .all_breakpoints(cx)
+            .clone()
+    });
+
+    assert_eq!(1, breakpoints_a.len());
+    assert_eq!(1, breakpoints_a.get(&abs_path).unwrap().len());
+    assert_eq!(breakpoints_a, breakpoints_b);
+
+    // Client B adds breakpoint on line(2)
+    editor_b.update_in(cx_b, |editor, window, cx| {
+        editor.move_down(&editor::actions::MoveDown, window, cx);
+        editor.move_down(&editor::actions::MoveDown, window, cx);
+        editor.toggle_breakpoint(&editor::actions::ToggleBreakpoint, window, cx);
+    });
+
+    cx_a.run_until_parked();
+    cx_b.run_until_parked();
+
+    let breakpoints_a = editor_a.update(cx_a, |editor, cx| {
+        editor
+            .breakpoint_store()
+            .clone()
+            .unwrap()
+            .read(cx)
+            .all_breakpoints(cx)
+            .clone()
+    });
+    let breakpoints_b = editor_b.update(cx_b, |editor, cx| {
+        editor
+            .breakpoint_store()
+            .clone()
+            .unwrap()
+            .read(cx)
+            .all_breakpoints(cx)
+            .clone()
+    });
+
+    assert_eq!(1, breakpoints_a.len());
+    assert_eq!(breakpoints_a, breakpoints_b);
+    assert_eq!(2, breakpoints_a.get(&abs_path).unwrap().len());
+
+    // Client A removes last added breakpoint from client B
+    editor_a.update_in(cx_a, |editor, window, cx| {
+        editor.move_down(&editor::actions::MoveDown, window, cx);
+        editor.move_down(&editor::actions::MoveDown, window, cx);
+        editor.toggle_breakpoint(&editor::actions::ToggleBreakpoint, window, cx);
+    });
+
+    cx_a.run_until_parked();
+    cx_b.run_until_parked();
+
+    let breakpoints_a = editor_a.update(cx_a, |editor, cx| {
+        editor
+            .breakpoint_store()
+            .clone()
+            .unwrap()
+            .read(cx)
+            .all_breakpoints(cx)
+            .clone()
+    });
+    let breakpoints_b = editor_b.update(cx_b, |editor, cx| {
+        editor
+            .breakpoint_store()
+            .clone()
+            .unwrap()
+            .read(cx)
+            .all_breakpoints(cx)
+            .clone()
+    });
+
+    assert_eq!(1, breakpoints_a.len());
+    assert_eq!(breakpoints_a, breakpoints_b);
+    assert_eq!(1, breakpoints_a.get(&abs_path).unwrap().len());
+
+    // Client B removes first added breakpoint by client A
+    editor_b.update_in(cx_b, |editor, window, cx| {
+        editor.move_up(&editor::actions::MoveUp, window, cx);
+        editor.move_up(&editor::actions::MoveUp, window, cx);
+        editor.toggle_breakpoint(&editor::actions::ToggleBreakpoint, window, cx);
+    });
+
+    cx_a.run_until_parked();
+    cx_b.run_until_parked();
+
+    let breakpoints_a = editor_a.update(cx_a, |editor, cx| {
+        editor
+            .breakpoint_store()
+            .clone()
+            .unwrap()
+            .read(cx)
+            .all_breakpoints(cx)
+            .clone()
+    });
+    let breakpoints_b = editor_b.update(cx_b, |editor, cx| {
+        editor
+            .breakpoint_store()
+            .clone()
+            .unwrap()
+            .read(cx)
+            .all_breakpoints(cx)
+            .clone()
+    });
+
+    assert_eq!(0, breakpoints_a.len());
+    assert_eq!(breakpoints_a, breakpoints_b);
 }
 
 #[track_caller]

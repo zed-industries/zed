@@ -513,21 +513,10 @@ impl TitleBar {
     }
 
     pub fn render_project_branch(&self, cx: &mut Context<Self>) -> Option<impl IntoElement> {
-        let entry = {
-            let mut names_and_branches =
-                self.project.read(cx).visible_worktrees(cx).map(|worktree| {
-                    let worktree = worktree.read(cx);
-                    worktree.root_git_entry()
-                });
-
-            names_and_branches.next().flatten()
-        };
+        let repository = self.project.read(cx).active_repository(cx)?;
         let workspace = self.workspace.upgrade()?;
-        let branch_name = entry
-            .as_ref()
-            .and_then(|entry| entry.branch())
-            .map(|branch| branch.name.clone())
-            .map(|branch| util::truncate_and_trailoff(&branch, MAX_BRANCH_NAME_LENGTH))?;
+        let branch_name = repository.read(cx).current_branch()?.name.clone();
+        let branch_name = util::truncate_and_trailoff(&branch_name, MAX_BRANCH_NAME_LENGTH);
         Some(
             Button::new("project_branch_trigger", branch_name)
                 .color(Color::Muted)
@@ -642,11 +631,11 @@ impl TitleBar {
             .on_click(move |_, window, cx| {
                 let client = client.clone();
                 window
-                    .spawn(cx, move |mut cx| async move {
+                    .spawn(cx, async move |cx| {
                         client
                             .authenticate_and_connect(true, &cx)
                             .await
-                            .notify_async_err(&mut cx);
+                            .notify_async_err(cx);
                     })
                     .detach();
             })
@@ -683,7 +672,10 @@ impl TitleBar {
                             "Icon Themes…",
                             zed_actions::icon_theme_selector::Toggle::default().boxed_clone(),
                         )
-                        .action("Extensions", zed_actions::Extensions.boxed_clone())
+                        .action(
+                            "Extensions",
+                            zed_actions::Extensions::default().boxed_clone(),
+                        )
                         .separator()
                         .link(
                             "Book Onboarding",
@@ -730,7 +722,10 @@ impl TitleBar {
                                 "Icon Themes…",
                                 zed_actions::icon_theme_selector::Toggle::default().boxed_clone(),
                             )
-                            .action("Extensions", zed_actions::Extensions.boxed_clone())
+                            .action(
+                                "Extensions",
+                                zed_actions::Extensions::default().boxed_clone(),
+                            )
                             .separator()
                             .link(
                                 "Book Onboarding",

@@ -20,13 +20,20 @@ pub(crate) struct SerializedEditor {
 
 impl StaticColumnCount for SerializedEditor {
     fn column_count() -> usize {
-        5
+        6
     }
 }
 
 impl Bind for SerializedEditor {
     fn bind(&self, statement: &Statement, start_index: i32) -> Result<i32> {
         let start_index = statement.bind(&self.abs_path, start_index)?;
+        let start_index = statement.bind(
+            &self
+                .abs_path
+                .as_ref()
+                .map(|p| p.to_string_lossy().to_string()),
+            start_index,
+        )?;
         let start_index = statement.bind(&self.contents, start_index)?;
         let start_index = statement.bind(&self.language, start_index)?;
 
@@ -50,6 +57,8 @@ impl Bind for SerializedEditor {
 impl Column for SerializedEditor {
     fn column(statement: &mut Statement, start_index: i32) -> Result<(Self, i32)> {
         let (abs_path, start_index): (Option<PathBuf>, i32) =
+            Column::column(statement, start_index)?;
+        let (_abs_path, start_index): (Option<PathBuf>, i32) =
             Column::column(statement, start_index)?;
         let (contents, start_index): (Option<String>, i32) =
             Column::column(statement, start_index)?;
@@ -83,10 +92,26 @@ define_connection!(
     //   scroll_top_row: usize,
     //   scroll_vertical_offset: f32,
     //   scroll_horizontal_offset: f32,
-    //   content: Option<String>,
+    //   contents: Option<String>,
     //   language: Option<String>,
     //   mtime_seconds: Option<i64>,
     //   mtime_nanos: Option<i32>,
+    // )
+    //
+    // editor_selections(
+    //   item_id: usize,
+    //   editor_id: usize,
+    //   workspace_id: usize,
+    //   start: usize,
+    //   end: usize,
+    // )
+    //
+    // editor_folds(
+    //   item_id: usize,
+    //   editor_id: usize,
+    //   workspace_id: usize,
+    //   start: usize,
+    //   end: usize,
     // )
     pub static ref DB: EditorDb<WorkspaceDb> = &[
         sql! (
@@ -147,6 +172,22 @@ define_connection!(
                 ON DELETE CASCADE
             ) STRICT;
         ),
+        sql! (
+            ALTER TABLE editors ADD COLUMN buffer_path TEXT;
+            UPDATE editors SET buffer_path = CAST(path AS TEXT);
+        ),
+        sql! (
+            CREATE TABLE editor_folds (
+                item_id INTEGER NOT NULL,
+                editor_id INTEGER NOT NULL,
+                workspace_id INTEGER NOT NULL,
+                start INTEGER NOT NULL,
+                end INTEGER NOT NULL,
+                PRIMARY KEY(item_id),
+                FOREIGN KEY(editor_id, workspace_id) REFERENCES editors(item_id, workspace_id)
+                ON DELETE CASCADE
+            ) STRICT;
+        ),
     ];
 );
 
@@ -158,7 +199,7 @@ const MAX_QUERY_PLACEHOLDERS: usize = 32000;
 impl EditorDb {
     query! {
         pub fn get_serialized_editor(item_id: ItemId, workspace_id: WorkspaceId) -> Result<Option<SerializedEditor>> {
-            SELECT path, contents, language, mtime_seconds, mtime_nanos FROM editors
+            SELECT path, buffer_path, contents, language, mtime_seconds, mtime_nanos FROM editors
             WHERE item_id = ? AND workspace_id = ?
         }
     }
@@ -166,17 +207,18 @@ impl EditorDb {
     query! {
         pub async fn save_serialized_editor(item_id: ItemId, workspace_id: WorkspaceId, serialized_editor: SerializedEditor) -> Result<()> {
             INSERT INTO editors
-                (item_id, workspace_id, path, contents, language, mtime_seconds, mtime_nanos)
+                (item_id, workspace_id, path, buffer_path, contents, language, mtime_seconds, mtime_nanos)
             VALUES
-                (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+                (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
             ON CONFLICT DO UPDATE SET
                 item_id = ?1,
                 workspace_id = ?2,
                 path = ?3,
-                contents = ?4,
-                language = ?5,
-                mtime_seconds = ?6,
-                mtime_nanos = ?7
+                buffer_path = ?4,
+                contents = ?5,
+                language = ?6,
+                mtime_seconds = ?7,
+                mtime_nanos = ?8
         }
     }
 
@@ -213,6 +255,17 @@ impl EditorDb {
         ) -> Result<Vec<(usize, usize)>> {
             SELECT start, end
             FROM editor_selections
+            WHERE editor_id = ?1 AND workspace_id = ?2
+        }
+    }
+
+    query! {
+        pub fn get_editor_folds(
+            editor_id: ItemId,
+            workspace_id: WorkspaceId
+        ) -> Result<Vec<(usize, usize)>> {
+            SELECT start, end
+            FROM editor_folds
             WHERE editor_id = ?1 AND workspace_id = ?2
         }
     }
@@ -258,6 +311,57 @@ VALUES {placeholders};
                 statement.bind(&editor_id, 1)?;
                 let mut next_index = statement.bind(&workspace_id, 2)?;
                 for (start, end) in selections {
+                    next_index = statement.bind(&start, next_index)?;
+                    next_index = statement.bind(&end, next_index)?;
+                }
+                statement.exec()
+            })
+            .await?;
+        }
+        Ok(())
+    }
+
+    pub async fn save_editor_folds(
+        &self,
+        editor_id: ItemId,
+        workspace_id: WorkspaceId,
+        folds: Vec<(usize, usize)>,
+    ) -> Result<()> {
+        let mut first_fold;
+        let mut last_fold = 0_usize;
+        for (count, placeholders) in std::iter::once("(?1, ?2, ?, ?)")
+            .cycle()
+            .take(folds.len())
+            .chunks(MAX_QUERY_PLACEHOLDERS / 4)
+            .into_iter()
+            .map(|chunk| {
+                let mut count = 0;
+                let placeholders = chunk
+                    .inspect(|_| {
+                        count += 1;
+                    })
+                    .join(", ");
+                (count, placeholders)
+            })
+            .collect::<Vec<_>>()
+        {
+            first_fold = last_fold;
+            last_fold = last_fold + count;
+            let query = format!(
+                r#"
+DELETE FROM editor_folds WHERE editor_id = ?1 AND workspace_id = ?2;
+
+INSERT OR IGNORE INTO editor_folds (editor_id, workspace_id, start, end)
+VALUES {placeholders};
+"#
+            );
+
+            let folds = folds[first_fold..last_fold].to_vec();
+            self.write(move |conn| {
+                let mut statement = Statement::prepare(conn, query)?;
+                statement.bind(&editor_id, 1)?;
+                let mut next_index = statement.bind(&workspace_id, 2)?;
+                for (start, end) in folds {
                     next_index = statement.bind(&start, next_index)?;
                     next_index = statement.bind(&end, next_index)?;
                 }

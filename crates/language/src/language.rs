@@ -11,6 +11,7 @@ mod diagnostic_set;
 mod highlight_map;
 mod language_registry;
 pub mod language_settings;
+mod manifest;
 mod outline;
 pub mod proto;
 mod syntax_map;
@@ -33,6 +34,7 @@ pub use highlight_map::HighlightMap;
 use http_client::HttpClient;
 pub use language_registry::{LanguageName, LoadedLanguage};
 use lsp::{CodeActionKind, InitializeParams, LanguageServerBinary, LanguageServerBinaryOptions};
+pub use manifest::{ManifestName, ManifestProvider, ManifestQuery};
 use parking_lot::Mutex;
 use regex::Regex;
 use schemars::{
@@ -73,8 +75,8 @@ pub use buffer::Operation;
 pub use buffer::*;
 pub use diagnostic_set::{DiagnosticEntry, DiagnosticGroup};
 pub use language_registry::{
-    AvailableLanguage, LanguageNotFound, LanguageQueries, LanguageRegistry,
-    LanguageServerBinaryStatus, QUERY_FILENAME_PREFIXES,
+    AvailableLanguage, BinaryStatus, LanguageNotFound, LanguageQueries, LanguageRegistry,
+    QUERY_FILENAME_PREFIXES,
 };
 pub use lsp::{LanguageServerId, LanguageServerName};
 pub use outline::*;
@@ -163,6 +165,7 @@ pub struct CachedLspAdapter {
     pub adapter: Arc<dyn LspAdapter>,
     pub reinstall_attempt_count: AtomicU64,
     cached_binary: futures::lock::Mutex<Option<LanguageServerBinary>>,
+    manifest_name: OnceLock<Option<ManifestName>>,
     attach_kind: OnceLock<Attach>,
 }
 
@@ -200,6 +203,7 @@ impl CachedLspAdapter {
             cached_binary: Default::default(),
             reinstall_attempt_count: AtomicU64::new(0),
             attach_kind: Default::default(),
+            manifest_name: Default::default(),
         })
     }
 
@@ -261,14 +265,10 @@ impl CachedLspAdapter {
             .cloned()
             .unwrap_or_else(|| language_name.lsp_id())
     }
-    pub fn find_project_root(
-        &self,
-        path: &Path,
-        ancestor_depth: usize,
-        delegate: &Arc<dyn LspAdapterDelegate>,
-    ) -> Option<Arc<Path>> {
-        self.adapter
-            .find_project_root(path, ancestor_depth, delegate)
+    pub fn manifest_name(&self) -> Option<ManifestName> {
+        self.manifest_name
+            .get_or_init(|| self.adapter.manifest_name())
+            .clone()
     }
     pub fn attach_kind(&self) -> Attach {
         *self.attach_kind.get_or_init(|| self.adapter.attach_kind())
@@ -304,7 +304,7 @@ pub trait LspAdapterDelegate: Send + Sync {
     fn worktree_id(&self) -> WorktreeId;
     fn worktree_root_path(&self) -> &Path;
     fn exists(&self, path: &Path, is_dir: Option<bool>) -> bool;
-    fn update_status(&self, language: LanguageServerName, status: LanguageServerBinaryStatus);
+    fn update_status(&self, language: LanguageServerName, status: BinaryStatus);
     async fn language_server_download_dir(&self, name: &LanguageServerName) -> Option<Arc<Path>>;
 
     async fn npm_package_installed_version(
@@ -382,7 +382,7 @@ pub trait LspAdapter: 'static + Send + Sync {
                 } else {
                     delegate.update_status(
                         self.name(),
-                        LanguageServerBinaryStatus::Failed {
+                        BinaryStatus::Failed {
                             error: format!("{error:?}"),
                         },
                     );
@@ -542,18 +542,13 @@ pub trait LspAdapter: 'static + Send + Sync {
     fn prepare_initialize_params(&self, original: InitializeParams) -> Result<InitializeParams> {
         Ok(original)
     }
+
     fn attach_kind(&self) -> Attach {
         Attach::Shared
     }
-    fn find_project_root(
-        &self,
 
-        _path: &Path,
-        _ancestor_depth: usize,
-        _: &Arc<dyn LspAdapterDelegate>,
-    ) -> Option<Arc<Path>> {
-        // By default all language servers are rooted at the root of the worktree.
-        Some(Arc::from("".as_ref()))
+    fn manifest_name(&self) -> Option<ManifestName> {
+        None
     }
 
     /// Method only implemented by the default JSON language server adapter.
@@ -586,7 +581,7 @@ async fn try_fetch_server_binary<L: LspAdapter + 'static + Send + Sync + ?Sized>
 
     let name = adapter.name();
     log::info!("fetching latest version of language server {:?}", name.0);
-    delegate.update_status(name.clone(), LanguageServerBinaryStatus::CheckingForUpdate);
+    delegate.update_status(name.clone(), BinaryStatus::CheckingForUpdate);
 
     let latest_version = adapter
         .fetch_latest_server_version(delegate.as_ref())
@@ -597,16 +592,16 @@ async fn try_fetch_server_binary<L: LspAdapter + 'static + Send + Sync + ?Sized>
         .await
     {
         log::info!("language server {:?} is already installed", name.0);
-        delegate.update_status(name.clone(), LanguageServerBinaryStatus::None);
+        delegate.update_status(name.clone(), BinaryStatus::None);
         Ok(binary)
     } else {
         log::info!("downloading language server {:?}", name.0);
-        delegate.update_status(adapter.name(), LanguageServerBinaryStatus::Downloading);
+        delegate.update_status(adapter.name(), BinaryStatus::Downloading);
         let binary = adapter
             .fetch_server_binary(latest_version, container_dir, delegate.as_ref())
             .await;
 
-        delegate.update_status(name.clone(), LanguageServerBinaryStatus::None);
+        delegate.update_status(name.clone(), BinaryStatus::None);
         binary
     }
 }
@@ -700,6 +695,9 @@ pub struct LanguageConfig {
     /// If configured, this language contains JSX style tags, and should support auto-closing of those tags.
     #[serde(default)]
     pub jsx_tag_auto_close: Option<JsxTagAutoCloseConfig>,
+    /// A list of characters that Zed should treat as word characters for completion queries.
+    #[serde(default)]
+    pub completion_query_characters: HashSet<char>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, Default, JsonSchema)]
@@ -729,6 +727,11 @@ pub struct JsxTagAutoCloseConfig {
     /// The name of the node found within both opening and closing
     /// tags that describes the tag name
     pub tag_name_node_name: String,
+    /// Alternate Node names for tag names.
+    /// Specifically needed as TSX represents the name in `<Foo.Bar>`
+    /// as `member_expression` rather than `identifier` as usual
+    #[serde(default)]
+    pub tag_name_node_name_alternates: Vec<String>,
     /// Some grammars are smart enough to detect a closing tag
     /// that is not valid i.e. doesn't match it's corresponding
     /// opening tag or does not have a corresponding opening tag
@@ -764,6 +767,8 @@ pub struct LanguageConfigOverride {
     pub disabled_bracket_ixs: Vec<u16>,
     #[serde(default)]
     pub word_characters: Override<HashSet<char>>,
+    #[serde(default)]
+    pub completion_query_characters: Override<HashSet<char>>,
     #[serde(default)]
     pub opt_into_language_servers: Vec<LanguageServerName>,
 }
@@ -816,6 +821,7 @@ impl Default for LanguageConfig {
             prettier_parser_name: None,
             hidden: false,
             jsx_tag_auto_close: None,
+            completion_query_characters: Default::default(),
         }
     }
 }
@@ -884,6 +890,12 @@ pub struct BracketPairConfig {
     /// N-th entry in `[Self::disabled_scopes_by_bracket_ix]` contains a list of disabled scopes for an n-th entry in `[Self::pairs]`
     #[serde(skip)]
     pub disabled_scopes_by_bracket_ix: Vec<Vec<String>>,
+}
+
+impl BracketPairConfig {
+    pub fn is_closing_brace(&self, c: char) -> bool {
+        self.pairs.iter().any(|pair| pair.end.starts_with(c))
+    }
 }
 
 fn bracket_pair_config_json_schema(gen: &mut SchemaGenerator) -> Schema {
@@ -1702,6 +1714,16 @@ impl LanguageScope {
         Override::as_option(
             self.config_override().map(|o| &o.word_characters),
             Some(&self.language.config.word_characters),
+        )
+    }
+
+    /// Returns a list of language-specific characters that are considered part of
+    /// a completion query.
+    pub fn completion_query_characters(&self) -> Option<&HashSet<char>> {
+        Override::as_option(
+            self.config_override()
+                .map(|o| &o.completion_query_characters),
+            Some(&self.language.config.completion_query_characters),
         )
     }
 

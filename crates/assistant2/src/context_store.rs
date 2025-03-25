@@ -64,6 +64,7 @@ impl ContextStore {
     pub fn add_file_from_path(
         &mut self,
         project_path: ProjectPath,
+        remove_if_exists: bool,
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
         let workspace = self.workspace.clone();
@@ -75,18 +76,20 @@ impl ContextStore {
             return Task::ready(Err(anyhow!("failed to read project")));
         };
 
-        cx.spawn(|this, mut cx| async move {
-            let open_buffer_task = project.update(&mut cx, |project, cx| {
+        cx.spawn(async move |this, cx| {
+            let open_buffer_task = project.update(cx, |project, cx| {
                 project.open_buffer(project_path.clone(), cx)
             })?;
 
             let buffer_entity = open_buffer_task.await?;
-            let buffer_id = this.update(&mut cx, |_, cx| buffer_entity.read(cx).remote_id())?;
+            let buffer_id = this.update(cx, |_, cx| buffer_entity.read(cx).remote_id())?;
 
-            let already_included = this.update(&mut cx, |this, _cx| {
+            let already_included = this.update(cx, |this, _cx| {
                 match this.will_include_buffer(buffer_id, &project_path.path) {
                     Some(FileInclusion::Direct(context_id)) => {
-                        this.remove_context(context_id);
+                        if remove_if_exists {
+                            this.remove_context(context_id);
+                        }
                         true
                     }
                     Some(FileInclusion::InDirectory(_)) => true,
@@ -98,7 +101,7 @@ impl ContextStore {
                 return anyhow::Ok(());
             }
 
-            let (buffer_info, text_task) = this.update(&mut cx, |_, cx| {
+            let (buffer_info, text_task) = this.update(cx, |_, cx| {
                 let buffer = buffer_entity.read(cx);
                 collect_buffer_info_and_text(
                     project_path.path.clone(),
@@ -110,7 +113,7 @@ impl ContextStore {
 
             let text = text_task.await;
 
-            this.update(&mut cx, |this, _cx| {
+            this.update(cx, |this, _cx| {
                 this.insert_file(make_context_buffer(buffer_info, text));
             })?;
 
@@ -123,8 +126,8 @@ impl ContextStore {
         buffer_entity: Entity<Buffer>,
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
-        cx.spawn(|this, mut cx| async move {
-            let (buffer_info, text_task) = this.update(&mut cx, |_, cx| {
+        cx.spawn(async move |this, cx| {
+            let (buffer_info, text_task) = this.update(cx, |_, cx| {
                 let buffer = buffer_entity.read(cx);
                 let Some(file) = buffer.file() else {
                     return Err(anyhow!("Buffer has no path."));
@@ -139,7 +142,7 @@ impl ContextStore {
 
             let text = text_task.await;
 
-            this.update(&mut cx, |this, _cx| {
+            this.update(cx, |this, _cx| {
                 this.insert_file(make_context_buffer(buffer_info, text))
             })?;
 
@@ -157,6 +160,7 @@ impl ContextStore {
     pub fn add_directory(
         &mut self,
         project_path: ProjectPath,
+        remove_if_exists: bool,
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
         let workspace = self.workspace.clone();
@@ -169,7 +173,9 @@ impl ContextStore {
 
         let already_included = if let Some(context_id) = self.includes_directory(&project_path.path)
         {
-            self.remove_context(context_id);
+            if remove_if_exists {
+                self.remove_context(context_id);
+            }
             true
         } else {
             false
@@ -179,18 +185,18 @@ impl ContextStore {
         }
 
         let worktree_id = project_path.worktree_id;
-        cx.spawn(|this, mut cx| async move {
-            let worktree = project.update(&mut cx, |project, cx| {
+        cx.spawn(async move |this, cx| {
+            let worktree = project.update(cx, |project, cx| {
                 project
                     .worktree_for_id(worktree_id, cx)
                     .ok_or_else(|| anyhow!("no worktree found for {worktree_id:?}"))
             })??;
 
-            let files = worktree.update(&mut cx, |worktree, _cx| {
+            let files = worktree.update(cx, |worktree, _cx| {
                 collect_files_in_path(worktree, &project_path.path)
             })?;
 
-            let open_buffers_task = project.update(&mut cx, |project, cx| {
+            let open_buffers_task = project.update(cx, |project, cx| {
                 let tasks = files.iter().map(|file_path| {
                     project.open_buffer(
                         ProjectPath {
@@ -207,7 +213,7 @@ impl ContextStore {
 
             let mut buffer_infos = Vec::new();
             let mut text_tasks = Vec::new();
-            this.update(&mut cx, |_, cx| {
+            this.update(cx, |_, cx| {
                 for (path, buffer_entity) in files.into_iter().zip(buffers) {
                     // Skip all binary files and other non-UTF8 files
                     if let Ok(buffer_entity) = buffer_entity {
@@ -236,7 +242,7 @@ impl ContextStore {
                 bail!("No text files found in {}", &project_path.path.display());
             }
 
-            this.update(&mut cx, |this, _| {
+            this.update(cx, |this, _| {
                 this.insert_directory(&project_path.path, context_buffers);
             })?;
 
@@ -256,9 +262,16 @@ impl ContextStore {
             )));
     }
 
-    pub fn add_thread(&mut self, thread: Entity<Thread>, cx: &mut Context<Self>) {
+    pub fn add_thread(
+        &mut self,
+        thread: Entity<Thread>,
+        remove_if_exists: bool,
+        cx: &mut Context<Self>,
+    ) {
         if let Some(context_id) = self.includes_thread(&thread.read(cx).id()) {
-            self.remove_context(context_id);
+            if remove_if_exists {
+                self.remove_context(context_id);
+            }
         } else {
             self.insert_thread(thread, cx);
         }
@@ -595,10 +608,10 @@ fn refresh_file_text(
     let id = file_context.id;
     let task = refresh_context_buffer(&file_context.context_buffer, cx);
     if let Some(task) = task {
-        Some(cx.spawn(|mut cx| async move {
+        Some(cx.spawn(async move |cx| {
             let context_buffer = task.await;
             context_store
-                .update(&mut cx, |context_store, _| {
+                .update(cx, |context_store, _| {
                     let new_file_context = FileContext { id, context_buffer };
                     context_store.replace_context(AssistantContext::File(new_file_context));
                 })
@@ -636,10 +649,10 @@ fn refresh_directory_text(
 
     let id = directory_context.snapshot.id;
     let path = directory_context.path.clone();
-    Some(cx.spawn(|mut cx| async move {
+    Some(cx.spawn(async move |cx| {
         let context_buffers = context_buffers.await;
         context_store
-            .update(&mut cx, |context_store, _| {
+            .update(cx, |context_store, _| {
                 let new_directory_context = DirectoryContext::new(id, &path, context_buffers);
                 context_store.replace_context(AssistantContext::Directory(new_directory_context));
             })
@@ -654,9 +667,9 @@ fn refresh_thread_text(
 ) -> Task<()> {
     let id = thread_context.id;
     let thread = thread_context.thread.clone();
-    cx.spawn(move |mut cx| async move {
+    cx.spawn(async move |cx| {
         context_store
-            .update(&mut cx, |context_store, cx| {
+            .update(cx, |context_store, cx| {
                 let text = thread.read(cx).text().into();
                 context_store.replace_context(AssistantContext::Thread(ThreadContext {
                     id,

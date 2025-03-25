@@ -128,7 +128,6 @@ enum GitOperation {
     WriteGitStatuses {
         repo_path: PathBuf,
         statuses: Vec<(PathBuf, FileStatus)>,
-        git_operation: bool,
     },
 }
 
@@ -987,7 +986,6 @@ impl RandomizedTest for ProjectCollaborationTest {
                 GitOperation::WriteGitStatuses {
                     repo_path,
                     statuses,
-                    git_operation,
                 } => {
                     if !client.fs().directories(false).contains(&repo_path) {
                         return Err(TestError::Inapplicable);
@@ -1016,17 +1014,9 @@ impl RandomizedTest for ProjectCollaborationTest {
                         client.fs().create_dir(&dot_git_dir).await?;
                     }
 
-                    if git_operation {
-                        client.fs().set_status_for_repo_via_git_operation(
-                            &dot_git_dir,
-                            statuses.as_slice(),
-                        );
-                    } else {
-                        client.fs().set_status_for_repo_via_working_copy_change(
-                            &dot_git_dir,
-                            statuses.as_slice(),
-                        );
-                    }
+                    client
+                        .fs()
+                        .set_status_for_repo(&dot_git_dir, statuses.as_slice());
                 }
             },
         }
@@ -1053,7 +1043,7 @@ impl RandomizedTest for ProjectCollaborationTest {
                 initializer: Some(Box::new({
                     let fs = client.app_state.fs.clone();
                     move |fake_server: &mut FakeLanguageServer| {
-                        fake_server.handle_request::<lsp::request::Completion, _, _>(
+                        fake_server.set_request_handler::<lsp::request::Completion, _, _>(
                             |_, _| async move {
                                 Ok(Some(lsp::CompletionResponse::Array(vec![
                                     lsp::CompletionItem {
@@ -1072,7 +1062,7 @@ impl RandomizedTest for ProjectCollaborationTest {
                             },
                         );
 
-                        fake_server.handle_request::<lsp::request::CodeActionRequest, _, _>(
+                        fake_server.set_request_handler::<lsp::request::CodeActionRequest, _, _>(
                             |_, _| async move {
                                 Ok(Some(vec![lsp::CodeActionOrCommand::CodeAction(
                                     lsp::CodeAction {
@@ -1083,16 +1073,17 @@ impl RandomizedTest for ProjectCollaborationTest {
                             },
                         );
 
-                        fake_server.handle_request::<lsp::request::PrepareRenameRequest, _, _>(
-                            |params, _| async move {
-                                Ok(Some(lsp::PrepareRenameResponse::Range(lsp::Range::new(
-                                    params.position,
-                                    params.position,
-                                ))))
-                            },
-                        );
+                        fake_server
+                            .set_request_handler::<lsp::request::PrepareRenameRequest, _, _>(
+                                |params, _| async move {
+                                    Ok(Some(lsp::PrepareRenameResponse::Range(lsp::Range::new(
+                                        params.position,
+                                        params.position,
+                                    ))))
+                                },
+                            );
 
-                        fake_server.handle_request::<lsp::request::GotoDefinition, _, _>({
+                        fake_server.set_request_handler::<lsp::request::GotoDefinition, _, _>({
                             let fs = fs.clone();
                             move |_, cx| {
                                 let background = cx.background_executor();
@@ -1117,32 +1108,34 @@ impl RandomizedTest for ProjectCollaborationTest {
                             }
                         });
 
-                        fake_server.handle_request::<lsp::request::DocumentHighlightRequest, _, _>(
-                            move |_, cx| {
-                                let mut highlights = Vec::new();
-                                let background = cx.background_executor();
-                                let mut rng = background.rng();
+                        fake_server
+                            .set_request_handler::<lsp::request::DocumentHighlightRequest, _, _>(
+                                move |_, cx| {
+                                    let mut highlights = Vec::new();
+                                    let background = cx.background_executor();
+                                    let mut rng = background.rng();
 
-                                let highlight_count = rng.gen_range(1..=5);
-                                for _ in 0..highlight_count {
-                                    let start_row = rng.gen_range(0..100);
-                                    let start_column = rng.gen_range(0..100);
-                                    let end_row = rng.gen_range(0..100);
-                                    let end_column = rng.gen_range(0..100);
-                                    let start = PointUtf16::new(start_row, start_column);
-                                    let end = PointUtf16::new(end_row, end_column);
-                                    let range = if start > end { end..start } else { start..end };
-                                    highlights.push(lsp::DocumentHighlight {
-                                        range: range_to_lsp(range.clone()).unwrap(),
-                                        kind: Some(lsp::DocumentHighlightKind::READ),
+                                    let highlight_count = rng.gen_range(1..=5);
+                                    for _ in 0..highlight_count {
+                                        let start_row = rng.gen_range(0..100);
+                                        let start_column = rng.gen_range(0..100);
+                                        let end_row = rng.gen_range(0..100);
+                                        let end_column = rng.gen_range(0..100);
+                                        let start = PointUtf16::new(start_row, start_column);
+                                        let end = PointUtf16::new(end_row, end_column);
+                                        let range =
+                                            if start > end { end..start } else { start..end };
+                                        highlights.push(lsp::DocumentHighlight {
+                                            range: range_to_lsp(range.clone()).unwrap(),
+                                            kind: Some(lsp::DocumentHighlightKind::READ),
+                                        });
+                                    }
+                                    highlights.sort_unstable_by_key(|highlight| {
+                                        (highlight.range.start, highlight.range.end)
                                     });
-                                }
-                                highlights.sort_unstable_by_key(|highlight| {
-                                    (highlight.range.start, highlight.range.end)
-                                });
-                                async move { Ok(Some(highlights)) }
-                            },
-                        );
+                                    async move { Ok(Some(highlights)) }
+                                },
+                            );
                     }
                 })),
                 ..Default::default()
@@ -1337,7 +1330,7 @@ impl RandomizedTest for ProjectCollaborationTest {
 
                     let host_diff_base = host_project.read_with(host_cx, |project, cx| {
                         project
-                            .buffer_store()
+                            .git_store()
                             .read(cx)
                             .get_unstaged_diff(host_buffer.read(cx).remote_id(), cx)
                             .unwrap()
@@ -1346,7 +1339,7 @@ impl RandomizedTest for ProjectCollaborationTest {
                     });
                     let guest_diff_base = guest_project.read_with(client_cx, |project, cx| {
                         project
-                            .buffer_store()
+                            .git_store()
                             .read(cx)
                             .get_unstaged_diff(guest_buffer.read(cx).remote_id(), cx)
                             .unwrap()
@@ -1455,18 +1448,13 @@ fn generate_git_operation(rng: &mut StdRng, client: &TestClient) -> GitOperation
         }
         64..=100 => {
             let file_paths = generate_file_paths(&repo_path, rng, client);
-
             let statuses = file_paths
                 .into_iter()
                 .map(|path| (path, gen_status(rng)))
                 .collect::<Vec<_>>();
-
-            let git_operation = rng.gen::<bool>();
-
             GitOperation::WriteGitStatuses {
                 repo_path,
                 statuses,
-                git_operation,
             }
         }
         _ => unreachable!(),
@@ -1605,15 +1593,24 @@ fn gen_file_name(rng: &mut StdRng) -> String {
 }
 
 fn gen_status(rng: &mut StdRng) -> FileStatus {
-    fn gen_status_code(rng: &mut StdRng) -> StatusCode {
-        match rng.gen_range(0..7) {
-            0 => StatusCode::Modified,
-            1 => StatusCode::TypeChanged,
-            2 => StatusCode::Added,
-            3 => StatusCode::Deleted,
-            4 => StatusCode::Renamed,
-            5 => StatusCode::Copied,
-            6 => StatusCode::Unmodified,
+    fn gen_tracked_status(rng: &mut StdRng) -> TrackedStatus {
+        match rng.gen_range(0..3) {
+            0 => TrackedStatus {
+                index_status: StatusCode::Unmodified,
+                worktree_status: StatusCode::Unmodified,
+            },
+            1 => TrackedStatus {
+                index_status: StatusCode::Modified,
+                worktree_status: StatusCode::Modified,
+            },
+            2 => TrackedStatus {
+                index_status: StatusCode::Added,
+                worktree_status: StatusCode::Modified,
+            },
+            3 => TrackedStatus {
+                index_status: StatusCode::Added,
+                worktree_status: StatusCode::Unmodified,
+            },
             _ => unreachable!(),
         }
     }
@@ -1627,17 +1624,12 @@ fn gen_status(rng: &mut StdRng) -> FileStatus {
         }
     }
 
-    match rng.gen_range(0..4) {
-        0 => FileStatus::Untracked,
-        1 => FileStatus::Ignored,
-        2 => FileStatus::Unmerged(UnmergedStatus {
+    match rng.gen_range(0..2) {
+        0 => FileStatus::Unmerged(UnmergedStatus {
             first_head: gen_unmerged_status_code(rng),
             second_head: gen_unmerged_status_code(rng),
         }),
-        3 => FileStatus::Tracked(TrackedStatus {
-            index_status: gen_status_code(rng),
-            worktree_status: gen_status_code(rng),
-        }),
+        1 => FileStatus::Tracked(gen_tracked_status(rng)),
         _ => unreachable!(),
     }
 }

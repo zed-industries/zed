@@ -5,19 +5,18 @@ mod remote;
 pub mod repository;
 pub mod status;
 
+pub use crate::hosting_provider::*;
+pub use crate::remote::*;
 use anyhow::{anyhow, Context as _, Result};
+pub use git2 as libgit;
 use gpui::action_with_deprecated_aliases;
 use gpui::actions;
+pub use repository::WORK_DIRECTORY_REPO_PATH;
 use serde::{Deserialize, Serialize};
 use std::ffi::OsStr;
 use std::fmt;
 use std::str::FromStr;
 use std::sync::LazyLock;
-
-pub use crate::hosting_provider::*;
-pub use crate::remote::*;
-pub use git2 as libgit;
-pub use repository::WORK_DIRECTORY_REPO_PATH;
 
 pub static DOT_GIT: LazyLock<&'static OsStr> = LazyLock::new(|| OsStr::new(".git"));
 pub static GITIGNORE: LazyLock<&'static OsStr> = LazyLock::new(|| OsStr::new(".gitignore"));

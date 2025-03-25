@@ -1304,8 +1304,8 @@ impl Buffer {
     pub fn reload(&mut self, cx: &Context<Self>) -> oneshot::Receiver<Option<Transaction>> {
         let (tx, rx) = futures::channel::oneshot::channel();
         let prev_version = self.text.version();
-        self.reload_task = Some(cx.spawn(|this, mut cx| async move {
-            let Some((new_mtime, new_text)) = this.update(&mut cx, |this, cx| {
+        self.reload_task = Some(cx.spawn(async move |this, cx| {
+            let Some((new_mtime, new_text)) = this.update(cx, |this, cx| {
                 let file = this.file.as_ref()?.as_local()?;
                 Some((file.disk_state().mtime(), file.load(cx)))
             })?
@@ -1315,9 +1315,9 @@ impl Buffer {
 
             let new_text = new_text.await?;
             let diff = this
-                .update(&mut cx, |this, cx| this.diff(new_text.clone(), cx))?
+                .update(cx, |this, cx| this.diff(new_text.clone(), cx))?
                 .await;
-            this.update(&mut cx, |this, cx| {
+            this.update(cx, |this, cx| {
                 if this.version() == diff.base_version {
                     this.finalize_last_transaction();
                     this.apply_diff(diff, cx);
@@ -1499,9 +1499,9 @@ impl Buffer {
                 self.reparse = None;
             }
             Err(parse_task) => {
-                self.reparse = Some(cx.spawn(move |this, mut cx| async move {
+                self.reparse = Some(cx.spawn(async move |this, cx| {
                     let new_syntax_map = parse_task.await;
-                    this.update(&mut cx, move |this, cx| {
+                    this.update(cx, move |this, cx| {
                         let grammar_changed =
                             this.language.as_ref().map_or(true, |current_language| {
                                 !Arc::ptr_eq(&language, current_language)
@@ -1566,9 +1566,9 @@ impl Buffer {
             {
                 Ok(indent_sizes) => self.apply_autoindents(indent_sizes, cx),
                 Err(indent_sizes) => {
-                    self.pending_autoindent = Some(cx.spawn(|this, mut cx| async move {
+                    self.pending_autoindent = Some(cx.spawn(async move |this, cx| {
                         let indent_sizes = indent_sizes.await;
-                        this.update(&mut cx, |this, cx| {
+                        this.update(cx, |this, cx| {
                             this.apply_autoindents(indent_sizes, cx);
                         })
                         .ok();
@@ -2160,8 +2160,10 @@ impl Buffer {
     {
         // Skip invalid edits and coalesce contiguous ones.
         let mut edits: Vec<(Range<usize>, Arc<str>)> = Vec::new();
+
         for (range, new_text) in edits_iter {
             let mut range = range.start.to_offset(self)..range.end.to_offset(self);
+
             if range.start > range.end {
                 mem::swap(&mut range.start, &mut range.end);
             }
@@ -4727,21 +4729,25 @@ impl CharClassifier {
     }
 
     pub fn kind_with(&self, c: char, ignore_punctuation: bool) -> CharKind {
-        if c.is_whitespace() {
-            return CharKind::Whitespace;
-        } else if c.is_alphanumeric() || c == '_' {
+        if c.is_alphanumeric() || c == '_' {
             return CharKind::Word;
         }
 
         if let Some(scope) = &self.scope {
-            if let Some(characters) = scope.word_characters() {
+            let characters = if self.for_completion {
+                scope.completion_query_characters()
+            } else {
+                scope.word_characters()
+            };
+            if let Some(characters) = characters {
                 if characters.contains(&c) {
-                    if c == '-' && !self.for_completion && !ignore_punctuation {
-                        return CharKind::Punctuation;
-                    }
                     return CharKind::Word;
                 }
             }
+        }
+
+        if c.is_whitespace() {
+            return CharKind::Whitespace;
         }
 
         if ignore_punctuation {

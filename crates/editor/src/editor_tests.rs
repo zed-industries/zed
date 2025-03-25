@@ -2,8 +2,10 @@ use super::*;
 use crate::{
     scroll::scroll_amount::ScrollAmount,
     test::{
-        assert_text_with_selections, build_editor, editor_lsp_test_context::EditorLspTestContext,
-        editor_test_context::EditorTestContext, select_ranges,
+        assert_text_with_selections, build_editor,
+        editor_lsp_test_context::{git_commit_lang, EditorLspTestContext},
+        editor_test_context::EditorTestContext,
+        select_ranges,
     },
     JoinLines,
 };
@@ -25,11 +27,15 @@ use language::{
     Override, Point,
 };
 use language_settings::{Formatter, FormatterList, IndentGuideSettings};
+use lsp::CompletionParams;
 use multi_buffer::{IndentGuide, PathKey};
 use parking_lot::Mutex;
 use pretty_assertions::{assert_eq, assert_ne};
-use project::project_settings::{LspSettings, ProjectSettings};
-use project::FakeFs;
+use project::{
+    debugger::breakpoint_store::{BreakpointKind, SerializedBreakpoint},
+    project_settings::{LspSettings, ProjectSettings},
+    FakeFs,
+};
 use serde_json::{self, json};
 use std::{cell::RefCell, future::Future, rc::Rc, sync::atomic::AtomicBool, time::Instant};
 use std::{
@@ -4743,6 +4749,7 @@ async fn test_hard_wrap(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
     let mut cx = EditorTestContext::new(cx).await;
 
+    cx.update_buffer(|buffer, cx| buffer.set_language(Some(git_commit_lang()), cx));
     cx.update_editor(|editor, _, cx| {
         editor.set_hard_wrap(Some(14), cx);
     });
@@ -4759,6 +4766,69 @@ async fn test_hard_wrap(cx: &mut TestAppContext) {
         "
         one two three
         fourˇ
+        "
+    ));
+
+    cx.update_editor(|editor, window, cx| {
+        editor.newline(&Default::default(), window, cx);
+    });
+    cx.run_until_parked();
+    cx.assert_editor_state(indoc!(
+        "
+        one two three
+        four
+        ˇ
+        "
+    ));
+
+    cx.simulate_input("five");
+    cx.run_until_parked();
+    cx.assert_editor_state(indoc!(
+        "
+        one two three
+        four
+        fiveˇ
+        "
+    ));
+
+    cx.update_editor(|editor, window, cx| {
+        editor.newline(&Default::default(), window, cx);
+    });
+    cx.run_until_parked();
+    cx.simulate_input("# ");
+    cx.run_until_parked();
+    cx.assert_editor_state(indoc!(
+        "
+        one two three
+        four
+        five
+        # ˇ
+        "
+    ));
+
+    cx.update_editor(|editor, window, cx| {
+        editor.newline(&Default::default(), window, cx);
+    });
+    cx.run_until_parked();
+    cx.assert_editor_state(indoc!(
+        "
+        one two three
+        four
+        five
+        #\x20
+        #ˇ
+        "
+    ));
+
+    cx.simulate_input(" 6");
+    cx.run_until_parked();
+    cx.assert_editor_state(indoc!(
+        "
+        one two three
+        four
+        five
+        #
+        # 6ˇ
         "
     ));
 }
@@ -4847,6 +4917,180 @@ async fn test_clipboard(cx: &mut TestAppContext) {
         ˇx jumps over
         fox jumps over
         tˇhe lazy dog"});
+}
+
+#[gpui::test]
+async fn test_copy_trim(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+    cx.set_state(
+        r#"            «for selection in selections.iter() {
+            let mut start = selection.start;
+            let mut end = selection.end;
+            let is_entire_line = selection.is_empty() || self.selections.line_mode;
+            if is_entire_line {
+                start = Point::new(start.row, 0);ˇ»
+                end = cmp::min(max_point, Point::new(end.row + 1, 0));
+            }
+        "#,
+    );
+    cx.update_editor(|e, window, cx| e.copy(&Copy, window, cx));
+    assert_eq!(
+        cx.read_from_clipboard()
+            .and_then(|item| item.text().as_deref().map(str::to_string)),
+        Some(
+            "for selection in selections.iter() {
+            let mut start = selection.start;
+            let mut end = selection.end;
+            let is_entire_line = selection.is_empty() || self.selections.line_mode;
+            if is_entire_line {
+                start = Point::new(start.row, 0);"
+                .to_string()
+        ),
+        "Regular copying preserves all indentation selected",
+    );
+    cx.update_editor(|e, window, cx| e.copy_and_trim(&CopyAndTrim, window, cx));
+    assert_eq!(
+        cx.read_from_clipboard()
+            .and_then(|item| item.text().as_deref().map(str::to_string)),
+        Some(
+            "for selection in selections.iter() {
+let mut start = selection.start;
+let mut end = selection.end;
+let is_entire_line = selection.is_empty() || self.selections.line_mode;
+if is_entire_line {
+    start = Point::new(start.row, 0);"
+                .to_string()
+        ),
+        "Copying with stripping should strip all leading whitespaces"
+    );
+
+    cx.set_state(
+        r#"       «     for selection in selections.iter() {
+            let mut start = selection.start;
+            let mut end = selection.end;
+            let is_entire_line = selection.is_empty() || self.selections.line_mode;
+            if is_entire_line {
+                start = Point::new(start.row, 0);ˇ»
+                end = cmp::min(max_point, Point::new(end.row + 1, 0));
+            }
+        "#,
+    );
+    cx.update_editor(|e, window, cx| e.copy(&Copy, window, cx));
+    assert_eq!(
+        cx.read_from_clipboard()
+            .and_then(|item| item.text().as_deref().map(str::to_string)),
+        Some(
+            "     for selection in selections.iter() {
+            let mut start = selection.start;
+            let mut end = selection.end;
+            let is_entire_line = selection.is_empty() || self.selections.line_mode;
+            if is_entire_line {
+                start = Point::new(start.row, 0);"
+                .to_string()
+        ),
+        "Regular copying preserves all indentation selected",
+    );
+    cx.update_editor(|e, window, cx| e.copy_and_trim(&CopyAndTrim, window, cx));
+    assert_eq!(
+        cx.read_from_clipboard()
+            .and_then(|item| item.text().as_deref().map(str::to_string)),
+        Some(
+            "for selection in selections.iter() {
+let mut start = selection.start;
+let mut end = selection.end;
+let is_entire_line = selection.is_empty() || self.selections.line_mode;
+if is_entire_line {
+    start = Point::new(start.row, 0);"
+                .to_string()
+        ),
+        "Copying with stripping should strip all leading whitespaces, even if some of it was selected"
+    );
+
+    cx.set_state(
+        r#"       «ˇ     for selection in selections.iter() {
+            let mut start = selection.start;
+            let mut end = selection.end;
+            let is_entire_line = selection.is_empty() || self.selections.line_mode;
+            if is_entire_line {
+                start = Point::new(start.row, 0);»
+                end = cmp::min(max_point, Point::new(end.row + 1, 0));
+            }
+        "#,
+    );
+    cx.update_editor(|e, window, cx| e.copy(&Copy, window, cx));
+    assert_eq!(
+        cx.read_from_clipboard()
+            .and_then(|item| item.text().as_deref().map(str::to_string)),
+        Some(
+            "     for selection in selections.iter() {
+            let mut start = selection.start;
+            let mut end = selection.end;
+            let is_entire_line = selection.is_empty() || self.selections.line_mode;
+            if is_entire_line {
+                start = Point::new(start.row, 0);"
+                .to_string()
+        ),
+        "Regular copying for reverse selection works the same",
+    );
+    cx.update_editor(|e, window, cx| e.copy_and_trim(&CopyAndTrim, window, cx));
+    assert_eq!(
+        cx.read_from_clipboard()
+            .and_then(|item| item.text().as_deref().map(str::to_string)),
+        Some(
+            "for selection in selections.iter() {
+let mut start = selection.start;
+let mut end = selection.end;
+let is_entire_line = selection.is_empty() || self.selections.line_mode;
+if is_entire_line {
+    start = Point::new(start.row, 0);"
+                .to_string()
+        ),
+        "Copying with stripping for reverse selection works the same"
+    );
+
+    cx.set_state(
+        r#"            for selection «in selections.iter() {
+            let mut start = selection.start;
+            let mut end = selection.end;
+            let is_entire_line = selection.is_empty() || self.selections.line_mode;
+            if is_entire_line {
+                start = Point::new(start.row, 0);ˇ»
+                end = cmp::min(max_point, Point::new(end.row + 1, 0));
+            }
+        "#,
+    );
+    cx.update_editor(|e, window, cx| e.copy(&Copy, window, cx));
+    assert_eq!(
+        cx.read_from_clipboard()
+            .and_then(|item| item.text().as_deref().map(str::to_string)),
+        Some(
+            "in selections.iter() {
+            let mut start = selection.start;
+            let mut end = selection.end;
+            let is_entire_line = selection.is_empty() || self.selections.line_mode;
+            if is_entire_line {
+                start = Point::new(start.row, 0);"
+                .to_string()
+        ),
+        "When selecting past the indent, the copying works as usual",
+    );
+    cx.update_editor(|e, window, cx| e.copy_and_trim(&CopyAndTrim, window, cx));
+    assert_eq!(
+        cx.read_from_clipboard()
+            .and_then(|item| item.text().as_deref().map(str::to_string)),
+        Some(
+            "in selections.iter() {
+            let mut start = selection.start;
+            let mut end = selection.end;
+            let is_entire_line = selection.is_empty() || self.selections.line_mode;
+            if is_entire_line {
+                start = Point::new(start.row, 0);"
+                .to_string()
+        ),
+        "When selecting past the indent, nothing is trimmed"
+    );
 }
 
 #[gpui::test]
@@ -5790,7 +6034,7 @@ async fn test_select_larger_smaller_syntax_node(cx: &mut TestAppContext) {
                 use mod1::mod2::{mod3, «mod4ˇ»};
 
                 fn fn_1«ˇ(param1: bool, param2: &str)» {
-                    let var1 = "«textˇ»";
+                    let var1 = "«ˇtext»";
                 }
             "#},
             cx,
@@ -5858,7 +6102,7 @@ async fn test_select_larger_smaller_syntax_node(cx: &mut TestAppContext) {
                 use mod1::mod2::{mod3, «mod4ˇ»};
 
                 fn fn_1«ˇ(param1: bool, param2: &str)» {
-                    let var1 = "«textˇ»";
+                    let var1 = "«ˇtext»";
                 }
             "#},
             cx,
@@ -5927,7 +6171,7 @@ async fn test_select_larger_smaller_syntax_node(cx: &mut TestAppContext) {
                 use mod1::mod2::«{mod3, mod4}ˇ»;
 
                 fn fn_1«ˇ(param1: bool, param2: &str)» {
-                    «let var1 = "text";ˇ»
+                    «ˇlet var1 = "text";»
                 }
             "#},
             cx,
@@ -7455,7 +7699,7 @@ async fn test_document_format_during_save(cx: &mut TestAppContext) {
         })
         .unwrap();
     fake_server
-        .handle_request::<lsp::request::Formatting, _, _>(move |params, _| async move {
+        .set_request_handler::<lsp::request::Formatting, _, _>(move |params, _| async move {
             assert_eq!(
                 params.text_document.uri,
                 lsp::Url::from_file_path(path!("/file.rs")).unwrap()
@@ -7483,14 +7727,16 @@ async fn test_document_format_during_save(cx: &mut TestAppContext) {
     assert!(cx.read(|cx| editor.is_dirty(cx)));
 
     // Ensure we can still save even if formatting hangs.
-    fake_server.handle_request::<lsp::request::Formatting, _, _>(move |params, _| async move {
-        assert_eq!(
-            params.text_document.uri,
-            lsp::Url::from_file_path(path!("/file.rs")).unwrap()
-        );
-        futures::future::pending::<()>().await;
-        unreachable!()
-    });
+    fake_server.set_request_handler::<lsp::request::Formatting, _, _>(
+        move |params, _| async move {
+            assert_eq!(
+                params.text_document.uri,
+                lsp::Url::from_file_path(path!("/file.rs")).unwrap()
+            );
+            futures::future::pending::<()>().await;
+            unreachable!()
+        },
+    );
     let save = editor
         .update_in(cx, |editor, window, cx| {
             editor.save(true, project.clone(), window, cx)
@@ -7512,7 +7758,7 @@ async fn test_document_format_during_save(cx: &mut TestAppContext) {
         })
         .unwrap();
     let _pending_format_request = fake_server
-        .handle_request::<lsp::request::RangeFormatting, _, _>(move |_, _| async move {
+        .set_request_handler::<lsp::request::RangeFormatting, _, _>(move |_, _| async move {
             panic!("Should not be invoked on non-dirty buffer");
         })
         .next();
@@ -7540,7 +7786,7 @@ async fn test_document_format_during_save(cx: &mut TestAppContext) {
         })
         .unwrap();
     fake_server
-        .handle_request::<lsp::request::Formatting, _, _>(move |params, _| async move {
+        .set_request_handler::<lsp::request::Formatting, _, _>(move |params, _| async move {
             assert_eq!(
                 params.text_document.uri,
                 lsp::Url::from_file_path(path!("/file.rs")).unwrap()
@@ -7830,7 +8076,7 @@ async fn test_range_format_during_save(cx: &mut TestAppContext) {
         })
         .unwrap();
     fake_server
-        .handle_request::<lsp::request::RangeFormatting, _, _>(move |params, _| async move {
+        .set_request_handler::<lsp::request::RangeFormatting, _, _>(move |params, _| async move {
             assert_eq!(
                 params.text_document.uri,
                 lsp::Url::from_file_path(path!("/file.rs")).unwrap()
@@ -7857,7 +8103,7 @@ async fn test_range_format_during_save(cx: &mut TestAppContext) {
     assert!(cx.read(|cx| editor.is_dirty(cx)));
 
     // Ensure we can still save even if formatting hangs.
-    fake_server.handle_request::<lsp::request::RangeFormatting, _, _>(
+    fake_server.set_request_handler::<lsp::request::RangeFormatting, _, _>(
         move |params, _| async move {
             assert_eq!(
                 params.text_document.uri,
@@ -7888,7 +8134,7 @@ async fn test_range_format_during_save(cx: &mut TestAppContext) {
         })
         .unwrap();
     let _pending_format_request = fake_server
-        .handle_request::<lsp::request::RangeFormatting, _, _>(move |_, _| async move {
+        .set_request_handler::<lsp::request::RangeFormatting, _, _>(move |_, _| async move {
             panic!("Should not be invoked on non-dirty buffer");
         })
         .next();
@@ -7916,7 +8162,7 @@ async fn test_range_format_during_save(cx: &mut TestAppContext) {
         })
         .unwrap();
     fake_server
-        .handle_request::<lsp::request::RangeFormatting, _, _>(move |params, _| async move {
+        .set_request_handler::<lsp::request::RangeFormatting, _, _>(move |params, _| async move {
             assert_eq!(
                 params.text_document.uri,
                 lsp::Url::from_file_path(path!("/file.rs")).unwrap()
@@ -8004,7 +8250,7 @@ async fn test_document_format_manual_trigger(cx: &mut TestAppContext) {
         })
         .unwrap();
     fake_server
-        .handle_request::<lsp::request::Formatting, _, _>(move |params, _| async move {
+        .set_request_handler::<lsp::request::Formatting, _, _>(move |params, _| async move {
             assert_eq!(
                 params.text_document.uri,
                 lsp::Url::from_file_path(path!("/file.rs")).unwrap()
@@ -8028,14 +8274,16 @@ async fn test_document_format_manual_trigger(cx: &mut TestAppContext) {
         editor.set_text("one\ntwo\nthree\n", window, cx)
     });
     // Ensure we don't lock if formatting hangs.
-    fake_server.handle_request::<lsp::request::Formatting, _, _>(move |params, _| async move {
-        assert_eq!(
-            params.text_document.uri,
-            lsp::Url::from_file_path(path!("/file.rs")).unwrap()
-        );
-        futures::future::pending::<()>().await;
-        unreachable!()
-    });
+    fake_server.set_request_handler::<lsp::request::Formatting, _, _>(
+        move |params, _| async move {
+            assert_eq!(
+                params.text_document.uri,
+                lsp::Url::from_file_path(path!("/file.rs")).unwrap()
+            );
+            futures::future::pending::<()>().await;
+            unreachable!()
+        },
+    );
     let format = editor
         .update_in(cx, |editor, window, cx| {
             editor.perform_format(
@@ -8131,7 +8379,7 @@ async fn test_organize_imports_manual_trigger(cx: &mut TestAppContext) {
         })
         .unwrap();
     fake_server
-        .handle_request::<lsp::request::CodeActionRequest, _, _>(move |params, _| async move {
+        .set_request_handler::<lsp::request::CodeActionRequest, _, _>(move |params, _| async move {
             assert_eq!(
                 params.text_document.uri,
                 lsp::Url::from_file_path(path!("/file.ts")).unwrap()
@@ -8178,7 +8426,7 @@ async fn test_organize_imports_manual_trigger(cx: &mut TestAppContext) {
         )
     });
     // Ensure we don't lock if code action hangs.
-    fake_server.handle_request::<lsp::request::CodeActionRequest, _, _>(
+    fake_server.set_request_handler::<lsp::request::CodeActionRequest, _, _>(
         move |params, _| async move {
             assert_eq!(
                 params.text_document.uri,
@@ -8227,7 +8475,7 @@ async fn test_concurrent_format_requests(cx: &mut TestAppContext) {
     // The format request takes a long time. When it completes, it inserts
     // a newline and an indent before the `.`
     cx.lsp
-        .handle_request::<lsp::request::Formatting, _, _>(move |_, cx| {
+        .set_request_handler::<lsp::request::Formatting, _, _>(move |_, cx| {
             let executor = cx.background_executor().clone();
             async move {
                 executor.timer(Duration::from_millis(100)).await;
@@ -8311,44 +8559,51 @@ async fn test_strip_whitespace_and_format_via_lsp(cx: &mut TestAppContext) {
         });
 
     // Handle formatting requests to the language server.
-    cx.lsp.handle_request::<lsp::request::Formatting, _, _>({
-        let buffer_changes = buffer_changes.clone();
-        move |_, _| {
-            // When formatting is requested, trailing whitespace has already been stripped,
-            // and the trailing newline has already been added.
-            assert_eq!(
-                &buffer_changes.lock()[1..],
-                &[
-                    (
-                        lsp::Range::new(lsp::Position::new(0, 3), lsp::Position::new(0, 4)),
-                        "".into()
-                    ),
-                    (
-                        lsp::Range::new(lsp::Position::new(2, 5), lsp::Position::new(2, 6)),
-                        "".into()
-                    ),
-                    (
-                        lsp::Range::new(lsp::Position::new(3, 4), lsp::Position::new(3, 4)),
-                        "\n".into()
-                    ),
-                ]
-            );
+    cx.lsp
+        .set_request_handler::<lsp::request::Formatting, _, _>({
+            let buffer_changes = buffer_changes.clone();
+            move |_, _| {
+                // When formatting is requested, trailing whitespace has already been stripped,
+                // and the trailing newline has already been added.
+                assert_eq!(
+                    &buffer_changes.lock()[1..],
+                    &[
+                        (
+                            lsp::Range::new(lsp::Position::new(0, 3), lsp::Position::new(0, 4)),
+                            "".into()
+                        ),
+                        (
+                            lsp::Range::new(lsp::Position::new(2, 5), lsp::Position::new(2, 6)),
+                            "".into()
+                        ),
+                        (
+                            lsp::Range::new(lsp::Position::new(3, 4), lsp::Position::new(3, 4)),
+                            "\n".into()
+                        ),
+                    ]
+                );
 
-            // Insert blank lines between each line of the buffer.
-            async move {
-                Ok(Some(vec![
-                    lsp::TextEdit {
-                        range: lsp::Range::new(lsp::Position::new(1, 0), lsp::Position::new(1, 0)),
-                        new_text: "\n".into(),
-                    },
-                    lsp::TextEdit {
-                        range: lsp::Range::new(lsp::Position::new(2, 0), lsp::Position::new(2, 0)),
-                        new_text: "\n".into(),
-                    },
-                ]))
+                // Insert blank lines between each line of the buffer.
+                async move {
+                    Ok(Some(vec![
+                        lsp::TextEdit {
+                            range: lsp::Range::new(
+                                lsp::Position::new(1, 0),
+                                lsp::Position::new(1, 0),
+                            ),
+                            new_text: "\n".into(),
+                        },
+                        lsp::TextEdit {
+                            range: lsp::Range::new(
+                                lsp::Position::new(2, 0),
+                                lsp::Position::new(2, 0),
+                            ),
+                            new_text: "\n".into(),
+                        },
+                    ]))
+                }
             }
-        }
-    });
+        });
 
     // After formatting the buffer, the trailing whitespace is stripped,
     // a newline is appended, and the edits provided by the language server
@@ -9182,9 +9437,7 @@ async fn test_completion(cx: &mut TestAppContext) {
     cx.set_state("editorˇ");
     cx.simulate_keystroke(".");
     assert!(cx.editor(|e, _, _| e.context_menu.borrow_mut().is_none()));
-    cx.simulate_keystroke("c");
-    cx.simulate_keystroke("l");
-    cx.simulate_keystroke("o");
+    cx.simulate_keystrokes("c l o");
     cx.assert_editor_state("editor.cloˇ");
     assert!(cx.editor(|e, _, _| e.context_menu.borrow_mut().is_none()));
     cx.update_editor(|editor, window, cx| {
@@ -9212,7 +9465,7 @@ async fn test_completion(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-async fn test_words_completion(cx: &mut TestAppContext) {
+async fn test_word_completion(cx: &mut TestAppContext) {
     let lsp_fetch_timeout_ms = 10;
     init_test(cx, |language_settings| {
         language_settings.defaults.completions = Some(CompletionSettings {
@@ -9243,6 +9496,7 @@ async fn test_words_completion(cx: &mut TestAppContext) {
             .server
             .on_request::<lsp::request::Completion, _, _>(move |_, cx| {
                 let lsp_throttle_completions = lsp_throttle_completions.clone();
+                let cx = cx.clone();
                 async move {
                     if lsp_throttle_completions.load(atomic::Ordering::Acquire) {
                         cx.background_executor()
@@ -9354,7 +9608,7 @@ async fn test_word_completions_do_not_duplicate_lsp_ones(cx: &mut TestAppContext
     cx.executor().run_until_parked();
     cx.condition(|editor, _| editor.context_menu_visible())
         .await;
-    cx.update_editor(|editor, window, cx| {
+    cx.update_editor(|editor, _, _| {
         if let Some(CodeContextMenu::Completions(menu)) = editor.context_menu.borrow_mut().as_ref()
         {
             assert_eq!(
@@ -9365,7 +9619,78 @@ async fn test_word_completions_do_not_duplicate_lsp_ones(cx: &mut TestAppContext
         } else {
             panic!("expected completion menu to be open");
         }
-        editor.cancel(&Cancel, window, cx);
+    });
+}
+
+#[gpui::test]
+async fn test_word_completions_continue_on_typing(cx: &mut TestAppContext) {
+    init_test(cx, |language_settings| {
+        language_settings.defaults.completions = Some(CompletionSettings {
+            words: WordsCompletionMode::Disabled,
+            lsp: true,
+            lsp_fetch_timeout_ms: 0,
+        });
+    });
+
+    let mut cx = EditorLspTestContext::new_rust(
+        lsp::ServerCapabilities {
+            completion_provider: Some(lsp::CompletionOptions {
+                trigger_characters: Some(vec![".".to_string(), ":".to_string()]),
+                ..lsp::CompletionOptions::default()
+            }),
+            signature_help_provider: Some(lsp::SignatureHelpOptions::default()),
+            ..lsp::ServerCapabilities::default()
+        },
+        cx,
+    )
+    .await;
+
+    let _completion_requests_handler =
+        cx.lsp
+            .server
+            .on_request::<lsp::request::Completion, _, _>(move |_, _| async move {
+                panic!("LSP completions should not be queried when dealing with word completions")
+            });
+
+    cx.set_state(indoc! {"ˇ
+        first
+        last
+        second
+    "});
+    cx.update_editor(|editor, window, cx| {
+        editor.show_word_completions(&ShowWordCompletions, window, cx);
+    });
+    cx.executor().run_until_parked();
+    cx.condition(|editor, _| editor.context_menu_visible())
+        .await;
+    cx.update_editor(|editor, _, _| {
+        if let Some(CodeContextMenu::Completions(menu)) = editor.context_menu.borrow_mut().as_ref()
+        {
+            assert_eq!(
+                completion_menu_entries(&menu),
+                &["first", "last", "second"],
+                "`ShowWordCompletions` action should show word completions"
+            );
+        } else {
+            panic!("expected completion menu to be open");
+        }
+    });
+
+    cx.simulate_keystroke("l");
+    cx.executor().run_until_parked();
+    cx.condition(|editor, _| editor.context_menu_visible())
+        .await;
+    cx.update_editor(|editor, _, _| {
+        if let Some(CodeContextMenu::Completions(menu)) = editor.context_menu.borrow_mut().as_ref()
+        {
+            assert_eq!(
+                completion_menu_entries(&menu),
+                &["last"],
+                "After showing word completions, further editing should filter them and not query the LSP"
+            );
+        } else {
+            panic!("expected completion menu to be open");
+        }
     });
 }
 
@@ -9428,6 +9753,20 @@ async fn test_word_completions_usually_skip_digits(cx: &mut TestAppContext) {
             panic!("expected completion menu to be open");
         }
     });
+}
+
+fn gen_text_edit(params: &CompletionParams, text: &str) -> Option<lsp::CompletionTextEdit> {
+    let position = || lsp::Position {
+        line: params.text_document_position.position.line,
+        character: params.text_document_position.position.character,
+    };
+    Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
+        range: lsp::Range {
+            start: position(),
+            end: position(),
+        },
+        new_text: text.to_string(),
+    }))
 }
 
 #[gpui::test]
@@ -9524,42 +9863,18 @@ async fn test_multiline_completion(cx: &mut TestAppContext) {
     let multiline_description = "d\ne\nf\n";
     let multiline_detail_2 = "g\nh\ni\n";
 
-    let mut completion_handle =
-        fake_server.handle_request::<lsp::request::Completion, _, _>(move |params, _| async move {
+    let mut completion_handle = fake_server.set_request_handler::<lsp::request::Completion, _, _>(
+        move |params, _| async move {
             Ok(Some(lsp::CompletionResponse::Array(vec![
                 lsp::CompletionItem {
                     label: multiline_label.to_string(),
-                    text_edit: Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
-                        range: lsp::Range {
-                            start: lsp::Position {
-                                line: params.text_document_position.position.line,
-                                character: params.text_document_position.position.character,
-                            },
-                            end: lsp::Position {
-                                line: params.text_document_position.position.line,
-                                character: params.text_document_position.position.character,
-                            },
-                        },
-                        new_text: "new_text_1".to_string(),
-                    })),
+                    text_edit: gen_text_edit(&params, "new_text_1"),
                     ..lsp::CompletionItem::default()
                 },
                 lsp::CompletionItem {
                     label: "single line label 1".to_string(),
                     detail: Some(multiline_detail.to_string()),
-                    text_edit: Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
-                        range: lsp::Range {
-                            start: lsp::Position {
-                                line: params.text_document_position.position.line,
-                                character: params.text_document_position.position.character,
-                            },
-                            end: lsp::Position {
-                                line: params.text_document_position.position.line,
-                                character: params.text_document_position.position.character,
-                            },
-                        },
-                        new_text: "new_text_2".to_string(),
-                    })),
+                    text_edit: gen_text_edit(&params, "new_text_2"),
                     ..lsp::CompletionItem::default()
                 },
                 lsp::CompletionItem {
@@ -9568,37 +9883,13 @@ async fn test_multiline_completion(cx: &mut TestAppContext) {
                         description: Some(multiline_description.to_string()),
                         detail: None,
                     }),
-                    text_edit: Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
-                        range: lsp::Range {
-                            start: lsp::Position {
-                                line: params.text_document_position.position.line,
-                                character: params.text_document_position.position.character,
-                            },
-                            end: lsp::Position {
-                                line: params.text_document_position.position.line,
-                                character: params.text_document_position.position.character,
-                            },
-                        },
-                        new_text: "new_text_2".to_string(),
-                    })),
+                    text_edit: gen_text_edit(&params, "new_text_2"),
                     ..lsp::CompletionItem::default()
                 },
                 lsp::CompletionItem {
                     label: multiline_label_2.to_string(),
                     detail: Some(multiline_detail_2.to_string()),
-                    text_edit: Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
-                        range: lsp::Range {
-                            start: lsp::Position {
-                                line: params.text_document_position.position.line,
-                                character: params.text_document_position.position.character,
-                            },
-                            end: lsp::Position {
-                                line: params.text_document_position.position.line,
-                                character: params.text_document_position.position.character,
-                            },
-                        },
-                        new_text: "new_text_3".to_string(),
-                    })),
+                    text_edit: gen_text_edit(&params, "new_text_3"),
                     ..lsp::CompletionItem::default()
                 },
                 lsp::CompletionItem {
@@ -9606,23 +9897,12 @@ async fn test_multiline_completion(cx: &mut TestAppContext) {
                     detail: Some(
                         "Details with many     spaces and \t but without newlines".to_string(),
                     ),
-                    text_edit: Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
-                        range: lsp::Range {
-                            start: lsp::Position {
-                                line: params.text_document_position.position.line,
-                                character: params.text_document_position.position.character,
-                            },
-                            end: lsp::Position {
-                                line: params.text_document_position.position.line,
-                                character: params.text_document_position.position.character,
-                            },
-                        },
-                        new_text: "new_text_4".to_string(),
-                    })),
+                    text_edit: gen_text_edit(&params, "new_text_4"),
                     ..lsp::CompletionItem::default()
                 },
             ])))
-        });
+        },
+    );
 
     editor.update_in(cx, |editor, window, cx| {
         cx.focus_self(window);
@@ -9664,7 +9944,6 @@ async fn test_multiline_completion(cx: &mut TestAppContext) {
                         "Adjusted completion items should still keep their filter ranges for the entire label. Item: {completion:?}"
                     );
                 }
-
         } else {
             panic!("expected completion menu to be open");
         }
@@ -9686,7 +9965,7 @@ async fn test_completion_page_up_down_keys(cx: &mut TestAppContext) {
     )
     .await;
     cx.lsp
-        .handle_request::<lsp::request::Completion, _, _>(move |_, _| async move {
+        .set_request_handler::<lsp::request::Completion, _, _>(move |_, _| async move {
             Ok(Some(lsp::CompletionResponse::Array(vec![
                 lsp::CompletionItem {
                     label: "first".into(),
@@ -9753,7 +10032,7 @@ async fn test_completion_sort(cx: &mut TestAppContext) {
     )
     .await;
     cx.lsp
-        .handle_request::<lsp::request::Completion, _, _>(move |_, _| async move {
+        .set_request_handler::<lsp::request::Completion, _, _>(move |_, _| async move {
             Ok(Some(lsp::CompletionResponse::Array(vec![
                 lsp::CompletionItem {
                     label: "Range".into(),
@@ -9825,7 +10104,7 @@ async fn test_no_duplicated_completion_requests(cx: &mut TestAppContext) {
     )
     .await;
 
-    cx.set_state(indoc! {"fn main() { let a = 2ˇ; }"});
+    cx.set_state("fn main() { let a = 2ˇ; }");
     cx.simulate_keystroke(".");
     let completion_item = lsp::CompletionItem {
         label: "Some".into(),
@@ -9871,7 +10150,7 @@ async fn test_no_duplicated_completion_requests(cx: &mut TestAppContext) {
     let closure_completion_item = completion_item.clone();
     let counter = Arc::new(AtomicUsize::new(0));
     let counter_clone = counter.clone();
-    let mut request = cx.handle_request::<lsp::request::Completion, _, _>(move |_, _, _| {
+    let mut request = cx.set_request_handler::<lsp::request::Completion, _, _>(move |_, _, _| {
         let task_completion_item = closure_completion_item.clone();
         counter_clone.fetch_add(1, atomic::Ordering::Release);
         async move {
@@ -9883,16 +10162,14 @@ async fn test_no_duplicated_completion_requests(cx: &mut TestAppContext) {
 
     cx.condition(|editor, _| editor.context_menu_visible())
         .await;
-    cx.assert_editor_state(indoc! {"fn main() { let a = 2.ˇ; }"});
+    cx.assert_editor_state("fn main() { let a = 2.ˇ; }");
     assert!(request.next().await.is_some());
     assert_eq!(counter.load(atomic::Ordering::Acquire), 1);
 
-    cx.simulate_keystroke("S");
-    cx.simulate_keystroke("o");
-    cx.simulate_keystroke("m");
+    cx.simulate_keystrokes("S o m");
     cx.condition(|editor, _| editor.context_menu_visible())
         .await;
-    cx.assert_editor_state(indoc! {"fn main() { let a = 2.Somˇ; }"});
+    cx.assert_editor_state("fn main() { let a = 2.Somˇ; }");
     assert!(request.next().await.is_some());
     assert!(request.next().await.is_some());
     assert!(request.next().await.is_some());
@@ -11853,6 +12130,7 @@ async fn test_move_to_enclosing_bracket(cx: &mut TestAppContext) {
         cx.update_editor(|editor, window, cx| {
             editor.move_to_enclosing_bracket(&MoveToEnclosingBracket, window, cx)
         });
+        cx.run_until_parked();
         cx.assert_editor_state(after);
     };
 
@@ -11975,21 +12253,23 @@ async fn test_on_type_formatting_not_triggered(cx: &mut TestAppContext) {
     cx.executor().start_waiting();
     let fake_server = fake_servers.next().await.unwrap();
 
-    fake_server.handle_request::<lsp::request::OnTypeFormatting, _, _>(|params, _| async move {
-        assert_eq!(
-            params.text_document_position.text_document.uri,
-            lsp::Url::from_file_path(path!("/a/main.rs")).unwrap(),
-        );
-        assert_eq!(
-            params.text_document_position.position,
-            lsp::Position::new(0, 21),
-        );
+    fake_server.set_request_handler::<lsp::request::OnTypeFormatting, _, _>(
+        |params, _| async move {
+            assert_eq!(
+                params.text_document_position.text_document.uri,
+                lsp::Url::from_file_path(path!("/a/main.rs")).unwrap(),
+            );
+            assert_eq!(
+                params.text_document_position.position,
+                lsp::Position::new(0, 21),
+            );
 
-        Ok(Some(vec![lsp::TextEdit {
-            new_text: "]".to_string(),
-            range: lsp::Range::new(lsp::Position::new(0, 22), lsp::Position::new(0, 22)),
-        }]))
-    });
+            Ok(Some(vec![lsp::TextEdit {
+                new_text: "]".to_string(),
+                range: lsp::Range::new(lsp::Position::new(0, 22), lsp::Position::new(0, 22)),
+            }]))
+        },
+    );
 
     editor_handle.update_in(cx, |editor, window, cx| {
         window.focus(&editor.focus_handle(cx));
@@ -12052,7 +12332,7 @@ async fn test_language_server_restart_due_to_settings_change(cx: &mut TestAppCon
             })),
             initializer: Some(Box::new(move |fake_server| {
                 let task_restarts = Arc::clone(&closure_restarts);
-                fake_server.handle_request::<lsp::request::Shutdown, _, _>(move |_, _| {
+                fake_server.set_request_handler::<lsp::request::Shutdown, _, _>(move |_, _| {
                     task_restarts.fetch_add(1, atomic::Ordering::Release);
                     futures::future::ready(Ok(()))
                 });
@@ -12177,7 +12457,7 @@ async fn test_completions_with_additional_edits(cx: &mut TestAppContext) {
     )
     .await;
 
-    cx.set_state(indoc! {"fn main() { let a = 2ˇ; }"});
+    cx.set_state("fn main() { let a = 2ˇ; }");
     cx.simulate_keystroke(".");
     let completion_item = lsp::CompletionItem {
         label: "some".into(),
@@ -12221,7 +12501,7 @@ async fn test_completions_with_additional_edits(cx: &mut TestAppContext) {
     };
 
     let closure_completion_item = completion_item.clone();
-    let mut request = cx.handle_request::<lsp::request::Completion, _, _>(move |_, _, _| {
+    let mut request = cx.set_request_handler::<lsp::request::Completion, _, _>(move |_, _, _| {
         let task_completion_item = closure_completion_item.clone();
         async move {
             Ok(Some(lsp::CompletionResponse::Array(vec![
@@ -12239,9 +12519,9 @@ async fn test_completions_with_additional_edits(cx: &mut TestAppContext) {
             .confirm_completion(&ConfirmCompletion::default(), window, cx)
             .unwrap()
     });
-    cx.assert_editor_state(indoc! {"fn main() { let a = 2.Some(2)ˇ; }"});
+    cx.assert_editor_state("fn main() { let a = 2.Some(2)ˇ; }");
 
-    cx.handle_request::<lsp::request::ResolveCompletionItem, _, _>(move |_, _, _| {
+    cx.set_request_handler::<lsp::request::ResolveCompletionItem, _, _>(move |_, _, _| {
         let task_completion_item = completion_item.clone();
         async move { Ok(task_completion_item) }
     })
@@ -12249,7 +12529,7 @@ async fn test_completions_with_additional_edits(cx: &mut TestAppContext) {
     .await
     .unwrap();
     apply_additional_edits.await.unwrap();
-    cx.assert_editor_state(indoc! {"fn main() { let a = Some(2)ˇ; }"});
+    cx.assert_editor_state("fn main() { let a = Some(2)ˇ; }");
 }
 
 #[gpui::test]
@@ -12269,7 +12549,7 @@ async fn test_completions_resolve_updates_labels_if_filter_text_matches(cx: &mut
     )
     .await;
 
-    cx.set_state(indoc! {"fn main() { let a = 2ˇ; }"});
+    cx.set_state("fn main() { let a = 2ˇ; }");
     cx.simulate_keystroke(".");
 
     let item1 = lsp::CompletionItem {
@@ -12297,7 +12577,7 @@ async fn test_completions_resolve_updates_labels_if_filter_text_matches(cx: &mut
     };
 
     let item1 = item1.clone();
-    cx.handle_request::<lsp::request::Completion, _, _>({
+    cx.set_request_handler::<lsp::request::Completion, _, _>({
         let item1 = item1.clone();
         move |_, _, _| {
             let item1 = item1.clone();
@@ -12330,7 +12610,7 @@ async fn test_completions_resolve_updates_labels_if_filter_text_matches(cx: &mut
         }
     });
 
-    cx.handle_request::<lsp::request::ResolveCompletionItem, _, _>({
+    cx.set_request_handler::<lsp::request::ResolveCompletionItem, _, _>({
         let item1 = item1.clone();
         move |_, item_to_resolve, _| {
             let item1 = item1.clone();
@@ -12404,7 +12684,7 @@ async fn test_completions_resolve_happens_once(cx: &mut TestAppContext) {
     )
     .await;
 
-    cx.set_state(indoc! {"fn main() { let a = 2ˇ; }"});
+    cx.set_state("fn main() { let a = 2ˇ; }");
     cx.simulate_keystroke(".");
 
     let unresolved_item_1 = lsp::CompletionItem {
@@ -12477,7 +12757,7 @@ async fn test_completions_resolve_happens_once(cx: &mut TestAppContext) {
         })
         .detach();
 
-    cx.handle_request::<lsp::request::Completion, _, _>(move |_, _, _| {
+    cx.set_request_handler::<lsp::request::Completion, _, _>(move |_, _, _| {
         let unresolved_item_1 = unresolved_item_1.clone();
         let unresolved_item_2 = unresolved_item_2.clone();
         async move {
@@ -12608,13 +12888,13 @@ async fn test_completions_default_resolve_data_handling(cx: &mut TestAppContext)
     )
     .await;
 
-    cx.set_state(indoc! {"fn main() { let a = 2ˇ; }"});
+    cx.set_state("fn main() { let a = 2ˇ; }");
     cx.simulate_keystroke(".");
 
     let completion_data = default_data.clone();
     let completion_characters = default_commit_characters.clone();
     let completion_items = items.clone();
-    cx.handle_request::<lsp::request::Completion, _, _>(move |_, _, _| {
+    cx.set_request_handler::<lsp::request::Completion, _, _>(move |_, _, _| {
         let default_data = completion_data.clone();
         let default_commit_characters = completion_characters.clone();
         let items = completion_items.clone();
@@ -12729,7 +13009,7 @@ async fn test_completions_in_languages_with_extra_word_characters(cx: &mut TestA
                 overrides: [(
                     "element".into(),
                     LanguageConfigOverride {
-                        word_characters: Override::Set(['-'].into_iter().collect()),
+                        completion_query_characters: Override::Set(['-'].into_iter().collect()),
                         ..Default::default()
                     },
                 )]
@@ -12753,7 +13033,7 @@ async fn test_completions_in_languages_with_extra_word_characters(cx: &mut TestA
     .await;
 
     cx.lsp
-        .handle_request::<lsp::request::Completion, _, _>(move |_, _| async move {
+        .set_request_handler::<lsp::request::Completion, _, _>(move |_, _| async move {
             Ok(Some(lsp::CompletionResponse::Array(vec![
                 lsp::CompletionItem {
                     label: "bg-blue".into(),
@@ -16042,26 +16322,31 @@ async fn test_goto_definition_with_find_all_references_fallback(cx: &mut TestApp
     .await;
 
     let set_up_lsp_handlers = |empty_go_to_definition: bool, cx: &mut EditorLspTestContext| {
-        let go_to_definition = cx.lsp.handle_request::<lsp::request::GotoDefinition, _, _>(
-            move |params, _| async move {
-                if empty_go_to_definition {
-                    Ok(None)
-                } else {
-                    Ok(Some(lsp::GotoDefinitionResponse::Scalar(lsp::Location {
-                        uri: params.text_document_position_params.text_document.uri,
-                        range: lsp::Range::new(lsp::Position::new(4, 3), lsp::Position::new(4, 6)),
-                    })))
-                }
-            },
-        );
-        let references =
-            cx.lsp
-                .handle_request::<lsp::request::References, _, _>(move |params, _| async move {
-                    Ok(Some(vec![lsp::Location {
-                        uri: params.text_document_position.text_document.uri,
-                        range: lsp::Range::new(lsp::Position::new(0, 8), lsp::Position::new(0, 11)),
-                    }]))
-                });
+        let go_to_definition = cx
+            .lsp
+            .set_request_handler::<lsp::request::GotoDefinition, _, _>(
+                move |params, _| async move {
+                    if empty_go_to_definition {
+                        Ok(None)
+                    } else {
+                        Ok(Some(lsp::GotoDefinitionResponse::Scalar(lsp::Location {
+                            uri: params.text_document_position_params.text_document.uri,
+                            range: lsp::Range::new(
+                                lsp::Position::new(4, 3),
+                                lsp::Position::new(4, 6),
+                            ),
+                        })))
+                    }
+                },
+            );
+        let references = cx
+            .lsp
+            .set_request_handler::<lsp::request::References, _, _>(move |params, _| async move {
+                Ok(Some(vec![lsp::Location {
+                    uri: params.text_document_position.text_document.uri,
+                    range: lsp::Range::new(lsp::Position::new(0, 8), lsp::Position::new(0, 11)),
+                }]))
+            });
         (go_to_definition, references)
     };
 
@@ -17040,6 +17325,337 @@ async fn assert_highlighted_edits(
     });
 }
 
+#[track_caller]
+fn assert_breakpoint(
+    breakpoints: &BTreeMap<Arc<Path>, Vec<SerializedBreakpoint>>,
+    path: &Arc<Path>,
+    expected: Vec<(u32, BreakpointKind)>,
+) {
+    if expected.len() == 0usize {
+        assert!(!breakpoints.contains_key(path));
+    } else {
+        let mut breakpoint = breakpoints
+            .get(path)
+            .unwrap()
+            .into_iter()
+            .map(|breakpoint| (breakpoint.position, breakpoint.kind.clone()))
+            .collect::<Vec<_>>();
+
+        breakpoint.sort_by_key(|(cached_position, _)| *cached_position);
+
+        assert_eq!(expected, breakpoint);
+    }
+}
+
+fn add_log_breakpoint_at_cursor(
+    editor: &mut Editor,
+    log_message: &str,
+    window: &mut Window,
+    cx: &mut Context<Editor>,
+) {
+    let (anchor, bp) = editor
+        .breakpoint_at_cursor_head(window, cx)
+        .unwrap_or_else(|| {
+            let cursor_position: Point = editor.selections.newest(cx).head();
+
+            let breakpoint_position = editor
+                .snapshot(window, cx)
+                .display_snapshot
+                .buffer_snapshot
+                .anchor_before(Point::new(cursor_position.row, 0));
+
+            let kind = BreakpointKind::Log(Arc::from(log_message));
+
+            (breakpoint_position, Breakpoint { kind })
+        });
+
+    editor.edit_breakpoint_at_anchor(
+        anchor,
+        bp.kind,
+        BreakpointEditAction::EditLogMessage(log_message.into()),
+        cx,
+    );
+}
+
+#[gpui::test]
+async fn test_breakpoint_toggling(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let sample_text = "First line\nSecond line\nThird line\nFourth line".to_string();
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/a"),
+        json!({
+            "main.rs": sample_text,
+        }),
+    )
+    .await;
+    let project = Project::test(fs, [path!("/a").as_ref()], cx).await;
+    let workspace = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+    let cx = &mut VisualTestContext::from_window(*workspace.deref(), cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/a"),
+        json!({
+            "main.rs": sample_text,
+        }),
+    )
+    .await;
+    let project = Project::test(fs, [path!("/a").as_ref()], cx).await;
+    let workspace = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+    let cx = &mut VisualTestContext::from_window(*workspace.deref(), cx);
+    let worktree_id = workspace
+        .update(cx, |workspace, _window, cx| {
+            workspace.project().update(cx, |project, cx| {
+                project.worktrees(cx).next().unwrap().read(cx).id()
+            })
+        })
+        .unwrap();
+
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_buffer((worktree_id, "main.rs"), cx)
+        })
+        .await
+        .unwrap();
+
+    let (editor, cx) = cx.add_window_view(|window, cx| {
+        Editor::new(
+            EditorMode::Full,
+            MultiBuffer::build_from_buffer(buffer, cx),
+            Some(project.clone()),
+            window,
+            cx,
+        )
+    });
+
+    let project_path = editor.update(cx, |editor, cx| editor.project_path(cx).unwrap());
+    let abs_path = project.read_with(cx, |project, cx| {
+        project
+            .absolute_path(&project_path, cx)
+            .map(|path_buf| Arc::from(path_buf.to_owned()))
+            .unwrap()
+    });
+
+    // assert we can add breakpoint on the first line
+    editor.update_in(cx, |editor, window, cx| {
+        editor.toggle_breakpoint(&actions::ToggleBreakpoint, window, cx);
+        editor.move_to_end(&MoveToEnd, window, cx);
+        editor.toggle_breakpoint(&actions::ToggleBreakpoint, window, cx);
+    });
+
+    let breakpoints = editor.update(cx, |editor, cx| {
+        editor
+            .breakpoint_store()
+            .as_ref()
+            .unwrap()
+            .read(cx)
+            .all_breakpoints(cx)
+            .clone()
+    });
+
+    assert_eq!(1, breakpoints.len());
+    assert_breakpoint(
+        &breakpoints,
+        &abs_path,
+        vec![(0, BreakpointKind::Standard), (3, BreakpointKind::Standard)],
+    );
+
+    editor.update_in(cx, |editor, window, cx| {
+        editor.move_to_beginning(&MoveToBeginning, window, cx);
+        editor.toggle_breakpoint(&actions::ToggleBreakpoint, window, cx);
+    });
+
+    let breakpoints = editor.update(cx, |editor, cx| {
+        editor
+            .breakpoint_store()
+            .as_ref()
+            .unwrap()
+            .read(cx)
+            .all_breakpoints(cx)
+            .clone()
+    });
+
+    assert_eq!(1, breakpoints.len());
+    assert_breakpoint(&breakpoints, &abs_path, vec![(3, BreakpointKind::Standard)]);
+
+    editor.update_in(cx, |editor, window, cx| {
+        editor.move_to_end(&MoveToEnd, window, cx);
+        editor.toggle_breakpoint(&actions::ToggleBreakpoint, window, cx);
+    });
+
+    let breakpoints = editor.update(cx, |editor, cx| {
+        editor
+            .breakpoint_store()
+            .as_ref()
+            .unwrap()
+            .read(cx)
+            .all_breakpoints(cx)
+            .clone()
+    });
+
+    assert_eq!(0, breakpoints.len());
+    assert_breakpoint(&breakpoints, &abs_path, vec![]);
+}
+
+#[gpui::test]
+async fn test_log_breakpoint_editing(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let sample_text = "First line\nSecond line\nThird line\nFourth line".to_string();
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/a"),
+        json!({
+            "main.rs": sample_text,
+        }),
+    )
+    .await;
+    let project = Project::test(fs, [path!("/a").as_ref()], cx).await;
+    let (workspace, cx) =
+        cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+
+    let worktree_id = workspace.update(cx, |workspace, cx| {
+        workspace.project().update(cx, |project, cx| {
+            project.worktrees(cx).next().unwrap().read(cx).id()
+        })
+    });
+
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_buffer((worktree_id, "main.rs"), cx)
+        })
+        .await
+        .unwrap();
+
+    let (editor, cx) = cx.add_window_view(|window, cx| {
+        Editor::new(
+            EditorMode::Full,
+            MultiBuffer::build_from_buffer(buffer, cx),
+            Some(project.clone()),
+            window,
+            cx,
+        )
+    });
+
+    let project_path = editor.update(cx, |editor, cx| editor.project_path(cx).unwrap());
+    let abs_path = project.read_with(cx, |project, cx| {
+        project
+            .absolute_path(&project_path, cx)
+            .map(|path_buf| Arc::from(path_buf.to_owned()))
+            .unwrap()
+    });
+
+    editor.update_in(cx, |editor, window, cx| {
+        add_log_breakpoint_at_cursor(editor, "hello world", window, cx);
+    });
+
+    let breakpoints = editor.update(cx, |editor, cx| {
+        editor
+            .breakpoint_store()
+            .as_ref()
+            .unwrap()
+            .read(cx)
+            .all_breakpoints(cx)
+            .clone()
+    });
+
+    assert_breakpoint(
+        &breakpoints,
+        &abs_path,
+        vec![(0, BreakpointKind::Log("hello world".into()))],
+    );
+
+    // Removing a log message from a log breakpoint should remove it
+    editor.update_in(cx, |editor, window, cx| {
+        add_log_breakpoint_at_cursor(editor, "", window, cx);
+    });
+
+    let breakpoints = editor.update(cx, |editor, cx| {
+        editor
+            .breakpoint_store()
+            .as_ref()
+            .unwrap()
+            .read(cx)
+            .all_breakpoints(cx)
+            .clone()
+    });
+
+    assert_breakpoint(&breakpoints, &abs_path, vec![]);
+
+    editor.update_in(cx, |editor, window, cx| {
+        editor.toggle_breakpoint(&actions::ToggleBreakpoint, window, cx);
+        editor.move_to_end(&MoveToEnd, window, cx);
+        editor.toggle_breakpoint(&actions::ToggleBreakpoint, window, cx);
+        // Not adding a log message to a standard breakpoint shouldn't remove it
+        add_log_breakpoint_at_cursor(editor, "", window, cx);
+    });
+
+    let breakpoints = editor.update(cx, |editor, cx| {
+        editor
+            .breakpoint_store()
+            .as_ref()
+            .unwrap()
+            .read(cx)
+            .all_breakpoints(cx)
+            .clone()
+    });
+
+    assert_breakpoint(
+        &breakpoints,
+        &abs_path,
+        vec![(0, BreakpointKind::Standard), (3, BreakpointKind::Standard)],
+    );
+
+    editor.update_in(cx, |editor, window, cx| {
+        add_log_breakpoint_at_cursor(editor, "hello world", window, cx);
+    });
+
+    let breakpoints = editor.update(cx, |editor, cx| {
+        editor
+            .breakpoint_store()
+            .as_ref()
+            .unwrap()
+            .read(cx)
+            .all_breakpoints(cx)
+            .clone()
+    });
+
+    assert_breakpoint(
+        &breakpoints,
+        &abs_path,
+        vec![
+            (0, BreakpointKind::Standard),
+            (3, BreakpointKind::Log("hello world".into())),
+        ],
+    );
+
+    editor.update_in(cx, |editor, window, cx| {
+        add_log_breakpoint_at_cursor(editor, "hello Earth!!", window, cx);
+    });
+
+    let breakpoints = editor.update(cx, |editor, cx| {
+        editor
+            .breakpoint_store()
+            .as_ref()
+            .unwrap()
+            .read(cx)
+            .all_breakpoints(cx)
+            .clone()
+    });
+
+    assert_breakpoint(
+        &breakpoints,
+        &abs_path,
+        vec![
+            (0, BreakpointKind::Standard),
+            (3, BreakpointKind::Log("hello Earth !!".into())),
+        ],
+    );
+}
+
 #[gpui::test]
 async fn test_rename_with_duplicate_edits(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
@@ -17066,19 +17682,21 @@ async fn test_rename_with_duplicate_edits(cx: &mut TestAppContext) {
         );
     });
 
-    let mut prepare_rename_handler =
-        cx.handle_request::<lsp::request::PrepareRenameRequest, _, _>(move |_, _, _| async move {
-            Ok(Some(lsp::PrepareRenameResponse::Range(lsp::Range {
-                start: lsp::Position {
-                    line: 0,
-                    character: 7,
-                },
-                end: lsp::Position {
-                    line: 0,
-                    character: 10,
-                },
-            })))
-        });
+    let mut prepare_rename_handler = cx
+        .set_request_handler::<lsp::request::PrepareRenameRequest, _, _>(
+            move |_, _, _| async move {
+                Ok(Some(lsp::PrepareRenameResponse::Range(lsp::Range {
+                    start: lsp::Position {
+                        line: 0,
+                        character: 7,
+                    },
+                    end: lsp::Position {
+                        line: 0,
+                        character: 10,
+                    },
+                })))
+            },
+        );
     let prepare_rename_task = cx
         .update_editor(|e, window, cx| e.rename(&Rename, window, cx))
         .expect("Prepare rename was not started");
@@ -17086,7 +17704,7 @@ async fn test_rename_with_duplicate_edits(cx: &mut TestAppContext) {
     prepare_rename_task.await.expect("Prepare rename failed");
 
     let mut rename_handler =
-        cx.handle_request::<lsp::request::Rename, _, _>(move |url, _, _| async move {
+        cx.set_request_handler::<lsp::request::Rename, _, _>(move |url, _, _| async move {
             let edit = lsp::TextEdit {
                 range: lsp::Range {
                     start: lsp::Position {
@@ -17148,7 +17766,7 @@ async fn test_rename_without_prepare(cx: &mut TestAppContext) {
         .expect("Prepare rename failed");
 
     let mut rename_handler =
-        cx.handle_request::<lsp::request::Rename, _, _>(move |url, _, _| async move {
+        cx.set_request_handler::<lsp::request::Rename, _, _>(move |url, _, _| async move {
             let edit = lsp::TextEdit {
                 range: lsp::Range {
                     start: lsp::Position {
@@ -17299,7 +17917,7 @@ async fn test_apply_code_lens_actions_with_commands(cx: &mut gpui::TestAppContex
         .unwrap();
 
     fake_server
-        .handle_request::<lsp::request::CodeLensRequest, _, _>(|_, _| async move {
+        .set_request_handler::<lsp::request::CodeLensRequest, _, _>(|_, _| async move {
             Ok(Some(vec![
                 lsp::CodeLens {
                     range: lsp::Range::default(),
@@ -17355,17 +17973,19 @@ async fn test_apply_code_lens_actions_with_commands(cx: &mut gpui::TestAppContex
 
     // Resolving the code action does not populate its edits. In absence of
     // edits, we must execute the given command.
-    fake_server.handle_request::<lsp::request::CodeLensResolve, _, _>(|mut lens, _| async move {
-        let lens_command = lens.command.as_mut().expect("should have a command");
-        assert_eq!(lens_command.title, "Code lens command");
-        lens_command.arguments = Some(vec![json!("the-argument")]);
-        Ok(lens)
-    });
+    fake_server.set_request_handler::<lsp::request::CodeLensResolve, _, _>(
+        |mut lens, _| async move {
+            let lens_command = lens.command.as_mut().expect("should have a command");
+            assert_eq!(lens_command.title, "Code lens command");
+            lens_command.arguments = Some(vec![json!("the-argument")]);
+            Ok(lens)
+        },
+    );
 
     // While executing the command, the language server sends the editor
     // a `workspaceEdit` request.
     fake_server
-        .handle_request::<lsp::request::ExecuteCommand, _, _>({
+        .set_request_handler::<lsp::request::ExecuteCommand, _, _>({
             let fake = fake_server.clone();
             move |params, _| {
                 assert_eq!(params.command, "_the/command");
@@ -17414,245 +18034,6 @@ async fn test_apply_code_lens_actions_with_commands(cx: &mut gpui::TestAppContex
     });
 }
 
-mod autoclose_tags {
-    use super::*;
-    use language::language_settings::JsxTagAutoCloseSettings;
-    use languages::language;
-
-    async fn test_setup(cx: &mut TestAppContext) -> EditorTestContext {
-        init_test(cx, |settings| {
-            settings.defaults.jsx_tag_auto_close = Some(JsxTagAutoCloseSettings { enabled: true });
-        });
-
-        let mut cx = EditorTestContext::new(cx).await;
-        cx.update_buffer(|buffer, cx| {
-            let language = language("tsx", tree_sitter_typescript::LANGUAGE_TSX.into());
-
-            buffer.set_language(Some(language), cx)
-        });
-
-        cx
-    }
-
-    macro_rules! check {
-        ($name:ident, $initial:literal + $input:literal => $expected:expr) => {
-            #[gpui::test]
-            async fn $name(cx: &mut TestAppContext) {
-                let mut cx = test_setup(cx).await;
-                cx.set_state($initial);
-                cx.run_until_parked();
-
-                cx.update_editor(|editor, window, cx| {
-                    editor.handle_input($input, window, cx);
-                });
-                cx.run_until_parked();
-                cx.assert_editor_state($expected);
-            }
-        };
-    }
-
-    check!(
-        test_basic,
-        "<divˇ" + ">" => "<div>ˇ</div>"
-    );
-
-    check!(
-        test_basic_nested,
-        "<div><divˇ</div>" + ">" => "<div><div>ˇ</div></div>"
-    );
-
-    check!(
-        test_basic_ignore_already_closed,
-        "<div><divˇ</div></div>" + ">" => "<div><div>ˇ</div></div>"
-    );
-
-    check!(
-        test_doesnt_autoclose_closing_tag,
-        "</divˇ" + ">" => "</div>ˇ"
-    );
-
-    check!(
-        test_jsx_attr,
-        "<div attr={</div>}ˇ" + ">" => "<div attr={</div>}>ˇ</div>"
-    );
-
-    check!(
-        test_ignores_closing_tags_in_expr_block,
-        "<div><divˇ{</div>}</div>" + ">" => "<div><div>ˇ</div>{</div>}</div>"
-    );
-
-    check!(
-        test_doesnt_autoclose_on_gt_in_expr,
-        "<div attr={1 ˇ" + ">" => "<div attr={1 >ˇ"
-    );
-
-    check!(
-        test_ignores_closing_tags_with_different_tag_names,
-        "<div><divˇ</div></span>" + ">" => "<div><div>ˇ</div></div></span>"
-    );
-
-    check!(
-        test_autocloses_in_jsx_expression,
-        "<div>{<divˇ}</div>" + ">" => "<div>{<div>ˇ</div>}</div>"
-    );
-
-    check!(
-        test_doesnt_autoclose_already_closed_in_jsx_expression,
-        "<div>{<divˇ</div>}</div>" + ">" => "<div>{<div>ˇ</div>}</div>"
-    );
-
-    check!(
-        test_autocloses_fragment,
-        "<ˇ" + ">" => "<>ˇ</>"
-    );
-
-    check!(
-        test_does_not_include_type_argument_in_autoclose_tag_name,
-        "<Component<T> attr={boolean_value}ˇ" + ">" => "<Component<T> attr={boolean_value}>ˇ</Component>"
-    );
-
-    check!(
-        test_does_not_autoclose_doctype,
-        "<!DOCTYPE htmlˇ" + ">" => "<!DOCTYPE html>ˇ"
-    );
-
-    check!(
-        test_does_not_autoclose_comment,
-        "<!-- comment --ˇ" + ">" => "<!-- comment -->ˇ"
-    );
-
-    check!(
-        test_multi_cursor_autoclose_same_tag,
-        r#"
-        <divˇ
-        <divˇ
-        "#
-        + ">" =>
-        r#"
-        <div>ˇ</div>
-        <div>ˇ</div>
-        "#
-    );
-
-    check!(
-        test_multi_cursor_autoclose_different_tags,
-        r#"
-        <divˇ
-        <spanˇ
-        "#
-        + ">" =>
-        r#"
-        <div>ˇ</div>
-        <span>ˇ</span>
-        "#
-    );
-
-    check!(
-        test_multi_cursor_autoclose_some_dont_autoclose_others,
-        r#"
-        <divˇ
-        <div /ˇ
-        <spanˇ</span>
-        <!DOCTYPE htmlˇ
-        </headˇ
-        <Component<T>ˇ
-        ˇ
-        "#
-        + ">" =>
-        r#"
-        <div>ˇ</div>
-        <div />ˇ
-        <span>ˇ</span>
-        <!DOCTYPE html>ˇ
-        </head>ˇ
-        <Component<T>>ˇ</Component>
-        >ˇ
-        "#
-    );
-
-    check!(
-        test_doesnt_mess_up_trailing_text,
-        "<divˇfoobar" + ">" => "<div>ˇ</div>foobar"
-    );
-
-    #[gpui::test]
-    async fn test_multibuffer(cx: &mut TestAppContext) {
-        init_test(cx, |settings| {
-            settings.defaults.jsx_tag_auto_close = Some(JsxTagAutoCloseSettings { enabled: true });
-        });
-
-        let buffer_a = cx.new(|cx| {
-            let mut buf = language::Buffer::local("<div", cx);
-            buf.set_language(
-                Some(language("tsx", tree_sitter_typescript::LANGUAGE_TSX.into())),
-                cx,
-            );
-            buf
-        });
-        let buffer_b = cx.new(|cx| {
-            let mut buf = language::Buffer::local("<pre", cx);
-            buf.set_language(
-                Some(language("tsx", tree_sitter_typescript::LANGUAGE_TSX.into())),
-                cx,
-            );
-            buf
-        });
-        let buffer_c = cx.new(|cx| {
-            let buf = language::Buffer::local("<span", cx);
-            buf
-        });
-        let buffer = cx.new(|cx| {
-            let mut buf = MultiBuffer::new(language::Capability::ReadWrite);
-            buf.push_excerpts(
-                buffer_a,
-                [ExcerptRange {
-                    context: text::Anchor::MIN..text::Anchor::MAX,
-                    primary: None,
-                }],
-                cx,
-            );
-            buf.push_excerpts(
-                buffer_b,
-                [ExcerptRange {
-                    context: text::Anchor::MIN..text::Anchor::MAX,
-                    primary: None,
-                }],
-                cx,
-            );
-            buf.push_excerpts(
-                buffer_c,
-                [ExcerptRange {
-                    context: text::Anchor::MIN..text::Anchor::MAX,
-                    primary: None,
-                }],
-                cx,
-            );
-            buf
-        });
-        let editor = cx.add_window(|window, cx| build_editor(buffer.clone(), window, cx));
-
-        let mut cx = EditorTestContext::for_editor(editor, cx).await;
-
-        cx.update_editor(|editor, window, cx| {
-            editor.change_selections(None, window, cx, |selections| {
-                selections.select(vec![
-                    Selection::from_offset(4),
-                    Selection::from_offset(9),
-                    Selection::from_offset(15),
-                ])
-            })
-        });
-        cx.run_until_parked();
-
-        cx.update_editor(|editor, window, cx| {
-            editor.handle_input(">", window, cx);
-        });
-        cx.run_until_parked();
-
-        cx.assert_editor_state("<div>ˇ</div>\n<pre>ˇ</pre>\n<span>ˇ");
-    }
-}
-
 fn empty_range(row: usize, column: usize) -> Range<DisplayPoint> {
     let point = DisplayPoint::new(DisplayRow(row as u32), column as u32);
     point..point
@@ -17674,7 +18055,7 @@ pub fn handle_signature_help_request(
     mocked_response: lsp::SignatureHelp,
 ) -> impl Future<Output = ()> {
     let mut request =
-        cx.handle_request::<lsp::request::SignatureHelpRequest, _, _>(move |_, _, _| {
+        cx.set_request_handler::<lsp::request::SignatureHelpRequest, _, _>(move |_, _, _| {
             let mocked_response = mocked_response.clone();
             async move { Ok(Some(mocked_response)) }
         });
@@ -17705,30 +18086,31 @@ pub fn handle_completion_request(
     let replace_range =
         cx.to_lsp_range(marked_ranges.remove(&replace_range_marker).unwrap()[0].clone());
 
-    let mut request = cx.handle_request::<lsp::request::Completion, _, _>(move |url, params, _| {
-        let completions = completions.clone();
-        counter.fetch_add(1, atomic::Ordering::Release);
-        async move {
-            assert_eq!(params.text_document_position.text_document.uri, url.clone());
-            assert_eq!(
-                params.text_document_position.position,
-                complete_from_position
-            );
-            Ok(Some(lsp::CompletionResponse::Array(
-                completions
-                    .iter()
-                    .map(|completion_text| lsp::CompletionItem {
-                        label: completion_text.to_string(),
-                        text_edit: Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
-                            range: replace_range,
-                            new_text: completion_text.to_string(),
-                        })),
-                        ..Default::default()
-                    })
-                    .collect(),
-            )))
-        }
-    });
+    let mut request =
+        cx.set_request_handler::<lsp::request::Completion, _, _>(move |url, params, _| {
+            let completions = completions.clone();
+            counter.fetch_add(1, atomic::Ordering::Release);
+            async move {
+                assert_eq!(params.text_document_position.text_document.uri, url.clone());
+                assert_eq!(
+                    params.text_document_position.position,
+                    complete_from_position
+                );
+                Ok(Some(lsp::CompletionResponse::Array(
+                    completions
+                        .iter()
+                        .map(|completion_text| lsp::CompletionItem {
+                            label: completion_text.to_string(),
+                            text_edit: Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
+                                range: replace_range,
+                                new_text: completion_text.to_string(),
+                            })),
+                            ..Default::default()
+                        })
+                        .collect(),
+                )))
+            }
+        });
 
     async move {
         request.next().await;
@@ -17751,7 +18133,7 @@ fn handle_resolve_completion_request(
     });
 
     let mut request =
-        cx.handle_request::<lsp::request::ResolveCompletionItem, _, _>(move |_, _, _| {
+        cx.set_request_handler::<lsp::request::ResolveCompletionItem, _, _>(move |_, _, _| {
             let edits = edits.clone();
             async move {
                 Ok(lsp::CompletionItem {

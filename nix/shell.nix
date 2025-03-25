@@ -46,8 +46,12 @@ mkShell' {
           passthru = { inherit (attrs) env; };
         })).env; # exfil `env`; it's not in drvAttrs
     in
-    # unsetting this var so we download the staticlib during the build
-    (removeAttrs baseEnvs [ "LK_CUSTOM_WEBRTC" ])
+    (removeAttrs baseEnvs [
+      "LK_CUSTOM_WEBRTC" # download the staticlib during the build as usual
+      "ZED_UPDATE_EXPLANATION" # allow auto-updates
+      "CARGO_PROFILE" # let you specify the profile
+      "TARGET_DIR"
+    ])
     // {
       # note: different than `$FONTCONFIG_FILE` in `build.nix` – this refers to relative paths
       # outside the nix store instead of to `$src`

@@ -2,7 +2,7 @@ use anyhow::{Context as _, Result};
 use channel::{ChannelChat, ChannelStore, MessageParams};
 use client::{UserId, UserStore};
 use collections::HashSet;
-use editor::{AnchorRangeExt, CompletionProvider, Editor, EditorElement, EditorStyle};
+use editor::{AnchorRangeExt, CompletionProvider, Editor, EditorElement, EditorStyle, ExcerptId};
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
     AsyncApp, AsyncWindowContext, Context, Entity, Focusable, FontStyle, FontWeight,
@@ -56,6 +56,7 @@ struct MessageEditorCompletionProvider(WeakEntity<MessageEditor>);
 impl CompletionProvider for MessageEditorCompletionProvider {
     fn completions(
         &self,
+        _excerpt_id: ExcerptId,
         buffer: &Entity<Buffer>,
         buffer_position: language::Anchor,
         _: editor::CompletionContext,
@@ -137,11 +138,9 @@ impl MessageEditor {
         .detach();
 
         let markdown = language_registry.language_for_name("Markdown");
-        cx.spawn_in(window, |_, mut cx| async move {
+        cx.spawn_in(window, async move |_, cx| {
             let markdown = markdown.await.context("failed to load Markdown language")?;
-            buffer.update(&mut cx, |buffer, cx| {
-                buffer.set_language(Some(markdown), cx)
-            })
+            buffer.update(cx, |buffer, cx| buffer.set_language(Some(markdown), cx))
         })
         .detach_and_log_err(cx);
 
@@ -232,7 +231,7 @@ impl MessageEditor {
     ) {
         if let language::BufferEvent::Reparsed | language::BufferEvent::Edited = event {
             let buffer = buffer.read(cx).snapshot();
-            self.mentions_task = Some(cx.spawn_in(window, |this, cx| async move {
+            self.mentions_task = Some(cx.spawn_in(window, async move |this, cx| {
                 cx.background_executor()
                     .timer(MENTIONS_DEBOUNCE_INTERVAL)
                     .await;
@@ -251,7 +250,7 @@ impl MessageEditor {
             self.collect_mention_candidates(buffer, end_anchor, cx)
         {
             if !candidates.is_empty() {
-                return cx.spawn(|_, cx| async move {
+                return cx.spawn(async move |_, cx| {
                     Ok(Some(
                         Self::resolve_completions_for_candidates(
                             &cx,
@@ -270,7 +269,7 @@ impl MessageEditor {
             self.collect_emoji_candidates(buffer, end_anchor, cx)
         {
             if !candidates.is_empty() {
-                return cx.spawn(|_, cx| async move {
+                return cx.spawn(async move |_, cx| {
                     Ok(Some(
                         Self::resolve_completions_for_candidates(
                             &cx,
@@ -313,6 +312,7 @@ impl MessageEditor {
                     old_range: range.clone(),
                     new_text,
                     label,
+                    icon_path: None,
                     confirm: None,
                     documentation: None,
                     source: CompletionSource::Custom,
@@ -453,7 +453,7 @@ impl MessageEditor {
     async fn find_mentions(
         this: WeakEntity<MessageEditor>,
         buffer: BufferSnapshot,
-        mut cx: AsyncWindowContext,
+        cx: &mut AsyncWindowContext,
     ) {
         let (buffer, ranges) = cx
             .background_spawn(async move {
@@ -462,7 +462,7 @@ impl MessageEditor {
             })
             .await;
 
-        this.update(&mut cx, |this, cx| {
+        this.update(cx, |this, cx| {
             let mut anchor_ranges = Vec::new();
             let mut mentioned_user_ids = Vec::new();
             let mut text = String::new();

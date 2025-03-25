@@ -1,5 +1,3 @@
-// #![allow(unused, dead_code)]
-
 use crate::branch_picker::{self, BranchList};
 use crate::git_panel::{commit_message_editor, GitPanel};
 use git::{Commit, GenerateCommitMessage};
@@ -54,16 +52,6 @@ impl ModalContainerProperties {
     }
 }
 
-pub fn init(cx: &mut App) {
-    cx.observe_new(|workspace: &mut Workspace, window, cx| {
-        let Some(window) = window else {
-            return;
-        };
-        CommitModal::register(workspace, window, cx)
-    })
-    .detach();
-}
-
 pub struct CommitModal {
     git_panel: Entity<GitPanel>,
     commit_editor: Entity<Editor>,
@@ -108,7 +96,7 @@ struct RestoreDock {
 }
 
 impl CommitModal {
-    pub fn register(workspace: &mut Workspace, _: &mut Window, _cx: &mut Context<Workspace>) {
+    pub fn register(workspace: &mut Workspace) {
         workspace.register_action(|workspace, _: &Commit, window, cx| {
             CommitModal::toggle(workspace, window, cx);
         });
@@ -146,7 +134,7 @@ impl CommitModal {
         cx: &mut Context<Self>,
     ) -> Self {
         let panel = git_panel.read(cx);
-        let suggested_commit_message = panel.suggest_commit_message();
+        let suggested_commit_message = panel.suggest_commit_message(cx);
 
         let commit_editor = git_panel.update(cx, |git_panel, cx| {
             git_panel.set_modal_open(true, cx);

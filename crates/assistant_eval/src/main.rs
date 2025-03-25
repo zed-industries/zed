@@ -4,7 +4,7 @@ mod judge;
 
 use clap::Parser;
 use eval::{Eval, EvalOutput};
-use futures::{stream, StreamExt};
+use futures::future;
 use gpui::{Application, AsyncApp};
 use headless_assistant::{authenticate_model_provider, find_model, HeadlessAppState};
 use itertools::Itertools;
@@ -48,7 +48,12 @@ fn main() {
 
     let crate_dir = PathBuf::from("../zed-agent-bench");
     let evaluation_data_dir = crate_dir.join("evaluation_data").canonicalize().unwrap();
-    let repos_dir = crate_dir.join("repos").canonicalize().unwrap();
+
+    let repos_dir = crate_dir.join("repos");
+    if !repos_dir.exists() {
+        std::fs::create_dir_all(&repos_dir).unwrap();
+    }
+    let repos_dir = repos_dir.canonicalize().unwrap();
 
     let all_evals = std::fs::read_dir(&evaluation_data_dir)
         .unwrap()
@@ -106,7 +111,7 @@ fn main() {
         let editor_model_provider_id = editor_model.provider_id();
         let judge_model_provider_id = judge_model.provider_id();
 
-        cx.spawn(move |cx| async move {
+        cx.spawn(async move |cx| {
             // Authenticate all model providers first
             cx.update(|cx| authenticate_model_provider(model_provider_id.clone(), cx))
                 .unwrap()
@@ -121,12 +126,13 @@ fn main() {
                 .await
                 .unwrap();
 
-            let loaded_evals = stream::iter(evals_to_run)
+            let eval_load_futures = evals_to_run
+                .into_iter()
                 .map(|eval_name| {
                     let eval_path = evaluation_data_dir.join(&eval_name);
-                    let repos_dir = repos_dir.clone();
+                    let load_future = Eval::load(eval_name.clone(), eval_path, &repos_dir);
                     async move {
-                        match Eval::load(eval_name.clone(), eval_path, &repos_dir).await {
+                        match load_future.await {
                             Ok(eval) => Some(eval),
                             Err(err) => {
                                 // TODO: Persist errors / surface errors at the end.
@@ -136,8 +142,9 @@ fn main() {
                         }
                     }
                 })
-                .buffer_unordered(args.concurrency)
-                .collect::<Vec<_>>()
+                .collect::<Vec<_>>();
+
+            let loaded_evals = future::join_all(eval_load_futures)
                 .await
                 .into_iter()
                 .flatten()
@@ -155,7 +162,8 @@ fn main() {
             // Sort groups in descending order, so that bigger groups start first.
             evals_grouped_by_url.sort_by_key(|evals| cmp::Reverse(evals.len()));
 
-            let results = stream::iter(evals_grouped_by_url)
+            let result_futures = evals_grouped_by_url
+                .into_iter()
                 .map(|evals| {
                     let model = model.clone();
                     let judge_model = judge_model.clone();
@@ -180,8 +188,9 @@ fn main() {
                         results
                     }
                 })
-                .buffer_unordered(args.concurrency)
-                .collect::<Vec<_>>()
+                .collect::<Vec<_>>();
+
+            let results = future::join_all(result_futures)
                 .await
                 .into_iter()
                 .flatten()

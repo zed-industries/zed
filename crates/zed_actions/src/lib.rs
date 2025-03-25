@@ -35,11 +35,31 @@ actions!(
         Quit,
         OpenKeymap,
         About,
-        Extensions,
         OpenLicenses,
         OpenTelemetryLog,
     ]
 );
+
+#[derive(PartialEq, Clone, Copy, Debug, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ExtensionCategoryFilter {
+    Themes,
+    IconThemes,
+    Languages,
+    Grammars,
+    LanguageServers,
+    ContextServers,
+    SlashCommands,
+    IndexedDocsProviders,
+    Snippets,
+}
+
+#[derive(PartialEq, Clone, Default, Debug, Deserialize, JsonSchema)]
+pub struct Extensions {
+    /// Filters the extensions page down to extensions that are in the specified category.
+    #[serde(default)]
+    pub category_filter: Option<ExtensionCategoryFilter>,
+}
 
 #[derive(PartialEq, Clone, Default, Debug, Deserialize, JsonSchema)]
 pub struct DecreaseBufferFontSize {
@@ -80,6 +100,7 @@ pub struct ResetUiFontSize {
 impl_actions!(
     zed,
     [
+        Extensions,
         DecreaseBufferFontSize,
         IncreaseBufferFontSize,
         ResetBufferFontSize,
@@ -116,7 +137,7 @@ pub mod workspace {
 pub mod git {
     use gpui::{action_with_deprecated_aliases, actions};
 
-    actions!(git, [CheckoutBranch, Switch]);
+    actions!(git, [CheckoutBranch, Switch, SelectRepo]);
     action_with_deprecated_aliases!(git, Branch, ["branches::OpenRecent"]);
 }
 
@@ -167,7 +188,7 @@ pub mod assistant {
     use schemars::JsonSchema;
     use serde::Deserialize;
 
-    actions!(assistant, [ToggleFocus, DeployPromptLibrary]);
+    actions!(assistant, [ToggleFocus, OpenPromptLibrary]);
 
     #[derive(Clone, Default, Deserialize, PartialEq, JsonSchema)]
     #[serde(deny_unknown_fields)]

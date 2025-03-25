@@ -153,7 +153,7 @@ blade-graphics = { workspace = true, optional = true }
 blade-macros = { workspace = true, optional = true }
 blade-util = { workspace = true, optional = true }
 bytemuck = { version = "1", optional = true }
-cosmic-text = { git = "https://github.com/pop-os/cosmic-text", rev = "542b20c", optional = true }
+cosmic-text = { version = "0.13.2", optional = true }
 font-kit = { git = "https://github.com/zed-industries/font-kit", rev = "40391b7", features = [
     "source-fontconfig-dlopen",
 ], optional = true }
@@ -190,10 +190,7 @@ x11rb = { version = "0.13.1", features = [
     "resource_manager",
     "sync",
 ], optional = true }
-xkbcommon = { git = "https://github.com/ConradIrwin/xkbcommon-rs", rev = "fcbb4612185cc129ceeff51d22f7fb51810a03b2", features = [
-    "wayland",
-    "x11",
-], optional = true }
+xkbcommon = { version = "0.8.0", features = ["wayland", "x11"], optional = true }
 xim = { git = "https://github.com/XDeme1/xim-rs", rev = "d50d461764c2213655cd9cf65a0ea94c70d3c4fd", features = [
     "x11rb-xcb",
     "x11rb-client",
@@ -208,7 +205,8 @@ blade-macros.workspace = true
 flume = "0.11"
 rand.workspace = true
 windows.workspace = true
-windows-core = "0.60"
+windows-core = "0.61"
+windows-numerics = "0.2"
 
 [dev-dependencies]
 backtrace = "0.3"

@@ -22,6 +22,8 @@ test-support = [
     "prettier/test-support",
     "worktree/test-support",
     "gpui/test-support",
+    "dap/test-support",
+    "dap_adapters/test-support",
 ]
 
 [dependencies]
@@ -30,9 +32,12 @@ anyhow.workspace = true
 askpass.workspace = true
 async-trait.workspace = true
 buffer_diff.workspace = true
+circular-buffer.workspace = true
 client.workspace = true
 clock.workspace = true
 collections.workspace = true
+dap.workspace = true
+dap_adapters.workspace = true
 extension.workspace = true
 fancy-regex.workspace = true
 fs.workspace = true
@@ -44,6 +49,7 @@ gpui.workspace = true
 http_client.workspace = true
 image.workspace = true
 itertools.workspace = true
+indexmap.workspace = true
 language.workspace = true
 log.workspace = true
 lsp.workspace = true
@@ -67,6 +73,7 @@ shlex.workspace = true
 smol.workspace = true
 snippet.workspace = true
 snippet_provider.workspace = true
+sum_tree.workspace = true
 task.workspace = true
 tempfile.workspace = true
 terminal.workspace = true
@@ -76,22 +83,25 @@ url.workspace = true
 util.workspace = true
 which.workspace = true
 worktree.workspace = true
+zlog.workspace = true
 
 [dev-dependencies]
 client = { workspace = true, features = ["test-support"] }
 collections = { workspace = true, features = ["test-support"] }
 buffer_diff = { workspace = true, features = ["test-support"] }
+dap = { workspace = true, features = ["test-support"] }
+dap_adapters = { workspace = true, features = ["test-support"] }
 env_logger.workspace = true
 fs = { workspace = true, features = ["test-support"] }
 git2.workspace = true
 gpui = { workspace = true, features = ["test-support"] }
 language = { workspace = true, features = ["test-support"] }
-release_channel.workspace = true
 lsp = { workspace = true, features = ["test-support"] }
 prettier = { workspace = true, features = ["test-support"] }
 pretty_assertions.workspace = true
-worktree = { workspace = true, features = ["test-support"] }
+release_channel.workspace = true
 rpc = { workspace = true, features = ["test-support"] }
 settings = { workspace = true, features = ["test-support"] }
 unindent.workspace = true
 util = { workspace = true, features = ["test-support"] }
+worktree = { workspace = true, features = ["test-support"] }
