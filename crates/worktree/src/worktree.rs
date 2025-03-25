@@ -1619,10 +1619,8 @@ impl LocalWorktree {
                                 || new_repo.status_scan_id != old_repo.status_scan_id
                             {
                                 if let Some(entry) = new_snapshot.entry_for_id(new_entry_id) {
-                                    let old_repo = old_snapshot
-                                        .repositories
-                                        .get(&PathKey(entry.path.clone()), &())
-                                        .cloned();
+                                    let old_repo =
+                                        old_snapshot.repository_for_id(old_entry_id).cloned();
                                     changes.push((
                                         entry.clone(),
                                         GitRepositoryChange {
@@ -1636,10 +1634,8 @@ impl LocalWorktree {
                         }
                         Ordering::Greater => {
                             if let Some(entry) = old_snapshot.entry_for_id(old_entry_id) {
-                                let old_repo = old_snapshot
-                                    .repositories
-                                    .get(&PathKey(entry.path.clone()), &())
-                                    .cloned();
+                                let old_repo =
+                                    old_snapshot.repository_for_id(old_entry_id).cloned();
                                 changes.push((
                                     entry.clone(),
                                     GitRepositoryChange {
@@ -1664,10 +1660,7 @@ impl LocalWorktree {
                 }
                 (None, Some((entry_id, _))) => {
                     if let Some(entry) = old_snapshot.entry_for_id(entry_id) {
-                        let old_repo = old_snapshot
-                            .repositories
-                            .get(&PathKey(entry.path.clone()), &())
-                            .cloned();
+                        let old_repo = old_snapshot.repository_for_id(entry_id).cloned();
                         changes.push((
                             entry.clone(),
                             GitRepositoryChange {
@@ -2797,17 +2790,18 @@ impl Snapshot {
         &self.repositories
     }
 
-    /// Get the repository whose work directory corresponds to the given path.
-    fn repository(&self, work_directory: PathKey) -> Option<RepositoryEntry> {
-        self.repositories.get(&work_directory, &()).cloned()
-    }
-
     /// Get the repository whose work directory contains the given path.
     pub fn repository_for_abs_path(&self, abs_path: &Path) -> Option<&RepositoryEntry> {
         self.repositories
             .iter()
             .filter(|repo| repo.directory_contains_abs_path(abs_path))
             .last()
+    }
+
+    pub fn repository_for_id(&self, id: ProjectEntryId) -> Option<&RepositoryEntry> {
+        self.repositories
+            .iter()
+            .find(|repo| repo.work_directory_id == id)
     }
 
     /// Given an ordered iterator of entries, returns an iterator of those entries,
@@ -3911,22 +3905,53 @@ impl<'a, S: Summary> sum_tree::Dimension<'a, PathSummary<S>> for PathProgress<'a
     }
 }
 
+#[derive(Clone, Debug)]
+pub struct AbsPathSummary {
+    max_path: Arc<Path>,
+}
+
+impl Summary for AbsPathSummary {
+    type Context = ();
+
+    fn zero(_: &Self::Context) -> Self {
+        Self {
+            max_path: Path::new("").into(),
+        }
+    }
+
+    fn add_summary(&mut self, rhs: &Self, cx: &Self::Context) {
+        self.max_path = rhs.max_path.clone();
+    }
+}
+
 impl sum_tree::Item for RepositoryEntry {
-    type Summary = PathSummary<Unit>;
+    type Summary = AbsPathSummary;
 
     fn summary(&self, _: &<Self::Summary as Summary>::Context) -> Self::Summary {
-        PathSummary {
+        AbsPathSummary {
             max_path: self.work_directory_abs_path.as_path().into(),
-            item_summary: Unit,
         }
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+struct AbsPathKey(Arc<Path>);
+
+impl<'a> sum_tree::Dimension<'a, AbsPathSummary> for AbsPathKey {
+    fn zero(_: &()) -> Self {
+        Self(Path::new("").into())
+    }
+
+    fn add_summary(&mut self, summary: &'a AbsPathSummary, _: &()) {
+        self.0 = summary.max_path.clone();
+    }
+}
+
 impl sum_tree::KeyedItem for RepositoryEntry {
-    type Key = PathKey;
+    type Key = AbsPathKey;
 
     fn key(&self) -> Self::Key {
-        PathKey(self.work_directory_abs_path.as_path().into())
+        AbsPathKey(self.work_directory_abs_path.as_path().into())
     }
 }
 
@@ -5470,8 +5495,11 @@ async fn update_branches(
     let branches = repository.repo().branches().await?;
     let snapshot = state.lock().snapshot.snapshot.clone();
     let mut repository = snapshot
-        .repository(repository.work_directory.path_key())
-        .context("Missing repository")?;
+        .repositories
+        .iter()
+        .cloned()
+        .find(|repo_entry| repo_entry.work_directory_id == repository.work_directory_id)
+        .context("missing repository")?;
     repository.current_branch = branches.into_iter().find(|branch| branch.is_head);
 
     let mut state = state.lock();
@@ -5513,9 +5541,10 @@ async fn do_git_status_update(
     let snapshot = job_state.lock().snapshot.snapshot.clone();
 
     let Some(mut repository) = snapshot
-        .repository(local_repository.work_directory.path_key())
-        .context("Tried to update git statuses for a repository that isn't in the snapshot")
+        .repository_for_id(local_repository.work_directory_id)
+        .context("tried to update git statuses for a repository that isn't in the snapshot")
         .log_err()
+        .cloned()
     else {
         return;
     };
