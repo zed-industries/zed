@@ -1576,7 +1576,7 @@ impl Editor {
         this._subscriptions.extend(project_subscriptions);
 
         this.end_selection(window, cx);
-        this.scroll_manager.show_scrollbar(window, cx);
+        this.scroll_manager.show_scrollbars(window, cx);
         jsx_tag_auto_close::refresh_enabled_in_any_buffer(&mut this, &buffer, cx);
 
         if mode == EditorMode::Full {
