@@ -2,7 +2,7 @@ mod actions;
 pub(crate) mod autoscroll;
 pub(crate) mod scroll_amount;
 
-use crate::editor_settings::{ScrollBeyondLastLine, ScrollbarAxes, ShowMinimap};
+use crate::editor_settings::{ScrollBeyondLastLine, ScrollbarAxes};
 use crate::{
     display_map::{DisplaySnapshot, ToDisplayPoint},
     hover_popover::hide_hover,
