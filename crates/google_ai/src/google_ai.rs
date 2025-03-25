@@ -80,7 +80,7 @@ pub async fn count_tokens(
     request: CountTokensRequest,
 ) -> Result<CountTokensResponse> {
     let uri = format!(
-        "{}/v1beta/models/gemini-pro:countTokens?key={}",
+        "{}/v1beta/models/gemini-2.0-flash:countTokens?key={}",
         api_url, api_key
     );
     let request = serde_json::to_string(&request)?;
