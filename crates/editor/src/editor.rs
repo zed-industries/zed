@@ -12644,15 +12644,14 @@ impl Editor {
         let start = snapshot.buffer_snapshot.anchor_before(start);
         let end = snapshot.buffer_snapshot.anchor_before(end);
 
-        self.clear_row_highlights::<T>();
         self.highlight_rows::<T>(
             start..end,
             highlight_color
                 .unwrap_or_else(|| cx.theme().colors().editor_highlighted_line_background),
-            true,
+            false,
             cx,
         );
-        self.request_autoscroll(Autoscroll::center(), cx);
+        self.request_autoscroll(Autoscroll::center().for_anchor(start), cx);
     }
 
     pub fn go_to_definition(
