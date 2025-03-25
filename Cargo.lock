@@ -3243,9 +3243,7 @@ name = "copilot"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "async-compression",
  "async-std",
- "async-tar",
  "chrono",
  "client",
  "clock",
@@ -3273,7 +3271,6 @@ dependencies = [
  "serde",
  "serde_json",
  "settings",
- "smol",
  "strum",
  "task",
  "theme",

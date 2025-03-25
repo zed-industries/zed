@@ -1258,12 +1258,13 @@ impl ActiveThread {
             "edit-files" => IconName::Pencil,
             "fetch" => IconName::Globe,
             "list-directory" => IconName::Folder,
+            "move-path" => IconName::ArrowRightLeft,
             "now" => IconName::Info,
             "path-search" => IconName::SearchCode,
             "read-file" => IconName::Eye,
             "regex-search" => IconName::Regex,
             "thinking" => IconName::Brain,
-            _ => IconName::Terminal,
+            _ => IconName::Cog,
         };
 
         div().py_2().child(
