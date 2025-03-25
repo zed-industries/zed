@@ -135,7 +135,7 @@ impl Tool for FindReplaceFileTool {
     fn description(&self) -> String {
         include_str!("find_replace_tool/description.md").to_string()
     }
-    
+
     fn icon(&self) -> IconName {
         IconName::Pencil
     }

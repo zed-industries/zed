@@ -2,10 +2,10 @@ use std::{any::Any, cell::Cell, fmt::Debug, ops::Range, rc::Rc, sync::Arc};
 
 use crate::{prelude::*, px, relative, IntoElement};
 use gpui::{
-    point, quad, Along, App, Axis as ScrollbarAxis, Bounds, ContentMask, Corners, Edges, Element,
-    ElementId, Entity, EntityId, GlobalElementId, Hitbox, Hsla, LayoutId, MouseDownEvent,
-    MouseMoveEvent, MouseUpEvent, Pixels, Point, ScrollHandle, ScrollWheelEvent, Size, Style,
-    UniformListScrollHandle, Window,
+    point, quad, Along, App, Axis as ScrollbarAxis, BorderStyle, Bounds, ContentMask, Corners,
+    Edges, Element, ElementId, Entity, EntityId, GlobalElementId, Hitbox, Hsla, LayoutId,
+    MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, ScrollHandle, ScrollWheelEvent,
+    Size, Style, UniformListScrollHandle, Window,
 };
 
 pub struct Scrollbar {
@@ -286,6 +286,7 @@ impl Element for Scrollbar {
                 thumb_background,
                 Edges::default(),
                 Hsla::transparent_black(),
+                BorderStyle::default(),
             ));
 
             let scroll = self.state.scroll_handle.clone();

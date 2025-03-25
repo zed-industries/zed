@@ -1,7 +1,7 @@
 mod edit_action;
 pub mod log;
-mod replace;
 
+use crate::replace::{replace_exact, replace_with_flexible_indent};
 use anyhow::{anyhow, Context, Result};
 use assistant_tool::{ActionLog, Tool};
 use collections::HashSet;
@@ -13,7 +13,6 @@ use language_model::{
 };
 use log::{EditToolLog, EditToolRequestId};
 use project::Project;
-use replace::{replace_exact, replace_with_flexible_indent};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::fmt::Write;
