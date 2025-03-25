@@ -16,6 +16,7 @@ path = "src/ui.rs"
 chrono.workspace = true
 component.workspace = true
 gpui.workspace = true
+icons.workspace = true
 itertools.workspace = true
 linkme.workspace = true
 menu.workspace = true
@@ -23,7 +24,7 @@ serde.workspace = true
 settings.workspace = true
 smallvec.workspace = true
 story = { workspace = true, optional = true }
-strum = { workspace = true, features = ["derive"] }
+strum.workspace = true
 theme.workspace = true
 ui_macros.workspace = true
 util.workspace = true

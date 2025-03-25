@@ -6491,6 +6491,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "icons"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "strum",
+]
+
+[[package]]
 name = "icu_collections"
 version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -14928,6 +14936,7 @@ dependencies = [
  "chrono",
  "component",
  "gpui",
+ "icons",
  "itertools 0.14.0",
  "linkme",
  "menu",
