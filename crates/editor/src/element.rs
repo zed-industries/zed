@@ -525,6 +525,8 @@ impl EditorElement {
         if cx.has_flag::<Debugger>() {
             register_action(editor, window, Editor::toggle_breakpoint);
             register_action(editor, window, Editor::edit_log_breakpoint);
+            register_action(editor, window, Editor::enable_breakpoint);
+            register_action(editor, window, Editor::disable_breakpoint);
         }
     }
 

@@ -260,7 +260,7 @@ impl BreakpointStore {
                     breakpoint_set.breakpoints.push(breakpoint.clone());
                 }
             }
-            BreakpointEditAction::ToggleState => {
+            BreakpointEditAction::InvertState => {
                 if let Some((_, bp)) = breakpoint_set
                     .breakpoints
                     .iter_mut()
@@ -542,7 +542,7 @@ type LogMessage = Arc<str>;
 #[derive(Clone, Debug)]
 pub enum BreakpointEditAction {
     Toggle,
-    ToggleState,
+    InvertState,
     EditLogMessage(LogMessage),
 }
 

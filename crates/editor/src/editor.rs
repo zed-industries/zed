@@ -6160,7 +6160,7 @@ impl Editor {
                                     this.edit_breakpoint_at_anchor(
                                         anchor,
                                         breakpoint.as_ref().clone(),
-                                        BreakpointEditAction::ToggleState,
+                                        BreakpointEditAction::InvertState,
                                         cx,
                                     );
                                 })
@@ -8479,24 +8479,25 @@ impl Editor {
         cx: &mut Context<Self>,
     ) -> Option<(Anchor, Breakpoint)> {
         let snapshot = self.snapshot(window, cx);
-        let breakpoint_position = snapshot
-            .display_snapshot
-            .buffer_snapshot
-            .anchor_before(Point::new(row, 0));
+        let breakpoint_position = snapshot.buffer_snapshot.anchor_before(Point::new(row, 0));
 
         let project = self.project.clone();
 
-        let buffer_id = breakpoint_position.text_anchor.buffer_id?;
-        let enclosing_excerpt = snapshot
+        let buffer_id = snapshot
             .buffer_snapshot
-            .excerpt_ids_for_range(breakpoint_position..breakpoint_position)
-            .next()?;
+            .buffer_id_for_excerpt(breakpoint_position.excerpt_id)?;
+        let enclosing_excerpt = breakpoint_position.excerpt_id;
         let buffer = project?.read_with(cx, |project, cx| project.buffer_for_id(buffer_id, cx))?;
         let buffer_snapshot = buffer.read(cx).snapshot();
 
         let row = buffer_snapshot
             .summary_for_anchor::<text::PointUtf16>(&breakpoint_position.text_anchor)
             .row;
+
+        let line_len = snapshot.buffer_snapshot.line_len(MultiBufferRow(row));
+        let anchor_end = snapshot
+            .buffer_snapshot
+            .anchor_before(Point::new(row, line_len));
 
         let bp = self
             .breakpoint_store
@@ -8505,7 +8506,7 @@ impl Editor {
                 breakpoint_store
                     .breakpoints(
                         &buffer,
-                        Some(breakpoint_position.text_anchor..(text::Anchor::MAX)),
+                        Some(breakpoint_position.text_anchor..anchor_end.text_anchor),
                         &buffer_snapshot,
                         cx,
                     )
@@ -8555,6 +8556,42 @@ impl Editor {
             });
 
         self.add_edit_breakpoint_block(anchor, &bp, window, cx);
+    }
+
+    pub fn enable_breakpoint(
+        &mut self,
+        _: &crate::actions::EnableBreakpoint,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some((anchor, breakpoint)) = self.breakpoint_at_cursor_head(window, cx) {
+            if breakpoint.is_disabled() {
+                self.edit_breakpoint_at_anchor(
+                    anchor,
+                    breakpoint,
+                    BreakpointEditAction::InvertState,
+                    cx,
+                );
+            }
+        }
+    }
+
+    pub fn disable_breakpoint(
+        &mut self,
+        _: &crate::actions::DisableBreakpoint,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some((anchor, breakpoint)) = self.breakpoint_at_cursor_head(window, cx) {
+            if breakpoint.is_enabled() {
+                self.edit_breakpoint_at_anchor(
+                    anchor,
+                    breakpoint,
+                    BreakpointEditAction::InvertState,
+                    cx,
+                );
+            }
+        }
     }
 
     pub fn toggle_breakpoint(
