@@ -2322,7 +2322,7 @@ pub(crate) fn parse_completion_text_edit(
 
         lsp::CompletionTextEdit::InsertAndReplace(edit) => {
             let replace = {
-                let mut range = edit.replace.clone();
+                let mut range = edit.replace;
                 range.start = edit.insert.end;
                 let range = range_from_lsp(range);
 
