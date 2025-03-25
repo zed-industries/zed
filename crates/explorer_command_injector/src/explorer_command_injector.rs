@@ -3,7 +3,7 @@
 use std::{os::windows::ffi::OsStringExt, path::PathBuf};
 
 use windows::{
-    core::{implement, Interface, Ref, Result, BOOL, GUID, HRESULT},
+    core::{implement, Interface, Ref, Result, BOOL, GUID, HRESULT, HSTRING},
     Win32::{
         Foundation::{
             GetLastError, CLASS_E_CLASSNOTAVAILABLE, ERROR_INSUFFICIENT_BUFFER, E_FAIL,
@@ -21,7 +21,6 @@ use windows::{
         },
     },
 };
-use windows_core::HSTRING;
 
 static mut DLL_INSTANCE: HINSTANCE = HINSTANCE(std::ptr::null_mut());
 

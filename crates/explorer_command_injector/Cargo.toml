@@ -23,4 +23,3 @@ nightly = []
 windows.workspace = true
 windows-core.workspace = true
 windows-registry = "0.5"
-windows-strings = "0.4"
