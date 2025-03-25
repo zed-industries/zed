@@ -1023,6 +1023,7 @@ impl ActiveThread {
 
                 parent.child(
                     h_flex()
+                        .pt_2p5()
                         .px_2p5()
                         .w_full()
                         .gap_1()
