@@ -52,8 +52,6 @@ const BOOK_ONBOARDING: &str = "https://dub.sh/zed-c-onboarding";
 actions!(
     collab,
     [
-        ShareProject,
-        UnshareProject,
         ToggleUserMenu,
         ToggleProjectMenu,
         SwitchBranch
@@ -567,7 +565,7 @@ impl TitleBar {
         cx.notify();
     }
 
-    fn share_project(&mut self, _: &ShareProject, cx: &mut Context<Self>) {
+    fn share_project(&mut self, cx: &mut Context<Self>) {
         let active_call = ActiveCall::global(cx);
         let project = self.project.clone();
         active_call
@@ -575,7 +573,7 @@ impl TitleBar {
             .detach_and_log_err(cx);
     }
 
-    fn unshare_project(&mut self, _: &UnshareProject, _: &mut Window, cx: &mut Context<Self>) {
+    fn unshare_project(&mut self, _: &mut Window, cx: &mut Context<Self>) {
         let active_call = ActiveCall::global(cx);
         let project = self.project.clone();
         active_call
