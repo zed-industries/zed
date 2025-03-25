@@ -148,6 +148,7 @@ pub struct GitStoreCheckpoint {
 pub struct Repository {
     pub repository_entry: RepositoryEntry,
     pub merge_message: Option<String>,
+    // FIXME remove, already have it in the snapshot??
     pub completed_scan_id: usize,
     pub worktree_id: Option<WorktreeId>,
     commit_message_buffer: Option<Entity<Buffer>>,
@@ -1474,6 +1475,10 @@ impl GitStore {
         this.update(&mut cx, |this, cx| {
             let update = envelope.payload;
             let work_directory_id = ProjectEntryId::from_proto(update.id);
+            let client = this
+                .upstream_client()
+                .context("no upstream client")?
+                .clone();
 
             let repo = this
                 .repositories
@@ -1495,19 +1500,19 @@ impl GitStore {
                             worktree_scan_id: update.scan_id as usize,
                         },
                         merge_message: None,
-                        completed_scan_id: todo!(),
+                        completed_scan_id: update.scan_id as usize,
                         state: RepositoryState::Remote {
                             project_id: ProjectId(update.project_id),
-                            client: todo!(),
+                            client,
                             work_directory_id,
                         },
-                        job_sender: todo!(),
-                        askpass_delegates: todo!(),
-                        latest_askpass_id: todo!(),
+                        job_sender: this.update_sender.clone(),
+                        askpass_delegates: Default::default(),
+                        latest_askpass_id: 0,
                     })
                 });
 
-            repo.update(cx, |repo, _cx| repo.apply_remote_update(update));
+            repo.update(cx, |repo, _cx| repo.apply_remote_update(update))?;
             Ok(())
         })?
     }
@@ -1517,18 +1522,10 @@ impl GitStore {
         envelope: TypedEnvelope<proto::RemoveRepository>,
         mut cx: AsyncApp,
     ) -> Result<()> {
-        todo!("just use the payload's id to look up a repository")
-        //this.update(&mut cx, |this, cx| {
-        //    if let Some(worktree) =
-        //        this.worktree_for_entry(ProjectEntryId::from_proto(envelope.payload.id), cx)
-        //    {
-        //        worktree.update(cx, |worktree, _| {
-        //            let worktree = worktree.as_remote_mut().unwrap();
-        //            worktree.update_from_remote(envelope.payload);
-        //        });
-        //    }
-        //    Ok(())
-        //})?
+        this.update(&mut cx, |this, _| {
+            this.repositories
+                .remove(&ProjectEntryId::from_proto(envelope.payload.id));
+        })
     }
 
     async fn handle_git_init(

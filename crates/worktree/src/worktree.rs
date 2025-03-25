@@ -417,21 +417,21 @@ impl WorkDirectory {
         }
     }
 
-    #[cfg(test)]
-    fn canonicalize(&self) -> Self {
-        match self {
-            WorkDirectory::InProject { relative_path } => WorkDirectory::InProject {
-                relative_path: relative_path.clone(),
-            },
-            WorkDirectory::AboveProject {
-                absolute_path,
-                location_in_repo,
-            } => WorkDirectory::AboveProject {
-                absolute_path: absolute_path.canonicalize().unwrap().into(),
-                location_in_repo: location_in_repo.clone(),
-            },
-        }
-    }
+    //#[cfg(test)]
+    //fn canonicalize(&self) -> Self {
+    //    match self {
+    //        WorkDirectory::InProject { relative_path } => WorkDirectory::InProject {
+    //            relative_path: relative_path.clone(),
+    //        },
+    //        WorkDirectory::AboveProject {
+    //            absolute_path,
+    //            location_in_repo,
+    //        } => WorkDirectory::AboveProject {
+    //            absolute_path: absolute_path.canonicalize().unwrap().into(),
+    //            location_in_repo: location_in_repo.clone(),
+    //        },
+    //    }
+    //}
 
     fn path_key(&self) -> PathKey {
         match self {
@@ -2662,26 +2662,11 @@ impl Snapshot {
         }
     }
 
-    pub(crate) fn apply_remove_repository(
-        &mut self,
-        update: proto::RemoveRepository,
-    ) -> Result<()> {
-        // NOTE: this is practically but not semantically correct. For now we're using the
-        // ID field to store the work directory ID, but eventually it will be a different
-        // kind of ID.
-        let work_directory_id = ProjectEntryId::from_proto(update.id);
-        self.repositories.retain(&(), |entry: &RepositoryEntry| {
-            entry.work_directory_id != work_directory_id
-        });
-        Ok(())
-    }
-
     pub(crate) fn apply_remote_update(
         &mut self,
         update: proto::UpdateWorktree,
         always_included_paths: &PathMatcher,
     ) -> Result<()> {
-        let update = update;
         log::debug!(
             "applying remote worktree update. {} entries updated, {} removed",
             update.updated_entries.len(),
@@ -2946,13 +2931,6 @@ impl LocalSnapshot {
             .map(|(_, entry)| entry)
             .find(|entry| entry.directory_contains(path))
     }
-
-    //pub fn local_repo_and_repo_entry_for_path(
-    //    &self,
-    //    path: &Path,
-    //) -> Option<(&LocalRepositoryEntry, &RepositoryEntry)> {
-    //    todo!()
-    //}
 
     fn build_update(
         &self,

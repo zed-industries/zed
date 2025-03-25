@@ -4288,7 +4288,7 @@ impl Project {
             if let Some(worktree) = this.worktree_for_id(worktree_id, cx) {
                 worktree.update(cx, |worktree, _| {
                     let worktree = worktree.as_remote_mut().unwrap();
-                    worktree.update_from_remote(envelope.payload.into());
+                    worktree.update_from_remote(envelope.payload);
                 });
             }
             Ok(())
