@@ -260,11 +260,12 @@ impl LocalLspStore {
                     )
                     .await?;
 
-                    let mut initialization_options = adapter
-                        .adapter
-                        .clone()
-                        .initialization_options(fs.as_ref(), &(delegate))
-                        .await?;
+                    let mut initialization_options = Self::initialization_options_for_adapter(
+                        adapter.adapter.clone(),
+                        fs.as_ref(),
+                        &delegate,
+                    )
+                    .await?;
 
                     match (&mut initialization_options, override_options) {
                         (Some(initialization_options), Some(override_options)) => {
@@ -3234,6 +3235,33 @@ impl LocalLspStore {
         }
 
         self.rebuild_watched_paths(language_server_id, cx);
+    }
+
+    async fn initialization_options_for_adapter(
+        adapter: Arc<dyn LspAdapter>,
+        fs: &dyn Fs,
+        delegate: &Arc<dyn LspAdapterDelegate>,
+    ) -> Result<Option<serde_json::Value>> {
+        let Some(mut initialization_config) =
+            adapter.clone().initialization_options(fs, delegate).await?
+        else {
+            return Ok(None);
+        };
+
+        for other_adapter in delegate.registered_lsp_adapters() {
+            if other_adapter.name() == adapter.name() {
+                continue;
+            }
+            if let Ok(Some(target_config)) = other_adapter
+                .clone()
+                .additional_initialization_options(adapter.name(), fs, delegate)
+                .await
+            {
+                merge_json_value_into(target_config.clone(), &mut initialization_config);
+            }
+        }
+
+        Ok(Some(initialization_config))
     }
 
     async fn workspace_configuration_for_adapter(
