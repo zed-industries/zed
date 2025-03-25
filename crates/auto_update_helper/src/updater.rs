@@ -51,22 +51,25 @@ macro_rules! log_err {
     };
 }
 
-pub(crate) async fn perform_update(app_dir: &Path, hwnd: isize) -> Result<()> {
-    let hwnd = HWND(hwnd as _);
+pub(crate) async fn perform_update(app_dir: &Path, hwnd: Option<isize>) -> Result<()> {
+    let hwnd = hwnd.map(|ptr| HWND(ptr as _));
 
+    #[cfg(not(test))]
     let work = async {
         let mut index = 0;
         loop {
             let Some(job) = JOBS.get(index) else {
                 break;
             };
-            // #[cfg(not(debug_assertions))]
             let ret = match job {
                 Jobs::Remove(relativ_path) => {
                     let path = app_dir.join(relativ_path);
                     if path.exists() {
                         log::info!("Removing old file: {}", path.display());
-                        log_err!(std::fs::remove_file(path), "Failed to remove old file")
+                        log_err!(
+                            smol::fs::remove_file(path).await,
+                            "Failed to remove old file"
+                        )
                     } else {
                         log::warn!("Old file not found: {}", path.display());
                         None
@@ -82,7 +85,7 @@ pub(crate) async fn perform_update(app_dir: &Path, hwnd: isize) -> Result<()> {
                             to_path.display()
                         );
                         log_err!(
-                            std::fs::copy(&from_path, &to_path),
+                            smol::fs::copy(from_path, to_path).await,
                             "Failed to copy new file"
                         )
                     } else {
@@ -94,21 +97,49 @@ pub(crate) async fn perform_update(app_dir: &Path, hwnd: isize) -> Result<()> {
                     let path = app_dir.join(relative_path);
                     if path.exists() {
                         log::info!("Cleaning up: {}", path.display());
-                        log_err!(std::fs::remove_dir_all(path), "Failed to remove directory")
+                        log_err!(
+                            smol::fs::remove_dir_all(path).await,
+                            "Failed to remove directory"
+                        )
                     } else {
                         log::warn!("Directory not found: {}", path.display());
                         None
                     }
                 }
             };
-            // #[cfg(debug_assertions)]
-            // let ret = {
-            //     smol::Timer::after(std::time::Duration::from_secs(1)).await;
-            //     Some(())
-            // };
+
             if ret.is_some() {
                 index += 1;
-                unsafe { PostMessageW(Some(hwnd), WM_JOB_UPDATED, WPARAM(0), LPARAM(0))? };
+                unsafe { PostMessageW(hwnd, WM_JOB_UPDATED, WPARAM(0), LPARAM(0))? };
+            }
+        }
+        Ok(())
+    }
+    .fuse();
+    #[cfg(test)]
+    let work = async {
+        let mut index = 0;
+        loop {
+            if JOBS.get(index).is_none() {
+                break;
+            }
+            let ret = {
+                smol::Timer::after(std::time::Duration::from_secs(1)).await;
+                if let Ok(setting) = std::env::var("ZED_AUTO_UPDATE") {
+                    match setting.as_str() {
+                        "inf" => None,
+                        "err" => Err(anyhow::anyhow!("Test error"))?,
+                        _ => {
+                            panic!("ZED_AUTO_UPDATE is set to {}, aborting test", setting);
+                        }
+                    }
+                } else {
+                    Some(())
+                }
+            };
+            if ret.is_some() {
+                index += 1;
+                unsafe { PostMessageW(hwnd, WM_JOB_UPDATED, WPARAM(0), LPARAM(0))? };
             }
         }
         Ok(())
@@ -134,5 +165,26 @@ pub(crate) async fn perform_update(app_dir: &Path, hwnd: isize) -> Result<()> {
             log::error!("Update timed out");
             Err(anyhow::anyhow!("Update timed out"))
         }
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::perform_update;
+
+    #[test]
+    fn test_perform_update() {
+        let app_dir = std::path::Path::new("C:/");
+        assert!(smol::block_on(perform_update(app_dir, None)).is_ok());
+
+        // Simulate a timeout
+        std::env::set_var("ZED_AUTO_UPDATE", "inf");
+        let ret = smol::block_on(perform_update(app_dir, None));
+        assert!(ret.is_err_and(|e| e.to_string().as_str() == "Update timed out"));
+
+        // Simulate a test error
+        std::env::set_var("ZED_AUTO_UPDATE", "err");
+        let ret = smol::block_on(perform_update(app_dir, None));
+        assert!(ret.is_err_and(|e| e.to_string().as_str() == "Test error"));
     }
 }
