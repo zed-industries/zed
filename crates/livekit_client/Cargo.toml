@@ -39,8 +39,10 @@ tokio-tungstenite.workspace = true
 http_client_tls.workspace = true
 
 [target.'cfg(not(all(target_os = "windows", target_env = "gnu")))'.dependencies]
-livekit = { rev = "4941ff2352c9a243113607e808fc784450aa2ff3", git = "https://github.com/zed-industries/livekit-rust-sdks", features = ["__rustls-tls"]}
-libwebrtc = { rev = "4941ff2352c9a243113607e808fc784450aa2ff3", git = "https://github.com/zed-industries/livekit-rust-sdks"}
+# # livekit = { rev = "4941ff2352c9a243113607e808fc784450aa2ff3", git = "https://github.com/zed-industries/livekit-rust-sdks", features = ["__rustls-tls"]}
+# libwebrtc = { rev = "4941ff2352c9a243113607e808fc784450aa2ff3", git = "https://github.com/zed-industries/livekit-rust-sdks"}
+livekit = { path = "../../../../rust/livekit-rust-sdks/livekit"}
+libwebrtc = { path = "../../../../rust/livekit-rust-sdks/libwebrtc"}
 
 [target.'cfg(target_os = "macos")'.dependencies]
 core-foundation.workspace = true
