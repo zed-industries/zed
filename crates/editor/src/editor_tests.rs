@@ -16435,6 +16435,69 @@ async fn test_goto_definition_with_find_all_references_fallback(cx: &mut TestApp
 }
 
 #[gpui::test]
+async fn test_goto_definition_no_fallback(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    cx.update(|cx| {
+        let mut editor_settings = EditorSettings::get_global(cx).clone();
+        editor_settings.go_to_definition_fallback = GoToDefinitionFallback::None;
+        EditorSettings::override_global(editor_settings, cx);
+    });
+    let mut cx = EditorLspTestContext::new_rust(
+        lsp::ServerCapabilities {
+            definition_provider: Some(lsp::OneOf::Left(true)),
+            references_provider: Some(lsp::OneOf::Left(true)),
+            ..lsp::ServerCapabilities::default()
+        },
+        cx,
+    )
+    .await;
+    let original_state = r#"fn one() {
+        let mut a = ˇtwo();
+    }
+
+    fn two() {}"#
+        .unindent();
+    cx.set_state(&original_state);
+
+    let mut go_to_definition = cx
+        .lsp
+        .set_request_handler::<lsp::request::GotoDefinition, _, _>(
+            move |_, _| async move { Ok(None) },
+        );
+    let _references = cx
+        .lsp
+        .set_request_handler::<lsp::request::References, _, _>(move |_, _| async move {
+            panic!("Should not call for references with no go to definition fallback")
+        });
+
+    let navigated = cx
+        .update_editor(|editor, window, cx| editor.go_to_definition(&GoToDefinition, window, cx))
+        .await
+        .expect("Failed to navigate to lookup references");
+    go_to_definition
+        .next()
+        .await
+        .expect("Should have called the go_to_definition handler");
+
+    assert_eq!(
+        navigated,
+        Navigated::No,
+        "Should have navigated to references as a fallback after empty GoToDefinition response"
+    );
+    cx.assert_editor_state(&original_state);
+    let editors = cx.update_workspace(|workspace, _, cx| {
+        workspace.items_of_type::<Editor>(cx).collect::<Vec<_>>()
+    });
+    cx.update_editor(|_, _, _| {
+        assert_eq!(
+            editors.len(),
+            1,
+            "After unsuccessful fallback, no other editor should have been opened"
+        );
+    });
+}
+
+#[gpui::test]
 async fn test_find_enclosing_node_with_task(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
