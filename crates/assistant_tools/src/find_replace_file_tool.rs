@@ -34,9 +34,8 @@ pub struct FindReplaceFileToolInput {
 
     /// A user-friendly description of what's being replaced. This will be shown in the UI.
     ///
-    /// <example>
-    /// "Fix API endpoint URLs" or "Update copyright year"
-    /// </example>
+    /// <example>Fix API endpoint URLs</example>
+    /// <example>Update copyright year</example>
     pub display_description: String,
 
     /// The unique string to find in the file. This string cannot be empty;
@@ -64,52 +63,52 @@ pub struct FindReplaceFileToolInput {
     ///
     /// <example>
     /// If a file contains this code:
-    /// 
+    ///
     /// ```rust
     /// fn check_user_permissions(user_id: &str) -> Result<bool> {
     ///     // Check if user exists first
     ///     let user = database.find_user(user_id)?;
-    ///     
+    ///
     ///     // This is the part we want to modify
     ///     if user.role == "admin" {
     ///         return Ok(true);
     ///     }
-    ///     
+    ///
     ///     // Check other permissions
     ///     check_custom_permissions(user_id)
     /// }
     /// ```
-    /// 
-    /// Your find string should include at least 3 lines of context before and after the part 
+    ///
+    /// Your find string should include at least 3 lines of context before and after the part
     /// you want to change:
-    /// 
+    ///
     /// ```
     /// fn check_user_permissions(user_id: &str) -> Result<bool> {
     ///     // Check if user exists first
     ///     let user = database.find_user(user_id)?;
-    ///     
+    ///
     ///     // This is the part we want to modify
     ///     if user.role == "admin" {
     ///         return Ok(true);
     ///     }
-    ///     
+    ///
     ///     // Check other permissions
     ///     check_custom_permissions(user_id)
     /// }
     /// ```
-    /// 
+    ///
     /// And your replace string might look like:
-    /// 
+    ///
     /// ```
     /// fn check_user_permissions(user_id: &str) -> Result<bool> {
     ///     // Check if user exists first
     ///     let user = database.find_user(user_id)?;
-    ///     
+    ///
     ///     // This is the part we want to modify
     ///     if user.role == "admin" || user.role == "superuser" {
     ///         return Ok(true);
     ///     }
-    ///     
+    ///
     ///     // Check other permissions
     ///     check_custom_permissions(user_id)
     /// }
