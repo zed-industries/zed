@@ -65,12 +65,12 @@ use uuid::Uuid;
 use vim_mode_setting::VimModeSetting;
 use welcome::{BaseKeymap, MultibufferHint};
 use workspace::notifications::{dismiss_app_notification, show_app_notification, NotificationId};
-use workspace::CloseIntent;
 use workspace::{
     create_and_open_local_file, notifications::simple_message_notification::MessageNotification,
     open_new, AppState, NewFile, NewWindow, OpenLog, Toast, Workspace, WorkspaceSettings,
 };
 use workspace::{notifications::DetachAndPromptErr, Pane};
+use workspace::{CloseIntent, RestoreBanner};
 use zed_actions::{
     OpenAccountSettings, OpenBrowser, OpenServerSettings, OpenSettings, OpenZedUrl, Quit,
 };
@@ -104,6 +104,8 @@ pub fn init(cx: &mut App) {
     #[cfg(target_os = "macos")]
     cx.on_action(|_: &ShowAll, cx| cx.unhide_other_apps());
     cx.on_action(quit);
+
+    cx.on_action(|_: &RestoreBanner, cx| title_bar::restore_banner(cx));
 
     if ReleaseChannel::global(cx) == ReleaseChannel::Dev {
         cx.on_action(test_panic);

@@ -182,6 +182,7 @@ actions!(
         ToggleZoom,
         Unfollow,
         Welcome,
+        RestoreBanner,
     ]
 );
 

@@ -29,7 +29,9 @@ test-support = [
 [dependencies]
 auto_update.workspace = true
 call.workspace = true
+chrono.workspace = true
 client.workspace = true
+db.workspace = true
 feature_flags.workspace = true
 gpui.workspace = true
 notifications.workspace = true
@@ -47,8 +49,6 @@ ui.workspace = true
 util.workspace = true
 workspace.workspace = true
 zed_actions.workspace = true
-zeta.workspace = true
-git_ui.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 windows.workspace = true

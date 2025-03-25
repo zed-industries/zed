@@ -5636,7 +5636,6 @@ dependencies = [
  "askpass",
  "assistant_settings",
  "buffer_diff",
- "chrono",
  "collections",
  "command_palette_hooks",
  "component",
@@ -14195,10 +14194,11 @@ version = "0.1.0"
 dependencies = [
  "auto_update",
  "call",
+ "chrono",
  "client",
  "collections",
+ "db",
  "feature_flags",
- "git_ui",
  "gpui",
  "http_client",
  "notifications",
@@ -14219,7 +14219,6 @@ dependencies = [
  "windows 0.61.1",
  "workspace",
  "zed_actions",
- "zeta",
 ]
 
 [[package]]
@@ -17371,6 +17370,7 @@ dependencies = [
  "theme_extension",
  "theme_selector",
  "time",
+ "title_bar",
  "toolchain_selector",
  "tree-sitter-md",
  "tree-sitter-rust",
@@ -17629,7 +17629,6 @@ dependencies = [
  "anyhow",
  "arrayvec",
  "call",
- "chrono",
  "client",
  "clock",
  "collections",

@@ -1,4 +1,5 @@
 mod application_menu;
+mod banner;
 mod collab;
 mod platforms;
 mod window_controls;
@@ -15,10 +16,10 @@ use crate::application_menu::{
 
 use crate::platforms::{platform_linux, platform_mac, platform_windows};
 use auto_update::AutoUpdateStatus;
+use banner::{Banner, BannerDetails};
 use call::ActiveCall;
 use client::{Client, UserStore};
 use feature_flags::{FeatureFlagAppExt, ZedPro};
-use git_ui::onboarding::GitBanner;
 use gpui::{
     actions, div, px, Action, AnyElement, App, Context, Decorations, Element, Entity,
     InteractiveElement, Interactivity, IntoElement, MouseButton, ParentElement, Render, Stateful,
@@ -37,7 +38,8 @@ use ui::{
 use util::ResultExt;
 use workspace::{notifications::NotifyResultExt, Workspace};
 use zed_actions::{OpenBrowser, OpenRecent, OpenRemote};
-use zeta::ZedPredictBanner;
+
+pub use banner::restore_banner;
 
 #[cfg(feature = "stories")]
 pub use stories::*;
@@ -126,8 +128,7 @@ pub struct TitleBar {
     should_move: bool,
     application_menu: Option<Entity<ApplicationMenu>>,
     _subscriptions: Vec<Subscription>,
-    zed_predict_banner: Entity<ZedPredictBanner>,
-    git_banner: Entity<GitBanner>,
+    banner: Entity<Banner>,
 }
 
 impl Render for TitleBar {
@@ -211,8 +212,7 @@ impl Render for TitleBar {
                             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation()),
                     )
                     .child(self.render_collaborator_list(window, cx))
-                    .child(self.zed_predict_banner.clone())
-                    .child(self.git_banner.clone())
+                    .child(self.banner.clone())
                     .child(
                         h_flex()
                             .gap_1()
@@ -315,8 +315,33 @@ impl TitleBar {
         subscriptions.push(cx.observe_window_activation(window, Self::window_activation_changed));
         subscriptions.push(cx.observe(&user_store, |_, _, cx| cx.notify()));
 
-        let zed_predict_banner = cx.new(ZedPredictBanner::new);
-        let git_banner = cx.new(GitBanner::new);
+        let banner = cx.new(|cx| {
+            Banner::new(
+                "Git Onboarding",
+                BannerDetails {
+                    action: zed_actions::OpenGitIntegrationOnboarding.boxed_clone(),
+                    banner_label: Box::new(|_, _| {
+                        h_flex()
+                            .h_full()
+                            .items_center()
+                            .gap_1()
+                            .child(Icon::new(IconName::GitBranchSmall).size(IconSize::Small))
+                            .child(
+                                h_flex()
+                                    .gap_0p5()
+                                    .child(
+                                        Label::new("Introducing:")
+                                            .size(LabelSize::Small)
+                                            .color(Color::Muted),
+                                    )
+                                    .child(Label::new("Git Support").size(LabelSize::Small)),
+                            )
+                            .into_any_element()
+                    }),
+                },
+                cx,
+            )
+        });
 
         Self {
             platform_style,
@@ -329,8 +354,7 @@ impl TitleBar {
             user_store,
             client,
             _subscriptions: subscriptions,
-            zed_predict_banner,
-            git_banner,
+            banner,
         }
     }
 
