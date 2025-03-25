@@ -843,7 +843,6 @@ impl PromptEditor<BufferCodegen> {
                 },
                 prompt_buffer,
                 None,
-                false,
                 window,
                 cx,
             );
@@ -862,7 +861,6 @@ impl PromptEditor<BufferCodegen> {
             ContextStrip::new(
                 context_store.clone(),
                 workspace.clone(),
-                prompt_editor.downgrade(),
                 thread_store.clone(),
                 context_picker_menu_handle.clone(),
                 SuggestContextKind::Thread,
@@ -1001,7 +999,6 @@ impl PromptEditor<TerminalCodegen> {
                 },
                 prompt_buffer,
                 None,
-                false,
                 window,
                 cx,
             );
@@ -1016,7 +1013,6 @@ impl PromptEditor<TerminalCodegen> {
             ContextStrip::new(
                 context_store.clone(),
                 workspace.clone(),
-                prompt_editor.downgrade(),
                 thread_store.clone(),
                 context_picker_menu_handle.clone(),
                 SuggestContextKind::Thread,

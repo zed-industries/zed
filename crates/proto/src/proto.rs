@@ -200,38 +200,54 @@ messages!(
     (Ack, Foreground),
     (AckBufferOperation, Background),
     (AckChannelMessage, Background),
+    (ActivateToolchain, Foreground),
+    (ActiveToolchain, Foreground),
+    (ActiveToolchainResponse, Foreground),
     (AddNotification, Foreground),
     (AddProjectCollaborator, Foreground),
+    (AddWorktree, Foreground),
+    (AddWorktreeResponse, Foreground),
+    (AdvertiseContexts, Foreground),
     (ApplyCodeAction, Background),
     (ApplyCodeActionResponse, Background),
     (ApplyCompletionAdditionalEdits, Background),
     (ApplyCompletionAdditionalEditsResponse, Background),
+    (BlameBuffer, Foreground),
+    (BlameBufferResponse, Foreground),
     (BufferReloaded, Foreground),
     (BufferSaved, Foreground),
     (Call, Foreground),
     (CallCanceled, Foreground),
     (CancelCall, Foreground),
+    (CancelLanguageServerWork, Foreground),
     (ChannelMessageSent, Foreground),
     (ChannelMessageUpdate, Foreground),
+    (CloseBuffer, Foreground),
     (Commit, Background),
     (ComputeEmbeddings, Background),
     (ComputeEmbeddingsResponse, Background),
     (CopyProjectEntry, Foreground),
+    (CountLanguageModelTokens, Background),
+    (CountLanguageModelTokensResponse, Background),
     (CreateBufferForPeer, Foreground),
     (CreateChannel, Foreground),
     (CreateChannelResponse, Foreground),
+    (CreateContext, Foreground),
+    (CreateContextResponse, Foreground),
     (CreateProjectEntry, Foreground),
     (CreateRoom, Foreground),
     (CreateRoomResponse, Foreground),
     (DeclineCall, Foreground),
     (DeleteChannel, Foreground),
     (DeleteNotification, Foreground),
-    (UpdateNotification, Foreground),
     (DeleteProjectEntry, Foreground),
     (EndStream, Foreground),
     (Error, Foreground),
     (ExpandProjectEntry, Foreground),
     (ExpandProjectEntryResponse, Foreground),
+    (FindSearchCandidatesResponse, Background),
+    (FindSearchCandidates, Background),
+    (FlushBufferedMessages, Foreground),
     (ExpandAllForProjectEntry, Foreground),
     (ExpandAllForProjectEntryResponse, Foreground),
     (Follow, Foreground),
@@ -252,16 +268,22 @@ messages!(
     (GetCodeActionsResponse, Background),
     (GetCompletions, Background),
     (GetCompletionsResponse, Background),
-    (GetDefinition, Background),
-    (GetDefinitionResponse, Background),
     (GetDeclaration, Background),
     (GetDeclarationResponse, Background),
+    (GetDefinition, Background),
+    (GetDefinitionResponse, Background),
     (GetDocumentHighlights, Background),
     (GetDocumentHighlightsResponse, Background),
     (GetHover, Background),
     (GetHoverResponse, Background),
     (GetNotifications, Foreground),
     (GetNotificationsResponse, Foreground),
+    (GetPanicFiles, Background),
+    (GetPanicFilesResponse, Background),
+    (GetPathMetadata, Background),
+    (GetPathMetadataResponse, Background),
+    (GetPermalinkToLine, Foreground),
+    (GetPermalinkToLineResponse, Foreground),
     (GetPrivateUserInfo, Foreground),
     (GetPrivateUserInfoResponse, Foreground),
     (GetProjectSymbols, Background),
@@ -283,10 +305,14 @@ messages!(
     (OpenUncommittedDiff, Foreground),
     (OpenUncommittedDiffResponse, Foreground),
     (GetUsers, Foreground),
+    (GitGetBranches, Background),
+    (GitBranchesResponse, Background),
     (Hello, Foreground),
+    (HideToast, Background),
     (IncomingCall, Foreground),
     (InlayHints, Background),
     (InlayHintsResponse, Background),
+    (InstallExtension, Background),
     (InviteChannelMember, Foreground),
     (JoinChannel, Foreground),
     (JoinChannelBuffer, Foreground),
@@ -297,12 +323,29 @@ messages!(
     (JoinProjectResponse, Foreground),
     (JoinRoom, Foreground),
     (JoinRoomResponse, Foreground),
+    (LanguageServerLog, Foreground),
+    (LanguageServerPromptRequest, Foreground),
+    (LanguageServerPromptResponse, Foreground),
     (LeaveChannelBuffer, Background),
     (LeaveChannelChat, Foreground),
     (LeaveProject, Foreground),
     (LeaveRoom, Foreground),
+    (LinkedEditingRange, Background),
+    (LinkedEditingRangeResponse, Background),
+    (ListRemoteDirectory, Background),
+    (ListRemoteDirectoryResponse, Background),
+    (ListToolchains, Foreground),
+    (ListToolchainsResponse, Foreground),
+    (LspExtExpandMacro, Background),
+    (LspExtExpandMacroResponse, Background),
+    (LspExtOpenDocs, Background),
+    (LspExtOpenDocsResponse, Background),
+    (LspExtSwitchSourceHeader, Background),
+    (LspExtSwitchSourceHeaderResponse, Background),
     (MarkNotificationRead, Foreground),
     (MoveChannel, Foreground),
+    (MultiLspQuery, Background),
+    (MultiLspQueryResponse, Background),
     (OnTypeFormatting, Background),
     (OnTypeFormattingResponse, Background),
     (OpenBufferById, Background),
@@ -311,27 +354,32 @@ messages!(
     (OpenBufferForSymbolResponse, Background),
     (OpenBufferResponse, Background),
     (OpenCommitMessageBuffer, Background),
+    (OpenContext, Foreground),
+    (OpenContextResponse, Foreground),
+    (OpenNewBuffer, Foreground),
+    (OpenServerSettings, Foreground),
     (PerformRename, Background),
     (PerformRenameResponse, Background),
     (Ping, Foreground),
     (PrepareRename, Background),
     (PrepareRenameResponse, Background),
     (ProjectEntryResponse, Foreground),
-    (CountLanguageModelTokens, Background),
-    (CountLanguageModelTokensResponse, Background),
-    (RefreshLlmToken, Background),
     (RefreshInlayHints, Foreground),
+    (RefreshLlmToken, Background),
+    (RegisterBufferWithLanguageServers, Background),
     (RejoinChannelBuffers, Foreground),
     (RejoinChannelBuffersResponse, Foreground),
+    (RejoinRemoteProjects, Foreground),
+    (RejoinRemoteProjectsResponse, Foreground),
     (RejoinRoom, Foreground),
     (RejoinRoomResponse, Foreground),
     (ReloadBuffers, Foreground),
     (ReloadBuffersResponse, Foreground),
     (RemoveChannelMember, Foreground),
     (RemoveChannelMessage, Foreground),
-    (UpdateChannelMessage, Foreground),
     (RemoveContact, Foreground),
     (RemoveProjectCollaborator, Foreground),
+    (RemoveWorktree, Foreground),
     (RenameChannel, Foreground),
     (RenameChannelResponse, Foreground),
     (RenameProjectEntry, Foreground),
@@ -340,25 +388,38 @@ messages!(
     (ResolveCompletionDocumentationResponse, Background),
     (ResolveInlayHint, Background),
     (ResolveInlayHintResponse, Background),
+    (RefreshCodeLens, Background),
+    (GetCodeLens, Background),
+    (GetCodeLensResponse, Background),
     (RespondToChannelInvite, Foreground),
     (RespondToContactRequest, Foreground),
+    (RestartLanguageServers, Foreground),
     (RoomUpdated, Foreground),
     (SaveBuffer, Foreground),
-    (SetChannelMemberRole, Foreground),
-    (SetChannelVisibility, Foreground),
     (SendChannelMessage, Background),
     (SendChannelMessageResponse, Background),
+    (SetChannelMemberRole, Foreground),
+    (SetChannelVisibility, Foreground),
+    (SetRoomParticipantRole, Foreground),
     (ShareProject, Foreground),
     (ShareProjectResponse, Foreground),
     (ShowContacts, Foreground),
+    (ShutdownRemoteServer, Foreground),
     (Stage, Background),
     (StartLanguageServer, Foreground),
     (SubscribeToChannels, Foreground),
+    (SyncExtensions, Background),
+    (SyncExtensionsResponse, Background),
+    (BreakpointsForFile, Background),
+    (ToggleBreakpoint, Foreground),
     (SynchronizeBuffers, Foreground),
     (SynchronizeBuffersResponse, Foreground),
-    (TaskContextForLocation, Background),
+    (SynchronizeContexts, Foreground),
+    (SynchronizeContextsResponse, Foreground),
     (TaskContext, Background),
+    (TaskContextForLocation, Background),
     (Test, Foreground),
+    (Toast, Background),
     (Unfollow, Foreground),
     (UnshareProject, Foreground),
     (Unstage, Background),
@@ -366,81 +427,27 @@ messages!(
     (UpdateBufferFile, Foreground),
     (UpdateChannelBuffer, Foreground),
     (UpdateChannelBufferCollaborators, Foreground),
+    (UpdateChannelMessage, Foreground),
     (UpdateChannels, Foreground),
-    (UpdateUserChannels, Foreground),
     (UpdateContacts, Foreground),
+    (UpdateContext, Foreground),
     (UpdateDiagnosticSummary, Foreground),
     (UpdateDiffBases, Foreground),
     (UpdateFollowers, Foreground),
+    (UpdateGitBranch, Background),
     (UpdateInviteInfo, Foreground),
     (UpdateLanguageServer, Foreground),
+    (UpdateNotification, Foreground),
     (UpdateParticipantLocation, Foreground),
     (UpdateProject, Foreground),
     (UpdateProjectCollaborator, Foreground),
+    (UpdateUserChannels, Foreground),
     (UpdateUserPlan, Foreground),
     (UpdateWorktree, Foreground),
     (UpdateWorktreeSettings, Foreground),
+    (UpdateRepository, Foreground),
+    (RemoveRepository, Foreground),
     (UsersResponse, Foreground),
-    (LspExtExpandMacro, Background),
-    (LspExtExpandMacroResponse, Background),
-    (LspExtOpenDocs, Background),
-    (LspExtOpenDocsResponse, Background),
-    (SetRoomParticipantRole, Foreground),
-    (BlameBuffer, Foreground),
-    (BlameBufferResponse, Foreground),
-    (RejoinRemoteProjects, Foreground),
-    (RejoinRemoteProjectsResponse, Foreground),
-    (MultiLspQuery, Background),
-    (MultiLspQueryResponse, Background),
-    (ListRemoteDirectory, Background),
-    (ListRemoteDirectoryResponse, Background),
-    (OpenNewBuffer, Foreground),
-    (RestartLanguageServers, Foreground),
-    (LinkedEditingRange, Background),
-    (LinkedEditingRangeResponse, Background),
-    (AdvertiseContexts, Foreground),
-    (OpenContext, Foreground),
-    (OpenContextResponse, Foreground),
-    (CreateContext, Foreground),
-    (CreateContextResponse, Foreground),
-    (UpdateContext, Foreground),
-    (SynchronizeContexts, Foreground),
-    (SynchronizeContextsResponse, Foreground),
-    (LspExtSwitchSourceHeader, Background),
-    (LspExtSwitchSourceHeaderResponse, Background),
-    (AddWorktree, Foreground),
-    (AddWorktreeResponse, Foreground),
-    (FindSearchCandidates, Background),
-    (FindSearchCandidatesResponse, Background),
-    (CloseBuffer, Foreground),
-    (ShutdownRemoteServer, Foreground),
-    (RemoveWorktree, Foreground),
-    (LanguageServerLog, Foreground),
-    (Toast, Background),
-    (HideToast, Background),
-    (OpenServerSettings, Foreground),
-    (GetPermalinkToLine, Foreground),
-    (GetPermalinkToLineResponse, Foreground),
-    (FlushBufferedMessages, Foreground),
-    (LanguageServerPromptRequest, Foreground),
-    (LanguageServerPromptResponse, Foreground),
-    (GitGetBranches, Background),
-    (GitBranchesResponse, Background),
-    (UpdateGitBranch, Background),
-    (ListToolchains, Foreground),
-    (ListToolchainsResponse, Foreground),
-    (ActivateToolchain, Foreground),
-    (ActiveToolchain, Foreground),
-    (ActiveToolchainResponse, Foreground),
-    (GetPathMetadata, Background),
-    (GetPathMetadataResponse, Background),
-    (GetPanicFiles, Background),
-    (GetPanicFilesResponse, Background),
-    (CancelLanguageServerWork, Foreground),
-    (SyncExtensions, Background),
-    (SyncExtensionsResponse, Background),
-    (InstallExtension, Background),
-    (RegisterBufferWithLanguageServers, Background),
     (GitReset, Background),
     (GitCheckoutFiles, Background),
     (GitShow, Background),
@@ -513,6 +520,7 @@ request_messages!(
     (GetUsers, UsersResponse),
     (IncomingCall, Ack),
     (InlayHints, InlayHintsResponse),
+    (GetCodeLens, GetCodeLensResponse),
     (InviteChannelMember, Ack),
     (JoinChannel, JoinRoomResponse),
     (JoinChannelBuffer, JoinChannelBufferResponse),
@@ -534,6 +542,7 @@ request_messages!(
     (PrepareRename, PrepareRenameResponse),
     (CountLanguageModelTokens, CountLanguageModelTokensResponse),
     (RefreshInlayHints, Ack),
+    (RefreshCodeLens, Ack),
     (RejoinChannelBuffers, RejoinChannelBuffersResponse),
     (RejoinRoom, RejoinRoomResponse),
     (ReloadBuffers, ReloadBuffersResponse),
@@ -566,6 +575,8 @@ request_messages!(
     (UpdateParticipantLocation, Ack),
     (UpdateProject, Ack),
     (UpdateWorktree, Ack),
+    (UpdateRepository, Ack),
+    (RemoveRepository, Ack),
     (LspExtExpandMacro, LspExtExpandMacroResponse),
     (LspExtOpenDocs, LspExtOpenDocsResponse),
     (SetRoomParticipantRole, Ack),
@@ -609,6 +620,7 @@ request_messages!(
     (CheckForPushedCommits, CheckForPushedCommitsResponse),
     (GitDiff, GitDiffResponse),
     (GitInit, Ack),
+    (ToggleBreakpoint, Ack),
 );
 
 entity_messages!(
@@ -632,6 +644,7 @@ entity_messages!(
     ApplyCodeActionKind,
     FormatBuffers,
     GetCodeActions,
+    GetCodeLens,
     GetCompletions,
     GetDefinition,
     GetDeclaration,
@@ -659,6 +672,7 @@ entity_messages!(
     PerformRename,
     PrepareRename,
     RefreshInlayHints,
+    RefreshCodeLens,
     ReloadBuffers,
     RemoveProjectCollaborator,
     RenameProjectEntry,
@@ -679,6 +693,8 @@ entity_messages!(
     UpdateProject,
     UpdateProjectCollaborator,
     UpdateWorktree,
+    UpdateRepository,
+    RemoveRepository,
     UpdateWorktreeSettings,
     LspExtExpandMacro,
     LspExtOpenDocs,
@@ -706,6 +722,7 @@ entity_messages!(
     GitReset,
     GitCheckoutFiles,
     SetIndexText,
+
     Push,
     Fetch,
     GetRemotes,
@@ -716,6 +733,8 @@ entity_messages!(
     CheckForPushedCommits,
     GitDiff,
     GitInit,
+    BreakpointsForFile,
+    ToggleBreakpoint,
 );
 
 entity_messages!(
@@ -770,6 +789,31 @@ pub const MAX_WORKTREE_UPDATE_MAX_CHUNK_SIZE: usize = 2;
 #[cfg(not(any(test, feature = "test-support")))]
 pub const MAX_WORKTREE_UPDATE_MAX_CHUNK_SIZE: usize = 256;
 
+#[derive(Clone, Debug)]
+pub enum WorktreeRelatedMessage {
+    UpdateWorktree(UpdateWorktree),
+    UpdateRepository(UpdateRepository),
+    RemoveRepository(RemoveRepository),
+}
+
+impl From<UpdateWorktree> for WorktreeRelatedMessage {
+    fn from(value: UpdateWorktree) -> Self {
+        Self::UpdateWorktree(value)
+    }
+}
+
+impl From<UpdateRepository> for WorktreeRelatedMessage {
+    fn from(value: UpdateRepository) -> Self {
+        Self::UpdateRepository(value)
+    }
+}
+
+impl From<RemoveRepository> for WorktreeRelatedMessage {
+    fn from(value: RemoveRepository) -> Self {
+        Self::RemoveRepository(value)
+    }
+}
+
 pub fn split_worktree_update(mut message: UpdateWorktree) -> impl Iterator<Item = UpdateWorktree> {
     let mut done = false;
 
@@ -804,7 +848,6 @@ pub fn split_worktree_update(mut message: UpdateWorktree) -> impl Iterator<Item 
 
             updated_repositories.push(RepositoryEntry {
                 work_directory_id: repo.work_directory_id,
-                branch: repo.branch.clone(),
                 branch_summary: repo.branch_summary.clone(),
                 updated_statuses: repo
                     .updated_statuses
@@ -848,6 +891,47 @@ pub fn split_worktree_update(mut message: UpdateWorktree) -> impl Iterator<Item 
             removed_repositories,
         })
     })
+}
+
+pub fn split_repository_update(
+    mut update: UpdateRepository,
+) -> impl Iterator<Item = UpdateRepository> {
+    let mut updated_statuses_iter = mem::take(&mut update.updated_statuses).into_iter().fuse();
+    let mut removed_statuses_iter = mem::take(&mut update.removed_statuses).into_iter().fuse();
+    let mut is_first = true;
+    std::iter::from_fn(move || {
+        let updated_statuses = updated_statuses_iter
+            .by_ref()
+            .take(MAX_WORKTREE_UPDATE_MAX_CHUNK_SIZE)
+            .collect::<Vec<_>>();
+        let removed_statuses = removed_statuses_iter
+            .by_ref()
+            .take(MAX_WORKTREE_UPDATE_MAX_CHUNK_SIZE)
+            .collect::<Vec<_>>();
+        if updated_statuses.is_empty() && removed_statuses.is_empty() && !is_first {
+            return None;
+        }
+        is_first = false;
+        Some(UpdateRepository {
+            updated_statuses,
+            removed_statuses,
+            ..update.clone()
+        })
+    })
+}
+
+pub fn split_worktree_related_message(
+    message: WorktreeRelatedMessage,
+) -> Box<dyn Iterator<Item = WorktreeRelatedMessage> + Send> {
+    match message {
+        WorktreeRelatedMessage::UpdateWorktree(message) => {
+            Box::new(split_worktree_update(message).map(WorktreeRelatedMessage::UpdateWorktree))
+        }
+        WorktreeRelatedMessage::UpdateRepository(message) => {
+            Box::new(split_repository_update(message).map(WorktreeRelatedMessage::UpdateRepository))
+        }
+        WorktreeRelatedMessage::RemoveRepository(update) => Box::new([update.into()].into_iter()),
+    }
 }
 
 #[cfg(test)]

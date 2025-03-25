@@ -11,6 +11,8 @@ pub struct Disclosure {
     selected: bool,
     on_toggle: Option<Arc<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>>,
     cursor_style: CursorStyle,
+    opened_icon: IconName,
+    closed_icon: IconName,
 }
 
 impl Disclosure {
@@ -21,6 +23,8 @@ impl Disclosure {
             selected: false,
             on_toggle: None,
             cursor_style: CursorStyle::PointingHand,
+            opened_icon: IconName::ChevronDown,
+            closed_icon: IconName::ChevronRight,
         }
     }
 
@@ -29,6 +33,16 @@ impl Disclosure {
         handler: impl Into<Option<Arc<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>>>,
     ) -> Self {
         self.on_toggle = handler.into();
+        self
+    }
+
+    pub fn opened_icon(mut self, icon: IconName) -> Self {
+        self.opened_icon = icon;
+        self
+    }
+
+    pub fn closed_icon(mut self, icon: IconName) -> Self {
+        self.closed_icon = icon;
         self
     }
 }
@@ -57,8 +71,8 @@ impl RenderOnce for Disclosure {
         IconButton::new(
             self.id,
             match self.is_open {
-                true => IconName::ChevronDown,
-                false => IconName::ChevronRight,
+                true => self.opened_icon,
+                false => self.closed_icon,
             },
         )
         .shape(IconButtonShape::Square)

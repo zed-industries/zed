@@ -137,9 +137,9 @@ pub fn deploy_context_menu(
         menu
     } else {
         // Don't show the context menu if there isn't a project associated with this editor
-        if editor.project.is_none() {
+        let Some(project) = editor.project.clone() else {
             return;
-        }
+        };
 
         let display_map = editor.selections.display_map(cx);
         let buffer = &editor.snapshot(window, cx).buffer_snapshot;
@@ -159,10 +159,13 @@ pub fn deploy_context_menu(
             .all::<PointUtf16>(cx)
             .into_iter()
             .any(|s| !s.is_empty());
-        let has_git_repo = editor.project.as_ref().map_or(false, |project| {
-            project.update(cx, |project, cx| {
-                project.get_first_worktree_root_repo(cx).is_some()
-            })
+        let has_git_repo = anchor.buffer_id.is_some_and(|buffer_id| {
+            project
+                .read(cx)
+                .git_store()
+                .read(cx)
+                .repository_and_path_for_buffer_id(buffer_id, cx)
+                .is_some()
         });
 
         ui::ContextMenu::build(window, cx, |menu, _window, _cx| {

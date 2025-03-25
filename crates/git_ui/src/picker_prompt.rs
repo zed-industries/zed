@@ -31,13 +31,13 @@ pub fn prompt(
     }
     let prompt = prompt.to_string().into();
 
-    window.spawn(cx, |mut cx| async move {
+    window.spawn(cx, async move |cx| {
         // Modal branch picker has a longer trailoff than a popover one.
         let (tx, rx) = oneshot::channel();
         let delegate = PickerPromptDelegate::new(prompt, options, tx, 70);
 
         workspace
-            .update_in(&mut cx, |workspace, window, cx| {
+            .update_in(cx, |workspace, window, cx| {
                 workspace.toggle_modal(window, cx, |window, cx| {
                     PickerPrompt::new(delegate, 34., window, cx)
                 })
@@ -146,8 +146,8 @@ impl PickerDelegate for PickerPromptDelegate {
         window: &mut Window,
         cx: &mut Context<Picker<Self>>,
     ) -> Task<()> {
-        cx.spawn_in(window, move |picker, mut cx| async move {
-            let candidates = picker.update(&mut cx, |picker, _| {
+        cx.spawn_in(window, async move |picker, cx| {
+            let candidates = picker.update(cx, |picker, _| {
                 picker
                     .delegate
                     .all_options
@@ -182,7 +182,7 @@ impl PickerDelegate for PickerPromptDelegate {
                 .await
             };
             picker
-                .update(&mut cx, |picker, _| {
+                .update(cx, |picker, _| {
                     let delegate = &mut picker.delegate;
                     delegate.matches = matches;
                     if delegate.matches.is_empty() {

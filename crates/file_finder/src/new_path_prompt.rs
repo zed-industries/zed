@@ -312,7 +312,7 @@ impl PickerDelegate for NewPathDelegate {
         let cancel_flag = self.cancel_flag.clone();
         let query = query.to_string();
         let prefix = dir.clone();
-        cx.spawn_in(window, |picker, mut cx| async move {
+        cx.spawn_in(window, async move |picker, cx| {
             let matches = fuzzy::match_path_sets(
                 candidate_sets.as_slice(),
                 &dir,
@@ -328,7 +328,7 @@ impl PickerDelegate for NewPathDelegate {
                 return;
             }
             picker
-                .update(&mut cx, |picker, cx| {
+                .update(cx, |picker, cx| {
                     picker
                         .delegate
                         .set_search_matches(query, prefix, suffix, matches, cx)
@@ -378,10 +378,10 @@ impl PickerDelegate for NewPathDelegate {
                 &["Replace", "Cancel"],
             cx);
             let m = m.clone();
-            cx.spawn_in(window, |picker, mut cx| async move {
+            cx.spawn_in(window, async move |picker, cx| {
                 let answer = answer.await.ok();
                 picker
-                    .update(&mut cx, |picker, cx| {
+                    .update(cx, |picker, cx| {
                         picker.delegate.should_dismiss = true;
                         if answer != Some(0) {
                             return;

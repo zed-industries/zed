@@ -33,7 +33,6 @@ use std::{
     cell::{Cell, RefCell},
     cmp,
     fmt::{Debug, Display},
-    future::Future,
     hash::{Hash, Hasher},
     marker::PhantomData,
     mem,
@@ -1292,12 +1291,16 @@ impl Window {
     /// The closure is provided a handle to the current window and an `AsyncWindowContext` for
     /// use within your future.
     #[track_caller]
-    pub fn spawn<Fut, R>(&self, cx: &App, f: impl FnOnce(AsyncWindowContext) -> Fut) -> Task<R>
+    pub fn spawn<AsyncFn, R>(&self, cx: &App, f: AsyncFn) -> Task<R>
     where
         R: 'static,
-        Fut: Future<Output = R> + 'static,
+        AsyncFn: AsyncFnOnce(&mut AsyncWindowContext) -> R + 'static,
     {
-        cx.spawn(|app| f(AsyncWindowContext::new_context(app, self.handle)))
+        let handle = self.handle;
+        cx.spawn(async move |app| {
+            let mut async_window_cx = AsyncWindowContext::new_context(app.clone(), handle);
+            f(&mut async_window_cx).await
+        })
     }
 
     fn bounds_changed(&mut self, cx: &mut App) {
@@ -2068,7 +2071,7 @@ impl Window {
                 let entity = self.current_view();
                 self.spawn(cx, {
                     let task = task.clone();
-                    |mut cx| async move {
+                    async move |cx| {
                         task.await;
 
                         cx.on_next_frame(move |_, cx| {
@@ -3241,7 +3244,7 @@ impl Window {
         if !match_result.pending.is_empty() {
             currently_pending.keystrokes = match_result.pending;
             currently_pending.focus = self.focus;
-            currently_pending.timer = Some(self.spawn(cx, |mut cx| async move {
+            currently_pending.timer = Some(self.spawn(cx, async move |cx| {
                 cx.background_executor.timer(Duration::from_secs(1)).await;
                 cx.update(move |window, cx| {
                     let Some(currently_pending) = window

@@ -234,6 +234,19 @@ pub(crate) struct InlayHints {
     pub range: Range<Anchor>,
 }
 
+#[derive(Debug, Copy, Clone)]
+pub(crate) struct GetCodeLens;
+
+impl GetCodeLens {
+    pub(crate) fn can_resolve_lens(capabilities: &ServerCapabilities) -> bool {
+        capabilities
+            .code_lens_provider
+            .as_ref()
+            .and_then(|code_lens_options| code_lens_options.resolve_provider)
+            .unwrap_or(false)
+    }
+}
+
 #[derive(Debug)]
 pub(crate) struct LinkedEditingRange {
     pub position: Anchor,
@@ -2229,18 +2242,18 @@ impl LspCommand for GetCodeActions {
             .unwrap_or_default()
             .into_iter()
             .filter_map(|entry| {
-                let lsp_action = match entry {
+                let (lsp_action, resolved) = match entry {
                     lsp::CodeActionOrCommand::CodeAction(lsp_action) => {
                         if let Some(command) = lsp_action.command.as_ref() {
                             if !available_commands.contains(&command.command) {
                                 return None;
                             }
                         }
-                        LspAction::Action(Box::new(lsp_action))
+                        (LspAction::Action(Box::new(lsp_action)), false)
                     }
                     lsp::CodeActionOrCommand::Command(command) => {
                         if available_commands.contains(&command.command) {
-                            LspAction::Command(command)
+                            (LspAction::Command(command), true)
                         } else {
                             return None;
                         }
@@ -2259,6 +2272,7 @@ impl LspCommand for GetCodeActions {
                     server_id,
                     range: self.range.clone(),
                     lsp_action,
+                    resolved,
                 })
             })
             .collect())
@@ -2943,14 +2957,14 @@ impl LspCommand for InlayHints {
             };
 
             let buffer = buffer.clone();
-            cx.spawn(move |mut cx| async move {
+            cx.spawn(async move |cx| {
                 InlayHints::lsp_to_project_hint(
                     lsp_hint,
                     &buffer,
                     server_id,
                     resolve_state,
                     force_no_type_left_padding,
-                    &mut cx,
+                    cx,
                 )
                 .await
             })
@@ -3033,6 +3047,152 @@ impl LspCommand for InlayHints {
     }
 
     fn buffer_id_from_proto(message: &proto::InlayHints) -> Result<BufferId> {
+        BufferId::new(message.buffer_id)
+    }
+}
+
+#[async_trait(?Send)]
+impl LspCommand for GetCodeLens {
+    type Response = Vec<CodeAction>;
+    type LspRequest = lsp::CodeLensRequest;
+    type ProtoRequest = proto::GetCodeLens;
+
+    fn display_name(&self) -> &str {
+        "Code Lens"
+    }
+
+    fn check_capabilities(&self, capabilities: AdapterServerCapabilities) -> bool {
+        capabilities
+            .server_capabilities
+            .code_lens_provider
+            .as_ref()
+            .map_or(false, |code_lens_options| {
+                code_lens_options.resolve_provider.unwrap_or(false)
+            })
+    }
+
+    fn to_lsp(
+        &self,
+        path: &Path,
+        _: &Buffer,
+        _: &Arc<LanguageServer>,
+        _: &App,
+    ) -> Result<lsp::CodeLensParams> {
+        Ok(lsp::CodeLensParams {
+            text_document: lsp::TextDocumentIdentifier {
+                uri: file_path_to_lsp_url(path)?,
+            },
+            work_done_progress_params: lsp::WorkDoneProgressParams::default(),
+            partial_result_params: lsp::PartialResultParams::default(),
+        })
+    }
+
+    async fn response_from_lsp(
+        self,
+        message: Option<Vec<lsp::CodeLens>>,
+        lsp_store: Entity<LspStore>,
+        buffer: Entity<Buffer>,
+        server_id: LanguageServerId,
+        mut cx: AsyncApp,
+    ) -> anyhow::Result<Vec<CodeAction>> {
+        let snapshot = buffer.update(&mut cx, |buffer, _| buffer.snapshot())?;
+        let language_server = cx.update(|cx| {
+            lsp_store
+                .read(cx)
+                .language_server_for_id(server_id)
+                .with_context(|| {
+                    format!("Missing the language server that just returned a response {server_id}")
+                })
+        })??;
+        let server_capabilities = language_server.capabilities();
+        let available_commands = server_capabilities
+            .execute_command_provider
+            .as_ref()
+            .map(|options| options.commands.as_slice())
+            .unwrap_or_default();
+        Ok(message
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|code_lens| {
+                code_lens
+                    .command
+                    .as_ref()
+                    .is_none_or(|command| available_commands.contains(&command.command))
+            })
+            .map(|code_lens| {
+                let code_lens_range = range_from_lsp(code_lens.range);
+                let start = snapshot.clip_point_utf16(code_lens_range.start, Bias::Left);
+                let end = snapshot.clip_point_utf16(code_lens_range.end, Bias::Right);
+                let range = snapshot.anchor_before(start)..snapshot.anchor_after(end);
+                CodeAction {
+                    server_id,
+                    range,
+                    lsp_action: LspAction::CodeLens(code_lens),
+                    resolved: false,
+                }
+            })
+            .collect())
+    }
+
+    fn to_proto(&self, project_id: u64, buffer: &Buffer) -> proto::GetCodeLens {
+        proto::GetCodeLens {
+            project_id,
+            buffer_id: buffer.remote_id().into(),
+            version: serialize_version(&buffer.version()),
+        }
+    }
+
+    async fn from_proto(
+        message: proto::GetCodeLens,
+        _: Entity<LspStore>,
+        buffer: Entity<Buffer>,
+        mut cx: AsyncApp,
+    ) -> Result<Self> {
+        buffer
+            .update(&mut cx, |buffer, _| {
+                buffer.wait_for_version(deserialize_version(&message.version))
+            })?
+            .await?;
+        Ok(Self)
+    }
+
+    fn response_to_proto(
+        response: Vec<CodeAction>,
+        _: &mut LspStore,
+        _: PeerId,
+        buffer_version: &clock::Global,
+        _: &mut App,
+    ) -> proto::GetCodeLensResponse {
+        proto::GetCodeLensResponse {
+            lens_actions: response
+                .iter()
+                .map(LspStore::serialize_code_action)
+                .collect(),
+            version: serialize_version(buffer_version),
+        }
+    }
+
+    async fn response_from_proto(
+        self,
+        message: proto::GetCodeLensResponse,
+        _: Entity<LspStore>,
+        buffer: Entity<Buffer>,
+        mut cx: AsyncApp,
+    ) -> anyhow::Result<Vec<CodeAction>> {
+        buffer
+            .update(&mut cx, |buffer, _| {
+                buffer.wait_for_version(deserialize_version(&message.version))
+            })?
+            .await?;
+        message
+            .lens_actions
+            .into_iter()
+            .map(LspStore::deserialize_code_action)
+            .collect::<Result<Vec<_>>>()
+            .context("deserializing proto code lens response")
+    }
+
+    fn buffer_id_from_proto(message: &proto::GetCodeLens) -> Result<BufferId> {
         BufferId::new(message.buffer_id)
     }
 }

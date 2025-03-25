@@ -209,18 +209,18 @@ impl SerializableItem for ImageView {
         window: &mut Window,
         cx: &mut App,
     ) -> Task<gpui::Result<Entity<Self>>> {
-        window.spawn(cx, |mut cx| async move {
+        window.spawn(cx, async move |cx| {
             let image_path = IMAGE_VIEWER
                 .get_image_path(item_id, workspace_id)?
                 .ok_or_else(|| anyhow::anyhow!("No image path found"))?;
 
             let (worktree, relative_path) = project
-                .update(&mut cx, |project, cx| {
+                .update(cx, |project, cx| {
                     project.find_or_create_worktree(image_path.clone(), false, cx)
                 })?
                 .await
                 .context("Path not found")?;
-            let worktree_id = worktree.update(&mut cx, |worktree, _cx| worktree.id())?;
+            let worktree_id = worktree.update(cx, |worktree, _cx| worktree.id())?;
 
             let project_path = ProjectPath {
                 worktree_id,
@@ -228,7 +228,7 @@ impl SerializableItem for ImageView {
             };
 
             let image_item = project
-                .update(&mut cx, |project, cx| project.open_image(project_path, cx))?
+                .update(cx, |project, cx| project.open_image(project_path, cx))?
                 .await?;
 
             cx.update(|_, cx| Ok(cx.new(|cx| ImageView::new(image_item, project, cx))))?
@@ -241,8 +241,10 @@ impl SerializableItem for ImageView {
         window: &mut Window,
         cx: &mut App,
     ) -> Task<gpui::Result<()>> {
-        window.spawn(cx, |_| {
-            IMAGE_VIEWER.delete_unloaded_items(workspace_id, alive_items)
+        window.spawn(cx, async move |_| {
+            IMAGE_VIEWER
+                .delete_unloaded_items(workspace_id, alive_items)
+                .await
         })
     }
 

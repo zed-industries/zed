@@ -260,10 +260,10 @@ impl ProjectSearch {
         self.search_id += 1;
         self.active_query = Some(query);
         self.match_ranges.clear();
-        self.pending_search = Some(cx.spawn(|this, mut cx| async move {
+        self.pending_search = Some(cx.spawn(async move |this, cx| {
             let mut matches = pin!(search.ready_chunks(1024));
             let this = this.upgrade()?;
-            this.update(&mut cx, |this, cx| {
+            this.update(cx, |this, cx| {
                 this.match_ranges.clear();
                 this.excerpts.update(cx, |this, cx| this.clear(cx));
                 this.no_results = Some(true);
@@ -286,7 +286,7 @@ impl ProjectSearch {
                 }
 
                 let match_ranges = this
-                    .update(&mut cx, |this, cx| {
+                    .update(cx, |this, cx| {
                         this.excerpts.update(cx, |excerpts, cx| {
                             excerpts.push_multiple_excerpts_with_context_lines(
                                 buffers_with_ranges,
@@ -298,14 +298,14 @@ impl ProjectSearch {
                     .ok()?
                     .await;
 
-                this.update(&mut cx, |this, cx| {
+                this.update(cx, |this, cx| {
                     this.match_ranges.extend(match_ranges);
                     cx.notify();
                 })
                 .ok()?;
             }
 
-            this.update(&mut cx, |this, cx| {
+            this.update(cx, |this, cx| {
                 if !this.match_ranges.is_empty() {
                     this.no_results = Some(false);
                 }
@@ -739,8 +739,7 @@ impl ProjectSearchView {
             editor
         });
         let results_editor = cx.new(|cx| {
-            let mut editor =
-                Editor::for_multibuffer(excerpts, Some(project.clone()), true, window, cx);
+            let mut editor = Editor::for_multibuffer(excerpts, Some(project.clone()), window, cx);
             editor.set_searchable(false);
             editor.set_in_project_search(true);
             editor
@@ -797,13 +796,13 @@ impl ProjectSearchView {
         }));
 
         let languages = project.read(cx).languages().clone();
-        cx.spawn(|project_search_view, mut cx| async move {
+        cx.spawn(async move |project_search_view, cx| {
             let regex_language = languages
                 .language_for_name("regex")
                 .await
                 .context("loading regex language")?;
             project_search_view
-                .update(&mut cx, |project_search_view, cx| {
+                .update(cx, |project_search_view, cx| {
                     project_search_view.regex_language = Some(regex_language);
                     project_search_view.adjust_query_regex_language(cx);
                 })
@@ -2273,7 +2272,7 @@ pub mod tests {
                 search_view
                     .results_editor
                     .update(cx, |editor, cx| editor.display_text(cx)),
-                "\n\n\nconst THREE: usize = one::ONE + two::TWO;\n\n\n\n\nconst TWO: usize = one::ONE + one::ONE;\n"
+                "\n\nconst THREE: usize = one::ONE + two::TWO;\n\n\nconst TWO: usize = one::ONE + one::ONE;"
             );
             let match_background_color = cx.theme().colors().search_match_background;
             assert_eq!(
@@ -2282,15 +2281,15 @@ pub mod tests {
                     .update(cx, |editor, cx| editor.all_text_background_highlights(window, cx)),
                 &[
                     (
-                        DisplayPoint::new(DisplayRow(3), 32)..DisplayPoint::new(DisplayRow(3), 35),
+                        DisplayPoint::new(DisplayRow(2), 32)..DisplayPoint::new(DisplayRow(2), 35),
                         match_background_color
                     ),
                     (
-                        DisplayPoint::new(DisplayRow(3), 37)..DisplayPoint::new(DisplayRow(3), 40),
+                        DisplayPoint::new(DisplayRow(2), 37)..DisplayPoint::new(DisplayRow(2), 40),
                         match_background_color
                     ),
                     (
-                        DisplayPoint::new(DisplayRow(8), 6)..DisplayPoint::new(DisplayRow(8), 9),
+                        DisplayPoint::new(DisplayRow(5), 6)..DisplayPoint::new(DisplayRow(5), 9),
                         match_background_color
                     )
                 ]
@@ -2300,7 +2299,7 @@ pub mod tests {
                 search_view
                     .results_editor
                     .update(cx, |editor, cx| editor.selections.display_ranges(cx)),
-                [DisplayPoint::new(DisplayRow(3), 32)..DisplayPoint::new(DisplayRow(3), 35)]
+                [DisplayPoint::new(DisplayRow(2), 32)..DisplayPoint::new(DisplayRow(2), 35)]
             );
 
             search_view.select_match(Direction::Next, window, cx);
@@ -2313,7 +2312,7 @@ pub mod tests {
                     search_view
                         .results_editor
                         .update(cx, |editor, cx| editor.selections.display_ranges(cx)),
-                    [DisplayPoint::new(DisplayRow(3), 37)..DisplayPoint::new(DisplayRow(3), 40)]
+                    [DisplayPoint::new(DisplayRow(2), 37)..DisplayPoint::new(DisplayRow(2), 40)]
                 );
                 search_view.select_match(Direction::Next, window, cx);
             })
@@ -2326,7 +2325,7 @@ pub mod tests {
                     search_view
                         .results_editor
                         .update(cx, |editor, cx| editor.selections.display_ranges(cx)),
-                    [DisplayPoint::new(DisplayRow(8), 6)..DisplayPoint::new(DisplayRow(8), 9)]
+                    [DisplayPoint::new(DisplayRow(5), 6)..DisplayPoint::new(DisplayRow(5), 9)]
                 );
                 search_view.select_match(Direction::Next, window, cx);
             })
@@ -2339,7 +2338,7 @@ pub mod tests {
                     search_view
                         .results_editor
                         .update(cx, |editor, cx| editor.selections.display_ranges(cx)),
-                    [DisplayPoint::new(DisplayRow(3), 32)..DisplayPoint::new(DisplayRow(3), 35)]
+                    [DisplayPoint::new(DisplayRow(2), 32)..DisplayPoint::new(DisplayRow(2), 35)]
                 );
                 search_view.select_match(Direction::Prev, window, cx);
             })
@@ -2352,7 +2351,7 @@ pub mod tests {
                     search_view
                         .results_editor
                         .update(cx, |editor, cx| editor.selections.display_ranges(cx)),
-                    [DisplayPoint::new(DisplayRow(8), 6)..DisplayPoint::new(DisplayRow(8), 9)]
+                    [DisplayPoint::new(DisplayRow(5), 6)..DisplayPoint::new(DisplayRow(5), 9)]
                 );
                 search_view.select_match(Direction::Prev, window, cx);
             })
@@ -2365,7 +2364,7 @@ pub mod tests {
                     search_view
                         .results_editor
                         .update(cx, |editor, cx| editor.selections.display_ranges(cx)),
-                    [DisplayPoint::new(DisplayRow(3), 37)..DisplayPoint::new(DisplayRow(3), 40)]
+                    [DisplayPoint::new(DisplayRow(2), 37)..DisplayPoint::new(DisplayRow(2), 40)]
                 );
             })
             .unwrap();
@@ -2538,7 +2537,7 @@ pub mod tests {
                     search_view
                         .results_editor
                         .update(cx, |editor, cx| editor.display_text(cx)),
-                    "\n\n\nconst THREE: usize = one::ONE + two::TWO;\n\n\n\n\nconst TWO: usize = one::ONE + one::ONE;\n",
+                    "\n\nconst THREE: usize = one::ONE + two::TWO;\n\n\nconst TWO: usize = one::ONE + one::ONE;",
                     "Search view results should match the query"
                 );
                 assert!(
@@ -2582,7 +2581,7 @@ pub mod tests {
                     search_view
                         .results_editor
                         .update(cx, |editor, cx| editor.display_text(cx)),
-                    "\n\n\nconst THREE: usize = one::ONE + two::TWO;\n\n\n\n\nconst TWO: usize = one::ONE + one::ONE;\n",
+                    "\n\nconst THREE: usize = one::ONE + two::TWO;\n\n\nconst TWO: usize = one::ONE + one::ONE;",
                     "Results should be unchanged after search view 2nd open in a row"
                 );
                 assert!(
@@ -2774,7 +2773,7 @@ pub mod tests {
                     search_view
                         .results_editor
                         .update(cx, |editor, cx| editor.display_text(cx)),
-                    "\n\n\nconst THREE: usize = one::ONE + two::TWO;\n\n\n\n\nconst TWO: usize = one::ONE + one::ONE;\n",
+                    "\n\nconst THREE: usize = one::ONE + two::TWO;\n\n\nconst TWO: usize = one::ONE + one::ONE;",
                     "Search view results should match the query"
                 );
                 assert!(
@@ -2829,7 +2828,7 @@ pub mod tests {
                         search_view
                             .results_editor
                             .update(cx, |editor, cx| editor.display_text(cx)),
-                        "\n\n\nconst THREE: usize = one::ONE + two::TWO;\n\n\n\n\nconst TWO: usize = one::ONE + one::ONE;\n",
+                        "\n\nconst THREE: usize = one::ONE + two::TWO;\n\n\nconst TWO: usize = one::ONE + one::ONE;",
                         "Results of the first search view should not update too"
                     );
                     assert!(
@@ -2878,7 +2877,7 @@ pub mod tests {
                         search_view_2
                             .results_editor
                             .update(cx, |editor, cx| editor.display_text(cx)),
-                        "\n\n\nconst FOUR: usize = one::ONE + three::THREE;\n",
+                        "\n\nconst FOUR: usize = one::ONE + three::THREE;",
                         "New search view with the updated query should have new search results"
                     );
                     assert!(
@@ -3023,7 +3022,7 @@ pub mod tests {
                 search_view
                     .results_editor
                     .update(cx, |editor, cx| editor.display_text(cx)),
-                "\n\n\nconst ONE: usize = 1;\n\n\n\n\nconst TWO: usize = one::ONE + one::ONE;\n",
+                "\n\nconst ONE: usize = 1;\n\n\nconst TWO: usize = one::ONE + one::ONE;",
                 "New search in directory should have a filter that matches a certain directory"
             );
                 })

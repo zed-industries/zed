@@ -13,6 +13,7 @@ use proto::deserialize_operation;
 use rand::prelude::*;
 use regex::RegexBuilder;
 use settings::SettingsStore;
+use std::collections::BTreeSet;
 use std::{
     env,
     ops::Range,
@@ -2538,7 +2539,7 @@ fn test_branch_and_merge(cx: &mut TestAppContext) {
         assert_eq!(buffer.text(), "one\n1.5\ntwo\nTHREE\n");
     });
 
-    // Convert from branch buffer ranges to the corresoponing ranges in the
+    // Convert from branch buffer ranges to the corresponding ranges in the
     // base buffer.
     branch.read_with(cx, |buffer, cx| {
         assert_eq!(
@@ -3138,6 +3139,150 @@ fn test_trailing_whitespace_ranges(mut rng: StdRng) {
         "wrong ranges for text lines:\n{:?}",
         text.split('\n').collect::<Vec<_>>()
     );
+}
+
+#[gpui::test]
+fn test_words_in_range(cx: &mut gpui::App) {
+    init_settings(cx, |_| {});
+
+    // The first line are words excluded from the results with heuristics, we do not expect them in the test assertions.
+    let contents = r#"
+0_isize 123 3.4 4  
+let word=öäpple.bar你 Öäpple word2-öÄpPlE-Pizza-word ÖÄPPLE word
+    "#;
+
+    let buffer = cx.new(|cx| {
+        let buffer = Buffer::local(contents, cx).with_language(Arc::new(rust_lang()), cx);
+        assert_eq!(buffer.text(), contents);
+        buffer.check_invariants();
+        buffer
+    });
+
+    buffer.update(cx, |buffer, _| {
+        let snapshot = buffer.snapshot();
+        assert_eq!(
+            BTreeSet::from_iter(["Pizza".to_string()]),
+            snapshot
+                .words_in_range(WordsQuery {
+                    fuzzy_contents: Some("piz"),
+                    skip_digits: true,
+                    range: 0..snapshot.len(),
+                })
+                .into_keys()
+                .collect::<BTreeSet<_>>()
+        );
+        assert_eq!(
+            BTreeSet::from_iter([
+                "öäpple".to_string(),
+                "Öäpple".to_string(),
+                "öÄpPlE".to_string(),
+                "ÖÄPPLE".to_string(),
+            ]),
+            snapshot
+                .words_in_range(WordsQuery {
+                    fuzzy_contents: Some("öp"),
+                    skip_digits: true,
+                    range: 0..snapshot.len(),
+                })
+                .into_keys()
+                .collect::<BTreeSet<_>>()
+        );
+        assert_eq!(
+            BTreeSet::from_iter([
+                "öÄpPlE".to_string(),
+                "Öäpple".to_string(),
+                "ÖÄPPLE".to_string(),
+                "öäpple".to_string(),
+            ]),
+            snapshot
+                .words_in_range(WordsQuery {
+                    fuzzy_contents: Some("öÄ"),
+                    skip_digits: true,
+                    range: 0..snapshot.len(),
+                })
+                .into_keys()
+                .collect::<BTreeSet<_>>()
+        );
+        assert_eq!(
+            BTreeSet::default(),
+            snapshot
+                .words_in_range(WordsQuery {
+                    fuzzy_contents: Some("öÄ好"),
+                    skip_digits: true,
+                    range: 0..snapshot.len(),
+                })
+                .into_keys()
+                .collect::<BTreeSet<_>>()
+        );
+        assert_eq!(
+            BTreeSet::from_iter(["bar你".to_string(),]),
+            snapshot
+                .words_in_range(WordsQuery {
+                    fuzzy_contents: Some("你"),
+                    skip_digits: true,
+                    range: 0..snapshot.len(),
+                })
+                .into_keys()
+                .collect::<BTreeSet<_>>()
+        );
+        assert_eq!(
+            BTreeSet::default(),
+            snapshot
+                .words_in_range(WordsQuery {
+                    fuzzy_contents: Some(""),
+                    skip_digits: true,
+                    range: 0..snapshot.len(),
+                },)
+                .into_keys()
+                .collect::<BTreeSet<_>>()
+        );
+        assert_eq!(
+            BTreeSet::from_iter([
+                "bar你".to_string(),
+                "öÄpPlE".to_string(),
+                "Öäpple".to_string(),
+                "ÖÄPPLE".to_string(),
+                "öäpple".to_string(),
+                "let".to_string(),
+                "Pizza".to_string(),
+                "word".to_string(),
+                "word2".to_string(),
+            ]),
+            snapshot
+                .words_in_range(WordsQuery {
+                    fuzzy_contents: None,
+                    skip_digits: true,
+                    range: 0..snapshot.len(),
+                })
+                .into_keys()
+                .collect::<BTreeSet<_>>()
+        );
+        assert_eq!(
+            BTreeSet::from_iter([
+                "0_isize".to_string(),
+                "123".to_string(),
+                "3".to_string(),
+                "4".to_string(),
+                "bar你".to_string(),
+                "öÄpPlE".to_string(),
+                "Öäpple".to_string(),
+                "ÖÄPPLE".to_string(),
+                "öäpple".to_string(),
+                "let".to_string(),
+                "Pizza".to_string(),
+                "word".to_string(),
+                "word2".to_string(),
+            ]),
+            snapshot
+                .words_in_range(WordsQuery {
+                    fuzzy_contents: None,
+                    skip_digits: false,
+                    range: 0..snapshot.len(),
+                })
+                .into_keys()
+                .collect::<BTreeSet<_>>()
+        );
+    });
 }
 
 fn ruby_lang() -> Language {

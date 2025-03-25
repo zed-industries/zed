@@ -157,7 +157,7 @@ impl Render for WindowDemo {
 
                 // Restore the application after 3 seconds
                 window
-                    .spawn(cx, |mut cx| async move {
+                    .spawn(cx, async move |cx| {
                         Timer::after(std::time::Duration::from_secs(3)).await;
                         cx.update(|_, cx| {
                             cx.activate(false);

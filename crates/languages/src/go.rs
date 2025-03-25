@@ -97,7 +97,7 @@ impl super::LspAdapter for GoLspAdapter {
             "Could not install the Go language server `gopls`, because `go` was not found.";
 
         let delegate = delegate.clone();
-        Some(cx.spawn(|cx| async move {
+        Some(cx.spawn(async move |cx| {
             if delegate.which("go".as_ref()).await.is_none() {
                 if DID_SHOW_NOTIFICATION
                     .compare_exchange(false, true, SeqCst, SeqCst)

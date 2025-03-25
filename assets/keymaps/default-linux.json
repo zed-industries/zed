@@ -30,6 +30,13 @@
       "ctrl-0": ["zed::ResetBufferFontSize", { "persist": false }],
       "ctrl-,": "zed::OpenSettings",
       "ctrl-q": "zed::Quit",
+      "f4": "debugger::Start",
+      "f5": "debugger::Continue",
+      "shift-f5": "debugger::Stop",
+      "f6": "debugger::Pause",
+      "f7": "debugger::StepOver",
+      "cmd-f11": "debugger::StepInto",
+      "shift-f11": "debugger::StepOut",
       "f11": "zed::ToggleFullScreen",
       "ctrl-alt-z": "edit_prediction::RateCompletions",
       "ctrl-shift-i": "edit_prediction::ToggleMenu"
@@ -46,7 +53,9 @@
     "context": "Prompt",
     "bindings": {
       "left": "menu::SelectPrevious",
-      "right": "menu::SelectNext"
+      "right": "menu::SelectNext",
+      "h": "menu::SelectPrevious",
+      "l": "menu::SelectNext"
     }
   },
   {
@@ -107,6 +116,7 @@
       "ctrl-a": "editor::SelectAll",
       "ctrl-l": "editor::SelectLine",
       "ctrl-shift-i": "editor::Format",
+      "alt-shift-o": "editor::OrganizeImports",
       // "cmd-shift-left": ["editor::SelectToBeginningOfLine", {"stop_at_soft_wraps": true, "stop_at_indent": true }],
       // "ctrl-shift-a": ["editor::SelectToBeginningOfLine", { "stop_at_soft_wraps": true, "stop_at_indent": true }],
       "shift-home": ["editor::SelectToBeginningOfLine", { "stop_at_soft_wraps": true, "stop_at_indent": true }],
@@ -123,7 +133,9 @@
       "alt-g b": "editor::ToggleGitBlame",
       "menu": "editor::OpenContextMenu",
       "shift-f10": "editor::OpenContextMenu",
-      "ctrl-shift-e": "editor::ToggleEditPrediction"
+      "ctrl-shift-e": "editor::ToggleEditPrediction",
+      "f9": "editor::ToggleBreakpoint",
+      "shift-f9": "editor::EditLogBreakpoint"
     }
   },
   {
@@ -183,7 +195,7 @@
       "ctrl-shift-g": "search::SelectPreviousMatch",
       "ctrl-alt-/": "assistant::ToggleModelSelector",
       "ctrl-k h": "assistant::DeployHistory",
-      "ctrl-k l": "assistant::DeployPromptLibrary",
+      "ctrl-k l": "assistant::OpenPromptLibrary",
       "new": "assistant::NewChat",
       "ctrl-t": "assistant::NewChat",
       "ctrl-n": "assistant::NewChat"
@@ -362,6 +374,7 @@
       "ctrl-k ctrl-0": "editor::FoldAll",
       "ctrl-k ctrl-j": "editor::UnfoldAll",
       "ctrl-space": "editor::ShowCompletions",
+      "ctrl-shift-space": "editor::ShowWordCompletions",
       "ctrl-.": "editor::ToggleCodeActions",
       "ctrl-k r": "editor::RevealInFileManager",
       "ctrl-k p": "editor::CopyPath",
@@ -741,7 +754,8 @@
       "escape": "git_panel::ToggleFocus",
       "ctrl-enter": "git::Commit",
       "alt-enter": "menu::SecondaryConfirm",
-      "backspace": "git::RestoreFile"
+      "shift-delete": "git::RestoreFile",
+      "ctrl-delete": "git::RestoreFile"
     }
   },
   {

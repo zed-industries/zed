@@ -185,13 +185,7 @@ impl Output {
                                             multi_buffer
                                         });
 
-                                        Editor::for_multibuffer(
-                                            multibuffer,
-                                            None,
-                                            false,
-                                            window,
-                                            cx,
-                                        )
+                                        Editor::for_multibuffer(multibuffer, None, window, cx)
                                     }));
                                     workspace
                                         .update(cx, |workspace, cx| {

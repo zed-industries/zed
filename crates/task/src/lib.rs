@@ -1,6 +1,7 @@
 //! Baseline interface of Tasks in Zed: all tasks in Zed are intended to use those for implementing their own logic.
 #![deny(missing_docs)]
 
+mod debug_format;
 pub mod static_source;
 mod task_template;
 mod vscode_format;
@@ -13,7 +14,13 @@ use std::borrow::Cow;
 use std::path::PathBuf;
 use std::str::FromStr;
 
-pub use task_template::{HideStrategy, RevealStrategy, TaskTemplate, TaskTemplates};
+pub use debug_format::{
+    AttachConfig, CustomArgs, DebugAdapterConfig, DebugAdapterKind, DebugConnectionType,
+    DebugRequestType, DebugTaskDefinition, DebugTaskFile, TCPHost,
+};
+pub use task_template::{
+    HideStrategy, RevealStrategy, TaskModal, TaskTemplate, TaskTemplates, TaskType,
+};
 pub use vscode_format::VsCodeTaskFile;
 pub use zed_actions::RevealTarget;
 
@@ -54,6 +61,8 @@ pub struct SpawnInTerminal {
     pub hide: HideStrategy,
     /// Which shell to use when spawning the task.
     pub shell: Shell,
+    /// Tells debug tasks which program to debug
+    pub program: Option<String>,
     /// Whether to show the task summary line in the task output (sucess/failure).
     pub show_summary: bool,
     /// Whether to show the command line in the task output.
@@ -86,6 +95,28 @@ impl ResolvedTask {
     /// A task template before the resolution.
     pub fn original_task(&self) -> &TaskTemplate {
         &self.original_task
+    }
+
+    /// Get the task type that determines what this task is used for
+    /// And where is it shown in the UI
+    pub fn task_type(&self) -> TaskType {
+        self.original_task.task_type.clone()
+    }
+
+    /// Get the configuration for the debug adapter that should be used for this task.
+    pub fn resolved_debug_adapter_config(&self) -> Option<DebugAdapterConfig> {
+        match self.original_task.task_type.clone() {
+            TaskType::Script => None,
+            TaskType::Debug(mut adapter_config) => {
+                if let Some(resolved) = &self.resolved {
+                    adapter_config.label = resolved.label.clone();
+                    adapter_config.program = resolved.program.clone().or(adapter_config.program);
+                    adapter_config.cwd = resolved.cwd.clone().or(adapter_config.cwd);
+                }
+
+                Some(adapter_config)
+            }
+        }
     }
 
     /// Variables that were substituted during the task template resolution.
@@ -403,8 +434,10 @@ impl ShellBuilder {
 
     // `alacritty_terminal` uses this as default on Windows. See:
     // https://github.com/alacritty/alacritty/blob/0d4ab7bca43213d96ddfe40048fc0f922543c6f8/alacritty_terminal/src/tty/windows/mod.rs#L130
+    // We could use `util::retrieve_system_shell()` here, but we are running tasks here, so leave it to `powershell.exe`
+    // should be okay.
     fn system_shell() -> String {
-        "powershell".to_owned()
+        "powershell.exe".to_string()
     }
 
     fn to_windows_shell_variable(&self, input: String) -> String {

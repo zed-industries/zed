@@ -9,8 +9,8 @@
 
 use crate::{
     point, px, size, AnyElement, App, AvailableSpace, Bounds, ContentMask, DispatchPhase, Edges,
-    Element, FocusHandle, GlobalElementId, Hitbox, IntoElement, Pixels, Point, ScrollWheelEvent,
-    Size, Style, StyleRefinement, Styled, Window,
+    Element, EntityId, FocusHandle, GlobalElementId, Hitbox, IntoElement, Pixels, Point,
+    ScrollWheelEvent, Size, Style, StyleRefinement, Styled, Window,
 };
 use collections::VecDeque;
 use refineable::Refineable as _;
@@ -371,6 +371,7 @@ impl StateInner {
         scroll_top: &ListOffset,
         height: Pixels,
         delta: Point<Pixels>,
+        current_view: EntityId,
         window: &mut Window,
         cx: &mut App,
     ) {
@@ -413,7 +414,7 @@ impl StateInner {
             );
         }
 
-        window.refresh();
+        cx.notify(current_view);
     }
 
     fn logical_scroll_top(&self) -> ListOffset {
@@ -847,6 +848,7 @@ impl Element for List {
         window: &mut Window,
         cx: &mut App,
     ) {
+        let current_view = window.current_view();
         window.with_content_mask(Some(ContentMask { bounds }), |window| {
             for item in &mut prepaint.layout.item_layouts {
                 item.element.paint(window, cx);
@@ -863,6 +865,7 @@ impl Element for List {
                     &scroll_top,
                     height,
                     event.delta.pixel_delta(px(20.)),
+                    current_view,
                     window,
                     cx,
                 )
@@ -967,7 +970,10 @@ mod test {
 
     #[gpui::test]
     fn test_reset_after_paint_before_scroll(cx: &mut TestAppContext) {
-        use crate::{div, list, point, px, size, Element, ListState, Styled};
+        use crate::{
+            div, list, point, px, size, AppContext, Context, Element, IntoElement, ListState,
+            Render, Styled, Window,
+        };
 
         let cx = cx.add_empty_window();
 
@@ -981,9 +987,16 @@ mod test {
             offset_in_item: px(0.0),
         });
 
+        struct TestView(ListState);
+        impl Render for TestView {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                list(self.0.clone()).w_full().h_full()
+            }
+        }
+
         // Paint
-        cx.draw(point(px(0.), px(0.)), size(px(100.), px(20.)), |_, _| {
-            list(state.clone()).w_full().h_full()
+        cx.draw(point(px(0.), px(0.)), size(px(100.), px(20.)), |_, cx| {
+            cx.new(|_| TestView(state.clone()))
         });
 
         // Reset

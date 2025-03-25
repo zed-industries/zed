@@ -1,6 +1,6 @@
 use crate::ui::InstructionListItem;
 use crate::AllLanguageModelSettings;
-use anthropic::{AnthropicError, ContentDelta, Event, ResponseContent};
+use anthropic::{AnthropicError, AnthropicModelMode, ContentDelta, Event, ResponseContent, Usage};
 use anyhow::{anyhow, Context as _, Result};
 use collections::{BTreeMap, HashMap};
 use credentials_provider::CredentialsProvider;
@@ -55,6 +55,37 @@ pub struct AvailableModel {
     pub default_temperature: Option<f32>,
     #[serde(default)]
     pub extra_beta_headers: Vec<String>,
+    /// The model's mode (e.g. thinking)
+    pub mode: Option<ModelMode>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "type", rename_all = "lowercase")]
+pub enum ModelMode {
+    #[default]
+    Default,
+    Thinking {
+        /// The maximum number of tokens to use for reasoning. Must be lower than the model's `max_output_tokens`.
+        budget_tokens: Option<u32>,
+    },
+}
+
+impl From<ModelMode> for AnthropicModelMode {
+    fn from(value: ModelMode) -> Self {
+        match value {
+            ModelMode::Default => AnthropicModelMode::Default,
+            ModelMode::Thinking { budget_tokens } => AnthropicModelMode::Thinking { budget_tokens },
+        }
+    }
+}
+
+impl From<AnthropicModelMode> for ModelMode {
+    fn from(value: AnthropicModelMode) -> Self {
+        match value {
+            AnthropicModelMode::Default => ModelMode::Default,
+            AnthropicModelMode::Thinking { budget_tokens } => ModelMode::Thinking { budget_tokens },
+        }
+    }
 }
 
 pub struct AnthropicLanguageModelProvider {
@@ -77,12 +108,12 @@ impl State {
             .anthropic
             .api_url
             .clone();
-        cx.spawn(|this, mut cx| async move {
+        cx.spawn(async move |this, cx| {
             credentials_provider
                 .delete_credentials(&api_url, &cx)
                 .await
                 .ok();
-            this.update(&mut cx, |this, cx| {
+            this.update(cx, |this, cx| {
                 this.api_key = None;
                 this.api_key_from_env = false;
                 cx.notify();
@@ -96,13 +127,13 @@ impl State {
             .anthropic
             .api_url
             .clone();
-        cx.spawn(|this, mut cx| async move {
+        cx.spawn(async move |this, cx| {
             credentials_provider
                 .write_credentials(&api_url, "Bearer", api_key.as_bytes(), &cx)
                 .await
                 .ok();
 
-            this.update(&mut cx, |this, cx| {
+            this.update(cx, |this, cx| {
                 this.api_key = Some(api_key);
                 cx.notify();
             })
@@ -124,7 +155,7 @@ impl State {
             .api_url
             .clone();
 
-        cx.spawn(|this, mut cx| async move {
+        cx.spawn(async move |this, cx| {
             let (api_key, from_env) = if let Ok(api_key) = std::env::var(ANTHROPIC_API_KEY_VAR) {
                 (api_key, true)
             } else {
@@ -138,7 +169,7 @@ impl State {
                 )
             };
 
-            this.update(&mut cx, |this, cx| {
+            this.update(cx, |this, cx| {
                 this.api_key = Some(api_key);
                 this.api_key_from_env = from_env;
                 cx.notify();
@@ -228,6 +259,7 @@ impl LanguageModelProvider for AnthropicLanguageModelProvider {
                     max_output_tokens: model.max_output_tokens,
                     default_temperature: model.default_temperature,
                     extra_beta_headers: model.extra_beta_headers.clone(),
+                    mode: model.mode.clone().unwrap_or_default().into(),
                 },
             );
         }
@@ -399,9 +431,10 @@ impl LanguageModel for AnthropicModel {
     ) -> BoxFuture<'static, Result<BoxStream<'static, Result<LanguageModelCompletionEvent>>>> {
         let request = into_anthropic(
             request,
-            self.model.id().into(),
+            self.model.request_id().into(),
             self.model.default_temperature(),
             self.model.max_output_tokens(),
+            self.model.mode(),
         );
         let request = self.stream_completion(request, cx);
         let future = self.request_limiter.stream(async move {
@@ -434,6 +467,7 @@ impl LanguageModel for AnthropicModel {
             self.model.tool_model_id().into(),
             self.model.default_temperature(),
             self.model.max_output_tokens(),
+            self.model.mode(),
         );
         request.tool_choice = Some(anthropic::ToolChoice::Tool {
             name: tool_name.clone(),
@@ -464,6 +498,7 @@ pub fn into_anthropic(
     model: String,
     default_temperature: f32,
     max_output_tokens: u32,
+    mode: AnthropicModelMode,
 ) -> anthropic::Request {
     let mut new_messages: Vec<anthropic::Message> = Vec::new();
     let mut system_message = String::new();
@@ -552,6 +587,11 @@ pub fn into_anthropic(
         messages: new_messages,
         max_tokens: max_output_tokens,
         system: Some(system_message),
+        thinking: if let AnthropicModelMode::Thinking { budget_tokens } = mode {
+            Some(anthropic::Thinking::Enabled { budget_tokens })
+        } else {
+            None
+        },
         tools: request
             .tools
             .into_iter()
@@ -582,12 +622,16 @@ pub fn map_to_language_model_completion_events(
     struct State {
         events: Pin<Box<dyn Send + Stream<Item = Result<Event, AnthropicError>>>>,
         tool_uses_by_index: HashMap<usize, RawToolUse>,
+        usage: Usage,
+        stop_reason: StopReason,
     }
 
     futures::stream::unfold(
         State {
             events,
             tool_uses_by_index: HashMap::default(),
+            usage: Usage::default(),
+            stop_reason: StopReason::EndTurn,
         },
         |mut state| async move {
             while let Some(event) = state.events.next().await {
@@ -599,9 +643,19 @@ pub fn map_to_language_model_completion_events(
                         } => match content_block {
                             ResponseContent::Text { text } => {
                                 return Some((
-                                    Some(Ok(LanguageModelCompletionEvent::Text(text))),
+                                    vec![Ok(LanguageModelCompletionEvent::Text(text))],
                                     state,
                                 ));
+                            }
+                            ResponseContent::Thinking { thinking } => {
+                                return Some((
+                                    vec![Ok(LanguageModelCompletionEvent::Thinking(thinking))],
+                                    state,
+                                ));
+                            }
+                            ResponseContent::RedactedThinking { .. } => {
+                                // Redacted thinking is encrypted and not accessible to the user, see:
+                                // https://docs.anthropic.com/en/docs/build-with-claude/extended-thinking#suggestions-for-handling-redacted-thinking-in-production
                             }
                             ResponseContent::ToolUse { id, name, .. } => {
                                 state.tool_uses_by_index.insert(
@@ -612,28 +666,32 @@ pub fn map_to_language_model_completion_events(
                                         input_json: String::new(),
                                     },
                                 );
-
-                                return Some((None, state));
                             }
                         },
                         Event::ContentBlockDelta { index, delta } => match delta {
                             ContentDelta::TextDelta { text } => {
                                 return Some((
-                                    Some(Ok(LanguageModelCompletionEvent::Text(text))),
+                                    vec![Ok(LanguageModelCompletionEvent::Text(text))],
                                     state,
                                 ));
                             }
+                            ContentDelta::ThinkingDelta { thinking } => {
+                                return Some((
+                                    vec![Ok(LanguageModelCompletionEvent::Thinking(thinking))],
+                                    state,
+                                ));
+                            }
+                            ContentDelta::SignatureDelta { .. } => {}
                             ContentDelta::InputJsonDelta { partial_json } => {
                                 if let Some(tool_use) = state.tool_uses_by_index.get_mut(&index) {
                                     tool_use.input_json.push_str(&partial_json);
-                                    return Some((None, state));
                                 }
                             }
                         },
                         Event::ContentBlockStop { index } => {
                             if let Some(tool_use) = state.tool_uses_by_index.remove(&index) {
                                 return Some((
-                                    Some(maybe!({
+                                    vec![maybe!({
                                         Ok(LanguageModelCompletionEvent::ToolUse(
                                             LanguageModelToolUse {
                                                 id: tool_use.id.into(),
@@ -650,44 +708,63 @@ pub fn map_to_language_model_completion_events(
                                                 },
                                             },
                                         ))
-                                    })),
+                                    })],
                                     state,
                                 ));
                             }
                         }
                         Event::MessageStart { message } => {
+                            update_usage(&mut state.usage, &message.usage);
                             return Some((
-                                Some(Ok(LanguageModelCompletionEvent::StartMessage {
-                                    message_id: message.id,
-                                })),
+                                vec![
+                                    Ok(LanguageModelCompletionEvent::StartMessage {
+                                        message_id: message.id,
+                                    }),
+                                    Ok(LanguageModelCompletionEvent::UsageUpdate(convert_usage(
+                                        &state.usage,
+                                    ))),
+                                ],
                                 state,
-                            ))
+                            ));
                         }
-                        Event::MessageDelta { delta, .. } => {
+                        Event::MessageDelta { delta, usage } => {
+                            update_usage(&mut state.usage, &usage);
                             if let Some(stop_reason) = delta.stop_reason.as_deref() {
-                                let stop_reason = match stop_reason {
+                                state.stop_reason = match stop_reason {
                                     "end_turn" => StopReason::EndTurn,
                                     "max_tokens" => StopReason::MaxTokens,
                                     "tool_use" => StopReason::ToolUse,
-                                    _ => StopReason::EndTurn,
+                                    _ => {
+                                        log::error!(
+                                            "Unexpected anthropic stop_reason: {stop_reason}"
+                                        );
+                                        StopReason::EndTurn
+                                    }
                                 };
-
-                                return Some((
-                                    Some(Ok(LanguageModelCompletionEvent::Stop(stop_reason))),
-                                    state,
-                                ));
                             }
+                            return Some((
+                                vec![Ok(LanguageModelCompletionEvent::UsageUpdate(
+                                    convert_usage(&state.usage),
+                                ))],
+                                state,
+                            ));
+                        }
+                        Event::MessageStop => {
+                            return Some((
+                                vec![Ok(LanguageModelCompletionEvent::Stop(state.stop_reason))],
+                                state,
+                            ));
                         }
                         Event::Error { error } => {
                             return Some((
-                                Some(Err(anyhow!(AnthropicError::ApiError(error)))),
+                                vec![Err(anyhow!(AnthropicError::ApiError(error)))],
                                 state,
                             ));
                         }
                         _ => {}
                     },
                     Err(err) => {
-                        return Some((Some(Err(anyhow!(err))), state));
+                        return Some((vec![Err(anyhow!(err))], state));
                     }
                 }
             }
@@ -695,7 +772,32 @@ pub fn map_to_language_model_completion_events(
             None
         },
     )
-    .filter_map(|event| async move { event })
+    .flat_map(futures::stream::iter)
+}
+
+/// Updates usage data by preferring counts from `new`.
+fn update_usage(usage: &mut Usage, new: &Usage) {
+    if let Some(input_tokens) = new.input_tokens {
+        usage.input_tokens = Some(input_tokens);
+    }
+    if let Some(output_tokens) = new.output_tokens {
+        usage.output_tokens = Some(output_tokens);
+    }
+    if let Some(cache_creation_input_tokens) = new.cache_creation_input_tokens {
+        usage.cache_creation_input_tokens = Some(cache_creation_input_tokens);
+    }
+    if let Some(cache_read_input_tokens) = new.cache_read_input_tokens {
+        usage.cache_read_input_tokens = Some(cache_read_input_tokens);
+    }
+}
+
+fn convert_usage(usage: &Usage) -> language_model::TokenUsage {
+    language_model::TokenUsage {
+        input_tokens: usage.input_tokens.unwrap_or(0),
+        output_tokens: usage.output_tokens.unwrap_or(0),
+        cache_creation_input_tokens: usage.cache_creation_input_tokens.unwrap_or(0),
+        cache_read_input_tokens: usage.cache_read_input_tokens.unwrap_or(0),
+    }
 }
 
 struct ConfigurationView {
@@ -715,15 +817,15 @@ impl ConfigurationView {
 
         let load_credentials_task = Some(cx.spawn({
             let state = state.clone();
-            |this, mut cx| async move {
+            async move |this, cx| {
                 if let Some(task) = state
-                    .update(&mut cx, |state, cx| state.authenticate(cx))
+                    .update(cx, |state, cx| state.authenticate(cx))
                     .log_err()
                 {
                     // We don't log an error, because "not signed in" is also an error.
                     let _ = task.await;
                 }
-                this.update(&mut cx, |this, cx| {
+                this.update(cx, |this, cx| {
                     this.load_credentials_task = None;
                     cx.notify();
                 })
@@ -749,9 +851,9 @@ impl ConfigurationView {
         }
 
         let state = self.state.clone();
-        cx.spawn_in(window, |_, mut cx| async move {
+        cx.spawn_in(window, async move |_, cx| {
             state
-                .update(&mut cx, |state, cx| state.set_api_key(api_key, cx))?
+                .update(cx, |state, cx| state.set_api_key(api_key, cx))?
                 .await
         })
         .detach_and_log_err(cx);
@@ -764,10 +866,8 @@ impl ConfigurationView {
             .update(cx, |editor, cx| editor.set_text("", window, cx));
 
         let state = self.state.clone();
-        cx.spawn_in(window, |_, mut cx| async move {
-            state
-                .update(&mut cx, |state, cx| state.reset_api_key(cx))?
-                .await
+        cx.spawn_in(window, async move |_, cx| {
+            state.update(cx, |state, cx| state.reset_api_key(cx))?.await
         })
         .detach_and_log_err(cx);
 

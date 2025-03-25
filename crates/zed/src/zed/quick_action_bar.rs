@@ -383,14 +383,14 @@ impl Render for QuickActionBar {
                                 "Column Git Blame",
                                 show_git_blame_gutter,
                                 IconPosition::Start,
-                                Some(editor::actions::ToggleGitBlame.boxed_clone()),
+                                Some(git::Blame.boxed_clone()),
                                 {
                                     let editor = editor.clone();
                                     move |window, cx| {
                                         editor
                                             .update(cx, |editor, cx| {
                                                 editor.toggle_git_blame(
-                                                    &editor::actions::ToggleGitBlame,
+                                                    &git::Blame,
                                                     window,
                                                     cx,
                                                 )

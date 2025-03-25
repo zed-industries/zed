@@ -2,10 +2,11 @@ use std::path::Path;
 use std::sync::Arc;
 
 use anyhow::{anyhow, Result};
-use assistant_tool::Tool;
+use assistant_tool::{ActionLog, Tool};
 use gpui::{App, Entity, Task};
+use itertools::Itertools;
 use language_model::LanguageModelRequestMessage;
-use project::{Project, ProjectPath};
+use project::Project;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -14,10 +15,10 @@ pub struct ReadFileToolInput {
     /// The relative path of the file to read.
     ///
     /// This path should never be absolute, and the first component
-    /// of the path should always be a top-level directory in a project.
+    /// of the path should always be a root directory in a project.
     ///
     /// <example>
-    /// If the project has the following top-level directories:
+    /// If the project has the following root directories:
     ///
     /// - directory1
     /// - directory2
@@ -26,6 +27,14 @@ pub struct ReadFileToolInput {
     /// If you wanna access `file.txt` in `directory2`, you should use the path `directory2/file.txt`.
     /// </example>
     pub path: Arc<Path>,
+
+    /// Optional line number to start reading on (1-based index)
+    #[serde(default)]
+    pub start_line: Option<usize>,
+
+    /// Optional line number to end reading on (1-based index)
+    #[serde(default)]
+    pub end_line: Option<usize>,
 }
 
 pub struct ReadFileTool;
@@ -33,6 +42,10 @@ pub struct ReadFileTool;
 impl Tool for ReadFileTool {
     fn name(&self) -> String {
         "read-file".into()
+    }
+
+    fn needs_confirmation(&self) -> bool {
+        false
     }
 
     fn description(&self) -> String {
@@ -44,11 +57,19 @@ impl Tool for ReadFileTool {
         serde_json::to_value(&schema).unwrap()
     }
 
+    fn ui_text(&self, input: &serde_json::Value) -> String {
+        match serde_json::from_value::<ReadFileToolInput>(input.clone()) {
+            Ok(input) => format!("Read file `{}`", input.path.display()),
+            Err(_) => "Read file".to_string(),
+        }
+    }
+
     fn run(
         self: Arc<Self>,
         input: serde_json::Value,
         _messages: &[LanguageModelRequestMessage],
         project: Entity<Project>,
+        action_log: Entity<ActionLog>,
         cx: &mut App,
     ) -> Task<Result<String>> {
         let input = match serde_json::from_value::<ReadFileToolInput>(input) {
@@ -56,36 +77,41 @@ impl Tool for ReadFileTool {
             Err(err) => return Task::ready(Err(anyhow!(err))),
         };
 
-        let Some(worktree_root_name) = input.path.components().next() else {
-            return Task::ready(Err(anyhow!("Invalid path")));
+        let Some(project_path) = project.read(cx).find_project_path(&input.path, cx) else {
+            return Task::ready(Err(anyhow!(
+                "Path {} not found in project",
+                &input.path.display()
+            )));
         };
-        let Some(worktree) = project
-            .read(cx)
-            .worktree_for_root_name(&worktree_root_name.as_os_str().to_string_lossy(), cx)
-        else {
-            return Task::ready(Err(anyhow!("Directory not found in the project")));
-        };
-        let project_path = ProjectPath {
-            worktree_id: worktree.read(cx).id(),
-            path: Arc::from(input.path.strip_prefix(worktree_root_name).unwrap()),
-        };
-        cx.spawn(|cx| async move {
+
+        cx.spawn(async move |cx| {
             let buffer = cx
                 .update(|cx| {
                     project.update(cx, |project, cx| project.open_buffer(project_path, cx))
                 })?
                 .await?;
 
-            buffer.read_with(&cx, |buffer, _cx| {
-                if buffer
-                    .file()
-                    .map_or(false, |file| file.disk_state().exists())
-                {
-                    Ok(buffer.text())
+            let result = buffer.read_with(cx, |buffer, _cx| {
+                let text = buffer.text();
+                if input.start_line.is_some() || input.end_line.is_some() {
+                    let start = input.start_line.unwrap_or(1);
+                    let lines = text.split('\n').skip(start - 1);
+                    if let Some(end) = input.end_line {
+                        let count = end.saturating_sub(start);
+                        Itertools::intersperse(lines.take(count), "\n").collect()
+                    } else {
+                        Itertools::intersperse(lines, "\n").collect()
+                    }
                 } else {
-                    Err(anyhow!("File does not exist"))
+                    text
                 }
-            })?
+            })?;
+
+            action_log.update(cx, |log, cx| {
+                log.buffer_read(buffer, cx);
+            })?;
+
+            anyhow::Ok(result)
         })
     }
 }

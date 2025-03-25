@@ -25,7 +25,7 @@
   // Features that can be globally enabled or disabled
   "features": {
     // Which edit prediction provider to use.
-    "edit_prediction_provider": "copilot"
+    "edit_prediction_provider": "zed"
   },
   // The name of a font to use for rendering text in the editor
   "buffer_font_family": "Zed Plex Mono",
@@ -136,6 +136,11 @@
   // Whether to use the system provided dialogs for Open and Save As.
   // When set to false, Zed will use the built-in keyboard-first pickers.
   "use_system_path_prompts": true,
+  // Whether to use the system provided dialogs for prompts, such as confirmation
+  // prompts.
+  // When set to false, Zed will use its built-in prompts. Note that on Linux,
+  // this option is ignored and Zed will always use the built-in prompts.
+  "use_system_prompts": true,
   // Whether the cursor blinks in the editor.
   "cursor_blink": true,
   // Cursor shape for the default editor.
@@ -324,6 +329,8 @@
     "code_actions": true,
     // Whether to show runnables buttons in the gutter.
     "runnables": true,
+    // Whether to show breakpoints in the gutter.
+    "breakpoints": true,
     // Whether to show fold buttons in the gutter.
     "folds": true
   },
@@ -336,14 +343,14 @@
     "active_line_width": 1,
     // Determines how indent guides are colored.
     // This setting can take the following three values:
-    ///
+    //
     // 1. "disabled"
     // 2. "fixed"
     // 3. "indent_aware"
     "coloring": "fixed",
     // Determines how indent guide backgrounds are colored.
     // This setting can take the following two values:
-    ///
+    //
     // 1. "disabled"
     // 2. "indent_aware"
     "background_coloring": "disabled"
@@ -402,8 +409,8 @@
     // Time to wait after scrolling the buffer, before requesting the hints,
     // set to 0 to disable debouncing.
     "scroll_debounce_ms": 50,
-    /// A set of modifiers which, when pressed, will toggle the visibility of inlay hints.
-    /// If the set if empty or not all the modifiers specified are pressed, inlay hints will not be toggled.
+    // A set of modifiers which, when pressed, will toggle the visibility of inlay hints.
+    // If the set if empty or not all the modifiers specified are pressed, inlay hints will not be toggled.
     "toggle_on_modifiers_press": {
       "control": false,
       "shift": false,
@@ -440,7 +447,7 @@
     "scrollbar": {
       // When to show the scrollbar in the project panel.
       // This setting can take five values:
-      ///
+      //
       // 1. null (default): Inherit editor settings
       // 2. Show the scrollbar if there's important information or
       //    follow the system's configured behavior (default):
@@ -455,7 +462,7 @@
     },
     // Which files containing diagnostic errors/warnings to mark in the project panel.
     // This setting can take the following three values:
-    ///
+    //
     // 1. Do not mark any files:
     //    "off"
     // 2. Only mark files with errors:
@@ -512,7 +519,7 @@
     "scrollbar": {
       // When to show the scrollbar in the project panel.
       // This setting can take five values:
-      ///
+      //
       // 1. null (default): Inherit editor settings
       // 2. Show the scrollbar if there's important information or
       //    follow the system's configured behavior (default):
@@ -547,7 +554,7 @@
   "git_panel": {
     // Whether to show the git panel button in the status bar.
     "button": true,
-    // Where to the git panel. Can be 'left' or 'right'.
+    // Where to show the git panel. Can be 'left' or 'right'.
     "dock": "left",
     // Default width of the git panel.
     "default_width": 360,
@@ -607,6 +614,38 @@
       "provider": "zed.dev",
       // The model to use.
       "model": "claude-3-5-sonnet-latest"
+    },
+    "profiles": {
+      "read-only": {
+        "name": "Read-only",
+        "tools": {
+          "diagnostics": true,
+          "fetch": true,
+          "list-directory": true,
+          "now": true,
+          "path-search": true,
+          "read-file": true,
+          "regex-search": true,
+          "thinking": true
+        }
+      },
+      "code-writer": {
+        "name": "Code Writer",
+        "tools": {
+          "bash": true,
+          "delete-path": true,
+          "diagnostics": true,
+          "edit-files": true,
+          "fetch": true,
+          "list-directory": true,
+          "move-path": true,
+          "now": true,
+          "path-search": true,
+          "read-file": true,
+          "regex-search": true,
+          "thinking": true
+        }
+      }
     }
   },
   // The settings for slash commands.
@@ -686,7 +725,7 @@
     // Which files containing diagnostic errors/warnings to mark in the tabs.
     // Diagnostics are only shown when file icons are also active.
     // This setting only works when can take the following three values:
-    ///
+    //
     // 1. Do not mark any files:
     //    "off"
     // 2. Only mark files with errors:
@@ -850,8 +889,24 @@
       //
       // The minimum column number to show the inline blame information at
       // "min_column": 0
-    }
+    },
+    // How git hunks are displayed visually in the editor.
+    // This setting can take two values:
+    //
+    // 1. Show unstaged hunks filled and staged hunks hollow:
+    //    "hunk_style": "staged_hollow"
+    // 2. Show unstaged hunks hollow and staged hunks filled:
+    //    "hunk_style": "unstaged_hollow"
+    "hunk_style": "staged_hollow"
   },
+  // The list of custom Git hosting providers.
+  "git_hosting_providers": [
+    // {
+    //   "provider": "github",
+    //   "name": "BigCorp GitHub",
+    //   "base_url": "https://code.big-corp.com"
+    // }
+  ],
   // Configuration for how direnv configuration should be loaded. May take 2 values:
   // 1. Load direnv configuration using `direnv export json` directly.
   //      "load_direnv": "direct"
@@ -958,7 +1013,7 @@
     //         "alternate_scroll": "on",
     //  2. Default alternate scroll mode to off
     //         "alternate_scroll": "off",
-    "alternate_scroll": "off",
+    "alternate_scroll": "on",
     // Set whether the option key behaves as the meta key.
     // May take 2 values:
     //  1. Rely on default platform handling of option key, on macOS
@@ -1014,7 +1069,7 @@
     "scrollbar": {
       // When to show the scrollbar in the terminal.
       // This setting can take five values:
-      ///
+      //
       // 1. null (default): Inherit editor settings
       // 2. Show the scrollbar if there's important information or
       //    follow the system's configured behavior (default):
@@ -1084,6 +1139,32 @@
   // and change the value to `false`.
   "auto_install_extensions": {
     "html": true
+  },
+  // Controls how completions are processed for this language.
+  "completions": {
+    // Controls how words are completed.
+    // For large documents, not all words may be fetched for completion.
+    //
+    // May take 3 values:
+    // 1. "enabled"
+    //   Always fetch document's words for completions along with LSP completions.
+    // 2. "fallback"
+    //   Only if LSP response errors or times out, use document's words to show completions.
+    // 3. "disabled"
+    //   Never fetch or complete document's words for completions.
+    //   (Word-based completions can still be queried via a separate action)
+    //
+    // Default: fallback
+    "words": "fallback",
+    // Whether to fetch LSP completions or not.
+    //
+    // Default: true
+    "lsp": true,
+    // When fetching LSP completions, determines how long to wait for a response of a particular server.
+    // When set to 0, waits indefinitely.
+    //
+    // Default: 0
+    "lsp_fetch_timeout_ms": 0
   },
   // Different settings for specific languages.
   "languages": {
@@ -1179,7 +1260,7 @@
       "format_on_save": "off",
       "use_on_type_format": false,
       "allow_rewrap": "anywhere",
-      "soft_wrap": "bounded",
+      "soft_wrap": "editor_width",
       "prettier": {
         "allowed": true
       }
@@ -1411,6 +1492,12 @@
   //   }
   // ]
   "ssh_connections": [],
+
   // Configures context servers for use in the Assistant.
-  "context_servers": {}
+  "context_servers": {},
+  "debugger": {
+    "stepping_granularity": "line",
+    "save_breakpoints": true,
+    "button": true
+  }
 }

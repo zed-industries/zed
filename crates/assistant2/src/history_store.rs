@@ -2,10 +2,10 @@ use assistant_context_editor::SavedContextMetadata;
 use chrono::{DateTime, Utc};
 use gpui::{prelude::*, Entity};
 
-use crate::thread_store::{SavedThreadMetadata, ThreadStore};
+use crate::thread_store::{SerializedThreadMetadata, ThreadStore};
 
 pub enum HistoryEntry {
-    Thread(SavedThreadMetadata),
+    Thread(SerializedThreadMetadata),
     Context(SavedContextMetadata),
 }
 

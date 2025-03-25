@@ -22,6 +22,7 @@ git2.workspace = true
 gpui.workspace = true
 language.workspace = true
 log.workspace = true
+pretty_assertions.workspace = true
 rope.workspace = true
 sum_tree.workspace = true
 text.workspace = true
@@ -31,7 +32,6 @@ util.workspace = true
 ctor.workspace = true
 env_logger.workspace = true
 gpui = { workspace = true, features = ["test-support"] }
-pretty_assertions.workspace = true
 rand.workspace = true
 serde_json.workspace = true
 text = { workspace = true, features = ["test-support"] }

@@ -1,5 +1,5 @@
 use anyhow::{anyhow, Result};
-use assistant_tool::Tool;
+use assistant_tool::{ActionLog, Tool};
 use gpui::{App, Entity, Task};
 use language_model::LanguageModelRequestMessage;
 use project::Project;
@@ -12,10 +12,10 @@ pub struct ListDirectoryToolInput {
     /// The relative path of the directory to list.
     ///
     /// This path should never be absolute, and the first component
-    /// of the path should always be a top-level directory in a project.
+    /// of the path should always be a root directory in a project.
     ///
     /// <example>
-    /// If the project has the following top-level directories:
+    /// If the project has the following root directories:
     ///
     /// - directory1
     /// - directory2
@@ -24,14 +24,14 @@ pub struct ListDirectoryToolInput {
     /// </example>
     ///
     /// <example>
-    /// If the project has the following top-level directories:
+    /// If the project has the following root directories:
     ///
     /// - foo
     /// - bar
     ///
     /// If you wanna list contents in the directory `foo/baz`, you should use the path `foo/baz`.
     /// </example>
-    pub path: Arc<Path>,
+    pub path: String,
 }
 
 pub struct ListDirectoryTool;
@@ -39,6 +39,10 @@ pub struct ListDirectoryTool;
 impl Tool for ListDirectoryTool {
     fn name(&self) -> String {
         "list-directory".into()
+    }
+
+    fn needs_confirmation(&self) -> bool {
+        false
     }
 
     fn description(&self) -> String {
@@ -50,11 +54,19 @@ impl Tool for ListDirectoryTool {
         serde_json::to_value(&schema).unwrap()
     }
 
+    fn ui_text(&self, input: &serde_json::Value) -> String {
+        match serde_json::from_value::<ListDirectoryToolInput>(input.clone()) {
+            Ok(input) => format!("List the `{}` directory's contents", input.path),
+            Err(_) => "List directory".to_string(),
+        }
+    }
+
     fn run(
         self: Arc<Self>,
         input: serde_json::Value,
         _messages: &[LanguageModelRequestMessage],
         project: Entity<Project>,
+        _action_log: Entity<ActionLog>,
         cx: &mut App,
     ) -> Task<Result<String>> {
         let input = match serde_json::from_value::<ListDirectoryToolInput>(input) {
@@ -62,26 +74,57 @@ impl Tool for ListDirectoryTool {
             Err(err) => return Task::ready(Err(anyhow!(err))),
         };
 
-        let Some(worktree_root_name) = input.path.components().next() else {
-            return Task::ready(Err(anyhow!("Invalid path")));
+        // Sometimes models will return these even though we tell it to give a path and not a glob.
+        // When this happens, just list the root worktree directories.
+        if matches!(input.path.as_str(), "." | "" | "./" | "*") {
+            let output = project
+                .read(cx)
+                .worktrees(cx)
+                .filter_map(|worktree| {
+                    worktree.read(cx).root_entry().and_then(|entry| {
+                        if entry.is_dir() {
+                            entry.path.to_str()
+                        } else {
+                            None
+                        }
+                    })
+                })
+                .collect::<Vec<_>>()
+                .join("\n");
+
+            return Task::ready(Ok(output));
+        }
+
+        let Some(project_path) = project.read(cx).find_project_path(&input.path, cx) else {
+            return Task::ready(Err(anyhow!("Path {} not found in project", input.path)));
         };
         let Some(worktree) = project
             .read(cx)
-            .worktree_for_root_name(&worktree_root_name.as_os_str().to_string_lossy(), cx)
+            .worktree_for_id(project_path.worktree_id, cx)
         else {
-            return Task::ready(Err(anyhow!("Directory not found in the project")));
+            return Task::ready(Err(anyhow!("Worktree not found")));
         };
-        let path = input.path.strip_prefix(worktree_root_name).unwrap();
+        let worktree = worktree.read(cx);
+
+        let Some(entry) = worktree.entry_for_path(&project_path.path) else {
+            return Task::ready(Err(anyhow!("Path not found: {}", input.path)));
+        };
+
+        if !entry.is_dir() {
+            return Task::ready(Err(anyhow!("{} is not a directory.", input.path)));
+        }
+
         let mut output = String::new();
-        for entry in worktree.read(cx).child_entries(path) {
+        for entry in worktree.child_entries(&project_path.path) {
             writeln!(
                 output,
                 "{}",
-                Path::new(worktree_root_name.as_os_str())
-                    .join(&entry.path)
-                    .display(),
+                Path::new(worktree.root_name()).join(&entry.path).display(),
             )
             .unwrap();
+        }
+        if output.is_empty() {
+            return Task::ready(Ok(format!("{} is empty.", input.path)));
         }
         Task::ready(Ok(output))
     }

@@ -129,7 +129,7 @@ impl LanguageModelProvider for CopilotChatLanguageModelProvider {
             Status::Error(err) => anyhow!(format!("Received the following error while signing into Copilot: {err}")),
             Status::Starting { task: _ } => anyhow!("Copilot is still starting, please wait for Copilot to start then try again"),
             Status::Unauthorized => anyhow!("Unable to authorize with Copilot. Please make sure that you have an active Copilot and Copilot Chat subscription."),
-            Status::SignedOut => anyhow!("You have signed out of Copilot. Please sign in to Copilot and try again."),
+            Status::SignedOut {..} => anyhow!("You have signed out of Copilot. Please sign in to Copilot and try again."),
             Status::SigningIn { prompt: _ } => anyhow!("Still signing into Copilot..."),
         };
 
@@ -186,6 +186,7 @@ impl LanguageModel for CopilotChatLanguageModel {
         match self.model {
             CopilotChatModel::Claude3_5Sonnet => count_anthropic_tokens(request, cx),
             CopilotChatModel::Claude3_7Sonnet => count_anthropic_tokens(request, cx),
+            CopilotChatModel::Claude3_7SonnetThinking => count_anthropic_tokens(request, cx),
             CopilotChatModel::Gemini20Flash => count_google_tokens(request, cx),
             _ => {
                 let model = match self.model {
@@ -195,6 +196,7 @@ impl LanguageModel for CopilotChatLanguageModel {
                     CopilotChatModel::O1 | CopilotChatModel::O3Mini => open_ai::Model::Four,
                     CopilotChatModel::Claude3_5Sonnet
                     | CopilotChatModel::Claude3_7Sonnet
+                    | CopilotChatModel::Claude3_7SonnetThinking
                     | CopilotChatModel::Gemini20Flash => {
                         unreachable!()
                     }
@@ -229,8 +231,8 @@ impl LanguageModel for CopilotChatLanguageModel {
         let is_streaming = copilot_request.stream;
 
         let request_limiter = self.request_limiter.clone();
-        let future = cx.spawn(|cx| async move {
-            let response = CopilotChat::stream_completion(copilot_request, cx);
+        let future = cx.spawn(async move |cx| {
+            let response = CopilotChat::stream_completion(copilot_request, cx.clone());
             request_limiter.stream(async move {
                 let response = response.await?;
                 let stream = response
@@ -264,6 +266,7 @@ impl LanguageModel for CopilotChatLanguageModel {
                         }
                     })
                     .boxed();
+
                 Ok(stream)
             }).await
         });
@@ -366,7 +369,6 @@ impl Render for ConfigurationView {
 
             match &self.copilot_status {
                 Some(status) => match status {
-                    Status::Disabled => v_flex().gap_6().p_4().child(Label::new(ERROR_LABEL)),
                     Status::Starting { task: _ } => {
                         const LABEL: &str = "Starting Copilot...";
                         v_flex()
@@ -376,7 +378,10 @@ impl Render for ConfigurationView {
                             .child(Label::new(LABEL))
                             .child(loading_icon)
                     }
-                    Status::SigningIn { prompt: _ } => {
+                    Status::SigningIn { prompt: _ }
+                    | Status::SignedOut {
+                        awaiting_signing_in: true,
+                    } => {
                         const LABEL: &str = "Signing in to Copilot...";
                         v_flex()
                             .gap_6()
