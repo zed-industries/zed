@@ -662,7 +662,8 @@ impl Element for TerminalElement {
                 let dimensions = {
                     let rem_size = window.rem_size();
                     let font_pixels = text_style.font_size.to_pixels(rem_size);
-                    let line_height = font_pixels * line_height.to_pixels(rem_size);
+                    // TODO: line_height should be an f32 not an AbsoluteLength.
+                    let line_height = font_pixels * line_height.to_pixels(rem_size).0;
                     let font_id = cx.text_system().resolve_font(&text_style.font());
 
                     let cell_width = text_system

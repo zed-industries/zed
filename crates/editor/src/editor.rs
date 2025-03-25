@@ -6905,7 +6905,7 @@ impl Editor {
             )
             .child(
                 h_flex()
-                    .h(line_height + BORDER_WIDTH * px(2.))
+                    .h(line_height + BORDER_WIDTH * 2.)
                     .px_1p5()
                     .gap_1()
                     // Workaround: For some reason, there's a gap if we don't do this
