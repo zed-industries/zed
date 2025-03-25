@@ -8,7 +8,7 @@ use gpui::{
     div, prelude::*, App, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, Render,
     SharedString, Styled, Subscription,
 };
-use language::Buffer;
+use language::{Buffer, Language, LanguageConfig, LanguageMatcher};
 use settings::Settings;
 use text::{Bias, Point};
 use theme::ActiveTheme;
@@ -422,7 +422,7 @@ mod tests {
         fs.insert_tree(
             path!("/dir"),
             json!({
-                "a.rs": "ēlo"
+                "a.rs": "ēlo word"
             }),
         )
         .await;
@@ -448,6 +448,21 @@ mod tests {
             })
             .await
             .unwrap();
+        let language = Arc::new(Language::new(
+            LanguageConfig {
+                name: "Markdown".into(),
+                matcher: LanguageMatcher {
+                    path_suffixes: vec!["md".to_string()],
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+            Some(tree_sitter_rust::LANGUAGE.into()),
+        ));
+
+        _buffer.update(cx, |buffer, cx| {
+            buffer.set_language(Some(language), cx);
+        });
         let editor = workspace
             .update_in(cx, |workspace, window, cx| {
                 workspace.open_path((worktree_id, "a.rs"), None, true, window, cx)
@@ -464,7 +479,7 @@ mod tests {
                     lines: 0,
                     characters: 0,
                     selections: 1,
-                    words: None
+                    words: Some(0)
                 },
                 workspace
                     .status_bar()
@@ -486,7 +501,7 @@ mod tests {
                     lines: 1,
                     characters: 3,
                     selections: 1,
-                    words: None
+                    words: Some(2)
                 },
                 workspace
                     .status_bar()
