@@ -1,3 +1,4 @@
+use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -6,15 +7,15 @@ use collections::{BTreeMap, HashMap, HashSet};
 use futures::{self, future, Future, FutureExt};
 use gpui::{App, AppContext as _, AsyncApp, Context, Entity, SharedString, Task, WeakEntity};
 use language::Buffer;
-use project::{ProjectPath, Worktree};
+use project::{ProjectPath, Symbol, Worktree};
 use rope::Rope;
-use text::BufferId;
+use text::{Anchor, BufferId};
 use util::maybe;
 use workspace::Workspace;
 
 use crate::context::{
-    AssistantContext, ContextBuffer, ContextId, ContextSnapshot, DirectoryContext,
-    FetchedUrlContext, FileContext, ThreadContext,
+    AssistantContext, ContextBuffer, ContextId, ContextSnapshot, ContextSymbol, ContextSymbolId,
+    DirectoryContext, FetchedUrlContext, FileContext, SymbolContext, ThreadContext,
 };
 use crate::context_strip::SuggestedContext;
 use crate::thread::{Thread, ThreadId};
@@ -26,6 +27,7 @@ pub struct ContextStore {
     next_context_id: ContextId,
     files: BTreeMap<BufferId, ContextId>,
     directories: HashMap<PathBuf, ContextId>,
+    symbols: HashMap<ContextSymbolId, ContextId>,
     threads: HashMap<ThreadId, ContextId>,
     fetched_urls: HashMap<String, ContextId>,
 }
@@ -38,6 +40,7 @@ impl ContextStore {
             next_context_id: ContextId(0),
             files: BTreeMap::default(),
             directories: HashMap::default(),
+            symbols: HashMap::default(),
             threads: HashMap::default(),
             fetched_urls: HashMap::default(),
         }
@@ -107,6 +110,7 @@ impl ContextStore {
                     project_path.path.clone(),
                     buffer_entity,
                     buffer,
+                    None,
                     cx.to_async(),
                 )
             })?;
@@ -136,6 +140,7 @@ impl ContextStore {
                     file.path().clone(),
                     buffer_entity,
                     buffer,
+                    None,
                     cx.to_async(),
                 ))
             })??;
@@ -222,6 +227,7 @@ impl ContextStore {
                             path,
                             buffer_entity,
                             buffer,
+                            None,
                             cx.to_async(),
                         );
                         buffer_infos.push(buffer_info);
@@ -260,6 +266,59 @@ impl ContextStore {
                 path,
                 context_buffers,
             )));
+    }
+
+    pub fn add_symbol(&mut self, symbol: &Symbol, cx: &mut Context<Self>) -> Task<Result<()>> {
+        let Some(workspace) = self.workspace.upgrade() else {
+            return Task::ready(Err(anyhow!("Cannot add symbol: Workspace was dropped")));
+        };
+
+        let symbol_range = symbol.range.clone();
+
+        let open_buffer_task = workspace.update(cx, |workspace, cx| {
+            workspace.project().update(cx, |project, cx| {
+                project.open_buffer(symbol.path.clone(), cx)
+            })
+        });
+
+        cx.spawn(async move |this, cx| {
+            let buffer_entity = open_buffer_task.await?;
+            let (range, (buffer_info, text_task)) = this.update(cx, |_, cx| {
+                let buffer = buffer_entity.read(cx);
+                let range =
+                    buffer.anchor_after(symbol_range.start)..buffer.anchor_before(symbol_range.end);
+
+                let Some(file) = buffer.file() else {
+                    return Err(anyhow!("Buffer has no path."));
+                };
+                Ok((
+                    range.clone(),
+                    collect_buffer_info_and_text(
+                        file.path().clone(),
+                        buffer_entity,
+                        buffer,
+                        Some(range),
+                        cx.to_async(),
+                    ),
+                ))
+            })??;
+
+            let text = text_task.await;
+
+            this.update(cx, |this, _cx| {
+                this.insert_symbol(make_context_symbol(buffer_info, range, text))
+            })?;
+            anyhow::Ok(())
+        })
+    }
+
+    fn insert_symbol(&mut self, context_symbol: ContextSymbol) {
+        let id = self.next_context_id.post_inc();
+        self.symbols.insert(context_symbol.id.clone(), id);
+        self.context.push(AssistantContext::Symbol(SymbolContext {
+            id,
+            context_symbol,
+        }));
     }
 
     pub fn add_thread(
@@ -340,6 +399,9 @@ impl ContextStore {
             AssistantContext::Directory(_) => {
                 self.directories.retain(|_, context_id| *context_id != id);
             }
+            AssistantContext::Symbol(_) => {
+                self.symbols.retain(|_, context_id| *context_id != id);
+            }
             AssistantContext::FetchedUrl(_) => {
                 self.fetched_urls.retain(|_, context_id| *context_id != id);
             }
@@ -403,6 +465,10 @@ impl ContextStore {
         self.directories.get(path).copied()
     }
 
+    pub fn includes_symbol(&self, symbol_id: &ContextSymbolId) -> Option<ContextId> {
+        self.symbols.get(symbol_id).copied()
+    }
+
     pub fn includes_thread(&self, thread_id: &ThreadId) -> Option<ContextId> {
         self.threads.get(thread_id).copied()
     }
@@ -431,6 +497,7 @@ impl ContextStore {
                     buffer_path_log_err(buffer).map(|p| p.to_path_buf())
                 }
                 AssistantContext::Directory(_)
+                | AssistantContext::Symbol(_)
                 | AssistantContext::FetchedUrl(_)
                 | AssistantContext::Thread(_) => None,
             })
@@ -463,10 +530,27 @@ fn make_context_buffer(info: BufferInfo, text: SharedString) -> ContextBuffer {
     }
 }
 
+fn make_context_symbol(
+    info: BufferInfo,
+    range: Range<Anchor>,
+    text: SharedString,
+) -> ContextSymbol {
+    ContextSymbol {
+        id: ContextSymbolId {
+            buffer_id: info.id,
+            buffer_version: info.version,
+            range,
+        },
+        buffer: info.buffer_entity,
+        text,
+    }
+}
+
 fn collect_buffer_info_and_text(
     path: Arc<Path>,
     buffer_entity: Entity<Buffer>,
     buffer: &Buffer,
+    range: Option<Range<Anchor>>,
     cx: AsyncApp,
 ) -> (BufferInfo, Task<SharedString>) {
     let buffer_info = BufferInfo {
@@ -475,7 +559,11 @@ fn collect_buffer_info_and_text(
         version: buffer.version(),
     };
     // Important to collect version at the same time as content so that staleness logic is correct.
-    let content = buffer.as_rope().clone();
+    let content = if let Some(range) = range {
+        buffer.text_for_range(range).collect::<Rope>()
+    } else {
+        buffer.as_rope().clone()
+    };
     let text_task = cx.background_spawn(async move { to_fenced_codeblock(&path, content) });
     (buffer_info, text_task)
 }
@@ -577,6 +665,14 @@ pub fn refresh_context_store_text(
                         return refresh_directory_text(context_store, directory_context, cx);
                     }
                 }
+                AssistantContext::Symbol(symbol_context) => {
+                    if changed_buffers.is_empty()
+                        || changed_buffers.contains(&symbol_context.context_symbol.buffer)
+                    {
+                        let context_store = context_store.clone();
+                        return refresh_symbol_text(context_store, symbol_context, cx);
+                    }
+                }
                 AssistantContext::Thread(thread_context) => {
                     if changed_buffers.is_empty() {
                         let context_store = context_store.clone();
@@ -660,6 +756,28 @@ fn refresh_directory_text(
     }))
 }
 
+fn refresh_symbol_text(
+    context_store: Entity<ContextStore>,
+    symbol_context: &SymbolContext,
+    cx: &App,
+) -> Option<Task<()>> {
+    let id = symbol_context.id;
+    let task = refresh_context_symbol(&symbol_context.context_symbol, cx);
+    if let Some(task) = task {
+        Some(cx.spawn(async move |cx| {
+            let context_symbol = task.await;
+            context_store
+                .update(cx, |context_store, _| {
+                    let new_symbol_context = SymbolContext { id, context_symbol };
+                    context_store.replace_context(AssistantContext::Symbol(new_symbol_context));
+                })
+                .ok();
+        }))
+    } else {
+        None
+    }
+}
+
 fn refresh_thread_text(
     context_store: Entity<ContextStore>,
     thread_context: &ThreadContext,
@@ -692,9 +810,34 @@ fn refresh_context_buffer(
             path,
             context_buffer.buffer.clone(),
             buffer,
+            None,
             cx.to_async(),
         );
         Some(text_task.map(move |text| make_context_buffer(buffer_info, text)))
+    } else {
+        None
+    }
+}
+
+fn refresh_context_symbol(
+    context_symbol: &ContextSymbol,
+    cx: &App,
+) -> Option<impl Future<Output = ContextSymbol>> {
+    let buffer = context_symbol.buffer.read(cx);
+    let path = buffer_path_log_err(buffer)?;
+    if buffer
+        .version
+        .changed_since(&context_symbol.id.buffer_version)
+    {
+        let (buffer_info, text_task) = collect_buffer_info_and_text(
+            path,
+            context_symbol.buffer.clone(),
+            buffer,
+            Some(context_symbol.id.range.clone()),
+            cx.to_async(),
+        );
+        let range = context_symbol.id.range.clone();
+        Some(text_task.map(move |text| make_context_symbol(buffer_info, range, text)))
     } else {
         None
     }

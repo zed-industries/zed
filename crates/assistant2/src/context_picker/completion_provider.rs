@@ -384,14 +384,10 @@ impl CompletionProvider for ContextPickerCompletionProvider {
         cx.spawn(async move |_, cx| {
             let mut completions = Vec::new();
 
-            let MentionCompletion {
-                mode: category,
-                argument,
-                ..
-            } = state;
+            let MentionCompletion { mode, argument, .. } = state;
 
             let query = argument.unwrap_or_else(|| "".to_string());
-            match category {
+            match mode {
                 Some(ContextPickerMode::File) => {
                     let path_matches = cx
                         .update(|cx| {
@@ -424,6 +420,9 @@ impl CompletionProvider for ContextPickerCompletionProvider {
                             )
                         }));
                     })?;
+                }
+                Some(ContextPickerMode::Symbol) => {
+                    //TODO
                 }
                 Some(ContextPickerMode::Fetch) => {
                     if let Some(editor) = editor.upgrade() {
