@@ -16,7 +16,7 @@ use crate::application_menu::{
 
 use crate::platforms::{platform_linux, platform_mac, platform_windows};
 use auto_update::AutoUpdateStatus;
-use banner::{Banner, BannerDetails};
+use banner::Banner;
 use call::ActiveCall;
 use client::{Client, UserStore};
 use feature_flags::{FeatureFlagAppExt, ZedPro};
@@ -318,27 +318,10 @@ impl TitleBar {
         let banner = cx.new(|cx| {
             Banner::new(
                 "Git Onboarding",
-                BannerDetails {
-                    action: zed_actions::OpenGitIntegrationOnboarding.boxed_clone(),
-                    banner_label: Box::new(|_, _| {
-                        h_flex()
-                            .h_full()
-                            .items_center()
-                            .gap_1()
-                            .child(Icon::new(IconName::GitBranchSmall).size(IconSize::Small))
-                            .child(
-                                h_flex()
-                                    .gap_0p5()
-                                    .child(
-                                        Label::new("Introducing:")
-                                            .size(LabelSize::Small)
-                                            .color(Color::Muted),
-                                    )
-                                    .child(Label::new("Git Support").size(LabelSize::Small)),
-                            )
-                            .into_any_element()
-                    }),
-                },
+                IconName::GitBranchSmall,
+                "Git Support",
+                None,
+                zed_actions::OpenGitIntegrationOnboarding.boxed_clone(),
                 cx,
             )
         });
