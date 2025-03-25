@@ -38,7 +38,7 @@ impl Tool for ContextServerTool {
     fn description(&self) -> String {
         self.tool.description.clone().unwrap_or_default()
     }
-    
+
     fn icon(&self) -> IconName {
         IconName::Cog
     }

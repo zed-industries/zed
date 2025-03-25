@@ -38,7 +38,7 @@ impl Tool for DeletePathTool {
     fn description(&self) -> String {
         include_str!("./delete_path_tool/description.md").into()
     }
-    
+
     fn icon(&self) -> IconName {
         IconName::Trash
     }

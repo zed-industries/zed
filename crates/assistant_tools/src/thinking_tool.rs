@@ -30,7 +30,7 @@ impl Tool for ThinkingTool {
     fn description(&self) -> String {
         include_str!("./thinking_tool/description.md").to_string()
     }
-    
+
     fn icon(&self) -> IconName {
         IconName::Brain
     }

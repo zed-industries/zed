@@ -86,7 +86,7 @@ impl Tool for EditFilesTool {
     fn description(&self) -> String {
         include_str!("./edit_files_tool/description.md").into()
     }
-    
+
     fn icon(&self) -> IconName {
         IconName::Pencil
     }

@@ -52,7 +52,7 @@ impl Tool for ReadFileTool {
     fn description(&self) -> String {
         include_str!("./read_file_tool/description.md").into()
     }
-    
+
     fn icon(&self) -> IconName {
         IconName::Eye
     }

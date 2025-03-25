@@ -121,7 +121,7 @@ impl Tool for FetchTool {
     fn description(&self) -> String {
         include_str!("./fetch_tool/description.md").to_string()
     }
-    
+
     fn icon(&self) -> IconName {
         IconName::Globe
     }

@@ -45,7 +45,7 @@ impl Tool for DiagnosticsTool {
     fn description(&self) -> String {
         include_str!("./diagnostics_tool/description.md").into()
     }
-    
+
     fn icon(&self) -> IconName {
         IconName::Warning
     }

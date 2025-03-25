@@ -47,7 +47,7 @@ impl Tool for PathSearchTool {
     fn description(&self) -> String {
         include_str!("./path_search_tool/description.md").into()
     }
-    
+
     fn icon(&self) -> IconName {
         IconName::SearchCode
     }

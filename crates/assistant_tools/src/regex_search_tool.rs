@@ -49,7 +49,7 @@ impl Tool for RegexSearchTool {
     fn description(&self) -> String {
         include_str!("./regex_search_tool/description.md").into()
     }
-    
+
     fn icon(&self) -> IconName {
         IconName::Regex
     }

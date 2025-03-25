@@ -44,7 +44,7 @@ impl Tool for CreateFileTool {
     fn description(&self) -> String {
         include_str!("./create_file_tool/description.md").into()
     }
-    
+
     fn icon(&self) -> IconName {
         IconName::File
     }

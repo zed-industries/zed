@@ -49,7 +49,7 @@ impl Tool for ListDirectoryTool {
     fn description(&self) -> String {
         include_str!("./list_directory_tool/description.md").into()
     }
-    
+
     fn icon(&self) -> IconName {
         IconName::Folder
     }

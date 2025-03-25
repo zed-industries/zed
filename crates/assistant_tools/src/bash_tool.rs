@@ -31,7 +31,7 @@ impl Tool for BashTool {
     fn description(&self) -> String {
         include_str!("./bash_tool/description.md").to_string()
     }
-    
+
     fn icon(&self) -> IconName {
         IconName::Terminal
     }

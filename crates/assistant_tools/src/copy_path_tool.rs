@@ -47,7 +47,7 @@ impl Tool for CopyPathTool {
     fn description(&self) -> String {
         include_str!("./copy_path_tool/description.md").into()
     }
-    
+
     fn icon(&self) -> IconName {
         IconName::Clipboard
     }
