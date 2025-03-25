@@ -1595,8 +1595,8 @@ impl EditorElement {
             ) - slider_height.0,
         ));
         show_slider &= slider_top_max.0 > 0.;
-        let slider_top =
-            (editor_scroll_top / minimap_contents_full_height) * slider_top_max;
+        let minimap_progress_pct = (editor_scroll_top / max_scroll_top).clamp(0., 1.);
+        let slider_top = minimap_progress_pct * slider_top_max;
         let slider_lines_from_top = slider_top.0 / minimap_line_height.0;
         let minimap_scroll_top = editor_scroll_top - slider_lines_from_top;
 
