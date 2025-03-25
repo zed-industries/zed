@@ -62,8 +62,8 @@ pub(crate) async fn perform_update(app_dir: &Path, hwnd: Option<isize>) -> Resul
                 break;
             };
             let ret = match job {
-                Jobs::Remove(relativ_path) => {
-                    let path = app_dir.join(relativ_path);
+                Jobs::Remove(relative_path) => {
+                    let path = app_dir.join(relative_path);
                     if path.exists() {
                         log::info!("Removing old file: {}", path.display());
                         log_err!(
