@@ -3,7 +3,7 @@ use editor::Editor;
 use gpui::{prelude::*, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, WeakEntity};
 use serde_json::json;
 use settings::update_settings_file;
-use ui::{prelude::*, Modal, ModalFooter, ModalHeader, Section};
+use ui::{prelude::*, Modal, ModalFooter, ModalHeader, Section, Tooltip};
 use workspace::{ModalView, Workspace};
 
 use crate::AddContextServer;
@@ -104,6 +104,9 @@ impl EventEmitter<DismissEvent> for AddContextServerModal {}
 
 impl Render for AddContextServerModal {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let is_name_empty = self.name_editor.read(cx).text(cx).trim().is_empty();
+        let is_command_empty = self.command_editor.read(cx).text(cx).trim().is_empty();
+
         div()
             .elevation_3(cx)
             .w(rems(34.))
@@ -139,9 +142,22 @@ impl Render for AddContextServerModal {
                                     cx.listener(|this, _event, _window, cx| this.cancel(cx)),
                                 ),
                             )
-                            .end_slot(Button::new("add-server", "Add Server").on_click(
-                                cx.listener(|this, _event, _window, cx| this.confirm(cx)),
-                            )),
+                            .end_slot(
+                                Button::new("add-server", "Add Server")
+                                    .disabled(is_name_empty || is_command_empty)
+                                    .map(|button| {
+                                        if is_name_empty {
+                                            button.tooltip(Tooltip::text("Name is required"))
+                                        } else if is_command_empty {
+                                            button.tooltip(Tooltip::text("Command is required"))
+                                        } else {
+                                            button
+                                        }
+                                    })
+                                    .on_click(
+                                        cx.listener(|this, _event, _window, cx| this.confirm(cx)),
+                                    ),
+                            ),
                     ),
             )
     }
