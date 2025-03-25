@@ -205,10 +205,6 @@ pub struct RepositoryEntry {
 }
 
 impl RepositoryEntry {
-    //pub fn relativize(&self, path: &Path) -> Result<RepoPath> {
-    //    self.work_directory.relativize(path)
-    //}
-
     pub fn relativize_abs_path(&self, abs_path: &Path) -> Option<RepoPath> {
         Some(
             abs_path
@@ -218,20 +214,8 @@ impl RepositoryEntry {
         )
     }
 
-    //pub fn try_unrelativize(&self, path: &RepoPath) -> Option<Arc<Path>> {
-    //    self.work_directory.try_unrelativize(path)
-    //}
-
-    //pub fn unrelativize(&self, path: &RepoPath) -> Arc<Path> {
-    //    self.work_directory.unrelativize(path)
-    //}
-
-    //pub fn directory_contains(&self, path: impl AsRef<Path>) -> bool {
-    //    self.work_directory.directory_contains(path)
-    //}
-
     pub fn directory_contains_abs_path(&self, abs_path: impl AsRef<Path>) -> bool {
-        todo!()
+        abs_path.as_ref().starts_with(&self.work_directory_abs_path)
     }
 
     pub fn branch(&self) -> Option<&Branch> {

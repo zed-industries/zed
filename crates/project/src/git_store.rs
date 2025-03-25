@@ -3,7 +3,7 @@ pub mod git_traversal;
 use crate::{
     buffer_store::{BufferStore, BufferStoreEvent},
     worktree_store::{WorktreeStore, WorktreeStoreEvent},
-    Project, ProjectEnvironment, ProjectItem, ProjectPath,
+    ProjectEnvironment, ProjectItem, ProjectPath,
 };
 use anyhow::{anyhow, bail, Context as _, Result};
 use askpass::{AskPassDelegate, AskPassSession};
@@ -146,13 +146,13 @@ pub struct GitStoreCheckpoint {
 }
 
 pub struct Repository {
-    commit_message_buffer: Option<Entity<Buffer>>,
-    git_store: WeakEntity<GitStore>,
-    project_environment: Option<WeakEntity<ProjectEnvironment>>,
     pub worktree_id: WorktreeId,
     pub repository_entry: RepositoryEntry,
     pub merge_message: Option<String>,
     pub completed_scan_id: usize,
+    commit_message_buffer: Option<Entity<Buffer>>,
+    git_store: WeakEntity<GitStore>,
+    project_environment: Option<WeakEntity<ProjectEnvironment>>,
     state: RepositoryState,
     job_sender: mpsc::UnboundedSender<GitJob>,
     askpass_delegates: Arc<Mutex<HashMap<u64, AskPassDelegate>>>,
@@ -703,15 +703,25 @@ impl GitStore {
     }
 
     pub fn delete_checkpoint(&self, checkpoint: GitStoreCheckpoint, cx: &App) -> Task<Result<()>> {
-        let repositories_by_dot_git_abs_path = self
+        let repositories_by_work_directory_abs_path = self
             .repositories
             .values()
-            .map(|repo| (repo.read(cx).repository.clone(), repo))
+            .map(|repo| {
+                (
+                    repo.read(cx)
+                        .repository_entry
+                        .work_directory_abs_path
+                        .clone(),
+                    repo,
+                )
+            })
             .collect::<HashMap<_, _>>();
 
         let mut tasks = Vec::new();
-        for (dot_git_abs_path, checkpoint) in checkpoint.checkpoints_by_work_dir_abs {
-            if let Some(repository) = repositories_by_dot_git_abs_path.get(&dot_git_abs_path) {
+        for (work_dir_abs_path, checkpoint) in checkpoint.checkpoints_by_work_dir_abs_path {
+            if let Some(repository) =
+                repositories_by_work_directory_abs_path.get(&work_dir_abs_path)
+            {
                 let delete = repository.read(cx).delete_checkpoint(checkpoint);
                 tasks.push(async move { delete.await? });
             }
@@ -2571,7 +2581,7 @@ impl Repository {
     }
 
     /// This is the name that will be displayed in the repository selector for this repository.
-    pub fn display_name(&self, project: &Project, cx: &App) -> SharedString {
+    pub fn display_name(&self) -> SharedString {
         self.repository_entry
             .work_directory_abs_path
             .file_name()

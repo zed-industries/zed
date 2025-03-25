@@ -2854,7 +2854,6 @@ impl GitPanel {
     ) -> Option<impl IntoElement> {
         let active_repository = self.active_repository.clone()?;
         let (can_commit, tooltip) = self.configure_commit_button(cx);
-        let project = self.project.clone().read(cx);
         let panel_editor_style = panel_editor_style(true, window, cx);
 
         let enable_coauthors = self.render_co_authors(cx);
@@ -2878,7 +2877,7 @@ impl GitPanel {
         let display_name = SharedString::from(Arc::from(
             active_repository
                 .read(cx)
-                .display_name(project, cx)
+                .display_name()
                 .trim_end_matches("/"),
         ));
         let editor_is_long = self.commit_editor.update(cx, |editor, cx| {

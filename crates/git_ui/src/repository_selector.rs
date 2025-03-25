@@ -44,18 +44,16 @@ impl RepositorySelector {
                 .cloned()
                 .collect::<Vec<_>>()
         });
-        let project = project_handle.read(cx);
         let filtered_repositories = repository_entries.clone();
 
         let widest_item_ix = repository_entries.iter().position_max_by(|a, b| {
             a.read(cx)
-                .display_name(project, cx)
+                .display_name()
                 .len()
-                .cmp(&b.read(cx).display_name(project, cx).len())
+                .cmp(&b.read(cx).display_name().len())
         });
 
         let delegate = RepositorySelectorDelegate {
-            project: project_handle.downgrade(),
             repository_selector: cx.entity().downgrade(),
             repository_entries,
             filtered_repositories,
@@ -120,7 +118,6 @@ impl Render for RepositorySelector {
 impl ModalView for RepositorySelector {}
 
 pub struct RepositorySelectorDelegate {
-    project: WeakEntity<Project>,
     repository_selector: WeakEntity<RepositorySelector>,
     repository_entries: Vec<Entity<Repository>>,
     filtered_repositories: Vec<Entity<Repository>>,
@@ -226,9 +223,8 @@ impl PickerDelegate for RepositorySelectorDelegate {
         _window: &mut Window,
         cx: &mut Context<Picker<Self>>,
     ) -> Option<Self::ListItem> {
-        let project = self.project.upgrade()?;
         let repo_info = self.filtered_repositories.get(ix)?;
-        let display_name = repo_info.read(cx).display_name(project.read(cx), cx);
+        let display_name = repo_info.read(cx).display_name();
         Some(
             ListItem::new(ix)
                 .inset(true)
