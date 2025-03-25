@@ -3748,7 +3748,10 @@ async fn test_deletion_gitignored(cx: &mut gpui::TestAppContext) {
             "cc": "// Testing 3",
             "dd": "// Testing 4",
             "ee": "// Testing 5",
-            ".gitignore": "bb\ndd\n'",
+            "ff": "// Testing 6",
+            "gg": "// Testing 7",
+            "hh": "// Testing 8",
+            ".gitignore": "bb\ndd\nee\nff\n'",
         }),
     )
     .await;
@@ -3757,7 +3760,7 @@ async fn test_deletion_gitignored(cx: &mut gpui::TestAppContext) {
     let workspace = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
     let cx = &mut VisualTestContext::from_window(*workspace, cx);
 
-    // Test auto selection after deletion with hide_gitignore enabled
+    // Test 1: Auto selection with one gitignored file next to the deleted file
     cx.update(|_, cx| {
         let settings = *ProjectPanelSettings::get_global(cx);
         ProjectPanelSettings::override_global(
@@ -3779,7 +3782,8 @@ async fn test_deletion_gitignored(cx: &mut gpui::TestAppContext) {
             "      .gitignore",
             "      aa  <== selected",
             "      cc",
-            "      ee"
+            "      gg",
+            "      hh"
         ],
         "Initial state should hide files on .gitignore"
     );
@@ -3792,7 +3796,21 @@ async fn test_deletion_gitignored(cx: &mut gpui::TestAppContext) {
             "v root",
             "      .gitignore",
             "      cc  <== selected",
-            "      ee"
+            "      gg",
+            "      hh"
+        ],
+        "Should select next entry not on .gitignore"
+    );
+
+    // Test 2: Auto selection with many gitignored files next to the deleted file
+    submit_deletion(&panel, cx);
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..10, cx),
+        &[
+            "v root",
+            "      .gitignore",
+            "      gg  <== selected",
+            "      hh"
         ],
         "Should select next entry not on .gitignore"
     );
