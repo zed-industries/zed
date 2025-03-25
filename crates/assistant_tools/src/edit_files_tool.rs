@@ -343,7 +343,7 @@ impl EditToolRequest {
 
         anyhow::Ok(())
     }
-    
+
     fn push_search_error(&mut self, error: SearchError) {
         match &mut self.editor_response {
             EditorResponse::Message(_) => {
