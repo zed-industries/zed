@@ -305,6 +305,7 @@ pub trait LspAdapterDelegate: Send + Sync {
     fn worktree_root_path(&self) -> &Path;
     fn exists(&self, path: &Path, is_dir: Option<bool>) -> bool;
     fn update_status(&self, language: LanguageServerName, status: BinaryStatus);
+    fn registered_lsp_adapters(&self) -> Vec<Arc<dyn LspAdapter>>;
     async fn language_server_download_dir(&self, name: &LanguageServerName) -> Option<Arc<Path>>;
 
     async fn npm_package_installed_version(
@@ -513,6 +514,26 @@ pub trait LspAdapter: 'static + Send + Sync {
         _cx: &mut AsyncApp,
     ) -> Result<Value> {
         Ok(serde_json::json!({}))
+    }
+
+    async fn additional_initialization_options(
+        self: Arc<Self>,
+        _target_language_server_id: LanguageServerName,
+        _: &dyn Fs,
+        _: &Arc<dyn LspAdapterDelegate>,
+    ) -> Result<Option<Value>> {
+        Ok(None)
+    }
+
+    async fn additional_workspace_configuration(
+        self: Arc<Self>,
+        _target_language_server_id: LanguageServerName,
+        _: &dyn Fs,
+        _: &Arc<dyn LspAdapterDelegate>,
+        _: Arc<dyn LanguageToolchainStore>,
+        _cx: &mut AsyncApp,
+    ) -> Result<Option<Value>> {
+        Ok(None)
     }
 
     /// Returns a list of code actions supported by a given LspAdapter

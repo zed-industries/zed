@@ -95,6 +95,12 @@ world extension {
     /// Returns the workspace configuration options to pass to the language server.
     export language-server-workspace-configuration: func(language-server-id: string, worktree: borrow<worktree>) -> result<option<string>, string>;
 
+    /// Returns the initialization options to pass to the other language server.
+    export language-server-additional-initialization-options: func(language-server-id: string, target-language-server-id: string, worktree: borrow<worktree>) -> result<option<string>, string>;
+
+    /// Returns the workspace configuration options to pass to the other language server.
+    export language-server-additional-workspace-configuration: func(language-server-id: string, target-language-server-id: string, worktree: borrow<worktree>) -> result<option<string>, string>;
+
     /// A label containing some code.
     record code-label {
         /// The source code to parse with Tree-sitter.
