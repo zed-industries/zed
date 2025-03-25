@@ -368,23 +368,29 @@ impl ScrollManager {
         self.show_scrollbars
     }
 
-    pub fn show_minimap_slider(&mut self, window: &mut Window, cx: &mut Context<Editor>) {
+    pub fn show_minimap_slider(&mut self, cx: &mut Context<Editor>) {
         if !self.show_minimap_slider {
             self.show_minimap_slider = true;
             cx.notify();
         }
+    }
 
-        self.hide_minimap_slider_task = Some(cx.spawn_in(window, |editor, mut cx| async move {
-            cx.background_executor()
-                .timer(SCROLLBAR_SHOW_INTERVAL)
-                .await;
-            editor
-                .update(&mut cx, |editor, cx| {
-                    editor.scroll_manager.show_minimap_slider = false;
-                    cx.notify();
-                })
-                .log_err();
-        }));
+    pub fn hide_minimap_slider(&mut self, window: &mut Window, cx: &mut Context<Editor>) {
+        if self.show_minimap_slider && self.hide_minimap_slider_task.is_none() {
+            self.hide_minimap_slider_task =
+                Some(cx.spawn_in(window, |editor, mut cx| async move {
+                    cx.background_executor()
+                        .timer(SCROLLBAR_SHOW_INTERVAL)
+                        .await;
+                    editor
+                        .update(&mut cx, |editor, cx| {
+                            editor.scroll_manager.show_minimap_slider = false;
+                            editor.scroll_manager.hide_minimap_slider_task = None;
+                            cx.notify();
+                        })
+                        .log_err();
+                }));
+        }
     }
 
     pub fn minimap_slider_visible(&mut self) -> bool {

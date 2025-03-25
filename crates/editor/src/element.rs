@@ -1587,6 +1587,7 @@ impl EditorElement {
                     minimap_line_height,
                     minimap_scroll_top: minimap_scroll_top_lines,
                     num_lines_minus_one,
+                    logical_height: logical_minimap_scroll_height,
                 })
             }
             _ => None,
@@ -5483,18 +5484,8 @@ impl EditorElement {
 
     fn paint_minimap(&self, layout: &mut EditorLayout, window: &mut Window, cx: &mut App) {
         if let Some(mut layout) = layout.minimap.take() {
-            let minimap_line_height = layout.minimap_line_height;
-            let minimap_scroll_top = layout.minimap_scroll_top;
-            let num_lines_minus_one = layout.num_lines_minus_one;
             let minimap_hitbox = layout.hitbox.clone();
             let slider_hitbox = layout.slider_hitbox.clone();
-            let get_scroll_top_from_minimap_position = move |position: gpui::Point<Pixels>| {
-                let slider_top = position.y.0
-                    - minimap_hitbox.bounds.origin.y.0
-                    - (slider_hitbox.bounds.size.height.0 / 2.);
-                (minimap_scroll_top + (slider_top / minimap_line_height.0))
-                    .clamp(0., num_lines_minus_one)
-            };
 
             window.paint_layer(layout.hitbox.bounds, |window| {
                 window.with_element_namespace("minimap", |window| {
@@ -5537,7 +5528,15 @@ impl EditorElement {
                             let y = mouse_position.y;
                             if (minimap_hitbox.top()..minimap_hitbox.bottom()).contains(&y) {
                                 let mut position = editor.scroll_position(cx);
-                                position.y = get_scroll_top_from_minimap_position(event.position);
+
+                                let slider_top = f32::max(
+                                    event.position.y.0
+                                        - minimap_hitbox.bounds.origin.y.0
+                                        - (slider_hitbox.bounds.size.height.0 / 2.),
+                                    0.,
+                                );
+                                let pct_progress = slider_top / minimap_hitbox.bounds.size.height.0;
+                                position.y = pct_progress * layout.logical_height;
                                 editor.set_scroll_position(position, window, cx);
                             }
 
@@ -5546,7 +5545,9 @@ impl EditorElement {
                             editor.scroll_manager.set_is_dragging_minimap(false, cx);
 
                             if minimap_hitbox.is_hovered(window) {
-                                editor.scroll_manager.show_minimap_slider(window, cx);
+                                editor.scroll_manager.show_minimap_slider(cx);
+                            } else {
+                                editor.scroll_manager.hide_minimap_slider(window, cx);
                             }
                         }
                         mouse_position = event.position;
@@ -5581,9 +5582,14 @@ impl EditorElement {
                             editor.scroll_manager.set_is_dragging_minimap(true, cx);
 
                             let mut position = editor.scroll_position(cx);
-                            position.y = get_scroll_top_from_minimap_position(event.position);
+
+                            let slider_top = event.position.y
+                                - minimap_hitbox.bounds.origin.y
+                                - (slider_hitbox.bounds.size.height / 2.);
+                            position.y = (layout.minimap_scroll_top
+                                + (slider_top.0 / layout.minimap_line_height.0))
+                                .clamp(0., layout.num_lines_minus_one);
                             editor.set_scroll_position(position, window, cx);
-                            editor.scroll_manager.show_minimap_slider(window, cx);
                             cx.stop_propagation();
                         });
                     }
@@ -8129,6 +8135,7 @@ struct MinimapLayout {
     pub minimap_line_height: Pixels,
     pub show_slider: bool,
     pub num_lines_minus_one: f32,
+    pub logical_height: f32,
 }
 
 struct CreaseTrailerLayout {
