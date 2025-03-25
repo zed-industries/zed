@@ -47,8 +47,6 @@ pub fn init(cx: &mut App) {
                         .edit_prediction_provider = Some(EditPredictionProvider::None)
                 },
             );
-
-            crate::onboarding_banner::clear_dismissed(cx);
         });
     })
     .detach();

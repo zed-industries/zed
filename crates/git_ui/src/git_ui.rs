@@ -9,7 +9,7 @@ use git::{
 };
 use git_panel_settings::GitPanelSettings;
 use gpui::{actions, App, FocusHandle};
-use onboarding::{clear_dismissed, GitOnboardingModal};
+use onboarding::GitOnboardingModal;
 use project_diff::ProjectDiff;
 use ui::prelude::*;
 use workspace::Workspace;
@@ -103,7 +103,7 @@ pub fn init(cx: &mut App) {
             },
         );
         workspace.register_action(move |_, _: &ResetOnboarding, window, cx| {
-            clear_dismissed(cx);
+            cx.dispatch_action(&workspace::RestoreBanner);
             window.refresh();
         });
         workspace.register_action(|workspace, _action: &git::Init, window, cx| {
