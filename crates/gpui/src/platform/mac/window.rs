@@ -81,7 +81,6 @@ const NSDragOperationNone: NSDragOperation = 0;
 #[allow(non_upper_case_globals)]
 const NSDragOperationCopy: NSDragOperation = 1;
 
-
 #[ctor]
 unsafe fn build_classes() {
     WINDOW_CLASS = build_window_class("GPUIWindow", class!(NSWindow));
@@ -230,11 +229,11 @@ unsafe fn build_classes() {
         let mut decl = ClassDecl::new("BlurredView", class!(NSVisualEffectView)).unwrap();
         decl.add_method(
             sel!(initWithFrame:),
-            blurred_view_init_with_frame as extern "C" fn(&Object, Sel, NSRect) -> id
+            blurred_view_init_with_frame as extern "C" fn(&Object, Sel, NSRect) -> id,
         );
         decl.add_method(
             sel!(updateLayer),
-            blurred_view_update_layer as extern "C" fn(&Object, Sel)
+            blurred_view_update_layer as extern "C" fn(&Object, Sel),
         );
         decl.register()
     };
@@ -671,7 +670,7 @@ impl MacWindow {
 
             native_view.setAutoresizingMask_(NSViewWidthSizable | NSViewHeightSizable);
             native_view.setWantsBestResolutionOpenGLSurface_(YES);
-            
+
             // From winit crate: On Mojave, views automatically become layer-backed shortly after
             // being added to a native_window. Changing the layer-backedness of a view breaks the
             // association between the view and its associated OpenGL context. To work around this,
@@ -679,10 +678,10 @@ impl MacWindow {
             // itself and break the association with its context.
             native_view.setWantsLayer(YES);
             let _: () = msg_send![
-                native_view,
-                setLayerContentsRedrawPolicy: NSViewLayerContentsRedrawDuringViewResize
-                ];
-                
+            native_view,
+            setLayerContentsRedrawPolicy: NSViewLayerContentsRedrawDuringViewResize
+            ];
+
             content_view.addSubview_(native_view.autorelease());
             native_window.makeFirstResponder_(native_view);
 
@@ -1676,7 +1675,7 @@ extern "C" fn set_frame_size(this: &Object, _: Sel, size: NSSize) {
     let old_size = unsafe {
         let old_frame: NSRect = msg_send![this, frame];
         Size::<Pixels>::from(old_frame.size)
-    }; 
+    };
 
     if old_size == new_size {
         return;
@@ -2092,11 +2091,12 @@ unsafe fn remove_layer_background(layer: id) {
         // There should be only one layer that has the filter.
         // The blurring layer also adjusts the saturation.
         let test_string: id = NSString::alloc(nil).init_str("saturat");
-        let predicate = ConcreteBlock::new(move |filter: id, _: NSUInteger, _: *mut BOOL| -> BOOL {
-            let name: id = msg_send![filter, description];
-            let lowercased: id = msg_send![name, lowercaseString];
-            !msg_send![lowercased, containsString: test_string]
-        });
+        let predicate =
+            ConcreteBlock::new(move |filter: id, _: NSUInteger, _: *mut BOOL| -> BOOL {
+                let name: id = msg_send![filter, description];
+                let lowercased: id = msg_send![name, lowercaseString];
+                !msg_send![lowercased, containsString: test_string]
+            });
         test_string.autorelease();
 
         let indices: id = msg_send![filters, indexesOfObjectsPassingTest: predicate];
