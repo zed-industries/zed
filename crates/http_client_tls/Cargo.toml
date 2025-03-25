@@ -1,0 +1,20 @@
+[package]
+name = "http_client_tls"
+version = "0.1.0"
+edition.workspace = true
+publish.workspace = true
+license = "Apache-2.0"
+
+[lints]
+workspace = true
+
+[features]
+test-support = []
+
+[lib]
+path = "src/http_client_tls.rs"
+doctest = true
+
+[dependencies]
+rustls.workspace = true
+rustls-platform-verifier.workspace = true

@@ -401,10 +401,7 @@ impl DispatchTree {
             .bindings_for_action(action)
             .filter(|binding| {
                 let (bindings, _) = keymap.bindings_for_input(&binding.keystrokes, context_stack);
-                bindings
-                    .iter()
-                    .next()
-                    .is_some_and(|b| b.action.partial_eq(action))
+                bindings.iter().any(|b| b.action.partial_eq(action))
             })
             .cloned()
             .collect()

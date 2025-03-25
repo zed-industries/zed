@@ -268,18 +268,18 @@ impl Session {
         };
 
         let pending_kernel = cx
-            .spawn(|this, mut cx| async move {
+            .spawn(async move |this, cx| {
                 let kernel = kernel.await;
 
                 match kernel {
                     Ok(kernel) => {
-                        this.update(&mut cx, |session, cx| {
+                        this.update(cx, |session, cx| {
                             session.kernel(Kernel::RunningKernel(kernel), cx);
                         })
                         .ok();
                     }
                     Err(err) => {
-                        this.update(&mut cx, |session, cx| {
+                        this.update(cx, |session, cx| {
                             session.kernel_errored(err.to_string(), cx);
                         })
                         .ok();
@@ -463,9 +463,9 @@ impl Session {
                 let task = task.clone();
                 let message = message.clone();
 
-                cx.spawn(|this, mut cx| async move {
+                cx.spawn(async move |this, cx| {
                     task.await;
-                    this.update(&mut cx, |session, cx| {
+                    this.update(cx, |session, cx| {
                         session.send(message, cx).ok();
                     })
                     .ok();
@@ -573,7 +573,7 @@ impl Session {
 
                 let forced = kernel.force_shutdown(window, cx);
 
-                cx.spawn(|this, mut cx| async move {
+                cx.spawn(async move |this, cx| {
                     let message: JupyterMessage = ShutdownRequest { restart: false }.into();
                     request_tx.try_send(message).ok();
 
@@ -582,7 +582,7 @@ impl Session {
                     // Give the kernel a bit of time to clean up
                     cx.background_executor().timer(Duration::from_secs(3)).await;
 
-                    this.update(&mut cx, |session, cx| {
+                    this.update(cx, |session, cx| {
                         session.clear_outputs(cx);
                         session.kernel(Kernel::Shutdown, cx);
                         cx.notify();
@@ -610,7 +610,7 @@ impl Session {
 
                 let forced = kernel.force_shutdown(window, cx);
 
-                cx.spawn_in(window, |this, mut cx| async move {
+                cx.spawn_in(window, async move |this, cx| {
                     // Send shutdown request with restart flag
                     log::debug!("restarting kernel");
                     let message: JupyterMessage = ShutdownRequest { restart: true }.into();
@@ -623,7 +623,7 @@ impl Session {
                     forced.await.log_err();
 
                     // Start a new kernel
-                    this.update_in(&mut cx, |session, window, cx| {
+                    this.update_in(cx, |session, window, cx| {
                         // TODO: Differentiate between restart and restart+clear-outputs
                         session.clear_outputs(cx);
                         session.start_kernel(window, cx);

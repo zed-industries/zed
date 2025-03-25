@@ -86,15 +86,6 @@ pub struct DiagnosticColors {
     pub info: Hsla,
 }
 
-pub struct GitStatusColors {
-    pub created: Hsla,
-    pub deleted: Hsla,
-    pub modified: Hsla,
-    pub renamed: Hsla,
-    pub conflict: Hsla,
-    pub ignored: Hsla,
-}
-
 impl StatusColors {
     pub fn dark() -> Self {
         Self {
@@ -195,17 +186,6 @@ impl StatusColors {
             error: self.error,
             warning: self.warning,
             info: self.info,
-        }
-    }
-
-    pub fn git(&self) -> GitStatusColors {
-        GitStatusColors {
-            created: self.created,
-            deleted: self.deleted,
-            modified: self.modified,
-            renamed: self.renamed,
-            conflict: self.conflict,
-            ignored: self.ignored,
         }
     }
 }

@@ -83,7 +83,7 @@ impl EditPredictionProvider for CopilotCompletionProvider {
         cx: &mut Context<Self>,
     ) {
         let copilot = self.copilot.clone();
-        self.pending_refresh = Some(cx.spawn(|this, mut cx| async move {
+        self.pending_refresh = Some(cx.spawn(async move |this, cx| {
             if debounce {
                 cx.background_executor()
                     .timer(COPILOT_DEBOUNCE_TIMEOUT)
@@ -91,12 +91,12 @@ impl EditPredictionProvider for CopilotCompletionProvider {
             }
 
             let completions = copilot
-                .update(&mut cx, |copilot, cx| {
+                .update(cx, |copilot, cx| {
                     copilot.completions(&buffer, cursor_position, cx)
                 })?
                 .await?;
 
-            this.update(&mut cx, |this, cx| {
+            this.update(cx, |this, cx| {
                 if !completions.is_empty() {
                     this.cycled = false;
                     this.pending_refresh = None;
@@ -153,14 +153,14 @@ impl EditPredictionProvider for CopilotCompletionProvider {
             cx.notify();
         } else {
             let copilot = self.copilot.clone();
-            self.pending_cycling_refresh = Some(cx.spawn(|this, mut cx| async move {
+            self.pending_cycling_refresh = Some(cx.spawn(async move |this, cx| {
                 let completions = copilot
-                    .update(&mut cx, |copilot, cx| {
+                    .update(cx, |copilot, cx| {
                         copilot.completions_cycling(&buffer, cursor_position, cx)
                     })?
                     .await?;
 
-                this.update(&mut cx, |this, cx| {
+                this.update(cx, |this, cx| {
                     this.cycled = true;
                     this.file_extension = buffer.read(cx).file().and_then(|file| {
                         Some(
@@ -271,7 +271,10 @@ mod tests {
     use gpui::{AppContext as _, BackgroundExecutor, TestAppContext, UpdateGlobal};
     use indoc::indoc;
     use language::{
-        language_settings::{AllLanguageSettings, AllLanguageSettingsContent},
+        language_settings::{
+            AllLanguageSettings, AllLanguageSettingsContent, CompletionSettings,
+            WordsCompletionMode,
+        },
         Point,
     };
     use project::Project;
@@ -286,7 +289,13 @@ mod tests {
     #[gpui::test(iterations = 10)]
     async fn test_copilot(executor: BackgroundExecutor, cx: &mut TestAppContext) {
         // flaky
-        init_test(cx, |_| {});
+        init_test(cx, |settings| {
+            settings.defaults.completions = Some(CompletionSettings {
+                words: WordsCompletionMode::Disabled,
+                lsp: true,
+                lsp_fetch_timeout_ms: 0,
+            });
+        });
 
         let (copilot, copilot_lsp) = Copilot::fake(cx);
         let mut cx = EditorLspTestContext::new_rust(
@@ -511,7 +520,13 @@ mod tests {
         cx: &mut TestAppContext,
     ) {
         // flaky
-        init_test(cx, |_| {});
+        init_test(cx, |settings| {
+            settings.defaults.completions = Some(CompletionSettings {
+                words: WordsCompletionMode::Disabled,
+                lsp: true,
+                lsp_fetch_timeout_ms: 0,
+            });
+        });
 
         let (copilot, copilot_lsp) = Copilot::fake(cx);
         let mut cx = EditorLspTestContext::new_rust(
@@ -730,8 +745,8 @@ mod tests {
             );
             multibuffer
         });
-        let editor = cx
-            .add_window(|window, cx| Editor::for_multibuffer(multibuffer, None, true, window, cx));
+        let editor =
+            cx.add_window(|window, cx| Editor::for_multibuffer(multibuffer, None, window, cx));
         editor
             .update(cx, |editor, window, cx| {
                 use gpui::Focusable;
@@ -766,7 +781,7 @@ mod tests {
             assert!(editor.has_active_inline_completion());
             assert_eq!(
                 editor.display_text(cx),
-                "\n\n\na = 1\nb = 2 + a\n\n\n\n\n\nc = 3\nd = 4\n\n"
+                "\n\na = 1\nb = 2 + a\n\n\n\nc = 3\nd = 4\n"
             );
             assert_eq!(editor.text(cx), "a = 1\nb = 2\n\nc = 3\nd = 4\n");
         });
@@ -788,7 +803,7 @@ mod tests {
             assert!(!editor.has_active_inline_completion());
             assert_eq!(
                 editor.display_text(cx),
-                "\n\n\na = 1\nb = 2\n\n\n\n\n\nc = 3\nd = 4\n\n"
+                "\n\na = 1\nb = 2\n\n\n\nc = 3\nd = 4\n"
             );
             assert_eq!(editor.text(cx), "a = 1\nb = 2\n\nc = 3\nd = 4\n");
 
@@ -797,7 +812,7 @@ mod tests {
             assert!(!editor.has_active_inline_completion());
             assert_eq!(
                 editor.display_text(cx),
-                "\n\n\na = 1\nb = 2\n\n\n\n\n\nc = 3\nd = 4 \n\n"
+                "\n\na = 1\nb = 2\n\n\n\nc = 3\nd = 4 \n"
             );
             assert_eq!(editor.text(cx), "a = 1\nb = 2\n\nc = 3\nd = 4 \n");
         });
@@ -808,7 +823,7 @@ mod tests {
             assert!(editor.has_active_inline_completion());
             assert_eq!(
                 editor.display_text(cx),
-                "\n\n\na = 1\nb = 2\n\n\n\n\n\nc = 3\nd = 4 + c\n\n"
+                "\n\na = 1\nb = 2\n\n\n\nc = 3\nd = 4 + c\n"
             );
             assert_eq!(editor.text(cx), "a = 1\nb = 2\n\nc = 3\nd = 4 \n");
         });
@@ -982,8 +997,8 @@ mod tests {
             );
             multibuffer
         });
-        let editor = cx
-            .add_window(|window, cx| Editor::for_multibuffer(multibuffer, None, true, window, cx));
+        let editor =
+            cx.add_window(|window, cx| Editor::for_multibuffer(multibuffer, None, window, cx));
         editor
             .update(cx, |editor, window, cx| {
                 use gpui::Focusable;
@@ -998,7 +1013,7 @@ mod tests {
             .unwrap();
 
         let mut copilot_requests = copilot_lsp
-            .handle_request::<crate::request::GetCompletions, _, _>(
+            .set_request_handler::<crate::request::GetCompletions, _, _>(
                 move |_params, _cx| async move {
                     Ok(crate::request::GetCompletionsResult {
                         completions: vec![crate::request::Completion {
@@ -1039,7 +1054,7 @@ mod tests {
         completions: Vec<crate::request::Completion>,
         completions_cycling: Vec<crate::request::Completion>,
     ) {
-        lsp.handle_request::<crate::request::GetCompletions, _, _>(move |_params, _cx| {
+        lsp.set_request_handler::<crate::request::GetCompletions, _, _>(move |_params, _cx| {
             let completions = completions.clone();
             async move {
                 Ok(crate::request::GetCompletionsResult {
@@ -1047,14 +1062,16 @@ mod tests {
                 })
             }
         });
-        lsp.handle_request::<crate::request::GetCompletionsCycling, _, _>(move |_params, _cx| {
-            let completions_cycling = completions_cycling.clone();
-            async move {
-                Ok(crate::request::GetCompletionsResult {
-                    completions: completions_cycling.clone(),
-                })
-            }
-        });
+        lsp.set_request_handler::<crate::request::GetCompletionsCycling, _, _>(
+            move |_params, _cx| {
+                let completions_cycling = completions_cycling.clone();
+                async move {
+                    Ok(crate::request::GetCompletionsResult {
+                        completions: completions_cycling.clone(),
+                    })
+                }
+            },
+        );
     }
 
     fn handle_completion_request(
@@ -1075,7 +1092,7 @@ mod tests {
             cx.to_lsp_range(marked_ranges.remove(&replace_range_marker).unwrap()[0].clone());
 
         let mut request =
-            cx.handle_request::<lsp::request::Completion, _, _>(move |url, params, _| {
+            cx.set_request_handler::<lsp::request::Completion, _, _>(move |url, params, _| {
                 let completions = completions.clone();
                 async move {
                     assert_eq!(params.text_document_position.text_document.uri, url.clone());

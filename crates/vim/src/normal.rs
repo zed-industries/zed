@@ -18,7 +18,7 @@ use crate::{
     indent::IndentDirection,
     motion::{self, first_non_whitespace, next_line_end, right, Motion},
     object::Object,
-    state::{Mode, Operator},
+    state::{Mark, Mode, Operator},
     surrounds::SurroundsType,
     Vim,
 };
@@ -355,11 +355,13 @@ impl Vim {
         self.start_recording(cx);
         self.switch_mode(Mode::Insert, false, window, cx);
         self.update_editor(window, cx, |vim, editor, window, cx| {
-            if let Some(marks) = vim.marks.get("^") {
-                editor.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
-                    s.select_anchor_ranges(marks.iter().map(|mark| *mark..*mark))
-                });
-            }
+            let Some(Mark::Local(marks)) = vim.get_mark("^", editor, window, cx) else {
+                return;
+            };
+
+            editor.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
+                s.select_anchor_ranges(marks.iter().map(|mark| *mark..*mark))
+            });
         });
     }
 

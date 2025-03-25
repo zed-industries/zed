@@ -3,8 +3,8 @@ use copilot::Copilot;
 use editor::{actions::MoveToEnd, scroll::Autoscroll, Editor, EditorEvent};
 use futures::{channel::mpsc, StreamExt};
 use gpui::{
-    actions, div, App, Context, Corner, Entity, EventEmitter, FocusHandle, Focusable, IntoElement,
-    ParentElement, Render, Styled, Subscription, WeakEntity, Window,
+    actions, div, AnyView, App, Context, Corner, Entity, EventEmitter, FocusHandle, Focusable,
+    IntoElement, ParentElement, Render, Styled, Subscription, WeakEntity, Window,
 };
 use language::{language_settings::SoftWrap, LanguageServerId};
 use lsp::{
@@ -12,7 +12,7 @@ use lsp::{
     SetTraceParams, TraceValue,
 };
 use project::{search::SearchQuery, Project, WorktreeId};
-use std::{borrow::Cow, sync::Arc};
+use std::{any::TypeId, borrow::Cow, sync::Arc};
 use ui::{prelude::*, Button, Checkbox, ContextMenu, Label, PopoverMenu, ToggleState};
 use workspace::{
     item::{Item, ItemHandle},
@@ -245,9 +245,9 @@ impl LogStore {
                         let weak_this = cx.weak_entity();
                         this.copilot_log_subscription =
                             Some(server.on_notification::<copilot::request::LogMessage, _>(
-                                move |params, mut cx| {
+                                move |params, cx| {
                                     weak_this
-                                        .update(&mut cx, |this, cx| {
+                                        .update(cx, |this, cx| {
                                             this.add_language_server_log(
                                                 server_id,
                                                 MessageType::LOG,
@@ -280,10 +280,10 @@ impl LogStore {
             io_tx,
         };
 
-        cx.spawn(|this, mut cx| async move {
+        cx.spawn(async move |this, cx| {
             while let Some((server_id, io_kind, message)) = io_rx.next().await {
                 if let Some(this) = this.upgrade() {
-                    this.update(&mut cx, |this, cx| {
+                    this.update(cx, |this, cx| {
                         this.on_io(server_id, io_kind, &message, cx);
                     })?;
                 }
@@ -540,7 +540,6 @@ impl LogStore {
             IoKind::StdOut => true,
             IoKind::StdIn => false,
             IoKind::StdErr => {
-                let message = format!("stderr: {}", message.trim());
                 self.add_language_server_log(language_server_id, MessageType::LOG, &message, cx);
                 return Some(());
             }
@@ -936,9 +935,9 @@ impl LspLogView {
                 .update(cx, |_, cx| {
                     cx.spawn({
                         let buffer = cx.entity();
-                        |_, mut cx| async move {
+                        async move |_, cx| {
                             let language = language.await.ok();
-                            buffer.update(&mut cx, |buffer, cx| {
+                            buffer.update(cx, |buffer, cx| {
                                 buffer.set_language(language, cx);
                             })
                         }
@@ -1069,6 +1068,21 @@ impl Item for LspLogView {
 
     fn as_searchable(&self, handle: &Entity<Self>) -> Option<Box<dyn SearchableItemHandle>> {
         Some(Box::new(handle.clone()))
+    }
+
+    fn act_as_type<'a>(
+        &'a self,
+        type_id: TypeId,
+        self_handle: &'a Entity<Self>,
+        _: &'a App,
+    ) -> Option<AnyView> {
+        if type_id == TypeId::of::<Self>() {
+            Some(self_handle.to_any())
+        } else if type_id == TypeId::of::<Editor>() {
+            Some(self.editor.to_any())
+        } else {
+            None
+        }
     }
 
     fn clone_on_split(

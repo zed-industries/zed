@@ -6,6 +6,14 @@ use crate::{LanguageServerPromptRequest, LspStore, LspStoreEvent};
 
 pub const RUST_ANALYZER_NAME: &str = "rust-analyzer";
 
+pub const EXTRA_SUPPORTED_COMMANDS: &[&str] = &[
+    "rust-analyzer.runSingle",
+    "rust-analyzer.showReferences",
+    "rust-analyzer.gotoLocation",
+    "rust-analyzer.triggerParameterHints",
+    "rust-analyzer.rename",
+];
+
 /// Experimental: Informs the end user about the state of the server
 ///
 /// [Rust Analyzer Specification](https://github.com/rust-lang/rust-analyzer/blob/master/docs/dev/lsp-extensions.md#server-status)
@@ -43,7 +51,7 @@ pub fn register_notifications(lsp_store: WeakEntity<LspStore>, language_server: 
     language_server
         .on_notification::<ServerStatus, _>({
             let name = name.to_string();
-            move |params, mut cx| {
+            move |params, cx| {
                 let this = this.clone();
                 let name = name.to_string();
                 if let Some(ref message) = params.message {
@@ -66,7 +74,7 @@ pub fn register_notifications(lsp_store: WeakEntity<LspStore>, language_server: 
                                     lsp_name: name.clone(),
                                 };
                                 let _ = this
-                                    .update(&mut cx, |_, cx| {
+                                    .update(cx, |_, cx| {
                                         cx.emit(LspStoreEvent::LanguageServerPrompt(request));
                                     })
                                     .ok();

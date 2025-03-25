@@ -27,6 +27,7 @@ trait InstalledApp {
     fn zed_version_string(&self) -> String;
     fn launch(&self, ipc_url: String) -> anyhow::Result<()>;
     fn run_foreground(&self, ipc_url: String) -> io::Result<ExitStatus>;
+    fn path(&self) -> PathBuf;
 }
 
 #[derive(Parser, Debug)]
@@ -73,6 +74,10 @@ struct Args {
     /// Run zed in dev-server mode
     #[arg(long)]
     dev_server_token: Option<String>,
+    /// Not supported in Zed CLI, only supported on Zed binary
+    /// Will attempt to give the correct command to run
+    #[arg(long)]
+    system_specs: bool,
     /// Uninstall Zed from user system
     #[cfg(all(
         any(target_os = "linux", target_os = "macos"),
@@ -140,6 +145,16 @@ fn main() -> Result<()> {
         return Ok(());
     }
 
+    if args.system_specs {
+        let path = app.path();
+        let msg = [
+            "The `--system-specs` argument is not supported in the Zed CLI, only on Zed binary.",
+            "To retrieve the system specs on the command line, run the following command:",
+            &format!("{} --system-specs", path.display()),
+        ];
+        return Err(anyhow::anyhow!(msg.join("\n")));
+    }
+
     #[cfg(all(
         any(target_os = "linux", target_os = "macos"),
         not(feature = "no-bundled-uninstall")
@@ -198,6 +213,8 @@ fn main() -> Result<()> {
     let mut paths = vec![];
     let mut urls = vec![];
     let mut stdin_tmp_file: Option<fs::File> = None;
+    let mut anonymous_fd_tmp_files = vec![];
+
     for path in args.paths_with_position.iter() {
         if path.starts_with("zed://")
             || path.starts_with("http://")
@@ -211,6 +228,11 @@ fn main() -> Result<()> {
             paths.push(file.path().to_string_lossy().to_string());
             let (file, _) = file.keep()?;
             stdin_tmp_file = Some(file);
+        } else if let Some(file) = anonymous_fd(path) {
+            let tmp_file = NamedTempFile::new()?;
+            paths.push(tmp_file.path().to_string_lossy().to_string());
+            let (tmp_file, _) = tmp_file.keep()?;
+            anonymous_fd_tmp_files.push((file, tmp_file));
         } else {
             paths.push(parse_path_with_position(path)?)
         }
@@ -252,37 +274,97 @@ fn main() -> Result<()> {
         }
     });
 
-    let pipe_handle: JoinHandle<anyhow::Result<()>> = thread::spawn(move || {
-        if let Some(mut tmp_file) = stdin_tmp_file {
-            let mut stdin = std::io::stdin().lock();
-            if io::IsTerminal::is_terminal(&stdin) {
-                return Ok(());
-            }
-            let mut buffer = [0; 8 * 1024];
-            loop {
-                let bytes_read = io::Read::read(&mut stdin, &mut buffer)?;
-                if bytes_read == 0 {
-                    break;
+    let stdin_pipe_handle: Option<JoinHandle<anyhow::Result<()>>> =
+        stdin_tmp_file.map(|tmp_file| {
+            thread::spawn(move || {
+                let stdin = std::io::stdin().lock();
+                if io::IsTerminal::is_terminal(&stdin) {
+                    return Ok(());
                 }
-                io::Write::write(&mut tmp_file, &buffer[..bytes_read])?;
-            }
-            io::Write::flush(&mut tmp_file)?;
-        }
-        Ok(())
-    });
+                return pipe_to_tmp(stdin, tmp_file);
+            })
+        });
+
+    let anonymous_fd_pipe_handles: Vec<JoinHandle<anyhow::Result<()>>> = anonymous_fd_tmp_files
+        .into_iter()
+        .map(|(file, tmp_file)| thread::spawn(move || pipe_to_tmp(file, tmp_file)))
+        .collect();
 
     if args.foreground {
         app.run_foreground(url)?;
     } else {
         app.launch(url)?;
         sender.join().unwrap()?;
-        pipe_handle.join().unwrap()?;
+        if let Some(handle) = stdin_pipe_handle {
+            handle.join().unwrap()?;
+        }
+        for handle in anonymous_fd_pipe_handles {
+            handle.join().unwrap()?;
+        }
     }
 
     if let Some(exit_status) = exit_status.lock().take() {
         std::process::exit(exit_status);
     }
     Ok(())
+}
+
+fn pipe_to_tmp(mut src: impl io::Read, mut dest: fs::File) -> Result<()> {
+    let mut buffer = [0; 8 * 1024];
+    loop {
+        let bytes_read = match src.read(&mut buffer) {
+            Err(err) if err.kind() == io::ErrorKind::Interrupted => continue,
+            res => res?,
+        };
+        if bytes_read == 0 {
+            break;
+        }
+        io::Write::write_all(&mut dest, &buffer[..bytes_read])?;
+    }
+    io::Write::flush(&mut dest)?;
+    Ok(())
+}
+
+fn anonymous_fd(path: &str) -> Option<fs::File> {
+    #[cfg(target_os = "linux")]
+    {
+        use std::os::fd::{self, FromRawFd};
+
+        let fd_str = path.strip_prefix("/proc/self/fd/")?;
+
+        let link = fs::read_link(path).ok()?;
+        if !link.starts_with("memfd:") {
+            return None;
+        }
+
+        let fd: fd::RawFd = fd_str.parse().ok()?;
+        let file = unsafe { fs::File::from_raw_fd(fd) };
+        return Some(file);
+    }
+    #[cfg(target_os = "macos")]
+    {
+        use std::os::{
+            fd::{self, FromRawFd},
+            unix::fs::FileTypeExt,
+        };
+
+        let fd_str = path.strip_prefix("/dev/fd/")?;
+
+        let metadata = fs::metadata(path).ok()?;
+        let file_type = metadata.file_type();
+        if !file_type.is_fifo() && !file_type.is_socket() {
+            return None;
+        }
+        let fd: fd::RawFd = fd_str.parse().ok()?;
+        let file = unsafe { fs::File::from_raw_fd(fd) };
+        return Some(file);
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+    {
+        _ = path;
+        // not implemented for bsd, windows. Could be, but isn't yet
+        return None;
+    }
 }
 
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
@@ -369,6 +451,10 @@ mod linux {
             std::process::Command::new(self.0.clone())
                 .arg(ipc_url)
                 .status()
+        }
+
+        fn path(&self) -> PathBuf {
+            self.0.clone()
         }
     }
 
@@ -607,6 +693,10 @@ mod windows {
                 .spawn()?
                 .wait()
         }
+
+        fn path(&self) -> PathBuf {
+            self.0.clone()
+        }
     }
 
     impl Detect {
@@ -808,6 +898,13 @@ mod mac_os {
             };
 
             std::process::Command::new(path).arg(ipc_url).status()
+        }
+
+        fn path(&self) -> PathBuf {
+            match self {
+                Bundle::App { app_bundle, .. } => app_bundle.join("Contents/MacOS/zed").clone(),
+                Bundle::LocalPath { executable, .. } => executable.clone(),
+            }
         }
     }
 

@@ -225,6 +225,15 @@ impl<T: Item> SumTree<T> {
         }))
     }
 
+    /// Useful in cases where the item type has a non-trivial context type, but the zero value of the summary type doesn't depend on that context.
+    pub fn from_summary(summary: T::Summary) -> Self {
+        SumTree(Arc::new(Node::Leaf {
+            summary,
+            items: ArrayVec::new(),
+            item_summaries: ArrayVec::new(),
+        }))
+    }
+
     pub fn from_item(item: T, cx: &<T::Summary as Summary>::Context) -> Self {
         let mut tree = Self::new(cx);
         tree.push(item, cx);

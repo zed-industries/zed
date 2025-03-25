@@ -140,6 +140,56 @@ impl extension::Extension for WasmExtension {
         .await
     }
 
+    async fn language_server_additional_initialization_options(
+        &self,
+        language_server_id: LanguageServerName,
+        target_language_server_id: LanguageServerName,
+        worktree: Arc<dyn WorktreeDelegate>,
+    ) -> Result<Option<String>> {
+        self.call(|extension, store| {
+            async move {
+                let resource = store.data_mut().table().push(worktree)?;
+                let options = extension
+                    .call_language_server_additional_initialization_options(
+                        store,
+                        &language_server_id,
+                        &target_language_server_id,
+                        resource,
+                    )
+                    .await?
+                    .map_err(|err| anyhow!("{err}"))?;
+                anyhow::Ok(options)
+            }
+            .boxed()
+        })
+        .await
+    }
+
+    async fn language_server_additional_workspace_configuration(
+        &self,
+        language_server_id: LanguageServerName,
+        target_language_server_id: LanguageServerName,
+        worktree: Arc<dyn WorktreeDelegate>,
+    ) -> Result<Option<String>> {
+        self.call(|extension, store| {
+            async move {
+                let resource = store.data_mut().table().push(worktree)?;
+                let options = extension
+                    .call_language_server_additional_workspace_configuration(
+                        store,
+                        &language_server_id,
+                        &target_language_server_id,
+                        resource,
+                    )
+                    .await?
+                    .map_err(|err| anyhow!("{err}"))?;
+                anyhow::Ok(options)
+            }
+            .boxed()
+        })
+        .await
+    }
+
     async fn labels_for_completions(
         &self,
         language_server_id: LanguageServerName,
@@ -334,9 +384,9 @@ impl WasmHost {
         cx: &mut App,
     ) -> Arc<Self> {
         let (tx, mut rx) = mpsc::unbounded::<MainThreadCall>();
-        let task = cx.spawn(|mut cx| async move {
+        let task = cx.spawn(async move |cx| {
             while let Some(message) = rx.next().await {
-                message(&mut cx).await;
+                message(cx).await;
             }
         });
         Arc::new(Self {

@@ -140,9 +140,11 @@ pub enum IconName {
     ArrowDownFromLine,
     ArrowLeft,
     ArrowRight,
+    ArrowRightLeft,
     ArrowUp,
     ArrowUpFromLine,
     ArrowUpRight,
+    ArrowUpRightAlt,
     AtSign,
     AudioOff,
     AudioOn,
@@ -156,6 +158,7 @@ pub enum IconName {
     Book,
     BookCopy,
     BookPlus,
+    Brain,
     CaseSensitive,
     Check,
     ChevronDown,
@@ -166,8 +169,10 @@ pub enum IconName {
     ChevronUp,
     ChevronUpDown,
     Circle,
+    Clipboard,
     Close,
     Code,
+    Cog,
     Command,
     Context,
     Control,
@@ -179,6 +184,19 @@ pub enum IconName {
     CountdownTimer,
     CursorIBeam,
     Dash,
+    DebugBreakpoint,
+    DebugIgnoreBreakpoints,
+    DebugPause,
+    DebugContinue,
+    DebugStepOver,
+    DebugStepInto,
+    DebugStepOut,
+    DebugStepBack,
+    DebugRestart,
+    Debug,
+    DebugStop,
+    DebugDisconnect,
+    DebugLogBreakpoint,
     DatabaseZap,
     Delete,
     Diff,
@@ -192,6 +210,8 @@ pub enum IconName {
     ExpandVertical,
     Exit,
     ExternalLink,
+    ExpandUp,
+    ExpandDown,
     Eye,
     File,
     FileCode,
@@ -357,7 +377,7 @@ enum IconSource {
 impl IconSource {
     fn from_path(path: impl Into<SharedString>) -> Self {
         let path = path.into();
-        if path.starts_with("icons/file_icons") {
+        if path.starts_with("icons/") {
             Self::Svg(path)
         } else {
             Self::Image(Arc::from(PathBuf::from(path.as_ref())))

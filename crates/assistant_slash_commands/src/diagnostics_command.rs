@@ -186,7 +186,7 @@ impl SlashCommand for DiagnosticsSlashCommand {
 
         let task = collect_diagnostics(workspace.read(cx).project().clone(), options, cx);
 
-        window.spawn(cx, move |_| async move {
+        window.spawn(cx, async move |_| {
             task.await?
                 .map(|output| output.to_event_stream())
                 .ok_or_else(|| anyhow!("No diagnostics found"))
@@ -268,7 +268,7 @@ fn collect_diagnostics(
         })
         .collect();
 
-    cx.spawn(|mut cx| async move {
+    cx.spawn(async move |cx| {
         let mut output = SlashCommandOutput::default();
 
         if let Some(error_source) = error_source.as_ref() {
@@ -299,7 +299,7 @@ fn collect_diagnostics(
             }
 
             if let Some(buffer) = project_handle
-                .update(&mut cx, |project, cx| project.open_buffer(project_path, cx))?
+                .update(cx, |project, cx| project.open_buffer(project_path, cx))?
                 .await
                 .log_err()
             {

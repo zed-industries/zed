@@ -1,4 +1,5 @@
 pub mod extension_builder;
+mod extension_events;
 mod extension_host_proxy;
 mod extension_manifest;
 mod types;
@@ -14,12 +15,14 @@ use gpui::{App, Task};
 use language::LanguageName;
 use semantic_version::SemanticVersion;
 
+pub use crate::extension_events::*;
 pub use crate::extension_host_proxy::*;
 pub use crate::extension_manifest::*;
 pub use crate::types::*;
 
 /// Initializes the `extension` crate.
 pub fn init(cx: &mut App) {
+    extension_events::init(cx);
     ExtensionHostProxy::default_global(cx);
 }
 
@@ -70,6 +73,20 @@ pub trait Extension: Send + Sync + 'static {
     async fn language_server_workspace_configuration(
         &self,
         language_server_id: LanguageServerName,
+        worktree: Arc<dyn WorktreeDelegate>,
+    ) -> Result<Option<String>>;
+
+    async fn language_server_additional_initialization_options(
+        &self,
+        language_server_id: LanguageServerName,
+        target_language_server_id: LanguageServerName,
+        worktree: Arc<dyn WorktreeDelegate>,
+    ) -> Result<Option<String>>;
+
+    async fn language_server_additional_workspace_configuration(
+        &self,
+        language_server_id: LanguageServerName,
+        target_language_server_id: LanguageServerName,
         worktree: Arc<dyn WorktreeDelegate>,
     ) -> Result<Option<String>>;
 

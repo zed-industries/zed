@@ -23,6 +23,7 @@ open_tag_node_name = "jsx_opening_element"
 close_tag_node_name = "jsx_closing_element"
 jsx_element_node_name = "jsx_element"
 tag_name_node_name = "identifier"
+tag_name_node_name_alternates = ["member_expression"]
 
 [overrides.element]
 line_comments = { remove = true }
@@ -30,5 +31,5 @@ block_comment = ["{/* ", " */}"]
 opt_into_language_servers = ["emmet-language-server"]
 
 [overrides.string]
-word_characters = ["-"]
+completion_query_characters = ["-", "."]
 opt_into_language_servers = ["tailwindcss-language-server"]

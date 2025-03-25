@@ -303,7 +303,7 @@ impl<T: SearchableItem> SearchableItemHandle for Entity<T> {
         cx: &mut App,
     ) -> Task<AnyVec<dyn Send>> {
         let matches = self.update(cx, |this, cx| this.find_matches(query, window, cx));
-        window.spawn(cx, |_| async {
+        window.spawn(cx, async |_| {
             let matches = matches.await;
             let mut any_matches = AnyVec::with_capacity::<T::Match>(matches.len());
             {

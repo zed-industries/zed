@@ -38,6 +38,7 @@
   nodejs_22,
 
   withGLES ? false,
+  profile ? "release",
 }:
 
 assert withGLES -> stdenv.hostPlatform.isLinux;
@@ -132,7 +133,7 @@ let
           (darwinMinVersionHook "10.15")
         ];
 
-      cargoExtraArgs = "--package=zed --package=cli --features=gpui/runtime_shaders";
+      cargoExtraArgs = "-p zed -p cli --locked --features=gpui/runtime_shaders";
 
       env = {
         ZSTD_SYS_USE_PKG_CONFIG = true;
@@ -145,15 +146,28 @@ let
         ZED_UPDATE_EXPLANATION = "Zed has been installed using Nix. Auto-updates have thus been disabled.";
         RELEASE_VERSION = version;
         RUSTFLAGS = if withGLES then "--cfg gles" else "";
-        # TODO: why are these not handled by the linker given that they're in buildInputs?
-        NIX_LDFLAGS = "-rpath ${
+        LK_CUSTOM_WEBRTC = livekit-libwebrtc;
+
+        CARGO_PROFILE = profile;
+        # need to handle some profiles specially https://github.com/rust-lang/cargo/issues/11053
+        TARGET_DIR = "target/" + (if profile == "dev" then "debug" else profile);
+
+        # for some reason these deps being in buildInputs isn't enough, the only thing
+        # about them that's special is that they're manually dlopened at runtime
+        NIX_LDFLAGS = lib.optionalString stdenv.hostPlatform.isLinux "-rpath ${
           lib.makeLibraryPath [
             gpu-lib
             wayland
           ]
         }";
-        LK_CUSTOM_WEBRTC = livekit-libwebrtc;
       };
+
+      # prevent nix from removing the "unused" wayland/gpu-lib rpaths
+      dontPatchELF = stdenv.hostPlatform.isLinux;
+
+      # TODO: try craneLib.cargoNextest separate output
+      # for now we're not worried about running our test suite (or tests for deps) in the nix sandbox
+      doCheck = false;
 
       cargoVendorDir = craneLib.vendorCargoDeps {
         inherit src cargoLock;
@@ -177,22 +191,7 @@ let
             drv;
       };
     };
-  cargoArtifacts = craneLib.buildDepsOnly (
-    commonArgs
-    // {
-      # TODO: figure out why the main derivation is still rebuilding deps...
-      # disable pre-building the deps for now
-      buildPhaseCargoCommand = "true";
-
-      # forcibly inhibit `doInstallCargoArtifacts`...
-      # https://github.com/ipetkov/crane/blob/1d19e2ec7a29dcc25845eec5f1527aaf275ec23e/lib/setupHooks/installCargoArtifactsHook.sh#L111
-      #
-      # it is, unfortunately, not overridable in `buildDepsOnly`:
-      # https://github.com/ipetkov/crane/blob/1d19e2ec7a29dcc25845eec5f1527aaf275ec23e/lib/buildDepsOnly.nix#L85
-      preBuild = "postInstallHooks=()";
-      doCheck = false;
-    }
-  );
+  cargoArtifacts = craneLib.buildDepsOnly commonArgs;
 in
 craneLib.buildPackage (
   lib.recursiveUpdate commonArgs {
@@ -208,14 +207,11 @@ craneLib.buildPackage (
 
     # without the env var generate-licenses fails due to crane's fetchCargoVendor, see:
     # https://github.com/zed-industries/zed/issues/19971#issuecomment-2688455390
+    # TODO: put this in a separate derivation that depends on src to avoid running it on every build
     preBuild = ''
       ALLOW_MISSING_LICENSES=yes bash script/generate-licenses
       echo nightly > crates/zed/RELEASE_CHANNEL
     '';
-
-    # TODO: try craneLib.cargoNextest separate output
-    # for now we're not worried about running our test suite in the nix sandbox
-    doCheck = false;
 
     installPhase =
       if stdenv.hostPlatform.isDarwin then
@@ -225,13 +221,13 @@ craneLib.buildPackage (
           pushd crates/zed
           sed -i "s/package.metadata.bundle-nightly/package.metadata.bundle/" Cargo.toml
           export CARGO_BUNDLE_SKIP_BUILD=true
-          app_path="$(cargo bundle --release | xargs)"
+          app_path="$(cargo bundle --profile $CARGO_PROFILE | xargs)"
           popd
 
           mkdir -p $out/Applications $out/bin
           # Zed expects git next to its own binary
           ln -s ${git}/bin/git "$app_path/Contents/MacOS/git"
-          mv target/release/cli "$app_path/Contents/MacOS/cli"
+          mv $TARGET_DIR/cli "$app_path/Contents/MacOS/cli"
           mv "$app_path" $out/Applications/
 
           # Physical location of the CLI must be inside the app bundle as this is used
@@ -241,21 +237,19 @@ craneLib.buildPackage (
           runHook postInstall
         ''
       else
-        # TODO: icons should probably be named "zed-nightly". fix bundle-linux first
         ''
           runHook preInstall
 
           mkdir -p $out/bin $out/libexec
-          cp target/release/zed $out/libexec/zed-editor
-          cp target/release/cli $out/bin/zed
+          cp $TARGET_DIR/zed $out/libexec/zed-editor
+          cp $TARGET_DIR/cli $out/bin/zed
 
           install -D "crates/zed/resources/app-icon-nightly@2x.png" \
             "$out/share/icons/hicolor/1024x1024@2x/apps/zed.png"
           install -D crates/zed/resources/app-icon-nightly.png \
             $out/share/icons/hicolor/512x512/apps/zed.png
 
-          # extracted from ../script/bundle-linux (envsubst) and
-          # ../script/install.sh (final desktop file name)
+          # TODO: icons should probably be named "zed-nightly"
           (
             export DO_STARTUP_NOTIFY="true"
             export APP_CLI="zed"

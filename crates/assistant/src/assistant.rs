@@ -98,9 +98,9 @@ pub fn init(
     AssistantSettings::register(cx);
     SlashCommandSettings::register(cx);
 
-    cx.spawn(|mut cx| {
+    cx.spawn({
         let client = client.clone();
-        async move {
+        async move |cx| {
             let is_search_slash_command_enabled = cx
                 .update(|cx| cx.wait_for_flag::<SearchSlashCommandFeatureFlag>())?
                 .await;
@@ -116,7 +116,7 @@ pub fn init(
             let semantic_index = SemanticDb::new(
                 paths::embeddings_dir().join("semantic-index-db.0.mdb"),
                 Arc::new(embedding_provider),
-                &mut cx,
+                cx,
             )
             .await?;
 
@@ -186,8 +186,12 @@ fn init_language_model_settings(cx: &mut App) {
 
 fn update_active_language_model_from_settings(cx: &mut App) {
     let settings = AssistantSettings::get_global(cx);
-    let provider_name = LanguageModelProviderId::from(settings.default_model.provider.clone());
-    let model_id = LanguageModelId::from(settings.default_model.model.clone());
+    let active_model_provider_name =
+        LanguageModelProviderId::from(settings.default_model.provider.clone());
+    let active_model_id = LanguageModelId::from(settings.default_model.model.clone());
+    let editor_provider_name =
+        LanguageModelProviderId::from(settings.editor_model.provider.clone());
+    let editor_model_id = LanguageModelId::from(settings.editor_model.model.clone());
     let inline_alternatives = settings
         .inline_alternatives
         .iter()
@@ -199,7 +203,8 @@ fn update_active_language_model_from_settings(cx: &mut App) {
         })
         .collect::<Vec<_>>();
     LanguageModelRegistry::global(cx).update(cx, |registry, cx| {
-        registry.select_active_model(&provider_name, &model_id, cx);
+        registry.select_active_model(&active_model_provider_name, &active_model_id, cx);
+        registry.select_editor_model(&editor_provider_name, &editor_model_id, cx);
         registry.select_inline_alternative_models(inline_alternatives, cx);
     });
 }

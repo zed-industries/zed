@@ -118,7 +118,7 @@ impl NativeRunningKernel {
         window: &mut Window,
         cx: &mut App,
     ) -> Task<Result<Box<dyn RunningKernel>>> {
-        window.spawn(cx, |cx| async move {
+        window.spawn(cx, async move |cx| {
             let ip = IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1));
             let ports = peek_ports(ip).await?;
 
@@ -177,10 +177,10 @@ impl NativeRunningKernel {
             cx.spawn({
                 let session = session.clone();
 
-                |mut cx| async move {
+                async move |cx| {
                     while let Some(message) = messages_rx.next().await {
                         session
-                            .update_in(&mut cx, |session, window, cx| {
+                            .update_in(cx, |session, window, cx| {
                                 session.route(&message, window, cx);
                             })
                             .ok();
@@ -194,10 +194,10 @@ impl NativeRunningKernel {
             cx.spawn({
                 let session = session.clone();
 
-                |mut cx| async move {
+                async move |cx| {
                     while let Ok(message) = iopub_socket.read().await {
                         session
-                            .update_in(&mut cx, |session, window, cx| {
+                            .update_in(cx, |session, window, cx| {
                                 session.route(&message, window, cx);
                             })
                             .ok();
@@ -253,7 +253,7 @@ impl NativeRunningKernel {
 
             let stderr = process.stderr.take();
 
-            cx.spawn(|mut _cx| async move {
+            cx.spawn(async move |_cx| {
                 if stderr.is_none() {
                     return;
                 }
@@ -267,7 +267,7 @@ impl NativeRunningKernel {
 
             let stdout = process.stdout.take();
 
-            cx.spawn(|mut _cx| async move {
+            cx.spawn(async move |_cx| {
                 if stdout.is_none() {
                     return;
                 }
@@ -281,7 +281,7 @@ impl NativeRunningKernel {
 
             let status = process.status();
 
-            let process_status_task = cx.spawn(|mut cx| async move {
+            let process_status_task = cx.spawn(async move |cx| {
                 let error_message = match status.await {
                     Ok(status) => {
                         if status.success() {
@@ -299,7 +299,7 @@ impl NativeRunningKernel {
                 log::error!("{}", error_message);
 
                 session
-                    .update(&mut cx, |session, cx| {
+                    .update(cx, |session, cx| {
                         session.kernel_errored(error_message, cx);
 
                         cx.notify();

@@ -49,7 +49,7 @@ impl WorktreeIndex {
         let worktree_abs_path = worktree.read(cx).abs_path();
         let embedding_fs = Arc::clone(&fs);
         let summary_fs = fs;
-        cx.spawn(|mut cx| async move {
+        cx.spawn(async move |cx| {
             let entries_being_indexed = Arc::new(IndexingEntrySet::new(status_tx));
             let (embedding_index, summary_index) = cx
                 .background_spawn({
@@ -138,7 +138,9 @@ impl WorktreeIndex {
             summary_index,
             worktree,
             entry_ids_being_indexed,
-            _index_entries: cx.spawn(|this, cx| Self::index_entries(this, updated_entries_rx, cx)),
+            _index_entries: cx.spawn(async move |this, cx| {
+                Self::index_entries(this, updated_entries_rx, cx).await
+            }),
             _subscription,
         }
     }
@@ -166,10 +168,10 @@ impl WorktreeIndex {
     async fn index_entries(
         this: WeakEntity<Self>,
         updated_entries: channel::Receiver<UpdatedEntriesSet>,
-        mut cx: AsyncApp,
+        cx: &mut AsyncApp,
     ) -> Result<()> {
         let is_auto_available = cx.update(|cx| cx.wait_for_flag::<AutoCommand>())?.await;
-        let index = this.update(&mut cx, |this, cx| {
+        let index = this.update(cx, |this, cx| {
             futures::future::try_join(
                 this.embedding_index.index_entries_changed_on_disk(cx),
                 this.summary_index
@@ -183,7 +185,7 @@ impl WorktreeIndex {
                 .update(|cx| cx.has_flag::<AutoCommand>())
                 .unwrap_or(false);
 
-            let index = this.update(&mut cx, |this, cx| {
+            let index = this.update(cx, |this, cx| {
                 futures::future::try_join(
                     this.embedding_index
                         .index_updated_entries(updated_entries.clone(), cx),
