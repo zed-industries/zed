@@ -13,7 +13,7 @@ use editor::{
         BlockContext, BlockId, BlockPlacement, BlockProperties, BlockStyle, Crease, CreaseMetadata,
         CustomBlockId, FoldId, RenderBlock, ToDisplayPoint,
     },
-    scroll::{Autoscroll, AutoscrollStrategy},
+    scroll::Autoscroll,
     Anchor, Editor, EditorEvent, MenuInlineCompletionsPolicy, ProposedChangeLocation,
     ProposedChangesEditor, RowExt, ToOffset as _, ToPoint,
 };
@@ -414,12 +414,9 @@ impl ContextEditor {
                 cursor..cursor
             };
             self.editor.update(cx, |editor, cx| {
-                editor.change_selections(
-                    Some(Autoscroll::Strategy(AutoscrollStrategy::Fit)),
-                    window,
-                    cx,
-                    |selections| selections.select_ranges([new_selection]),
-                );
+                editor.change_selections(Some(Autoscroll::fit()), window, cx, |selections| {
+                    selections.select_ranges([new_selection])
+                });
             });
             // Avoid scrolling to the new cursor position so the assistant's output is stable.
             cx.defer_in(window, |this, _, _| this.scroll_position = None);
