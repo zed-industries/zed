@@ -803,9 +803,9 @@ mod element {
     use std::{cell::RefCell, iter, rc::Rc, sync::Arc};
 
     use gpui::{
-        px, relative, size, Along, AnyElement, App, Axis, Bounds, Element, GlobalElementId,
-        IntoElement, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, Pixels, Point,
-        Size, Style, WeakEntity, Window,
+        px, relative, size, Along, AnyElement, App, Axis, BorderStyle, Bounds, Element,
+        GlobalElementId, IntoElement, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement,
+        Pixels, Point, Size, Style, WeakEntity, Window,
     };
     use gpui::{CursorStyle, Hitbox};
     use parking_lot::Mutex;
@@ -1165,6 +1165,7 @@ mod element {
                                 gpui::transparent_black(),
                                 border,
                                 cx.theme().colors().border_selected,
+                                BorderStyle::Solid,
                             ));
                         }
                     }

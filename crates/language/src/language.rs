@@ -229,8 +229,14 @@ impl CachedLspAdapter {
         self.adapter.code_action_kinds()
     }
 
-    pub fn process_diagnostics(&self, params: &mut lsp::PublishDiagnosticsParams) {
-        self.adapter.process_diagnostics(params)
+    pub fn process_diagnostics(
+        &self,
+        params: &mut lsp::PublishDiagnosticsParams,
+        server_id: LanguageServerId,
+        existing_diagnostics: Option<&'_ Buffer>,
+    ) {
+        self.adapter
+            .process_diagnostics(params, server_id, existing_diagnostics)
     }
 
     pub async fn process_completions(&self, completion_items: &mut [lsp::CompletionItem]) {
@@ -305,6 +311,7 @@ pub trait LspAdapterDelegate: Send + Sync {
     fn worktree_root_path(&self) -> &Path;
     fn exists(&self, path: &Path, is_dir: Option<bool>) -> bool;
     fn update_status(&self, language: LanguageServerName, status: BinaryStatus);
+    fn registered_lsp_adapters(&self) -> Vec<Arc<dyn LspAdapter>>;
     async fn language_server_download_dir(&self, name: &LanguageServerName) -> Option<Arc<Path>>;
 
     async fn npm_package_installed_version(
@@ -442,7 +449,13 @@ pub trait LspAdapter: 'static + Send + Sync {
         delegate: &dyn LspAdapterDelegate,
     ) -> Option<LanguageServerBinary>;
 
-    fn process_diagnostics(&self, _: &mut lsp::PublishDiagnosticsParams) {}
+    fn process_diagnostics(
+        &self,
+        _: &mut lsp::PublishDiagnosticsParams,
+        _: LanguageServerId,
+        _: Option<&'_ Buffer>,
+    ) {
+    }
 
     /// Post-processes completions provided by the language server.
     async fn process_completions(&self, _: &mut [lsp::CompletionItem]) {}
@@ -513,6 +526,26 @@ pub trait LspAdapter: 'static + Send + Sync {
         _cx: &mut AsyncApp,
     ) -> Result<Value> {
         Ok(serde_json::json!({}))
+    }
+
+    async fn additional_initialization_options(
+        self: Arc<Self>,
+        _target_language_server_id: LanguageServerName,
+        _: &dyn Fs,
+        _: &Arc<dyn LspAdapterDelegate>,
+    ) -> Result<Option<Value>> {
+        Ok(None)
+    }
+
+    async fn additional_workspace_configuration(
+        self: Arc<Self>,
+        _target_language_server_id: LanguageServerName,
+        _: &dyn Fs,
+        _: &Arc<dyn LspAdapterDelegate>,
+        _: Arc<dyn LanguageToolchainStore>,
+        _cx: &mut AsyncApp,
+    ) -> Result<Option<Value>> {
+        Ok(None)
     }
 
     /// Returns a list of code actions supported by a given LspAdapter
@@ -2038,8 +2071,6 @@ impl LspAdapter for FakeLspAdapter {
     ) -> Option<LanguageServerBinary> {
         unreachable!();
     }
-
-    fn process_diagnostics(&self, _: &mut lsp::PublishDiagnosticsParams) {}
 
     fn disk_based_diagnostic_sources(&self) -> Vec<String> {
         self.disk_based_diagnostics_sources.clone()

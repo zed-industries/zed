@@ -698,11 +698,12 @@ impl Thread {
 
         // Note that Cline supports `.clinerules` being a directory, but that is not currently
         // supported. This doesn't seem to occur often in GitHub repositories.
-        const RULES_FILE_NAMES: [&'static str; 5] = [
+        const RULES_FILE_NAMES: [&'static str; 6] = [
             ".rules",
             ".cursorrules",
             ".windsurfrules",
             ".clinerules",
+            ".github/copilot-instructions.md",
             "CLAUDE.md",
         ];
         let selected_rules_file = RULES_FILE_NAMES

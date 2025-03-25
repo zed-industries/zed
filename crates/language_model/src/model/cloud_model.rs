@@ -6,13 +6,13 @@ use client::Client;
 use gpui::{
     App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, Global, ReadGlobal as _,
 };
+use icons::IconName;
 use proto::{Plan, TypedEnvelope};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use smol::lock::{RwLock, RwLockUpgradableReadGuard, RwLockWriteGuard};
 use strum::EnumIter;
 use thiserror::Error;
-use ui::IconName;
 
 use crate::LanguageModelAvailability;
 

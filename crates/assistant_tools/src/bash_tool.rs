@@ -6,6 +6,7 @@ use project::Project;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
+use ui::IconName;
 use util::command::new_smol_command;
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
@@ -29,6 +30,10 @@ impl Tool for BashTool {
 
     fn description(&self) -> String {
         include_str!("./bash_tool/description.md").to_string()
+    }
+
+    fn icon(&self) -> IconName {
+        IconName::Terminal
     }
 
     fn input_schema(&self) -> serde_json::Value {

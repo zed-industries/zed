@@ -142,7 +142,7 @@ actions!(
         StepBack,
         Stop,
         ToggleIgnoreBreakpoints,
-        ClearBreakpoints
+        ClearAllBreakpoints
     ]
 );
 
@@ -182,6 +182,7 @@ actions!(
         ToggleZoom,
         Unfollow,
         Welcome,
+        RestoreBanner,
     ]
 );
 

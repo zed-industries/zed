@@ -77,7 +77,6 @@ use std::{
     ops::{ControlFlow, Range},
     path::{self, Path, PathBuf},
     rc::Rc,
-    str,
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -251,17 +250,21 @@ impl LocalLspStore {
                     let toolchains = this.update(cx, |this, cx| this.toolchain_store(cx))?;
                     let language_server = pending_server.await?;
 
-                    let workspace_config = adapter
-                        .adapter
-                        .clone()
-                        .workspace_configuration(fs.as_ref(), &delegate, toolchains.clone(), cx)
-                        .await?;
+                    let workspace_config = Self::workspace_configuration_for_adapter(
+                        adapter.adapter.clone(),
+                        fs.as_ref(),
+                        &delegate,
+                        toolchains.clone(),
+                        cx,
+                    )
+                    .await?;
 
-                    let mut initialization_options = adapter
-                        .adapter
-                        .clone()
-                        .initialization_options(fs.as_ref(), &(delegate))
-                        .await?;
+                    let mut initialization_options = Self::initialization_options_for_adapter(
+                        adapter.adapter.clone(),
+                        fs.as_ref(),
+                        &delegate,
+                    )
+                    .await?;
 
                     match (&mut initialization_options, override_options) {
                         (Some(initialization_options), Some(override_options)) => {
@@ -448,8 +451,17 @@ impl LocalLspStore {
                 move |mut params, cx| {
                     let adapter = adapter.clone();
                     if let Some(this) = this.upgrade() {
-                        adapter.process_diagnostics(&mut params);
                         this.update(cx, |this, cx| {
+                            {
+                                let buffer = params
+                                    .uri
+                                    .to_file_path()
+                                    .map(|file_path| this.get_buffer(&file_path, cx))
+                                    .ok()
+                                    .flatten();
+                                adapter.process_diagnostics(&mut params, server_id, buffer);
+                            }
+
                             this.update_diagnostics(
                                 server_id,
                                 params,
@@ -478,9 +490,16 @@ impl LocalLspStore {
                     async move {
                         let toolchains =
                             this.update(&mut cx, |this, cx| this.toolchain_store(cx))?;
-                        let workspace_config = adapter
-                            .workspace_configuration(fs.as_ref(), &delegate, toolchains, &mut cx)
-                            .await?;
+
+                        let workspace_config = Self::workspace_configuration_for_adapter(
+                            adapter.clone(),
+                            fs.as_ref(),
+                            &delegate,
+                            toolchains.clone(),
+                            &mut cx,
+                        )
+                        .await?;
+
                         Ok(params
                             .items
                             .into_iter()
@@ -2151,7 +2170,7 @@ impl LocalLspStore {
             Patch::new(snapshot.edits_since::<PointUtf16>(saved_version).collect())
         });
 
-        let mut sanitized_diagnostics = Vec::new();
+        let mut sanitized_diagnostics = Vec::with_capacity(diagnostics.len());
 
         for entry in diagnostics {
             let start;
@@ -3225,6 +3244,67 @@ impl LocalLspStore {
 
         self.rebuild_watched_paths(language_server_id, cx);
     }
+
+    async fn initialization_options_for_adapter(
+        adapter: Arc<dyn LspAdapter>,
+        fs: &dyn Fs,
+        delegate: &Arc<dyn LspAdapterDelegate>,
+    ) -> Result<Option<serde_json::Value>> {
+        let Some(mut initialization_config) =
+            adapter.clone().initialization_options(fs, delegate).await?
+        else {
+            return Ok(None);
+        };
+
+        for other_adapter in delegate.registered_lsp_adapters() {
+            if other_adapter.name() == adapter.name() {
+                continue;
+            }
+            if let Ok(Some(target_config)) = other_adapter
+                .clone()
+                .additional_initialization_options(adapter.name(), fs, delegate)
+                .await
+            {
+                merge_json_value_into(target_config.clone(), &mut initialization_config);
+            }
+        }
+
+        Ok(Some(initialization_config))
+    }
+
+    async fn workspace_configuration_for_adapter(
+        adapter: Arc<dyn LspAdapter>,
+        fs: &dyn Fs,
+        delegate: &Arc<dyn LspAdapterDelegate>,
+        toolchains: Arc<dyn LanguageToolchainStore>,
+        cx: &mut AsyncApp,
+    ) -> Result<serde_json::Value> {
+        let mut workspace_config = adapter
+            .clone()
+            .workspace_configuration(fs, delegate, toolchains.clone(), cx)
+            .await?;
+
+        for other_adapter in delegate.registered_lsp_adapters() {
+            if other_adapter.name() == adapter.name() {
+                continue;
+            }
+            if let Ok(Some(target_config)) = other_adapter
+                .clone()
+                .additional_workspace_configuration(
+                    adapter.name(),
+                    fs,
+                    delegate,
+                    toolchains.clone(),
+                    cx,
+                )
+                .await
+            {
+                merge_json_value_into(target_config.clone(), &mut workspace_config);
+            }
+        }
+
+        Ok(workspace_config)
+    }
 }
 
 #[derive(Debug)]
@@ -3764,8 +3844,8 @@ impl LspStore {
             for (adapter, server, delegate) in servers {
                 adapter.clear_zed_json_schema_cache().await;
 
-                let Some(json_workspace_config) = adapter
-                    .workspace_configuration(
+                let Some(json_workspace_config) = LocalLspStore::workspace_configuration_for_adapter(
+                        adapter,
                         fs.as_ref(),
                         &delegate,
                         toolchain_store.clone(),
@@ -6065,10 +6145,15 @@ impl LspStore {
 
             let toolchain_store = this.update(cx, |this, cx| this.toolchain_store(cx)).ok()?;
             for (adapter, server, delegate) in servers {
-                let settings = adapter
-                    .workspace_configuration(fs.as_ref(), &delegate, toolchain_store.clone(), cx)
-                    .await
-                    .ok()?;
+                let settings = LocalLspStore::workspace_configuration_for_adapter(
+                    adapter,
+                    fs.as_ref(),
+                    &delegate,
+                    toolchain_store.clone(),
+                    cx,
+                )
+                .await
+                .ok()?;
 
                 server
                     .notify::<lsp::notification::DidChangeConfiguration>(
@@ -6254,6 +6339,18 @@ impl LspStore {
         version: Option<i32>,
         diagnostics: Vec<DiagnosticEntry<Unclipped<PointUtf16>>>,
         cx: &mut Context<Self>,
+    ) -> anyhow::Result<()> {
+        self.merge_diagnostic_entries(server_id, abs_path, version, diagnostics, |_| false, cx)
+    }
+
+    pub fn merge_diagnostic_entries<F: Fn(&Diagnostic) -> bool + Clone>(
+        &mut self,
+        server_id: LanguageServerId,
+        abs_path: PathBuf,
+        version: Option<i32>,
+        mut diagnostics: Vec<DiagnosticEntry<Unclipped<PointUtf16>>>,
+        filter: F,
+        cx: &mut Context<Self>,
     ) -> Result<(), anyhow::Error> {
         let Some((worktree, relative_path)) =
             self.worktree_store.read(cx).find_worktree(&abs_path, cx)
@@ -6268,6 +6365,28 @@ impl LspStore {
         };
 
         if let Some(buffer) = self.buffer_store.read(cx).get_by_path(&project_path, cx) {
+            let snapshot = self
+                .as_local_mut()
+                .unwrap()
+                .buffer_snapshot_for_lsp_version(&buffer, server_id, version, cx)?;
+
+            diagnostics.extend(
+                buffer
+                    .read(cx)
+                    .get_diagnostics(server_id)
+                    .into_iter()
+                    .flat_map(|diag| {
+                        diag.iter().filter(|v| filter(&v.diagnostic)).map(|v| {
+                            let start = Unclipped(v.range.start.to_point_utf16(&snapshot));
+                            let end = Unclipped(v.range.end.to_point_utf16(&snapshot));
+                            DiagnosticEntry {
+                                range: start..end,
+                                diagnostic: v.diagnostic.clone(),
+                            }
+                        })
+                    }),
+            );
+
             self.as_local_mut().unwrap().update_buffer_diagnostics(
                 &buffer,
                 server_id,
@@ -8292,11 +8411,45 @@ impl LspStore {
         }
     }
 
+    fn get_buffer<'a>(&self, abs_path: &Path, cx: &'a App) -> Option<&'a Buffer> {
+        let (worktree, relative_path) =
+            self.worktree_store.read(cx).find_worktree(&abs_path, cx)?;
+
+        let project_path = ProjectPath {
+            worktree_id: worktree.read(cx).id(),
+            path: relative_path.into(),
+        };
+
+        Some(
+            self.buffer_store()
+                .read(cx)
+                .get_by_path(&project_path, cx)?
+                .read(cx),
+        )
+    }
+
     pub fn update_diagnostics(
+        &mut self,
+        language_server_id: LanguageServerId,
+        params: lsp::PublishDiagnosticsParams,
+        disk_based_sources: &[String],
+        cx: &mut Context<Self>,
+    ) -> Result<()> {
+        self.merge_diagnostics(
+            language_server_id,
+            params,
+            disk_based_sources,
+            |_| false,
+            cx,
+        )
+    }
+
+    pub fn merge_diagnostics<F: Fn(&Diagnostic) -> bool + Clone>(
         &mut self,
         language_server_id: LanguageServerId,
         mut params: lsp::PublishDiagnosticsParams,
         disk_based_sources: &[String],
+        filter: F,
         cx: &mut Context<Self>,
     ) -> Result<()> {
         if !self.mode.is_local() {
@@ -8403,11 +8556,12 @@ impl LspStore {
             }
         }
 
-        self.update_diagnostic_entries(
+        self.merge_diagnostic_entries(
             language_server_id,
             abs_path,
             params.version,
             diagnostics,
+            filter,
             cx,
         )?;
         Ok(())
@@ -9809,6 +9963,14 @@ impl LspAdapterDelegate for LocalLspAdapterDelegate {
     fn update_status(&self, server_name: LanguageServerName, status: language::BinaryStatus) {
         self.language_registry
             .update_lsp_status(server_name, status);
+    }
+
+    fn registered_lsp_adapters(&self) -> Vec<Arc<dyn LspAdapter>> {
+        self.language_registry
+            .all_lsp_adapters()
+            .into_iter()
+            .map(|adapter| adapter.adapter.clone() as Arc<dyn LspAdapter>)
+            .collect()
     }
 
     async fn language_server_download_dir(&self, name: &LanguageServerName) -> Option<Arc<Path>> {

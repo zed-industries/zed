@@ -25,7 +25,7 @@
   // Features that can be globally enabled or disabled
   "features": {
     // Which edit prediction provider to use.
-    "edit_prediction_provider": "copilot"
+    "edit_prediction_provider": "zed"
   },
   // The name of a font to use for rendering text in the editor
   "buffer_font_family": "Zed Plex Mono",
@@ -656,9 +656,12 @@
         "name": "Code Writer",
         "tools": {
           "bash": true,
+          "copy-path": true,
+          "create-file": true,
           "delete-path": true,
           "diagnostics": true,
-          "edit-files": true,
+          "find-replace-file": true,
+          "edit-files": false,
           "fetch": true,
           "list-directory": true,
           "move-path": true,
@@ -1277,6 +1280,14 @@
     "JSONC": {
       "prettier": {
         "allowed": true
+      }
+    },
+    "LaTeX": {
+      "format_on_save": "on",
+      "formatter": "language_server",
+      "language_servers": ["texlab", "..."],
+      "prettier": {
+        "allowed": false
       }
     },
     "Markdown": {
