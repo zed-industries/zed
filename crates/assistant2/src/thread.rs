@@ -1165,6 +1165,7 @@ impl Thread {
                         messages.clone(),
                         tool,
                     );
+                    cx.emit(ThreadEvent::ToolConfirmationNeeded);
                 } else {
                     self.run_tool(
                         tool_use.id.clone(),
@@ -1543,6 +1544,7 @@ pub enum ThreadEvent {
         canceled: bool,
     },
     CheckpointChanged,
+    ToolConfirmationNeeded,
 }
 
 impl EventEmitter<ThreadEvent> for Thread {}

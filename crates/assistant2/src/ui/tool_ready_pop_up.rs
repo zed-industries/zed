@@ -7,9 +7,17 @@ use std::rc::Rc;
 use theme;
 use ui::{prelude::*, Render};
 
-pub struct ToolReadyPopUp;
+pub struct ToolReadyPopUp {
+    caption: SharedString,
+}
 
 impl ToolReadyPopUp {
+    pub fn new(caption: impl Into<SharedString>) -> Self {
+        Self {
+            caption: caption.into(),
+        }
+    }
+
     pub fn window_options(screen: Rc<dyn PlatformDisplay>, cx: &App) -> WindowOptions {
         let size = Size {
             width: px(400.),
@@ -69,7 +77,7 @@ impl Render for ToolReadyPopUp {
             .child(
                 v_flex()
                     .overflow_hidden()
-                    .child(Label::new("Tool is ready to use")),
+                    .child(Label::new(self.caption.clone())),
             )
             .child(
                 v_flex()

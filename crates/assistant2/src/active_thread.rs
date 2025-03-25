@@ -375,48 +375,12 @@ impl ActiveThread {
                 self.save_thread(cx);
             }
             ThreadEvent::DoneStreaming => {
-                if !window.is_window_active()
-                    && self.pop_ups.is_empty()
-                    && !self.thread().read(cx).is_generating()
-                    && AssistantSettings::get_global(cx).notify_when_agent_waiting
-                {
-                    for screen in cx.displays() {
-                        let options = ToolReadyPopUp::window_options(screen, cx);
-
-                        if let Some(screen_window) = cx
-                            .open_window(options, |_, cx| cx.new(|_| ToolReadyPopUp))
-                            .log_err()
-                        {
-                            if let Some(pop_up) = screen_window.entity(cx).log_err() {
-                                cx.subscribe_in(&pop_up, window, {
-                                    |this, _, event, window, cx| match event {
-                                        ToolReadyPopupEvent::Accepted => {
-                                            let handle = window.window_handle();
-                                            cx.activate(true); // Switch back to the Zed application
-
-                                            // If there are multiple Zed windows, activate the correct one.
-                                            cx.defer(move |cx| {
-                                                handle
-                                                    .update(cx, |_view, window, _cx| {
-                                                        window.activate_window();
-                                                    })
-                                                    .log_err();
-                                            });
-
-                                            this.dismiss_notifications(cx);
-                                        }
-                                        ToolReadyPopupEvent::Dismissed => {
-                                            this.dismiss_notifications(cx);
-                                        }
-                                    }
-                                })
-                                .detach();
-
-                                self.pop_ups.push(screen_window);
-                            }
-                        }
-                    }
+                if !self.thread().read(cx).is_generating() {
+                    self.show_notification("Agent has finished.", window, cx);
                 }
+            }
+            ThreadEvent::ToolConfirmationNeeded => {
+                self.show_notification("Tool confirmation needed.", window, cx);
             }
             ThreadEvent::StreamedAssistantText(message_id, text) => {
                 if let Some(rendered_message) = self.rendered_messages_by_id.get_mut(&message_id) {
@@ -541,6 +505,59 @@ impl ActiveThread {
                 }
             }
             ThreadEvent::CheckpointChanged => cx.notify(),
+        }
+    }
+
+    fn show_notification(
+        &mut self,
+        caption: impl Into<SharedString>,
+        window: &mut Window,
+        cx: &mut Context<'_, ActiveThread>,
+    ) {
+        let caption = caption.into();
+
+        if !window.is_window_active()
+            && self.pop_ups.is_empty()
+            && AssistantSettings::get_global(cx).notify_when_agent_waiting
+        {
+            for screen in cx.displays() {
+                let options = ToolReadyPopUp::window_options(screen, cx);
+
+                if let Some(screen_window) = cx
+                    .open_window(options, |_, cx| {
+                        cx.new(|_| ToolReadyPopUp::new(caption.clone()))
+                    })
+                    .log_err()
+                {
+                    if let Some(pop_up) = screen_window.entity(cx).log_err() {
+                        cx.subscribe_in(&pop_up, window, {
+                            |this, _, event, window, cx| match event {
+                                ToolReadyPopupEvent::Accepted => {
+                                    let handle = window.window_handle();
+                                    cx.activate(true); // Switch back to the Zed application
+
+                                    // If there are multiple Zed windows, activate the correct one.
+                                    cx.defer(move |cx| {
+                                        handle
+                                            .update(cx, |_view, window, _cx| {
+                                                window.activate_window();
+                                            })
+                                            .log_err();
+                                    });
+
+                                    this.dismiss_notifications(cx);
+                                }
+                                ToolReadyPopupEvent::Dismissed => {
+                                    this.dismiss_notifications(cx);
+                                }
+                            }
+                        })
+                        .detach();
+
+                        self.pop_ups.push(screen_window);
+                    }
+                }
+            }
         }
     }
 
