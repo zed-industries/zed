@@ -14,6 +14,7 @@ use clock::Global;
 use collections::HashSet;
 use futures::future;
 use gpui::{App, AsyncApp, Entity};
+use itertools::Itertools;
 use language::{
     language_settings::{language_settings, InlayHintKind, LanguageSettings},
     point_from_lsp, point_to_lsp,
@@ -25,8 +26,8 @@ use lsp::{
     AdapterServerCapabilities, CodeActionKind, CodeActionOptions, CompletionContext,
     CompletionListItemDefaultsEditRange, CompletionTriggerKind, DocumentHighlightKind,
     LanguageServer, LanguageServerId, LinkedEditingRangeServerCapabilities, OneOf, RenameOptions,
-    SemanticTokensOptions, SemanticTokensRegistrationOptions, SemanticTokensServerCapabilities,
-    ServerCapabilities,
+    SemanticTokenModifier, SemanticTokensOptions, SemanticTokensRegistrationOptions,
+    SemanticTokensServerCapabilities, ServerCapabilities,
 };
 use signature_help::{lsp_to_proto_signature, proto_to_lsp_signature};
 use std::{cmp::Reverse, ops::Range, path::Path, sync::Arc};
@@ -3366,7 +3367,7 @@ impl LspCommand for SemanticTokensFull {
         _: &Buffer,
         _: &Arc<LanguageServer>,
         _: &App,
-    ) -> Result<<Self::LspRequest as lsp::request::Request>::Params> {
+    ) -> Result<lsp::SemanticTokensParams> {
         Ok(lsp::SemanticTokensParams {
             text_document: lsp::TextDocumentIdentifier {
                 uri: file_path_to_lsp_url(path)?,
@@ -3416,30 +3417,35 @@ impl LspCommand for SemanticTokensFull {
         let mut acc = 0;
         let mut line_acc = 0;
         let new_tokens = tokens.into_iter().map(|token| {
+            let len = token.length;
             if token.delta_line != 0 {
                 acc = 0;
             }
-            let len = token.length;
-            let start = snapshot.clip_point_utf16(
-                Unclipped(PointUtf16::new(
-                    token.delta_line + line_acc, //
-                    token.delta_start + acc,
-                )),
-                Bias::Left,
-            );
-            let end = snapshot.clip_point_utf16(
-                Unclipped(PointUtf16::new(
-                    token.delta_line + line_acc, //
-                    token.delta_start + len + acc,
-                )),
-                Bias::Right,
-            );
-            let range = snapshot.anchor_at(start, Bias::Left)..snapshot.anchor_at(end, Bias::Right);
+            // this line is assuming that we have one token lines because the
+            // line of the token never gets "spoofed" by this. and this is actually
+            // the current limitation of the semantic highlight support here.
+            let range = {
+                let start = snapshot.clip_point_utf16(
+                    Unclipped(PointUtf16::new(
+                        token.delta_line + line_acc, //
+                        token.delta_start + acc,
+                    )),
+                    Bias::Left,
+                );
+                let end = snapshot.clip_point_utf16(
+                    Unclipped(PointUtf16::new(
+                        token.delta_line + line_acc, //
+                        token.delta_start + len + acc,
+                    )),
+                    Bias::Right,
+                );
+                snapshot.anchor_before(start)..snapshot.anchor_before(end)
+            };
             acc += token.delta_start;
             line_acc += token.delta_start;
             SemanticToken {
                 range,
-                modifiers: vec![],
+                modifiers: active_modifiers(token.token_modifiers_bitset, &legend.token_modifiers),
                 r#type: legend
                     .token_types
                     .get(token.token_type as usize)
@@ -3486,4 +3492,18 @@ impl LspCommand for SemanticTokensFull {
     fn buffer_id_from_proto(message: &Self::ProtoRequest) -> Result<BufferId> {
         todo!()
     }
+}
+
+fn active_modifiers(m: u32, legend: &[SemanticTokenModifier]) -> Vec<SemanticTokenModifier> {
+    legend
+        .iter()
+        .enumerate()
+        .filter_map(move |(idx, modifier)| {
+            if (m & (1 << idx)) != 0 {
+                Some(modifier.clone())
+            } else {
+                None
+            }
+        })
+        .collect_vec()
 }
