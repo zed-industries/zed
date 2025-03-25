@@ -40,7 +40,7 @@ use language::{
     point_to_lsp,
     proto::{deserialize_anchor, deserialize_version, serialize_anchor, serialize_version},
     range_from_lsp, range_to_lsp, Bias, BinaryStatus, Buffer, BufferSnapshot, CachedLspAdapter,
-    CodeLabel, Diagnostic, DiagnosticEntry, DiagnosticSet, Diff, File as _, Language, LanguageName,
+    CodeLabel, Diagnostic, DiagnosticEntry, DiagnosticSet, Diff, File as _, Language,
     LanguageRegistry, LanguageToolchainStore, LocalFile, LspAdapter, LspAdapterDelegate, Patch,
     PointUtf16, TextBufferSnapshot, ToOffset, ToPointUtf16, Transaction, Unclipped,
 };
@@ -3258,7 +3258,6 @@ impl LocalLspStore {
                 .await
             {
                 if let Some(target_config) = config.get(adapter.name().to_string()) {
-                    dbg!(target_config);
                     merge_json_value_into(target_config.clone(), &mut workspace_config);
                 }
             }
