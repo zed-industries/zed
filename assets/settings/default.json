@@ -320,7 +320,7 @@
     // When to show the minimap slider.
     // This setting can take two values:
     // 1. Show the minimap slider if the mouse is over the minimap:
-    //    "hover"
+    //    "hover" (default)
     // 2. Always show the minimap slider:
     //    "always"
     "slider": "hover",
