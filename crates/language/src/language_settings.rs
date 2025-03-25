@@ -281,7 +281,7 @@ pub enum EditPredictionsMode {
 
 /// The provider that supplies edit predictions.
 #[derive(Copy, Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "snake_case")]
+#[serde(rename_all = "kebab-case")]
 pub enum CopilotPredictionModel {
     None,
     #[default]
