@@ -353,6 +353,13 @@ pub struct InlayHint {
     pub resolve_state: ResolveState,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SemanticToken {
+    pub range: Range<Anchor>,
+    pub token_type: u32,
+    pub token_modifiers: u32,
+}
+
 /// The user's intent behind a given completion confirmation
 #[derive(PartialEq, Eq, Hash, Debug, Clone, Copy)]
 pub enum CompletionIntent {
@@ -3446,6 +3453,16 @@ impl Project {
     ) -> Task<Result<Option<Transaction>>> {
         self.lsp_store.update(cx, |lsp_store, cx| {
             lsp_store.on_type_format(buffer, position, trigger, push_to_history, cx)
+        })
+    }
+
+    pub fn semantic_tokens(
+        &mut self,
+        buffer_handle: Entity<Buffer>,
+        cx: &mut Context<Self>,
+    ) -> Task<anyhow::Result<Vec<SemanticToken>>> {
+        self.lsp_store.update(cx, |lsp_store, cx| {
+            lsp_store.semantic_tokens(buffer_handle, cx)
         })
     }
 

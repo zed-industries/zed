@@ -359,6 +359,9 @@ message Envelope {
 
         UpdateRepository update_repository = 328;
         RemoveRepository remove_repository = 329; // current max
+
+        SemanticTokensFullRequest semantic_tokens_full_request = 330;
+        SemanticTokensResult semantic_tokens_result = 331;
     }
 
     reserved 87 to 88;
@@ -3530,4 +3533,21 @@ message GitInit {
     uint64 project_id = 1;
     string abs_path = 2;
     string fallback_branch_name = 3;
+}
+
+message SemanticTokensFullRequest {
+    uint64 project_id = 1;
+    uint64 buffer_id = 2;
+}
+
+message SemanticToken {
+  uint32 line = 1;
+  uint32 start_char = 2;
+  uint32 length = 3;
+  uint32 token_type = 4;
+  uint32 token_modifiers = 5;
+}
+
+message SemanticTokensResult {
+  repeated SemanticToken tokens = 1;
 }

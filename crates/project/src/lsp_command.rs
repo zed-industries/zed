@@ -5,7 +5,7 @@ use crate::{
     CodeAction, CompletionSource, CoreCompletion, DocumentHighlight, Hover, HoverBlock,
     HoverBlockKind, InlayHint, InlayHintLabel, InlayHintLabelPart, InlayHintLabelPartTooltip,
     InlayHintTooltip, Location, LocationLink, LspAction, MarkupContent, PrepareRenameResponse,
-    ProjectTransaction, ResolveState,
+    ProjectTransaction, ResolveState, SemanticToken,
 };
 use anyhow::{anyhow, Context as _, Result};
 use async_trait::async_trait;
@@ -233,6 +233,9 @@ pub(crate) struct OnTypeFormatting {
 pub(crate) struct InlayHints {
     pub range: Range<Anchor>,
 }
+
+#[derive(Debug)]
+pub(crate) struct SemanticTokens;
 
 #[derive(Debug, Copy, Clone)]
 pub(crate) struct GetCodeLens;
@@ -3343,5 +3346,118 @@ impl LspCommand for LinkedEditingRange {
 
     fn buffer_id_from_proto(message: &proto::LinkedEditingRange) -> Result<BufferId> {
         BufferId::new(message.buffer_id)
+    }
+}
+
+#[async_trait(?Send)]
+impl LspCommand for SemanticTokens {
+    type Response = Vec<SemanticToken>;
+    type LspRequest = lsp::request::SemanticTokensFullRequest;
+    type ProtoRequest = proto::SemanticTokensFullRequest;
+
+    fn display_name(&self) -> &str {
+        "Semantic Tokens"
+    }
+
+    fn to_lsp(
+        &self,
+        path: &Path,
+        _: &Buffer,
+        _: &Arc<LanguageServer>,
+        _: &App,
+    ) -> Result<<Self::LspRequest as lsp::request::Request>::Params> {
+        Ok(lsp::SemanticTokensParams {
+            text_document: lsp::TextDocumentIdentifier {
+                uri: file_path_to_lsp_url(path)?,
+            },
+            partial_result_params: lsp::PartialResultParams {
+                partial_result_token: None,
+            },
+            work_done_progress_params: lsp::WorkDoneProgressParams::default(),
+        })
+    }
+
+    async fn response_from_lsp(
+        mut self,
+        message: <Self::LspRequest as lsp::request::Request>::Result,
+        _: Entity<LspStore>,
+        buffer: Entity<Buffer>,
+        _: LanguageServerId,
+        mut cx: AsyncApp,
+    ) -> Result<Self::Response> {
+        let snapshot = buffer.update(&mut cx, |buffer, _| buffer.snapshot())?;
+        let tokens = match message {
+            Some(lsp::SemanticTokensResult::Partial(tokens)) => tokens.data,
+            Some(lsp::SemanticTokensResult::Tokens(tokens)) => tokens.data,
+            None => vec![],
+        };
+        let mut acc = 0;
+        let mut line_acc = 0;
+        let new_tokens = tokens.into_iter().map(|token| {
+            if token.delta_line != 0 {
+                acc = 0;
+            }
+            let len = token.length;
+            let start = snapshot.clip_point_utf16(
+                Unclipped(PointUtf16::new(
+                    token.delta_line + line_acc, //
+                    token.delta_start + acc,
+                )),
+                Bias::Left,
+            );
+            let end = snapshot.clip_point_utf16(
+                Unclipped(PointUtf16::new(
+                    token.delta_line + line_acc, //
+                    token.delta_start + len + acc,
+                )),
+                Bias::Right,
+            );
+            let range = snapshot.anchor_at(start, Bias::Left)..snapshot.anchor_at(end, Bias::Right);
+            acc += token.delta_start;
+            line_acc += token.delta_start;
+            SemanticToken {
+                range,
+                token_modifiers: token.token_modifiers_bitset,
+                token_type: token.token_type,
+            }
+        });
+        Ok(new_tokens.collect())
+    }
+
+    fn to_proto(&self, project_id: u64, buffer: &Buffer) -> Self::ProtoRequest {
+        todo!()
+    }
+
+    async fn from_proto(
+        message: Self::ProtoRequest,
+        lsp_store: Entity<LspStore>,
+        buffer: Entity<Buffer>,
+        cx: AsyncApp,
+    ) -> Result<Self> {
+        todo!()
+    }
+
+    fn response_to_proto(
+        response: Self::Response,
+        lsp_store: &mut LspStore,
+        peer_id: PeerId,
+        buffer_version: &clock::Global,
+        cx: &mut App,
+    ) -> <Self::ProtoRequest as proto::RequestMessage>::Response {
+        todo!()
+    }
+
+    async fn response_from_proto(
+        self,
+        message: <Self::ProtoRequest as proto::RequestMessage>::Response,
+        lsp_store: Entity<LspStore>,
+        buffer: Entity<Buffer>,
+        cx: AsyncApp,
+    ) -> Result<Self::Response> {
+        todo!()
+    }
+
+    fn buffer_id_from_proto(message: &Self::ProtoRequest) -> Result<BufferId> {
+        todo!()
     }
 }

@@ -1540,7 +1540,6 @@ impl Editor {
             }
 
             this.go_to_active_debug_line(window, cx);
-
             if let Some(buffer) = buffer.read(cx).as_singleton() {
                 if let Some(project) = this.project.as_ref() {
                     let handle = project.update(cx, |project, cx| {
@@ -3261,6 +3260,7 @@ impl Editor {
                     )
                 }
             }
+
             this.trigger_completion_on_input(&text, trigger_in_words, window, cx);
             linked_editing_ranges::refresh_linked_ranges(this, window, cx);
             this.refresh_inline_completion(true, false, window, cx);
@@ -4004,6 +4004,27 @@ impl Editor {
             display_map.splice_inlays(to_remove, to_insert, cx)
         });
         cx.notify();
+    }
+
+    fn refresh_semantic_tokens(&self, window: &mut Window, cx: &mut Context<Self>) -> Option<()> {
+        let project = self.project.as_ref()?;
+        for buffer in self.buffer.read(cx).all_buffers() {
+            let semantic_tokens = project.update(cx, |project, cx| {
+                project.semantic_tokens(buffer.clone(), cx)
+            });
+            let task: Task<Result<()>> = cx.spawn_in(window, async move |project, cx| {
+                let tokens = semantic_tokens.await?;
+                log::error!("file semantic tokens count: {}", tokens.len());
+                for token in tokens {
+                    log::error!("token {token:?}");
+                }
+                buffer.update(cx, |buffer, cx| {}).unwrap();
+
+                Ok(())
+            });
+            task.detach_and_log_err(cx);
+        }
+        Some(())
     }
 
     fn trigger_on_type_formatting(
@@ -16238,6 +16259,7 @@ impl Editor {
                 self.active_indent_guides_state.dirty = true;
                 self.refresh_active_diagnostics(cx);
                 self.refresh_code_actions(window, cx);
+                self.refresh_semantic_tokens(window, cx);
                 if self.has_active_inline_completion() {
                     self.update_visible_inline_completion(window, cx);
                 }
@@ -16317,9 +16339,11 @@ impl Editor {
                     predecessor: *predecessor,
                     excerpts: excerpts.clone(),
                 });
+                self.refresh_semantic_tokens(window, cx);
                 self.refresh_inlay_hints(InlayHintRefreshReason::NewLinesShown, cx);
             }
             multi_buffer::Event::ExcerptsRemoved { ids } => {
+                self.refresh_semantic_tokens(window, cx);
                 self.refresh_inlay_hints(InlayHintRefreshReason::ExcerptsRemoved(ids.clone()), cx);
                 let buffer = self.buffer.read(cx);
                 self.registered_buffers
@@ -16339,6 +16363,7 @@ impl Editor {
                 })
             }
             multi_buffer::Event::ExcerptsExpanded { ids } => {
+                self.refresh_semantic_tokens(window, cx);
                 self.refresh_inlay_hints(InlayHintRefreshReason::NewLinesShown, cx);
                 cx.emit(EditorEvent::ExcerptsExpanded { ids: ids.clone() })
             }

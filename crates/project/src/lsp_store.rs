@@ -14,7 +14,8 @@ use crate::{
     worktree_store::{WorktreeStore, WorktreeStoreEvent},
     yarn::YarnPathStore,
     CodeAction, Completion, CompletionSource, CoreCompletion, Hover, InlayHint, LspAction,
-    ProjectItem, ProjectPath, ProjectTransaction, ResolveState, Symbol, ToolchainStore,
+    ProjectItem, ProjectPath, ProjectTransaction, ResolveState, SemanticToken, Symbol,
+    ToolchainStore,
 };
 use anyhow::{anyhow, Context as _, Result};
 use async_trait::async_trait;
@@ -5351,6 +5352,25 @@ impl LspStore {
                     Ok(None)
                 }
             })
+        }
+    }
+
+    pub fn semantic_tokens(
+        &mut self,
+        buffer_handle: Entity<Buffer>,
+        cx: &mut Context<Self>,
+    ) -> Task<anyhow::Result<Vec<SemanticToken>>> {
+        let buffer = buffer_handle.read(cx);
+        let lsp_request = SemanticTokens;
+        if let Some((client, project_id)) = self.upstream_client() {
+            todo!("rpc not implemented yet")
+        } else {
+            self.request_lsp(
+                buffer_handle.clone(),
+                LanguageServerToQuery::FirstCapable,
+                lsp_request,
+                cx,
+            )
         }
     }
 
