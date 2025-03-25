@@ -21,7 +21,7 @@ use call::ActiveCall;
 use client::{Client, UserStore};
 use feature_flags::{FeatureFlagAppExt, ZedPro};
 use gpui::{
-    actions, div, px, Action, AnyElement, App, Context, Decorations, Element, Entity,
+    actions, div, px, Action, AnyElement, App, Context, Corner, Decorations, Element, Entity,
     InteractiveElement, Interactivity, IntoElement, MouseButton, ParentElement, Render, Stateful,
     StatefulInteractiveElement, Styled, Subscription, WeakEntity, Window,
 };
@@ -670,6 +670,7 @@ impl TitleBar {
         if let Some(user) = user_store.current_user() {
             let plan = user_store.current_plan();
             PopoverMenu::new("user-menu")
+                .anchor(Corner::TopRight)
                 .menu(move |window, cx| {
                     ContextMenu::build(window, cx, |menu, _, cx| {
                         menu.when(cx.has_flag::<ZedPro>(), |menu| {
@@ -734,6 +735,7 @@ impl TitleBar {
                 .anchor(gpui::Corner::TopRight)
         } else {
             PopoverMenu::new("user-menu")
+                .anchor(Corner::TopRight)
                 .menu(|window, cx| {
                     ContextMenu::build(window, cx, |menu, _, _| {
                         menu.action("Settings", zed_actions::OpenSettings.boxed_clone())
