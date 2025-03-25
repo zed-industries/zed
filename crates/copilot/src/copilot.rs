@@ -15,7 +15,10 @@ use gpui::{
 use http_client::github::get_release_by_tag_name;
 use http_client::HttpClient;
 use language::{
-    language_settings::{all_language_settings, language_settings, EditPredictionProvider},
+    language_settings::{
+        all_language_settings, language_settings, CopilotPredictionModel, CopilotSettings,
+        EditPredictionProvider,
+    },
     point_from_lsp, point_to_lsp, Anchor, Bias, Buffer, BufferSnapshot, Language, PointUtf16,
     ToPointUtf16,
 };
@@ -348,14 +351,14 @@ impl Copilot {
         };
 
         let language_settings = all_language_settings(None, cx);
-        let mut prev_prediction_model = language_settings.edit_predictions_selected_model();
+        let mut prev_prediction_model = language_settings.edit_prediction_model();
 
         this.start_copilot(true, false, cx);
         cx.observe_global::<SettingsStore>(move |this, cx| {
             this.start_copilot(true, false, cx);
 
             let language_settings = all_language_settings(None, cx);
-            let current_prediction_model = language_settings.edit_predictions_selected_model();
+            let current_prediction_model = language_settings.edit_prediction_model();
             if prev_prediction_model != current_prediction_model {
                 prev_prediction_model = current_prediction_model;
                 this.update_prediction_model(cx).detach()
@@ -402,7 +405,7 @@ impl Copilot {
         let prediction_model = language_settings
             .edit_predictions
             .copilot
-            .selected_model
+            .prediction_model
             .clone();
         let start_task = cx
             .spawn(async move |this, cx| {
@@ -485,7 +488,7 @@ impl Copilot {
         http: Arc<dyn HttpClient>,
         node_runtime: NodeRuntime,
         env: Option<HashMap<String, String>>,
-        prediction_model: Option<String>,
+        prediction_model: CopilotPredictionModel,
         this: WeakEntity<Self>,
         awaiting_sign_in_after_start: bool,
         cx: &mut AsyncApp,
@@ -707,7 +710,7 @@ impl Copilot {
         let prediction_model = language_settings
             .edit_predictions
             .copilot
-            .selected_model
+            .prediction_model
             .clone();
         let env = self.build_env(&language_settings.edit_predictions.copilot);
         let start_task = cx
@@ -752,9 +755,8 @@ impl Copilot {
                 let prediction_model = language_settings
                     .edit_predictions
                     .copilot
-                    .selected_model
+                    .prediction_model
                     .clone();
-
                 let request =
                     server
                         .lsp

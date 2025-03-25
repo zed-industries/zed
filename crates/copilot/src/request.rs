@@ -1,3 +1,4 @@
+use language::language_settings::CopilotPredictionModel;
 use serde::{Deserialize, Serialize};
 
 pub enum CheckStatus {}
@@ -228,8 +229,7 @@ impl lsp::request::Request for NotifyRejected {
 #[derive(Serialize, Deserialize, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct CopilotConfiguration {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub selected_completion_model: Option<String>,
+    pub selected_completion_model: CopilotPredictionModel,
     pub enable_auto_completions: bool,
 }
 

@@ -17,7 +17,10 @@ use gpui::{
 };
 use indoc::indoc;
 use language::{
-    language_settings::{self, all_language_settings, AllLanguageSettings, EditPredictionProvider},
+    language_settings::{
+        self, all_language_settings, AllLanguageSettings, CopilotPredictionModel,
+        EditPredictionProvider,
+    },
     EditPredictionsMode, File, Language,
 };
 use regex::Regex;
@@ -497,24 +500,20 @@ impl InlineCompletionButton {
         );
 
         menu = menu.separator().header("Select Prediction Model");
-        let selected_model = settings.edit_predictions_selected_model();
-
-        let copilot_codex_model = Some("copilot-codex".into());
-        let gpt_4o_copilot_model = Some("gpt-4o-copilot".into());
-
-        let is_copilot_codex_selected = selected_model == copilot_codex_model;
-        let is_gpt_4o_copilot_selected = selected_model == gpt_4o_copilot_model;
+        let current_model = settings.edit_prediction_model();
+        let copilot_codex_model = matches!(current_model, CopilotPredictionModel::CopilotCodex);
+        let gpt_4o_copilot_model = matches!(current_model, CopilotPredictionModel::Gpt4oCopilot);
 
         menu = menu.item(
             ContextMenuEntry::new("Copilot Codex")
-                .toggleable(IconPosition::Start, is_copilot_codex_selected)
+                .toggleable(IconPosition::Start, copilot_codex_model)
                 .documentation_aside(move |_| Label::new("Default").into_any_element())
                 .handler({
                     let fs = fs.clone();
                     move |_, cx| {
-                        toggle_edit_prediction_selected_model(
+                        toggle_edit_prediction_model(
                             fs.clone(),
-                            copilot_codex_model.clone(),
+                            CopilotPredictionModel::CopilotCodex,
                             cx,
                         );
                     }
@@ -523,13 +522,13 @@ impl InlineCompletionButton {
 
         menu = menu.item(
             ContextMenuEntry::new("GPT 4o")
-                .toggleable(IconPosition::Start, is_gpt_4o_copilot_selected)
+                .toggleable(IconPosition::Start, gpt_4o_copilot_model)
                 .handler({
                     let fs = fs.clone();
                     move |_, cx| {
-                        toggle_edit_prediction_selected_model(
+                        toggle_edit_prediction_model(
                             fs.clone(),
-                            gpt_4o_copilot_model.clone(),
+                            CopilotPredictionModel::Gpt4oCopilot,
                             cx,
                         );
                     }
@@ -917,19 +916,19 @@ fn toggle_edit_prediction_mode(fs: Arc<dyn Fs>, mode: EditPredictionsMode, cx: &
     }
 }
 
-fn toggle_edit_prediction_selected_model(fs: Arc<dyn Fs>, model: Option<String>, cx: &mut App) {
+fn toggle_edit_prediction_model(fs: Arc<dyn Fs>, model: CopilotPredictionModel, cx: &mut App) {
     let settings = AllLanguageSettings::get_global(cx);
-    let current_model = settings.edit_predictions_selected_model();
+    let current_model = settings.edit_prediction_model();
 
     if current_model != model {
         update_settings_file::<AllLanguageSettings>(fs, cx, move |settings, _cx| {
             if let Some(edit_predictions) = settings.edit_predictions.as_mut() {
-                edit_predictions.copilot.selected_model = model;
+                edit_predictions.copilot.prediction_model = model;
             } else {
                 settings.edit_predictions =
                     Some(language_settings::EditPredictionSettingsContent {
                         copilot: language_settings::CopilotSettingsContent {
-                            selected_model: model,
+                            prediction_model: model,
                             ..Default::default()
                         },
                         ..Default::default()
