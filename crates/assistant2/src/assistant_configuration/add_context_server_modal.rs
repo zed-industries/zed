@@ -10,7 +10,6 @@ use crate::AddContextServer;
 
 pub struct AddContextServerModal {
     workspace: WeakEntity<Workspace>,
-    focus_handle: FocusHandle,
     name_editor: Entity<Editor>,
     command_editor: Entity<Editor>,
 }
@@ -34,21 +33,18 @@ impl AddContextServerModal {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let focus_handle = cx.focus_handle();
         let name_editor = cx.new(|cx| Editor::single_line(window, cx));
         let command_editor = cx.new(|cx| Editor::single_line(window, cx));
 
         name_editor.update(cx, |editor, cx| {
             editor.set_placeholder_text("Context server name", cx);
         });
-        name_editor.focus_handle(cx).focus(window);
 
         command_editor.update(cx, |editor, cx| {
             editor.set_placeholder_text("Command to run the context server", cx);
         });
 
         Self {
-            focus_handle,
             name_editor,
             command_editor,
             workspace,
@@ -99,8 +95,8 @@ impl AddContextServerModal {
 impl ModalView for AddContextServerModal {}
 
 impl Focusable for AddContextServerModal {
-    fn focus_handle(&self, _cx: &App) -> FocusHandle {
-        self.focus_handle.clone()
+    fn focus_handle(&self, cx: &App) -> FocusHandle {
+        self.name_editor.focus_handle(cx).clone()
     }
 }
 
