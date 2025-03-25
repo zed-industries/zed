@@ -225,12 +225,11 @@ impl EditToolRequest {
                 temperature: Some(0.0),
             };
 
-            let stream = model.stream_completion_text(llm_request, &cx);
-            let mut chunks = stream.await?;
-
             let (mut tx, mut rx) = mpsc::channel::<String>(32);
-
+            let stream = model.stream_completion_text(llm_request, &cx);
             let reader_task = cx.background_spawn(async move {
+                let mut chunks = stream.await?;
+
                 while let Some(chunk) = chunks.stream.next().await {
                     if let Some(chunk) = chunk.log_err() {
                         // we don't process here because the API fails
