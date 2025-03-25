@@ -531,16 +531,23 @@ pub mod scope_map {
             let mut enabled = None;
             let mut cur_range = &self.entries[0..self.root_count];
             let mut depth = 0;
-            while !cur_range.is_empty() && depth < SCOPE_DEPTH_MAX && scope[depth].as_ref() != "" {
+
+            'search: while !cur_range.is_empty()
+                && depth < SCOPE_DEPTH_MAX
+                && scope[depth].as_ref() != ""
+            {
                 for entry in cur_range {
                     if entry.scope == scope[depth].as_ref() {
                         // note:
                         enabled = entry.enabled.or(enabled);
                         cur_range = &self.entries[entry.descendants.clone()];
                         depth += 1;
+                        continue 'search;
                     }
                 }
+                break 'search;
             }
+
             return enabled.map_or(EnabledStatus::NotConfigured, |level_enabled| {
                 if level <= level_enabled {
                     EnabledStatus::Enabled
