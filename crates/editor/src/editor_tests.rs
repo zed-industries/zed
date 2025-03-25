@@ -6429,6 +6429,44 @@ async fn test_autoindent_selections(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_indent_selection_behavior(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let text = "let a = 42;\nlet b = 24;\nlet c = 7;";
+
+    let buffer = cx.new(|cx| Buffer::local(text, cx));
+    let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+    let (editor, cx) = cx.add_window_view(|window, cx| build_editor(buffer, window, cx));
+    editor
+        .condition::<crate::EditorEvent>(cx, |editor, cx| !editor.buffer.read(cx).is_parsing(cx))
+        .await;
+
+    editor.update_in(cx, |editor, window, cx| {
+        editor.change_selections(None, window, cx, |s| {
+            s.select_ranges([Point::new(1, 4)..Point::new(1, 8)])
+        });
+        editor.indent(&Default::default(), window, cx);
+    });
+
+    editor.update(cx, |editor, cx| {
+        let actual = editor.text(cx);
+        assert_eq!(actual, "let a = 42;\nlet     24;\nlet c = 7;");
+    });
+
+    editor.update_in(cx, |editor, window, cx| {
+        editor.change_selections(None, window, cx, |s| {
+            s.select_ranges([Point::new(2, 0)..Point::new(2, 10)])
+        });
+        editor.indent(&Default::default(), window, cx);
+    });
+
+    editor.update(cx, |editor, cx| {
+        let actual = editor.text(cx);
+        assert_eq!(actual, "let a = 42;\nlet     24;\n    let c = 7;");
+    });
+}
+
+#[gpui::test]
 async fn test_autoclose_and_auto_surround_pairs(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 

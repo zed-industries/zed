@@ -8021,24 +8021,36 @@ impl Editor {
                 (_, IndentKind::Tab) => IndentSize::tab(),
             };
 
-            let start = if has_multiple_rows || current_indent.len < selection.start.column {
-                0
-            } else {
-                selection.start.column
-            };
-            let row_start = Point::new(row, start);
-            edits.push((
-                row_start..row_start,
-                indent_delta.chars().collect::<String>(),
-            ));
+            if has_multiple_rows 
+                || (selection.start.column == 0 
+                && selection.end.column == snapshot.line_len(MultiBufferRow(row))) 
+                || row != selection.start.row {
+                let row_start = Point::new(row, 0);
+                edits.push((
+                    row_start..row_start,
+                    indent_delta.chars().collect::<String>(),
+                ));
 
-            // Update this selection's endpoints to reflect the indentation.
-            if row == selection.start.row {
-                selection.start.column += indent_delta.len;
-            }
-            if row == selection.end.row {
-                selection.end.column += indent_delta.len;
-                delta_for_end_row = indent_delta.len;
+                if row == selection.start.row {
+                    selection.start.column = if has_multiple_rows {
+                        selection.start.column + indent_delta.len
+                    } else {
+                        0
+                    };
+                }
+                if row == selection.end.row {
+                    selection.end.column += indent_delta.len;
+                    delta_for_end_row = indent_delta.len;
+                }
+            } else {
+                edits.push((
+                    selection.range(),
+                    indent_delta.chars().collect::<String>(),
+                ));
+
+                let new_column = selection.start.column + indent_delta.len;
+                selection.start.column = new_column;
+                selection.end.column = new_column;
             }
         }
 
