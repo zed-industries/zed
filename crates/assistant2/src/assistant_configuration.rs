@@ -9,7 +9,6 @@ use ui::{
     prelude::*, Disclosure, Divider, DividerColor, ElevationIndex, Indicator, Switch, Tooltip,
 };
 use util::ResultExt as _;
-use zed_actions::assistant::OpenPromptLibrary;
 use zed_actions::ExtensionCategoryFilter;
 
 pub struct AssistantConfiguration {
@@ -170,7 +169,6 @@ impl AssistantConfiguration {
 
         v_flex()
             .p(DynamicSpacing::Base16.rems(cx))
-            .mt_1()
             .gap_2()
             .flex_1()
             .child(
@@ -352,33 +350,6 @@ impl Render for AssistantConfiguration {
             .bg(cx.theme().colors().panel_background)
             .size_full()
             .overflow_y_scroll()
-            .child(
-                v_flex()
-                    .p(DynamicSpacing::Base16.rems(cx))
-                    .gap_2()
-                    .child(
-                        v_flex()
-                            .gap_0p5()
-                            .child(Headline::new("Prompt Library").size(HeadlineSize::Small))
-                            .child(
-                                Label::new("Create reusable prompts and tag which ones you want sent in every LLM interaction.")
-                                    .color(Color::Muted),
-                            ),
-                    )
-                    .child(
-                        Button::new("open-prompt-library", "Open Prompt Library")
-                            .style(ButtonStyle::Filled)
-                            .layer(ElevationIndex::ModalSurface)
-                            .full_width()
-                            .icon(IconName::Book)
-                            .icon_size(IconSize::Small)
-                            .icon_position(IconPosition::Start)
-                            .on_click(|_event, window, cx| {
-                                window.dispatch_action(OpenPromptLibrary.boxed_clone(), cx)
-                            }),
-                    ),
-            )
-            .child(Divider::horizontal().color(DividerColor::Border))
             .child(self.render_context_servers_section(cx))
             .child(Divider::horizontal().color(DividerColor::Border))
             .child(
