@@ -376,11 +376,11 @@ impl ActiveThread {
             }
             ThreadEvent::DoneStreaming => {
                 if !self.thread().read(cx).is_generating() {
-                    self.show_notification("Agent has finished.", window, cx);
+                    self.show_notification("Your changes have been applied.", window, cx);
                 }
             }
             ThreadEvent::ToolConfirmationNeeded => {
-                self.show_notification("Tool confirmation needed.", window, cx);
+                self.show_notification("There's a tool confirmation needed.", window, cx);
             }
             ThreadEvent::StreamedAssistantText(message_id, text) => {
                 if let Some(rendered_message) = self.rendered_messages_by_id.get_mut(&message_id) {
