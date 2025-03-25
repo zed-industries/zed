@@ -146,12 +146,13 @@ pub struct GitStoreCheckpoint {
 }
 
 pub struct Repository {
-    pub worktree_id: WorktreeId,
     pub repository_entry: RepositoryEntry,
     pub merge_message: Option<String>,
     pub completed_scan_id: usize,
+    pub worktree_id: Option<WorktreeId>,
     commit_message_buffer: Option<Entity<Buffer>>,
     git_store: WeakEntity<GitStore>,
+    // The next two fields are always None for non-local repositories.
     project_environment: Option<WeakEntity<ProjectEnvironment>>,
     state: RepositoryState,
     job_sender: mpsc::UnboundedSender<GitJob>,
@@ -1012,9 +1013,10 @@ impl GitStore {
                             continue;
                         };
 
-                        let existing_repo = self.repositories.values().find(|repo| {
-                            repo.read(cx).id() == (worktree.id(), repo_entry.work_directory_id())
-                        });
+                        let existing_repo = self
+                            .repositories
+                            .values()
+                            .find(|repo| repo.read(cx).id() == repo_entry.work_directory_id());
 
                         let repo = if let Some(existing_repo) = existing_repo {
                             // Update the statuses and merge message but keep everything else.
@@ -1029,12 +1031,12 @@ impl GitStore {
                             existing_repo
                         } else {
                             cx.new(|_| Repository {
+                                worktree_id: Some(worktree.id()),
                                 project_environment: self
                                     .project_environment()
                                     .as_ref()
                                     .map(|env| env.downgrade()),
                                 git_store: git_store.clone(),
-                                worktree_id: worktree.id(),
                                 askpass_delegates: Default::default(),
                                 latest_askpass_id: 0,
                                 repository_entry: repo_entry.clone(),
@@ -1484,8 +1486,8 @@ impl GitStore {
                     cx.new(|_| Repository {
                         commit_message_buffer: None,
                         git_store,
-                        project_environment: todo!(),
-                        worktree_id: todo!(),
+                        project_environment: None,
+                        worktree_id: None,
                         repository_entry: RepositoryEntry {
                             work_directory_id,
                             current_branch: None,
@@ -2177,12 +2179,11 @@ impl GitStore {
             this.repositories
                 .values()
                 .find(|repository_handle| {
-                    repository_handle.read(cx).worktree_id == worktree_id
-                        && repository_handle
-                            .read(cx)
-                            .repository_entry
-                            .work_directory_id()
-                            == work_directory_id
+                    repository_handle
+                        .read(cx)
+                        .repository_entry
+                        .work_directory_id()
+                        == work_directory_id
                 })
                 .context("missing repository handle")
                 .cloned()
@@ -2536,8 +2537,8 @@ impl Repository {
         self.git_store.upgrade()
     }
 
-    fn id(&self) -> (WorktreeId, ProjectEntryId) {
-        (self.worktree_id, self.repository_entry.work_directory_id())
+    fn id(&self) -> ProjectEntryId {
+        self.repository_entry.work_directory_id()
     }
 
     pub fn current_branch(&self) -> Option<&Branch> {
@@ -3008,8 +3009,9 @@ impl Repository {
     ) -> impl Future<Output = HashMap<String, String>> + 'static {
         let task = self.project_environment.as_ref().and_then(|env| {
             env.update(cx, |env, cx| {
+                // FIXME
                 env.get_environment(
-                    Some(self.worktree_id),
+                    None,
                     Some(
                         self.repository_entry
                             .work_directory_abs_path
