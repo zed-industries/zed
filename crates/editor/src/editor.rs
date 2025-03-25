@@ -60,6 +60,7 @@ use collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use convert_case::{Case, Casing};
 use display_map::*;
 pub use display_map::{DisplayPoint, FoldPlaceholder};
+use editor_settings::GoToDefinitionFallback;
 pub use editor_settings::{
     CurrentLineHighlight, EditorSettings, ScrollBeyondLastLine, SearchSettings, ShowScrollbar,
 };
@@ -12662,15 +12663,21 @@ impl Editor {
     ) -> Task<Result<Navigated>> {
         let definition =
             self.go_to_definition_of_kind(GotoDefinitionKind::Symbol, false, window, cx);
+        let fallback_strategy = EditorSettings::get_global(cx).go_to_definition_fallback;
         cx.spawn_in(window, async move |editor, cx| {
             if definition.await? == Navigated::Yes {
                 return Ok(Navigated::Yes);
             }
-            match editor.update_in(cx, |editor, window, cx| {
-                editor.find_all_references(&FindAllReferences, window, cx)
-            })? {
-                Some(references) => references.await,
-                None => Ok(Navigated::No),
+            match fallback_strategy {
+                GoToDefinitionFallback::None => Ok(Navigated::No),
+                GoToDefinitionFallback::FindAllReferences => {
+                    match editor.update_in(cx, |editor, window, cx| {
+                        editor.find_all_references(&FindAllReferences, window, cx)
+                    })? {
+                        Some(references) => references.await,
+                        None => Ok(Navigated::No),
+                    }
+                }
             }
         })
     }
