@@ -698,13 +698,13 @@ dependencies = [
  "collections",
  "derive_more",
  "gpui",
+ "icons",
  "language",
  "language_model",
  "parking_lot",
  "project",
  "serde",
  "serde_json",
- "ui",
 ]
 
 [[package]]
@@ -3198,6 +3198,7 @@ dependencies = [
  "extension",
  "futures 0.3.31",
  "gpui",
+ "icons",
  "language_model",
  "log",
  "parking_lot",
@@ -3207,7 +3208,6 @@ dependencies = [
  "serde_json",
  "settings",
  "smol",
- "ui",
  "url",
  "util",
 ]

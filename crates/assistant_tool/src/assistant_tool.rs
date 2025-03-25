@@ -1,15 +1,16 @@
 mod tool_registry;
 mod tool_working_set;
 
+use std::fmt::{self, Debug, Formatter};
+use std::sync::Arc;
+
 use anyhow::Result;
 use collections::{HashMap, HashSet};
 use gpui::{App, Context, Entity, SharedString, Task};
+use icons::IconName;
 use language::Buffer;
 use language_model::LanguageModelRequestMessage;
 use project::Project;
-use std::fmt::{self, Debug, Formatter};
-use std::sync::Arc;
-use ui::IconName;
 
 pub use crate::tool_registry::*;
 pub use crate::tool_working_set::*;
