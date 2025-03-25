@@ -102,8 +102,8 @@ pub fn init(cx: &mut App) {
         workspace.register_action(|_, _: &LeaveCall, window, cx| {
             CollabPanel::leave_call(window, cx);
         });
-        workspace.register_action(|_, _: &ShareProject, window, cx| {
-            let project = cx.entity().read(cx).project().clone();
+        workspace.register_action(|workspace, _: &ShareProject, window, cx| {
+            let project = workspace.project().clone();
             println!("{project:?}");
             window.defer(cx, move |_window, cx| {
                 ActiveCall::global(cx).update(cx, move |call, cx| {
