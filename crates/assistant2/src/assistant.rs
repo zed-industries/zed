@@ -14,6 +14,7 @@ mod message_editor;
 mod terminal_codegen;
 mod terminal_inline_assistant;
 mod thread;
+mod thread_diff;
 mod thread_history;
 mod thread_store;
 mod tool_selector;
@@ -36,6 +37,7 @@ use crate::assistant_configuration::AddContextServerModal;
 pub use crate::assistant_panel::{AssistantPanel, ConcreteAssistantPanelDelegate};
 pub use crate::inline_assistant::InlineAssistant;
 pub use crate::thread::{Message, RequestKind, Thread, ThreadEvent};
+pub(crate) use crate::thread_diff::*;
 pub use crate::thread_store::ThreadStore;
 
 actions!(

@@ -453,6 +453,7 @@ dependencies = [
  "assistant_slash_command",
  "assistant_tool",
  "async-watch",
+ "buffer_diff",
  "chrono",
  "client",
  "clock",

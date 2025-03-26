@@ -18,9 +18,7 @@ use language_model::{
     LanguageModelToolUseId, MaxMonthlySpendReachedError, MessageContent, PaymentRequiredError,
     Role, StopReason, TokenUsage,
 };
-use project::git_store::{
-    GitStore, GitStoreCheckpoint, GitStoreVirtualBranch, GitStoreVirtualBranchChanges,
-};
+use project::git_store::{GitStore, GitStoreCheckpoint};
 use project::{Project, Worktree};
 use prompt_store::{
     AssistantSystemPromptContext, PromptBuilder, RulesFile, WorktreeInfoForSystemPrompt,
@@ -36,6 +34,7 @@ use crate::thread_store::{
     SerializedToolUse,
 };
 use crate::tool_use::{PendingToolUse, ToolUse, ToolUseState};
+use crate::{ThreadDiff, ThreadDiffSource};
 
 #[derive(Debug, Clone, Copy)]
 pub enum RequestKind {
@@ -143,12 +142,6 @@ pub struct ThreadCheckpoint {
     git_checkpoint: GitStoreCheckpoint,
 }
 
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
-pub enum ChangeSource {
-    User,
-    Assistant,
-}
-
 #[derive(Copy, Clone, Debug)]
 pub enum ThreadFeedback {
     Positive,
@@ -198,9 +191,7 @@ pub struct Thread {
     initial_project_snapshot: Shared<Task<Option<Arc<ProjectSnapshot>>>>,
     cumulative_token_usage: TokenUsage,
     feedback: Option<ThreadFeedback>,
-    last_diff_checkpoint: Option<Task<Result<GitStoreCheckpoint>>>,
-    diff_branch: Shared<Task<Option<GitStoreVirtualBranch>>>,
-    diff_branch_changes: GitStoreVirtualBranchChanges,
+    diff: Entity<ThreadDiff>,
 }
 
 impl Thread {
@@ -210,7 +201,7 @@ impl Thread {
         prompt_builder: Arc<PromptBuilder>,
         cx: &mut Context<Self>,
     ) -> Self {
-        let mut this = Self {
+        Self {
             id: ThreadId::new(),
             updated_at: Utc::now(),
             summary: None,
@@ -238,21 +229,8 @@ impl Thread {
             },
             cumulative_token_usage: TokenUsage::default(),
             feedback: None,
-            last_diff_checkpoint: None,
-            diff_branch_changes: GitStoreVirtualBranchChanges::default(),
-            diff_branch: cx
-                .background_spawn(
-                    project
-                        .read(cx)
-                        .git_store()
-                        .read(cx)
-                        .create_virtual_branch(cx)
-                        .log_err(),
-                )
-                .shared(),
-        };
-        this.update_diff(ChangeSource::User, cx);
-        this
+            diff: cx.new(|cx| ThreadDiff::new(project.clone(), cx)),
+        }
     }
 
     pub fn deserialize(
@@ -273,7 +251,7 @@ impl Thread {
         let tool_use =
             ToolUseState::from_serialized_messages(tools.clone(), &serialized.messages, |_| true);
 
-        let mut this = Self {
+        Self {
             id,
             updated_at: serialized.updated_at,
             summary: Some(serialized.summary),
@@ -305,6 +283,7 @@ impl Thread {
             pending_completions: Vec::new(),
             last_restore_checkpoint: None,
             pending_checkpoint: None,
+            diff: cx.new(|cx| ThreadDiff::new(project.clone(), cx)),
             project,
             prompt_builder,
             tools,
@@ -314,12 +293,7 @@ impl Thread {
             // TODO: persist token usage?
             cumulative_token_usage: TokenUsage::default(),
             feedback: None,
-            last_diff_checkpoint: None,
-            diff_branch: Task::ready(None).shared(),
-            diff_branch_changes: GitStoreVirtualBranchChanges::default(),
-        };
-        this.update_diff(ChangeSource::User, cx);
-        this
+        }
     }
 
     pub fn id(&self) -> &ThreadId {
@@ -1243,7 +1217,9 @@ impl Thread {
         tool: Arc<dyn Tool>,
         cx: &mut Context<Thread>,
     ) -> Task<()> {
-        self.update_diff(ChangeSource::User, cx);
+        self.diff.update(cx, |diff, cx| {
+            diff.compute_changes(ThreadDiffSource::User, cx)
+        });
 
         let run_tool = tool.run(
             input,
@@ -1259,7 +1235,9 @@ impl Thread {
 
                 thread
                     .update(cx, |thread, cx| {
-                        thread.update_diff(ChangeSource::Assistant, cx);
+                        thread.diff.update(cx, |diff, cx| {
+                            diff.compute_changes(ThreadDiffSource::Assistant, cx)
+                        });
 
                         let pending_tool_use = thread
                             .tool_use
@@ -1297,54 +1275,6 @@ impl Thread {
             None,
             cx,
         );
-    }
-
-    fn update_diff(&mut self, source: ChangeSource, cx: &mut Context<Self>) {
-        let last_checkpoint = self.last_diff_checkpoint.take();
-        let git_store = self.project.read(cx).git_store().clone();
-        let checkpoint = git_store.read(cx).checkpoint(cx);
-        let virtual_branch = self.diff_branch.clone();
-        self.last_diff_checkpoint = Some(cx.spawn(async move |this, cx| {
-            let checkpoint = checkpoint.await?;
-
-            if let Some(virtual_branch) = virtual_branch.await {
-                if let Some(last_checkpoint) = last_checkpoint {
-                    if let Ok(last_checkpoint) = last_checkpoint.await {
-                        if source == ChangeSource::User {
-                            let diff = git_store
-                                .read_with(cx, |store, cx| {
-                                    store.diff_checkpoints(last_checkpoint, checkpoint.clone(), cx)
-                                })?
-                                .await;
-
-                            if let Ok(diff) = diff {
-                                _ = git_store
-                                    .read_with(cx, |store, cx| {
-                                        store.apply_diff_to_virtual_branch(
-                                            virtual_branch.clone(),
-                                            diff,
-                                            cx,
-                                        )
-                                    })?
-                                    .await;
-                            }
-                        }
-                    }
-                }
-
-                let diff_branch_changes = git_store
-                    .read_with(cx, |store, cx| {
-                        store.changes_for_virtual_branch(virtual_branch, cx)
-                    })?
-                    .await;
-                this.update(cx, |this, cx| {
-                    this.diff_branch_changes = diff_branch_changes.log_err().unwrap_or_default();
-                    cx.emit(ThreadEvent::DiffChanged);
-                })?;
-            }
-
-            Ok(checkpoint)
-        }));
     }
 
     /// Cancels the last pending completion, if there are any pending.
