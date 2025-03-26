@@ -16,6 +16,7 @@ enum Mode {
 #[derive(Clone)]
 pub struct ViewProfileMode {
     profile_id: Arc<str>,
+    configure_tools: NavigableEntry,
 }
 
 #[derive(Clone)]
@@ -58,9 +59,9 @@ impl ManageProfilesModal {
             focus_handle,
             mode: Mode::ChooseProfile(cx.new(|cx| {
                 let delegate = ProfilePickerDelegate::new(
-                    move |profile_id, _window, cx| {
-                        handle.update(cx, |this, _cx| {
-                            this.view_profile(profile_id.clone());
+                    move |profile_id, window, cx| {
+                        handle.update(cx, |this, cx| {
+                            this.view_profile(profile_id.clone(), window, cx);
                         })
                     },
                     cx,
@@ -70,11 +71,25 @@ impl ManageProfilesModal {
         }
     }
 
-    pub fn view_profile(&mut self, profile_id: Arc<str>) {
-        self.mode = Mode::ViewProfile(ViewProfileMode { profile_id });
+    pub fn view_profile(
+        &mut self,
+        profile_id: Arc<str>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.mode = Mode::ViewProfile(ViewProfileMode {
+            profile_id,
+            configure_tools: NavigableEntry::focusable(cx),
+        });
+        self.focus_handle.focus(window);
     }
 
-    fn configure_tools(&mut self, profile_id: Arc<str>) {
+    fn configure_tools(
+        &mut self,
+        profile_id: Arc<str>,
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
+    ) {
         self.mode = Mode::ConfigureTools(ConfigureToolsMode { profile_id });
     }
 
@@ -103,8 +118,6 @@ impl ManageProfilesModal {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        let test = NavigableEntry::focusable(cx);
-
         Navigable::new(
             div()
                 .track_focus(&self.focus_handle)
@@ -113,18 +126,22 @@ impl ManageProfilesModal {
                     v_flex().child(
                         div()
                             .id("configure-tools")
-                            .track_focus(&test.focus_handle)
+                            .track_focus(&mode.configure_tools.focus_handle)
                             .child(
-                                ListItem::new("")
-                                    .toggle_state(test.focus_handle.contains_focused(window, cx))
+                                ListItem::new("configure-tools")
+                                    .toggle_state(
+                                        mode.configure_tools
+                                            .focus_handle
+                                            .contains_focused(window, cx),
+                                    )
                                     .inset(true)
                                     .spacing(ListItemSpacing::Sparse)
                                     .start_slot(Icon::new(IconName::Cog))
                                     .child(Label::new("Configure Tools"))
                                     .on_click({
                                         let profile_id = mode.profile_id.clone();
-                                        cx.listener(move |this, _, _window, _cx| {
-                                            this.configure_tools(profile_id.clone());
+                                        cx.listener(move |this, _, window, cx| {
+                                            this.configure_tools(profile_id.clone(), window, cx);
                                         })
                                     }),
                             ),
@@ -132,7 +149,7 @@ impl ManageProfilesModal {
                 )
                 .into_any_element(),
         )
-        .entry(test)
+        .entry(mode.configure_tools)
     }
 
     fn render_configure_tools(
