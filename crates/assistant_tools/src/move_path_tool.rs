@@ -7,6 +7,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::{path::Path, sync::Arc};
 use ui::IconName;
+use util::markdown::MarkdownString;
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct MovePathToolInput {
@@ -60,16 +61,17 @@ impl Tool for MovePathTool {
     fn ui_text(&self, input: &serde_json::Value) -> String {
         match serde_json::from_value::<MovePathToolInput>(input.clone()) {
             Ok(input) => {
-                let src = input.source_path.as_str();
-                let dest = input.destination_path.as_str();
-                let src_path = Path::new(src);
-                let dest_path = Path::new(dest);
+                let src = MarkdownString::escape(&input.source_path);
+                let dest = MarkdownString::escape(&input.destination_path);
+                let src_path = Path::new(&input.source_path);
+                let dest_path = Path::new(&input.destination_path);
 
                 match dest_path
                     .file_name()
                     .and_then(|os_str| os_str.to_os_string().into_string().ok())
                 {
                     Some(filename) if src_path.parent() == dest_path.parent() => {
+                        let filename = MarkdownString::escape(&filename);
                         format!("Rename `{src}` to `{filename}`")
                     }
                     _ => {
