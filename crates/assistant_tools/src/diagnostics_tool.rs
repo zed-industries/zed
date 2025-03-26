@@ -25,7 +25,17 @@ pub struct DiagnosticsToolInput {
     ///
     /// If you wanna access diagnostics for `dolor.txt` in `ipsum`, you should use the path `ipsum/dolor.txt`.
     /// </example>
+    #[serde(deserialize_with = "deserialize_path")]
     pub path: Option<String>,
+}
+
+fn deserialize_path<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let opt = Option::<String>::deserialize(deserializer)?;
+    // The model passes an empty string sometimes
+    Ok(opt.filter(|s| !s.is_empty()))
 }
 
 pub struct DiagnosticsTool;
@@ -71,7 +81,7 @@ impl Tool for DiagnosticsTool {
         input: serde_json::Value,
         _messages: &[LanguageModelRequestMessage],
         project: Entity<Project>,
-        _action_log: Entity<ActionLog>,
+        action_log: Entity<ActionLog>,
         cx: &mut App,
     ) -> Task<Result<String>> {
         match serde_json::from_value::<DiagnosticsToolInput>(input)
@@ -139,6 +149,10 @@ impl Tool for DiagnosticsTool {
                         ));
                     }
                 }
+
+                action_log.update(cx, |action_log, _cx| {
+                    action_log.checked_project_diagnostics();
+                });
 
                 if has_diagnostics {
                     Task::ready(Ok(output))
