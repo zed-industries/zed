@@ -1,4 +1,4 @@
-use crate::status::GitStatus;
+use crate::status::{FileStatus, GitStatus};
 use crate::{Oid, SHORT_SHA_LENGTH};
 use anyhow::{anyhow, Context as _, Result};
 use collections::HashMap;
@@ -1304,31 +1304,38 @@ impl GitRepository for RealGitRepository {
     ) -> BoxFuture<Result<HashMap<RepoPath, VirtualBranchChange>>> {
         let working_directory = self.working_directory();
         let git_binary_path = self.git_binary_path.clone();
-        let working_copy_checkpoint = self.checkpoint(cx.clone());
 
         let executor = cx.background_executor().clone();
         cx.background_spawn(async move {
             let working_directory = working_directory?;
-            let working_copy_checkpoint = working_copy_checkpoint.await?;
             let mut git = GitBinary::new(git_binary_path, working_directory, executor);
             git.with_index(virtual_branch.id, async move |git| {
-                let diff_files_output = git
+                let status: GitStatus = git
                     .run(&[
-                        "diff",
-                        "--name-only",
-                        "--staged",
-                        &working_copy_checkpoint.commit_sha.to_string(),
+                        "--no-optional-locks",
+                        "status",
+                        "--porcelain=v1",
+                        "--untracked-files=all",
+                        "--no-renames",
+                        "-z",
                     ])
-                    .await?;
+                    .await?
+                    .parse()?;
 
                 let mut changes = HashMap::default();
-                for file_path in diff_files_output.lines().filter(|line| !line.is_empty()) {
+                for (path, status) in status.entries.iter() {
+                    if let FileStatus::Tracked(tracked) = status {
+                        if tracked.worktree_status == crate::status::StatusCode::Unmodified {
+                            continue;
+                        }
+                    }
+
                     let branch_content = git
-                        .run(&["show", &format!(":0:{}", file_path)])
+                        .run(&["show", &format!(":0:{}", path)])
                         .await
                         .unwrap_or_default();
                     changes.insert(
-                        RepoPath::from_str(file_path),
+                        path.clone(),
                         VirtualBranchChange {
                             branch_text: branch_content,
                         },
@@ -2010,18 +2017,43 @@ mod tests {
             .await
             .unwrap();
 
-        let changes = repo
-            .changes_for_virtual_branch(virtual_branch, cx.to_async())
-            .await
-            .unwrap();
         assert_eq!(
-            changes.into_iter().collect::<Vec<_>>(),
+            repo.changes_for_virtual_branch(virtual_branch, cx.to_async())
+                .await
+                .unwrap()
+                .into_iter()
+                .collect::<Vec<_>>(),
             vec![(
                 RepoPath::from_str("file1"),
                 VirtualBranchChange {
                     branch_text: "".into()
                 }
             )]
+        );
+
+        smol::fs::write(repo_dir.path().join("file2"), "file2-changed\n")
+            .await
+            .unwrap();
+        assert_eq!(
+            repo.changes_for_virtual_branch(virtual_branch, cx.to_async())
+                .await
+                .unwrap()
+                .into_iter()
+                .collect::<Vec<_>>(),
+            vec![
+                (
+                    RepoPath::from_str("file2"),
+                    VirtualBranchChange {
+                        branch_text: "file2".into()
+                    }
+                ),
+                (
+                    RepoPath::from_str("file1"),
+                    VirtualBranchChange {
+                        branch_text: "".into()
+                    }
+                )
+            ]
         );
     }
 
