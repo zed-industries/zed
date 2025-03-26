@@ -3142,7 +3142,7 @@ impl CodegenAlternative {
                         let result = diff.await;
 
                         let error_message = result.as_ref().err().map(|error| error.to_string());
-                        let token_usage = result.as_ref().ok();
+                        let _token_usage = result.as_ref().ok();
                         report_assistant_event(
                             AssistantEvent {
                                 conversation_id: None,
