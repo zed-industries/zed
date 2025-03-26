@@ -3018,6 +3018,7 @@ The name of any font family installed on the system.
   "calt": false
 }
 ```
+
 - Platform: macOS and Windows.
 
 **Options**
