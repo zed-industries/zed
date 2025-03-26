@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use anyhow::{anyhow, Result};
-use assistant_settings::AssistantSettings;
+use assistant_settings::{AgentProfile, AssistantSettings};
 use assistant_tool::{ToolId, ToolSource, ToolWorkingSet};
 use chrono::{DateTime, Utc};
 use collections::HashMap;
@@ -187,35 +187,42 @@ impl ThreadStore {
         })
     }
 
-    pub fn load_default_profile(&self, cx: &mut Context<Self>) {
+    fn load_default_profile(&self, cx: &Context<Self>) {
         let assistant_settings = AssistantSettings::get_global(cx);
 
-        if let Some(profile) = assistant_settings
-            .profiles
-            .get(&assistant_settings.default_profile)
-        {
-            self.tools.disable_source(ToolSource::Native, cx);
+        self.load_profile_by_id(&assistant_settings.default_profile, cx);
+    }
+
+    pub fn load_profile_by_id(&self, profile_id: &Arc<str>, cx: &Context<Self>) {
+        let assistant_settings = AssistantSettings::get_global(cx);
+
+        if let Some(profile) = assistant_settings.profiles.get(profile_id) {
+            self.load_profile(profile);
+        }
+    }
+
+    pub fn load_profile(&self, profile: &AgentProfile) {
+        self.tools.disable_all_tools();
+        self.tools.enable(
+            ToolSource::Native,
+            &profile
+                .tools
+                .iter()
+                .filter_map(|(tool, enabled)| enabled.then(|| tool.clone()))
+                .collect::<Vec<_>>(),
+        );
+
+        for (context_server_id, preset) in &profile.context_servers {
             self.tools.enable(
-                ToolSource::Native,
-                &profile
+                ToolSource::ContextServer {
+                    id: context_server_id.clone().into(),
+                },
+                &preset
                     .tools
                     .iter()
                     .filter_map(|(tool, enabled)| enabled.then(|| tool.clone()))
                     .collect::<Vec<_>>(),
-            );
-
-            for (context_server_id, preset) in &profile.context_servers {
-                self.tools.enable(
-                    ToolSource::ContextServer {
-                        id: context_server_id.clone().into(),
-                    },
-                    &preset
-                        .tools
-                        .iter()
-                        .filter_map(|(tool, enabled)| enabled.then(|| tool.clone()))
-                        .collect::<Vec<_>>(),
-                )
-            }
+            )
         }
     }
 
