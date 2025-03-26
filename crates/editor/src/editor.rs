@@ -17442,7 +17442,6 @@ impl Editor {
         self.load_diff_task.clone()
     }
 
-    // TODO kb
     fn schedule_default_metadata_update(
         &mut self,
         pane: &Entity<Pane>,
@@ -17459,16 +17458,17 @@ impl Editor {
                     .ok()
             })
             .flatten()?;
-        let project = self.project.as_ref()?;
         let file = project::File::from_dyn(self.buffer().read(cx).as_singleton()?.read(cx).file())?;
         let buffer_path = file.worktree.read(cx).absolutize(&file.path).ok()?;
 
         // TODO kb config option to disable this behavior
-        let oo = DB.get_aa(&buffer_path, workspace_id, pane_id).log_err()?;
-        // cx.spawn(|editor, cx| async move {
-        //     //
-        // })
-        // .detach();
+        let item_id = DB
+            .most_relevant_editor_item(&buffer_path, workspace_id, pane_id)
+            .log_err()?? as u64;
+
+        // TODO kb do not overwrite non-default values
+        self.read_metadata_from_db(item_id, workspace_id, window, cx);
+
         Some(())
     }
 
@@ -17485,6 +17485,7 @@ impl Editor {
             let buffer_snapshot = OnceCell::new();
 
             if let Some(selections) = DB.get_editor_selections(item_id, workspace_id).log_err() {
+                dbg!(selections.len());
                 if !selections.is_empty() {
                     let snapshot =
                         buffer_snapshot.get_or_init(|| self.buffer.read(cx).snapshot(cx));
@@ -17498,6 +17499,7 @@ impl Editor {
             };
 
             if let Some(folds) = DB.get_editor_folds(item_id, workspace_id).log_err() {
+                dbg!(folds.len());
                 if !folds.is_empty() {
                     let snapshot =
                         buffer_snapshot.get_or_init(|| self.buffer.read(cx).snapshot(cx));

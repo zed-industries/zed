@@ -398,27 +398,20 @@ VALUES {placeholders};
         .await
     }
 
-    /* TODO kb
-
-    select e.item_id
-    from editors e
-    join workspaces w
-    on w.workspace_id = e.workspace_id
-    join items i
-    on e.item_id = i.item_id
-    -- where e.buffer_path = ?
-    order by i.pane_id = 161065 desc, i.item_id desc
-    limit 1;
-    */
     query! {
-        pub fn get_aa(
+        pub fn most_relevant_editor_item(
             buffer_path: &Path,
             workspace_id: WorkspaceId,
             pane_id: PaneId
-        ) -> Result<Vec<(usize, usize)>> {
-            SELECT start, end
-            FROM editor_selections
-            WHERE editor_id = ?1 AND workspace_id = ?2 AND pane_id = ?3
+        ) -> Result<Option<usize>> {
+            SELECT e.item_id
+            FROM editors e
+                     JOIN items i
+                          ON e.item_id = i.item_id
+            WHERE e.buffer_path = ?1
+            AND e.workspace_id = ?2
+            ORDER BY i.pane_id = ?3 DESC, i.item_id DESC
+            LIMIT 1
         }
     }
 }
