@@ -1,11 +1,6 @@
-use serde_json::Value;
 use std::{env, fs};
 use zed::settings::LspSettings;
-use zed_extension_api::{
-    self as zed,
-    serde_json::{self, json},
-    LanguageServerId, Result,
-};
+use zed_extension_api::{self as zed, serde_json::json, LanguageServerId, Result};
 
 const BINARY_NAME: &str = "vscode-html-language-server";
 const SERVER_PATH: &str =
