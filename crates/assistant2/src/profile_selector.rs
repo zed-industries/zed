@@ -54,29 +54,36 @@ impl ProfileSelector {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Entity<ContextMenu> {
-        ContextMenu::build(window, cx, |mut menu, _window, _cx| {
+        ContextMenu::build(window, cx, |mut menu, _window, cx| {
+            let settings = AssistantSettings::get_global(cx);
             let icon_position = IconPosition::Start;
 
             menu = menu.header("Profiles");
             for (profile_id, profile) in self.profiles.clone() {
-                menu = menu.toggleable_entry(profile.name.clone(), false, icon_position, None, {
-                    let fs = self.fs.clone();
-                    let thread_store = self.thread_store.clone();
-                    move |_window, cx| {
-                        update_settings_file::<AssistantSettings>(fs.clone(), cx, {
-                            let profile_id = profile_id.clone();
-                            move |settings, _cx| {
-                                settings.set_profile(profile_id.clone());
-                            }
-                        });
+                menu = menu.toggleable_entry(
+                    profile.name.clone(),
+                    profile_id == settings.default_profile,
+                    icon_position,
+                    None,
+                    {
+                        let fs = self.fs.clone();
+                        let thread_store = self.thread_store.clone();
+                        move |_window, cx| {
+                            update_settings_file::<AssistantSettings>(fs.clone(), cx, {
+                                let profile_id = profile_id.clone();
+                                move |settings, _cx| {
+                                    settings.set_profile(profile_id.clone());
+                                }
+                            });
 
-                        thread_store
-                            .update(cx, |this, cx| {
-                                this.load_default_profile(cx);
-                            })
-                            .log_err();
-                    }
-                });
+                            thread_store
+                                .update(cx, |this, cx| {
+                                    this.load_default_profile(cx);
+                                })
+                                .log_err();
+                        }
+                    },
+                );
             }
 
             menu = menu.separator();
@@ -171,17 +178,24 @@ impl ProfileSelector {
 }
 
 impl Render for ProfileSelector {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<'_, Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let settings = AssistantSettings::get_global(cx);
+        let profile = settings
+            .profiles
+            .get(&settings.default_profile)
+            .map(|profile| profile.name.clone())
+            .unwrap_or_else(|| "Unknown".into());
+
         let this = cx.entity().clone();
         PopoverMenu::new("tool-selector")
             .menu(move |window, cx| {
                 Some(this.update(cx, |this, cx| this.build_context_menu(window, cx)))
             })
             .trigger_with_tooltip(
-                IconButton::new("tool-selector-button", IconName::SettingsAlt)
-                    .icon_size(IconSize::Small)
-                    .icon_color(Color::Muted),
-                Tooltip::text("Customize Tools"),
+                Button::new("profile-selector-button", profile)
+                    .style(ButtonStyle::Filled)
+                    .label_size(LabelSize::Small),
+                Tooltip::text("Change Profile"),
             )
             .anchor(gpui::Corner::BottomLeft)
     }
