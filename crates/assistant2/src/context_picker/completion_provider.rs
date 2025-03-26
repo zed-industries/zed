@@ -262,7 +262,7 @@ impl ContextPickerCompletionProvider {
             cx,
         );
         let full_path = if let Some(directory) = directory {
-            format!("{}/{}", directory, file_name)
+            format!("{}{}", directory, file_name)
         } else {
             file_name.to_string()
         };
@@ -784,10 +784,10 @@ mod tests {
             assert_eq!(
                 current_completion_labels(editor),
                 &[
-                    format!("seven.txt {}", separator!("dir/b")).as_str(),
-                    format!("six.txt {}", separator!("dir/b")).as_str(),
-                    format!("five.txt {}", separator!("dir/b")).as_str(),
-                    format!("four.txt {}", separator!("dir/a")).as_str(),
+                    format!("seven.txt {}", separator!("dir/b/")).as_str(),
+                    format!("six.txt {}", separator!("dir/b/")).as_str(),
+                    format!("five.txt {}", separator!("dir/b/")).as_str(),
+                    format!("four.txt {}", separator!("dir/a/")).as_str(),
                     "Files & Directories",
                     "Fetch"
                 ]
@@ -818,7 +818,7 @@ mod tests {
             assert!(editor.has_visible_completions_menu());
             assert_eq!(
                 current_completion_labels(editor),
-                vec![format!("one.txt {}", separator!("dir/a")).as_str(),]
+                vec![format!("one.txt {}", separator!("dir/a/")).as_str(),]
             );
         });
 
