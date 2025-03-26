@@ -409,7 +409,7 @@ impl GitRepository for FakeGitRepository {
         unimplemented!()
     }
 
-    fn checkpoint(&self, _cx: AsyncApp) -> BoxFuture<Result<GitRepositoryCheckpoint>> {
+    fn checkpoint(&self, _cx: AsyncApp) -> BoxFuture<'static, Result<GitRepositoryCheckpoint>> {
         unimplemented!()
     }
 
@@ -460,7 +460,7 @@ impl GitRepository for FakeGitRepository {
         unimplemented!()
     }
 
-    fn diff_review_branch(
+    fn diff_for_review_branch(
         &self,
         _review_branch: GitReviewBranch,
         _cx: AsyncApp,

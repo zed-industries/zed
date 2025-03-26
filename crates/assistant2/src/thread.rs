@@ -199,7 +199,7 @@ pub struct Thread {
     initial_project_snapshot: Shared<Task<Option<Arc<ProjectSnapshot>>>>,
     cumulative_token_usage: TokenUsage,
     feedback: Option<ThreadFeedback>,
-    last_changes_checkpoint: Option<Task<Result<GitStoreCheckpoint>>>,
+    last_diff_checkpoint: Option<Task<Result<GitStoreCheckpoint>>>,
     review_branch: Shared<Task<Option<GitStoreReviewBranch>>>,
 }
 
@@ -241,7 +241,7 @@ impl Thread {
             },
             cumulative_token_usage: TokenUsage::default(),
             feedback: None,
-            last_changes_checkpoint: None,
+            last_diff_checkpoint: None,
             review_branch: cx
                 .background_spawn(
                     project
@@ -253,7 +253,7 @@ impl Thread {
                 )
                 .shared(),
         };
-        this.compute_changes(ChangeSource::User, cx);
+        this.update_diff(ChangeSource::User, cx);
         this
     }
 
@@ -326,10 +326,10 @@ impl Thread {
             // TODO: persist token usage?
             cumulative_token_usage: TokenUsage::default(),
             feedback: None,
-            last_changes_checkpoint: None,
+            last_diff_checkpoint: None,
             review_branch: Task::ready(None).shared(),
         };
-        this.compute_changes(ChangeSource::User, cx);
+        this.update_diff(ChangeSource::User, cx);
         this
     }
 
@@ -1342,7 +1342,7 @@ impl Thread {
         tool: Arc<dyn Tool>,
         cx: &mut Context<Thread>,
     ) -> Task<()> {
-        self.compute_changes(ChangeSource::User, cx);
+        self.update_diff(ChangeSource::User, cx);
 
         let run_tool = tool.run(
             input,
@@ -1358,7 +1358,7 @@ impl Thread {
 
                 thread
                     .update(cx, |thread, cx| {
-                        thread.compute_changes(ChangeSource::Assistant, cx);
+                        thread.update_diff(ChangeSource::Assistant, cx);
 
                         let pending_tool_use = thread
                             .tool_use
@@ -1452,42 +1452,48 @@ impl Thread {
         );
     }
 
-    fn compute_changes(&mut self, source: ChangeSource, cx: &mut Context<Self>) {
-        let old_checkpoint = self.last_changes_checkpoint.take();
+    fn update_diff(&mut self, source: ChangeSource, cx: &mut Context<Self>) {
+        let last_checkpoint = self.last_diff_checkpoint.take();
         let git_store = self.project.read(cx).git_store().clone();
-        let new_checkpoint = git_store.read(cx).checkpoint(cx);
+        let checkpoint = git_store.read(cx).checkpoint(cx);
         let review_branch = self.review_branch.clone();
-        self.last_changes_checkpoint = Some(cx.spawn(async move |_this, cx| {
-            let new_checkpoint = new_checkpoint.await?;
+        self.last_diff_checkpoint = Some(cx.spawn(async move |_this, cx| {
+            let checkpoint = checkpoint.await?;
 
             if let Some(review_branch) = review_branch.await {
-                if let Some(old_checkpoint) = old_checkpoint {
-                    if let Ok(old_checkpoint) = old_checkpoint.await {
+                if let Some(last_checkpoint) = last_checkpoint {
+                    if let Ok(last_checkpoint) = last_checkpoint.await {
                         if source == ChangeSource::User {
                             let diff = git_store
                                 .read_with(cx, |store, cx| {
-                                    store.diff_checkpoints(
-                                        old_checkpoint,
-                                        new_checkpoint.clone(),
-                                        cx,
-                                    )
+                                    store.diff_checkpoints(last_checkpoint, checkpoint.clone(), cx)
                                 })?
                                 .await;
 
                             if let Ok(diff) = diff {
-                                git_store
+                                _ = git_store
                                     .read_with(cx, |store, cx| {
-                                        store.apply_diff_to_review_branch(review_branch, diff, cx)
+                                        store.apply_diff_to_review_branch(
+                                            review_branch.clone(),
+                                            diff,
+                                            cx,
+                                        )
                                     })?
-                                    .await
-                                    .unwrap();
+                                    .await;
                             }
                         }
                     }
                 }
+
+                let diff = git_store
+                    .read_with(cx, |store, cx| {
+                        store.diff_for_review_branch(review_branch, cx)
+                    })?
+                    .await;
+                println!("Last diff:\n{:?}\n===============", diff);
             }
 
-            Ok(new_checkpoint)
+            Ok(checkpoint)
         }));
     }
 
