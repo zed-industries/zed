@@ -6702,7 +6702,7 @@ pub fn client_side_decorations(
                                     CursorStyle::ResizeUpRightDownLeft
                                 }
                             },
-                            &hitbox,
+                            Some(&hitbox),
                         );
                     },
                 )
