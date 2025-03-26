@@ -420,6 +420,13 @@ fn start_output_stream(
                             output_config.sample_rate().0,
                         )
                     };
+                    apm.lock()
+                        .process_reverse_stream(
+                            data,
+                            output_config.sample_rate().0 as i32,
+                            output_config.channels() as i32,
+                        )
+                        .ok();
                     if bytes.len() < data.len() {
                         // Instead of partially filling a buffer, output silence. If a partial
                         // buffer was outputted then this could lead to a perpetual state of
