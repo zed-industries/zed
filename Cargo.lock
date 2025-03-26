@@ -17430,7 +17430,7 @@ dependencies = [
 
 [[package]]
 name = "zed_html"
-version = "0.1.6"
+version = "0.2.0"
 dependencies = [
  "zed_extension_api 0.1.0",
 ]
