@@ -5,7 +5,7 @@ use crate::{
         Block, BlockContext, BlockStyle, DisplaySnapshot, HighlightedChunk, ToDisplayPoint,
     },
     editor_settings::{
-        CurrentLineHighlight, DoubleClickInMultibuffer, Minimap, Minimapthumb, MultiCursorModifier,
+        CurrentLineHighlight, DoubleClickInMultibuffer, Minimap, MinimapThumb, MultiCursorModifier,
         ScrollBeyondLastLine, ScrollbarAxes, ScrollbarDiagnostics, ShowMinimap, ShowScrollbar,
     },
     git::blame::GitBlame,
@@ -1432,8 +1432,8 @@ impl EditorElement {
             .update(cx, |editor, cx| editor.clone(window, cx));
 
         let mut show_thumb = match minimap_settings.thumb {
-            Minimapthumb::Always => true,
-            Minimapthumb::Hover => self.editor.update(cx, |editor, _| {
+            MinimapThumb::Always => true,
+            MinimapThumb::Hover => self.editor.update(cx, |editor, _| {
                 editor.scroll_manager.minimap_thumb_visible()
             }),
         };
