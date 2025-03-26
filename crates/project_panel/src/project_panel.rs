@@ -1544,11 +1544,9 @@ impl ProjectPanel {
         sanitized_entries: BTreeSet<SelectedEntry>,
         cx: &mut Context<Self>,
     ) -> Option<SelectedEntry> {
-        let hide_gitignore = ProjectPanelSettings::get_global(cx).hide_gitignore;
         if sanitized_entries.is_empty() {
             return None;
         }
-
         let project = self.project.read(cx);
         let (worktree_id, worktree) = sanitized_entries
             .iter()
@@ -1580,6 +1578,7 @@ impl ProjectPanel {
 
         // Remove all siblings that are being deleted except the last marked entry
         let snapshot = worktree.snapshot();
+        let hide_gitignore = ProjectPanelSettings::get_global(cx).hide_gitignore;
         let mut siblings: Vec<_> = ChildEntriesGitIter::new(&snapshot, parent_path)
             .filter(|sibling| {
                 (sibling.id == latest_entry.id)
