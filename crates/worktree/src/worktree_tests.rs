@@ -2267,9 +2267,7 @@ async fn test_file_status(cx: &mut TestAppContext) {
     });
 
     // Modify a file in the working copy.
-    eprintln!("-------------------- before modify a.txt");
     std::fs::write(work_dir.join(A_TXT), "aa").unwrap();
-    eprintln!("-------------------- after modify a.txt");
     tree.flush_fs_events(cx).await;
     cx.executor().run_until_parked();
 

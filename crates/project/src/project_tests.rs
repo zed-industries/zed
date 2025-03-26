@@ -6850,12 +6850,10 @@ async fn test_repository_and_path_for_project_path(
         pretty_assertions::assert_eq!(expected, actual);
     });
 
-    eprintln!(">>>>>>>>>>>>>>>> remove");
     fs.remove_dir(path!("/root/dir1/.git").as_ref(), RemoveOptions::default())
         .await
         .unwrap();
     tree.flush_fs_events(cx).await;
-    eprintln!("<<<<<<<<<<<<<<<< remove");
 
     project.read_with(cx, |project, cx| {
         let git_store = project.git_store().read(cx);
