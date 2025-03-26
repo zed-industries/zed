@@ -4326,6 +4326,10 @@ impl Editor {
             .as_ref()
             .map_or(true, |provider| provider.sort_completions());
 
+        let filter_completions = provider
+            .as_ref()
+            .map_or(true, |provider| provider.filter_completions());
+
         let id = post_inc(&mut self.next_completion_id);
         let task = cx.spawn_in(window, async move |editor, cx| {
             async move {
@@ -4374,8 +4378,15 @@ impl Editor {
                         completions.into(),
                     );
 
-                    menu.filter(query.as_deref(), cx.background_executor().clone())
-                        .await;
+                    menu.filter(
+                        if filter_completions {
+                            query.as_deref()
+                        } else {
+                            None
+                        },
+                        cx.background_executor().clone(),
+                    )
+                    .await;
 
                     menu.visible().then_some(menu)
                 };
@@ -18039,6 +18050,10 @@ pub trait CompletionProvider {
     ) -> bool;
 
     fn sort_completions(&self) -> bool {
+        true
+    }
+
+    fn filter_completions(&self) -> bool {
         true
     }
 }
