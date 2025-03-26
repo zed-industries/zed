@@ -6777,7 +6777,6 @@ async fn test_repository_and_path_for_project_path(
     cx: &mut gpui::TestAppContext,
 ) {
     init_test(cx);
-    cx.executor().allow_parking();
     let fs = FakeFs::new(background_executor);
     fs.insert_tree(
         path!("/root"),
@@ -6868,71 +6867,60 @@ async fn test_repository_and_path_for_project_path(
 }
 
 #[gpui::test]
-async fn test_home_dir_as_git_repository(_cx: &mut gpui::TestAppContext) {
-    todo!("restore this one too")
-    //init_test(cx);
-    //cx.executor().allow_parking();
-    //let fs = FakeFs::new(cx.background_executor.clone());
-    //fs.insert_tree(
-    //    "/root",
-    //    json!({
-    //        "home": {
-    //            ".git": {},
-    //            "project": {
-    //                "a.txt": "A"
-    //            },
-    //        },
-    //    }),
-    //)
-    //.await;
-    //fs.set_home_dir(Path::new(path!("/root/home")).to_owned());
+async fn test_home_dir_as_git_repository(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree(
+        "/root",
+        json!({
+            "home": {
+                ".git": {},
+                "project": {
+                    "a.txt": "A"
+                },
+            },
+        }),
+    )
+    .await;
+    fs.set_home_dir(Path::new(path!("/root/home")).to_owned());
 
-    //let tree = Worktree::local(
-    //    Path::new(path!("/root/home/project")),
-    //    true,
-    //    fs.clone(),
-    //    Default::default(),
-    //    &mut cx.to_async(),
-    //)
-    //.await
-    //.unwrap();
+    let project = Project::test(fs.clone(), [path!("/root/home/project").as_ref()], cx).await;
+    let tree = project.read_with(cx, |project, cx| project.worktrees(cx).next().unwrap());
+    let tree_id = tree.read_with(cx, |tree, _| tree.id());
+    tree.read_with(cx, |tree, _| tree.as_local().unwrap().scan_complete())
+        .await;
+    tree.flush_fs_events(cx).await;
 
-    //cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
-    //    .await;
-    //tree.flush_fs_events(cx).await;
+    project.read_with(cx, |project, cx| {
+        let containing = project
+            .git_store()
+            .read(cx)
+            .repository_and_path_for_project_path(&(tree_id, path!("a.txt")).into(), cx);
+        assert!(containing.is_none());
+    });
 
-    //tree.read_with(cx, |tree, _cx| {
-    //    let tree = tree.as_local().unwrap();
+    let project = Project::test(fs.clone(), [path!("/root/home").as_ref()], cx).await;
+    let tree = project.read_with(cx, |project, cx| project.worktrees(cx).next().unwrap());
+    let tree_id = tree.read_with(cx, |tree, _| tree.id());
+    tree.read_with(cx, |tree, _| tree.as_local().unwrap().scan_complete())
+        .await;
+    tree.flush_fs_events(cx).await;
 
-    //    let repo = tree.local_repo_containing_path(path!("a.txt").as_ref());
-    //    assert!(repo.is_none());
-    //});
-
-    //let home_tree = Worktree::local(
-    //    Path::new(path!("/root/home")),
-    //    true,
-    //    fs.clone(),
-    //    Default::default(),
-    //    &mut cx.to_async(),
-    //)
-    //.await
-    //.unwrap();
-
-    //cx.read(|cx| home_tree.read(cx).as_local().unwrap().scan_complete())
-    //    .await;
-    //home_tree.flush_fs_events(cx).await;
-
-    //home_tree.read_with(cx, |home_tree, _cx| {
-    //    let home_tree = home_tree.as_local().unwrap();
-
-    //    let repo = home_tree.local_repo_containing_path(path!("project/a.txt").as_ref());
-    //    assert_eq!(
-    //        repo.map(|repo| &repo.work_directory),
-    //        Some(&WorkDirectory::InProject {
-    //            relative_path: Path::new("").into()
-    //        })
-    //    );
-    //})
+    project.read_with(cx, |project, cx| {
+        let containing = project
+            .git_store()
+            .read(cx)
+            .repository_and_path_for_project_path(&(tree_id, path!("project/a.txt")).into(), cx);
+        assert_eq!(
+            containing
+                .unwrap()
+                .0
+                .read(cx)
+                .repository_entry
+                .work_directory_abs_path,
+            Path::new("/root/home")
+        );
+    });
 }
 
 async fn search(
