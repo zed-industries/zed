@@ -3241,6 +3241,7 @@ impl Window {
             keystroke,
             &dispatch_path,
         );
+
         if !match_result.to_replay.is_empty() {
             self.replay_pending_input(match_result.to_replay, cx)
         }

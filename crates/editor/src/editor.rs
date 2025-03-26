@@ -790,6 +790,8 @@ pub struct Editor {
     _scroll_cursor_center_top_bottom_task: Task<()>,
     serialize_selections: Task<()>,
     serialize_folds: Task<()>,
+    mouse_cursor_hidden: bool,
+    hide_mouse_while_typing: bool,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Default)]
@@ -1568,6 +1570,10 @@ impl Editor {
             serialize_folds: Task::ready(()),
             text_style_refinement: None,
             load_diff_task: load_uncommitted_diff,
+            mouse_cursor_hidden: false,
+            hide_mouse_while_typing: EditorSettings::get_global(cx)
+                .hide_mouse_while_typing
+                .unwrap_or(true),
         };
         if let Some(breakpoints) = this.breakpoint_store.as_ref() {
             this._subscriptions
@@ -2998,6 +3004,8 @@ impl Editor {
         if self.read_only(cx) {
             return;
         }
+
+        self.mouse_cursor_hidden = self.hide_mouse_while_typing;
 
         let selections = self.selections.all_adjusted(cx);
         let mut bracket_inserted = false;
@@ -16669,6 +16677,7 @@ impl Editor {
             self.scroll_manager.vertical_scroll_margin = editor_settings.vertical_scroll_margin;
             self.show_breadcrumbs = editor_settings.toolbar.breadcrumbs;
             self.cursor_shape = editor_settings.cursor_shape.unwrap_or_default();
+            self.hide_mouse_while_typing = editor_settings.hide_mouse_while_typing.unwrap_or(true);
         }
 
         if old_cursor_shape != self.cursor_shape {

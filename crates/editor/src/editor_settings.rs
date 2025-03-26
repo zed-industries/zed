@@ -39,6 +39,7 @@ pub struct EditorSettings {
     #[serde(default)]
     pub go_to_definition_fallback: GoToDefinitionFallback,
     pub jupyter: Jupyter,
+    pub hide_mouse_while_typing: Option<bool>,
 }
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
@@ -235,6 +236,10 @@ pub struct EditorSettingsContent {
     ///
     /// Default: None
     pub cursor_shape: Option<CursorShape>,
+    /// Determines whether the mouse cursor should be hidden while typing in an editor or input box.
+    ///
+    /// Default: true
+    pub hide_mouse_while_typing: Option<bool>,
     /// How to highlight the current line in the editor.
     ///
     /// Default: all
