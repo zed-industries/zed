@@ -23,9 +23,7 @@ impl LspCommand for SemanticTokensFull {
         _: &App,
     ) -> Result<lsp::SemanticTokensParams> {
         Ok(lsp::SemanticTokensParams {
-            text_document: lsp::TextDocumentIdentifier {
-                uri: file_path_to_lsp_url(path)?,
-            },
+            text_document: make_text_document_identifier(path)?,
             partial_result_params: lsp::PartialResultParams {
                 partial_result_token: None,
             },
@@ -87,11 +85,8 @@ impl LspCommand for SemanticTokensFull {
                 Bias::Left,
             );
             let end = snapshot.clip_point_utf16(
-                Unclipped(PointUtf16::new(
-                    current_line, //
-                    current_char + token.length,
-                )),
-                Bias::Right,
+                Unclipped(PointUtf16::new(current_line, current_char + token.length)),
+                Bias::Left,
             );
             SemanticToken {
                 range: snapshot.anchor_before(start)..snapshot.anchor_after(end),

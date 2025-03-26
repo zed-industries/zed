@@ -80,7 +80,7 @@ pub trait ToDisplayPoint {
     fn to_display_point(&self, map: &DisplaySnapshot) -> DisplayPoint;
 }
 
-type SemanticHighlights = TreeMap<TypeId, Arc<(HighlightStyle, Range<Anchor>)>>;
+type SemanticHighlights = Vec<(HighlightStyle, Range<Anchor>)>;
 type TextHighlights = TreeMap<TypeId, Arc<(HighlightStyle, Vec<Range<Anchor>>)>>;
 type InlayHighlights = TreeMap<TypeId, TreeMap<InlayId, (HighlightStyle, InlayHighlight)>>;
 
@@ -179,6 +179,7 @@ impl DisplayMap {
             crease_snapshot: self.crease_map.snapshot(),
             text_highlights: self.text_highlights.clone(),
             inlay_highlights: self.inlay_highlights.clone(),
+            semantic_highlights: self.semantic_highlights.clone(),
             clip_at_line_ends: self.clip_at_line_ends,
             masked: self.masked,
             fold_placeholder: self.fold_placeholder.clone(),
@@ -456,14 +457,8 @@ impl DisplayMap {
         Some(DisplayRow(block_row.0))
     }
 
-    pub fn semantic_highlight(
-        &mut self,
-        type_id: TypeId,
-        ranges: Range<Anchor>,
-        style: HighlightStyle,
-    ) {
-        self.semantic_highlights
-            .insert(type_id, Arc::new((style, ranges)));
+    pub fn semantic_highlight(&mut self, range: Range<Anchor>, style: HighlightStyle) {
+        self.semantic_highlights.push((style, range));
     }
 
     pub fn highlight_text(
@@ -567,6 +562,7 @@ impl DisplayMap {
 pub(crate) struct Highlights<'a> {
     pub text_highlights: Option<&'a TextHighlights>,
     pub inlay_highlights: Option<&'a InlayHighlights>,
+    pub semantic_highlights: Option<&'a SemanticHighlights>,
     pub styles: HighlightStyles,
 }
 
@@ -701,6 +697,7 @@ pub struct DisplaySnapshot {
     block_snapshot: BlockSnapshot,
     text_highlights: TextHighlights,
     inlay_highlights: InlayHighlights,
+    semantic_highlights: SemanticHighlights,
     clip_at_line_ends: bool,
     masked: bool,
     pub(crate) fold_placeholder: FoldPlaceholder,
@@ -883,6 +880,7 @@ impl DisplaySnapshot {
             Highlights {
                 text_highlights: Some(&self.text_highlights),
                 inlay_highlights: Some(&self.inlay_highlights),
+                semantic_highlights: Some(&self.semantic_highlights),
                 styles: highlight_styles,
             },
         )

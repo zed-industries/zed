@@ -245,7 +245,6 @@ impl InlayId {
 }
 
 pub enum DebugCurrentRowHighlight {}
-pub enum SemanticHighlight {}
 enum DocumentHighlightRead {}
 enum DocumentHighlightWrite {}
 enum InputComposition {}
@@ -4019,12 +4018,11 @@ impl Editor {
                 let tokens = semantic_tokens.await?;
                 let multibuffer = multibuffer.clone();
                 let tokens: Vec<_> = cx.update(|_, cx| {
-                    let multibuffer = multibuffer.read(cx);
+                    let multibuffer = multibuffer.read(cx).snapshot(cx);
                     let iter = tokens.into_iter().filter_map(|token| {
-                        let Range { start, end } = token.range.to_point(&snapshot);
-                        let start = multibuffer.buffer_point_to_anchor(&buffer, start, cx)?;
-                        let end = multibuffer.buffer_point_to_anchor(&buffer, end, cx)?;
-                        Some((start..end, token.r#type, token.modifiers))
+                        let range = token.range.to_point(&snapshot);
+                        let range = range.to_anchors(&multibuffer);
+                        Some((range, token.r#type, token.modifiers))
                     });
                     iter.collect_vec()
                 })?;
@@ -4032,7 +4030,6 @@ impl Editor {
                     let iter = tokens.into_iter();
                     let iter = iter.filter_map(|(range, r#type, modifiers)| {
                         let mut style = cx.theme().tokens().get(r#type.as_str())?;
-                        let range = vec![range];
                         for r#mod in modifiers {
                             let r#mod = cx.theme().modifiers().get(r#mod.as_str());
                             style.highlight(match r#mod {
@@ -4040,7 +4037,7 @@ impl Editor {
                                 None => continue,
                             });
                         }
-                        this.highlight_text::<SemanticHighlight>(range, style, cx);
+                        this.semantic_highlight(range, style, cx);
                         Some(())
                     });
                     iter.collect_vec();
@@ -16213,6 +16210,17 @@ impl Editor {
                     ..range.end.to_display_point(display_snapshot)
             })
             .collect()
+    }
+
+    pub fn semantic_highlight(
+        &mut self,
+        range: Range<Anchor>,
+        style: HighlightStyle,
+        cx: &mut Context<Self>,
+    ) {
+        self.display_map
+            .update(cx, |map, _| map.semantic_highlight(range, style));
+        cx.notify();
     }
 
     pub fn highlight_text<T: 'static>(

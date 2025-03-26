@@ -21,12 +21,12 @@ pub(crate) enum Highlight {
 
 pub(crate) const DEFAULT_SEMANTIC_TOKENS: &[(&str, Highlight)] = &[
     ("keyword", Highlight::TreeSitter("variable")),
-    ("comment", Highlight::TreeSitter("comment")),
+    ("comment", Highlight::TreeSitter("keyword")),
 ];
 
 pub(crate) const DEFAULT_SEMANTIC_MODIFIERS: &[(&str, Highlight)] = &[
     ("keyword", Highlight::TreeSitter("variable")),
-    ("comment", Highlight::TreeSitter("comment")),
+    ("comment", Highlight::TreeSitter("keyword")),
 ];
 
 impl SemanticTheme {
