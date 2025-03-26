@@ -550,7 +550,7 @@ impl GitRepository for RealGitRepository {
                     .current_dir(&working_directory)
                     .envs(env)
                     .args(["update-index", "--add", "--cacheinfo", "100644", &sha])
-                    .arg(path.normalize())
+                    .arg(path.to_unix_style())
                     .output()
                     .await?;
 
@@ -565,7 +565,7 @@ impl GitRepository for RealGitRepository {
                     .current_dir(&working_directory)
                     .envs(env)
                     .args(["update-index", "--force-remove"])
-                    .arg(path.normalize())
+                    .arg(path.to_unix_style())
                     .output()
                     .await?;
 
@@ -779,7 +779,7 @@ impl GitRepository for RealGitRepository {
                     .current_dir(&working_directory?)
                     .envs(env)
                     .args(["update-index", "--add", "--remove", "--"])
-                    .args(paths.iter().map(|p| p.normalize()))
+                    .args(paths.iter().map(|p| p.to_unix_style()))
                     .output()
                     .await?;
 
@@ -1337,7 +1337,7 @@ impl RepoPath {
         RepoPath(path.into())
     }
 
-    pub fn normalize(&self) -> String {
+    pub fn to_unix_style(&self) -> String {
         #[cfg(windows)]
         {
             self.0.to_string_lossy().replace('\\', "/")
