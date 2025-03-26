@@ -34,7 +34,7 @@ use crate::thread_store::{
     SerializedToolUse,
 };
 use crate::tool_use::{PendingToolUse, ToolUse, ToolUseState};
-use crate::{ThreadDiff, ThreadDiffSource};
+use crate::{ChangeAuthor, ThreadDiff};
 
 #[derive(Debug, Clone, Copy)]
 pub enum RequestKind {
@@ -1217,9 +1217,8 @@ impl Thread {
         tool: Arc<dyn Tool>,
         cx: &mut Context<Thread>,
     ) -> Task<()> {
-        self.diff.update(cx, |diff, cx| {
-            diff.compute_changes(ThreadDiffSource::User, cx)
-        });
+        self.diff
+            .update(cx, |diff, cx| diff.compute_changes(ChangeAuthor::User, cx));
 
         let run_tool = tool.run(
             input,
@@ -1235,9 +1234,9 @@ impl Thread {
 
                 thread
                     .update(cx, |thread, cx| {
-                        thread.diff.update(cx, |diff, cx| {
-                            diff.compute_changes(ThreadDiffSource::Assistant, cx)
-                        });
+                        thread
+                            .diff
+                            .update(cx, |diff, cx| diff.compute_changes(ChangeAuthor::Agent, cx));
 
                         let pending_tool_use = thread
                             .tool_use

@@ -147,6 +147,34 @@ pub struct GitStoreVirtualBranchChanges {
     changes_by_dot_git_abs_path: HashMap<PathBuf, HashMap<RepoPath, VirtualBranchChange>>,
 }
 
+impl GitStoreVirtualBranchChanges {
+    pub fn iter<'a>(
+        &'a self,
+        git_store: &Entity<GitStore>,
+        cx: &'a App,
+    ) -> impl 'a + Iterator<Item = (Entity<Repository>, &'a RepoPath, &'a VirtualBranchChange)>
+    {
+        let repositories_by_dot_git_abs_path = git_store
+            .read(cx)
+            .repositories
+            .values()
+            .map(|repo| (repo.read(cx).dot_git_abs_path.clone(), repo))
+            .collect::<HashMap<_, _>>();
+
+        self.changes_by_dot_git_abs_path
+            .iter()
+            .flat_map(move |(dot_git_abs_path, changes)| {
+                changes
+                    .iter()
+                    .map(move |(repo_path, change)| (dot_git_abs_path, repo_path, change))
+            })
+            .filter_map(move |(dot_git_abs_path, repo_path, change)| {
+                let repository = *repositories_by_dot_git_abs_path.get(dot_git_abs_path)?;
+                Some((repository.clone(), repo_path, change))
+            })
+    }
+}
+
 pub struct Repository {
     commit_message_buffer: Option<Entity<Buffer>>,
     git_store: WeakEntity<GitStore>,
