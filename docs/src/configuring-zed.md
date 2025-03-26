@@ -909,7 +909,7 @@ List of `string` values
 
 ### Show Diagnostics
 
-- Description:Whether to show diagnostics indicators in tabs. This setting only works when file icons are active and controls which files with diagnostic issues to mark.
+- Description: Whether to show diagnostics indicators in tabs. This setting only works when file icons are active and controls which files with diagnostic issues to mark.
 - Setting: `show_diagnostics`
 - Default: `off`
 
