@@ -285,16 +285,16 @@ impl BufferDiffInner {
         let mut unstaged_hunk_cursor = unstaged_diff.hunks.cursor::<DiffHunkSummary>(buffer);
         unstaged_hunk_cursor.next(buffer);
 
+        // then, iterate over all pending hunks (both new ones and the existing ones) and compute the edits
         let mut prev_unstaged_hunk_buffer_end = 0;
         let mut prev_unstaged_hunk_base_text_end = 0;
         let mut edits = Vec::<(Range<usize>, String)>::new();
-
-        // then, iterate over all pending hunks (both new ones and the existing ones) and compute the edits
-        for PendingHunk {
+        let mut pending_hunks_iter = pending_hunks.iter().cloned().peekable();
+        while let Some(PendingHunk {
             buffer_range,
             diff_base_byte_range,
             ..
-        } in pending_hunks.iter().cloned()
+        }) = pending_hunks_iter.next()
         {
             // Advance unstaged_hunk_cursor to skip unstaged hunks before current hunk
             let skipped_unstaged =
@@ -310,32 +310,46 @@ impl BufferDiffInner {
             let start_overshoot = buffer_offset_range.start - prev_unstaged_hunk_buffer_end;
             let mut index_start = prev_unstaged_hunk_base_text_end + start_overshoot;
 
-            // If it does overlap, "merge" with overlapping and update position
-            while let Some(unstaged_hunk) = unstaged_hunk_cursor.item().filter(|item| {
-                item.buffer_range
-                    .start
-                    .cmp(&buffer_range.end, buffer)
-                    .is_le()
-            }) {
-                let unstaged_hunk_offset_range = unstaged_hunk.buffer_range.to_offset(buffer);
-                prev_unstaged_hunk_base_text_end = unstaged_hunk.diff_base_byte_range.end;
-                prev_unstaged_hunk_buffer_end = unstaged_hunk_offset_range.end;
+            loop {
+                // Merge this hunk with any overlapping unstaged hunks.
+                if let Some(unstaged_hunk) = unstaged_hunk_cursor.item() {
+                    let unstaged_hunk_offset_range = unstaged_hunk.buffer_range.to_offset(buffer);
+                    if unstaged_hunk_offset_range.start <= buffer_offset_range.end {
+                        prev_unstaged_hunk_base_text_end = unstaged_hunk.diff_base_byte_range.end;
+                        prev_unstaged_hunk_buffer_end = unstaged_hunk_offset_range.end;
 
-                index_start = index_start.min(unstaged_hunk.diff_base_byte_range.start);
-                buffer_offset_range.start = buffer_offset_range
-                    .start
-                    .min(unstaged_hunk_offset_range.start);
+                        index_start = index_start.min(unstaged_hunk.diff_base_byte_range.start);
+                        buffer_offset_range.start = buffer_offset_range
+                            .start
+                            .min(unstaged_hunk_offset_range.start);
+                        buffer_offset_range.end =
+                            buffer_offset_range.end.max(unstaged_hunk_offset_range.end);
 
-                unstaged_hunk_cursor.next(buffer);
+                        unstaged_hunk_cursor.next(buffer);
+                        continue;
+                    }
+                }
+
+                // If any unstaged hunks were merged, then subsequent pending hunks may
+                // now overlap this hunk. Merge them.
+                if let Some(next_pending_hunk) = pending_hunks_iter.peek() {
+                    let next_pending_hunk_offset_range =
+                        next_pending_hunk.buffer_range.to_offset(buffer);
+                    if next_pending_hunk_offset_range.start <= buffer_offset_range.end {
+                        buffer_offset_range.end = next_pending_hunk_offset_range.end;
+                        pending_hunks_iter.next();
+                        continue;
+                    }
+                }
+
+                break;
             }
 
             let end_overshoot = buffer_offset_range
                 .end
                 .saturating_sub(prev_unstaged_hunk_buffer_end);
             let index_end = prev_unstaged_hunk_base_text_end + end_overshoot;
-
-            let index_range = index_start..index_end;
-            buffer_offset_range.end = buffer_offset_range.end.max(prev_unstaged_hunk_buffer_end);
+            let index_byte_range = index_start..index_end;
 
             let replacement_text = if stage {
                 log::debug!("stage hunk {:?}", buffer_offset_range);
@@ -349,8 +363,9 @@ impl BufferDiffInner {
                     .collect::<String>()
             };
 
-            edits.push((index_range, replacement_text));
+            edits.push((index_byte_range, replacement_text));
         }
+        drop(pending_hunks_iter);
 
         #[cfg(debug_assertions)] // invariants: non-overlapping and sorted
         {
@@ -1644,6 +1659,38 @@ mod tests {
                 final_index_text: "
                     one
                     five
+                "
+                .unindent(),
+            },
+            Example {
+                name: "one unstaged hunk that contains two uncommitted hunks",
+                head_text: "
+                    one
+                    two
+
+                    three
+                    four
+                "
+                .unindent(),
+                index_text: "
+                    one
+                    two
+                    three
+                    four
+                "
+                .unindent(),
+                buffer_marked_text: "
+                    «one
+
+                    three // modified
+                    four»
+                "
+                .unindent(),
+                final_index_text: "
+                    one
+
+                    three // modified
+                    four
                 "
                 .unindent(),
             },
