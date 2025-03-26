@@ -10,6 +10,7 @@ enum Mode {
 }
 
 pub struct ManageProfilesModal {
+    #[allow(dead_code)]
     workspace: WeakEntity<Workspace>,
     mode: Mode,
 }
@@ -41,6 +42,10 @@ impl ManageProfilesModal {
             })),
         }
     }
+
+    fn confirm(&mut self, _window: &mut Window, _cx: &mut Context<Self>) {}
+
+    fn cancel(&mut self, _window: &mut Window, _cx: &mut Context<Self>) {}
 }
 
 impl ModalView for ManageProfilesModal {}
@@ -61,8 +66,8 @@ impl Render for ManageProfilesModal {
             .elevation_3(cx)
             .w(rems(34.))
             .key_context("ManageProfilesModal")
-            // .on_action(cx.listener(|this, _: &menu::Cancel, _window, cx| this.cancel(cx)))
-            // .on_action(cx.listener(|this, _: &menu::Confirm, _window, cx| this.confirm(cx)))
+            .on_action(cx.listener(|this, _: &menu::Cancel, window, cx| this.cancel(window, cx)))
+            .on_action(cx.listener(|this, _: &menu::Confirm, window, cx| this.confirm(window, cx)))
             .capture_any_mouse_down(cx.listener(|this, _, window, cx| {
                 this.focus_handle(cx).focus(window);
             }))

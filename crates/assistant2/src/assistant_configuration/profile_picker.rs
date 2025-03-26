@@ -42,11 +42,13 @@ impl Render for ProfilePicker {
 
 #[derive(Debug)]
 pub struct ProfileEntry {
+    #[allow(dead_code)]
     pub id: Arc<str>,
     pub name: SharedString,
 }
 
 pub struct ProfilePickerDelegate {
+    profile_picker: WeakEntity<ProfilePicker>,
     profiles: Vec<ProfileEntry>,
     matches: Vec<StringMatch>,
     selected_index: usize,
@@ -66,6 +68,7 @@ impl ProfilePickerDelegate {
             .collect::<Vec<_>>();
 
         Self {
+            profile_picker: cx.entity().downgrade(),
             profiles,
             matches: Vec::new(),
             selected_index: 0,
@@ -135,7 +138,7 @@ impl PickerDelegate for ProfilePickerDelegate {
                 .await
             };
 
-            this.update(cx, |this, cx| {
+            this.update(cx, |this, _cx| {
                 this.delegate.matches = matches;
                 this.delegate.selected_index = this
                     .delegate
@@ -146,9 +149,14 @@ impl PickerDelegate for ProfilePickerDelegate {
         })
     }
 
-    fn confirm(&mut self, secondary: bool, window: &mut Window, cx: &mut Context<Picker<Self>>) {}
+    fn confirm(&mut self, _secondary: bool, _window: &mut Window, _cx: &mut Context<Picker<Self>>) {
+    }
 
-    fn dismissed(&mut self, window: &mut Window, cx: &mut Context<Picker<Self>>) {}
+    fn dismissed(&mut self, _window: &mut Window, cx: &mut Context<Picker<Self>>) {
+        self.profile_picker
+            .update(cx, |_this, cx| cx.emit(DismissEvent))
+            .log_err();
+    }
 
     fn render_match(
         &self,
