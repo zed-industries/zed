@@ -1,4 +1,6 @@
 mod add_context_server_modal;
+mod manage_profiles_modal;
+mod profile_picker;
 
 use std::sync::Arc;
 
@@ -12,6 +14,7 @@ use util::ResultExt as _;
 use zed_actions::ExtensionCategoryFilter;
 
 pub(crate) use add_context_server_modal::AddContextServerModal;
+pub(crate) use manage_profiles_modal::ManageProfilesModal;
 
 use crate::AddContextServer;
 
