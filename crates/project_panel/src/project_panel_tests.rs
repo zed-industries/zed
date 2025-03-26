@@ -3850,7 +3850,7 @@ async fn test_nested_deletion_gitignore(cx: &mut gpui::TestAppContext) {
                 "file3": "// Testing"
             },
             "aa": "// Testing",
-            ".gitignore": "file1\nfile2\n",
+            ".gitignore": "file1\nfile3\n",
         }),
     )
     .await;
@@ -3874,13 +3874,13 @@ async fn test_nested_deletion_gitignore(cx: &mut gpui::TestAppContext) {
 
     // Test 1: Visible items should exclude files on gitignore
     toggle_expand_dir(&panel, "root/dir1", cx);
-    select_path(&panel, "root/dir1/file3", cx);
+    select_path(&panel, "root/dir1/file2", cx);
     assert_eq!(
         visible_entries_as_strings(&panel, 0..10, cx),
         &[
             "v root",
             "    v dir1",
-            "          file3  <== selected",
+            "          file2  <== selected",
             "      .gitignore",
             "      aa"
         ],
