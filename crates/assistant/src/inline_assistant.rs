@@ -3045,8 +3045,7 @@ impl CodegenAlternative {
                         let mut response_latency = None;
                         let request_start = Instant::now();
                         let diff = async {
-                            let stream = stream?;
-                            let chunks = StripInvalidSpans::new(stream.stream);
+                            let chunks = StripInvalidSpans::new(stream?.stream);
                             futures::pin_mut!(chunks);
                             let mut diff = StreamingDiff::new(selected_text.to_string());
                             let mut line_diff = LineDiff::default();
@@ -3134,15 +3133,12 @@ impl CodegenAlternative {
                                 .send((char_ops, line_diff.line_operations()))
                                 .await?;
 
-                            let token_usage = stream.last_token_usage.lock().clone();
-
-                            anyhow::Ok(token_usage)
+                            anyhow::Ok(())
                         };
 
                         let result = diff.await;
 
                         let error_message = result.as_ref().err().map(|error| error.to_string());
-                        let _token_usage = result.as_ref().ok();
                         report_assistant_event(
                             AssistantEvent {
                                 conversation_id: None,
