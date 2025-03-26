@@ -2,31 +2,40 @@ use std::sync::{Arc, LazyLock};
 
 use anyhow::Result;
 use assistant_settings::{AgentProfile, AssistantSettings};
-use assistant_tool::{ToolSource, ToolWorkingSet};
 use editor::scroll::Autoscroll;
 use editor::Editor;
+use fs::Fs;
 use gpui::{prelude::*, AsyncWindowContext, Entity, Subscription, WeakEntity};
 use indexmap::IndexMap;
 use regex::Regex;
-use settings::{Settings as _, SettingsStore};
+use settings::{update_settings_file, Settings as _, SettingsStore};
 use ui::{prelude::*, ContextMenu, ContextMenuEntry, PopoverMenu, Tooltip};
+use util::ResultExt as _;
 use workspace::{create_and_open_local_file, Workspace};
+
+use crate::ThreadStore;
 
 pub struct ProfileSelector {
     profiles: IndexMap<Arc<str>, AgentProfile>,
-    tools: Arc<ToolWorkingSet>,
+    fs: Arc<dyn Fs>,
+    thread_store: WeakEntity<ThreadStore>,
     _subscriptions: Vec<Subscription>,
 }
 
 impl ProfileSelector {
-    pub fn new(tools: Arc<ToolWorkingSet>, cx: &mut Context<Self>) -> Self {
+    pub fn new(
+        fs: Arc<dyn Fs>,
+        thread_store: WeakEntity<ThreadStore>,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let settings_subscription = cx.observe_global::<SettingsStore>(move |this, cx| {
             this.refresh_profiles(cx);
         });
 
         let mut this = Self {
             profiles: IndexMap::default(),
-            tools,
+            fs,
+            thread_store,
             _subscriptions: vec![settings_subscription],
         };
         this.refresh_profiles(cx);
@@ -45,39 +54,27 @@ impl ProfileSelector {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Entity<ContextMenu> {
-        let profiles = self.profiles.clone();
-        let tool_set = self.tools.clone();
-        ContextMenu::build_persistent(window, cx, move |mut menu, _window, _cx| {
-            let icon_position = IconPosition::End;
+        ContextMenu::build(window, cx, |mut menu, _window, _cx| {
+            let icon_position = IconPosition::Start;
 
             menu = menu.header("Profiles");
-            for (_id, profile) in profiles.clone() {
+            for (profile_id, profile) in self.profiles.clone() {
                 menu = menu.toggleable_entry(profile.name.clone(), false, icon_position, None, {
-                    let tools = tool_set.clone();
+                    let fs = self.fs.clone();
+                    let thread_store = self.thread_store.clone();
                     move |_window, cx| {
-                        tools.disable_all_tools(cx);
+                        update_settings_file::<AssistantSettings>(fs.clone(), cx, {
+                            let profile_id = profile_id.clone();
+                            move |settings, _cx| {
+                                settings.set_profile(profile_id.clone());
+                            }
+                        });
 
-                        tools.enable(
-                            ToolSource::Native,
-                            &profile
-                                .tools
-                                .iter()
-                                .filter_map(|(tool, enabled)| enabled.then(|| tool.clone()))
-                                .collect::<Vec<_>>(),
-                        );
-
-                        for (context_server_id, preset) in &profile.context_servers {
-                            tools.enable(
-                                ToolSource::ContextServer {
-                                    id: context_server_id.clone().into(),
-                                },
-                                &preset
-                                    .tools
-                                    .iter()
-                                    .filter_map(|(tool, enabled)| enabled.then(|| tool.clone()))
-                                    .collect::<Vec<_>>(),
-                            )
-                        }
+                        thread_store
+                            .update(cx, |this, cx| {
+                                this.load_default_profile(cx);
+                            })
+                            .log_err();
                     }
                 });
             }

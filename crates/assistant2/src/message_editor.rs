@@ -57,7 +57,6 @@ impl MessageEditor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let tools = thread.read(cx).tools().clone();
         let context_picker_menu_handle = PopoverMenuHandle::default();
         let inline_context_picker_menu_handle = PopoverMenuHandle::default();
         let model_selector_menu_handle = PopoverMenuHandle::default();
@@ -129,14 +128,14 @@ impl MessageEditor {
             inline_context_picker_menu_handle,
             model_selector: cx.new(|cx| {
                 AssistantModelSelector::new(
-                    fs,
+                    fs.clone(),
                     model_selector_menu_handle,
                     editor.focus_handle(cx),
                     window,
                     cx,
                 )
             }),
-            profile_selector: cx.new(|cx| ProfileSelector::new(tools, cx)),
+            profile_selector: cx.new(|cx| ProfileSelector::new(fs, thread_store, cx)),
             _subscriptions: subscriptions,
         }
     }
