@@ -1,4 +1,5 @@
 use crate::actions::FormatSelections;
+use crate::CopyAndTrim;
 use crate::{
     actions::Format, selections_collection::SelectionsCollection, Copy, CopyPermalinkToLine, Cut,
     DisplayPoint, DisplaySnapshot, Editor, EditorMode, FindAllReferences, GoToDeclaration,
@@ -191,6 +192,7 @@ pub fn deploy_context_menu(
                 .separator()
                 .action("Cut", Box::new(Cut))
                 .action("Copy", Box::new(Copy))
+                .action("Copy and trim", Box::new(CopyAndTrim))
                 .action("Paste", Box::new(Paste))
                 .separator()
                 .map(|builder| {
