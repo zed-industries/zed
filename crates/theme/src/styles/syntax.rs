@@ -10,14 +10,6 @@ pub struct SyntaxTheme {
 }
 
 impl SyntaxTheme {
-    pub fn import_semantic_tokens(other: &SyntaxTheme) -> Self {
-        Self { highlights: vec![] }
-    }
-
-    pub fn import_semantic_modifiers(other: &SyntaxTheme) -> Self {
-        Self { highlights: vec![] }
-    }
-
     #[cfg(any(test, feature = "test-support"))]
     pub fn new_test(colors: impl IntoIterator<Item = (&'static str, Hsla)>) -> Self {
         Self::new_test_styles(colors.into_iter().map(|(key, color)| {
@@ -93,6 +85,30 @@ impl SyntaxTheme {
             highlights: merged_highlights,
         })
     }
+
+    pub fn import_semantic_tokens(other: &SyntaxTheme) -> Self {
+        Self {
+            highlights: semantic_highlights(other, &[]),
+        }
+    }
+
+    pub fn import_semantic_modifiers(other: &SyntaxTheme) -> Self {
+        Self {
+            highlights: semantic_highlights(other, &[]),
+        }
+    }
+}
+
+#[inline]
+fn semantic_highlights(
+    other: &SyntaxTheme,
+    bindings: &[(&str, &str)],
+) -> Vec<(String, HighlightStyle)> {
+    let iter = bindings.iter();
+    let iter = iter.filter_map(|(semantic_token, parsed_token)| {
+        Some((semantic_token.to_string(), other.get(parsed_token)))
+    });
+    iter.collect()
 }
 
 #[cfg(test)]

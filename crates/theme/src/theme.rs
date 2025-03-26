@@ -330,6 +330,18 @@ impl Theme {
         &self.styles.colors
     }
 
+    /// Returns the [`SyntaxTheme`] for the semantic tokens theme.
+    #[inline(always)]
+    pub fn tokens(&self) -> &Arc<SyntaxTheme> {
+        &self.styles.tokens
+    }
+
+    /// Returns the [`SyntaxTheme`] for the semantic modifiers theme.
+    #[inline(always)]
+    pub fn modifiers(&self) -> &Arc<SyntaxTheme> {
+        &self.styles.modifiers
+    }
+
     /// Returns the [`SyntaxTheme`] for the theme.
     #[inline(always)]
     pub fn syntax(&self) -> &Arc<SyntaxTheme> {

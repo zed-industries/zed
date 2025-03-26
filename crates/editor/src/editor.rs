@@ -4024,7 +4024,8 @@ impl Editor {
                     let iter = tokens.into_iter().filter_map(|token| {
                         let Range { start, end } = token.range.to_point(&snapshot);
                         log::error!(
-                            "  * {}:{}..{}:{}",
+                            "  * {} {}:{}..{}:{}",
+                            token.r#type.as_str(),
                             start.row,
                             start.column,
                             end.row,
@@ -4036,11 +4037,14 @@ impl Editor {
                     });
                     iter.collect_vec()
                 })?;
-                log::error!("  - again count: {}", tokens.len());
-                editor.update(cx, |this, cx| {
+                editor.update(cx, |this: &mut Self, cx| {
                     for (range, r#type, modifiers) in tokens {
                         let range = vec![range];
-                        let style = HighlightStyle::color(Hsla::red());
+                        let mut style = cx.theme().tokens().get(r#type.as_str());
+                        for modifier in modifiers {
+                            let modifier = cx.theme().modifiers().get(modifier.as_str());
+                            style.highlight(modifier);
+                        }
                         this.highlight_text::<SemanticHighlight>(range, style, cx)
                     }
                 })?;
