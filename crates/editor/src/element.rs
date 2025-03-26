@@ -7040,7 +7040,7 @@ impl Element for EditorElement {
                                         gutter_breakpoint_point,
                                         Bias::Left,
                                     );
-                                    let breakpoint = Breakpoint::new_hover();
+                                    let breakpoint = Breakpoint::new_standard();
 
                                     (position, breakpoint)
                                 });

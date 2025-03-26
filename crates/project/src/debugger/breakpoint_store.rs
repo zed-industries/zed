@@ -611,9 +611,16 @@ pub struct Breakpoint {
 }
 
 impl Breakpoint {
-    pub fn new_hover() -> Self {
+    pub fn new_standard() -> Self {
         Self {
             kind: BreakpointKind::Standard,
+            state: BreakpointState::Enabled,
+        }
+    }
+
+    pub fn new_log(log_message: &str) -> Self {
+        Self {
+            kind: BreakpointKind::Log(log_message.to_owned().into()),
             state: BreakpointState::Enabled,
         }
     }
