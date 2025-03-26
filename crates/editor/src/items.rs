@@ -41,7 +41,7 @@ use util::{paths::PathExt, ResultExt, TryFutureExt};
 use workspace::{
     item::{BreadcrumbText, FollowEvent},
     searchable::SearchOptions,
-    OpenVisible,
+    OpenVisible, Pane,
 };
 use workspace::{
     item::{Dedup, ItemSettings, SerializableItem, TabContentParams},
@@ -1255,11 +1255,14 @@ impl ProjectItem for Editor {
 
     fn for_project_item(
         project: Entity<Project>,
+        pane: &Entity<Pane>,
         buffer: Entity<Buffer>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        Self::for_buffer(buffer, Some(project), window, cx)
+        let mut editor = Self::for_buffer(buffer, Some(project), window, cx);
+        editor.schedule_default_metadata_update(pane, window, cx);
+        editor
     }
 }
 

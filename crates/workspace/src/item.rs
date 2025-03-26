@@ -1036,6 +1036,7 @@ pub trait ProjectItem: Item {
 
     fn for_project_item(
         project: Entity<Project>,
+        pane: &Entity<Pane>,
         item: Entity<Self::Item>,
         window: &mut Window,
         cx: &mut Context<Self>,

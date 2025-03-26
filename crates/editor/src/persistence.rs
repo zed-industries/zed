@@ -3,12 +3,12 @@ use db::sqlez::bindable::{Bind, Column, StaticColumnCount};
 use db::sqlez::statement::Statement;
 use fs::MTime;
 use itertools::Itertools as _;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use db::sqlez_macros::sql;
 use db::{define_connection, query};
 
-use workspace::{ItemId, WorkspaceDb, WorkspaceId};
+use workspace::{ItemId, PaneId, WorkspaceDb, WorkspaceId};
 
 #[derive(Clone, Debug, PartialEq, Default)]
 pub(crate) struct SerializedEditor {
@@ -396,6 +396,30 @@ VALUES {placeholders};
             statement.exec()
         })
         .await
+    }
+
+    /* TODO kb
+
+    select e.item_id
+    from editors e
+    join workspaces w
+    on w.workspace_id = e.workspace_id
+    join items i
+    on e.item_id = i.item_id
+    -- where e.buffer_path = ?
+    order by i.pane_id = 161065 desc, i.item_id desc
+    limit 1;
+    */
+    query! {
+        pub fn get_aa(
+            buffer_path: &Path,
+            workspace_id: WorkspaceId,
+            pane_id: PaneId
+        ) -> Result<Vec<(usize, usize)>> {
+            SELECT start, end
+            FROM editor_selections
+            WHERE editor_id = ?1 AND workspace_id = ?2 AND pane_id = ?3
+        }
     }
 }
 

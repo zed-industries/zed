@@ -193,7 +193,7 @@ use workspace::{
     item::{ItemHandle, PreviewTabsSettings},
     notifications::{DetachAndPromptErr, NotificationId, NotifyTaskExt},
     searchable::SearchEvent,
-    Item as WorkspaceItem, ItemId, ItemNavHistory, OpenInTerminal, OpenTerminal,
+    Item as WorkspaceItem, ItemId, ItemNavHistory, OpenInTerminal, OpenTerminal, Pane,
     RestoreOnStartupBehavior, SplitDirection, TabBarSettings, Toast, ViewId, Workspace,
     WorkspaceId, WorkspaceSettings, SERIALIZATION_THROTTLE_TIME,
 };
@@ -17440,6 +17440,36 @@ impl Editor {
 
     pub fn wait_for_diff_to_load(&self) -> Option<Shared<Task<()>>> {
         self.load_diff_task.clone()
+    }
+
+    // TODO kb
+    fn schedule_default_metadata_update(
+        &mut self,
+        pane: &Entity<Pane>,
+        window: &mut Window,
+        cx: &mut Context<Editor>,
+    ) -> Option<()> {
+        let workspace_id = window
+            .window_handle()
+            .downcast::<Workspace>()
+            .and_then(|workspace| {
+                workspace
+                    .update(cx, |workspace, _, _| workspace.database_id())
+                    .ok()
+            })
+            .flatten()?;
+        let project = self.project.as_ref()?;
+        let pane_id = pane.read(cx).preview_item_id();
+        let file = project::File::from_dyn(self.buffer().read(cx).as_singleton()?.read(cx).file())?;
+        let buffer_path = file.worktree.read(cx).absolutize(&file.path).ok()?;
+
+        // TODO kb config option to disable this behavior
+        let oo = DB.get_aa(&buffer_path, workspace_id, ());
+        // cx.spawn(|editor, cx| async move {
+        //     //
+        // })
+        // .detach();
+        Some(())
     }
 
     fn read_metadata_from_db(

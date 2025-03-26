@@ -10,8 +10,9 @@ use std::{
 
 use anyhow::{anyhow, bail, Context, Result};
 use client::DevServerProjectId;
+use collections::HashMap;
 use db::{define_connection, query, sqlez::connection::Connection, sqlez_macros::sql};
-use gpui::{point, size, Axis, Bounds, WindowBounds, WindowId};
+use gpui::{point, size, Axis, Bounds, Entity, WindowBounds, WindowId};
 use itertools::Itertools;
 use project::debugger::breakpoint_store::{BreakpointKind, BreakpointState, SerializedBreakpoint};
 
@@ -23,11 +24,11 @@ use sqlez::{
     statement::{SqlType, Statement},
 };
 
-use ui::px;
+use ui::{px, App};
 use util::{maybe, ResultExt};
 use uuid::Uuid;
 
-use crate::WorkspaceId;
+use crate::{Workspace, WorkspaceId};
 
 use model::{
     GroupId, LocalPaths, PaneId, SerializedItem, SerializedPane, SerializedPaneGroup,
@@ -763,7 +764,12 @@ impl WorkspaceDb {
 
     /// Saves a workspace using the worktree roots. Will garbage collect any workspaces
     /// that used this workspace previously
-    pub(crate) async fn save_workspace(&self, workspace: SerializedWorkspace) {
+    pub(crate) async fn save_workspace(
+        &self,
+        workspace_handle: Entity<Workspace>,
+        workspace: SerializedWorkspace,
+        cx: &mut App,
+    ) {
         self.write(move |conn| {
             conn.with_savepoint("update_worktrees", || {
                 // Clear out panes and pane_groups
@@ -906,8 +912,18 @@ impl WorkspaceDb {
                 }
 
                 // Save center pane group
-                Self::save_pane_group(conn, workspace.id, &workspace.center_group, None)
-                    .context("save pane group in save workspace")?;
+                let new_pane_ids = Self::save_pane_group(conn, workspace.id, &workspace.center_group, None)
+                        .context("save pane group in save workspace")?;
+                let panes = workspace_handle.read(cx).panes();
+                let panes_to_update = new_pane_ids.into_iter().map(|(index, pane_id)| {
+                    let pane = panes.get(index).context("mismatched pane data");
+                    pane.map(|pane| (pane, pane_id))
+                }).collect::<anyhow::Result<Vec<_>>>().ok();
+                for (pane, pane_id) in panes_to_update.into_iter().flatten() {
+                    pane.update(cx, |pane, _| {
+                        pane.set_db_id(pane_id);
+                    });
+                }
 
                 Ok(())
             })
@@ -1143,8 +1159,9 @@ impl WorkspaceDb {
             .unwrap_or_else(|| {
                 SerializedPaneGroup::Pane(SerializedPane {
                     active: true,
-                    children: vec![],
+                    children: Vec::new(),
                     pinned_count: 0,
+                    id: None,
                 })
             }))
     }
@@ -1207,6 +1224,7 @@ impl WorkspaceDb {
                 })
             } else if let Some((pane_id, active, pinned_count)) = maybe_pane {
                 Ok(SerializedPaneGroup::Pane(SerializedPane::new(
+                    Some(pane_id),
                     self.get_items(pane_id)?,
                     active,
                     pinned_count,
@@ -1229,7 +1247,7 @@ impl WorkspaceDb {
         workspace_id: WorkspaceId,
         pane_group: &SerializedPaneGroup,
         parent: Option<(GroupId, usize)>,
-    ) -> Result<()> {
+    ) -> Result<HashMap<usize, PaneId>> {
         match pane_group {
             SerializedPaneGroup::Group {
                 axis,
@@ -1261,15 +1279,22 @@ impl WorkspaceDb {
                 ))?
                 .ok_or_else(|| anyhow!("Couldn't retrieve group_id from inserted pane_group"))?;
 
+                let mut pane_ids = HashMap::default();
                 for (position, group) in children.iter().enumerate() {
-                    Self::save_pane_group(conn, workspace_id, group, Some((group_id, position)))?
+                    let new_pane_ids = Self::save_pane_group(
+                        conn,
+                        workspace_id,
+                        group,
+                        Some((group_id, position)),
+                    )?;
+                    pane_ids.extend(new_pane_ids);
                 }
 
-                Ok(())
+                Ok(pane_ids)
             }
             SerializedPaneGroup::Pane(pane) => {
-                Self::save_pane(conn, workspace_id, pane, parent)?;
-                Ok(())
+                let pane_id = Self::save_pane(conn, workspace_id, pane, parent)?;
+                Ok(HashMap::from_iter(vec![(pane_id, pane_id)]))
             }
         }
     }
@@ -1691,6 +1716,7 @@ mod tests {
                     Axis::Vertical,
                     vec![
                         SerializedPaneGroup::Pane(SerializedPane::new(
+                            None,
                             vec![
                                 SerializedItem::new("Terminal", 5, false, false),
                                 SerializedItem::new("Terminal", 6, true, false),
@@ -1699,6 +1725,7 @@ mod tests {
                             0,
                         )),
                         SerializedPaneGroup::Pane(SerializedPane::new(
+                            None,
                             vec![
                                 SerializedItem::new("Terminal", 7, true, false),
                                 SerializedItem::new("Terminal", 8, false, false),
@@ -1709,6 +1736,7 @@ mod tests {
                     ],
                 ),
                 SerializedPaneGroup::Pane(SerializedPane::new(
+                    None,
                     vec![
                         SerializedItem::new("Terminal", 9, false, false),
                         SerializedItem::new("Terminal", 10, true, false),
@@ -2298,6 +2326,7 @@ mod tests {
                     Axis::Vertical,
                     vec![
                         SerializedPaneGroup::Pane(SerializedPane::new(
+                            None,
                             vec![
                                 SerializedItem::new("Terminal", 1, false, false),
                                 SerializedItem::new("Terminal", 2, true, false),
@@ -2306,6 +2335,7 @@ mod tests {
                             0,
                         )),
                         SerializedPaneGroup::Pane(SerializedPane::new(
+                            None,
                             vec![
                                 SerializedItem::new("Terminal", 4, false, false),
                                 SerializedItem::new("Terminal", 3, true, false),
@@ -2316,6 +2346,7 @@ mod tests {
                     ],
                 ),
                 SerializedPaneGroup::Pane(SerializedPane::new(
+                    None,
                     vec![
                         SerializedItem::new("Terminal", 5, true, false),
                         SerializedItem::new("Terminal", 6, false, false),
@@ -2348,6 +2379,7 @@ mod tests {
                     Axis::Vertical,
                     vec![
                         SerializedPaneGroup::Pane(SerializedPane::new(
+                            None,
                             vec![
                                 SerializedItem::new("Terminal", 1, false, false),
                                 SerializedItem::new("Terminal", 2, true, false),
@@ -2356,6 +2388,7 @@ mod tests {
                             0,
                         )),
                         SerializedPaneGroup::Pane(SerializedPane::new(
+                            None,
                             vec![
                                 SerializedItem::new("Terminal", 4, false, false),
                                 SerializedItem::new("Terminal", 3, true, false),
@@ -2366,6 +2399,7 @@ mod tests {
                     ],
                 ),
                 SerializedPaneGroup::Pane(SerializedPane::new(
+                    None,
                     vec![
                         SerializedItem::new("Terminal", 5, false, false),
                         SerializedItem::new("Terminal", 6, true, false),
@@ -2386,6 +2420,7 @@ mod tests {
             Axis::Vertical,
             vec![
                 SerializedPaneGroup::Pane(SerializedPane::new(
+                    None,
                     vec![
                         SerializedItem::new("Terminal", 1, false, false),
                         SerializedItem::new("Terminal", 2, true, false),
@@ -2394,6 +2429,7 @@ mod tests {
                     0,
                 )),
                 SerializedPaneGroup::Pane(SerializedPane::new(
+                    None,
                     vec![
                         SerializedItem::new("Terminal", 4, true, false),
                         SerializedItem::new("Terminal", 3, false, false),
