@@ -18,6 +18,7 @@ use std::{
     io::{self, Cursor},
     ops::{Deref, DerefMut},
     path::{Path, PathBuf},
+    rc::Rc,
     str::FromStr,
     sync::Arc,
     time::{Duration, Instant},
@@ -47,6 +48,18 @@ pub enum ImageSource {
     Image(Arc<Image>),
     /// A custom loading function to use
     Custom(Arc<dyn Fn(&mut Window, &mut App) -> Option<Result<Arc<RenderImage>, ImageCacheError>>>),
+}
+
+impl PartialEq for ImageSource {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::Resource(a), Self::Resource(b)) => a == b,
+            (Self::Render(a), Self::Render(b)) => a == b,
+            (Self::Image(a), Self::Image(b)) => a == b,
+            (Self::Custom(_), Self::Custom(_)) => false,
+            _ => false,
+        }
+    }
 }
 
 fn is_uri(uri: &str) -> bool {
@@ -188,7 +201,7 @@ impl StyledImage for Stateful<Img> {
 /// An image element.
 pub struct Img {
     interactivity: Interactivity,
-    source: ImageSource,
+    source: Rc<ImageSource>,
     style: ImageStyle,
 }
 
@@ -196,7 +209,7 @@ pub struct Img {
 pub fn img(source: impl Into<ImageSource>) -> Img {
     Img {
         interactivity: Interactivity::default(),
-        source: source.into(),
+        source: Rc::new(source.into()),
         style: ImageStyle::default(),
     }
 }
@@ -228,6 +241,9 @@ impl DerefMut for Stateful<Img> {
 
 /// The image state between frames
 struct ImgState {
+    /// Used to track the last time image source, if element has been changed to new source,
+    /// we will remove the old source cache.
+    source: Rc<ImageSource>,
     frame_index: usize,
     last_frame_time: Option<Instant>,
     started_loading: Option<(Instant, Task<()>)>,
@@ -261,6 +277,7 @@ impl Element for Img {
         window.with_optional_element_state(global_id, |state, window| {
             let mut state = state.map(|state| {
                 state.unwrap_or(ImgState {
+                    source: self.source.clone(),
                     frame_index: 0,
                     last_frame_time: None,
                     started_loading: None,
@@ -268,6 +285,14 @@ impl Element for Img {
             });
 
             let frame_index = state.as_ref().map(|state| state.frame_index).unwrap_or(0);
+
+            if let Some(state) = &mut state {
+                // Remove old source cache if changed for cycle memory.
+                if state.source != self.source {
+                    state.source.remove_cache(window, cx);
+                    state.source = self.source.clone();
+                }
+            }
 
             let layout_id = self.interactivity.request_layout(
                 global_id,
@@ -482,6 +507,21 @@ impl ImageSource {
             ImageSource::Custom(loading_fn) => loading_fn(window, cx),
             ImageSource::Render(data) => Some(Ok(data.to_owned())),
             ImageSource::Image(data) => window.use_asset::<AssetLogger<ImageDecoder>>(data, cx),
+        }
+    }
+
+    pub(crate) fn remove_cache(&self, window: &mut Window, cx: &mut App) {
+        if let Some(image) = self.use_data(window, cx) {
+            if let Ok(data) = image {
+                _ = window.drop_image(data);
+            }
+        }
+
+        match self {
+            ImageSource::Resource(resource) => cx.remove_asset::<ImgResourceLoader>(&resource),
+            ImageSource::Custom(_) => {}
+            ImageSource::Render(_) => {}
+            ImageSource::Image(data) => cx.remove_asset::<AssetLogger<ImageDecoder>>(data),
         }
     }
 }
