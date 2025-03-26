@@ -70,6 +70,7 @@ members = [
     "crates/html_to_markdown",
     "crates/http_client",
     "crates/http_client_tls",
+    "crates/icons",
     "crates/image_viewer",
     "crates/indexed_docs",
     "crates/inline_completion",
@@ -124,7 +125,6 @@ members = [
     "crates/rope",
     "crates/rpc",
     "crates/schema_generator",
-    "crates/scripting_tool",
     "crates/search",
     "crates/semantic_index",
     "crates/semantic_version",
@@ -275,6 +275,7 @@ gpui_tokio = { path = "crates/gpui_tokio" }
 html_to_markdown = { path = "crates/html_to_markdown" }
 http_client = { path = "crates/http_client" }
 http_client_tls = { path = "crates/http_client_tls" }
+icons = { path = "crates/icons" }
 image_viewer = { path = "crates/image_viewer" }
 indexed_docs = { path = "crates/indexed_docs" }
 inline_completion = { path = "crates/inline_completion" }
@@ -329,7 +330,6 @@ reqwest_client = { path = "crates/reqwest_client" }
 rich_text = { path = "crates/rich_text" }
 rope = { path = "crates/rope" }
 rpc = { path = "crates/rpc" }
-scripting_tool = { path = "crates/scripting_tool" }
 search = { path = "crates/search" }
 semantic_index = { path = "crates/semantic_index" }
 semantic_version = { path = "crates/semantic_version" }

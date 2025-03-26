@@ -2,7 +2,6 @@ use client::{Client, UserStore};
 use collections::HashMap;
 use copilot::{Copilot, CopilotCompletionProvider};
 use editor::{Editor, EditorMode};
-use feature_flags::{FeatureFlagAppExt, PredictEditsFeatureFlag};
 use gpui::{AnyWindowHandle, App, AppContext as _, Context, Entity, WeakEntity};
 use language::language_settings::{all_language_settings, EditPredictionProvider};
 use settings::SettingsStore;
@@ -71,23 +70,8 @@ pub fn init(client: Arc<Client>, user_store: Entity<UserStore>, cx: &mut App) {
         });
     }
 
-    if cx.has_flag::<PredictEditsFeatureFlag>() {
-        cx.on_action(clear_zeta_edit_history);
-    }
-
-    cx.observe_flag::<PredictEditsFeatureFlag, _>({
-        let editors = editors.clone();
-        let client = client.clone();
-        let user_store = user_store.clone();
-        move |active, cx| {
-            let provider = all_language_settings(None, cx).edit_predictions.provider;
-            assign_edit_prediction_providers(&editors, provider, &client, user_store.clone(), cx);
-            if active && !cx.is_action_available(&zeta::ClearHistory) {
-                cx.on_action(clear_zeta_edit_history);
-            }
-        }
-    })
-    .detach();
+    cx.on_action(clear_zeta_edit_history);
+    assign_edit_prediction_providers(&editors, provider, &client, user_store.clone(), cx);
 
     cx.observe_global::<SettingsStore>({
         let editors = editors.clone();
@@ -249,9 +233,7 @@ fn assign_edit_prediction_provider(
             }
         }
         EditPredictionProvider::Zed => {
-            if cx.has_flag::<PredictEditsFeatureFlag>()
-                || (cfg!(debug_assertions) && client.status().borrow().is_connected())
-            {
+            if client.status().borrow().is_connected() {
                 let mut worktree = None;
 
                 if let Some(buffer) = &singleton_buffer {

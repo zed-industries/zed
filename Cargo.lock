@@ -491,8 +491,8 @@ dependencies = [
  "prompt_store",
  "proto",
  "rand 0.8.5",
+ "release_channel",
  "rope",
- "scripting_tool",
  "serde",
  "serde_json",
  "settings",
@@ -699,6 +699,7 @@ dependencies = [
  "collections",
  "derive_more",
  "gpui",
+ "icons",
  "language",
  "language_model",
  "parking_lot",
@@ -3198,6 +3199,7 @@ dependencies = [
  "extension",
  "futures 0.3.31",
  "gpui",
+ "icons",
  "language_model",
  "log",
  "parking_lot",
@@ -3244,9 +3246,7 @@ name = "copilot"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "async-compression",
  "async-std",
- "async-tar",
  "chrono",
  "client",
  "clock",
@@ -3274,7 +3274,6 @@ dependencies = [
  "serde",
  "serde_json",
  "settings",
- "smol",
  "strum",
  "task",
  "theme",
@@ -4522,12 +4521,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "env_home"
-version = "0.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c7f84e12ccf0a7ddc17a6c41c93326024c42920d7ee630d04950e6926645c0fe"
-
-[[package]]
 name = "env_logger"
 version = "0.10.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5646,7 +5639,6 @@ dependencies = [
  "askpass",
  "assistant_settings",
  "buffer_diff",
- "chrono",
  "collections",
  "command_palette_hooks",
  "component",
@@ -6500,6 +6492,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "icons"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "strum",
+]
+
+[[package]]
 name = "icu_collections"
 version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7312,6 +7312,7 @@ dependencies = [
  "google_ai",
  "gpui",
  "http_client",
+ "icons",
  "image",
  "log",
  "open_ai",
@@ -7324,7 +7325,6 @@ dependencies = [
  "strum",
  "telemetry_events",
  "thiserror 2.0.12",
- "ui",
  "util",
 ]
 
@@ -7932,25 +7932,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "lua-src"
-version = "547.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1edaf29e3517b49b8b746701e5648ccb5785cde1c119062cbabbc5d5cd115e42"
-dependencies = [
- "cc",
-]
-
-[[package]]
-name = "luajit-src"
-version = "210.5.12+a4f56a4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b3a8e7962a5368d5f264d045a5a255e90f9aa3fc1941ae15a8d2940d42cac671"
-dependencies = [
- "cc",
- "which 7.0.2",
-]
-
-[[package]]
 name = "lyon"
 version = "1.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -8363,34 +8344,6 @@ dependencies = [
  "serde",
  "serde_json",
  "strum",
-]
-
-[[package]]
-name = "mlua"
-version = "0.10.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d3f763c1041eff92ffb5d7169968a327e1ed2ebfe425dac0ee5a35f29082534b"
-dependencies = [
- "bstr",
- "either",
- "futures-util",
- "mlua-sys",
- "num-traits",
- "parking_lot",
- "rustc-hash 2.1.1",
-]
-
-[[package]]
-name = "mlua-sys"
-version = "0.6.7"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1901c1a635a22fe9250ffcc4fcc937c16b47c2e9e71adba8784af8bca1f69594"
-dependencies = [
- "cc",
- "cfg-if",
- "lua-src",
- "luajit-src",
- "pkg-config",
 ]
 
 [[package]]
@@ -9675,7 +9628,7 @@ name = "perplexity"
 version = "0.1.0"
 dependencies = [
  "serde",
- "zed_extension_api 0.3.0",
+ "zed_extension_api 0.4.0",
 ]
 
 [[package]]
@@ -12202,30 +12155,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a3cf7c11c38cb994f3d40e8a8cde3bbd1f72a435e4c49e85d6553d8312306152"
 
 [[package]]
-name = "scripting_tool"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "buffer_diff",
- "clock",
- "collections",
- "futures 0.3.31",
- "gpui",
- "language",
- "log",
- "mlua",
- "parking_lot",
- "project",
- "rand 0.8.5",
- "regex",
- "schemars",
- "serde",
- "serde_json",
- "settings",
- "util",
-]
-
-[[package]]
 name = "scrypt"
 version = "0.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -14276,10 +14205,11 @@ version = "0.1.0"
 dependencies = [
  "auto_update",
  "call",
+ "chrono",
  "client",
  "collections",
+ "db",
  "feature_flags",
- "git_ui",
  "gpui",
  "http_client",
  "notifications",
@@ -14300,7 +14230,6 @@ dependencies = [
  "windows 0.61.1",
  "workspace",
  "zed_actions",
- "zeta",
 ]
 
 [[package]]
@@ -15008,6 +14937,7 @@ dependencies = [
  "chrono",
  "component",
  "gpui",
+ "icons",
  "itertools 0.14.0",
  "linkme",
  "menu",
@@ -16182,18 +16112,6 @@ checksum = "b4ee928febd44d98f2f459a4a79bd4d928591333a494a10a868418ac1b39cf1f"
 dependencies = [
  "either",
  "home",
- "rustix",
- "winsafe",
-]
-
-[[package]]
-name = "which"
-version = "7.0.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2774c861e1f072b3aadc02f8ba886c26ad6321567ecc294c935434cad06f1283"
-dependencies = [
- "either",
- "env_home",
  "rustix",
  "winsafe",
 ]
@@ -17464,6 +17382,7 @@ dependencies = [
  "theme_extension",
  "theme_selector",
  "time",
+ "title_bar",
  "toolchain_selector",
  "tree-sitter-md",
  "tree-sitter-rust",
@@ -17513,7 +17432,7 @@ dependencies = [
 
 [[package]]
 name = "zed_extension_api"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -17571,7 +17490,7 @@ dependencies = [
 name = "zed_test_extension"
 version = "0.1.0"
 dependencies = [
- "zed_extension_api 0.3.0",
+ "zed_extension_api 0.4.0",
 ]
 
 [[package]]
@@ -17722,7 +17641,6 @@ dependencies = [
  "anyhow",
  "arrayvec",
  "call",
- "chrono",
  "client",
  "clock",
  "collections",

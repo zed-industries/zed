@@ -11,6 +11,7 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
+use ui::IconName;
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct DiagnosticsToolInput {
@@ -43,6 +44,10 @@ impl Tool for DiagnosticsTool {
 
     fn description(&self) -> String {
         include_str!("./diagnostics_tool/description.md").into()
+    }
+
+    fn icon(&self) -> IconName {
+        IconName::Warning
     }
 
     fn input_schema(&self) -> serde_json::Value {

@@ -1176,6 +1176,11 @@ impl FakeFs {
         self.state.lock().events_paused = true;
     }
 
+    pub fn unpause_events_and_flush(&self) {
+        self.state.lock().events_paused = false;
+        self.flush_events(usize::MAX);
+    }
+
     pub fn buffered_event_count(&self) -> usize {
         self.state.lock().buffered_events.len()
     }

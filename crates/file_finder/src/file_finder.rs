@@ -1067,7 +1067,7 @@ fn full_path_budget(
     small_em: Pixels,
     max_width: Pixels,
 ) -> usize {
-    ((px(max_width / px(0.8)) - px(file_name.len() as f32) * normal_em) / small_em) as usize
+    (((max_width / 0.8) - file_name.len() * normal_em) / small_em) as usize
 }
 
 impl PickerDelegate for FileFinderDelegate {

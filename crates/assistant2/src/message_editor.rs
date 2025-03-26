@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use collections::HashSet;
 use editor::actions::MoveUp;
-use editor::{Editor, EditorElement, EditorEvent, EditorStyle};
+use editor::{ContextMenuOptions, ContextMenuPlacement, Editor, EditorElement, EditorStyle};
 use fs::Fs;
 use git::ExpandCommitEditor;
 use git_ui::git_panel;
@@ -13,10 +13,8 @@ use gpui::{
 use language_model::LanguageModelRegistry;
 use language_model_selector::ToggleModelSelector;
 use project::Project;
-use rope::Point;
 use settings::Settings;
 use std::time::Duration;
-use text::Bias;
 use theme::ThemeSettings;
 use ui::{
     prelude::*, ButtonLike, KeyBinding, PlatformStyle, PopoverMenu, PopoverMenuHandle, Tooltip,
@@ -25,7 +23,7 @@ use vim_mode_setting::VimModeSetting;
 use workspace::Workspace;
 
 use crate::assistant_model_selector::AssistantModelSelector;
-use crate::context_picker::{ConfirmBehavior, ContextPicker};
+use crate::context_picker::{ConfirmBehavior, ContextPicker, ContextPickerCompletionProvider};
 use crate::context_store::{refresh_context_store_text, ContextStore};
 use crate::context_strip::{ContextStrip, ContextStripEvent, SuggestContextKind};
 use crate::thread::{RequestKind, Thread};
@@ -68,8 +66,23 @@ impl MessageEditor {
             let mut editor = Editor::auto_height(10, window, cx);
             editor.set_placeholder_text("Ask anything, @ to mention, ↑ to select", cx);
             editor.set_show_indent_guides(false, cx);
+            editor.set_context_menu_options(ContextMenuOptions {
+                min_entries_visible: 12,
+                max_entries_visible: 12,
+                placement: Some(ContextMenuPlacement::Above),
+            });
 
             editor
+        });
+
+        let editor_entity = editor.downgrade();
+        editor.update(cx, |editor, _| {
+            editor.set_completion_provider(Some(Box::new(ContextPickerCompletionProvider::new(
+                workspace.clone(),
+                context_store.downgrade(),
+                Some(thread_store.clone()),
+                editor_entity,
+            ))));
         });
 
         let inline_context_picker = cx.new(|cx| {
@@ -77,7 +90,6 @@ impl MessageEditor {
                 workspace.clone(),
                 Some(thread_store.clone()),
                 context_store.downgrade(),
-                editor.downgrade(),
                 ConfirmBehavior::Close,
                 window,
                 cx,
@@ -88,7 +100,6 @@ impl MessageEditor {
             ContextStrip::new(
                 context_store.clone(),
                 workspace.clone(),
-                editor.downgrade(),
                 Some(thread_store.clone()),
                 context_picker_menu_handle.clone(),
                 SuggestContextKind::File,
@@ -98,7 +109,6 @@ impl MessageEditor {
         });
 
         let subscriptions = vec![
-            cx.subscribe_in(&editor, window, Self::handle_editor_event),
             cx.subscribe_in(
                 &inline_context_picker,
                 window,
@@ -230,34 +240,6 @@ impl MessageEditor {
                 .ok();
         })
         .detach();
-    }
-
-    fn handle_editor_event(
-        &mut self,
-        editor: &Entity<Editor>,
-        event: &EditorEvent,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        match event {
-            EditorEvent::SelectionsChanged { .. } => {
-                editor.update(cx, |editor, cx| {
-                    let snapshot = editor.buffer().read(cx).snapshot(cx);
-                    let newest_cursor = editor.selections.newest::<Point>(cx).head();
-                    if newest_cursor.column > 0 {
-                        let behind_cursor = snapshot.clip_point(
-                            Point::new(newest_cursor.row, newest_cursor.column - 1),
-                            Bias::Left,
-                        );
-                        let char_behind_cursor = snapshot.chars_at(behind_cursor).next();
-                        if char_behind_cursor == Some('@') {
-                            self.inline_context_picker_menu_handle.show(window, cx);
-                        }
-                    }
-                });
-            }
-            _ => {}
-        }
     }
 
     fn handle_inline_context_picker_event(
@@ -616,6 +598,7 @@ impl Render for MessageEditor {
                                         background: editor_bg_color,
                                         local_player: cx.theme().players().local(),
                                         text: text_style,
+                                        syntax: cx.theme().syntax().clone(),
                                         ..Default::default()
                                     },
                                 )

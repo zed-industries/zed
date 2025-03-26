@@ -10,7 +10,8 @@ use parking_lot::Mutex;
 use rope::Rope;
 use schemars::JsonSchema;
 use serde::Deserialize;
-use std::borrow::Borrow;
+use std::borrow::{Borrow, Cow};
+use std::ffi::OsStr;
 use std::future;
 use std::path::Component;
 use std::process::{ExitStatus, Stdio};
@@ -504,12 +505,13 @@ impl GitRepository for RealGitRepository {
         let repo = self.repository.clone();
         cx.background_spawn(async move {
             fn logic(repo: &git2::Repository, path: &RepoPath) -> Result<Option<String>> {
-                const STAGE_NORMAL: i32 = 0;
-                let index = repo.index()?;
-
                 // This check is required because index.get_path() unwraps internally :(
                 check_path_to_repo_path_errors(path)?;
 
+                let mut index = repo.index()?;
+                index.read(false)?;
+
+                const STAGE_NORMAL: i32 = 0;
                 let oid = match index.get_path(path, STAGE_NORMAL) {
                     Some(entry) if entry.mode != GIT_MODE_SYMLINK => entry.id,
                     _ => return Ok(None),
@@ -577,7 +579,7 @@ impl GitRepository for RealGitRepository {
                     .current_dir(&working_directory)
                     .envs(env)
                     .args(["update-index", "--add", "--cacheinfo", "100644", &sha])
-                    .arg(path.as_ref())
+                    .arg(path.to_unix_style())
                     .output()
                     .await?;
 
@@ -592,7 +594,7 @@ impl GitRepository for RealGitRepository {
                     .current_dir(&working_directory)
                     .envs(env)
                     .args(["update-index", "--force-remove"])
-                    .arg(path.as_ref())
+                    .arg(path.to_unix_style())
                     .output()
                     .await?;
 
@@ -806,7 +808,7 @@ impl GitRepository for RealGitRepository {
                     .current_dir(&working_directory?)
                     .envs(env)
                     .args(["update-index", "--add", "--remove", "--"])
-                    .args(paths.iter().map(|p| p.as_ref()))
+                    .args(paths.iter().map(|p| p.to_unix_style()))
                     .output()
                     .await?;
 
@@ -1495,6 +1497,20 @@ impl RepoPath {
         debug_assert!(path.is_relative(), "Repo paths must be relative");
 
         RepoPath(path.into())
+    }
+
+    pub fn to_unix_style(&self) -> Cow<'_, OsStr> {
+        #[cfg(target_os = "windows")]
+        {
+            use std::ffi::OsString;
+
+            let path = self.0.as_os_str().to_string_lossy().replace("\\", "/");
+            Cow::Owned(OsString::from(path))
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            Cow::Borrowed(self.0.as_os_str())
+        }
     }
 }
 
