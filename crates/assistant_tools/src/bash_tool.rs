@@ -62,10 +62,11 @@ impl Tool for BashTool {
             Err(err) => return Task::ready(Err(anyhow!(err))),
         };
 
+        let project = project.read(cx);
         let input_path = Path::new(&input.cd);
         let working_directory = if input.cd == "." {
             // Accept "." as meaning "the one worktree" if we only have one worktree.
-            let mut worktrees = project.read(cx).worktrees(cx);
+            let mut worktrees = project.worktrees(cx);
 
             let only_worktree = match worktrees.next() {
                 Some(worktree) => worktree,
@@ -80,7 +81,6 @@ impl Tool for BashTool {
         } else if input_path.is_absolute() {
             // Absolute paths are allowed, but only if they're in one of the project's worktrees.
             if !project
-                .read(cx)
                 .worktrees(cx)
                 .any(|worktree| input_path.starts_with(&worktree.read(cx).abs_path()))
             {
@@ -91,7 +91,7 @@ impl Tool for BashTool {
 
             input_path.into()
         } else {
-            let Some(worktree) = project.read(cx).worktree_for_root_name(&input.cd, cx) else {
+            let Some(worktree) = project.worktree_for_root_name(&input.cd, cx) else {
                 return Task::ready(Err(anyhow!("`cd` directory not found in the project")));
             };
 
