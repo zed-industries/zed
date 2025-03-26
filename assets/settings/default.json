@@ -654,7 +654,8 @@
           "thinking": true
         }
       }
-    }
+    },
+    "notify_when_agent_waiting": true
   },
   // The settings for slash commands.
   "slash_commands": {
