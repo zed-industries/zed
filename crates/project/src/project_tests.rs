@@ -6,7 +6,8 @@ use buffer_diff::{
 };
 use fs::FakeFs;
 use futures::{future, StreamExt};
-use gpui::{App, SemanticVersion, UpdateGlobal};
+use git::repository::RepoPath;
+use gpui::{App, BackgroundExecutor, SemanticVersion, UpdateGlobal};
 use http_client::Url;
 use language::{
     language_settings::{language_settings, AllLanguageSettings, LanguageSettingsContent},
@@ -34,6 +35,7 @@ use util::{
     test::{marked_text_offsets, TempTree},
     uri, TryFutureExt as _,
 };
+use worktree::WorktreeModelHandle as _;
 
 #[gpui::test]
 async fn test_block_via_channel(cx: &mut gpui::TestAppContext) {
@@ -6770,117 +6772,101 @@ async fn test_single_file_diffs(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
-async fn test_project_path_to_repo_path(_cx: &mut gpui::TestAppContext) {
-    todo!("restore this now at the proper layer")
-    //init_test(cx);
-    //cx.executor().allow_parking();
-    //let root = TempTree::new(json!({
-    //    "c.txt": "",
-    //    "dir1": {
-    //        ".git": {},
-    //        "deps": {
-    //            "dep1": {
-    //                ".git": {},
-    //                "src": {
-    //                    "a.txt": ""
-    //                }
-    //            }
-    //        },
-    //        "src": {
-    //            "b.txt": ""
-    //        }
-    //    },
-    //}));
+async fn test_repository_and_path_for_project_path(
+    background_executor: BackgroundExecutor,
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx);
+    cx.executor().allow_parking();
+    let fs = FakeFs::new(background_executor);
+    fs.insert_tree(
+        path!("/root"),
+        json!({
+            "c.txt": "",
+            "dir1": {
+                ".git": {},
+                "deps": {
+                    "dep1": {
+                        ".git": {},
+                        "src": {
+                            "a.txt": ""
+                        }
+                    }
+                },
+                "src": {
+                    "b.txt": ""
+                }
+            },
+        }),
+    )
+    .await;
 
-    //let tree = Worktree::local(
-    //    root.path(),
-    //    true,
-    //    Arc::new(RealFs::default()),
-    //    Default::default(),
-    //    &mut cx.to_async(),
-    //)
-    //.await
-    //.unwrap();
+    let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+    let tree = project.read_with(cx, |project, cx| project.worktrees(cx).next().unwrap());
+    let tree_id = tree.read_with(cx, |tree, _| tree.id());
+    tree.read_with(cx, |tree, _| tree.as_local().unwrap().scan_complete())
+        .await;
+    tree.flush_fs_events(cx).await;
 
-    //cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
-    //    .await;
-    //tree.flush_fs_events(cx).await;
+    project.read_with(cx, |project, cx| {
+        let git_store = project.git_store().read(cx);
+        let pairs = [
+            ("c.txt", None),
+            ("dir1/src/b.txt", Some(("/root/dir1", "src/b.txt"))),
+            (
+                "dir1/deps/dep1/src/a.txt",
+                Some(("/root/dir1/deps/dep1", "src/a.txt")),
+            ),
+        ];
+        let expected = pairs
+            .iter()
+            .map(|(path, result)| {
+                (
+                    path,
+                    result.map(|(repo, repo_path)| {
+                        (Path::new(repo).to_owned(), RepoPath::from(repo_path))
+                    }),
+                )
+            })
+            .collect::<Vec<_>>();
+        let actual = pairs
+            .iter()
+            .map(|(path, _)| {
+                let project_path = (tree_id, Path::new(path)).into();
+                let result = maybe!({
+                    let (repo, repo_path) =
+                        git_store.repository_and_path_for_project_path(&project_path, cx)?;
+                    Some((
+                        repo.read(cx)
+                            .repository_entry
+                            .work_directory_abs_path
+                            .clone(),
+                        repo_path,
+                    ))
+                });
+                (path, result)
+            })
+            .collect::<Vec<_>>();
+        pretty_assertions::assert_eq!(expected, actual);
+    });
 
-    //tree.read_with(cx, |tree, _cx| {
-    //    let tree = tree.as_local().unwrap();
+    eprintln!(">>>>>>>>>>>>>>>> remove");
+    fs.remove_dir(path!("/root/dir1/.git").as_ref(), RemoveOptions::default())
+        .await
+        .unwrap();
+    tree.flush_fs_events(cx).await;
+    eprintln!("<<<<<<<<<<<<<<<< remove");
 
-    //    assert!(tree.local_repo_containing_path("c.txt".as_ref()).is_none());
-
-    //    let repo = tree
-    //        .local_repo_containing_path("dir1/src/b.txt".as_ref())
-    //        .unwrap();
-    //    assert_eq!(repo.work_directory, WorkDirectory::in_project("dir1"));
-
-    //    let repo = tree
-    //        .local_repo_containing_path("dir1/deps/dep1/src/a.txt".as_ref())
-    //        .unwrap();
-    //    assert_eq!(
-    //        repo.work_directory,
-    //        WorkDirectory::in_project("dir1/deps/dep1")
-    //    );
-
-    //    let entries = tree.files(false, 0);
-
-    //    let paths_with_repos = tree
-    //        .entries_with_repositories(entries)
-    //        .map(|(entry, repo)| {
-    //            (
-    //                entry.path.as_ref(),
-    //                repo.map(|repo| repo.work_directory_abs_path.clone()),
-    //            )
-    //        })
-    //        .collect::<Vec<_>>();
-
-    //    assert_eq!(
-    //        paths_with_repos,
-    //        &[
-    //            (Path::new("c.txt"), None),
-    //            (
-    //                Path::new("dir1/deps/dep1/src/a.txt"),
-    //                Some(root.path().join("dir1/deps/dep1")),
-    //            ),
-    //            (Path::new("dir1/src/b.txt"), Some(root.path().join("dir1"))),
-    //        ]
-    //    );
-    //});
-
-    //let repo_update_events = Arc::new(Mutex::new(vec![]));
-    //tree.update(cx, |_, cx| {
-    //    let repo_update_events = repo_update_events.clone();
-    //    cx.subscribe(&tree, move |_, _, event, _| {
-    //        if let Event::UpdatedGitRepositories(update) = event {
-    //            repo_update_events.lock().push(update.clone());
-    //        }
-    //    })
-    //    .detach();
-    //});
-
-    //std::fs::write(root.path().join("dir1/.git/random_new_file"), "hello").unwrap();
-    //tree.flush_fs_events(cx).await;
-
-    //assert_eq!(
-    //    repo_update_events.lock()[0]
-    //        .iter()
-    //        .map(|(entry, _)| entry.path.clone())
-    //        .collect::<Vec<Arc<Path>>>(),
-    //    vec![Path::new("dir1").into()]
-    //);
-
-    //std::fs::remove_dir_all(root.path().join("dir1/.git")).unwrap();
-    //tree.flush_fs_events(cx).await;
-
-    //tree.read_with(cx, |tree, _cx| {
-    //    let tree = tree.as_local().unwrap();
-
-    //    assert!(tree
-    //        .local_repo_containing_path("dir1/src/b.txt".as_ref())
-    //        .is_none());
-    //});
+    project.read_with(cx, |project, cx| {
+        let git_store = project.git_store().read(cx);
+        assert_eq!(
+            git_store.repository_and_path_for_project_path(
+                &(tree_id, Path::new(path!("dir1/src/b.txt"))).into(),
+                cx
+            ),
+            None
+        );
+    });
 }
 
 #[gpui::test]

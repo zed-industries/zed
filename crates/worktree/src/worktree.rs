@@ -5487,9 +5487,9 @@ async fn update_branches(
     let mut repository = snapshot
         .repositories
         .iter()
-        .cloned()
         .find(|repo_entry| repo_entry.work_directory_id == repository.work_directory_id)
-        .context("missing repository")?;
+        .context("missing repository")?
+        .clone();
     repository.current_branch = branches.into_iter().find(|branch| branch.is_head);
 
     let mut state = state.lock();
