@@ -63,7 +63,7 @@ use ui::{
     Tooltip,
 };
 use util::{maybe, post_inc, ResultExt, TryFutureExt};
-use workspace::{AppState, OpenOptions, OpenVisible};
+use workspace::AppState;
 
 use notifications::status_toast::{StatusToast, ToastIcon};
 use workspace::{
