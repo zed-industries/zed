@@ -127,13 +127,16 @@ pub struct ContextBuffer {
 pub struct ContextSymbol {
     pub id: ContextSymbolId,
     pub buffer: Entity<Buffer>,
+    pub buffer_version: clock::Global,
+    /// The range that the symbol encloses, e.g. for function symbol, this will
+    /// include not only the signature, but also the body
+    pub enclosing_range: Range<Anchor>,
     pub text: SharedString,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ContextSymbolId {
-    pub buffer_id: BufferId,
-    pub buffer_version: clock::Global,
+    pub name: SharedString,
     pub range: Range<Anchor>,
 }
 
@@ -225,22 +228,16 @@ impl DirectoryContext {
 impl SymbolContext {
     pub fn snapshot(&self, cx: &App) -> Option<ContextSnapshot> {
         let buffer = self.context_symbol.buffer.read(cx);
-        let path = buffer_path_log_err(buffer)?;
-        let full_path: SharedString = path.to_string_lossy().into_owned().into();
-        let name = match path.file_name() {
-            Some(name) => name.to_string_lossy().into_owned().into(),
-            None => full_path.clone(),
-        };
-
-        let parent = path
-            .parent()
-            .and_then(|p| p.file_name())
-            .map(|p| p.to_string_lossy().into_owned().into());
+        let name = self.context_symbol.id.name.clone();
+        let path = buffer_path_log_err(buffer)?
+            .to_string_lossy()
+            .into_owned()
+            .into();
 
         Some(ContextSnapshot {
             id: self.id,
             name,
-            parent,
+            parent: Some(path),
             tooltip: None,
             icon_path: None,
             kind: ContextKind::Symbol,

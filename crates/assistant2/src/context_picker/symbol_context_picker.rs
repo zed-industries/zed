@@ -13,8 +13,7 @@ use gpui::{
 use language::OutlineItem;
 use ordered_float::OrderedFloat;
 use picker::{Picker, PickerDelegate};
-use project::{ProjectPath, Symbol, WorktreeId};
-use rope::Point;
+use project::{DocumentSymbol, Symbol};
 use ui::{prelude::*, ListItem, Tooltip};
 use util::ResultExt as _;
 use workspace::{notifications::NotifyResultExt, Workspace};
@@ -120,10 +119,8 @@ impl PickerDelegate for SymbolContextPickerDelegate {
             return Task::ready(());
         };
 
-        let search_task = search_symbols(query, &workspace, cx);
-
+        let search_task = search_symbols(query, Arc::<AtomicBool>::default(), &workspace, cx);
         cx.spawn_in(window, async move |this, cx| {
-            // TODO: This should be probably be run in the background.
             let symbols = search_task
                 .await
                 .context("Failed to load symbols")
@@ -140,30 +137,59 @@ impl PickerDelegate for SymbolContextPickerDelegate {
         let Some(mat) = self.matches.get(self.selected_index) else {
             return;
         };
-
-        let Some(task) = self
-            .context_store
-            .update(cx, |context_store, cx| {
-                context_store.add_symbol(
-                    mat.path.clone(),
-                    mat.symbol.range.start.text_anchor..mat.symbol.range.end.text_anchor,
-                    cx,
-                )
-            })
-            .ok()
-        else {
+        let Some(workspace) = self.workspace.upgrade() else {
             return;
         };
 
+        let project = workspace.read(cx).project().clone();
+        let path = mat.symbol.path.clone();
+        let symbol = mat.symbol.clone();
+        let context_store = self.context_store.clone();
         let confirm_behavior = self.confirm_behavior;
+
+        let open_buffer_task = project.update(cx, |project, cx| project.open_buffer(path, cx));
         cx.spawn_in(window, async move |this, cx| {
-            match task.await.notify_async_err(cx) {
-                None => anyhow::Ok(()),
-                Some(()) => this.update_in(cx, |this, window, cx| match confirm_behavior {
-                    ConfirmBehavior::KeepOpen => {}
-                    ConfirmBehavior::Close => this.delegate.dismissed(window, cx),
-                }),
-            }
+            let buffer = open_buffer_task.await?;
+            let document_symbols = project
+                .update(cx, |project, cx| project.document_symbols(&buffer, cx))?
+                .await?;
+
+            // Try to find a matching document symbol. Document symbols include
+            // not only the symbol itself (e.g. function name), but they also
+            // include the context that they contain (e.g. function body).
+            let (name, range, enclosing_range) = if let Some(DocumentSymbol {
+                name,
+                range,
+                selection_range,
+                ..
+            }) =
+                find_matching_symbol(&symbol, &document_symbols)
+            {
+                (name, selection_range, range)
+            } else {
+                // If we do not find a matching document symbol, fall back to
+                // just the symbol itself
+                (symbol.name, symbol.range.clone(), symbol.range)
+            };
+
+            let (range, enclosing_range) = buffer.read_with(cx, |buffer, cx| {
+                (
+                    buffer.anchor_after(range.start)..buffer.anchor_before(range.end),
+                    buffer.anchor_after(enclosing_range.start)
+                        ..buffer.anchor_before(enclosing_range.end),
+                )
+            })?;
+
+            context_store
+                .update(cx, move |context_store, cx| {
+                    context_store.add_symbol(buffer, name.into(), range, enclosing_range, cx)
+                })?
+                .await?;
+
+            this.update_in(cx, |this, window, cx| match confirm_behavior {
+                ConfirmBehavior::KeepOpen => {}
+                ConfirmBehavior::Close => this.delegate.dismissed(window, cx),
+            })
         })
         .detach_and_log_err(cx);
     }
@@ -198,103 +224,99 @@ impl PickerDelegate for SymbolContextPickerDelegate {
 
 pub(crate) struct SymbolMatch {
     pub mat: StringMatch,
-    pub symbol: OutlineItem<Anchor>,
-    pub path: ProjectPath,
-    pub range: Range<Point>,
+    pub symbol: Symbol,
+}
+
+fn find_matching_symbol(symbol: &Symbol, candidates: &[DocumentSymbol]) -> Option<DocumentSymbol> {
+    let mut candidates = candidates.iter();
+    let mut candidate = candidates.next()?;
+
+    loop {
+        if candidate.range.start > symbol.range.end {
+            return None;
+        }
+        if candidate.range.end < symbol.range.start {
+            candidate = candidates.next()?;
+            continue;
+        }
+        if candidate.selection_range == symbol.range {
+            return Some(candidate.clone());
+        }
+        if candidate.range.start <= symbol.range.start && symbol.range.end <= candidate.range.end {
+            candidates = candidate.children.iter();
+            candidate = candidates.next()?;
+            continue;
+        }
+        return None;
+    }
 }
 
 pub(crate) fn search_symbols(
     query: String,
+    cancellation_flag: Arc<AtomicBool>,
     workspace: &Entity<Workspace>,
     cx: &mut App,
 ) -> Task<Result<Vec<SymbolMatch>>> {
-    let Some(editor) = workspace.read(cx).active_item_as::<Editor>(cx) else {
-        return Task::ready(Ok(Vec::new()));
-    };
-
-    let snapshot = editor.read(cx).buffer().read(cx).snapshot(cx);
-
-    let Some(outline) = snapshot.outline(None) else {
-        return Task::ready(Ok(Vec::new()));
-    };
-
-    let Some(path) = editor.read(cx).project_path(cx) else {
-        return Task::ready(Ok(Vec::new()));
-    };
-
+    let symbols_task = workspace.update(cx, |workspace, cx| {
+        workspace
+            .project()
+            .update(cx, |project, cx| project.symbols(&query, cx))
+    });
+    let project = workspace.read(cx).project().clone();
     cx.spawn(async move |cx| {
-        let task = outline.search(&query, cx.background_executor().clone());
-        let matches = task.await;
+        let symbols = symbols_task.await?;
+        let (visible_match_candidates, external_match_candidates): (Vec<_>, Vec<_>) = project
+            .update(cx, |project, cx| {
+                symbols
+                    .iter()
+                    .enumerate()
+                    .map(|(id, symbol)| StringMatchCandidate::new(id, &symbol.label.filter_text()))
+                    .partition(|candidate| {
+                        project
+                            .entry_for_path(&symbols[candidate.id].path, cx)
+                            .map_or(false, |e| !e.is_ignored)
+                    })
+            })?;
+
+        const MAX_MATCHES: usize = 100;
+        let mut visible_matches = cx.background_executor().block(fuzzy::match_strings(
+            &visible_match_candidates,
+            &query,
+            false,
+            MAX_MATCHES,
+            &cancellation_flag,
+            cx.background_executor().clone(),
+        ));
+        let mut external_matches = cx.background_executor().block(fuzzy::match_strings(
+            &external_match_candidates,
+            &query,
+            false,
+            MAX_MATCHES - visible_matches.len().min(MAX_MATCHES),
+            &cancellation_flag,
+            cx.background_executor().clone(),
+        ));
+        let sort_key_for_match = |mat: &StringMatch| {
+            let symbol = &symbols[mat.candidate_id];
+            (Reverse(OrderedFloat(mat.score)), symbol.label.filter_text())
+        };
+
+        visible_matches.sort_unstable_by_key(sort_key_for_match);
+        external_matches.sort_unstable_by_key(sort_key_for_match);
+        let mut matches = visible_matches;
+        matches.append(&mut external_matches);
+
         Ok(matches
             .into_iter()
-            .map(|mat| {
-                let symbol = outline.items[mat.candidate_id].clone();
-
-                SymbolMatch {
-                    mat,
-                    range: symbol.range.to_point(&snapshot),
-                    path: path.clone(),
-                    symbol,
+            .map(|mut mat| {
+                let symbol = symbols[mat.candidate_id].clone();
+                let filter_start = symbol.label.filter_range.start;
+                for position in &mut mat.positions {
+                    *position += filter_start;
                 }
+                SymbolMatch { mat, symbol }
             })
-            .collect::<Vec<_>>())
+            .collect())
     })
-
-    // let symbols_task = project.update(cx, |project, cx| project.symbols(&query, cx));
-    // cx.spawn(async move |cx| {
-    //     let symbols = symbols_task.await?;
-    //     let (visible_match_candidates, external_match_candidates): (Vec<_>, Vec<_>) = project
-    //         .update(cx, |project, cx| {
-    //             symbols
-    //                 .iter()
-    //                 .enumerate()
-    //                 .map(|(id, symbol)| StringMatchCandidate::new(id, &symbol.label.filter_text()))
-    //                 .partition(|candidate| {
-    //                     project
-    //                         .entry_for_path(&symbols[candidate.id].path, cx)
-    //                         .map_or(false, |e| !e.is_ignored)
-    //                 })
-    //         })?;
-
-    //     const MAX_MATCHES: usize = 100;
-    //     let mut visible_matches = cx.background_executor().block(fuzzy::match_strings(
-    //         &visible_match_candidates,
-    //         &query,
-    //         false,
-    //         MAX_MATCHES,
-    //         &cancellation_flag,
-    //         cx.background_executor().clone(),
-    //     ));
-    //     let mut external_matches = cx.background_executor().block(fuzzy::match_strings(
-    //         &external_match_candidates,
-    //         &query,
-    //         false,
-    //         MAX_MATCHES - visible_matches.len().min(MAX_MATCHES),
-    //         &cancellation_flag,
-    //         cx.background_executor().clone(),
-    //     ));
-    //     let sort_key_for_match = |mat: &StringMatch| {
-    //         let symbol = &symbols[mat.candidate_id];
-    //         (Reverse(OrderedFloat(mat.score)), symbol.label.filter_text())
-    //     };
-
-    //     visible_matches.sort_unstable_by_key(sort_key_for_match);
-    //     external_matches.sort_unstable_by_key(sort_key_for_match);
-    //     let mut matches = visible_matches;
-    //     matches.append(&mut external_matches);
-
-    //     Ok(matches
-    //         .into_iter()
-    //         .map(|mut mat| {
-    //             let symbol = symbols[mat.candidate_id].clone();
-    //             let filter_start = symbol.label.filter_range.start;
-    //             for position in &mut mat.positions {
-    //                 *position += filter_start;
-    //             }
-    //             (mat, symbol)
-    //         })
-    //         .collect())
-    // })
 }
 
 pub fn render_symbol_context_entry(
@@ -303,23 +325,15 @@ pub fn render_symbol_context_entry(
     context_store: WeakEntity<ContextStore>,
     cx: &App,
 ) -> Stateful<Div> {
-    // let added = context_store.upgrade().and_then(|context_store| {
-    //     context_store
-    //         .read(cx)
-    //         .included_th(path)
-    //         .map(FileInclusion::Direct)
-    // });
+    //TODO: Check if symbol is added
     let path = mat
+        .symbol
         .path
         .path
         .file_name()
         .map(|s| s.to_string_lossy())
         .unwrap_or_default();
-    let symbol_location = if mat.range.start.row == mat.range.end.row {
-        format!("{} L{}", path, mat.range.start.row)
-    } else {
-        format!("{} L{}-{}", path, mat.range.start.row, mat.range.end.row)
-    };
+    let symbol_location = format!("{} L{}", path, mat.symbol.range.start.0.row);
 
     h_flex()
         .id(id)
@@ -331,41 +345,10 @@ pub fn render_symbol_context_entry(
                 .color(Color::Muted),
         )
         .child(
-            h_flex().gap_1().child(Label::new(&mat.symbol.text)).child(
+            h_flex().gap_1().child(Label::new(&mat.symbol.name)).child(
                 Label::new(symbol_location)
                     .size(LabelSize::Small)
                     .color(Color::Muted),
             ),
         )
-    // .when_some(added, |el, added| match added {
-    //     FileInclusion::Direct(_) => el.child(
-    //         h_flex()
-    //             .w_full()
-    //             .justify_end()
-    //             .gap_0p5()
-    //             .child(
-    //                 Icon::new(IconName::Check)
-    //                     .size(IconSize::Small)
-    //                     .color(Color::Success),
-    //             )
-    //             .child(Label::new("Added").size(LabelSize::Small)),
-    //     ),
-    //     FileInclusion::InDirectory(dir_name) => {
-    //         let dir_name = dir_name.to_string_lossy().into_owned();
-
-    //         el.child(
-    //             h_flex()
-    //                 .w_full()
-    //                 .justify_end()
-    //                 .gap_0p5()
-    //                 .child(
-    //                     Icon::new(IconName::Check)
-    //                         .size(IconSize::Small)
-    //                         .color(Color::Success),
-    //                 )
-    //                 .child(Label::new("Included").size(LabelSize::Small)),
-    //         )
-    //         .tooltip(Tooltip::text(format!("in {dir_name}")))
-    //     }
-    // })
 }

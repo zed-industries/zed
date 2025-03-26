@@ -7,7 +7,7 @@ use collections::{BTreeMap, HashMap, HashSet};
 use futures::{self, future, Future, FutureExt};
 use gpui::{App, AppContext as _, AsyncApp, Context, Entity, SharedString, Task, WeakEntity};
 use language::Buffer;
-use project::{ProjectPath, Symbol, Worktree};
+use project::{ProjectPath, Worktree};
 use rope::Rope;
 use text::{Anchor, BufferId};
 use util::maybe;
@@ -270,43 +270,40 @@ impl ContextStore {
 
     pub fn add_symbol(
         &mut self,
-        path: ProjectPath,
+        buffer: Entity<Buffer>,
+        symbol_name: SharedString,
         symbol_range: Range<Anchor>,
+        symbol_enclosing_range: Range<Anchor>,
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
         let Some(workspace) = self.workspace.upgrade() else {
             return Task::ready(Err(anyhow!("Cannot add symbol: Workspace was dropped")));
         };
 
-        let open_buffer_task = workspace.update(cx, |workspace, cx| {
-            workspace
-                .project()
-                .update(cx, |project, cx| project.open_buffer(path.clone(), cx))
-        });
+        let buffer_ref = buffer.read(cx);
+        let Some(file) = buffer_ref.file() else {
+            return Task::ready(Err(anyhow!("Buffer has no path.")));
+        };
+
+        let (buffer_info, collect_content_task) = collect_buffer_info_and_text(
+            file.path().clone(),
+            buffer,
+            buffer_ref,
+            Some(symbol_enclosing_range.clone()),
+            cx.to_async(),
+        );
 
         cx.spawn(async move |this, cx| {
-            let buffer_entity = open_buffer_task.await?;
-            let (range, (buffer_info, text_task)) = this.update(cx, |_, cx| {
-                let buffer = buffer_entity.read(cx);
-                let Some(file) = buffer.file() else {
-                    return Err(anyhow!("Buffer has no path."));
-                };
-                Ok((
-                    symbol_range.clone(),
-                    collect_buffer_info_and_text(
-                        file.path().clone(),
-                        buffer_entity,
-                        buffer,
-                        Some(symbol_range),
-                        cx.to_async(),
-                    ),
-                ))
-            })??;
-
-            let text = text_task.await;
+            let content = collect_content_task.await;
 
             this.update(cx, |this, _cx| {
-                this.insert_symbol(make_context_symbol(buffer_info, range, text))
+                this.insert_symbol(make_context_symbol(
+                    buffer_info,
+                    symbol_name,
+                    symbol_range,
+                    symbol_enclosing_range,
+                    content,
+                ))
             })?;
             anyhow::Ok(())
         })
@@ -532,15 +529,15 @@ fn make_context_buffer(info: BufferInfo, text: SharedString) -> ContextBuffer {
 
 fn make_context_symbol(
     info: BufferInfo,
+    name: SharedString,
     range: Range<Anchor>,
+    enclosing_range: Range<Anchor>,
     text: SharedString,
 ) -> ContextSymbol {
     ContextSymbol {
-        id: ContextSymbolId {
-            buffer_id: info.id,
-            buffer_version: info.version,
-            range,
-        },
+        id: ContextSymbolId { name, range },
+        buffer_version: info.version,
+        enclosing_range,
         buffer: info.buffer_entity,
         text,
     }
@@ -825,19 +822,22 @@ fn refresh_context_symbol(
 ) -> Option<impl Future<Output = ContextSymbol>> {
     let buffer = context_symbol.buffer.read(cx);
     let path = buffer_path_log_err(buffer)?;
-    if buffer
-        .version
-        .changed_since(&context_symbol.id.buffer_version)
-    {
+    if buffer.version.changed_since(&context_symbol.buffer_version) {
         let (buffer_info, text_task) = collect_buffer_info_and_text(
             path,
             context_symbol.buffer.clone(),
             buffer,
-            Some(context_symbol.id.range.clone()),
+            Some(context_symbol.enclosing_range.clone()),
             cx.to_async(),
         );
+        let name = context_symbol.id.name.clone();
         let range = context_symbol.id.range.clone();
-        Some(text_task.map(move |text| make_context_symbol(buffer_info, range, text)))
+        let enclosing_range = context_symbol.enclosing_range.clone();
+        Some(
+            text_task.map(move |text| {
+                make_context_symbol(buffer_info, name, range, enclosing_range, text)
+            }),
+        )
     } else {
         None
     }
