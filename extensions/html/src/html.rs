@@ -107,10 +107,17 @@ impl zed::Extension for HtmlExtension {
 
     fn language_server_initialization_options(
         &mut self,
-        _server_id: &LanguageServerId,
-        _worktree: &zed_extension_api::Worktree,
+        server_id: &LanguageServerId,
+        worktree: &zed_extension_api::Worktree,
     ) -> Result<Option<zed_extension_api::serde_json::Value>> {
-        let initialization_options = json!({"provideFormatter": true });
+        let user_initialization_options = LspSettings::for_worktree(server_id.as_ref(), worktree)
+            .ok()
+            .and_then(|lsp_settings| lsp_settings.initialization_options.clone())
+            .unwrap_or_default();
+        let mut initialization_options = json!({"provideFormatter": true });
+        if !user_initialization_options.is_null() {
+            merge_json_value_into(user_initialization_options, &mut initialization_options);
+        }
         Ok(Some(initialization_options))
     }
 }
