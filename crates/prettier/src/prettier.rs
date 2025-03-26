@@ -248,7 +248,7 @@ impl Prettier {
         server_id: LanguageServerId,
         prettier_dir: PathBuf,
         node: NodeRuntime,
-        cx: AsyncApp,
+        mut cx: AsyncApp,
     ) -> anyhow::Result<Self> {
         use lsp::{LanguageServerBinary, LanguageServerName};
 
@@ -280,7 +280,7 @@ impl Prettier {
             &prettier_dir,
             None,
             Default::default(),
-            cx.clone(),
+            &mut cx,
         )
         .context("prettier server creation")?;
 

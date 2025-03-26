@@ -100,6 +100,7 @@ impl<'a> MarkdownParser<'a> {
             // Represent an inline code block
             | Event::Code(_)
             | Event::Html(_)
+            | Event::InlineHtml(_)
             | Event::FootnoteReference(_)
             | Event::Start(Tag::Link { .. })
             | Event::Start(Tag::Emphasis)
@@ -314,29 +315,6 @@ impl<'a> MarkdownParser<'a> {
                             ));
                         }
                     }
-                    if let Some(image) = image.as_mut() {
-                        text.truncate(text.len() - t.len());
-                        image.set_alt_text(t.to_string().into());
-                        if !text.is_empty() {
-                            let parsed_regions = MarkdownParagraphChunk::Text(ParsedMarkdownText {
-                                source_range: source_range.clone(),
-                                contents: text.clone(),
-                                highlights: highlights.clone(),
-                                region_ranges: region_ranges.clone(),
-                                regions: regions.clone(),
-                            });
-                            text = String::new();
-                            highlights = vec![];
-                            region_ranges = vec![];
-                            regions = vec![];
-                            markdown_text_like.push(parsed_regions);
-                        }
-
-                        let parsed_image = MarkdownParagraphChunk::Image(image.clone());
-                        markdown_text_like.push(parsed_image);
-                        style = MarkdownHighlightStyle::default();
-                        style.underline = true;
-                    }
                 }
                 Event::Code(t) => {
                     text.push_str(t.as_ref());
@@ -367,6 +345,20 @@ impl<'a> MarkdownParser<'a> {
                         );
                     }
                     Tag::Image { dest_url, .. } => {
+                        if !text.is_empty() {
+                            let parsed_regions = MarkdownParagraphChunk::Text(ParsedMarkdownText {
+                                source_range: source_range.clone(),
+                                contents: text.clone(),
+                                highlights: highlights.clone(),
+                                region_ranges: region_ranges.clone(),
+                                regions: regions.clone(),
+                            });
+                            text = String::new();
+                            highlights = vec![];
+                            region_ranges = vec![];
+                            regions = vec![];
+                            markdown_text_like.push(parsed_regions);
+                        }
                         image = Image::identify(
                             dest_url.to_string(),
                             source_range.clone(),
@@ -386,7 +378,12 @@ impl<'a> MarkdownParser<'a> {
                         link = None;
                     }
                     TagEnd::Image => {
-                        image = None;
+                        if let Some(mut image) = image.take() {
+                            if !text.is_empty() {
+                                image.alt_text = Some(std::mem::take(&mut text).into());
+                            }
+                            markdown_text_like.push(MarkdownParagraphChunk::Image(image));
+                        }
                     }
                     TagEnd::Paragraph => {
                         self.cursor += 1;
@@ -721,6 +718,9 @@ impl<'a> MarkdownParser<'a> {
                 }
             }
         }
+
+        code = code.strip_suffix('\n').unwrap_or(&code).to_string();
+
         let highlights = if let Some(language) = &language {
             if let Some(registry) = &self.language_registry {
                 let rope: language::Rope = code.as_str().into();
@@ -738,7 +738,7 @@ impl<'a> MarkdownParser<'a> {
 
         ParsedMarkdownCodeBlock {
             source_range,
-            contents: code.trim().to_string().into(),
+            contents: code.into(),
             language,
             highlights,
         }
@@ -928,6 +928,86 @@ mod tests {
                 },
                 alt_text: Some("test".into()),
             },)
+        );
+    }
+
+    #[gpui::test]
+    async fn test_image_without_alt_text() {
+        let parsed = parse("![](http://example.com/foo.png)").await;
+
+        let paragraph = if let ParsedMarkdownElement::Paragraph(text) = &parsed.children[0] {
+            text
+        } else {
+            panic!("Expected a paragraph");
+        };
+        assert_eq!(
+            paragraph[0],
+            MarkdownParagraphChunk::Image(Image {
+                source_range: 0..31,
+                link: Link::Web {
+                    url: "http://example.com/foo.png".to_string(),
+                },
+                alt_text: None,
+            },)
+        );
+    }
+
+    #[gpui::test]
+    async fn test_image_with_alt_text_containing_formatting() {
+        let parsed = parse("![foo *bar* baz](http://example.com/foo.png)").await;
+
+        let ParsedMarkdownElement::Paragraph(chunks) = &parsed.children[0] else {
+            panic!("Expected a paragraph");
+        };
+        assert_eq!(
+            chunks,
+            &[MarkdownParagraphChunk::Image(Image {
+                source_range: 0..44,
+                link: Link::Web {
+                    url: "http://example.com/foo.png".to_string(),
+                },
+                alt_text: Some("foo bar baz".into()),
+            }),],
+        );
+    }
+
+    #[gpui::test]
+    async fn test_images_with_text_in_between() {
+        let parsed = parse(
+            "![foo](http://example.com/foo.png)\nLorem Ipsum\n![bar](http://example.com/bar.png)",
+        )
+        .await;
+
+        let chunks = if let ParsedMarkdownElement::Paragraph(text) = &parsed.children[0] {
+            text
+        } else {
+            panic!("Expected a paragraph");
+        };
+        assert_eq!(
+            chunks,
+            &vec![
+                MarkdownParagraphChunk::Image(Image {
+                    source_range: 0..81,
+                    link: Link::Web {
+                        url: "http://example.com/foo.png".to_string(),
+                    },
+                    alt_text: Some("foo".into()),
+                }),
+                MarkdownParagraphChunk::Text(ParsedMarkdownText {
+                    source_range: 0..81,
+                    contents: " Lorem Ipsum ".to_string(),
+                    highlights: Vec::new(),
+                    region_ranges: Vec::new(),
+                    regions: Vec::new(),
+                }),
+                MarkdownParagraphChunk::Image(Image {
+                    source_range: 0..81,
+                    link: Link::Web {
+                        url: "http://example.com/bar.png".to_string(),
+                    },
+                    alt_text: Some("bar".into()),
+                })
+            ]
         );
     }
 

@@ -9,7 +9,8 @@ use language::{proto::serialize_operation, Buffer, BufferEvent, LanguageRegistry
 use node_runtime::NodeRuntime;
 use project::{
     buffer_store::{BufferStore, BufferStoreEvent},
-    git::GitStore,
+    debugger::{breakpoint_store::BreakpointStore, dap_store::DapStore},
+    git_store::GitStore,
     project_settings::SettingsObserver,
     search::SearchQuery,
     task_store::TaskStore,
@@ -81,32 +82,8 @@ impl HeadlessProject {
             store
         });
 
-        let buffer_store = cx.new(|cx| {
-            let mut buffer_store = BufferStore::local(worktree_store.clone(), cx);
-            buffer_store.shared(SSH_PROJECT_ID, session.clone().into(), cx);
-            buffer_store
-        });
-
         let environment = project::ProjectEnvironment::new(&worktree_store, None, cx);
-        let git_store = cx.new(|cx| {
-            GitStore::local(
-                &worktree_store,
-                buffer_store.clone(),
-                environment.clone(),
-                fs.clone(),
-                session.clone().into(),
-                cx,
-            )
-        });
-        let prettier_store = cx.new(|cx| {
-            PrettierStore::new(
-                node_runtime.clone(),
-                fs.clone(),
-                languages.clone(),
-                worktree_store.clone(),
-                cx,
-            )
-        });
+
         let toolchain_store = cx.new(|cx| {
             ToolchainStore::local(
                 languages.clone(),
@@ -116,9 +93,53 @@ impl HeadlessProject {
             )
         });
 
+        let buffer_store = cx.new(|cx| {
+            let mut buffer_store = BufferStore::local(worktree_store.clone(), cx);
+            buffer_store.shared(SSH_PROJECT_ID, session.clone().into(), cx);
+            buffer_store
+        });
+
+        let breakpoint_store =
+            cx.new(|_| BreakpointStore::local(worktree_store.clone(), buffer_store.clone()));
+
+        let dap_store = cx.new(|cx| {
+            DapStore::new_local(
+                http_client.clone(),
+                node_runtime.clone(),
+                fs.clone(),
+                languages.clone(),
+                environment.clone(),
+                toolchain_store.read(cx).as_language_toolchain_store(),
+                breakpoint_store.clone(),
+                worktree_store.clone(),
+                cx,
+            )
+        });
+
+        let git_store = cx.new(|cx| {
+            let mut store = GitStore::local(
+                &worktree_store,
+                buffer_store.clone(),
+                environment.clone(),
+                fs.clone(),
+                cx,
+            );
+            store.shared(SSH_PROJECT_ID, session.clone().into(), cx);
+            store
+        });
+
+        let prettier_store = cx.new(|cx| {
+            PrettierStore::new(
+                node_runtime.clone(),
+                fs.clone(),
+                languages.clone(),
+                worktree_store.clone(),
+                cx,
+            )
+        });
+
         let task_store = cx.new(|cx| {
             let mut task_store = TaskStore::local(
-                fs.clone(),
                 buffer_store.downgrade(),
                 worktree_store.clone(),
                 toolchain_store.read(cx).as_language_toolchain_store(),
@@ -186,6 +207,7 @@ impl HeadlessProject {
         session.subscribe_to_entity(SSH_PROJECT_ID, &lsp_store);
         session.subscribe_to_entity(SSH_PROJECT_ID, &task_store);
         session.subscribe_to_entity(SSH_PROJECT_ID, &toolchain_store);
+        session.subscribe_to_entity(SSH_PROJECT_ID, &dap_store);
         session.subscribe_to_entity(SSH_PROJECT_ID, &settings_observer);
         session.subscribe_to_entity(SSH_PROJECT_ID, &git_store);
 
@@ -220,6 +242,9 @@ impl HeadlessProject {
         LspStore::init(&client);
         TaskStore::init(Some(&client));
         ToolchainStore::init(&client);
+        DapStore::init(&client);
+        // todo(debugger): Re init breakpoint store when we set it up for collab
+        // BreakpointStore::init(&client);
         GitStore::init(&client);
 
         HeadlessProject {
@@ -380,8 +405,8 @@ impl HeadlessProject {
         // and immediately dropping the reference of the new client, causing it
         // to be dropped on the headless project, and the client only then
         // receiving a response to AddWorktree.
-        cx.spawn(|mut cx| async move {
-            this.update(&mut cx, |this, cx| {
+        cx.spawn(async move |cx| {
+            this.update(cx, |this, cx| {
                 this.worktree_store.update(cx, |worktree_store, cx| {
                     worktree_store.add(&worktree, cx);
                 });
@@ -610,7 +635,7 @@ impl HeadlessProject {
         _envelope: TypedEnvelope<proto::ShutdownRemoteServer>,
         cx: AsyncApp,
     ) -> Result<proto::Ack> {
-        cx.spawn(|cx| async move {
+        cx.spawn(async move |cx| {
             cx.update(|cx| {
                 // TODO: This is a hack, because in a headless project, shutdown isn't executed
                 // when calling quit, but it should be.

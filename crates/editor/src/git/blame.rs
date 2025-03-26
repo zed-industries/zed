@@ -363,7 +363,7 @@ impl GitBlame {
         let blame = self.project.read(cx).blame_buffer(&self.buffer, None, cx);
         let provider_registry = GitHostingProviderRegistry::default_global(cx);
 
-        self.task = cx.spawn(|this, mut cx| async move {
+        self.task = cx.spawn(async move |this, cx| {
             let result = cx
                 .background_spawn({
                     let snapshot = snapshot.clone();
@@ -386,7 +386,7 @@ impl GitBlame {
                 })
                 .await;
 
-            this.update(&mut cx, |this, cx| match result {
+            this.update(cx, |this, cx| match result {
                 Ok(None) => {
                     // Nothing to do, e.g. no repository found
                 }
@@ -417,12 +417,12 @@ impl GitBlame {
     }
 
     fn regenerate_on_edit(&mut self, cx: &mut Context<Self>) {
-        self.regenerate_on_edit_task = cx.spawn(|this, mut cx| async move {
+        self.regenerate_on_edit_task = cx.spawn(async move |this, cx| {
             cx.background_executor()
                 .timer(REGENERATE_ON_EDIT_DEBOUNCE_INTERVAL)
                 .await;
 
-            this.update(&mut cx, |this, cx| {
+            this.update(cx, |this, cx| {
                 this.generate(cx);
             })
         })

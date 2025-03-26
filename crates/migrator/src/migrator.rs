@@ -77,7 +77,7 @@ fn run_migrations(
             result = Some(migrated_text);
         }
     }
-    Ok(result)
+    Ok(result.filter(|new_text| text != new_text))
 }
 
 pub fn migrate_keymap(text: &str) -> Result<Option<String>> {
@@ -104,6 +104,10 @@ pub fn migrate_keymap(text: &str) -> Result<Option<String>> {
 
 pub fn migrate_settings(text: &str) -> Result<Option<String>> {
     let migrations: &[(MigrationPatterns, &Query)] = &[
+        (
+            migrations::m_2025_01_02::SETTINGS_PATTERNS,
+            &SETTINGS_QUERY_2025_01_02,
+        ),
         (
             migrations::m_2025_01_29::SETTINGS_PATTERNS,
             &SETTINGS_QUERY_2025_01_29,
@@ -166,6 +170,10 @@ define_query!(
 );
 
 // settings
+define_query!(
+    SETTINGS_QUERY_2025_01_02,
+    migrations::m_2025_01_02::SETTINGS_PATTERNS
+);
 define_query!(
     SETTINGS_QUERY_2025_01_29,
     migrations::m_2025_01_29::SETTINGS_PATTERNS
@@ -455,6 +463,56 @@ mod tests {
                         "Astro": {
                             "show_edit_predictions": true
                         }
+                    }
+                }
+            "#,
+            ),
+        )
+    }
+
+    #[test]
+    fn test_replace_settings_value() {
+        assert_migrate_settings(
+            r#"
+                {
+                    "scrollbar": {
+                        "diagnostics": true
+                    },
+                    "chat_panel": {
+                        "button": true
+                    }
+                }
+            "#,
+            Some(
+                r#"
+                {
+                    "scrollbar": {
+                        "diagnostics": "all"
+                    },
+                    "chat_panel": {
+                        "button": "always"
+                    }
+                }
+            "#,
+            ),
+        )
+    }
+
+    #[test]
+    fn test_replace_settings_name_and_value() {
+        assert_migrate_settings(
+            r#"
+                {
+                    "tabs": {
+                        "always_show_close_button": true
+                    }
+                }
+            "#,
+            Some(
+                r#"
+                {
+                    "tabs": {
+                        "show_close_button": "always"
                     }
                 }
             "#,

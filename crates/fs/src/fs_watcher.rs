@@ -38,6 +38,9 @@ impl Watcher for FsWatcher {
                         EventKind::Create(_) => Some(PathEventKind::Created),
                         EventKind::Modify(_) => Some(PathEventKind::Changed),
                         EventKind::Remove(_) => Some(PathEventKind::Removed),
+                        // Adding this fix a weird bug on Linux after upgrading notify
+                        // https://github.com/zed-industries/zed/actions/runs/14085230504/job/39449448832
+                        EventKind::Access(_) => return,
                         _ => None,
                     };
                     let mut path_events = event

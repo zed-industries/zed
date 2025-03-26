@@ -1,18 +1,26 @@
 pub mod model;
 
-use std::{path::Path, str::FromStr};
+use std::{
+    borrow::Cow,
+    collections::BTreeMap,
+    path::{Path, PathBuf},
+    str::FromStr,
+    sync::Arc,
+};
 
 use anyhow::{anyhow, bail, Context, Result};
 use client::DevServerProjectId;
 use db::{define_connection, query, sqlez::connection::Connection, sqlez_macros::sql};
 use gpui::{point, size, Axis, Bounds, WindowBounds, WindowId};
+use itertools::Itertools;
+use project::debugger::breakpoint_store::{BreakpointKind, BreakpointState, SerializedBreakpoint};
 
 use language::{LanguageName, Toolchain};
 use project::WorktreeId;
 use remote::ssh_session::SshProjectId;
 use sqlez::{
     bindable::{Bind, Column, StaticColumnCount},
-    statement::Statement,
+    statement::{SqlType, Statement},
 };
 
 use ui::px;
@@ -136,6 +144,158 @@ impl Column for SerializedWindowBounds {
     }
 }
 
+#[derive(Debug)]
+pub struct Breakpoint {
+    pub position: u32,
+    pub kind: BreakpointKind,
+    pub state: BreakpointState,
+}
+
+/// Wrapper for DB type of a breakpoint
+struct BreakpointStateWrapper<'a>(Cow<'a, BreakpointState>);
+
+impl From<BreakpointState> for BreakpointStateWrapper<'static> {
+    fn from(kind: BreakpointState) -> Self {
+        BreakpointStateWrapper(Cow::Owned(kind))
+    }
+}
+impl StaticColumnCount for BreakpointStateWrapper<'_> {
+    fn column_count() -> usize {
+        1
+    }
+}
+
+impl Bind for BreakpointStateWrapper<'_> {
+    fn bind(&self, statement: &Statement, start_index: i32) -> anyhow::Result<i32> {
+        statement.bind(&self.0.to_int(), start_index)
+    }
+}
+
+impl Column for BreakpointStateWrapper<'_> {
+    fn column(statement: &mut Statement, start_index: i32) -> anyhow::Result<(Self, i32)> {
+        let state = statement.column_int(start_index)?;
+
+        match state {
+            0 => Ok((BreakpointState::Enabled.into(), start_index + 1)),
+            1 => Ok((BreakpointState::Disabled.into(), start_index + 1)),
+            _ => Err(anyhow::anyhow!("Invalid BreakpointState discriminant")),
+        }
+    }
+}
+
+/// Wrapper for DB type of a breakpoint
+#[derive(Debug)]
+struct BreakpointKindWrapper<'a>(Cow<'a, BreakpointKind>);
+
+impl From<BreakpointKind> for BreakpointKindWrapper<'static> {
+    fn from(kind: BreakpointKind) -> Self {
+        BreakpointKindWrapper(Cow::Owned(kind))
+    }
+}
+impl StaticColumnCount for BreakpointKindWrapper<'_> {
+    fn column_count() -> usize {
+        1
+    }
+}
+
+impl Bind for BreakpointKindWrapper<'_> {
+    fn bind(&self, statement: &Statement, start_index: i32) -> anyhow::Result<i32> {
+        let next_index = statement.bind(&self.0.to_int(), start_index)?;
+
+        match self.0.as_ref() {
+            BreakpointKind::Standard => {
+                statement.bind_null(next_index)?;
+                Ok(next_index + 1)
+            }
+            BreakpointKind::Log(message) => statement.bind(&message.as_ref(), next_index),
+        }
+    }
+}
+
+impl Column for BreakpointKindWrapper<'_> {
+    fn column(statement: &mut Statement, start_index: i32) -> anyhow::Result<(Self, i32)> {
+        let kind = statement.column_int(start_index)?;
+
+        match kind {
+            0 => Ok((BreakpointKind::Standard.into(), start_index + 2)),
+            1 => {
+                let message = statement.column_text(start_index)?.to_string();
+                Ok((BreakpointKind::Log(message.into()).into(), start_index + 1))
+            }
+            _ => Err(anyhow::anyhow!("Invalid BreakpointKind discriminant")),
+        }
+    }
+}
+
+/// This struct is used to implement traits on Vec<breakpoint>
+#[derive(Debug)]
+#[allow(dead_code)]
+struct Breakpoints(Vec<Breakpoint>);
+
+impl sqlez::bindable::StaticColumnCount for Breakpoint {
+    fn column_count() -> usize {
+        1 + BreakpointKindWrapper::column_count() + BreakpointStateWrapper::column_count()
+    }
+}
+
+impl sqlez::bindable::Bind for Breakpoint {
+    fn bind(
+        &self,
+        statement: &sqlez::statement::Statement,
+        start_index: i32,
+    ) -> anyhow::Result<i32> {
+        let next_index = statement.bind(&self.position, start_index)?;
+        let next_index = statement.bind(
+            &BreakpointKindWrapper(Cow::Borrowed(&self.kind)),
+            next_index,
+        )?;
+        statement.bind(
+            &BreakpointStateWrapper(Cow::Borrowed(&self.state)),
+            next_index,
+        )
+    }
+}
+
+impl Column for Breakpoint {
+    fn column(statement: &mut Statement, start_index: i32) -> Result<(Self, i32)> {
+        let position = statement
+            .column_int(start_index)
+            .with_context(|| format!("Failed to read BreakPoint at index {start_index}"))?
+            as u32;
+        let (kind, next_index) = BreakpointKindWrapper::column(statement, start_index + 1)?;
+        let (state, next_index) = BreakpointStateWrapper::column(statement, next_index)?;
+
+        Ok((
+            Breakpoint {
+                position,
+                kind: kind.0.into_owned(),
+                state: state.0.into_owned(),
+            },
+            next_index,
+        ))
+    }
+}
+
+impl Column for Breakpoints {
+    fn column(statement: &mut Statement, start_index: i32) -> Result<(Self, i32)> {
+        let mut breakpoints = Vec::new();
+        let mut index = start_index;
+
+        loop {
+            match statement.column_type(index) {
+                Ok(SqlType::Null) => break,
+                _ => {
+                    let (breakpoint, next_index) = Breakpoint::column(statement, index)?;
+
+                    breakpoints.push(breakpoint);
+                    index = next_index;
+                }
+            }
+        }
+        Ok((Breakpoints(breakpoints), index))
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 struct SerializedPixels(gpui::Pixels);
 impl sqlez::bindable::StaticColumnCount for SerializedPixels {}
@@ -204,6 +364,14 @@ define_connection! {
     //     position: usize, // Position of the item in the parent pane. This is equivalent to panes' position column
     //     active: bool, // Indicates if this item is the active one in the pane
     //     preview: bool // Indicates if this item is a preview item
+    // )
+    //
+    // CREATE TABLE breakpoints(
+    //      workspace_id: usize Foreign Key, // References workspace table
+    //      path: PathBuf, // The absolute path of the file that this breakpoint belongs to
+    //      breakpoint_location: Vec<u32>, // A list of the locations of breakpoints
+    //      kind: int, // The kind of breakpoint (standard, log)
+    //      log_message: String, // log message for log breakpoints, otherwise it's Null
     // )
     pub static ref DB: WorkspaceDb<()> =
     &[
@@ -383,6 +551,26 @@ define_connection! {
     sql!(
         ALTER TABLE toolchains ADD COLUMN raw_json TEXT DEFAULT "{}";
     ),
+    sql!(
+            CREATE TABLE breakpoints (
+                workspace_id INTEGER NOT NULL,
+                path TEXT NOT NULL,
+                breakpoint_location INTEGER NOT NULL,
+                kind INTEGER NOT NULL,
+                log_message TEXT,
+                FOREIGN KEY(workspace_id) REFERENCES workspaces(workspace_id)
+                ON DELETE CASCADE
+                ON UPDATE CASCADE
+            );
+        ),
+    sql!(
+        ALTER TABLE workspaces ADD COLUMN local_paths_array TEXT;
+        CREATE UNIQUE INDEX local_paths_array_uq ON workspaces(local_paths_array);
+        ALTER TABLE workspaces ADD COLUMN local_paths_order_array TEXT;
+    ),
+    sql!(
+        ALTER TABLE breakpoints ADD COLUMN state INTEGER DEFAULT(0) NOT NULL
+    )
     ];
 }
 
@@ -470,6 +658,7 @@ impl WorkspaceDb {
             display,
             docks,
             session_id: None,
+            breakpoints: self.breakpoints(workspace_id),
             window_id,
         })
     }
@@ -523,11 +712,53 @@ impl WorkspaceDb {
                 .log_err()?,
             window_bounds,
             centered_layout: centered_layout.unwrap_or(false),
+            breakpoints: self.breakpoints(workspace_id),
             display,
             docks,
             session_id: None,
             window_id,
         })
+    }
+
+    fn breakpoints(
+        &self,
+        workspace_id: WorkspaceId,
+    ) -> BTreeMap<Arc<Path>, Vec<SerializedBreakpoint>> {
+        let breakpoints: Result<Vec<(PathBuf, Breakpoint)>> = self
+            .select_bound(sql! {
+                SELECT path, breakpoint_location, kind, log_message, state
+                FROM breakpoints
+                WHERE workspace_id = ?
+            })
+            .and_then(|mut prepared_statement| (prepared_statement)(workspace_id));
+
+        match breakpoints {
+            Ok(bp) => {
+                if bp.is_empty() {
+                    log::debug!("Breakpoints are empty after querying database for them");
+                }
+
+                let mut map: BTreeMap<Arc<Path>, Vec<SerializedBreakpoint>> = Default::default();
+
+                for (path, breakpoint) in bp {
+                    let path: Arc<Path> = path.into();
+                    map.entry(path.clone())
+                        .or_default()
+                        .push(SerializedBreakpoint {
+                            position: breakpoint.position,
+                            path,
+                            kind: breakpoint.kind,
+                            state: breakpoint.state,
+                        });
+                }
+
+                map
+            }
+            Err(msg) => {
+                log::error!("Breakpoints query failed with msg: {msg}");
+                Default::default()
+            }
+        }
     }
 
     /// Saves a workspace using the worktree roots. Will garbage collect any workspaces
@@ -540,6 +771,33 @@ impl WorkspaceDb {
                     DELETE FROM pane_groups WHERE workspace_id = ?1;
                     DELETE FROM panes WHERE workspace_id = ?1;))?(workspace.id)
                 .context("Clearing old panes")?;
+                for (path, breakpoints) in workspace.breakpoints {
+                    conn.exec_bound(sql!(DELETE FROM breakpoints WHERE workspace_id = ?1 AND path = ?2))?((workspace.id, path.as_ref()))
+                    .context("Clearing old breakpoints")?;
+                    for bp in breakpoints {
+                        let kind = BreakpointKindWrapper::from(bp.kind);
+                        let state = BreakpointStateWrapper::from(bp.state);
+                        match conn.exec_bound(sql!(
+                            INSERT INTO breakpoints (workspace_id, path, breakpoint_location, kind, log_message, state)
+                            VALUES (?1, ?2, ?3, ?4, ?5, ?6);))?
+
+                        ((
+                            workspace.id,
+                            path.as_ref(),
+                            bp.position,
+                            kind,
+                            state,
+                        )) {
+                            Ok(_) => {}
+                            Err(err) => {
+                                log::error!("{err}");
+                                continue;
+                            }
+                        }
+                    }
+
+                }
+
 
                 match workspace.location {
                     SerializedWorkspaceLocation::Local(local_paths, local_paths_order) => {
@@ -566,9 +824,11 @@ impl WorkspaceDb {
                                 bottom_dock_zoom,
                                 session_id,
                                 window_id,
-                                timestamp
+                                timestamp,
+                                local_paths_array,
+                                local_paths_order_array
                             )
-                            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, CURRENT_TIMESTAMP)
+                            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, CURRENT_TIMESTAMP, ?15, ?16)
                             ON CONFLICT DO
                             UPDATE SET
                                 local_paths = ?2,
@@ -584,10 +844,12 @@ impl WorkspaceDb {
                                 bottom_dock_zoom = ?12,
                                 session_id = ?13,
                                 window_id = ?14,
-                                timestamp = CURRENT_TIMESTAMP
+                                timestamp = CURRENT_TIMESTAMP,
+                                local_paths_array = ?15,
+                                local_paths_order_array = ?16
                         );
                         let mut prepared_query = conn.exec_bound(query)?;
-                        let args = (workspace.id, &local_paths, &local_paths_order, workspace.docks, workspace.session_id, workspace.window_id);
+                        let args = (workspace.id, &local_paths, &local_paths_order, workspace.docks, workspace.session_id, workspace.window_id, local_paths.paths().iter().map(|path| path.to_string_lossy().to_string()).join(","), local_paths_order.order().iter().map(|order| order.to_string()).join(","));
 
                         prepared_query(args).context("Updating workspace")?;
                     }
@@ -717,6 +979,21 @@ impl WorkspaceDb {
             FROM workspaces
             WHERE session_id = ?1 AND dev_server_project_id IS NULL
             ORDER BY timestamp DESC
+        }
+    }
+
+    query! {
+        pub fn breakpoints_for_file(workspace_id: WorkspaceId, file_path: &Path) -> Result<Vec<Breakpoint>> {
+            SELECT breakpoint_location
+            FROM breakpoints
+            WHERE  workspace_id= ?1 AND path = ?2
+        }
+    }
+
+    query! {
+        pub fn clear_breakpoints(file_path: &Path) -> Result<()> {
+            DELETE FROM breakpoints
+            WHERE file_path = ?2
         }
     }
 
@@ -1166,6 +1443,95 @@ mod tests {
     use gpui;
 
     #[gpui::test]
+    async fn test_breakpoints() {
+        env_logger::try_init().ok();
+
+        let db = WorkspaceDb(open_test_db("test_breakpoints").await);
+        let id = db.next_id().await.unwrap();
+
+        let path = Path::new("/tmp/test.rs");
+
+        let breakpoint = Breakpoint {
+            position: 123,
+            kind: BreakpointKind::Standard,
+            state: BreakpointState::Enabled,
+        };
+
+        let log_breakpoint = Breakpoint {
+            position: 456,
+            kind: BreakpointKind::Log("Test log message".into()),
+            state: BreakpointState::Enabled,
+        };
+
+        let disable_breakpoint = Breakpoint {
+            position: 578,
+            kind: BreakpointKind::Standard,
+            state: BreakpointState::Disabled,
+        };
+
+        let workspace = SerializedWorkspace {
+            id,
+            location: SerializedWorkspaceLocation::from_local_paths(["/tmp"]),
+            center_group: Default::default(),
+            window_bounds: Default::default(),
+            display: Default::default(),
+            docks: Default::default(),
+            centered_layout: false,
+            breakpoints: {
+                let mut map = collections::BTreeMap::default();
+                map.insert(
+                    Arc::from(path),
+                    vec![
+                        SerializedBreakpoint {
+                            position: breakpoint.position,
+                            path: Arc::from(path),
+                            kind: breakpoint.kind.clone(),
+                            state: breakpoint.state,
+                        },
+                        SerializedBreakpoint {
+                            position: log_breakpoint.position,
+                            path: Arc::from(path),
+                            kind: log_breakpoint.kind.clone(),
+                            state: log_breakpoint.state,
+                        },
+                        SerializedBreakpoint {
+                            position: disable_breakpoint.position,
+                            path: Arc::from(path),
+                            kind: disable_breakpoint.kind.clone(),
+                            state: disable_breakpoint.state,
+                        },
+                    ],
+                );
+                map
+            },
+            session_id: None,
+            window_id: None,
+        };
+
+        db.save_workspace(workspace.clone()).await;
+
+        let loaded = db.workspace_for_roots(&["/tmp"]).unwrap();
+        let loaded_breakpoints = loaded.breakpoints.get(&Arc::from(path)).unwrap();
+
+        assert_eq!(loaded_breakpoints.len(), 3);
+
+        assert_eq!(loaded_breakpoints[0].position, breakpoint.position);
+        assert_eq!(loaded_breakpoints[0].kind, breakpoint.kind);
+        assert_eq!(loaded_breakpoints[0].state, breakpoint.state);
+        assert_eq!(loaded_breakpoints[0].path, Arc::from(path));
+
+        assert_eq!(loaded_breakpoints[1].position, log_breakpoint.position);
+        assert_eq!(loaded_breakpoints[1].kind, log_breakpoint.kind);
+        assert_eq!(loaded_breakpoints[1].state, log_breakpoint.state);
+        assert_eq!(loaded_breakpoints[1].path, Arc::from(path));
+
+        assert_eq!(loaded_breakpoints[2].position, disable_breakpoint.position);
+        assert_eq!(loaded_breakpoints[2].kind, disable_breakpoint.kind);
+        assert_eq!(loaded_breakpoints[2].state, disable_breakpoint.state);
+        assert_eq!(loaded_breakpoints[2].path, Arc::from(path));
+    }
+
+    #[gpui::test]
     async fn test_next_id_stability() {
         env_logger::try_init().ok();
 
@@ -1243,6 +1609,7 @@ mod tests {
             display: Default::default(),
             docks: Default::default(),
             centered_layout: false,
+            breakpoints: Default::default(),
             session_id: None,
             window_id: None,
         };
@@ -1255,6 +1622,7 @@ mod tests {
             display: Default::default(),
             docks: Default::default(),
             centered_layout: false,
+            breakpoints: Default::default(),
             session_id: None,
             window_id: None,
         };
@@ -1359,6 +1727,7 @@ mod tests {
             ),
             center_group,
             window_bounds: Default::default(),
+            breakpoints: Default::default(),
             display: Default::default(),
             docks: Default::default(),
             centered_layout: false,
@@ -1393,6 +1762,7 @@ mod tests {
             ),
             center_group: Default::default(),
             window_bounds: Default::default(),
+            breakpoints: Default::default(),
             display: Default::default(),
             docks: Default::default(),
             centered_layout: false,
@@ -1408,6 +1778,7 @@ mod tests {
             display: Default::default(),
             docks: Default::default(),
             centered_layout: false,
+            breakpoints: Default::default(),
             session_id: None,
             window_id: Some(2),
         };
@@ -1447,6 +1818,7 @@ mod tests {
             ),
             center_group: Default::default(),
             window_bounds: Default::default(),
+            breakpoints: Default::default(),
             display: Default::default(),
             docks: Default::default(),
             centered_layout: false,
@@ -1486,6 +1858,7 @@ mod tests {
             display: Default::default(),
             docks: Default::default(),
             centered_layout: false,
+            breakpoints: Default::default(),
             session_id: Some("session-id-1".to_owned()),
             window_id: Some(10),
         };
@@ -1498,6 +1871,7 @@ mod tests {
             display: Default::default(),
             docks: Default::default(),
             centered_layout: false,
+            breakpoints: Default::default(),
             session_id: Some("session-id-1".to_owned()),
             window_id: Some(20),
         };
@@ -1510,6 +1884,7 @@ mod tests {
             display: Default::default(),
             docks: Default::default(),
             centered_layout: false,
+            breakpoints: Default::default(),
             session_id: Some("session-id-2".to_owned()),
             window_id: Some(30),
         };
@@ -1522,6 +1897,7 @@ mod tests {
             display: Default::default(),
             docks: Default::default(),
             centered_layout: false,
+            breakpoints: Default::default(),
             session_id: None,
             window_id: None,
         };
@@ -1539,6 +1915,7 @@ mod tests {
             display: Default::default(),
             docks: Default::default(),
             centered_layout: false,
+            breakpoints: Default::default(),
             session_id: Some("session-id-2".to_owned()),
             window_id: Some(50),
         };
@@ -1551,6 +1928,7 @@ mod tests {
             ),
             center_group: Default::default(),
             window_bounds: Default::default(),
+            breakpoints: Default::default(),
             display: Default::default(),
             docks: Default::default(),
             centered_layout: false,
@@ -1608,6 +1986,7 @@ mod tests {
             window_bounds: Default::default(),
             display: Default::default(),
             docks: Default::default(),
+            breakpoints: Default::default(),
             centered_layout: false,
             session_id: None,
             window_id: None,
@@ -1655,6 +2034,7 @@ mod tests {
             docks: Default::default(),
             centered_layout: false,
             session_id: Some("one-session".to_owned()),
+            breakpoints: Default::default(),
             window_id: Some(window_id),
         })
         .collect::<Vec<_>>();
@@ -1746,6 +2126,7 @@ mod tests {
             docks: Default::default(),
             centered_layout: false,
             session_id: Some("one-session".to_owned()),
+            breakpoints: Default::default(),
             window_id: Some(window_id),
         })
         .collect::<Vec<_>>();

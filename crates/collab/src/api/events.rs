@@ -660,10 +660,6 @@ fn for_snowflake(
                 e.event_type.clone(),
                 serde_json::to_value(&e.event_properties).unwrap(),
             ),
-            Event::AssistantThreadFeedback(e) => (
-                "Assistant Feedback".to_string(),
-                serde_json::to_value(&e).unwrap(),
-            ),
         };
 
         if let serde_json::Value::Object(ref mut map) = event_properties {

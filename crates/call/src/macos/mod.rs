@@ -47,10 +47,10 @@ impl OneAtATime {
     {
         let (tx, rx) = oneshot::channel();
         self.cancel.replace(tx);
-        cx.spawn(|cx| async move {
+        cx.spawn(async move |cx| {
             futures::select_biased! {
                 _ = rx.fuse() => Ok(None),
-                result = f(cx).fuse() => result.map(Some),
+                result = f(cx.clone()).fuse() => result.map(Some),
             }
         })
     }
@@ -185,19 +185,19 @@ impl ActiveCall {
         };
 
         let invite = if let Some(room) = room {
-            cx.spawn(move |_, mut cx| async move {
+            cx.spawn(async move |_, cx| {
                 let room = room.await.map_err(|err| anyhow!("{:?}", err))?;
 
                 let initial_project_id = if let Some(initial_project) = initial_project {
                     Some(
-                        room.update(&mut cx, |room, cx| room.share_project(initial_project, cx))?
+                        room.update(cx, |room, cx| room.share_project(initial_project, cx))?
                             .await?,
                     )
                 } else {
                     None
                 };
 
-                room.update(&mut cx, move |room, cx| {
+                room.update(cx, move |room, cx| {
                     room.call(called_user_id, initial_project_id, cx)
                 })?
                 .await?;
@@ -208,7 +208,7 @@ impl ActiveCall {
             let client = self.client.clone();
             let user_store = self.user_store.clone();
             let room = cx
-                .spawn(move |this, mut cx| async move {
+                .spawn(async move |this, cx| {
                     let create_room = async {
                         let room = cx
                             .update(|cx| {
@@ -222,14 +222,14 @@ impl ActiveCall {
                             })?
                             .await?;
 
-                        this.update(&mut cx, |this, cx| this.set_room(Some(room.clone()), cx))?
+                        this.update(cx, |this, cx| this.set_room(Some(room.clone()), cx))?
                             .await?;
 
                         anyhow::Ok(room)
                     };
 
                     let room = create_room.await;
-                    this.update(&mut cx, |this, _| this.pending_room_creation = None)?;
+                    this.update(cx, |this, _| this.pending_room_creation = None)?;
                     room.map_err(Arc::new)
                 })
                 .shared();
@@ -240,10 +240,10 @@ impl ActiveCall {
             })
         };
 
-        cx.spawn(move |this, mut cx| async move {
+        cx.spawn(async move |this, cx| {
             let result = invite.await;
             if result.is_ok() {
-                this.update(&mut cx, |this, cx| {
+                this.update(cx, |this, cx| {
                     this.report_call_event("Participant Invited", cx)
                 })?;
             } else {
@@ -251,7 +251,7 @@ impl ActiveCall {
                 log::error!("invite failed: {:?}", result);
             }
 
-            this.update(&mut cx, |this, cx| {
+            this.update(cx, |this, cx| {
                 this.pending_invites.remove(&called_user_id);
                 cx.notify();
             })?;
@@ -304,15 +304,15 @@ impl ActiveCall {
         let room_id = call.room_id;
         let client = self.client.clone();
         let user_store = self.user_store.clone();
-        let join = self
-            ._join_debouncer
-            .spawn(cx, move |cx| Room::join(room_id, client, user_store, cx));
+        let join = self._join_debouncer.spawn(cx, move |mut cx| async move {
+            Room::join(room_id, client, user_store, &mut cx).await
+        });
 
-        cx.spawn(|this, mut cx| async move {
+        cx.spawn(async move |this, cx| {
             let room = join.await?;
-            this.update(&mut cx, |this, cx| this.set_room(room.clone(), cx))?
+            this.update(cx, |this, cx| this.set_room(room.clone(), cx))?
                 .await?;
-            this.update(&mut cx, |this, cx| {
+            this.update(cx, |this, cx| {
                 this.report_call_event("Incoming Call Accepted", cx)
             })?;
             Ok(())
@@ -352,17 +352,15 @@ impl ActiveCall {
 
         let client = self.client.clone();
         let user_store = self.user_store.clone();
-        let join = self._join_debouncer.spawn(cx, move |cx| async move {
-            Room::join_channel(channel_id, client, user_store, cx).await
+        let join = self._join_debouncer.spawn(cx, move |mut cx| async move {
+            Room::join_channel(channel_id, client, user_store, &mut cx).await
         });
 
-        cx.spawn(|this, mut cx| async move {
+        cx.spawn(async move |this, cx| {
             let room = join.await?;
-            this.update(&mut cx, |this, cx| this.set_room(room.clone(), cx))?
+            this.update(cx, |this, cx| this.set_room(room.clone(), cx))?
                 .await?;
-            this.update(&mut cx, |this, cx| {
-                this.report_call_event("Channel Joined", cx)
-            })?;
+            this.update(cx, |this, cx| this.report_call_event("Channel Joined", cx))?;
             Ok(room)
         })
     }

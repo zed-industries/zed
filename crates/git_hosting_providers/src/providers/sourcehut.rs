@@ -11,7 +11,7 @@ pub struct Sourcehut;
 
 impl GitHostingProvider for Sourcehut {
     fn name(&self) -> String {
-        "Gitee".to_string()
+        "SourceHut".to_string()
     }
 
     fn base_url(&self) -> Url {

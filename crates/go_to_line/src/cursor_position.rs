@@ -72,11 +72,9 @@ impl CursorPosition {
         cx: &mut Context<Self>,
     ) {
         let editor = editor.downgrade();
-        self.update_position = cx.spawn_in(window, |cursor_position, mut cx| async move {
+        self.update_position = cx.spawn_in(window, async move |cursor_position, cx| {
             let is_singleton = editor
-                .update(&mut cx, |editor, cx| {
-                    editor.buffer().read(cx).is_singleton()
-                })
+                .update(cx, |editor, cx| editor.buffer().read(cx).is_singleton())
                 .ok()
                 .unwrap_or(true);
 
@@ -87,7 +85,7 @@ impl CursorPosition {
             }
 
             editor
-                .update(&mut cx, |editor, cx| {
+                .update(cx, |editor, cx| {
                     cursor_position.update(cx, |cursor_position, cx| {
                         cursor_position.selected_count = SelectionStats::default();
                         cursor_position.selected_count.selections = editor.selections.count();

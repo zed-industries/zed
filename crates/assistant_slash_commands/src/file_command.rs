@@ -241,7 +241,7 @@ fn collect_files(
         .collect::<Vec<_>>();
 
     let (events_tx, events_rx) = mpsc::unbounded();
-    cx.spawn(|mut cx| async move {
+    cx.spawn(async move |cx| {
         for snapshot in snapshots {
             let worktree_id = snapshot.id();
             let mut directory_stack: Vec<Arc<Path>> = Vec::new();
@@ -352,7 +352,7 @@ fn collect_files(
                     )))?;
                 } else if entry.is_file() {
                     let Some(open_buffer_task) = project_handle
-                        .update(&mut cx, |project, cx| {
+                        .update(cx, |project, cx| {
                             project.open_buffer((worktree_id, &entry.path), cx)
                         })
                         .ok()
@@ -361,7 +361,7 @@ fn collect_files(
                     };
                     if let Some(buffer) = open_buffer_task.await.log_err() {
                         let mut output = SlashCommandOutput::default();
-                        let snapshot = buffer.read_with(&cx, |buffer, _| buffer.snapshot())?;
+                        let snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot())?;
                         append_buffer_to_output(
                             &snapshot,
                             Some(&path_including_worktree_name),

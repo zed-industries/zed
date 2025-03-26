@@ -86,7 +86,7 @@ impl SlashCommand for TabSlashCommand {
             tab_items_for_queries(workspace, &[current_query], cancel, false, window, cx);
 
         let comment_id = cx.theme().syntax().highlight_id("comment").map(HighlightId);
-        window.spawn(cx, |_| async move {
+        window.spawn(cx, async move |_| {
             let tab_items = tab_items_search.await?;
             let run_command = tab_items.len() == 1;
             let tab_completion_items = tab_items.into_iter().filter_map(|(path, ..)| {
@@ -172,11 +172,11 @@ fn tab_items_for_queries(
 ) -> Task<anyhow::Result<Vec<(Option<PathBuf>, BufferSnapshot, usize)>>> {
     let empty_query = queries.is_empty() || queries.iter().all(|query| query.trim().is_empty());
     let queries = queries.to_owned();
-    window.spawn(cx, |mut cx| async move {
+    window.spawn(cx, async move |cx| {
         let mut open_buffers =
             workspace
                 .context("no workspace")?
-                .update(&mut cx, |workspace, cx| {
+                .update(cx, |workspace, cx| {
                     if strict_match && empty_query {
                         let snapshot = active_item_buffer(workspace, cx)?;
                         let full_path = snapshot.resolve_file_path(cx, true);

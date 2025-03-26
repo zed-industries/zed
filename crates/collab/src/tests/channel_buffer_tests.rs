@@ -562,7 +562,7 @@ async fn test_channel_buffers_and_server_restarts(
     deterministic.run_until_parked();
 
     // Client C can't reconnect.
-    client_c.override_establish_connection(|_, cx| cx.spawn(|_| future::pending()));
+    client_c.override_establish_connection(|_, cx| cx.spawn(async |_| future::pending().await));
 
     // Server stops.
     server.reset().await;

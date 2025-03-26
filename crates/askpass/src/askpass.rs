@@ -34,9 +34,9 @@ impl AskPassDelegate {
         password_prompt: impl Fn(String, oneshot::Sender<String>, &mut AsyncApp) + Send + Sync + 'static,
     ) -> Self {
         let (tx, mut rx) = mpsc::unbounded::<(String, oneshot::Sender<String>)>();
-        let task = cx.spawn(|mut cx| async move {
+        let task = cx.spawn(async move |cx: &mut AsyncApp| {
             while let Some((prompt, channel)) = rx.next().await {
-                password_prompt(prompt, channel, &mut cx);
+                password_prompt(prompt, channel, cx);
             }
         });
         Self { tx, _task: task }
@@ -188,7 +188,7 @@ impl AskPassSession {
     }
 
     pub async fn run(&mut self) -> AskPassResult {
-        futures::FutureExt::fuse(smol::Timer::after(Duration::from_secs(10))).await;
+        futures::FutureExt::fuse(smol::Timer::after(Duration::from_secs(20))).await;
         AskPassResult::Timedout
     }
 }

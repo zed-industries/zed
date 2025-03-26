@@ -240,7 +240,7 @@ pub struct BlockContext<'a, 'b> {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Ord, PartialOrd, Hash)]
 pub enum BlockId {
-    ExcerptBoundary(Option<ExcerptId>),
+    ExcerptBoundary(ExcerptId),
     FoldedBuffer(ExcerptId),
     Custom(CustomBlockId),
 }
@@ -249,10 +249,9 @@ impl From<BlockId> for ElementId {
     fn from(value: BlockId) -> Self {
         match value {
             BlockId::Custom(CustomBlockId(id)) => ("Block", id).into(),
-            BlockId::ExcerptBoundary(next_excerpt) => match next_excerpt {
-                Some(id) => ("ExcerptBoundary", EntityId::from(id)).into(),
-                None => "LastExcerptBoundary".into(),
-            },
+            BlockId::ExcerptBoundary(excerpt_id) => {
+                ("ExcerptBoundary", EntityId::from(excerpt_id)).into()
+            }
             BlockId::FoldedBuffer(id) => ("FoldedBuffer", EntityId::from(id)).into(),
         }
     }
@@ -280,12 +279,10 @@ pub enum Block {
     Custom(Arc<CustomBlock>),
     FoldedBuffer {
         first_excerpt: ExcerptInfo,
-        prev_excerpt: Option<ExcerptInfo>,
         height: u32,
     },
     ExcerptBoundary {
-        prev_excerpt: Option<ExcerptInfo>,
-        next_excerpt: Option<ExcerptInfo>,
+        excerpt: ExcerptInfo,
         height: u32,
         starts_new_buffer: bool,
     },
@@ -295,9 +292,10 @@ impl Block {
     pub fn id(&self) -> BlockId {
         match self {
             Block::Custom(block) => BlockId::Custom(block.id),
-            Block::ExcerptBoundary { next_excerpt, .. } => {
-                BlockId::ExcerptBoundary(next_excerpt.as_ref().map(|info| info.id))
-            }
+            Block::ExcerptBoundary {
+                excerpt: next_excerpt,
+                ..
+            } => BlockId::ExcerptBoundary(next_excerpt.id),
             Block::FoldedBuffer { first_excerpt, .. } => BlockId::FoldedBuffer(first_excerpt.id),
         }
     }
@@ -320,7 +318,7 @@ impl Block {
         match self {
             Block::Custom(block) => matches!(block.placement, BlockPlacement::Above(_)),
             Block::FoldedBuffer { .. } => false,
-            Block::ExcerptBoundary { next_excerpt, .. } => next_excerpt.is_some(),
+            Block::ExcerptBoundary { .. } => true,
         }
     }
 
@@ -328,7 +326,7 @@ impl Block {
         match self {
             Block::Custom(block) => matches!(block.placement, BlockPlacement::Below(_)),
             Block::FoldedBuffer { .. } => false,
-            Block::ExcerptBoundary { next_excerpt, .. } => next_excerpt.is_none(),
+            Block::ExcerptBoundary { .. } => false,
         }
     }
 
@@ -347,6 +345,16 @@ impl Block {
             Block::ExcerptBoundary { .. } => true,
         }
     }
+
+    pub fn is_buffer_header(&self) -> bool {
+        match self {
+            Block::Custom(_) => false,
+            Block::FoldedBuffer { .. } => true,
+            Block::ExcerptBoundary {
+                starts_new_buffer, ..
+            } => *starts_new_buffer,
+        }
+    }
 }
 
 impl Debug for Block {
@@ -355,24 +363,21 @@ impl Debug for Block {
             Self::Custom(block) => f.debug_struct("Custom").field("block", block).finish(),
             Self::FoldedBuffer {
                 first_excerpt,
-                prev_excerpt,
                 height,
             } => f
                 .debug_struct("FoldedBuffer")
                 .field("first_excerpt", &first_excerpt)
-                .field("prev_excerpt", prev_excerpt)
                 .field("height", height)
                 .finish(),
             Self::ExcerptBoundary {
                 starts_new_buffer,
-                next_excerpt,
-                prev_excerpt,
-                ..
+                excerpt,
+                height,
             } => f
                 .debug_struct("ExcerptBoundary")
-                .field("prev_excerpt", prev_excerpt)
-                .field("next_excerpt", next_excerpt)
+                .field("excerpt", excerpt)
                 .field("starts_new_buffer", starts_new_buffer)
+                .field("height", height)
                 .finish(),
         }
     }
@@ -724,23 +729,13 @@ impl BlockMap {
 
         std::iter::from_fn(move || {
             let excerpt_boundary = boundaries.next()?;
-            let wrap_row = if excerpt_boundary.next.is_some() {
-                wrap_snapshot.make_wrap_point(Point::new(excerpt_boundary.row.0, 0), Bias::Left)
-            } else {
-                wrap_snapshot.make_wrap_point(
-                    Point::new(
-                        excerpt_boundary.row.0,
-                        buffer.line_len(excerpt_boundary.row),
-                    ),
-                    Bias::Left,
-                )
-            }
-            .row();
+            let wrap_row = wrap_snapshot
+                .make_wrap_point(Point::new(excerpt_boundary.row.0, 0), Bias::Left)
+                .row();
 
             let new_buffer_id = match (&excerpt_boundary.prev, &excerpt_boundary.next) {
-                (_, None) => None,
-                (None, Some(next)) => Some(next.buffer_id),
-                (Some(prev), Some(next)) => {
+                (None, next) => Some(next.buffer_id),
+                (Some(prev), next) => {
                     if prev.buffer_id != next.buffer_id {
                         Some(next.buffer_id)
                     } else {
@@ -749,24 +744,18 @@ impl BlockMap {
                 }
             };
 
-            let prev_excerpt = excerpt_boundary
-                .prev
-                .filter(|prev| !folded_buffers.contains(&prev.buffer_id));
-
             let mut height = 0;
 
             if let Some(new_buffer_id) = new_buffer_id {
-                let first_excerpt = excerpt_boundary.next.clone().unwrap();
+                let first_excerpt = excerpt_boundary.next.clone();
                 if folded_buffers.contains(&new_buffer_id) {
                     let mut last_excerpt_end_row = first_excerpt.end_row;
 
                     while let Some(next_boundary) = boundaries.peek() {
-                        if let Some(next_excerpt_boundary) = &next_boundary.next {
-                            if next_excerpt_boundary.buffer_id == new_buffer_id {
-                                last_excerpt_end_row = next_excerpt_boundary.end_row;
-                            } else {
-                                break;
-                            }
+                        if next_boundary.next.buffer_id == new_buffer_id {
+                            last_excerpt_end_row = next_boundary.next.end_row;
+                        } else {
+                            break;
                         }
 
                         boundaries.next();
@@ -785,7 +774,6 @@ impl BlockMap {
                     return Some((
                         BlockPlacement::Replace(WrapRow(wrap_row)..=WrapRow(wrap_end_row)),
                         Block::FoldedBuffer {
-                            prev_excerpt,
                             height: height + buffer_header_height,
                             first_excerpt,
                         },
@@ -793,27 +781,16 @@ impl BlockMap {
                 }
             }
 
-            if excerpt_boundary.next.is_some() {
-                if new_buffer_id.is_some() {
-                    height += buffer_header_height;
-                } else {
-                    height += excerpt_header_height;
-                }
-            }
-
-            if height == 0 {
-                return None;
+            if new_buffer_id.is_some() {
+                height += buffer_header_height;
+            } else {
+                height += excerpt_header_height;
             }
 
             Some((
-                if excerpt_boundary.next.is_some() {
-                    BlockPlacement::Above(WrapRow(wrap_row))
-                } else {
-                    BlockPlacement::Below(WrapRow(wrap_row))
-                },
+                BlockPlacement::Above(WrapRow(wrap_row)),
                 Block::ExcerptBoundary {
-                    prev_excerpt,
-                    next_excerpt: excerpt_boundary.next,
+                    excerpt: excerpt_boundary.next,
                     height,
                     starts_new_buffer: new_buffer_id.is_some(),
                 },
@@ -861,31 +838,14 @@ impl BlockMap {
             placement_comparison.then_with(|| match (block_a, block_b) {
                 (
                     Block::ExcerptBoundary {
-                        next_excerpt: next_excerpt_a,
-                        ..
+                        excerpt: excerpt_a, ..
                     },
                     Block::ExcerptBoundary {
-                        next_excerpt: next_excerpt_b,
-                        ..
+                        excerpt: excerpt_b, ..
                     },
-                ) => next_excerpt_a
-                    .as_ref()
-                    .map(|excerpt| excerpt.id)
-                    .cmp(&next_excerpt_b.as_ref().map(|excerpt| excerpt.id)),
-                (Block::ExcerptBoundary { next_excerpt, .. }, Block::Custom(_)) => {
-                    if next_excerpt.is_some() {
-                        Ordering::Less
-                    } else {
-                        Ordering::Greater
-                    }
-                }
-                (Block::Custom(_), Block::ExcerptBoundary { next_excerpt, .. }) => {
-                    if next_excerpt.is_some() {
-                        Ordering::Greater
-                    } else {
-                        Ordering::Less
-                    }
-                }
+                ) => Some(excerpt_a.id).cmp(&Some(excerpt_b.id)),
+                (Block::ExcerptBoundary { .. }, Block::Custom(_)) => Ordering::Less,
+                (Block::Custom(_), Block::ExcerptBoundary { .. }) => Ordering::Greater,
                 (Block::Custom(block_a), Block::Custom(block_b)) => block_a
                     .priority
                     .cmp(&block_b.priority)
@@ -1405,51 +1365,19 @@ impl BlockSnapshot {
     pub fn sticky_header_excerpt(&self, position: f32) -> Option<StickyHeaderExcerpt<'_>> {
         let top_row = position as u32;
         let mut cursor = self.transforms.cursor::<BlockRow>(&());
-        cursor.seek(&BlockRow(top_row), Bias::Left, &());
+        cursor.seek(&BlockRow(top_row), Bias::Right, &());
 
         while let Some(transform) = cursor.item() {
-            let start = cursor.start().0;
-            let end = cursor.end(&()).0;
-
             match &transform.block {
-                Some(Block::ExcerptBoundary {
-                    prev_excerpt,
-                    next_excerpt,
-                    starts_new_buffer,
-                    ..
-                }) => {
-                    let matches_start = (start as f32) < position;
-
-                    if matches_start && top_row <= end {
-                        return next_excerpt.as_ref().map(|excerpt| StickyHeaderExcerpt {
-                            next_buffer_row: None,
-                            excerpt,
-                        });
-                    }
-
-                    let next_buffer_row = if *starts_new_buffer { Some(end) } else { None };
-
-                    return prev_excerpt.as_ref().map(|excerpt| StickyHeaderExcerpt {
-                        excerpt,
-                        next_buffer_row,
-                    });
+                Some(Block::ExcerptBoundary { excerpt, .. }) => {
+                    return Some(StickyHeaderExcerpt { excerpt })
                 }
-                Some(Block::FoldedBuffer {
-                    prev_excerpt: Some(excerpt),
-                    ..
-                }) if top_row <= start => {
-                    return Some(StickyHeaderExcerpt {
-                        next_buffer_row: Some(end),
-                        excerpt,
-                    });
+                Some(block) if block.is_buffer_header() => return None,
+                _ => {
+                    cursor.prev(&());
+                    continue;
                 }
-                Some(Block::FoldedBuffer { .. }) | Some(Block::Custom(_)) | None => {}
             }
-
-            // This is needed to iterate past None / FoldedBuffer / Custom blocks. For FoldedBuffer,
-            // if scrolled slightly past the header of a folded block, the next block is needed for
-            // the sticky header.
-            cursor.next(&());
         }
 
         None
@@ -1463,14 +1391,9 @@ impl BlockSnapshot {
                 return Some(Block::Custom(custom_block.clone()));
             }
             BlockId::ExcerptBoundary(next_excerpt_id) => {
-                if let Some(next_excerpt_id) = next_excerpt_id {
-                    let excerpt_range = buffer.range_for_excerpt(next_excerpt_id)?;
-                    self.wrap_snapshot
-                        .make_wrap_point(excerpt_range.start, Bias::Left)
-                } else {
-                    self.wrap_snapshot
-                        .make_wrap_point(buffer.max_point(), Bias::Left)
-                }
+                let excerpt_range = buffer.range_for_excerpt(next_excerpt_id)?;
+                self.wrap_snapshot
+                    .make_wrap_point(excerpt_range.start, Bias::Left)
             }
             BlockId::FoldedBuffer(excerpt_id) => self
                 .wrap_snapshot
@@ -1748,7 +1671,6 @@ impl BlockChunks<'_> {
 
 pub struct StickyHeaderExcerpt<'a> {
     pub excerpt: &'a ExcerptInfo,
-    pub next_buffer_row: Option<u32>,
 }
 
 impl<'a> Iterator for BlockChunks<'a> {
@@ -2254,9 +2176,9 @@ mod tests {
         assert_eq!(
             blocks,
             vec![
-                (0..1, BlockId::ExcerptBoundary(Some(excerpt_ids[0]))), // path, header
-                (3..4, BlockId::ExcerptBoundary(Some(excerpt_ids[1]))), // path, header
-                (6..7, BlockId::ExcerptBoundary(Some(excerpt_ids[2]))), // path, header
+                (0..1, BlockId::ExcerptBoundary(excerpt_ids[0])), // path, header
+                (3..4, BlockId::ExcerptBoundary(excerpt_ids[1])), // path, header
+                (6..7, BlockId::ExcerptBoundary(excerpt_ids[2])), // path, header
             ]
         );
     }
@@ -2953,10 +2875,7 @@ mod tests {
                 .iter()
                 .filter(|(_, block)| {
                     match block {
-                        Block::FoldedBuffer { prev_excerpt, .. } => {
-                            assert!(prev_excerpt.is_none());
-                            true
-                        }
+                        Block::FoldedBuffer { .. } => true,
                         _ => false,
                     }
                 })

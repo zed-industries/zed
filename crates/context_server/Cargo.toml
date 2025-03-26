@@ -21,6 +21,7 @@ context_server_settings.workspace = true
 extension.workspace = true
 futures.workspace = true
 gpui.workspace = true
+icons.workspace = true
 language_model.workspace = true
 log.workspace = true
 parking_lot.workspace = true

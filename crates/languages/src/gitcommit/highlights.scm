@@ -4,6 +4,7 @@
 (commit) @constant
 (item) @markup.link.url
 (header) @tag
+(comment) @comment
 
 (change kind: "new file" @diff.plus)
 (change kind: "deleted" @diff.minus)
@@ -15,4 +16,3 @@
   value: (trailer_value) @string)
 
 [":" "=" "->" (scissors)] @punctuation.delimiter
-(comment) @comment

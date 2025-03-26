@@ -92,7 +92,9 @@ impl NotebookEditor {
         let language_name = notebook_item.read(cx).language_name();
 
         let notebook_language = notebook_item.read(cx).notebook_language();
-        let notebook_language = cx.spawn_in(window, |_, _| notebook_language).shared();
+        let notebook_language = cx
+            .spawn_in(window, async move |_, _| notebook_language.await)
+            .shared();
 
         let mut cell_order = vec![]; // Vec<CellId>
         let mut cell_map = HashMap::default(); // HashMap<CellId, Cell>
@@ -570,9 +572,9 @@ impl project::ProjectItem for NotebookItem {
         let languages = project.read(cx).languages().clone();
 
         if path.path.extension().unwrap_or_default() == "ipynb" {
-            Some(cx.spawn(|mut cx| async move {
+            Some(cx.spawn(async move |cx| {
                 let abs_path = project
-                    .read_with(&cx, |project, cx| project.absolute_path(&path, cx))?
+                    .read_with(cx, |project, cx| project.absolute_path(&path, cx))?
                     .ok_or_else(|| anyhow::anyhow!("Failed to find the absolute path"))?;
 
                 // todo: watch for changes to the file
@@ -595,7 +597,7 @@ impl project::ProjectItem for NotebookItem {
                 };
 
                 let id = project
-                    .update(&mut cx, |project, cx| project.entry_for_path(&path, cx))?
+                    .update(cx, |project, cx| project.entry_for_path(&path, cx))?
                     .context("Entry not found")?
                     .id;
 

@@ -281,6 +281,7 @@ impl RateCompletionModal {
                 editor.set_show_git_diff_gutter(false, cx);
                 editor.set_show_code_actions(false, cx);
                 editor.set_show_runnables(false, cx);
+                editor.set_show_breakpoints(false, cx);
                 editor.set_show_wrap_guides(false, cx);
                 editor.set_show_indent_guides(false, cx);
                 editor.set_show_edit_predictions(Some(false), window, cx);

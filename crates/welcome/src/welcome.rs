@@ -221,7 +221,7 @@ impl Render for WelcomePage {
                                                 .on_click(cx.listener(|_, _, _, cx| {
                                                     telemetry::event!("Welcome CLI Installed");
                                                     cx
-                                                        .spawn(|_, cx| async move {
+                                                        .spawn(async move |_, cx| {
                                                             install_cli::install_cli(&cx).await
                                                         })
                                                         .detach_and_log_err(cx);
@@ -248,7 +248,7 @@ impl Render for WelcomePage {
                                             .on_click(cx.listener(|_, _, window, cx| {
                                                 telemetry::event!("Welcome Extensions Page Opened");
                                                 window.dispatch_action(Box::new(
-                                                    zed_actions::Extensions,
+                                                    zed_actions::Extensions::default(),
                                                 ), cx);
                                             })),
                                     )

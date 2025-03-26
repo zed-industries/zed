@@ -377,10 +377,10 @@ impl PartialEq for PathMatcher {
 impl Eq for PathMatcher {}
 
 impl PathMatcher {
-    pub fn new(globs: &[String]) -> Result<Self, globset::Error> {
+    pub fn new(globs: impl IntoIterator<Item = impl AsRef<str>>) -> Result<Self, globset::Error> {
         let globs = globs
-            .iter()
-            .map(|glob| Glob::new(glob))
+            .into_iter()
+            .map(|as_str| Glob::new(as_str.as_ref()))
             .collect::<Result<Vec<_>, _>>()?;
         let sources = globs.iter().map(|glob| glob.glob().to_owned()).collect();
         let mut glob_builder = GlobSetBuilder::new();

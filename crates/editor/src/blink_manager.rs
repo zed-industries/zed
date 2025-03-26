@@ -40,9 +40,9 @@ impl BlinkManager {
 
         let epoch = self.next_blink_epoch();
         let interval = self.blink_interval;
-        cx.spawn(|this, mut cx| async move {
+        cx.spawn(async move |this, cx| {
             Timer::after(interval).await;
-            this.update(&mut cx, |this, cx| this.resume_cursor_blinking(epoch, cx))
+            this.update(cx, |this, cx| this.resume_cursor_blinking(epoch, cx))
         })
         .detach();
     }
@@ -62,10 +62,10 @@ impl BlinkManager {
 
                 let epoch = self.next_blink_epoch();
                 let interval = self.blink_interval;
-                cx.spawn(|this, mut cx| async move {
+                cx.spawn(async move |this, cx| {
                     Timer::after(interval).await;
                     if let Some(this) = this.upgrade() {
-                        this.update(&mut cx, |this, cx| this.blink_cursors(epoch, cx))
+                        this.update(cx, |this, cx| this.blink_cursors(epoch, cx))
                             .ok();
                     }
                 })

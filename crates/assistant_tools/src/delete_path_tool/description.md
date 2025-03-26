@@ -1,1 +1,1 @@
-Deletes all files and directories in the project which match the given glob, and returns a list of the paths that were deleted.
+Deletes the file or directory (and the directory's contents, recursively) at the specified path in the project, and returns confirmation of the deletion.

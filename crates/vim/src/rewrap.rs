@@ -1,6 +1,6 @@
 use crate::{motion::Motion, object::Object, state::Mode, Vim};
 use collections::HashMap;
-use editor::{display_map::ToDisplayPoint, scroll::Autoscroll, Bias, Editor};
+use editor::{display_map::ToDisplayPoint, scroll::Autoscroll, Bias, Editor, RewrapOptions};
 use gpui::{actions, Context, Window};
 use language::SelectionGoal;
 
@@ -14,7 +14,13 @@ pub(crate) fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
         vim.update_editor(window, cx, |vim, editor, window, cx| {
             editor.transact(window, cx, |editor, window, cx| {
                 let mut positions = vim.save_selection_starts(editor, cx);
-                editor.rewrap_impl(true, cx);
+                editor.rewrap_impl(
+                    RewrapOptions {
+                        override_language_settings: true,
+                        ..Default::default()
+                    },
+                    cx,
+                );
                 editor.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
                     s.move_with(|map, selection| {
                         if let Some(anchor) = positions.remove(&selection.id) {
@@ -52,7 +58,13 @@ impl Vim {
                         motion.expand_selection(map, selection, times, false, &text_layout_details);
                     });
                 });
-                editor.rewrap_impl(true, cx);
+                editor.rewrap_impl(
+                    RewrapOptions {
+                        override_language_settings: true,
+                        ..Default::default()
+                    },
+                    cx,
+                );
                 editor.change_selections(None, window, cx, |s| {
                     s.move_with(|map, selection| {
                         let anchor = selection_starts.remove(&selection.id).unwrap();
@@ -83,7 +95,13 @@ impl Vim {
                         object.expand_selection(map, selection, around);
                     });
                 });
-                editor.rewrap_impl(true, cx);
+                editor.rewrap_impl(
+                    RewrapOptions {
+                        override_language_settings: true,
+                        ..Default::default()
+                    },
+                    cx,
+                );
                 editor.change_selections(None, window, cx, |s| {
                     s.move_with(|map, selection| {
                         let anchor = original_positions.remove(&selection.id).unwrap();

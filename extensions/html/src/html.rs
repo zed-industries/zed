@@ -1,13 +1,14 @@
 use std::{env, fs};
 use zed::settings::LspSettings;
-use zed_extension_api::{self as zed, LanguageServerId, Result};
+use zed_extension_api::{self as zed, serde_json::json, LanguageServerId, Result};
 
+const BINARY_NAME: &str = "vscode-html-language-server";
 const SERVER_PATH: &str =
     "node_modules/@zed-industries/vscode-langservers-extracted/bin/vscode-html-language-server";
 const PACKAGE_NAME: &str = "@zed-industries/vscode-langservers-extracted";
 
 struct HtmlExtension {
-    did_find_server: bool,
+    cached_binary_path: Option<String>,
 }
 
 impl HtmlExtension {
@@ -17,7 +18,7 @@ impl HtmlExtension {
 
     fn server_script_path(&mut self, language_server_id: &LanguageServerId) -> Result<String> {
         let server_exists = self.server_exists();
-        if self.did_find_server && server_exists {
+        if self.cached_binary_path.is_some() && server_exists {
             return Ok(SERVER_PATH.to_string());
         }
 
@@ -50,8 +51,6 @@ impl HtmlExtension {
                 }
             }
         }
-
-        self.did_find_server = true;
         Ok(SERVER_PATH.to_string())
     }
 }
@@ -59,16 +58,22 @@ impl HtmlExtension {
 impl zed::Extension for HtmlExtension {
     fn new() -> Self {
         Self {
-            did_find_server: false,
+            cached_binary_path: None,
         }
     }
 
     fn language_server_command(
         &mut self,
         language_server_id: &LanguageServerId,
-        _worktree: &zed::Worktree,
+        worktree: &zed::Worktree,
     ) -> Result<zed::Command> {
-        let server_path = self.server_script_path(language_server_id)?;
+        let server_path = if let Some(path) = worktree.which(BINARY_NAME) {
+            path
+        } else {
+            self.server_script_path(language_server_id)?
+        };
+        self.cached_binary_path = Some(server_path.clone());
+
         Ok(zed::Command {
             command: zed::node_binary_path()?,
             args: vec![
@@ -93,6 +98,15 @@ impl zed::Extension for HtmlExtension {
             .and_then(|lsp_settings| lsp_settings.settings.clone())
             .unwrap_or_default();
         Ok(Some(settings))
+    }
+
+    fn language_server_initialization_options(
+        &mut self,
+        _server_id: &LanguageServerId,
+        _worktree: &zed_extension_api::Worktree,
+    ) -> Result<Option<zed_extension_api::serde_json::Value>> {
+        let initialization_options = json!({"provideFormatter": true });
+        Ok(Some(initialization_options))
     }
 }
 

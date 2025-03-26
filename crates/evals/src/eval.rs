@@ -116,8 +116,8 @@ fn main() -> Result<()> {
                     .detach();
             }
             Commands::Run { repo } => {
-                cx.spawn(|mut cx| async move {
-                    if let Err(err) = run_evaluation(repo, &executor, &mut cx).await {
+                cx.spawn(async move |cx| {
+                    if let Err(err) = run_evaluation(repo, &executor, cx).await {
                         eprintln!("Error: {}", err);
                         exit(1);
                     }

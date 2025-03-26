@@ -144,6 +144,7 @@ actions!(
         PushReplace,
         PushDeleteSurrounds,
         PushMark,
+        ToggleMarksView,
         PushIndent,
         PushOutdent,
         PushAutoIndent,
@@ -821,6 +822,19 @@ impl Vim {
             EditorEvent::Edited { .. } => self.push_to_change_list(window, cx),
             EditorEvent::FocusedIn => self.sync_vim_settings(window, cx),
             EditorEvent::CursorShapeChanged => self.cursor_shape_changed(window, cx),
+            EditorEvent::PushedToNavHistory {
+                anchor,
+                is_deactivate,
+            } => {
+                self.update_editor(window, cx, |vim, editor, window, cx| {
+                    let mark = if *is_deactivate {
+                        "\"".to_string()
+                    } else {
+                        "'".to_string()
+                    };
+                    vim.set_mark(mark, vec![*anchor], editor.buffer(), window, cx);
+                });
+            }
             _ => {}
         }
     }
@@ -1599,7 +1613,7 @@ impl Vim {
                     self.select_register(text, window, cx);
                 }
             },
-            Some(Operator::Jump { line }) => self.jump(text, line, window, cx),
+            Some(Operator::Jump { line }) => self.jump(text, line, true, window, cx),
             _ => {
                 if self.mode == Mode::Replace {
                     self.multi_replace(text, window, cx)

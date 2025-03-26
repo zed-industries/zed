@@ -66,12 +66,12 @@ impl State {
             .google
             .api_url
             .clone();
-        cx.spawn(|this, mut cx| async move {
+        cx.spawn(async move |this, cx| {
             credentials_provider
                 .delete_credentials(&api_url, &cx)
                 .await
                 .log_err();
-            this.update(&mut cx, |this, cx| {
+            this.update(cx, |this, cx| {
                 this.api_key = None;
                 this.api_key_from_env = false;
                 cx.notify();
@@ -85,11 +85,11 @@ impl State {
             .google
             .api_url
             .clone();
-        cx.spawn(|this, mut cx| async move {
+        cx.spawn(async move |this, cx| {
             credentials_provider
                 .write_credentials(&api_url, "Bearer", api_key.as_bytes(), &cx)
                 .await?;
-            this.update(&mut cx, |this, cx| {
+            this.update(cx, |this, cx| {
                 this.api_key = Some(api_key);
                 cx.notify();
             })
@@ -107,7 +107,7 @@ impl State {
             .api_url
             .clone();
 
-        cx.spawn(|this, mut cx| async move {
+        cx.spawn(async move |this, cx| {
             let (api_key, from_env) = if let Ok(api_key) = std::env::var(GOOGLE_AI_API_KEY_VAR) {
                 (api_key, true)
             } else {
@@ -121,7 +121,7 @@ impl State {
                 )
             };
 
-            this.update(&mut cx, |this, cx| {
+            this.update(cx, |this, cx| {
                 this.api_key = Some(api_key);
                 this.api_key_from_env = from_env;
                 cx.notify();
@@ -418,15 +418,15 @@ impl ConfigurationView {
 
         let load_credentials_task = Some(cx.spawn_in(window, {
             let state = state.clone();
-            |this, mut cx| async move {
+            async move |this, cx| {
                 if let Some(task) = state
-                    .update(&mut cx, |state, cx| state.authenticate(cx))
+                    .update(cx, |state, cx| state.authenticate(cx))
                     .log_err()
                 {
                     // We don't log an error, because "not signed in" is also an error.
                     let _ = task.await;
                 }
-                this.update(&mut cx, |this, cx| {
+                this.update(cx, |this, cx| {
                     this.load_credentials_task = None;
                     cx.notify();
                 })
@@ -452,9 +452,9 @@ impl ConfigurationView {
         }
 
         let state = self.state.clone();
-        cx.spawn_in(window, |_, mut cx| async move {
+        cx.spawn_in(window, async move |_, cx| {
             state
-                .update(&mut cx, |state, cx| state.set_api_key(api_key, cx))?
+                .update(cx, |state, cx| state.set_api_key(api_key, cx))?
                 .await
         })
         .detach_and_log_err(cx);
@@ -467,10 +467,8 @@ impl ConfigurationView {
             .update(cx, |editor, cx| editor.set_text("", window, cx));
 
         let state = self.state.clone();
-        cx.spawn_in(window, |_, mut cx| async move {
-            state
-                .update(&mut cx, |state, cx| state.reset_api_key(cx))?
-                .await
+        cx.spawn_in(window, async move |_, cx| {
+            state.update(cx, |state, cx| state.reset_api_key(cx))?.await
         })
         .detach_and_log_err(cx);
 

@@ -45,17 +45,22 @@ struct User {
     pub avatar_url: String,
 }
 
+#[derive(Debug)]
 pub struct Github {
     name: String,
     base_url: Url,
 }
 
 impl Github {
-    pub fn new() -> Self {
+    pub fn new(name: impl Into<String>, base_url: Url) -> Self {
         Self {
-            name: "GitHub".to_string(),
-            base_url: Url::parse("https://github.com").unwrap(),
+            name: name.into(),
+            base_url,
         }
+    }
+
+    pub fn public_instance() -> Self {
+        Self::new("GitHub", Url::parse("https://github.com").unwrap())
     }
 
     pub fn from_remote_url(remote_url: &str) -> Result<Self> {
@@ -71,10 +76,10 @@ impl Github {
             bail!("not a GitHub URL");
         }
 
-        Ok(Self {
-            name: "GitHub Self-Hosted".to_string(),
-            base_url: Url::parse(&format!("https://{}", host))?,
-        })
+        Ok(Self::new(
+            "GitHub Self-Hosted",
+            Url::parse(&format!("https://{}", host))?,
+        ))
     }
 
     async fn fetch_github_commit_author(
@@ -308,7 +313,7 @@ mod tests {
 
     #[test]
     fn test_parse_remote_url_given_ssh_url() {
-        let parsed_remote = Github::new()
+        let parsed_remote = Github::public_instance()
             .parse_remote_url("git@github.com:zed-industries/zed.git")
             .unwrap();
 
@@ -323,7 +328,7 @@ mod tests {
 
     #[test]
     fn test_parse_remote_url_given_https_url() {
-        let parsed_remote = Github::new()
+        let parsed_remote = Github::public_instance()
             .parse_remote_url("https://github.com/zed-industries/zed.git")
             .unwrap();
 
@@ -338,7 +343,7 @@ mod tests {
 
     #[test]
     fn test_parse_remote_url_given_https_url_with_username() {
-        let parsed_remote = Github::new()
+        let parsed_remote = Github::public_instance()
             .parse_remote_url("https://jlannister@github.com/some-org/some-repo.git")
             .unwrap();
 
@@ -357,7 +362,7 @@ mod tests {
             owner: "zed-industries".into(),
             repo: "zed".into(),
         };
-        let permalink = Github::new().build_permalink(
+        let permalink = Github::public_instance().build_permalink(
             remote,
             BuildPermalinkParams {
                 sha: "e6ebe7974deb6bb6cc0e2595c8ec31f0c71084b7",
@@ -372,7 +377,7 @@ mod tests {
 
     #[test]
     fn test_build_github_permalink() {
-        let permalink = Github::new().build_permalink(
+        let permalink = Github::public_instance().build_permalink(
             ParsedGitRemote {
                 owner: "zed-industries".into(),
                 repo: "zed".into(),
@@ -390,7 +395,7 @@ mod tests {
 
     #[test]
     fn test_build_github_permalink_with_single_line_selection() {
-        let permalink = Github::new().build_permalink(
+        let permalink = Github::public_instance().build_permalink(
             ParsedGitRemote {
                 owner: "zed-industries".into(),
                 repo: "zed".into(),
@@ -408,7 +413,7 @@ mod tests {
 
     #[test]
     fn test_build_github_permalink_with_multi_line_selection() {
-        let permalink = Github::new().build_permalink(
+        let permalink = Github::public_instance().build_permalink(
             ParsedGitRemote {
                 owner: "zed-industries".into(),
                 repo: "zed".into(),
@@ -431,7 +436,7 @@ mod tests {
             repo: "zed".into(),
         };
 
-        let github = Github::new();
+        let github = Github::public_instance();
         let message = "This does not contain a pull request";
         assert!(github.extract_pull_request(&remote, message).is_none());
 

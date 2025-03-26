@@ -1,7 +1,6 @@
 mod markdown_preview;
 mod repl_menu;
 
-use assistant::AssistantPanel;
 use assistant_settings::AssistantSettings;
 use editor::actions::{
     AddSelectionAbove, AddSelectionBelow, DuplicateLineDown, GoToDiagnostic, GoToHunk,
@@ -130,20 +129,8 @@ impl Render for QuickActionBar {
             Box::new(InlineAssist::default()),
             focus_handle.clone(),
             "Inline Assist",
-            {
-                let workspace = self.workspace.clone();
-                move |_, window, cx| {
-                    if let Some(workspace) = workspace.upgrade() {
-                        workspace.update(cx, |workspace, cx| {
-                            AssistantPanel::inline_assist(
-                                workspace,
-                                &InlineAssist::default(),
-                                window,
-                                cx,
-                            );
-                        });
-                    }
-                }
+            move |_, window, cx| {
+                window.dispatch_action(Box::new(InlineAssist::default()), cx);
             },
         );
 

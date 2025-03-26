@@ -23,7 +23,7 @@ line_comments = ["# "]
 - `name` (required) is the human readable name that will show up in the Select Language dropdown.
 - `grammar` (required) is the name of a grammar. Grammars are registered separately, described below.
 - `path_suffixes` is an array of file suffixes that should be associated with this language. Unlike `file_types` in settings, this does not support glob patterns.
-- `line_comments` is an array of strings that are used to identify line comments in the language. This is used for the `editor::ToggleComments` keybind: `{#kb editor::ToggleComments}` for toggling lines of code.
+- `line_comments` is an array of strings that are used to identify line comments in the language. This is used for the `editor::ToggleComments` keybind: {#kb editor::ToggleComments} for toggling lines of code.
 - `tab_size` defines the indentation/tab size used for this language (default is `4`).
 - `hard_tabs` whether to indent with tabs (`true`) or spaces (`false`, the default).
 - `first_line_pattern` is a regular expression, that in addition to `path_suffixes` (above) or `file_types` in settings can be used to match files which should use this language. For example Zed uses this to identify Shell Scripts by matching the [shebangs lines](https://github.com/zed-industries/zed/blob/main/crates/languages/src/bash/config.toml) in the first line of a script.
@@ -223,7 +223,9 @@ Note that we couldn't use JSON as an example here because it doesn't support lan
 
 The `overrides.scm` file defines syntactic _scopes_ that can be used to override certain editor settings within specific language constructs.
 
-For example, there is a language-specific setting called `word_characters` that controls which non-alphabetic characters are considered part of a word, for filtering autocomplete suggestions. In JavaScript, "$" and "#" are considered word characters. But when your cursor is within a _string_ in JavaScript, "-" is _also_ considered a word character. To achieve this, the JavaScript `overrides.scm` file contains the following pattern:
+For example, there is a language-specific setting called `word_characters` that controls which non-alphabetic characters are considered part of a word, for example when you double click to select a variable. In JavaScript, "$" and "#" are considered word characters.
+
+There is also a language-specific setting called `completion_query_characters` that controls which characters trigger autocomplete suggestions. In JavaScript, when your cursor is within a _string_, "-" is should be considered a completion query character. To achieve this, the JavaScript `overrides.scm` file contains the following pattern:
 
 ```scheme
 [
@@ -238,7 +240,7 @@ And the JavaScript `config.toml` contains this setting:
 word_characters = ["#", "$"]
 
 [overrides.string]
-word_characters = ["-"]
+completion_query_characters = ["-"]
 ```
 
 You can also disable certain auto-closing brackets in a specific scope. For example, to prevent auto-closing `'` within strings, you could put the following in the JavaScript `config.toml`:

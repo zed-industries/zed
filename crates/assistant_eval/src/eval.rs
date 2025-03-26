@@ -63,14 +63,14 @@ impl Eval {
         model: Arc<dyn LanguageModel>,
         cx: &mut App,
     ) -> Task<anyhow::Result<EvalOutput>> {
-        cx.spawn(move |mut cx| async move {
+        cx.spawn(async move |cx| {
             checkout_repo(&self.eval_setup, &self.repo_path).await?;
 
             let (assistant, done_rx) =
                 cx.update(|cx| HeadlessAssistant::new(app_state.clone(), cx))??;
 
             let _worktree = assistant
-                .update(&mut cx, |assistant, cx| {
+                .update(cx, |assistant, cx| {
                     assistant.project.update(cx, |project, cx| {
                         project.create_worktree(&self.repo_path, true, cx)
                     })
@@ -79,10 +79,25 @@ impl Eval {
 
             let start_time = std::time::SystemTime::now();
 
-            assistant.update(&mut cx, |assistant, cx| {
+            let (system_prompt_context, load_error) = cx
+                .update(|cx| {
+                    assistant
+                        .read(cx)
+                        .thread
+                        .read(cx)
+                        .load_system_prompt_context(cx)
+                })?
+                .await;
+
+            if let Some(load_error) = load_error {
+                return Err(anyhow!("{:?}", load_error));
+            };
+
+            assistant.update(cx, |assistant, cx| {
                 assistant.thread.update(cx, |thread, cx| {
                     let context = vec![];
-                    thread.insert_user_message(self.user_prompt.clone(), context, cx);
+                    thread.insert_user_message(self.user_prompt.clone(), context, None, cx);
+                    thread.set_system_prompt_context(system_prompt_context);
                     thread.send_to_model(model, RequestKind::Chat, cx);
                 });
             })?;
@@ -93,7 +108,7 @@ impl Eval {
 
             let diff = query_git(&self.repo_path, vec!["diff"]).await?;
 
-            assistant.update(&mut cx, |assistant, cx| {
+            assistant.update(cx, |assistant, cx| {
                 let thread = assistant.thread.read(cx);
                 let last_message = thread.messages().last().unwrap();
                 if last_message.role != language_model::Role::Assistant {
@@ -105,7 +120,7 @@ impl Eval {
                     .count();
                 Ok(EvalOutput {
                     diff,
-                    last_message: last_message.text.clone(),
+                    last_message: last_message.to_string(),
                     elapsed_time,
                     assistant_response_count,
                     tool_use_counts: assistant.tool_use_counts.clone(),

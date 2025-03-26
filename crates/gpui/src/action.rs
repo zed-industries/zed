@@ -375,16 +375,50 @@ macro_rules! action_with_deprecated_aliases {
             $name,
             $name,
             fn build(
-                _: gpui::private::serde_json::Value,
+                value: gpui::private::serde_json::Value,
             ) -> gpui::Result<::std::boxed::Box<dyn gpui::Action>> {
                 Ok(Box::new(Self))
             },
+
             fn action_json_schema(
                 generator: &mut gpui::private::schemars::gen::SchemaGenerator,
             ) -> Option<gpui::private::schemars::schema::Schema> {
                 None
-
             },
+
+            fn deprecated_aliases() -> &'static [&'static str] {
+                &[
+                    $($alias),*
+                ]
+            }
+        );
+
+        gpui::register_action!($name);
+    };
+}
+
+/// Defines and registers a unit struct that can be used as an action, with some deprecated aliases.
+#[macro_export]
+macro_rules! impl_action_with_deprecated_aliases {
+    ($namespace:path, $name:ident, [$($alias:literal),* $(,)?]) => {
+        gpui::__impl_action!(
+            $namespace,
+            $name,
+            $name,
+            fn build(
+                value: gpui::private::serde_json::Value,
+            ) -> gpui::Result<::std::boxed::Box<dyn gpui::Action>> {
+                Ok(std::boxed::Box::new(gpui::private::serde_json::from_value::<Self>(value)?))
+            },
+
+            fn action_json_schema(
+                generator: &mut gpui::private::schemars::gen::SchemaGenerator,
+            ) -> Option<gpui::private::schemars::schema::Schema> {
+                Some(<Self as gpui::private::schemars::JsonSchema>::json_schema(
+                    generator,
+                ))
+            },
+
             fn deprecated_aliases() -> &'static [&'static str] {
                 &[
                     $($alias),*

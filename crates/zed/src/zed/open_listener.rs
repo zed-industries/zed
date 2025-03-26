@@ -251,7 +251,7 @@ pub async fn open_paths_with_positions(
 pub async fn handle_cli_connection(
     (mut requests, responses): (mpsc::Receiver<CliRequest>, IpcSender<CliResponse>),
     app_state: Arc<AppState>,
-    mut cx: AsyncApp,
+    cx: &mut AsyncApp,
 ) {
     if let Some(request) = requests.next().await {
         match request {
@@ -290,7 +290,7 @@ pub async fn handle_cli_connection(
                     wait,
                     app_state.clone(),
                     env,
-                    &mut cx,
+                    cx,
                 )
                 .await;
 
@@ -379,7 +379,7 @@ async fn open_workspaces(
                             .connection_options_for(ssh.host, ssh.port, ssh.user)
                     });
                     if let Ok(connection_options) = connection_options {
-                        cx.spawn(|mut cx| async move {
+                        cx.spawn(async move |mut cx| {
                             open_ssh_project(
                                 connection_options,
                                 ssh.paths.into_iter().map(PathBuf::from).collect(),

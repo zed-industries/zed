@@ -560,7 +560,7 @@ impl SerializableItem for ComponentPreview {
         let user_store = project.read(cx).user_store().clone();
         let language_registry = project.read(cx).languages().clone();
 
-        window.spawn(cx, |mut cx| async move {
+        window.spawn(cx, async move |cx| {
             let user_store = user_store.clone();
             let language_registry = language_registry.clone();
             let weak_workspace = workspace.clone();

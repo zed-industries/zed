@@ -100,7 +100,7 @@ impl PickerDelegate for SlashCommandDelegate {
         cx: &mut Context<Picker<Self>>,
     ) -> Task<()> {
         let all_commands = self.all_commands.clone();
-        cx.spawn_in(window, |this, mut cx| async move {
+        cx.spawn_in(window, async move |this, cx| {
             let filtered_commands = cx
                 .background_spawn(async move {
                     if query.is_empty() {
@@ -119,7 +119,7 @@ impl PickerDelegate for SlashCommandDelegate {
                 })
                 .await;
 
-            this.update_in(&mut cx, |this, window, cx| {
+            this.update_in(cx, |this, window, cx| {
                 this.delegate.filtered_commands = filtered_commands;
                 this.delegate.set_selected_index(0, window, cx);
                 cx.notify();

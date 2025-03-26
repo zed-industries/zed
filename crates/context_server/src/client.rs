@@ -171,13 +171,17 @@ impl Client {
             let notification_handlers = notification_handlers.clone();
             let response_handlers = response_handlers.clone();
             let transport = transport.clone();
-            move |cx| {
+            async move |cx| {
                 Self::handle_input(transport, notification_handlers, response_handlers, cx)
                     .log_err()
+                    .await
             }
         });
-        let stderr_input_task = cx.spawn(|_| Self::handle_stderr(transport.clone()).log_err());
-        let input_task = cx.spawn(|_| async move {
+        let stderr_input_task = cx.spawn({
+            let transport = transport.clone();
+            async move |_| Self::handle_stderr(transport).log_err().await
+        });
+        let input_task = cx.spawn(async move |_| {
             let (stdout, stderr) = futures::join!(stdout_input_task, stderr_input_task);
             stdout.or(stderr)
         });
@@ -217,7 +221,7 @@ impl Client {
         transport: Arc<dyn Transport>,
         notification_handlers: Arc<Mutex<HashMap<&'static str, NotificationHandler>>>,
         response_handlers: Arc<Mutex<Option<HashMap<RequestId, ResponseHandler>>>>,
-        cx: AsyncApp,
+        cx: &mut AsyncApp,
     ) -> anyhow::Result<()> {
         let mut receiver = transport.receive();
 

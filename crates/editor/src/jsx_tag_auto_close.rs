@@ -114,7 +114,13 @@ pub(crate) fn generate_auto_close_edits(
         assert!(open_tag.kind() == config.open_tag_node_name);
         let tag_name = open_tag
             .named_child(TS_NODE_TAG_NAME_CHILD_INDEX)
-            .filter(|node| node.kind() == config.tag_name_node_name)
+            .filter(|node| {
+                node.kind() == config.tag_name_node_name
+                    || config
+                        .tag_name_node_name_alternates
+                        .iter()
+                        .any(|alternate| alternate == node.kind())
+            })
             .map_or("".to_string(), |node| {
                 buffer.text_for_range(node.byte_range()).collect::<String>()
             });
@@ -174,12 +180,9 @@ pub(crate) fn generate_auto_close_edits(
          * given that the naive algorithm is sufficient in the majority of cases.
          */
         {
-            let tag_node_name_equals = |node: &Node, tag_name_node_name: &str, name: &str| {
+            let tag_node_name_equals = |node: &Node, name: &str| {
                 let is_empty = name.len() == 0;
                 if let Some(node_name) = node.named_child(TS_NODE_TAG_NAME_CHILD_INDEX) {
-                    if node_name.kind() != tag_name_node_name {
-                        return is_empty;
-                    }
                     let range = node_name.byte_range();
                     return buffer.text_for_range(range).equals_str(name);
                 }
@@ -225,11 +228,7 @@ pub(crate) fn generate_auto_close_edits(
                                 .named_child(0)
                                 .filter(|n| n.kind() == config.open_tag_node_name)
                                 .map_or(false, |element_open_tag_node| {
-                                    tag_node_name_equals(
-                                        &element_open_tag_node,
-                                        &config.tag_name_node_name,
-                                        &tag_name,
-                                    )
+                                    tag_node_name_equals(&element_open_tag_node, &tag_name)
                                 });
                             if has_open_tag_with_same_tag_name {
                                 doing_deep_search = true;
@@ -258,14 +257,9 @@ pub(crate) fn generate_auto_close_edits(
 
             let mut has_erroneous_close_tag = false;
             let mut erroneous_close_tag_node_name = "";
-            let mut erroneous_close_tag_name_node_name = "";
             if let Some(name) = config.erroneous_close_tag_node_name.as_deref() {
                 has_erroneous_close_tag = true;
                 erroneous_close_tag_node_name = name;
-                erroneous_close_tag_name_node_name = config
-                    .erroneous_close_tag_name_node_name
-                    .as_deref()
-                    .unwrap_or(&config.tag_name_node_name);
             }
 
             let is_after_open_tag = |node: &Node| {
@@ -281,15 +275,15 @@ pub(crate) fn generate_auto_close_edits(
             while let Some(node) = stack.pop() {
                 let kind = node.kind();
                 if kind == config.open_tag_node_name {
-                    if tag_node_name_equals(&node, &config.tag_name_node_name, &tag_name) {
+                    if tag_node_name_equals(&node, &tag_name) {
                         unclosed_open_tag_count += 1;
                     }
                 } else if kind == config.close_tag_node_name {
-                    if tag_node_name_equals(&node, &config.tag_name_node_name, &tag_name) {
+                    if tag_node_name_equals(&node, &tag_name) {
                         unclosed_open_tag_count -= 1;
                     }
                 } else if has_erroneous_close_tag && kind == erroneous_close_tag_node_name {
-                    if tag_node_name_equals(&node, erroneous_close_tag_name_node_name, &tag_name) {
+                    if tag_node_name_equals(&node, &tag_name) {
                         if !is_after_open_tag(&node) {
                             unclosed_open_tag_count -= 1;
                         }
@@ -434,7 +428,7 @@ pub(crate) fn handle_from(
         let (buffer_version_initial, mut buffer_parse_status_rx) =
             buffer.read_with(cx, |buffer, _| (buffer.version(), buffer.parse_status()));
 
-        cx.spawn_in(window, |this, mut cx| async move {
+        cx.spawn_in(window, async move |this, cx| {
             let Some(buffer_parse_status) = buffer_parse_status_rx.recv().await.ok() else {
                 return Some(());
             };
@@ -445,7 +439,7 @@ pub(crate) fn handle_from(
                 };
             }
 
-            let buffer_snapshot = buffer.read_with(&cx, |buf, _| buf.snapshot()).ok()?;
+            let buffer_snapshot = buffer.read_with(cx, |buf, _| buf.snapshot()).ok()?;
 
             let Some(edit_behavior_state) =
                 should_auto_close(&buffer_snapshot, &edited_ranges, &jsx_tag_auto_close_config)
@@ -456,7 +450,7 @@ pub(crate) fn handle_from(
             let ensure_no_edits_since_start = || -> Option<()> {
                 // <div>wef,wefwef
                 let has_edits_since_start = this
-                    .read_with(&cx, |this, cx| {
+                    .read_with(cx, |this, cx| {
                         this.buffer.read_with(cx, |buffer, cx| {
                             buffer.buffer(buffer_id).map_or(true, |buffer| {
                                 buffer.read_with(cx, |buffer, _| {
@@ -506,7 +500,7 @@ pub(crate) fn handle_from(
             ensure_no_edits_since_start()?;
 
             let multi_buffer_snapshot = this
-                .read_with(&cx, |this, cx| {
+                .read_with(cx, |this, cx| {
                     this.buffer.read_with(cx, |buffer, cx| buffer.snapshot(cx))
                 })
                 .ok()?;
@@ -516,7 +510,7 @@ pub(crate) fn handle_from(
 
             {
                 let selections = this
-                    .read_with(&cx, |this, _| this.selections.disjoint_anchors().clone())
+                    .read_with(cx, |this, _| this.selections.disjoint_anchors().clone())
                     .ok()?;
                 for selection in selections.iter() {
                     let Some(selection_buffer_offset_head) =
@@ -576,14 +570,14 @@ pub(crate) fn handle_from(
             }
 
             buffer
-                .update(&mut cx, |buffer, cx| {
+                .update(cx, |buffer, cx| {
                     buffer.edit(edits, None, cx);
                 })
                 .ok()?;
 
             if any_selections_need_update {
                 let multi_buffer_snapshot = this
-                    .read_with(&cx, |this, cx| {
+                    .read_with(cx, |this, cx| {
                         this.buffer.read_with(cx, |buffer, cx| buffer.snapshot(cx))
                     })
                     .ok()?;
@@ -601,7 +595,7 @@ pub(crate) fn handle_from(
                         selection.map(|anchor| anchor.to_offset(&multi_buffer_snapshot))
                     })
                     .collect::<Vec<_>>();
-                this.update_in(&mut cx, |this, window, cx| {
+                this.update_in(cx, |this, window, cx| {
                     this.change_selections_inner(None, false, window, cx, |s| {
                         s.select(base_selections);
                     });
@@ -612,5 +606,258 @@ pub(crate) fn handle_from(
             Some(())
         })
         .detach();
+    }
+}
+
+#[cfg(test)]
+mod jsx_tag_autoclose_tests {
+    use crate::{
+        editor_tests::init_test,
+        test::{build_editor, editor_test_context::EditorTestContext},
+    };
+
+    use super::*;
+    use gpui::{AppContext as _, TestAppContext};
+    use language::language_settings::JsxTagAutoCloseSettings;
+    use languages::language;
+    use multi_buffer::ExcerptRange;
+    use text::Selection;
+
+    async fn test_setup(cx: &mut TestAppContext) -> EditorTestContext {
+        init_test(cx, |settings| {
+            settings.defaults.jsx_tag_auto_close = Some(JsxTagAutoCloseSettings { enabled: true });
+        });
+
+        let mut cx = EditorTestContext::new(cx).await;
+        cx.update_buffer(|buffer, cx| {
+            let language = language("tsx", tree_sitter_typescript::LANGUAGE_TSX.into());
+
+            buffer.set_language(Some(language), cx)
+        });
+
+        cx
+    }
+
+    macro_rules! check {
+        ($name:ident, $initial:literal + $input:literal => $expected:expr) => {
+            #[gpui::test]
+            async fn $name(cx: &mut TestAppContext) {
+                let mut cx = test_setup(cx).await;
+                cx.set_state($initial);
+                cx.run_until_parked();
+
+                cx.update_editor(|editor, window, cx| {
+                    editor.handle_input($input, window, cx);
+                });
+                cx.run_until_parked();
+                cx.assert_editor_state($expected);
+            }
+        };
+    }
+
+    check!(
+        test_basic,
+        "<divˇ" + ">" => "<div>ˇ</div>"
+    );
+
+    check!(
+        test_basic_nested,
+        "<div><divˇ</div>" + ">" => "<div><div>ˇ</div></div>"
+    );
+
+    check!(
+        test_basic_ignore_already_closed,
+        "<div><divˇ</div></div>" + ">" => "<div><div>ˇ</div></div>"
+    );
+
+    check!(
+        test_doesnt_autoclose_closing_tag,
+        "</divˇ" + ">" => "</div>ˇ"
+    );
+
+    check!(
+        test_jsx_attr,
+        "<div attr={</div>}ˇ" + ">" => "<div attr={</div>}>ˇ</div>"
+    );
+
+    check!(
+        test_ignores_closing_tags_in_expr_block,
+        "<div><divˇ{</div>}</div>" + ">" => "<div><div>ˇ</div>{</div>}</div>"
+    );
+
+    check!(
+        test_doesnt_autoclose_on_gt_in_expr,
+        "<div attr={1 ˇ" + ">" => "<div attr={1 >ˇ"
+    );
+
+    check!(
+        test_ignores_closing_tags_with_different_tag_names,
+        "<div><divˇ</div></span>" + ">" => "<div><div>ˇ</div></div></span>"
+    );
+
+    check!(
+        test_autocloses_in_jsx_expression,
+        "<div>{<divˇ}</div>" + ">" => "<div>{<div>ˇ</div>}</div>"
+    );
+
+    check!(
+        test_doesnt_autoclose_already_closed_in_jsx_expression,
+        "<div>{<divˇ</div>}</div>" + ">" => "<div>{<div>ˇ</div>}</div>"
+    );
+
+    check!(
+        test_autocloses_fragment,
+        "<ˇ" + ">" => "<>ˇ</>"
+    );
+
+    check!(
+        test_does_not_include_type_argument_in_autoclose_tag_name,
+        "<Component<T> attr={boolean_value}ˇ" + ">" => "<Component<T> attr={boolean_value}>ˇ</Component>"
+    );
+
+    check!(
+        test_does_not_autoclose_doctype,
+        "<!DOCTYPE htmlˇ" + ">" => "<!DOCTYPE html>ˇ"
+    );
+
+    check!(
+        test_does_not_autoclose_comment,
+        "<!-- comment --ˇ" + ">" => "<!-- comment -->ˇ"
+    );
+
+    check!(
+        test_autocloses_dot_separated_component,
+        "<Component.Fooˇ" + ">" => "<Component.Foo>ˇ</Component.Foo>"
+    );
+
+    check!(
+        test_multi_cursor_autoclose_same_tag,
+        r#"
+        <divˇ
+        <divˇ
+        "#
+        + ">" =>
+        r#"
+        <div>ˇ</div>
+        <div>ˇ</div>
+        "#
+    );
+
+    check!(
+        test_multi_cursor_autoclose_different_tags,
+        r#"
+        <divˇ
+        <spanˇ
+        "#
+        + ">" =>
+        r#"
+        <div>ˇ</div>
+        <span>ˇ</span>
+        "#
+    );
+
+    check!(
+        test_multi_cursor_autoclose_some_dont_autoclose_others,
+        r#"
+        <divˇ
+        <div /ˇ
+        <spanˇ</span>
+        <!DOCTYPE htmlˇ
+        </headˇ
+        <Component<T>ˇ
+        ˇ
+        "#
+        + ">" =>
+        r#"
+        <div>ˇ</div>
+        <div />ˇ
+        <span>ˇ</span>
+        <!DOCTYPE html>ˇ
+        </head>ˇ
+        <Component<T>>ˇ</Component>
+        >ˇ
+        "#
+    );
+
+    check!(
+        test_doesnt_mess_up_trailing_text,
+        "<divˇfoobar" + ">" => "<div>ˇ</div>foobar"
+    );
+
+    #[gpui::test]
+    async fn test_multibuffer(cx: &mut TestAppContext) {
+        init_test(cx, |settings| {
+            settings.defaults.jsx_tag_auto_close = Some(JsxTagAutoCloseSettings { enabled: true });
+        });
+
+        let buffer_a = cx.new(|cx| {
+            let mut buf = language::Buffer::local("<div", cx);
+            buf.set_language(
+                Some(language("tsx", tree_sitter_typescript::LANGUAGE_TSX.into())),
+                cx,
+            );
+            buf
+        });
+        let buffer_b = cx.new(|cx| {
+            let mut buf = language::Buffer::local("<pre", cx);
+            buf.set_language(
+                Some(language("tsx", tree_sitter_typescript::LANGUAGE_TSX.into())),
+                cx,
+            );
+            buf
+        });
+        let buffer_c = cx.new(|cx| {
+            let buf = language::Buffer::local("<span", cx);
+            buf
+        });
+        let buffer = cx.new(|cx| {
+            let mut buf = MultiBuffer::new(language::Capability::ReadWrite);
+            buf.push_excerpts(
+                buffer_a,
+                [ExcerptRange {
+                    context: text::Anchor::MIN..text::Anchor::MAX,
+                    primary: None,
+                }],
+                cx,
+            );
+            buf.push_excerpts(
+                buffer_b,
+                [ExcerptRange {
+                    context: text::Anchor::MIN..text::Anchor::MAX,
+                    primary: None,
+                }],
+                cx,
+            );
+            buf.push_excerpts(
+                buffer_c,
+                [ExcerptRange {
+                    context: text::Anchor::MIN..text::Anchor::MAX,
+                    primary: None,
+                }],
+                cx,
+            );
+            buf
+        });
+        let editor = cx.add_window(|window, cx| build_editor(buffer.clone(), window, cx));
+
+        let mut cx = EditorTestContext::for_editor(editor, cx).await;
+
+        cx.update_editor(|editor, window, cx| {
+            editor.change_selections(None, window, cx, |selections| {
+                selections.select(vec![
+                    Selection::from_offset(4),
+                    Selection::from_offset(9),
+                    Selection::from_offset(15),
+                ])
+            })
+        });
+        cx.run_until_parked();
+
+        cx.update_editor(|editor, window, cx| {
+            editor.handle_input(">", window, cx);
+        });
+        cx.run_until_parked();
+
+        cx.assert_editor_state("<div>ˇ</div>\n<pre>ˇ</pre>\n<span>ˇ");
     }
 }
