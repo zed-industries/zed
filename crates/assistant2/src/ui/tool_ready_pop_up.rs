@@ -9,12 +9,16 @@ use ui::{prelude::*, Render};
 
 pub struct ToolReadyPopUp {
     caption: SharedString,
+    icon: IconName,
+    icon_color: Color,
 }
 
 impl ToolReadyPopUp {
-    pub fn new(caption: impl Into<SharedString>) -> Self {
+    pub fn new(caption: impl Into<SharedString>, icon: IconName, icon_color: Color) -> Self {
         Self {
             caption: caption.into(),
+            icon,
+            icon_color,
         }
     }
 
@@ -82,9 +86,9 @@ impl Render for ToolReadyPopUp {
                     .gap_2()
                     .child(
                         h_flex().h(line_height).justify_center().child(
-                            Icon::new(IconName::Info)
-                                .size(IconSize::Small)
-                                .color(Color::Muted),
+                            Icon::new(self.icon)
+                                .color(self.icon_color)
+                                .size(IconSize::Small),
                         ),
                     )
                     .child(
