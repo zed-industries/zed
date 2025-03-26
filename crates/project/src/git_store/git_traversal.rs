@@ -1,26 +1,28 @@
+use collections::HashMap;
 use git::status::GitSummary;
-use gpui::App;
 use std::{ops::Deref, path::Path};
 use sum_tree::Cursor;
 use text::Bias;
-use util::ResultExt as _;
-use worktree::{Entry, PathProgress, PathTarget, RepositoryEntry, StatusEntry, Traversal};
-
-use super::GitStore;
+use worktree::{
+    Entry, PathProgress, PathTarget, ProjectEntryId, RepositoryEntry, StatusEntry, Traversal,
+};
 
 /// Walks the worktree entries and their associated git statuses.
 pub struct GitTraversal<'a> {
-    git_store: &'a GitStore,
     traversal: Traversal<'a>,
     current_entry_summary: Option<GitSummary>,
-    repo_location: Option<(RepositoryEntry, Cursor<'a, StatusEntry, PathProgress<'a>>)>,
+    repo_snapshots: &'a HashMap<ProjectEntryId, RepositoryEntry>,
+    repo_location: Option<(ProjectEntryId, Cursor<'a, StatusEntry, PathProgress<'a>>)>,
 }
 
 impl<'a> GitTraversal<'a> {
-    pub fn new(git_store: &'a GitStore, traversal: Traversal<'a>) -> GitTraversal<'a> {
+    pub fn new(
+        repo_snapshots: &'a HashMap<ProjectEntryId, RepositoryEntry>,
+        traversal: Traversal<'a>,
+    ) -> GitTraversal<'a> {
         let mut this = GitTraversal {
-            git_store,
             traversal,
+            repo_snapshots,
             current_entry_summary: None,
             repo_location: None,
         };
@@ -28,35 +30,46 @@ impl<'a> GitTraversal<'a> {
         this
     }
 
-    fn synchronize_statuses(&mut self, reset: bool, cx: &App) {
+    fn synchronize_statuses(&mut self, reset: bool) {
         self.current_entry_summary = None;
 
         let Some(entry) = self.entry() else {
             return;
         };
-        let entry_path = (self.traversal.snapshot().id(), &entry.path).into();
+
+        let Ok(abs_path) = self.traversal.snapshot().absolutize(&entry.path) else {
+            self.repo_location = None;
+            return;
+        };
 
         let Some((repo, repo_path)) = self
-            .git_store
-            .repository_and_path_for_project_path(&entry_path, cx)
+            .repo_snapshots
+            .values()
+            .filter_map(|repo_snapshot| {
+                let relative_path = repo_snapshot.relativize_abs_path(&abs_path)?;
+                Some((repo_snapshot, relative_path))
+            })
+            .min_by_key(|(_, relative_path)| relative_path.clone())
         else {
             self.repo_location = None;
             return;
         };
-        let repo = repo.read(cx).repository_entry.clone();
 
         // Update our state if we changed repositories.
         if reset
             || self
                 .repo_location
                 .as_ref()
-                .map(|(prev_repo, _)| prev_repo.work_directory_id)
-                != Some(repo.work_directory_id)
+                .map(|(prev_repo_id, _)| *prev_repo_id)
+                != Some(repo.work_directory_id())
         {
-            self.repo_location = Some((repo, repo.statuses_by_path.cursor::<PathProgress>(&())));
+            self.repo_location = Some((
+                repo.work_directory_id(),
+                repo.statuses_by_path.cursor::<PathProgress>(&()),
+            ));
         }
 
-        let Some((repo, statuses)) = &mut self.repo_location else {
+        let Some((_, statuses)) = &mut self.repo_location else {
             return;
         };
 
@@ -134,9 +147,15 @@ pub struct ChildEntriesGitIter<'a> {
 }
 
 impl<'a> ChildEntriesGitIter<'a> {
-    pub fn new(snapshot: &'a worktree::Snapshot, parent_path: &'a Path) -> Self {
-        let mut traversal =
-            GitTraversal::new(snapshot.traverse_from_path(true, true, true, parent_path));
+    pub fn new(
+        repo_snapshots: &'a HashMap<ProjectEntryId, RepositoryEntry>,
+        worktree_snapshot: &'a worktree::Snapshot,
+        parent_path: &'a Path,
+    ) -> Self {
+        let mut traversal = GitTraversal::new(
+            repo_snapshots,
+            worktree_snapshot.traverse_from_path(true, true, true, parent_path),
+        );
         traversal.advance();
         ChildEntriesGitIter {
             parent_path,
@@ -221,6 +240,8 @@ impl AsRef<Entry> for GitEntry {
 mod tests {
     use std::time::Duration;
 
+    use crate::Project;
+
     use super::*;
     use fs::FakeFs;
     use git::status::{FileStatus, StatusCode, TrackedSummary, UnmergedStatus, UnmergedStatusCode};
@@ -228,7 +249,7 @@ mod tests {
     use serde_json::json;
     use settings::{Settings as _, SettingsStore};
     use util::path;
-    use worktree::{Worktree, WorktreeSettings};
+    use worktree::WorktreeSettings;
 
     const CONFLICT: FileStatus = FileStatus::Unmerged(UnmergedStatus {
         first_head: UnmergedStatusCode::Updated,
@@ -288,22 +309,19 @@ mod tests {
             &[(Path::new("z2.txt"), StatusCode::Added.index())],
         );
 
-        let tree = Worktree::local(
-            Path::new(path!("/root")),
-            true,
-            fs.clone(),
-            Default::default(),
-            &mut cx.to_async(),
-        )
-        .await
-        .unwrap();
-
+        let project = Project::test(fs, [path!("/root").as_ref()], cx).await;
         cx.executor().run_until_parked();
 
-        let snapshot = tree.read_with(cx, |tree, _| tree.snapshot());
-
-        let mut traversal =
-            GitTraversal::new(snapshot.traverse_from_path(true, false, true, Path::new("x")));
+        let (repo_snapshots, worktree_snapshot) = project.read_with(cx, |project, cx| {
+            (
+                project.git_store().read(cx).repo_snapshots(),
+                project.worktrees(cx).next().unwrap().read(cx).snapshot(),
+            )
+        });
+        let mut traversal = GitTraversal::new(
+            &repo_snapshots,
+            worktree_snapshot.traverse_from_path(true, false, true, Path::new("x")),
+        );
 
         let entry = traversal.next().unwrap();
         assert_eq!(entry.path.as_ref(), Path::new("x/x1.txt"));
@@ -372,23 +390,20 @@ mod tests {
             &[(Path::new("z2.txt"), StatusCode::Added.index())],
         );
 
-        let tree = Worktree::local(
-            Path::new(path!("/root")),
-            true,
-            fs.clone(),
-            Default::default(),
-            &mut cx.to_async(),
-        )
-        .await
-        .unwrap();
-
+        let project = Project::test(fs, [path!("/root").as_ref()], cx).await;
         cx.executor().run_until_parked();
 
-        let snapshot = tree.read_with(cx, |tree, _| tree.snapshot());
+        let (repo_snapshots, worktree_snapshot) = project.read_with(cx, |project, cx| {
+            (
+                project.git_store().read(cx).repo_snapshots(),
+                project.worktrees(cx).next().unwrap().read(cx).snapshot(),
+            )
+        });
 
         // Sanity check the propagation for x/y and z
         check_git_statuses(
-            &snapshot,
+            &repo_snapshots,
+            &worktree_snapshot,
             &[
                 (Path::new("x/y"), GitSummary::CONFLICT),
                 (Path::new("x/y/y1.txt"), GitSummary::CONFLICT),
@@ -396,7 +411,8 @@ mod tests {
             ],
         );
         check_git_statuses(
-            &snapshot,
+            &repo_snapshots,
+            &worktree_snapshot,
             &[
                 (Path::new("z"), ADDED),
                 (Path::new("z/z1.txt"), GitSummary::UNCHANGED),
@@ -406,7 +422,8 @@ mod tests {
 
         // Test one of the fundamental cases of propagation blocking, the transition from one git repository to another
         check_git_statuses(
-            &snapshot,
+            &repo_snapshots,
+            &worktree_snapshot,
             &[
                 (Path::new("x"), MODIFIED + ADDED),
                 (Path::new("x/y"), GitSummary::CONFLICT),
@@ -416,7 +433,8 @@ mod tests {
 
         // Sanity check everything around it
         check_git_statuses(
-            &snapshot,
+            &repo_snapshots,
+            &worktree_snapshot,
             &[
                 (Path::new("x"), MODIFIED + ADDED),
                 (Path::new("x/x1.txt"), GitSummary::UNCHANGED),
@@ -430,7 +448,8 @@ mod tests {
 
         // Test the other fundamental case, transitioning from git repository to non-git repository
         check_git_statuses(
-            &snapshot,
+            &repo_snapshots,
+            &worktree_snapshot,
             &[
                 (Path::new(""), GitSummary::UNCHANGED),
                 (Path::new("x"), MODIFIED + ADDED),
@@ -440,7 +459,8 @@ mod tests {
 
         // And all together now
         check_git_statuses(
-            &snapshot,
+            &repo_snapshots,
+            &worktree_snapshot,
             &[
                 (Path::new(""), GitSummary::UNCHANGED),
                 (Path::new("x"), MODIFIED + ADDED),
@@ -496,21 +516,19 @@ mod tests {
             ],
         );
 
-        let tree = Worktree::local(
-            Path::new(path!("/root")),
-            true,
-            fs.clone(),
-            Default::default(),
-            &mut cx.to_async(),
-        )
-        .await
-        .unwrap();
+        let project = Project::test(fs, [path!("/root").as_ref()], cx).await;
         cx.executor().run_until_parked();
 
-        let snapshot = tree.read_with(cx, |tree, _| tree.snapshot());
+        let (repo_snapshots, worktree_snapshot) = project.read_with(cx, |project, cx| {
+            (
+                project.git_store().read(cx).repo_snapshots(),
+                project.worktrees(cx).next().unwrap().read(cx).snapshot(),
+            )
+        });
 
         check_git_statuses(
-            &snapshot,
+            &repo_snapshots,
+            &worktree_snapshot,
             &[
                 (Path::new(""), GitSummary::CONFLICT + MODIFIED + ADDED),
                 (Path::new("g"), GitSummary::CONFLICT),
@@ -519,7 +537,8 @@ mod tests {
         );
 
         check_git_statuses(
-            &snapshot,
+            &repo_snapshots,
+            &worktree_snapshot,
             &[
                 (Path::new(""), GitSummary::CONFLICT + ADDED + MODIFIED),
                 (Path::new("a"), ADDED + MODIFIED),
@@ -536,7 +555,8 @@ mod tests {
         );
 
         check_git_statuses(
-            &snapshot,
+            &repo_snapshots,
+            &worktree_snapshot,
             &[
                 (Path::new("a/b"), ADDED),
                 (Path::new("a/b/c1.txt"), ADDED),
@@ -551,7 +571,8 @@ mod tests {
         );
 
         check_git_statuses(
-            &snapshot,
+            &repo_snapshots,
+            &worktree_snapshot,
             &[
                 (Path::new("a/b/c1.txt"), ADDED),
                 (Path::new("a/b/c2.txt"), GitSummary::UNCHANGED),
@@ -604,26 +625,25 @@ mod tests {
             &[(Path::new("z2.txt"), StatusCode::Modified.index())],
         );
 
-        let tree = Worktree::local(
-            Path::new(path!("/root")),
-            true,
-            fs.clone(),
-            Default::default(),
-            &mut cx.to_async(),
-        )
-        .await
-        .unwrap();
+        let project = Project::test(fs, [path!("/root").as_ref()], cx).await;
         cx.executor().run_until_parked();
 
-        let snapshot = tree.read_with(cx, |tree, _| tree.snapshot());
+        let (repo_snapshots, worktree_snapshot) = project.read_with(cx, |project, cx| {
+            (
+                project.git_store().read(cx).repo_snapshots(),
+                project.worktrees(cx).next().unwrap().read(cx).snapshot(),
+            )
+        });
 
         check_git_statuses(
-            &snapshot,
+            &repo_snapshots,
+            &worktree_snapshot,
             &[(Path::new("x"), ADDED), (Path::new("x/x1.txt"), ADDED)],
         );
 
         check_git_statuses(
-            &snapshot,
+            &repo_snapshots,
+            &worktree_snapshot,
             &[
                 (Path::new("y"), GitSummary::CONFLICT + MODIFIED),
                 (Path::new("y/y1.txt"), GitSummary::CONFLICT),
@@ -632,7 +652,8 @@ mod tests {
         );
 
         check_git_statuses(
-            &snapshot,
+            &repo_snapshots,
+            &worktree_snapshot,
             &[
                 (Path::new("z"), MODIFIED),
                 (Path::new("z/z2.txt"), MODIFIED),
@@ -640,12 +661,14 @@ mod tests {
         );
 
         check_git_statuses(
-            &snapshot,
+            &repo_snapshots,
+            &worktree_snapshot,
             &[(Path::new("x"), ADDED), (Path::new("x/x1.txt"), ADDED)],
         );
 
         check_git_statuses(
-            &snapshot,
+            &repo_snapshots,
+            &worktree_snapshot,
             &[
                 (Path::new("x"), ADDED),
                 (Path::new("x/x1.txt"), ADDED),
@@ -695,18 +718,11 @@ mod tests {
         );
         cx.run_until_parked();
 
-        let tree = Worktree::local(
-            path!("/root").as_ref(),
-            true,
-            fs.clone(),
-            Default::default(),
-            &mut cx.to_async(),
-        )
-        .await
-        .unwrap();
+        let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
         cx.executor().run_until_parked();
 
-        let (old_entry_ids, old_mtimes) = tree.read_with(cx, |tree, _| {
+        let (old_entry_ids, old_mtimes) = project.read_with(cx, |project, cx| {
+            let tree = project.worktrees(cx).next().unwrap().read(cx);
             (
                 tree.entries(true, 0).map(|e| e.id).collect::<Vec<_>>(),
                 tree.entries(true, 0).map(|e| e.mtime).collect::<Vec<_>>(),
@@ -719,7 +735,8 @@ mod tests {
         fs.touch_path(path!("/root")).await;
         cx.executor().run_until_parked();
 
-        let (new_entry_ids, new_mtimes) = tree.read_with(cx, |tree, _| {
+        let (new_entry_ids, new_mtimes) = project.read_with(cx, |project, cx| {
+            let tree = project.worktrees(cx).next().unwrap().read(cx);
             (
                 tree.entries(true, 0).map(|e| e.id).collect::<Vec<_>>(),
                 tree.entries(true, 0).map(|e| e.mtime).collect::<Vec<_>>(),
@@ -740,10 +757,16 @@ mod tests {
         cx.executor().run_until_parked();
         cx.executor().advance_clock(Duration::from_secs(1));
 
-        let snapshot = tree.read_with(cx, |tree, _| tree.snapshot());
+        let (repo_snapshots, worktree_snapshot) = project.read_with(cx, |project, cx| {
+            (
+                project.git_store().read(cx).repo_snapshots(),
+                project.worktrees(cx).next().unwrap().read(cx).snapshot(),
+            )
+        });
 
         check_git_statuses(
-            &snapshot,
+            &repo_snapshots,
+            &worktree_snapshot,
             &[
                 (Path::new(""), MODIFIED),
                 (Path::new("a.txt"), GitSummary::UNCHANGED),
@@ -754,11 +777,14 @@ mod tests {
 
     #[track_caller]
     fn check_git_statuses(
-        snapshot: &worktree::Snapshot,
+        repo_snapshots: &HashMap<ProjectEntryId, RepositoryEntry>,
+        worktree_snapshot: &worktree::Snapshot,
         expected_statuses: &[(&Path, GitSummary)],
     ) {
-        let mut traversal =
-            GitTraversal::new(snapshot.traverse_from_path(true, true, false, "".as_ref()));
+        let mut traversal = GitTraversal::new(
+            repo_snapshots,
+            worktree_snapshot.traverse_from_path(true, true, false, "".as_ref()),
+        );
         let found_statuses = expected_statuses
             .iter()
             .map(|&(path, _)| {

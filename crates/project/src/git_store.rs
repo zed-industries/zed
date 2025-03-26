@@ -2159,6 +2159,10 @@ impl GitStore {
                 .cloned()
         })?
     }
+
+    pub fn repo_snapshots(&self) -> HashMap<ProjectEntryId, RepositoryEntry> {
+        todo!()
+    }
 }
 
 impl BufferDiffState {
