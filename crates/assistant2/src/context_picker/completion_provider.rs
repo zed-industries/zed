@@ -821,7 +821,7 @@ mod tests {
                     format!("six.txt {}", separator!("dir/b")).as_str(),
                     format!("five.txt {}", separator!("dir/b")).as_str(),
                     format!("four.txt {}", separator!("dir/a")).as_str(),
-                    "File/Directory",
+                    "Files & Directories",
                     "Fetch"
                 ]
             );

@@ -12,6 +12,8 @@ use language_model::LanguageModelRequestMessage;
 use project::Project;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use ui::IconName;
+use util::markdown::MarkdownString;
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy)]
 enum ContentType {
@@ -121,6 +123,10 @@ impl Tool for FetchTool {
         include_str!("./fetch_tool/description.md").to_string()
     }
 
+    fn icon(&self) -> IconName {
+        IconName::Globe
+    }
+
     fn input_schema(&self) -> serde_json::Value {
         let schema = schemars::schema_for!(FetchToolInput);
         serde_json::to_value(&schema).unwrap()
@@ -128,7 +134,7 @@ impl Tool for FetchTool {
 
     fn ui_text(&self, input: &serde_json::Value) -> String {
         match serde_json::from_value::<FetchToolInput>(input.clone()) {
-            Ok(input) => format!("Fetch `{}`", input.url),
+            Ok(input) => format!("Fetch {}", MarkdownString::escape(&input.url)),
             Err(_) => "Fetch URL".to_string(),
         }
     }

@@ -774,6 +774,10 @@ impl LanguageServer {
                     code_lens: Some(CodeLensClientCapabilities {
                         dynamic_registration: Some(false),
                     }),
+                    document_symbol: Some(DocumentSymbolClientCapabilities {
+                        hierarchical_document_symbol_support: Some(true),
+                        ..DocumentSymbolClientCapabilities::default()
+                    }),
                     ..TextDocumentClientCapabilities::default()
                 }),
                 experimental: Some(json!({
@@ -1479,6 +1483,7 @@ impl LanguageServer {
             document_formatting_provider: Some(OneOf::Left(true)),
             document_range_formatting_provider: Some(OneOf::Left(true)),
             definition_provider: Some(OneOf::Left(true)),
+            workspace_symbol_provider: Some(OneOf::Left(true)),
             implementation_provider: Some(ImplementationProviderCapability::Simple(true)),
             type_definition_provider: Some(TypeDefinitionProviderCapability::Simple(true)),
             ..Default::default()

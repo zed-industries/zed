@@ -67,7 +67,7 @@ impl ContextPickerMode {
 
     pub fn label(&self) -> &'static str {
         match self {
-            Self::File => "File/Directory",
+            Self::File => "Files & Directories",
             Self::Fetch => "Fetch",
             Self::Thread => "Thread",
         }

@@ -36,7 +36,7 @@ use project_panel_settings::{
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::{Settings, SettingsStore};
+use settings::{update_settings_file, Settings, SettingsStore};
 use smallvec::SmallVec;
 use std::any::TypeId;
 use std::{
@@ -197,6 +197,7 @@ actions!(
         Open,
         OpenPermanent,
         ToggleFocus,
+        ToggleHideGitIgnore,
         NewSearchInDirectory,
         UnfoldDirectory,
         FoldDirectory,
@@ -232,6 +233,13 @@ pub fn init(cx: &mut App) {
     cx.observe_new(|workspace: &mut Workspace, _, _| {
         workspace.register_action(|workspace, _: &ToggleFocus, window, cx| {
             workspace.toggle_panel_focus::<ProjectPanel>(window, cx);
+        });
+
+        workspace.register_action(|workspace, _: &ToggleHideGitIgnore, _, cx| {
+            let fs = workspace.app_state().fs.clone();
+            update_settings_file::<ProjectPanelSettings>(fs, cx, move |setting, _| {
+                setting.hide_gitignore = Some(!setting.hide_gitignore.unwrap_or(false));
+            })
         });
     })
     .detach();
@@ -415,6 +423,9 @@ impl ProjectPanel {
             cx.observe_global::<SettingsStore>(move |this, cx| {
                 let new_settings = *ProjectPanelSettings::get_global(cx);
                 if project_panel_settings != new_settings {
+                    if project_panel_settings.hide_gitignore != new_settings.hide_gitignore {
+                        this.update_visible_entries(None, cx);
+                    }
                     project_panel_settings = new_settings;
                     this.update_diagnostics(cx);
                     cx.notify();
@@ -501,6 +512,9 @@ impl ProjectPanel {
                                             "{} is not shared by the host. This could be because it has been marked as `private`",
                                             file_path.display()
                                         )),
+                                        // See note in worktree.rs where this error originates. Returning Some in this case prevents
+                                        // the error popup from saying "Try Again", which is a red herring in this case
+                                        ErrorCode::Internal if e.to_string().contains("File is too large to load") => Some(e.to_string()),
                                         _ => None,
                                     }
                                 });
@@ -1534,7 +1548,6 @@ impl ProjectPanel {
         if sanitized_entries.is_empty() {
             return None;
         }
-
         let project = self.project.read(cx);
         let (worktree_id, worktree) = sanitized_entries
             .iter()
@@ -1568,14 +1581,15 @@ impl ProjectPanel {
         // Remove all siblings that are being deleted except the last marked entry
         let repo_snapshots = git_store.repo_snapshots(cx);
         let worktree_snapshot = worktree.snapshot();
+        let hide_gitignore = ProjectPanelSettings::get_global(cx).hide_gitignore;
         let mut siblings: Vec<_> =
             ChildEntriesGitIter::new(&repo_snapshots, &worktree_snapshot, parent_path)
                 .filter(|sibling| {
-                    sibling.id == latest_entry.id
-                        || !marked_entries_in_worktree.contains(&&SelectedEntry {
+                    (sibling.id == latest_entry.id)
+                        || (!marked_entries_in_worktree.contains(&&SelectedEntry {
                             worktree_id,
                             entry_id: sibling.id,
-                        })
+                        }) && (!hide_gitignore || !sibling.is_ignored))
                 })
                 .map(|entry| entry.to_owned())
                 .collect();
@@ -2591,7 +2605,9 @@ impl ProjectPanel {
         new_selected_entry: Option<(WorktreeId, ProjectEntryId)>,
         cx: &mut Context<Self>,
     ) {
-        let auto_collapse_dirs = ProjectPanelSettings::get_global(cx).auto_fold_dirs;
+        let settings = ProjectPanelSettings::get_global(cx);
+        let auto_collapse_dirs = settings.auto_fold_dirs;
+        let hide_gitignore = settings.hide_gitignore;
         let project = self.project.read(cx);
         let repo_snapshots = project.git_store().read(cx).repo_snapshots(cx);
         self.last_worktree_root_id = project
@@ -2678,7 +2694,9 @@ impl ProjectPanel {
                     }
                 }
                 auto_folded_ancestors.clear();
-                visible_worktree_entries.push(entry.to_owned());
+                if !hide_gitignore || !entry.is_ignored {
+                    visible_worktree_entries.push(entry.to_owned());
+                }
                 let precedes_new_entry = if let Some(new_entry_id) = new_entry_parent_id {
                     entry.id == new_entry_id || {
                         self.ancestors.get(&entry.id).map_or(false, |entries| {
@@ -2691,7 +2709,7 @@ impl ProjectPanel {
                 } else {
                     false
                 };
-                if precedes_new_entry {
+                if precedes_new_entry && (!hide_gitignore || !entry.is_ignored) {
                     visible_worktree_entries.push(GitEntry {
                         entry: Entry {
                             id: NEW_ENTRY_ID,
@@ -4587,9 +4605,9 @@ impl Render for ProjectPanel {
                             .with_render_fn(
                                 cx.entity().clone(),
                                 move |this, params, _, cx| {
-                                    const LEFT_OFFSET: f32 = 14.;
-                                    const PADDING_Y: f32 = 4.;
-                                    const HITBOX_OVERDRAW: f32 = 3.;
+                                    const LEFT_OFFSET: Pixels = px(14.);
+                                    const PADDING_Y: Pixels = px(4.);
+                                    const HITBOX_OVERDRAW: Pixels = px(3.);
 
                                     let active_indent_guide_index =
                                         this.find_active_indent_guide(&params.indent_guides, cx);
@@ -4605,19 +4623,16 @@ impl Render for ProjectPanel {
                                             let offset = if layout.continues_offscreen {
                                                 px(0.)
                                             } else {
-                                                px(PADDING_Y)
+                                                PADDING_Y
                                             };
                                             let bounds = Bounds::new(
                                                 point(
-                                                    px(layout.offset.x as f32) * indent_size
-                                                        + px(LEFT_OFFSET),
-                                                    px(layout.offset.y as f32) * item_height
-                                                        + offset,
+                                                    layout.offset.x * indent_size + LEFT_OFFSET,
+                                                    layout.offset.y * item_height + offset,
                                                 ),
                                                 size(
                                                     px(1.),
-                                                    px(layout.length as f32) * item_height
-                                                        - px(offset.0 * 2.),
+                                                    layout.length * item_height - offset * 2.,
                                                 ),
                                             );
                                             ui::RenderedIndentGuide {
@@ -4626,12 +4641,11 @@ impl Render for ProjectPanel {
                                                 is_active: Some(idx) == active_indent_guide_index,
                                                 hitbox: Some(Bounds::new(
                                                     point(
-                                                        bounds.origin.x - px(HITBOX_OVERDRAW),
+                                                        bounds.origin.x - HITBOX_OVERDRAW,
                                                         bounds.origin.y,
                                                     ),
                                                     size(
-                                                        bounds.size.width
-                                                            + px(2. * HITBOX_OVERDRAW),
+                                                        bounds.size.width + HITBOX_OVERDRAW * 2.,
                                                         bounds.size.height,
                                                     ),
                                                 )),

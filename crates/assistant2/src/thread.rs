@@ -352,6 +352,10 @@ impl Thread {
             .filter(|tool_use| tool_use.status.needs_confirmation())
     }
 
+    pub fn has_pending_tool_uses(&self) -> bool {
+        !self.tool_use.pending_tool_uses().is_empty()
+    }
+
     pub fn checkpoint_for_message(&self, id: MessageId) -> Option<ThreadCheckpoint> {
         self.checkpoints_by_message.get(&id).cloned()
     }
@@ -698,11 +702,12 @@ impl Thread {
 
         // Note that Cline supports `.clinerules` being a directory, but that is not currently
         // supported. This doesn't seem to occur often in GitHub repositories.
-        const RULES_FILE_NAMES: [&'static str; 5] = [
+        const RULES_FILE_NAMES: [&'static str; 6] = [
             ".rules",
             ".cursorrules",
             ".windsurfrules",
             ".clinerules",
+            ".github/copilot-instructions.md",
             "CLAUDE.md",
         ];
         let selected_rules_file = RULES_FILE_NAMES
@@ -868,17 +873,23 @@ impl Thread {
             request.messages.push(context_message);
         }
 
-        self.attach_stale_files(&mut request.messages, cx);
+        self.attached_tracked_files_state(&mut request.messages, cx);
 
         request
     }
 
-    fn attach_stale_files(&self, messages: &mut Vec<LanguageModelRequestMessage>, cx: &App) {
+    fn attached_tracked_files_state(
+        &self,
+        messages: &mut Vec<LanguageModelRequestMessage>,
+        cx: &App,
+    ) {
         const STALE_FILES_HEADER: &str = "These files changed since last read:";
 
         let mut stale_message = String::new();
 
-        for stale_file in self.action_log.read(cx).stale_buffers(cx) {
+        let action_log = self.action_log.read(cx);
+
+        for stale_file in action_log.stale_buffers(cx) {
             let Some(file) = stale_file.read(cx).file() else {
                 continue;
             };
@@ -890,10 +901,22 @@ impl Thread {
             writeln!(&mut stale_message, "- {}", file.path().display()).ok();
         }
 
+        let mut content = Vec::with_capacity(2);
+
         if !stale_message.is_empty() {
+            content.push(stale_message.into());
+        }
+
+        if action_log.has_edited_files_since_project_diagnostics_check() {
+            content.push(
+                "When you're done making changes, make sure to check project diagnostics and fix all errors AND warnings you introduced!".into(),
+            );
+        }
+
+        if !content.is_empty() {
             let context_message = LanguageModelRequestMessage {
                 role: Role::User,
-                content: vec![stale_message.into()],
+                content,
                 cache: false,
             };
 
@@ -1160,6 +1183,7 @@ impl Thread {
                         messages.clone(),
                         tool,
                     );
+                    cx.emit(ThreadEvent::ToolConfirmationNeeded);
                 } else {
                     self.run_tool(
                         tool_use.id.clone(),
@@ -1538,6 +1562,7 @@ pub enum ThreadEvent {
         canceled: bool,
     },
     CheckpointChanged,
+    ToolConfirmationNeeded,
 }
 
 impl EventEmitter<ThreadEvent> for Thread {}
