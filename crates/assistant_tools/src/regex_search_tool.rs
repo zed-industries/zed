@@ -64,12 +64,12 @@ impl Tool for RegexSearchTool {
         match serde_json::from_value::<RegexSearchToolInput>(input.clone()) {
             Ok(input) => {
                 let page = input.page();
-                let regex = MarkdownString::escape(&input.regex);
+                let regex = MarkdownString::inline_code(&input.regex);
 
                 if page > 1 {
-                    format!("Get page {page} of search results for regex “`{regex}`”")
+                    format!("Get page {page} of search results for regex “{regex}”")
                 } else {
-                    format!("Search files for regex “`{regex}`”")
+                    format!("Search files for regex “{regex}”")
                 }
             }
             Err(_) => "Search with regex".to_string(),

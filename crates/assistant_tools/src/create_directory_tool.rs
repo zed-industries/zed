@@ -51,7 +51,10 @@ impl Tool for CreateDirectoryTool {
     fn ui_text(&self, input: &serde_json::Value) -> String {
         match serde_json::from_value::<CreateDirectoryToolInput>(input.clone()) {
             Ok(input) => {
-                format!("Create directory `{}`", MarkdownString::escape(&input.path))
+                format!(
+                    "Create directory {}",
+                    MarkdownString::inline_code(&input.path)
+                )
             }
             Err(_) => "Create directory".to_string(),
         }

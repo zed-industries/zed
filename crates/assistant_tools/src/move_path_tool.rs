@@ -61,8 +61,8 @@ impl Tool for MovePathTool {
     fn ui_text(&self, input: &serde_json::Value) -> String {
         match serde_json::from_value::<MovePathToolInput>(input.clone()) {
             Ok(input) => {
-                let src = MarkdownString::escape(&input.source_path);
-                let dest = MarkdownString::escape(&input.destination_path);
+                let src = MarkdownString::inline_code(&input.source_path);
+                let dest = MarkdownString::inline_code(&input.destination_path);
                 let src_path = Path::new(&input.source_path);
                 let dest_path = Path::new(&input.destination_path);
 
@@ -71,11 +71,11 @@ impl Tool for MovePathTool {
                     .and_then(|os_str| os_str.to_os_string().into_string().ok())
                 {
                     Some(filename) if src_path.parent() == dest_path.parent() => {
-                        let filename = MarkdownString::escape(&filename);
-                        format!("Rename `{src}` to `{filename}`")
+                        let filename = MarkdownString::inline_code(&filename);
+                        format!("Rename {src} to {filename}")
                     }
                     _ => {
-                        format!("Move `{src}` to `{dest}`")
+                        format!("Move {src} to {dest}")
                     }
                 }
             }
