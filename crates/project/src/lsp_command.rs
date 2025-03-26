@@ -1542,7 +1542,6 @@ impl LspCommand for GetDocumentSymbols {
                     kind: lsp_symbol.kind,
                     range: range_from_lsp(lsp_symbol.location.range),
                     selection_range: range_from_lsp(lsp_symbol.location.range),
-                    signature: [0; 32], //TODO
                     children: Vec::new(),
                 })
                 .collect(),
@@ -1553,7 +1552,6 @@ impl LspCommand for GetDocumentSymbols {
                         kind: lsp_symbol.kind,
                         range: range_from_lsp(lsp_symbol.range),
                         selection_range: range_from_lsp(lsp_symbol.selection_range),
-                        signature: [0; 32], //TODO
                         children: lsp_symbol
                             .children
                             .map(|children| {
@@ -1620,7 +1618,6 @@ impl LspCommand for GetDocumentSymbols {
                             row: symbol.selection_range.end.0.row,
                             column: symbol.selection_range.end.0.column,
                         }),
-                        signature: symbol.signature.to_vec(),
                         children: symbol
                             .children
                             .into_iter()
@@ -1666,6 +1663,7 @@ impl LspCommand for GetDocumentSymbols {
 
                 Ok(DocumentSymbol {
                     name: serialized_symbol.name,
+                    kind,
                     range: Unclipped(PointUtf16::new(start.row, start.column))
                         ..Unclipped(PointUtf16::new(end.row, end.column)),
                     selection_range: Unclipped(PointUtf16::new(
@@ -1673,11 +1671,6 @@ impl LspCommand for GetDocumentSymbols {
                         selection_start.column,
                     ))
                         ..Unclipped(PointUtf16::new(selection_end.row, selection_end.column)),
-                    kind,
-                    signature: serialized_symbol
-                        .signature
-                        .try_into()
-                        .map_err(|_| anyhow!("invalid signature"))?,
                     children: serialized_symbol
                         .children
                         .into_iter()

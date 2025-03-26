@@ -869,8 +869,7 @@ message DocumentSymbol {
     PointUtf16 end = 4;
     PointUtf16 selection_start = 5;
     PointUtf16 selection_end = 6;
-    bytes signature = 7;
-    repeated DocumentSymbol children = 8;
+    repeated DocumentSymbol children = 7;
 }
 
 message OpenBufferForSymbol {

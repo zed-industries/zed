@@ -665,7 +665,6 @@ pub struct DocumentSymbol {
     pub kind: lsp::SymbolKind,
     pub range: Range<Unclipped<PointUtf16>>,
     pub selection_range: Range<Unclipped<PointUtf16>>,
-    pub signature: [u8; 32],
     pub children: Vec<DocumentSymbol>,
 }
 
