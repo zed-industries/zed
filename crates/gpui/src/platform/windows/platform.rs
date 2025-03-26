@@ -262,9 +262,11 @@ impl WindowsPlatform {
         self.state.borrow_mut().dock_menus = actions;
     }
 
-    fn update_jump_list(&self, entries: &[&Vec<String>]) -> Option<Vec<Vec<String>>> {
+    fn update_jump_list(&self, entries: &[&Vec<PathBuf>]) -> Vec<Vec<PathBuf>> {
         let dock_menus = &self.state.borrow().dock_menus;
-        update_jump_list(entries, dock_menus).log_err().flatten()
+        update_jump_list(entries, dock_menus)
+            .log_err()
+            .unwrap_or_default()
     }
 }
 
@@ -654,7 +656,7 @@ impl Platform for WindowsPlatform {
         }
     }
 
-    fn update_jump_list(&self, entries: &[&Vec<String>]) -> Option<Vec<Vec<String>>> {
+    fn update_jump_list(&self, entries: &[&Vec<PathBuf>]) -> Vec<Vec<PathBuf>> {
         self.update_jump_list(entries)
     }
 }

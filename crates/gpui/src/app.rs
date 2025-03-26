@@ -1442,7 +1442,7 @@ impl App {
     }
 
     /// Updates the jump list with the updated list of recent paths for the application, only used on Windows for now.
-    pub fn update_jump_list(&self, entries: &[&Vec<String>]) -> Option<Vec<Vec<String>>> {
+    pub fn update_jump_list(&self, entries: &[&Vec<PathBuf>]) -> Vec<Vec<PathBuf>> {
         self.platform.update_jump_list(entries)
     }
 
