@@ -85,6 +85,7 @@ struct BufferDiffState {
     language: Option<Arc<Language>>,
     language_registry: Option<Arc<LanguageRegistry>>,
     diff_updated_futures: Vec<oneshot::Sender<()>>,
+    hunk_staging_operation_count: usize,
 
     head_text: Option<Arc<String>>,
     index_text: Option<Arc<String>>,
@@ -574,7 +575,7 @@ impl GitStore {
                     }
                 }
 
-                let rx = diff_state.diff_bases_changed(text_snapshot, diff_bases_change, cx);
+                let rx = diff_state.diff_bases_changed(text_snapshot, diff_bases_change, 0, cx);
 
                 anyhow::Ok(async move {
                     rx.await.ok();
@@ -1140,7 +1141,11 @@ impl GitStore {
             if let Some(diff_state) = self.diffs.get_mut(&buffer.read(cx).remote_id()) {
                 let buffer = buffer.read(cx).text_snapshot();
                 futures.push(diff_state.update(cx, |diff_state, cx| {
-                    diff_state.recalculate_diffs(buffer, cx)
+                    diff_state.recalculate_diffs(
+                        buffer,
+                        diff_state.hunk_staging_operation_count,
+                        cx,
+                    )
                 }));
             }
         }
@@ -1157,6 +1162,11 @@ impl GitStore {
     ) {
         if let BufferDiffEvent::HunksStagedOrUnstaged(new_index_text) = event {
             let buffer_id = diff.read(cx).buffer_id;
+            if let Some(diff_state) = self.diffs.get(&buffer_id) {
+                diff_state.update(cx, |diff_state, _| {
+                    diff_state.hunk_staging_operation_count += 1;
+                });
+            }
             if let Some((repo, path)) = self.repository_and_path_for_buffer_id(buffer_id, cx) {
                 let recv = repo.update(cx, |repo, cx| {
                     log::debug!("updating index text for buffer {}", path.display());
@@ -1229,6 +1239,7 @@ impl GitStore {
                 file.path.clone(),
                 has_unstaged_diff.then(|| diff_state.index_text.clone()),
                 has_uncommitted_diff.then(|| diff_state.head_text.clone()),
+                diff_state.hunk_staging_operation_count,
             );
             diff_state_updates.entry(repo_id).or_default().push(update);
         }
@@ -1252,8 +1263,13 @@ impl GitStore {
                     };
 
                     let mut diff_bases_changes_by_buffer = Vec::new();
-                    for (buffer, path, current_index_text, current_head_text) in
-                        &repo_diff_state_updates
+                    for (
+                        buffer,
+                        path,
+                        current_index_text,
+                        current_head_text,
+                        hunk_staging_operation_count,
+                    ) in &repo_diff_state_updates
                     {
                         let Some(local_repo) = snapshot.local_repo_containing_path(&path) else {
                             continue;
@@ -1306,12 +1322,18 @@ impl GitStore {
                                 (false, false) => None,
                             };
 
-                        diff_bases_changes_by_buffer.push((buffer, diff_bases_change))
+                        diff_bases_changes_by_buffer.push((
+                            buffer,
+                            diff_bases_change,
+                            *hunk_staging_operation_count,
+                        ))
                     }
 
                     git_store
                         .update(&mut cx, |git_store, cx| {
-                            for (buffer, diff_bases_change) in diff_bases_changes_by_buffer {
+                            for (buffer, diff_bases_change, hunk_staging_operation_count) in
+                                diff_bases_changes_by_buffer
+                            {
                                 let Some(diff_state) =
                                     git_store.diffs.get(&buffer.read(cx).remote_id())
                                 else {
@@ -1356,6 +1378,7 @@ impl GitStore {
                                     let _ = diff_state.diff_bases_changed(
                                         buffer.text_snapshot(),
                                         diff_bases_change,
+                                        hunk_staging_operation_count,
                                         cx,
                                     );
                                 });
@@ -2192,7 +2215,11 @@ impl BufferDiffState {
     fn buffer_language_changed(&mut self, buffer: Entity<Buffer>, cx: &mut Context<Self>) {
         self.language = buffer.read(cx).language().cloned();
         self.language_changed = true;
-        let _ = self.recalculate_diffs(buffer.read(cx).text_snapshot(), cx);
+        let _ = self.recalculate_diffs(
+            buffer.read(cx).text_snapshot(),
+            self.hunk_staging_operation_count,
+            cx,
+        );
     }
 
     fn unstaged_diff(&self) -> Option<Entity<BufferDiff>> {
@@ -2225,7 +2252,12 @@ impl BufferDiffState {
             },
         };
 
-        let _ = self.diff_bases_changed(buffer, diff_bases_change, cx);
+        let _ = self.diff_bases_changed(
+            buffer,
+            diff_bases_change,
+            self.hunk_staging_operation_count,
+            cx,
+        );
     }
 
     pub fn wait_for_recalculation(&mut self) -> Option<oneshot::Receiver<()>> {
@@ -2241,6 +2273,7 @@ impl BufferDiffState {
         &mut self,
         buffer: text::BufferSnapshot,
         diff_bases_change: DiffBasesChange,
+        prev_hunk_staging_operation_count: usize,
         cx: &mut Context<Self>,
     ) -> oneshot::Receiver<()> {
         match diff_bases_change {
@@ -2282,12 +2315,13 @@ impl BufferDiffState {
             }
         }
 
-        self.recalculate_diffs(buffer, cx)
+        self.recalculate_diffs(buffer, prev_hunk_staging_operation_count, cx)
     }
 
     fn recalculate_diffs(
         &mut self,
         buffer: text::BufferSnapshot,
+        prev_hunk_staging_operation_count: usize,
         cx: &mut Context<Self>,
     ) -> oneshot::Receiver<()> {
         log::debug!("recalculate diffs");
@@ -2345,6 +2379,12 @@ impl BufferDiffState {
                         .await?,
                     )
                 }
+            }
+
+            if this.update(cx, |this, _| {
+                this.hunk_staging_operation_count > prev_hunk_staging_operation_count
+            })? {
+                return Ok(());
             }
 
             let unstaged_changed_range = if let Some((unstaged_diff, new_unstaged_diff)) =
