@@ -6,7 +6,7 @@ use git::{
     blame::Blame,
     repository::{
         AskPassSession, Branch, CommitDetails, GitRepository, GitRepositoryCheckpoint,
-        GitReviewBranch, PushOptions, Remote, RepoPath, ResetMode, ReviewBranchChange,
+        GitVirtualBranch, PushOptions, Remote, RepoPath, ResetMode, VirtualBranchChange,
     },
     status::{FileStatus, GitStatus, StatusCode, TrackedStatus, UnmergedStatus},
 };
@@ -447,24 +447,24 @@ impl GitRepository for FakeGitRepository {
         unimplemented!()
     }
 
-    fn create_review_branch(&self, _cx: AsyncApp) -> BoxFuture<Result<GitReviewBranch>> {
+    fn create_virtual_branch(&self, _cx: AsyncApp) -> BoxFuture<Result<GitVirtualBranch>> {
         unimplemented!()
     }
 
-    fn apply_diff_to_review_branch(
+    fn apply_diff_to_virtual_branch(
         &self,
-        _review_branch: GitReviewBranch,
+        _virtual_branch: GitVirtualBranch,
         _diff: String,
         _cx: AsyncApp,
     ) -> BoxFuture<Result<()>> {
         unimplemented!()
     }
 
-    fn changes_for_review_branch(
+    fn changes_for_virtual_branch(
         &self,
-        _review_branch: GitReviewBranch,
+        _virtual_branch: GitVirtualBranch,
         _cx: AsyncApp,
-    ) -> BoxFuture<Result<HashMap<RepoPath, ReviewBranchChange>>> {
+    ) -> BoxFuture<Result<HashMap<RepoPath, VirtualBranchChange>>> {
         unimplemented!()
     }
 }

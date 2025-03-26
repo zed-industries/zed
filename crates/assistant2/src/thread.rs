@@ -18,7 +18,7 @@ use language_model::{
     LanguageModelToolUseId, MaxMonthlySpendReachedError, MessageContent, PaymentRequiredError,
     Role, StopReason, TokenUsage,
 };
-use project::git_store::{GitStore, GitStoreCheckpoint, GitStoreReviewBranch};
+use project::git_store::{GitStore, GitStoreCheckpoint, GitStoreVirtualBranch};
 use project::{Project, Worktree};
 use prompt_store::{
     AssistantSystemPromptContext, PromptBuilder, RulesFile, WorktreeInfoForSystemPrompt,
@@ -201,7 +201,7 @@ pub struct Thread {
     feedback: Option<ThreadFeedback>,
     last_diff_checkpoint: Option<Task<Result<GitStoreCheckpoint>>>,
     diff: ThreadDiff,
-    review_branch: Shared<Task<Option<GitStoreReviewBranch>>>,
+    diff_branch: Shared<Task<Option<GitStoreVirtualBranch>>>,
 }
 
 impl Thread {
@@ -241,13 +241,13 @@ impl Thread {
             feedback: None,
             last_diff_checkpoint: None,
             diff: ThreadDiff::default(),
-            review_branch: cx
+            diff_branch: cx
                 .background_spawn(
                     project
                         .read(cx)
                         .git_store()
                         .read(cx)
-                        .create_review_branch(cx)
+                        .create_virtual_branch(cx)
                         .log_err(),
                 )
                 .shared(),
@@ -317,7 +317,7 @@ impl Thread {
             feedback: None,
             last_diff_checkpoint: None,
             diff: ThreadDiff::default(),
-            review_branch: Task::ready(None).shared(),
+            diff_branch: Task::ready(None).shared(),
         };
         this.update_diff(ChangeSource::User, cx);
         this
@@ -1304,11 +1304,11 @@ impl Thread {
         let last_checkpoint = self.last_diff_checkpoint.take();
         let git_store = self.project.read(cx).git_store().clone();
         let checkpoint = git_store.read(cx).checkpoint(cx);
-        let review_branch = self.review_branch.clone();
+        let virtual_branch = self.diff_branch.clone();
         self.last_diff_checkpoint = Some(cx.spawn(async move |_this, cx| {
             let checkpoint = checkpoint.await?;
 
-            if let Some(review_branch) = review_branch.await {
+            if let Some(virtual_branch) = virtual_branch.await {
                 if let Some(last_checkpoint) = last_checkpoint {
                     if let Ok(last_checkpoint) = last_checkpoint.await {
                         if source == ChangeSource::User {
@@ -1321,8 +1321,8 @@ impl Thread {
                             if let Ok(diff) = diff {
                                 _ = git_store
                                     .read_with(cx, |store, cx| {
-                                        store.apply_diff_to_review_branch(
-                                            review_branch.clone(),
+                                        store.apply_diff_to_virtual_branch(
+                                            virtual_branch.clone(),
                                             diff,
                                             cx,
                                         )
@@ -1335,7 +1335,7 @@ impl Thread {
 
                 let diff = git_store
                     .read_with(cx, |store, cx| {
-                        store.changes_for_review_branch(review_branch, cx)
+                        store.changes_for_virtual_branch(virtual_branch, cx)
                     })?
                     .await;
             }

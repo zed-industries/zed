@@ -325,20 +325,20 @@ pub trait GitRepository: Send + Sync {
         cx: AsyncApp,
     ) -> BoxFuture<Result<String>>;
 
-    fn create_review_branch(&self, cx: AsyncApp) -> BoxFuture<Result<GitReviewBranch>>;
+    fn create_virtual_branch(&self, cx: AsyncApp) -> BoxFuture<Result<GitVirtualBranch>>;
 
-    fn apply_diff_to_review_branch(
+    fn apply_diff_to_virtual_branch(
         &self,
-        review_branch: GitReviewBranch,
+        virtual_branch: GitVirtualBranch,
         diff: String,
         cx: AsyncApp,
     ) -> BoxFuture<Result<()>>;
 
-    fn changes_for_review_branch(
+    fn changes_for_virtual_branch(
         &self,
-        review_branch: GitReviewBranch,
+        virtual_branch: GitVirtualBranch,
         cx: AsyncApp,
-    ) -> BoxFuture<Result<HashMap<RepoPath, ReviewBranchChange>>>;
+    ) -> BoxFuture<Result<HashMap<RepoPath, VirtualBranchChange>>>;
 }
 
 pub enum DiffType {
@@ -390,12 +390,12 @@ pub struct GitRepositoryCheckpoint {
 }
 
 #[derive(Copy, Clone, Debug)]
-pub struct GitReviewBranch {
+pub struct GitVirtualBranch {
     id: Uuid,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ReviewBranchChange {
+pub struct VirtualBranchChange {
     branch_text: String,
 }
 
@@ -1259,7 +1259,7 @@ impl GitRepository for RealGitRepository {
         .boxed()
     }
 
-    fn create_review_branch(&self, cx: AsyncApp) -> BoxFuture<Result<GitReviewBranch>> {
+    fn create_virtual_branch(&self, cx: AsyncApp) -> BoxFuture<Result<GitVirtualBranch>> {
         let working_directory = self.working_directory();
         let git_binary_path = self.git_binary_path.clone();
 
@@ -1270,14 +1270,14 @@ impl GitRepository for RealGitRepository {
             let id = Uuid::new_v4();
             git.with_index(id, async |git| git.run(&["add", "--all"]).await)
                 .await?;
-            Ok(GitReviewBranch { id })
+            Ok(GitVirtualBranch { id })
         })
         .boxed()
     }
 
-    fn apply_diff_to_review_branch(
+    fn apply_diff_to_virtual_branch(
         &self,
-        review_branch: GitReviewBranch,
+        virtual_branch: GitVirtualBranch,
         diff: String,
         cx: AsyncApp,
     ) -> BoxFuture<Result<()>> {
@@ -1288,7 +1288,7 @@ impl GitRepository for RealGitRepository {
         cx.background_spawn(async move {
             let working_directory = working_directory?;
             let mut git = GitBinary::new(git_binary_path, working_directory, executor);
-            git.with_index(review_branch.id, async move |git| {
+            git.with_index(virtual_branch.id, async move |git| {
                 git.run_with_stdin(&["apply", "--cached", "-"], diff).await
             })
             .await?;
@@ -1297,11 +1297,11 @@ impl GitRepository for RealGitRepository {
         .boxed()
     }
 
-    fn changes_for_review_branch(
+    fn changes_for_virtual_branch(
         &self,
-        review_branch: GitReviewBranch,
+        virtual_branch: GitVirtualBranch,
         cx: AsyncApp,
-    ) -> BoxFuture<Result<HashMap<RepoPath, ReviewBranchChange>>> {
+    ) -> BoxFuture<Result<HashMap<RepoPath, VirtualBranchChange>>> {
         let working_directory = self.working_directory();
         let git_binary_path = self.git_binary_path.clone();
         let working_copy_checkpoint = self.checkpoint(cx.clone());
@@ -1311,7 +1311,7 @@ impl GitRepository for RealGitRepository {
             let working_directory = working_directory?;
             let working_copy_checkpoint = working_copy_checkpoint.await?;
             let mut git = GitBinary::new(git_binary_path, working_directory, executor);
-            git.with_index(review_branch.id, async move |git| {
+            git.with_index(virtual_branch.id, async move |git| {
                 let diff_files_output = git
                     .run(&[
                         "diff",
@@ -1329,7 +1329,7 @@ impl GitRepository for RealGitRepository {
                         .unwrap_or_default();
                     changes.insert(
                         RepoPath::from_str(file_path),
-                        ReviewBranchChange {
+                        VirtualBranchChange {
                             branch_text: branch_content,
                         },
                     );
@@ -1983,13 +1983,13 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_review_branch(cx: &mut TestAppContext) {
+    async fn test_virtual_branch(cx: &mut TestAppContext) {
         cx.executor().allow_parking();
 
         let repo_dir = tempfile::tempdir().unwrap();
         git2::Repository::init(repo_dir.path()).unwrap();
         let repo = RealGitRepository::new(&repo_dir.path().join(".git"), None).unwrap();
-        let review_branch = repo.create_review_branch(cx.to_async()).await.unwrap();
+        let virtual_branch = repo.create_virtual_branch(cx.to_async()).await.unwrap();
         smol::fs::write(repo_dir.path().join("file1"), "file1\n")
             .await
             .unwrap();
@@ -2006,19 +2006,19 @@ mod tests {
             +file2
         "#
         .unindent();
-        repo.apply_diff_to_review_branch(review_branch.clone(), diff.to_string(), cx.to_async())
+        repo.apply_diff_to_virtual_branch(virtual_branch.clone(), diff.to_string(), cx.to_async())
             .await
             .unwrap();
 
         let changes = repo
-            .changes_for_review_branch(review_branch, cx.to_async())
+            .changes_for_virtual_branch(virtual_branch, cx.to_async())
             .await
             .unwrap();
         assert_eq!(
             changes.into_iter().collect::<Vec<_>>(),
             vec![(
                 RepoPath::from_str("file1"),
-                ReviewBranchChange {
+                VirtualBranchChange {
                     branch_text: "".into()
                 }
             )]

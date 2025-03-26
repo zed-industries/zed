@@ -20,8 +20,8 @@ use git::{
     blame::Blame,
     parse_git_remote_url,
     repository::{
-        Branch, CommitDetails, DiffType, GitRepository, GitRepositoryCheckpoint, GitReviewBranch,
-        PushOptions, Remote, RemoteCommandOutput, RepoPath, ResetMode, ReviewBranchChange,
+        Branch, CommitDetails, DiffType, GitRepository, GitRepositoryCheckpoint, GitVirtualBranch,
+        PushOptions, Remote, RemoteCommandOutput, RepoPath, ResetMode, VirtualBranchChange,
     },
     status::FileStatus,
     BuildPermalinkParams, GitHostingProviderRegistry,
@@ -138,13 +138,13 @@ pub struct GitStoreDiff {
 }
 
 #[derive(Clone, Debug)]
-pub struct GitStoreReviewBranch {
-    branches_by_dot_git_abs_path: HashMap<PathBuf, GitReviewBranch>,
+pub struct GitStoreVirtualBranch {
+    branches_by_dot_git_abs_path: HashMap<PathBuf, GitVirtualBranch>,
 }
 
 #[derive(Clone, Debug)]
-pub struct GitStoreReviewBranchChanges {
-    changes_by_dot_git_abs_path: HashMap<PathBuf, HashMap<RepoPath, ReviewBranchChange>>,
+pub struct GitStoreVirtualBranchChanges {
+    changes_by_dot_git_abs_path: HashMap<PathBuf, HashMap<RepoPath, VirtualBranchChange>>,
 }
 
 pub struct Repository {
@@ -690,12 +690,12 @@ impl GitStore {
         })
     }
 
-    pub fn create_review_branch(&self, cx: &App) -> Task<Result<GitStoreReviewBranch>> {
+    pub fn create_virtual_branch(&self, cx: &App) -> Task<Result<GitStoreVirtualBranch>> {
         let mut branches = Vec::new();
         for repository in self.repositories.values() {
             let repository = repository.read(cx);
             let dot_git_abs_path = repository.dot_git_abs_path.clone();
-            let branch = repository.create_review_branch().map(|branch| branch?);
+            let branch = repository.create_virtual_branch().map(|branch| branch?);
             branches.push(async move {
                 let branch = branch.await?;
                 anyhow::Ok((dot_git_abs_path, branch))
@@ -704,15 +704,15 @@ impl GitStore {
 
         cx.background_executor().spawn(async move {
             let branches = future::try_join_all(branches).await?;
-            Ok(GitStoreReviewBranch {
+            Ok(GitStoreVirtualBranch {
                 branches_by_dot_git_abs_path: branches.into_iter().collect(),
             })
         })
     }
 
-    pub fn apply_diff_to_review_branch(
+    pub fn apply_diff_to_virtual_branch(
         &self,
-        mut review_branch: GitStoreReviewBranch,
+        mut virtual_branch: GitStoreVirtualBranch,
         diff: GitStoreDiff,
         cx: &App,
     ) -> Task<Result<()>> {
@@ -725,13 +725,13 @@ impl GitStore {
         let mut tasks = Vec::new();
         for (dot_git_abs_path, diff) in diff.diffs_by_dot_git_abs_path {
             if let Some(repository) = repositories_by_dot_git_abs_path.get(&dot_git_abs_path) {
-                if let Some(branch) = review_branch
+                if let Some(branch) = virtual_branch
                     .branches_by_dot_git_abs_path
                     .remove(&dot_git_abs_path)
                 {
                     let apply = repository
                         .read(cx)
-                        .apply_diff_to_review_branch(branch, diff);
+                        .apply_diff_to_virtual_branch(branch, diff);
                     tasks.push(async move { apply.await? });
                 }
             }
@@ -742,12 +742,12 @@ impl GitStore {
         })
     }
 
-    /// Returns the changes for the given review branch.
-    pub fn changes_for_review_branch(
+    /// Returns the changes for the given virtual branch.
+    pub fn changes_for_virtual_branch(
         &self,
-        branch: GitStoreReviewBranch,
+        branch: GitStoreVirtualBranch,
         cx: &App,
-    ) -> Task<Result<GitStoreReviewBranchChanges>> {
+    ) -> Task<Result<GitStoreVirtualBranchChanges>> {
         let repositories_by_dot_git_abs_path = self
             .repositories
             .values()
@@ -757,13 +757,13 @@ impl GitStore {
         let mut tasks = Vec::new();
         for (dot_git_abs_path, branch) in branch.branches_by_dot_git_abs_path {
             if let Some(repository) = repositories_by_dot_git_abs_path.get(&dot_git_abs_path) {
-                let changes = repository.read(cx).changes_for_review_branch(branch);
+                let changes = repository.read(cx).changes_for_virtual_branch(branch);
                 tasks.push(async move { anyhow::Ok((dot_git_abs_path, changes.await??)) });
             }
         }
         cx.background_spawn(async move {
             let changes = future::try_join_all(tasks).await?;
-            Ok(GitStoreReviewBranchChanges {
+            Ok(GitStoreVirtualBranchChanges {
                 changes_by_dot_git_abs_path: changes.into_iter().collect(),
             })
         })
@@ -3503,27 +3503,27 @@ impl Repository {
         })
     }
 
-    pub fn create_review_branch(&self) -> oneshot::Receiver<Result<GitReviewBranch>> {
+    pub fn create_virtual_branch(&self) -> oneshot::Receiver<Result<GitVirtualBranch>> {
         self.send_job(move |repo, cx| async move {
             match repo {
                 RepositoryState::Local(git_repository) => {
-                    git_repository.create_review_branch(cx).await
+                    git_repository.create_virtual_branch(cx).await
                 }
                 RepositoryState::Remote { .. } => Err(anyhow!("not implemented yet")),
             }
         })
     }
 
-    pub fn apply_diff_to_review_branch(
+    pub fn apply_diff_to_virtual_branch(
         &self,
-        review_branch: GitReviewBranch,
+        virtual_branch: GitVirtualBranch,
         diff: String,
     ) -> oneshot::Receiver<Result<()>> {
         self.send_job(move |repo, cx| async move {
             match repo {
                 RepositoryState::Local(git_repository) => {
                     git_repository
-                        .apply_diff_to_review_branch(review_branch, diff, cx)
+                        .apply_diff_to_virtual_branch(virtual_branch, diff, cx)
                         .await
                 }
                 RepositoryState::Remote { .. } => Err(anyhow!("not implemented yet")),
@@ -3531,15 +3531,15 @@ impl Repository {
         })
     }
 
-    pub fn changes_for_review_branch(
+    pub fn changes_for_virtual_branch(
         &self,
-        review_branch: GitReviewBranch,
-    ) -> oneshot::Receiver<Result<HashMap<RepoPath, ReviewBranchChange>>> {
+        virtual_branch: GitVirtualBranch,
+    ) -> oneshot::Receiver<Result<HashMap<RepoPath, VirtualBranchChange>>> {
         self.send_job(move |repo, cx| async move {
             match repo {
                 RepositoryState::Local(git_repository) => {
                     git_repository
-                        .changes_for_review_branch(review_branch, cx)
+                        .changes_for_virtual_branch(virtual_branch, cx)
                         .await
                 }
                 RepositoryState::Remote { .. } => Err(anyhow!("not implemented yet")),
