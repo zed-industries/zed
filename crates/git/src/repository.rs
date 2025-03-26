@@ -334,11 +334,11 @@ pub trait GitRepository: Send + Sync {
         cx: AsyncApp,
     ) -> BoxFuture<Result<()>>;
 
-    fn diff_for_review_branch(
+    fn changes_for_review_branch(
         &self,
         review_branch: GitReviewBranch,
         cx: AsyncApp,
-    ) -> BoxFuture<Result<String>>;
+    ) -> BoxFuture<Result<HashMap<RepoPath, ReviewBranchChange>>>;
 }
 
 pub enum DiffType {
@@ -392,6 +392,11 @@ pub struct GitRepositoryCheckpoint {
 #[derive(Copy, Clone, Debug)]
 pub struct GitReviewBranch {
     id: Uuid,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ReviewBranchChange {
+    branch_text: String,
 }
 
 // https://git-scm.com/book/en/v2/Git-Internals-Git-Objects
@@ -1292,11 +1297,11 @@ impl GitRepository for RealGitRepository {
         .boxed()
     }
 
-    fn diff_for_review_branch(
+    fn changes_for_review_branch(
         &self,
         review_branch: GitReviewBranch,
         cx: AsyncApp,
-    ) -> BoxFuture<Result<String>> {
+    ) -> BoxFuture<Result<HashMap<RepoPath, ReviewBranchChange>>> {
         let working_directory = self.working_directory();
         let git_binary_path = self.git_binary_path.clone();
         let working_copy_checkpoint = self.checkpoint(cx.clone());
@@ -1307,13 +1312,30 @@ impl GitRepository for RealGitRepository {
             let working_copy_checkpoint = working_copy_checkpoint.await?;
             let mut git = GitBinary::new(git_binary_path, working_directory, executor);
             git.with_index(review_branch.id, async move |git| {
-                git.run(&[
-                    "diff",
-                    "-R",
-                    "--staged",
-                    &working_copy_checkpoint.commit_sha.to_string(),
-                ])
-                .await
+                let diff_files_output = git
+                    .run(&[
+                        "diff",
+                        "--name-only",
+                        "--staged",
+                        &working_copy_checkpoint.commit_sha.to_string(),
+                    ])
+                    .await?;
+
+                let mut changes = HashMap::default();
+                for file_path in diff_files_output.lines().filter(|line| !line.is_empty()) {
+                    let branch_content = git
+                        .run(&["show", &format!(":0:{}", file_path)])
+                        .await
+                        .unwrap_or_default();
+                    changes.insert(
+                        RepoPath::from_str(file_path),
+                        ReviewBranchChange {
+                            branch_text: branch_content,
+                        },
+                    );
+                }
+
+                Ok(changes)
             })
             .await
         })
@@ -1988,21 +2010,18 @@ mod tests {
             .await
             .unwrap();
 
-        let review_branch_diff = repo
-            .diff_for_review_branch(review_branch, cx.to_async())
+        let changes = repo
+            .changes_for_review_branch(review_branch, cx.to_async())
             .await
             .unwrap();
         assert_eq!(
-            review_branch_diff,
-            r#"
-            diff --git b/file1 a/file1
-            new file mode 100644
-            index 0000000..e212970
-            --- /dev/null
-            +++ a/file1
-            @@ -0,0 +1 @@
-            +file1"#
-                .unindent()
+            changes.into_iter().collect::<Vec<_>>(),
+            vec![(
+                RepoPath::from_str("file1"),
+                ReviewBranchChange {
+                    branch_text: "".into()
+                }
+            )]
         );
     }
 

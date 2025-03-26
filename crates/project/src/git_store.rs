@@ -21,7 +21,7 @@ use git::{
     parse_git_remote_url,
     repository::{
         Branch, CommitDetails, DiffType, GitRepository, GitRepositoryCheckpoint, GitReviewBranch,
-        PushOptions, Remote, RemoteCommandOutput, RepoPath, ResetMode,
+        PushOptions, Remote, RemoteCommandOutput, RepoPath, ResetMode, ReviewBranchChange,
     },
     status::FileStatus,
     BuildPermalinkParams, GitHostingProviderRegistry,
@@ -140,6 +140,11 @@ pub struct GitStoreDiff {
 #[derive(Clone, Debug)]
 pub struct GitStoreReviewBranch {
     branches_by_dot_git_abs_path: HashMap<PathBuf, GitReviewBranch>,
+}
+
+#[derive(Clone, Debug)]
+pub struct GitStoreReviewBranchChanges {
+    changes_by_dot_git_abs_path: HashMap<PathBuf, HashMap<RepoPath, ReviewBranchChange>>,
 }
 
 pub struct Repository {
@@ -737,12 +742,12 @@ impl GitStore {
         })
     }
 
-    /// Returns the diff for the given review branch.
-    pub fn diff_for_review_branch(
+    /// Returns the changes for the given review branch.
+    pub fn changes_for_review_branch(
         &self,
         branch: GitStoreReviewBranch,
         cx: &App,
-    ) -> Task<Result<GitStoreDiff>> {
+    ) -> Task<Result<GitStoreReviewBranchChanges>> {
         let repositories_by_dot_git_abs_path = self
             .repositories
             .values()
@@ -752,14 +757,14 @@ impl GitStore {
         let mut tasks = Vec::new();
         for (dot_git_abs_path, branch) in branch.branches_by_dot_git_abs_path {
             if let Some(repository) = repositories_by_dot_git_abs_path.get(&dot_git_abs_path) {
-                let diff = repository.read(cx).diff_for_review_branch(branch);
-                tasks.push(async move { anyhow::Ok((dot_git_abs_path, diff.await??)) });
+                let changes = repository.read(cx).changes_for_review_branch(branch);
+                tasks.push(async move { anyhow::Ok((dot_git_abs_path, changes.await??)) });
             }
         }
         cx.background_spawn(async move {
-            let diffs = future::try_join_all(tasks).await?;
-            Ok(GitStoreDiff {
-                diffs_by_dot_git_abs_path: diffs.into_iter().collect(),
+            let changes = future::try_join_all(tasks).await?;
+            Ok(GitStoreReviewBranchChanges {
+                changes_by_dot_git_abs_path: changes.into_iter().collect(),
             })
         })
     }
@@ -3526,15 +3531,15 @@ impl Repository {
         })
     }
 
-    pub fn diff_for_review_branch(
+    pub fn changes_for_review_branch(
         &self,
         review_branch: GitReviewBranch,
-    ) -> oneshot::Receiver<Result<String>> {
+    ) -> oneshot::Receiver<Result<HashMap<RepoPath, ReviewBranchChange>>> {
         self.send_job(move |repo, cx| async move {
             match repo {
                 RepositoryState::Local(git_repository) => {
                     git_repository
-                        .diff_for_review_branch(review_branch, cx)
+                        .changes_for_review_branch(review_branch, cx)
                         .await
                 }
                 RepositoryState::Remote { .. } => Err(anyhow!("not implemented yet")),

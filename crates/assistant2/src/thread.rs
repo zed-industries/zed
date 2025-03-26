@@ -172,6 +172,9 @@ impl LastRestoreCheckpoint {
     }
 }
 
+#[derive(Default)]
+pub struct ThreadDiff {}
+
 /// A thread of conversation with the LLM.
 pub struct Thread {
     id: ThreadId,
@@ -197,6 +200,7 @@ pub struct Thread {
     cumulative_token_usage: TokenUsage,
     feedback: Option<ThreadFeedback>,
     last_diff_checkpoint: Option<Task<Result<GitStoreCheckpoint>>>,
+    diff: ThreadDiff,
     review_branch: Shared<Task<Option<GitStoreReviewBranch>>>,
 }
 
@@ -207,7 +211,6 @@ impl Thread {
         prompt_builder: Arc<PromptBuilder>,
         cx: &mut Context<Self>,
     ) -> Self {
-        println!("NEW");
         let mut this = Self {
             id: ThreadId::new(),
             updated_at: Utc::now(),
@@ -237,6 +240,7 @@ impl Thread {
             cumulative_token_usage: TokenUsage::default(),
             feedback: None,
             last_diff_checkpoint: None,
+            diff: ThreadDiff::default(),
             review_branch: cx
                 .background_spawn(
                     project
@@ -260,7 +264,6 @@ impl Thread {
         prompt_builder: Arc<PromptBuilder>,
         cx: &mut Context<Self>,
     ) -> Self {
-        println!("DESERIALIZE");
         let next_message_id = MessageId(
             serialized
                 .messages
@@ -313,6 +316,7 @@ impl Thread {
             cumulative_token_usage: TokenUsage::default(),
             feedback: None,
             last_diff_checkpoint: None,
+            diff: ThreadDiff::default(),
             review_branch: Task::ready(None).shared(),
         };
         this.update_diff(ChangeSource::User, cx);
@@ -1331,10 +1335,9 @@ impl Thread {
 
                 let diff = git_store
                     .read_with(cx, |store, cx| {
-                        store.diff_for_review_branch(review_branch, cx)
+                        store.changes_for_review_branch(review_branch, cx)
                     })?
                     .await;
-                println!("Last diff:\n{:?}\n===============", diff);
             }
 
             Ok(checkpoint)
