@@ -65,7 +65,7 @@ impl Tool for ListDirectoryTool {
             Ok(input) => {
                 let path = MarkdownString::escape(&input.path);
                 format!("List the `{path}` directory's contents")
-            },
+            }
             Err(_) => "List directory".to_string(),
         }
     }

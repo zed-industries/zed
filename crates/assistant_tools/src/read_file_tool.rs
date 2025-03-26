@@ -68,7 +68,7 @@ impl Tool for ReadFileTool {
             Ok(input) => {
                 let path = MarkdownString::escape(&input.path.display().to_string());
                 format!("Read file `{path}`")
-            },
+            }
             Err(_) => "Read file".to_string(),
         }
     }
