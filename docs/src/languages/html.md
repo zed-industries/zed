@@ -35,7 +35,7 @@ You can still trigger formatting manually with {#kb editor::Format} or by openin
 
 ### LSP Formatting
 
-If you prefer you can use `vscode-html-language-server` insetad of Prettier for auto-formatting by adding the following to your Zed settings:
+If you prefer you can use `vscode-html-language-server` instead of Prettier for auto-formatting by adding the following to your Zed settings:
 
 ```json
   "languages": {
