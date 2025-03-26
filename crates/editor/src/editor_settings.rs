@@ -166,7 +166,7 @@ pub enum ShowMinimap {
 
 /// When to show the minimap thumb.
 ///
-/// Default: hover
+/// Default: always
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum MinimapThumb {
@@ -437,7 +437,7 @@ pub struct MinimapContent {
 
     /// When to show the minimap thumb.
     ///
-    /// Default: hover
+    /// Default: always
     pub thumb: Option<MinimapThumb>,
 
     /// The width of the minimap in pixels.
