@@ -2095,7 +2095,7 @@ impl EditorElement {
                         return None;
                     }
 
-                    let button = editor.render_breakpoint(text_anchor, display_row, Some(&bp), cx);
+                    let button = editor.render_breakpoint(text_anchor, display_row, &bp, cx);
 
                     let button = prepaint_gutter_button(
                         button,

@@ -240,10 +240,6 @@ impl BreakpointStore {
             return;
         };
 
-        if breakpoint.1.state == BreakpointState::Hint {
-            breakpoint.1.state = BreakpointState::Enabled;
-        }
-
         let breakpoint_set = self
             .breakpoints
             .entry(abs_path.clone())
@@ -588,7 +584,6 @@ pub enum BreakpointState {
     #[default]
     Enabled,
     Disabled,
-    Hint,
 }
 
 impl BreakpointState {
@@ -607,7 +602,6 @@ impl BreakpointState {
         match self {
             BreakpointState::Enabled => 0,
             BreakpointState::Disabled => 1,
-            BreakpointState::Hint => unreachable!("We should never try to serialize this data"),
         }
     }
 }
@@ -622,18 +616,16 @@ impl Breakpoint {
     pub fn new_hover() -> Self {
         Self {
             kind: BreakpointKind::Standard,
-            state: BreakpointState::Hint,
+            state: BreakpointState::Enabled,
         }
     }
+
     fn to_proto(&self, _path: &Path, position: &text::Anchor) -> Option<client::proto::Breakpoint> {
         Some(client::proto::Breakpoint {
             position: Some(serialize_text_anchor(position)),
             state: match self.state {
                 BreakpointState::Enabled => proto::BreakpointState::Enabled.into(),
                 BreakpointState::Disabled => proto::BreakpointState::Disabled.into(),
-                BreakpointState::Hint => {
-                    unreachable!("We should never store any breakpoint's that are used for hints")
-                }
             },
             kind: match self.kind {
                 BreakpointKind::Standard => proto::BreakpointKind::Standard.into(),

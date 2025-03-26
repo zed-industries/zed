@@ -5959,9 +5959,7 @@ impl Editor {
         cx: &mut Context<Self>,
     ) -> Option<IconButton> {
         let color = Color::Muted;
-
         let position = breakpoint.as_ref().map(|(anchor, _)| *anchor);
-        let breakpoint = breakpoint.map(|(_, bp)| Arc::new(bp.clone()));
 
         if self.available_code_actions.is_some() {
             Some(
@@ -5998,7 +5996,6 @@ impl Editor {
                         editor.set_breakpoint_context_menu(
                             row,
                             position,
-                            breakpoint.clone(),
                             event.down.position,
                             window,
                             cx,
@@ -6112,12 +6109,22 @@ impl Editor {
     fn breakpoint_context_menu(
         &self,
         anchor: Anchor,
-        breakpoint: Option<Arc<Breakpoint>>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Entity<ui::ContextMenu> {
         let weak_editor = cx.weak_entity();
         let focus_handle = self.focus_handle(cx);
+
+        let row = self
+            .buffer
+            .read(cx)
+            .snapshot(cx)
+            .summary_for_anchor::<Point>(&anchor)
+            .row;
+
+        let breakpoint = self
+            .breakpoint_at_row(row, window, cx)
+            .map(|(_, bp)| Arc::from(bp));
 
         let log_breakpoint_msg = if breakpoint
             .as_ref()
@@ -6137,7 +6144,6 @@ impl Editor {
         let toggle_state_msg = breakpoint.as_ref().map_or(None, |bp| match bp.state {
             BreakpointState::Enabled => Some("Disable"),
             BreakpointState::Disabled => Some("Enable"),
-            BreakpointState::Hint => None,
         });
 
         let breakpoint = breakpoint.unwrap_or_else(|| {
@@ -6198,31 +6204,28 @@ impl Editor {
         &self,
         position: Anchor,
         row: DisplayRow,
-        breakpoint: Option<&Breakpoint>,
+        breakpoint: &Breakpoint,
         cx: &mut Context<Self>,
     ) -> IconButton {
-        let (color, icon) = match breakpoint {
-            Some(bp) => {
-                let color = if self
-                    .gutter_breakpoint_indicator
-                    .is_some_and(|point| point.row() == row)
-                {
-                    Color::Hint
-                } else if bp.is_disabled() {
-                    Color::Custom(Color::Debugger.color(cx).opacity(0.5))
-                } else {
-                    Color::Debugger
-                };
-                let icon = match &bp.kind {
-                    BreakpointKind::Standard => ui::IconName::DebugBreakpoint,
-                    BreakpointKind::Log(_) => ui::IconName::DebugLogBreakpoint,
-                };
-                (color, icon)
-            }
-            None => (Color::Hint, ui::IconName::DebugBreakpoint),
+        let (color, icon) = {
+            let color = if self
+                .gutter_breakpoint_indicator
+                .is_some_and(|point| point.row() == row)
+            {
+                Color::Hint
+            } else if breakpoint.is_disabled() {
+                Color::Custom(Color::Debugger.color(cx).opacity(0.5))
+            } else {
+                Color::Debugger
+            };
+            let icon = match &breakpoint.kind {
+                BreakpointKind::Standard => ui::IconName::DebugBreakpoint,
+                BreakpointKind::Log(_) => ui::IconName::DebugLogBreakpoint,
+            };
+            (color, icon)
         };
 
-        let breakpoint = breakpoint.map(|bp| Arc::new(bp.clone()));
+        let breakpoint = Arc::from(breakpoint.clone());
 
         IconButton::new(("breakpoint_indicator", row.0 as usize), icon)
             .icon_size(IconSize::XSmall)
@@ -6236,7 +6239,7 @@ impl Editor {
                     window.focus(&editor.focus_handle(cx));
                     editor.edit_breakpoint_at_anchor(
                         position,
-                        breakpoint.clone().unwrap_or_default().as_ref().clone(),
+                        breakpoint.as_ref().clone(),
                         BreakpointEditAction::Toggle,
                         cx,
                     );
@@ -6246,7 +6249,6 @@ impl Editor {
                 editor.set_breakpoint_context_menu(
                     row,
                     Some(position),
-                    breakpoint.clone(),
                     event.down.position,
                     window,
                     cx,
@@ -6394,9 +6396,7 @@ impl Editor {
         cx: &mut Context<Self>,
     ) -> IconButton {
         let color = Color::Muted;
-
         let position = breakpoint.as_ref().map(|(anchor, _)| *anchor);
-        let breakpoint = breakpoint.map(|(_, bp)| Arc::new(bp));
 
         IconButton::new(("run_indicator", row.0 as usize), ui::IconName::Play)
             .shape(ui::IconButtonShape::Square)
@@ -6414,14 +6414,7 @@ impl Editor {
                 );
             }))
             .on_right_click(cx.listener(move |editor, event: &ClickEvent, window, cx| {
-                editor.set_breakpoint_context_menu(
-                    row,
-                    position,
-                    breakpoint.clone(),
-                    event.down.position,
-                    window,
-                    cx,
-                );
+                editor.set_breakpoint_context_menu(row, position, event.down.position, window, cx);
             }))
     }
 
@@ -8397,9 +8390,8 @@ impl Editor {
 
     fn set_breakpoint_context_menu(
         &mut self,
-        row: DisplayRow,
+        display_row: DisplayRow,
         position: Option<Anchor>,
-        breakpoint: Option<Arc<Breakpoint>>,
         clicked_point: gpui::Point<Pixels>,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -8411,10 +8403,9 @@ impl Editor {
             .buffer
             .read(cx)
             .snapshot(cx)
-            .anchor_before(Point::new(row.0, 0u32));
+            .anchor_before(Point::new(display_row.0, 0u32));
 
-        let context_menu =
-            self.breakpoint_context_menu(position.unwrap_or(source), breakpoint, window, cx);
+        let context_menu = self.breakpoint_context_menu(position.unwrap_or(source), window, cx);
 
         self.mouse_context_menu = MouseContextMenu::pinned_to_editor(
             self,
