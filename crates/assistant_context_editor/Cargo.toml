@@ -54,6 +54,7 @@ ui.workspace = true
 util.workspace = true
 uuid.workspace = true
 workspace.workspace = true
+workspace-hack.workspace = true
 
 [dev-dependencies]
 language_model = { workspace = true, features = ["test-support"] }

@@ -38,6 +38,7 @@ util.workspace = true
 http_client.workspace = true
 smallvec.workspace = true
 image.workspace = true
+workspace-hack.workspace = true
 
 [target.'cfg(not(all(target_os = "windows", target_env = "gnu")))'.dependencies]
 livekit.workspace = true

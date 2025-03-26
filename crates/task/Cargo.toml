@@ -30,6 +30,7 @@ sha2.workspace = true
 shellexpand.workspace = true
 util.workspace = true
 zed_actions.workspace = true
+workspace-hack.workspace = true
 
 [dev-dependencies]
 gpui = { workspace = true, features = ["test-support"] }

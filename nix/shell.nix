@@ -9,6 +9,8 @@
 
   rust-analyzer,
   cargo-nextest,
+  cargo-hakari,
+  cargo-machete,
   nixfmt-rfc-style,
   protobuf,
   nodejs_22,
@@ -23,6 +25,8 @@ mkShell' {
   packages = [
     rust-analyzer
     cargo-nextest
+    cargo-hakari
+    cargo-machete
     nixfmt-rfc-style
     # TODO: package protobuf-language-server for editing zed.proto
     # TODO: add other tools used in our scripts

@@ -64,6 +64,7 @@ ui.workspace = true
 util.workspace = true
 uuid.workspace = true
 zed_actions.workspace = true
+workspace-hack.workspace = true
 
 [dev-dependencies]
 call = { workspace = true, features = ["test-support"] }

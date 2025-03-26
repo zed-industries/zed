@@ -24,3 +24,4 @@ lsp.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 util.workspace = true
+workspace-hack.workspace = true

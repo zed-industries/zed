@@ -35,6 +35,7 @@ time.workspace = true
 ui.workspace = true
 util.workspace = true
 workspace.workspace = true
+workspace-hack.workspace = true
 
 [dev-dependencies]
 client = { workspace = true, features = ["test-support"] }

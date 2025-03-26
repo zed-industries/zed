@@ -42,3 +42,4 @@ serde_json_lenient.workspace = true
 settings.workspace = true
 smol.workspace = true
 util.workspace = true
+workspace-hack.workspace = true
