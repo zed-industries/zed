@@ -29,6 +29,7 @@ use std::{
     any::Any,
     borrow::Cow,
     ffi::OsString,
+    fmt::Write,
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -534,6 +535,28 @@ fn python_module_name_from_relative_path(relative_path: &str) -> String {
         .to_string()
 }
 
+fn python_env_kind_display(k: &PythonEnvironmentKind) -> &'static str {
+    match k {
+        PythonEnvironmentKind::Conda => "Conda",
+        PythonEnvironmentKind::Pixi => "Pixi",
+        PythonEnvironmentKind::Homebrew => "Homebrew",
+        PythonEnvironmentKind::Pyenv => "Pyenv",
+        PythonEnvironmentKind::GlobalPaths => "GlobalPaths",
+        PythonEnvironmentKind::PyenvVirtualEnv => "PyenvVirtualEnv",
+        PythonEnvironmentKind::Pipenv => "Pipenv",
+        PythonEnvironmentKind::Poetry => "Poetry",
+        PythonEnvironmentKind::MacPythonOrg => "MacPythonOrg",
+        PythonEnvironmentKind::MacCommandLineTools => "MacCommandLineTools",
+        PythonEnvironmentKind::LinuxGlobal => "LinuxGlobal",
+        PythonEnvironmentKind::MacXCode => "MacXCode",
+        PythonEnvironmentKind::Venv => "Venv",
+        PythonEnvironmentKind::VirtualEnv => "VirtualEnv",
+        PythonEnvironmentKind::VirtualEnvWrapper => "VirtualEnvWrapper",
+        PythonEnvironmentKind::WindowsStore => "WindowsStore",
+        PythonEnvironmentKind::WindowsRegistry => "WindowsRegistry",
+    }
+}
+
 pub(crate) struct PythonToolchainProvider {
     term: SharedString,
 }
@@ -631,20 +654,18 @@ impl ToolchainLister for PythonToolchainProvider {
             .filter_map(|toolchain| {
                 let mut name = String::from("Python");
                 if let Some(ref version) = toolchain.version {
-                    name.push(' ');
-                    name.push_str(&version);
+                    _ = write!(name, " {version}");
                 }
 
                 let name_and_kind = match (&toolchain.name, &toolchain.kind) {
-                    (Some(name), Some(kind)) => Some(format!("({name}; {:?})", kind)),
+                    (Some(name), Some(kind)) => Some(format!("({name}; {})", python_env_kind_display(kind))),
                     (Some(name), None) => Some(format!("({name})")),
-                    (None, Some(kind)) => Some(format!("({:?})", kind)),
+                    (None, Some(kind)) => Some(format!("({})", python_env_kind_display(kind))),
                     (None, None) => None,
                 };
 
                 if let Some(nk) = name_and_kind {
-                    name.push(' ');
-                    name.push_str(&nk);
+                    _ = write!(name, " {nk}");
                 }
 
                 Some(Toolchain {
