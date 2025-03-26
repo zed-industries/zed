@@ -12,9 +12,9 @@ use editor::{Editor, MultiBuffer};
 use gpui::{
     linear_color_stop, linear_gradient, list, percentage, pulsating_between, AbsoluteLength,
     Animation, AnimationExt, AnyElement, App, ClickEvent, DefiniteLength, EdgesRefinement, Empty,
-    Entity, Focusable, Length, ListAlignment, ListOffset, ListState, ScrollHandle, StyleRefinement,
-    Subscription, Task, TextStyleRefinement, Transformation, UnderlineStyle, WeakEntity,
-    WindowHandle,
+    Entity, Focusable, Hsla, Length, ListAlignment, ListOffset, ListState, ScrollHandle,
+    StyleRefinement, Subscription, Task, TextStyleRefinement, Transformation, UnderlineStyle,
+    WeakEntity, WindowHandle,
 };
 use language::{Buffer, LanguageRegistry};
 use language_model::{LanguageModelRegistry, LanguageModelToolUseId, Role};
@@ -1145,6 +1145,17 @@ impl ActiveThread {
             )
     }
 
+    fn tool_card_border_color(&self, cx: &Context<Self>) -> Hsla {
+        cx.theme().colors().border.opacity(0.5)
+    }
+
+    fn tool_card_header_bg(&self, cx: &Context<Self>) -> Hsla {
+        cx.theme()
+            .colors()
+            .element_background
+            .blend(cx.theme().colors().editor_foreground.opacity(0.025))
+    }
+
     fn render_message_thinking_segment(
         &self,
         message_id: MessageId,
@@ -1160,26 +1171,25 @@ impl ActiveThread {
             .copied()
             .unwrap_or_default();
 
-        let lighter_border = cx.theme().colors().border.opacity(0.5);
         let editor_bg = cx.theme().colors().editor_background;
 
         div().py_2().child(
             v_flex()
                 .rounded_lg()
                 .border_1()
-                .border_color(lighter_border)
+                .border_color(self.tool_card_border_color(cx))
                 .child(
                     h_flex()
                         .group("disclosure-header")
                         .justify_between()
                         .py_1()
                         .px_2()
-                        .bg(cx.theme().colors().editor_foreground.opacity(0.025))
+                        .bg(self.tool_card_header_bg(cx))
                         .map(|this| {
                             if pending || is_open {
                                 this.rounded_t_md()
                                     .border_b_1()
-                                    .border_color(lighter_border)
+                                    .border_color(self.tool_card_border_color(cx))
                             } else {
                                 this.rounded_md()
                             }
@@ -1314,22 +1324,21 @@ impl ActiveThread {
             .copied()
             .unwrap_or_default();
 
-        let lighter_border = cx.theme().colors().border.opacity(0.5);
-
         div().py_2().child(
             v_flex()
                 .rounded_lg()
                 .border_1()
-                .border_color(lighter_border)
+                .border_color(self.tool_card_border_color(cx))
                 .overflow_hidden()
                 .child(
                     h_flex()
                         .group("disclosure-header")
+                        .relative()
                         .gap_1p5()
                         .justify_between()
                         .py_1()
                         .px_2()
-                        .bg(cx.theme().colors().editor_foreground.opacity(0.025))
+                        .bg(self.tool_card_header_bg(cx))
                         .map(|element| {
                             if is_open {
                                 element.border_b_1().rounded_t_md()
@@ -1337,7 +1346,7 @@ impl ActiveThread {
                                 element.rounded_md()
                             }
                         })
-                        .border_color(lighter_border)
+                        .border_color(self.tool_card_border_color(cx))
                         .child(
                             h_flex()
                                 .id("tool-label-container")
@@ -1350,7 +1359,7 @@ impl ActiveThread {
                                         .size(IconSize::XSmall)
                                         .color(Color::Muted),
                                 )
-                                .child(h_flex().text_ui_sm(cx).children(
+                                .child(h_flex().pr_8().text_ui_sm(cx).children(
                                     self.rendered_tool_use_labels.get(&tool_use.id).cloned(),
                                 )),
                         )
@@ -1410,7 +1419,14 @@ impl ActiveThread {
                                         icon.into_any_element()
                                     }
                                 }),
-                        ),
+                        )
+                        .child(div().h_full().absolute().w_8().bottom_0().right_12().bg(
+                            linear_gradient(
+                                90.,
+                                linear_color_stop(self.tool_card_header_bg(cx), 1.),
+                                linear_color_stop(self.tool_card_header_bg(cx).opacity(0.2), 0.),
+                            ),
+                        )),
                 )
                 .map(|parent| {
                     if !is_open {
@@ -1427,7 +1443,7 @@ impl ActiveThread {
                             .child(
                                 content_container()
                                     .border_b_1()
-                                    .border_color(lighter_border)
+                                    .border_color(self.tool_card_border_color(cx))
                                     .child(
                                         Label::new("Input")
                                             .size(LabelSize::XSmall)
