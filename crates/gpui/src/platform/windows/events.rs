@@ -1137,7 +1137,7 @@ fn handle_cursor_changed(lparam: LPARAM, state_ptr: Rc<WindowsWindowStatePtr>) -
     };
 
     if had_cursor != state.current_cursor.is_some() {
-        unsafe { SetCursor(state.current_cursor.as_ref()) };
+        unsafe { SetCursor(state.current_cursor) };
     }
 
     Some(0)
@@ -1151,7 +1151,7 @@ fn handle_set_cursor(lparam: LPARAM, state_ptr: Rc<WindowsWindowStatePtr>) -> Op
         return None;
     }
     unsafe {
-        SetCursor(state_ptr.state.borrow().current_cursor.as_ref());
+        SetCursor(state_ptr.state.borrow().current_cursor);
     };
     Some(1)
 }
