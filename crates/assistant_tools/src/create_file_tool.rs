@@ -46,7 +46,7 @@ impl Tool for CreateFileTool {
     }
 
     fn icon(&self) -> IconName {
-        IconName::File
+        IconName::FileCreate
     }
 
     fn input_schema(&self) -> serde_json::Value {
