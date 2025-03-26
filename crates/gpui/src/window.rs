@@ -2327,6 +2327,10 @@ impl Window {
     /// see [`fill`](crate::fill), [`outline`](crate::outline), and [`quad`](crate::quad) to construct this type.
     ///
     /// This method should only be called as part of the paint phase of element drawing.
+    ///
+    /// Note that the `quad.corner_radii` are allowed to exceed the bounds, creating sharp corners
+    /// where the circular arcs meet. This will not display well when combined with dashed borders.
+    /// Use `Corners::clamp_radii_for_quad_size` if the radii should fit within the bounds.
     pub fn paint_quad(&mut self, quad: PaintQuad) {
         self.invalidator.debug_assert_paint();
 

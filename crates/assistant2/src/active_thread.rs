@@ -4,8 +4,9 @@ use crate::thread::{
 };
 use crate::thread_store::ThreadStore;
 use crate::tool_use::{PendingToolUseStatus, ToolUse, ToolUseStatus};
-use crate::ui::ContextPill;
+use crate::ui::{ContextPill, ToolReadyPopUp, ToolReadyPopupEvent};
 
+use assistant_settings::AssistantSettings;
 use collections::HashMap;
 use editor::{Editor, MultiBuffer};
 use gpui::{
@@ -13,6 +14,7 @@ use gpui::{
     Animation, AnimationExt, AnyElement, App, ClickEvent, DefiniteLength, EdgesRefinement, Empty,
     Entity, Focusable, Length, ListAlignment, ListOffset, ListState, ScrollHandle, StyleRefinement,
     Subscription, Task, TextStyleRefinement, Transformation, UnderlineStyle, WeakEntity,
+    WindowHandle,
 };
 use language::{Buffer, LanguageRegistry};
 use language_model::{LanguageModelRegistry, LanguageModelToolUseId, Role};
@@ -42,6 +44,7 @@ pub struct ActiveThread {
     expanded_tool_uses: HashMap<LanguageModelToolUseId, bool>,
     expanded_thinking_segments: HashMap<(MessageId, usize), bool>,
     last_error: Option<ThreadError>,
+    pop_ups: Vec<WindowHandle<ToolReadyPopUp>>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -244,6 +247,7 @@ impl ActiveThread {
             }),
             editing_message: None,
             last_error: None,
+            pop_ups: Vec::new(),
             _subscriptions: subscriptions,
         };
 
@@ -370,7 +374,14 @@ impl ActiveThread {
             ThreadEvent::StreamedCompletion | ThreadEvent::SummaryChanged => {
                 self.save_thread(cx);
             }
-            ThreadEvent::DoneStreaming => {}
+            ThreadEvent::DoneStreaming => {
+                if !self.thread().read(cx).is_generating() {
+                    self.show_notification("Your changes have been applied.", window, cx);
+                }
+            }
+            ThreadEvent::ToolConfirmationNeeded => {
+                self.show_notification("There's a tool confirmation needed.", window, cx);
+            }
             ThreadEvent::StreamedAssistantText(message_id, text) => {
                 if let Some(rendered_message) = self.rendered_messages_by_id.get_mut(&message_id) {
                     rendered_message.append_text(text, window, cx);
@@ -494,6 +505,59 @@ impl ActiveThread {
                 }
             }
             ThreadEvent::CheckpointChanged => cx.notify(),
+        }
+    }
+
+    fn show_notification(
+        &mut self,
+        caption: impl Into<SharedString>,
+        window: &mut Window,
+        cx: &mut Context<'_, ActiveThread>,
+    ) {
+        if !window.is_window_active()
+            && self.pop_ups.is_empty()
+            && AssistantSettings::get_global(cx).notify_when_agent_waiting
+        {
+            let caption = caption.into();
+
+            for screen in cx.displays() {
+                let options = ToolReadyPopUp::window_options(screen, cx);
+
+                if let Some(screen_window) = cx
+                    .open_window(options, |_, cx| {
+                        cx.new(|_| ToolReadyPopUp::new(caption.clone()))
+                    })
+                    .log_err()
+                {
+                    if let Some(pop_up) = screen_window.entity(cx).log_err() {
+                        cx.subscribe_in(&pop_up, window, {
+                            |this, _, event, window, cx| match event {
+                                ToolReadyPopupEvent::Accepted => {
+                                    let handle = window.window_handle();
+                                    cx.activate(true); // Switch back to the Zed application
+
+                                    // If there are multiple Zed windows, activate the correct one.
+                                    cx.defer(move |cx| {
+                                        handle
+                                            .update(cx, |_view, window, _cx| {
+                                                window.activate_window();
+                                            })
+                                            .log_err();
+                                    });
+
+                                    this.dismiss_notifications(cx);
+                                }
+                                ToolReadyPopupEvent::Dismissed => {
+                                    this.dismiss_notifications(cx);
+                                }
+                            }
+                        })
+                        .detach();
+
+                        self.pop_ups.push(screen_window);
+                    }
+                }
+            }
         }
     }
 
@@ -1634,6 +1698,16 @@ impl ActiveThread {
                     )
                     .into_any()
             })
+    }
+
+    fn dismiss_notifications(&mut self, cx: &mut Context<'_, ActiveThread>) {
+        for window in self.pop_ups.drain(..) {
+            window
+                .update(cx, |_, window, _| {
+                    window.remove_window();
+                })
+                .ok();
+        }
     }
 }
 
