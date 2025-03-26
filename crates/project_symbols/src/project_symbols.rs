@@ -270,6 +270,7 @@ mod tests {
     use futures::StreamExt;
     use gpui::{SemanticVersion, TestAppContext, VisualContext};
     use language::{FakeLspAdapter, Language, LanguageConfig, LanguageMatcher};
+    use lsp::OneOf;
     use project::FakeFs;
     use serde_json::json;
     use settings::SettingsStore;
@@ -298,8 +299,16 @@ mod tests {
             },
             None,
         )));
-        let mut fake_servers =
-            language_registry.register_fake_lsp("Rust", FakeLspAdapter::default());
+        let mut fake_servers = language_registry.register_fake_lsp(
+            "Rust",
+            FakeLspAdapter {
+                capabilities: lsp::ServerCapabilities {
+                    workspace_symbol_provider: Some(OneOf::Left(true)),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        );
 
         let _buffer = project
             .update(cx, |project, cx| {

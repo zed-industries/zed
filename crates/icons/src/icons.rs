@@ -100,6 +100,8 @@ pub enum IconName {
     Eye,
     File,
     FileCode,
+    FileCreate,
+    FileDelete,
     FileDoc,
     FileDiff,
     FileGeneric,

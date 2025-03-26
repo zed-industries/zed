@@ -11,7 +11,7 @@ use crate::connection::Connection;
 pub struct Statement<'a> {
     /// vector of pointers to the raw SQLite statement objects.
     /// it holds the actual prepared statements that will be executed.
-    raw_statements: Vec<*mut sqlite3_stmt>,
+    pub raw_statements: Vec<*mut sqlite3_stmt>,
     /// Index of the current statement being executed from the `raw_statements` vector.
     current_statement: usize,
     /// A reference to the database connection.

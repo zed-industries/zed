@@ -26,7 +26,7 @@ use language::{
     tree_sitter_rust, tree_sitter_typescript, Diagnostic, DiagnosticEntry, FakeLspAdapter,
     Language, LanguageConfig, LanguageMatcher, LineEnding, OffsetRangeExt, Point, Rope,
 };
-use lsp::LanguageServerId;
+use lsp::{LanguageServerId, OneOf};
 use parking_lot::Mutex;
 use pretty_assertions::assert_eq;
 use project::{
@@ -5399,9 +5399,16 @@ async fn test_project_symbols(
     let active_call_a = cx_a.read(ActiveCall::global);
 
     client_a.language_registry().add(rust_lang());
-    let mut fake_language_servers = client_a
-        .language_registry()
-        .register_fake_lsp("Rust", Default::default());
+    let mut fake_language_servers = client_a.language_registry().register_fake_lsp(
+        "Rust",
+        FakeLspAdapter {
+            capabilities: lsp::ServerCapabilities {
+                workspace_symbol_provider: Some(OneOf::Left(true)),
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+    );
 
     client_a
         .fs()

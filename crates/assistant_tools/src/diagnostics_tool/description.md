@@ -14,3 +14,5 @@ To get diagnostics for a specific file:
 To get a project-wide diagnostic summary:
 {}
 </example>
+
+IMPORTANT: When you're done making changes, you **MUST** get the **project** diagnostics (input: `{}`) at the end of your edits so you can fix any problems you might have introduced. **DO NOT** tell the user you're done before doing this!

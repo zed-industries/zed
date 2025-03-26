@@ -40,7 +40,7 @@ impl Tool for DeletePathTool {
     }
 
     fn icon(&self) -> IconName {
-        IconName::Trash
+        IconName::FileDelete
     }
 
     fn input_schema(&self) -> serde_json::Value {
