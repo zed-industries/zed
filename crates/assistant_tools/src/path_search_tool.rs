@@ -7,6 +7,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::{path::PathBuf, sync::Arc};
 use ui::IconName;
+use util::markdown::MarkdownString;
 use util::paths::PathMatcher;
 use worktree::Snapshot;
 

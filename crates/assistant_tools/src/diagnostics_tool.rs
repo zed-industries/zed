@@ -12,6 +12,7 @@ use std::{
     sync::Arc,
 };
 use ui::IconName;
+use util::markdown::MarkdownString;
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct DiagnosticsToolInput {
@@ -58,9 +59,15 @@ impl Tool for DiagnosticsTool {
     fn ui_text(&self, input: &serde_json::Value) -> String {
         if let Some(path) = serde_json::from_value::<DiagnosticsToolInput>(input.clone())
             .ok()
-            .and_then(|input| input.path)
+            .and_then(|input| match input.path {
+                Some(path) => match path.to_str() {
+                    Some(path) if !path.is_empty() => Some(MarkdownString::escape(path)),
+                    _ => None,
+                },
+                _ => None,
+            })
         {
-            format!("Check diagnostics for “`{}`”", path.display())
+            format!("Check diagnostics for `{path}`")
         } else {
             "Check project diagnostics".to_string()
         }
