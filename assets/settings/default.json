@@ -1239,6 +1239,7 @@
       "language_servers": ["elixir-ls", "!next-ls", "!lexical", "..."]
     },
     "HTML": {
+      "language_servers": ["vscode-html-language-server", "..."],
       "prettier": {
         "allowed": true
       }

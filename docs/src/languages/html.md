@@ -17,6 +17,21 @@ If you do not want to use the HTML extension, you can add the following to your 
 }
 ```
 
+## Formatting
+
+By default Zed will use Prettier for formatting HTML but if you prefer you can alternately use `vscode-html-language-server` by adding the following to your Zed settings:
+
+```json
+  "languages": {
+    "HTML": {
+      "formatter": "language_server",
+      "prettier": {
+        "allowed": false
+      }
+    }
+  }
+```
+
 ## See also:
 
 - [CSS](./css.md)
