@@ -75,6 +75,8 @@ pub struct ActionLog {
     stale_buffers_in_context: HashSet<Entity<Buffer>>,
     /// Buffers that we want to notify the model about when they change.
     tracked_buffers: HashMap<Entity<Buffer>, TrackedBuffer>,
+    /// Has the model edited a file since it last checked diagnostics?
+    edited_since_project_diagnostics_check: bool,
 }
 
 #[derive(Debug, Default)]
@@ -88,6 +90,7 @@ impl ActionLog {
         Self {
             stale_buffers_in_context: HashSet::default(),
             tracked_buffers: HashMap::default(),
+            edited_since_project_diagnostics_check: false,
         }
     }
 
@@ -105,6 +108,12 @@ impl ActionLog {
         }
 
         self.stale_buffers_in_context.extend(buffers);
+        self.edited_since_project_diagnostics_check = true;
+    }
+
+    /// Notifies a diagnostics check
+    pub fn checked_project_diagnostics(&mut self) {
+        self.edited_since_project_diagnostics_check = false;
     }
 
     /// Iterate over buffers changed since last read or edited by the model
@@ -113,6 +122,11 @@ impl ActionLog {
             .iter()
             .filter(|(buffer, tracked)| tracked.version != buffer.read(cx).version)
             .map(|(buffer, _)| buffer)
+    }
+
+    /// Returns true if any files have been edited since the last project diagnostics check
+    pub fn has_edited_files_since_project_diagnostics_check(&self) -> bool {
+        self.edited_since_project_diagnostics_check
     }
 
     /// Takes and returns the set of buffers pending refresh, clearing internal state.
