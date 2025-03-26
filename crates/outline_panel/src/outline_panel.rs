@@ -2556,7 +2556,7 @@ impl OutlinePanel {
         let active_multi_buffer = active_editor.read(cx).buffer().clone();
         let new_entries = self.new_entries_for_fs_update.clone();
         let repo_snapshots = self.project.update(cx, |project, cx| {
-            project.git_store().read(cx).repo_snapshots()
+            project.git_store().read(cx).repo_snapshots(cx)
         });
         self.updating_fs_entries = true;
         self.fs_entries_update_task = cx.spawn_in(window, async move |outline_panel, cx| {

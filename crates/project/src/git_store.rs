@@ -344,8 +344,6 @@ impl GitStore {
                                         {
                                             let update =
                                                 snapshot.build_update(old_snapshot, remote_id);
-                                            eprintln!("sending update repository");
-                                            dbg!(&update);
                                             *old_snapshot = snapshot;
                                             client.send(update)?;
                                         } else {
@@ -1400,7 +1398,12 @@ impl GitStore {
                 let relative_path = repo.repository_entry.relativize_abs_path(&abs_path)?;
                 Some((repo_handle.clone(), relative_path))
             })
-            .min_by_key(|(_, relative_path)| relative_path.clone())
+            .max_by_key(|(repo, _)| {
+                repo.read(cx)
+                    .repository_entry
+                    .work_directory_abs_path
+                    .clone()
+            })
     }
 
     fn spawn_git_worker(cx: &mut Context<GitStore>) -> mpsc::UnboundedSender<GitJob> {
@@ -1479,7 +1482,6 @@ impl GitStore {
     ) -> Result<()> {
         this.update(&mut cx, |this, cx| {
             let update = envelope.payload;
-            dbg!(&update);
             let work_directory_id = ProjectEntryId::from_proto(update.id);
             let client = this
                 .upstream_client()
@@ -2160,8 +2162,11 @@ impl GitStore {
         })?
     }
 
-    pub fn repo_snapshots(&self) -> HashMap<ProjectEntryId, RepositoryEntry> {
-        todo!()
+    pub fn repo_snapshots(&self, cx: &App) -> HashMap<ProjectEntryId, RepositoryEntry> {
+        self.repositories
+            .iter()
+            .map(|(id, repo)| (*id, repo.read(cx).repository_entry.clone()))
+            .collect()
     }
 }
 
@@ -3443,7 +3448,6 @@ impl Repository {
             )
             .collect::<Vec<_>>();
         self.repository_entry.statuses_by_path.edit(edits, &());
-        dbg!(&self.repository_entry.statuses_by_path);
         Ok(())
     }
 

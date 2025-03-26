@@ -1566,7 +1566,7 @@ impl ProjectPanel {
         let parent_entry = worktree.entry_for_path(parent_path)?;
 
         // Remove all siblings that are being deleted except the last marked entry
-        let repo_snapshots = git_store.repo_snapshots();
+        let repo_snapshots = git_store.repo_snapshots(cx);
         let worktree_snapshot = worktree.snapshot();
         let mut siblings: Vec<_> =
             ChildEntriesGitIter::new(&repo_snapshots, &worktree_snapshot, parent_path)
@@ -2593,7 +2593,7 @@ impl ProjectPanel {
     ) {
         let auto_collapse_dirs = ProjectPanelSettings::get_global(cx).auto_fold_dirs;
         let project = self.project.read(cx);
-        let repo_snapshots = project.git_store().read(cx).repo_snapshots();
+        let repo_snapshots = project.git_store().read(cx).repo_snapshots(cx);
         self.last_worktree_root_id = project
             .visible_worktrees(cx)
             .next_back()
@@ -3285,7 +3285,12 @@ impl ProjectPanel {
                 .cloned();
         }
 
-        let repo_snapshots = self.project.read(cx).git_store().read(cx).repo_snapshots();
+        let repo_snapshots = self
+            .project
+            .read(cx)
+            .git_store()
+            .read(cx)
+            .repo_snapshots(cx);
         let worktree = self.project.read(cx).worktree_for_id(worktree_id, cx)?;
         worktree.update(cx, |tree, _| {
             utils::ReversibleIterable::new(
@@ -3309,7 +3314,12 @@ impl ProjectPanel {
             .iter()
             .map(|(worktree_id, _, _)| *worktree_id)
             .collect();
-        let repo_snapshots = self.project.read(cx).git_store().read(cx).repo_snapshots();
+        let repo_snapshots = self
+            .project
+            .read(cx)
+            .git_store()
+            .read(cx)
+            .repo_snapshots(cx);
 
         let mut last_found: Option<SelectedEntry> = None;
 

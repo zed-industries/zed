@@ -49,7 +49,7 @@ impl<'a> GitTraversal<'a> {
                 let relative_path = repo_snapshot.relativize_abs_path(&abs_path)?;
                 Some((repo_snapshot, relative_path))
             })
-            .min_by_key(|(_, relative_path)| relative_path.clone())
+            .max_by_key(|(repo, _)| repo.work_directory_abs_path.clone())
         else {
             self.repo_location = None;
             return;
@@ -314,36 +314,30 @@ mod tests {
 
         let (repo_snapshots, worktree_snapshot) = project.read_with(cx, |project, cx| {
             (
-                project.git_store().read(cx).repo_snapshots(),
+                project.git_store().read(cx).repo_snapshots(cx),
                 project.worktrees(cx).next().unwrap().read(cx).snapshot(),
             )
         });
-        let mut traversal = GitTraversal::new(
+
+        let traversal = GitTraversal::new(
             &repo_snapshots,
             worktree_snapshot.traverse_from_path(true, false, true, Path::new("x")),
         );
-
-        let entry = traversal.next().unwrap();
-        assert_eq!(entry.path.as_ref(), Path::new("x/x1.txt"));
-        assert_eq!(entry.git_summary, GitSummary::UNCHANGED);
-        let entry = traversal.next().unwrap();
-        assert_eq!(entry.path.as_ref(), Path::new("x/x2.txt"));
-        assert_eq!(entry.git_summary, MODIFIED);
-        let entry = traversal.next().unwrap();
-        assert_eq!(entry.path.as_ref(), Path::new("x/y/y1.txt"));
-        assert_eq!(entry.git_summary, GitSummary::CONFLICT);
-        let entry = traversal.next().unwrap();
-        assert_eq!(entry.path.as_ref(), Path::new("x/y/y2.txt"));
-        assert_eq!(entry.git_summary, GitSummary::UNCHANGED);
-        let entry = traversal.next().unwrap();
-        assert_eq!(entry.path.as_ref(), Path::new("x/z.txt"));
-        assert_eq!(entry.git_summary, ADDED);
-        let entry = traversal.next().unwrap();
-        assert_eq!(entry.path.as_ref(), Path::new("z/z1.txt"));
-        assert_eq!(entry.git_summary, GitSummary::UNCHANGED);
-        let entry = traversal.next().unwrap();
-        assert_eq!(entry.path.as_ref(), Path::new("z/z2.txt"));
-        assert_eq!(entry.git_summary, ADDED);
+        let entries = traversal
+            .map(|entry| (entry.path.clone(), entry.git_summary))
+            .collect::<Vec<_>>();
+        pretty_assertions::assert_eq!(
+            entries,
+            [
+                (Path::new("x/x1.txt").into(), GitSummary::UNCHANGED),
+                (Path::new("x/x2.txt").into(), MODIFIED),
+                (Path::new("x/y/y1.txt").into(), GitSummary::CONFLICT),
+                (Path::new("x/y/y2.txt").into(), GitSummary::UNCHANGED),
+                (Path::new("x/z.txt").into(), ADDED),
+                (Path::new("z/z1.txt").into(), GitSummary::UNCHANGED),
+                (Path::new("z/z2.txt").into(), ADDED),
+            ]
+        )
     }
 
     #[gpui::test]
@@ -395,7 +389,7 @@ mod tests {
 
         let (repo_snapshots, worktree_snapshot) = project.read_with(cx, |project, cx| {
             (
-                project.git_store().read(cx).repo_snapshots(),
+                project.git_store().read(cx).repo_snapshots(cx),
                 project.worktrees(cx).next().unwrap().read(cx).snapshot(),
             )
         });
@@ -521,7 +515,7 @@ mod tests {
 
         let (repo_snapshots, worktree_snapshot) = project.read_with(cx, |project, cx| {
             (
-                project.git_store().read(cx).repo_snapshots(),
+                project.git_store().read(cx).repo_snapshots(cx),
                 project.worktrees(cx).next().unwrap().read(cx).snapshot(),
             )
         });
@@ -630,7 +624,7 @@ mod tests {
 
         let (repo_snapshots, worktree_snapshot) = project.read_with(cx, |project, cx| {
             (
-                project.git_store().read(cx).repo_snapshots(),
+                project.git_store().read(cx).repo_snapshots(cx),
                 project.worktrees(cx).next().unwrap().read(cx).snapshot(),
             )
         });
@@ -759,7 +753,7 @@ mod tests {
 
         let (repo_snapshots, worktree_snapshot) = project.read_with(cx, |project, cx| {
             (
-                project.git_store().read(cx).repo_snapshots(),
+                project.git_store().read(cx).repo_snapshots(cx),
                 project.worktrees(cx).next().unwrap().read(cx).snapshot(),
             )
         });
@@ -794,6 +788,6 @@ mod tests {
                 (path, git_entry.git_summary)
             })
             .collect::<Vec<_>>();
-        assert_eq!(found_statuses, expected_statuses);
+        pretty_assertions::assert_eq!(found_statuses, expected_statuses);
     }
 }
