@@ -738,7 +738,6 @@ mod tests {
                 .unwrap();
         }
 
-        //TODO: Construct the editor without an actual buffer that points to a file
         let item = workspace
             .update_in(&mut cx, |workspace, window, cx| {
                 workspace.open_path(
@@ -788,10 +787,10 @@ mod tests {
             assert_eq!(
                 current_completion_labels(editor),
                 &[
-                    format!("seven.txt {}", separator!("dir/b/")).as_str(),
-                    format!("six.txt {}", separator!("dir/b/")).as_str(),
-                    format!("five.txt {}", separator!("dir/b/")).as_str(),
-                    format!("four.txt {}", separator!("dir/a/")).as_str(),
+                    "seven.txt dir/b/",
+                    "six.txt dir/b/",
+                    "five.txt dir/b/",
+                    "four.txt dir/a/",
                     "Files & Directories",
                     "Fetch"
                 ]
