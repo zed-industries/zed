@@ -6128,35 +6128,6 @@ impl Editor {
             return breakpoint_display_points;
         };
 
-        if let Some(buffer) = self.buffer.read(cx).as_singleton() {
-            let buffer_snapshot = buffer.read(cx).snapshot();
-
-            for breakpoint in
-                breakpoint_store
-                    .read(cx)
-                    .breakpoints(&buffer, None, &buffer_snapshot, cx)
-            {
-                let point = buffer_snapshot.summary_for_anchor::<Point>(&breakpoint.0);
-                let mut anchor = multi_buffer_snapshot.anchor_before(point);
-                anchor.text_anchor = breakpoint.0;
-
-                breakpoint_display_points.insert(
-                    snapshot
-                        .point_to_display_point(
-                            MultiBufferPoint {
-                                row: point.row,
-                                column: point.column,
-                            },
-                            Bias::Left,
-                        )
-                        .row(),
-                    (anchor, breakpoint.1.clone()),
-                );
-            }
-
-            return breakpoint_display_points;
-        }
-
         let range = snapshot.display_point_to_point(DisplayPoint::new(range.start, 0), Bias::Left)
             ..snapshot.display_point_to_point(DisplayPoint::new(range.end, 0), Bias::Right);
 

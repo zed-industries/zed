@@ -1955,7 +1955,12 @@ impl EditorElement {
                 .filter_map(|(display_row, (text_anchor, bp))| {
                     if row_infos
                         .get((display_row.0.saturating_sub(range.start.0)) as usize)
-                        .is_some_and(|row_info| row_info.expand_info.is_some())
+                        .is_some_and(|row_info| {
+                            row_info.expand_info.is_some()
+                                || row_info
+                                    .diff_status
+                                    .is_some_and(|status| status.is_deleted())
+                        })
                     {
                         return None;
                     }
