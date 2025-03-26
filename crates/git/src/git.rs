@@ -58,6 +58,7 @@ actions!(
 
 #[derive(Clone, Debug, Default, PartialEq, Deserialize, JsonSchema)]
 pub struct RestoreFile {
+    #[serde(default)]
     pub skip_prompt: bool,
 }
 
