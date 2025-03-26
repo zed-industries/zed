@@ -19,18 +19,50 @@ If you do not want to use the HTML extension, you can add the following to your 
 
 ## Formatting
 
-By default Zed will use Prettier for formatting HTML but if you prefer you can alternately use `vscode-html-language-server` by adding the following to your Zed settings:
+By default Zed uses [Prettier](https://prettier.io/) for formatting HTML
+
+You can disable `format_on_save` by adding the following to your Zed settings:
+
+```json
+  "languages": {
+    "HTML": {
+      "format_on_save": "off",
+    }
+  }
+```
+
+You can still trigger formatting manually with {#kb editor::Format} or by opening the command palette ( {#kb commandPalette::Toggle} and selecting `Format Document`.
+
+### LSP Formatting
+
+If you prefer you can use `vscode-html-language-server` insetad of Prettier for auto-formatting by adding the following to your Zed settings:
 
 ```json
   "languages": {
     "HTML": {
       "formatter": "language_server",
-      "prettier": {
-        "allowed": false
-      }
     }
   }
 ```
+
+You can customize various [formatting options](https://code.visualstudio.com/docs/languages/html#_formatting) for `vscode-html-language-server`,
+
+  "lsp": {
+    "vscode-html-language-server": {
+      "settings": {
+        "html": {
+          "format": {
+            // Indent under <html> and <head> (default: false)
+            "indentInnerHtml": true,
+            // Disable formatting inside <svg> or <script>
+            "contentUnformatted": "svg,script",
+            // Add an extra newline before <div> and <p>
+            "extraLiners": "div,p"
+          }
+        }
+      }
+    }
+  }
 
 ## See also:
 
