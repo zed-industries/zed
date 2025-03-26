@@ -1,3 +1,4 @@
+mod semantic_tokens;
 mod signature_help;
 
 use crate::{
@@ -5,7 +6,7 @@ use crate::{
     CodeAction, CompletionSource, CoreCompletion, DocumentHighlight, Hover, HoverBlock,
     HoverBlockKind, InlayHint, InlayHintLabel, InlayHintLabelPart, InlayHintLabelPartTooltip,
     InlayHintTooltip, Location, LocationLink, LspAction, MarkupContent, PrepareRenameResponse,
-    ProjectTransaction, ResolveState, SemanticToken,
+    ProjectTransaction, ResolveState,
 };
 use anyhow::{anyhow, Context as _, Result};
 use async_trait::async_trait;
@@ -26,13 +27,13 @@ use lsp::{
     AdapterServerCapabilities, CodeActionKind, CodeActionOptions, CompletionContext,
     CompletionListItemDefaultsEditRange, CompletionTriggerKind, DocumentHighlightKind,
     LanguageServer, LanguageServerId, LinkedEditingRangeServerCapabilities, OneOf, RenameOptions,
-    SemanticTokenModifier, SemanticTokensOptions, SemanticTokensRegistrationOptions,
-    SemanticTokensServerCapabilities, ServerCapabilities,
+    ServerCapabilities,
 };
 use signature_help::{lsp_to_proto_signature, proto_to_lsp_signature};
 use std::{cmp::Reverse, ops::Range, path::Path, sync::Arc};
 use text::{BufferId, LineEnding};
 
+pub use semantic_tokens::SemanticTokensFull;
 pub use signature_help::SignatureHelp;
 
 pub fn lsp_formatting_options(settings: &LanguageSettings) -> lsp::FormattingOptions {
@@ -235,9 +236,6 @@ pub(crate) struct OnTypeFormatting {
 pub(crate) struct InlayHints {
     pub range: Range<Anchor>,
 }
-
-#[derive(Debug)]
-pub(crate) struct SemanticTokensFull;
 
 #[derive(Debug, Copy, Clone)]
 pub(crate) struct GetCodeLens;
@@ -3349,161 +3347,4 @@ impl LspCommand for LinkedEditingRange {
     fn buffer_id_from_proto(message: &proto::LinkedEditingRange) -> Result<BufferId> {
         BufferId::new(message.buffer_id)
     }
-}
-
-#[async_trait(?Send)]
-impl LspCommand for SemanticTokensFull {
-    type Response = Vec<SemanticToken>;
-    type LspRequest = lsp::request::SemanticTokensFullRequest;
-    type ProtoRequest = proto::SemanticTokensFullRequest;
-
-    fn display_name(&self) -> &str {
-        "Semantic Tokens"
-    }
-
-    fn to_lsp(
-        &self,
-        path: &Path,
-        _: &Buffer,
-        _: &Arc<LanguageServer>,
-        _: &App,
-    ) -> Result<lsp::SemanticTokensParams> {
-        Ok(lsp::SemanticTokensParams {
-            text_document: lsp::TextDocumentIdentifier {
-                uri: file_path_to_lsp_url(path)?,
-            },
-            partial_result_params: lsp::PartialResultParams {
-                partial_result_token: None,
-            },
-            work_done_progress_params: lsp::WorkDoneProgressParams::default(),
-        })
-    }
-
-    async fn response_from_lsp(
-        mut self,
-        message: <Self::LspRequest as lsp::request::Request>::Result,
-        lsp_store: Entity<LspStore>,
-        buffer: Entity<Buffer>,
-        server_id: LanguageServerId,
-        mut cx: AsyncApp,
-    ) -> Result<Self::Response> {
-        let snapshot = buffer.update(&mut cx, |buffer, _| buffer.snapshot())?;
-        let language_server = cx.update(|cx| {
-            lsp_store
-                .read(cx)
-                .language_server_for_id(server_id)
-                .with_context(|| {
-                    format!("Missing the language server that just returned a response {server_id}")
-                })
-        })??;
-        let server_capabilities = language_server.capabilities();
-        let legend = match server_capabilities.semantic_tokens_provider {
-            Some(SemanticTokensServerCapabilities::SemanticTokensOptions(
-                SemanticTokensOptions { legend, .. },
-            )) => legend,
-            Some(SemanticTokensServerCapabilities::SemanticTokensRegistrationOptions(
-                SemanticTokensRegistrationOptions {
-                    semantic_tokens_options: SemanticTokensOptions { legend, .. },
-                    ..
-                },
-            )) => legend,
-            None => anyhow::bail!("Missing semantic tokens provider in the server"),
-        };
-        let tokens = match message {
-            Some(lsp::SemanticTokensResult::Partial(tokens)) => tokens.data,
-            Some(lsp::SemanticTokensResult::Tokens(tokens)) => tokens.data,
-            None => vec![],
-        };
-        let mut acc = 0;
-        let mut line_acc = 0;
-        let new_tokens = tokens.into_iter().map(|token| {
-            let len = token.length;
-            if token.delta_line != 0 {
-                acc = 0;
-            }
-            // this line is assuming that we have one token lines because the
-            // line of the token never gets "spoofed" by this. and this is actually
-            // the current limitation of the semantic highlight support here.
-            let range = {
-                let start = snapshot.clip_point_utf16(
-                    Unclipped(PointUtf16::new(
-                        token.delta_line + line_acc, //
-                        token.delta_start + acc,
-                    )),
-                    Bias::Left,
-                );
-                let end = snapshot.clip_point_utf16(
-                    Unclipped(PointUtf16::new(
-                        token.delta_line + line_acc, //
-                        token.delta_start + len + acc,
-                    )),
-                    Bias::Right,
-                );
-                snapshot.anchor_before(start)..snapshot.anchor_before(end)
-            };
-            acc += token.delta_start;
-            line_acc += token.delta_start;
-            SemanticToken {
-                range,
-                modifiers: active_modifiers(token.token_modifiers_bitset, &legend.token_modifiers),
-                r#type: legend
-                    .token_types
-                    .get(token.token_type as usize)
-                    .cloned()
-                    .expect("cant find the token in the legend"),
-            }
-        });
-        Ok(new_tokens.collect())
-    }
-
-    fn to_proto(&self, project_id: u64, buffer: &Buffer) -> Self::ProtoRequest {
-        todo!()
-    }
-
-    async fn from_proto(
-        message: Self::ProtoRequest,
-        lsp_store: Entity<LspStore>,
-        buffer: Entity<Buffer>,
-        cx: AsyncApp,
-    ) -> Result<Self> {
-        todo!()
-    }
-
-    fn response_to_proto(
-        response: Self::Response,
-        lsp_store: &mut LspStore,
-        peer_id: PeerId,
-        buffer_version: &clock::Global,
-        cx: &mut App,
-    ) -> <Self::ProtoRequest as proto::RequestMessage>::Response {
-        todo!()
-    }
-
-    async fn response_from_proto(
-        self,
-        message: <Self::ProtoRequest as proto::RequestMessage>::Response,
-        lsp_store: Entity<LspStore>,
-        buffer: Entity<Buffer>,
-        cx: AsyncApp,
-    ) -> Result<Self::Response> {
-        todo!()
-    }
-
-    fn buffer_id_from_proto(message: &Self::ProtoRequest) -> Result<BufferId> {
-        todo!()
-    }
-}
-
-fn active_modifiers(m: u32, legend: &[SemanticTokenModifier]) -> Vec<SemanticTokenModifier> {
-    legend
-        .iter()
-        .enumerate()
-        .filter_map(move |(idx, modifier)| {
-            if (m & (1 << idx)) != 0 {
-                Some(modifier.clone())
-            } else {
-                None
-            }
-        })
-        .collect_vec()
 }

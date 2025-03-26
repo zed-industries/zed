@@ -42,12 +42,6 @@ impl SyntaxTheme {
             .unwrap_or_default()
     }
 
-    pub fn get_or_none(&self, name: &str) -> Option<HighlightStyle> {
-        self.highlights
-            .iter()
-            .find_map(|entry| if entry.0 == name { Some(entry.1) } else { None })
-    }
-
     pub fn color(&self, name: &str) -> Hsla {
         self.get(name).color.unwrap_or_default()
     }
@@ -91,30 +85,6 @@ impl SyntaxTheme {
             highlights: merged_highlights,
         })
     }
-
-    pub fn import_semantic_tokens(other: &SyntaxTheme) -> Self {
-        Self {
-            highlights: semantic_highlights(other, &[]),
-        }
-    }
-
-    pub fn import_semantic_modifiers(other: &SyntaxTheme) -> Self {
-        Self {
-            highlights: semantic_highlights(other, &[("")]),
-        }
-    }
-}
-
-#[inline]
-fn semantic_highlights(
-    other: &SyntaxTheme,
-    bindings: &[(&str, &str)],
-) -> Vec<(String, HighlightStyle)> {
-    let iter = bindings.iter();
-    let iter = iter.filter_map(|(semantic_token, parsed_token)| {
-        Some((semantic_token.to_string(), other.get(parsed_token)))
-    });
-    iter.collect()
 }
 
 #[cfg(test)]

@@ -10,6 +10,8 @@ use crate::{
     SystemColors,
 };
 
+use super::SemanticTheme;
+
 #[derive(Refineable, Clone, Debug, PartialEq)]
 #[refineable(Debug, serde::Deserialize)]
 pub struct ThemeColors {
@@ -526,9 +528,9 @@ pub struct ThemeStyles {
 
     pub syntax: Arc<SyntaxTheme>,
 
-    pub tokens: Arc<SyntaxTheme>,
+    pub tokens: Arc<SemanticTheme>,
 
-    pub modifiers: Arc<SyntaxTheme>,
+    pub modifiers: Arc<SemanticTheme>,
 }
 
 #[cfg(test)]

@@ -194,27 +194,23 @@ impl ThemeFamily {
 
         let syntax_highlights = refine_highlights(&theme.style.syntax);
         let syntax_theme = SyntaxTheme::merge(Arc::new(SyntaxTheme::default()), syntax_highlights);
-        let tokens_theme = SyntaxTheme::merge(
-            Arc::new(SyntaxTheme::default()),
-            theme
+        let tokens_theme = SemanticTheme::new(
+            DEFAULT_SEMANTIC_TOKENS,
+            syntax_theme.clone(),
+            &theme
                 .style
                 .tokens
                 .as_ref()
-                .map(|tokens| refine_highlights(tokens))
-                .unwrap_or_else(|| {
-                    SyntaxTheme::import_semantic_modifiers(&syntax_theme).highlights
-                }),
+                .map_or(vec![], |tokens| refine_highlights(tokens)),
         );
-        let modifiers_theme = SyntaxTheme::merge(
-            Arc::new(SyntaxTheme::default()),
-            theme
+        let modifiers_theme = SemanticTheme::new(
+            DEFAULT_SEMANTIC_MODIFIERS,
+            syntax_theme.clone(),
+            &theme
                 .style
                 .modifiers
                 .as_ref()
-                .map(|tokens| refine_highlights(tokens))
-                .unwrap_or_else(|| {
-                    SyntaxTheme::import_semantic_modifiers(&syntax_theme).highlights
-                }),
+                .map_or(vec![], |tokens| refine_highlights(tokens)),
         );
 
         let window_background_appearance = theme
@@ -235,8 +231,8 @@ impl ThemeFamily {
                 status: refined_status_colors,
                 player: refined_player_colors,
                 syntax: syntax_theme,
-                tokens: tokens_theme,
-                modifiers: modifiers_theme,
+                tokens: Arc::new(tokens_theme),
+                modifiers: Arc::new(modifiers_theme),
             },
         }
     }
@@ -332,13 +328,13 @@ impl Theme {
 
     /// Returns the [`SyntaxTheme`] for the semantic tokens theme.
     #[inline(always)]
-    pub fn tokens(&self) -> &Arc<SyntaxTheme> {
+    pub fn tokens(&self) -> &Arc<SemanticTheme> {
         &self.styles.tokens
     }
 
     /// Returns the [`SyntaxTheme`] for the semantic modifiers theme.
     #[inline(always)]
-    pub fn modifiers(&self) -> &Arc<SyntaxTheme> {
+    pub fn modifiers(&self) -> &Arc<SemanticTheme> {
         &self.styles.modifiers
     }
 

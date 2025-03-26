@@ -1,5 +1,5 @@
 use collections::BTreeMap;
-use gpui::HighlightStyle;
+use gpui::{HighlightStyle, Hsla};
 use language::Chunk;
 use multi_buffer::{Anchor, MultiBufferChunks, MultiBufferSnapshot, ToOffset as _};
 use std::{
@@ -87,24 +87,6 @@ fn create_highlight_endpoints(
                 Ok(i) | Err(i) => i,
             };
 
-            // Support for semantic highlight workaround, as the range[start_ix..]
-            // only works for full vectors with a lot of highlights, and our semantic
-            // highlights is simpler
-            if ranges.len() == 1 {
-                highlight_endpoints.push(HighlightEndpoint {
-                    offset: range.start.to_offset(&buffer),
-                    is_start: true,
-                    tag,
-                    style,
-                });
-                highlight_endpoints.push(HighlightEndpoint {
-                    offset: range.end.to_offset(&buffer),
-                    is_start: false,
-                    tag,
-                    style,
-                });
-            }
-
             for range in &ranges[start_ix..] {
                 if range.start.cmp(&end, &buffer).is_ge() {
                     break;
@@ -163,17 +145,15 @@ impl<'a> Iterator for CustomHighlightsChunks<'a> {
         self.offset += prefix.len();
         let mut prefix = Chunk {
             text: prefix,
-            highlight_style: self
-                .active_highlights
-                .get(&TypeId::of::<crate::SemanticHighlight>())
-                .cloned()
-                .map(Some)
-                .unwrap_or(chunk.highlight_style.clone()),
             ..chunk.clone()
         };
         if !self.active_highlights.is_empty() {
-            let mut highlight_style = HighlightStyle::default();
-            for active_highlight in self.active_highlights.values() {
+            let mut active_highlights = self.active_highlights.clone();
+            let mut highlight_style = active_highlights
+                .remove(&TypeId::of::<crate::SemanticHighlight>())
+                .inspect(|_| prefix.syntax_highlight_id = None)
+                .unwrap_or_default();
+            for active_highlight in active_highlights.values() {
                 highlight_style.highlight(*active_highlight);
             }
             prefix.highlight_style = Some(highlight_style);

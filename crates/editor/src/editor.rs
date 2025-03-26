@@ -4018,45 +4018,33 @@ impl Editor {
             let task: Task<Result<()>> = cx.spawn_in(window, async move |editor, cx| {
                 let tokens = semantic_tokens.await?;
                 let multibuffer = multibuffer.clone();
-                log::error!("file semantic tokens count: {}", tokens.len());
-                let tokens = cx.update(|_, cx| {
+                let tokens: Vec<_> = cx.update(|_, cx| {
                     let multibuffer = multibuffer.read(cx);
                     let iter = tokens.into_iter().filter_map(|token| {
                         let Range { start, end } = token.range.to_point(&snapshot);
-                        log::error!(
-                            "  * {} {}:{}..{}:{}",
-                            token.r#type.as_str(),
-                            start.row,
-                            start.column,
-                            end.row,
-                            end.column
-                        );
                         let start = multibuffer.buffer_point_to_anchor(&buffer, start, cx)?;
                         let end = multibuffer.buffer_point_to_anchor(&buffer, end, cx)?;
-                        log::error!("    - finished");
                         Some((start..end, token.r#type, token.modifiers))
                     });
                     iter.collect_vec()
                 })?;
                 editor.update(cx, |this: &mut Self, cx| {
-                    for (range, r#type, modifiers) in tokens {
+                    let iter = tokens.into_iter();
+                    let iter = iter.filter_map(|(range, r#type, modifiers)| {
+                        let mut style = cx.theme().tokens().get(r#type.as_str())?;
                         let range = vec![range];
-                        let Some(mut style) = cx.theme().tokens().get_or_none(r#type.as_str())
-                        else {
-                            continue;
-                        };
-                        for modifier in modifiers {
-                            let Some(modifier) =
-                                cx.theme().modifiers().get_or_none(modifier.as_str())
-                            else {
-                                continue;
-                            };
-                            style.highlight(modifier);
+                        for r#mod in modifiers {
+                            let r#mod = cx.theme().modifiers().get(r#mod.as_str());
+                            style.highlight(match r#mod {
+                                Some(value) => value,
+                                None => continue,
+                            });
                         }
-                        this.highlight_text::<SemanticHighlight>(range, style, cx)
-                    }
+                        this.highlight_text::<SemanticHighlight>(range, style, cx);
+                        Some(())
+                    });
+                    iter.collect_vec();
                 })?;
-                log::error!("  -> successfully rendered");
                 Ok(())
             });
             task.detach_and_log_err(cx);

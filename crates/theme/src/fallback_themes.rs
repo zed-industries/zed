@@ -3,9 +3,9 @@ use std::sync::Arc;
 use gpui::{hsla, FontStyle, FontWeight, HighlightStyle, Hsla, WindowBackgroundAppearance};
 
 use crate::{
-    default_color_scales, AccentColors, Appearance, PlayerColors, StatusColors,
+    default_color_scales, AccentColors, Appearance, PlayerColors, SemanticTheme, StatusColors,
     StatusColorsRefinement, SyntaxTheme, SystemColors, Theme, ThemeColors, ThemeFamily,
-    ThemeStyles,
+    ThemeStyles, DEFAULT_SEMANTIC_MODIFIERS, DEFAULT_SEMANTIC_TOKENS,
 };
 
 /// The default theme family for Zed.
@@ -75,7 +75,7 @@ pub(crate) fn zed_default_dark() -> Theme {
         a: 1.0,
     };
 
-    let syntax = SyntaxTheme {
+    let syntax = Arc::new(SyntaxTheme {
         highlights: vec![
             ("attribute".into(), purple.into()),
             ("boolean".into(), orange.into()),
@@ -138,7 +138,7 @@ pub(crate) fn zed_default_dark() -> Theme {
             ("variable.special".into(), red.into()),
             ("variant".into(), HighlightStyle::default()),
         ],
-    };
+    });
 
     Theme {
         id: "one_dark".to_string(),
@@ -313,9 +313,17 @@ pub(crate) fn zed_default_dark() -> Theme {
                 warning_border: yellow,
             },
             player: PlayerColors::dark(),
-            tokens: Arc::new(SyntaxTheme::import_semantic_tokens(&syntax)),
-            modifiers: Arc::new(SyntaxTheme::import_semantic_modifiers(&syntax)),
-            syntax: Arc::new(syntax),
+            tokens: Arc::new(SemanticTheme::new(
+                DEFAULT_SEMANTIC_TOKENS,
+                syntax.clone(),
+                &[],
+            )),
+            modifiers: Arc::new(SemanticTheme::new(
+                DEFAULT_SEMANTIC_MODIFIERS,
+                syntax.clone(),
+                &[],
+            )),
+            syntax,
         },
     }
 }
