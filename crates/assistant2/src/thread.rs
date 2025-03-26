@@ -1410,7 +1410,7 @@ impl Thread {
                     git_store
                         .repositories()
                         .values()
-                        .find(|repo| repo.read(cx).worktree_id == snapshot.id())
+                        .find(|repo| repo.read(cx).worktree_id == Some(snapshot.id()))
                         .and_then(|repo| {
                             let repo = repo.read(cx);
                             Some((repo.branch().cloned(), repo.local_repository()?))

@@ -2892,15 +2892,17 @@ async fn test_git_branch_name(
     #[track_caller]
     fn assert_branch(branch_name: Option<impl Into<String>>, project: &Project, cx: &App) {
         let branch_name = branch_name.map(Into::into);
-        let worktrees = project.visible_worktrees(cx).collect::<Vec<_>>();
-        assert_eq!(worktrees.len(), 1);
-        let worktree = worktrees[0].clone();
-        let snapshot = worktree.read(cx).snapshot();
-        let repo = snapshot.repositories().first().unwrap();
+        let repositories = project.repositories(cx).values().collect::<Vec<_>>();
+        assert_eq!(repositories.len(), 1);
+        let repository = repositories[0].clone();
         assert_eq!(
-            repo.branch().map(|branch| branch.name.to_string()),
+            repository
+                .read(cx)
+                .repository_entry
+                .branch()
+                .map(|branch| branch.name.to_string()),
             branch_name
-        );
+        )
     }
 
     // Smoke test branch reading
@@ -3022,11 +3024,20 @@ async fn test_git_status_sync(
         cx: &App,
     ) {
         let file = file.as_ref();
-        let worktrees = project.visible_worktrees(cx).collect::<Vec<_>>();
-        assert_eq!(worktrees.len(), 1);
-        let worktree = worktrees[0].clone();
-        let snapshot = worktree.read(cx).snapshot();
-        assert_eq!(snapshot.status_for_file(file), status);
+        let repos = project
+            .repositories(cx)
+            .values()
+            .cloned()
+            .collect::<Vec<_>>();
+        assert_eq!(repos.len(), 1);
+        let repo = repos.into_iter().next().unwrap();
+        assert_eq!(
+            repo.read(cx)
+                .repository_entry
+                .status_for_path(&file.into())
+                .map(|entry| entry.status),
+            status
+        );
     }
 
     project_local.read_with(cx_a, |project, cx| {
@@ -3093,6 +3104,27 @@ async fn test_git_status_sync(
         assert_status("a.txt", Some(A_STATUS_END), project, cx);
         assert_status("b.txt", Some(B_STATUS_END), project, cx);
         assert_status("c.txt", Some(C_STATUS_END), project, cx);
+    });
+
+    // Now remove the original git repository and check that collaborators are notified.
+    client_a
+        .fs()
+        .remove_dir("/dir/.git".as_ref(), RemoveOptions::default())
+        .await
+        .unwrap();
+
+    executor.run_until_parked();
+    project_remote.update(cx_b, |project, cx| {
+        pretty_assertions::assert_eq!(
+            project.git_store().read(cx).repo_snapshots(cx),
+            HashMap::default()
+        );
+    });
+    project_remote_c.update(cx_c, |project, cx| {
+        pretty_assertions::assert_eq!(
+            project.git_store().read(cx).repo_snapshots(cx),
+            HashMap::default()
+        );
     });
 }
 

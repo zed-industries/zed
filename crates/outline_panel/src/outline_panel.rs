@@ -2555,6 +2555,9 @@ impl OutlinePanel {
         let auto_fold_dirs = OutlinePanelSettings::get_global(cx).auto_fold_dirs;
         let active_multi_buffer = active_editor.read(cx).buffer().clone();
         let new_entries = self.new_entries_for_fs_update.clone();
+        let repo_snapshots = self.project.update(cx, |project, cx| {
+            project.git_store().read(cx).repo_snapshots(cx)
+        });
         self.updating_fs_entries = true;
         self.fs_entries_update_task = cx.spawn_in(window, async move |outline_panel, cx| {
             if let Some(debounce) = debounce {
@@ -2679,13 +2682,15 @@ impl OutlinePanel {
                                             .unwrap_or_default(),
                                         entry,
                                     };
-                                    let mut traversal =
-                                        GitTraversal::new(worktree.traverse_from_path(
+                                    let mut traversal = GitTraversal::new(
+                                        &repo_snapshots,
+                                        worktree.traverse_from_path(
                                             true,
                                             true,
                                             true,
                                             entry.path.as_ref(),
-                                        ));
+                                        ),
+                                    );
 
                                     let mut entries_to_add = HashMap::default();
                                     worktree_excerpts

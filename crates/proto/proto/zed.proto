@@ -2240,7 +2240,7 @@ message OpenUncommittedDiffResponse {
 
 message SetIndexText {
     uint64 project_id = 1;
-    uint64 worktree_id = 2;
+    reserved 2;
     uint64 work_directory_id = 3;
     string path = 4;
     optional string text = 5;
@@ -3350,7 +3350,7 @@ message GetPanicFiles {
 
 message GitShow {
     uint64 project_id = 1;
-    uint64 worktree_id = 2;
+    reserved 2;
     uint64 work_directory_id = 3;
     string commit = 4;
 }
@@ -3365,7 +3365,7 @@ message GitCommitDetails {
 
 message GitReset {
     uint64 project_id = 1;
-    uint64 worktree_id = 2;
+    reserved 2;
     uint64 work_directory_id = 3;
     string commit = 4;
     ResetMode mode = 5;
@@ -3377,7 +3377,7 @@ message GitReset {
 
 message GitCheckoutFiles {
     uint64 project_id = 1;
-    uint64 worktree_id = 2;
+    reserved 2;
     uint64 work_directory_id = 3;
     string commit = 4;
     repeated string paths = 5;
@@ -3432,21 +3432,21 @@ message RegisterBufferWithLanguageServers{
 
 message Stage {
     uint64 project_id = 1;
-    uint64 worktree_id = 2;
+    reserved 2;
     uint64 work_directory_id = 3;
     repeated string paths = 4;
 }
 
 message Unstage {
     uint64 project_id = 1;
-    uint64 worktree_id = 2;
+    reserved 2;
     uint64 work_directory_id = 3;
     repeated string paths = 4;
 }
 
 message Commit {
     uint64 project_id = 1;
-    uint64 worktree_id = 2;
+    reserved 2;
     uint64 work_directory_id = 3;
     optional string name = 4;
     optional string email = 5;
@@ -3455,13 +3455,13 @@ message Commit {
 
 message OpenCommitMessageBuffer {
     uint64 project_id = 1;
-    uint64 worktree_id = 2;
+    reserved 2;
     uint64 work_directory_id = 3;
 }
 
 message Push {
     uint64 project_id = 1;
-    uint64 worktree_id = 2;
+    reserved 2;
     uint64 work_directory_id = 3;
     string remote_name = 4;
     string branch_name = 5;
@@ -3476,14 +3476,14 @@ message Push {
 
 message Fetch {
     uint64 project_id = 1;
-    uint64 worktree_id = 2;
+    reserved 2;
     uint64 work_directory_id = 3;
     uint64 askpass_id = 4;
 }
 
 message GetRemotes {
     uint64 project_id = 1;
-    uint64 worktree_id = 2;
+    reserved 2;
     uint64 work_directory_id = 3;
     optional string branch_name = 4;
 }
@@ -3498,7 +3498,7 @@ message GetRemotesResponse {
 
 message Pull {
     uint64 project_id = 1;
-    uint64 worktree_id = 2;
+    reserved 2;
     uint64 work_directory_id = 3;
     string remote_name = 4;
     string branch_name = 5;
@@ -3512,7 +3512,7 @@ message RemoteMessageResponse {
 
 message AskPassRequest {
     uint64 project_id = 1;
-    uint64 worktree_id = 2;
+    reserved 2;
     uint64 work_directory_id = 3;
     uint64 askpass_id = 4;
     string prompt = 5;
@@ -3524,27 +3524,27 @@ message AskPassResponse {
 
 message GitGetBranches {
     uint64 project_id = 1;
-    uint64 worktree_id = 2;
+    reserved 2;
     uint64 work_directory_id = 3;
 }
 
 message GitCreateBranch {
     uint64 project_id = 1;
-    uint64 worktree_id = 2;
+    reserved 2;
     uint64 work_directory_id = 3;
     string branch_name = 4;
 }
 
 message GitChangeBranch {
     uint64 project_id = 1;
-    uint64 worktree_id = 2;
+    reserved 2;
     uint64 work_directory_id = 3;
     string branch_name = 4;
 }
 
 message CheckForPushedCommits {
     uint64 project_id = 1;
-    uint64 worktree_id = 2;
+    reserved 2;
     uint64 work_directory_id = 3;
 }
 
@@ -3554,7 +3554,7 @@ message CheckForPushedCommitsResponse {
 
 message GitDiff {
     uint64 project_id = 1;
-    uint64 worktree_id = 2;
+    reserved 2;
     uint64 work_directory_id = 3;
     DiffType diff_type = 4;
 
