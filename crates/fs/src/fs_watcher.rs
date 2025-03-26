@@ -38,6 +38,7 @@ impl Watcher for FsWatcher {
                         EventKind::Create(_) => Some(PathEventKind::Created),
                         EventKind::Modify(_) => Some(PathEventKind::Changed),
                         EventKind::Remove(_) => Some(PathEventKind::Removed),
+                        EventKind::Access(_) => return,
                         _ => None,
                     };
                     let mut path_events = event
