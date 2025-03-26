@@ -12,7 +12,6 @@ use schemars::JsonSchema;
 use serde::Deserialize;
 use std::borrow::{Borrow, Cow};
 use std::ffi::{OsStr, OsString};
-use std::future;
 use std::path::Component;
 use std::process::{ExitStatus, Stdio};
 use std::sync::LazyLock;
@@ -21,6 +20,7 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
+use std::{future, mem};
 use sum_tree::MapSeekTarget;
 use thiserror::Error;
 use util::command::new_smol_command;
@@ -161,7 +161,8 @@ pub trait GitRepository: Send + Sync {
     /// Returns the contents of an entry in the repository's index, or None if there is no entry for the given path.
     ///
     /// Also returns `None` for symlinks.
-    fn load_index_text(&self, path: RepoPath) -> BoxFuture<Option<String>>;
+    fn load_index_text(&self, index: Option<GitIndex>, path: RepoPath)
+        -> BoxFuture<Option<String>>;
 
     /// Returns the contents of an entry in the repository's HEAD, or None if HEAD does not exist or has no entry for the given path.
     ///
@@ -371,9 +372,6 @@ pub struct VirtualBranchChange {
     branch_text: String,
 }
 
-// https://git-scm.com/book/en/v2/Git-Internals-Git-Objects
-const GIT_MODE_SYMLINK: u32 = 0o120000;
-
 impl GitRepository for RealGitRepository {
     fn reload_index(&self) {
         if let Ok(mut index) = self.repository.lock().index() {
@@ -479,31 +477,82 @@ impl GitRepository for RealGitRepository {
         .boxed()
     }
 
-    fn load_index_text(&self, path: RepoPath) -> BoxFuture<Option<String>> {
-        let repo = self.repository.clone();
+    fn load_index_text(
+        &self,
+        index: Option<GitIndex>,
+        path: RepoPath,
+    ) -> BoxFuture<Option<String>> {
+        let working_directory = self.working_directory();
+        let git_binary_path = self.git_binary_path.clone();
+        let executor = self.executor.clone();
         self.executor
             .spawn(async move {
-                fn logic(repo: &git2::Repository, path: &RepoPath) -> Result<Option<String>> {
-                    // This check is required because index.get_path() unwraps internally :(
-                    check_path_to_repo_path_errors(path)?;
-
-                    let mut index = repo.index()?;
-                    index.read(false)?;
-
-                    const STAGE_NORMAL: i32 = 0;
-                    let oid = match index.get_path(path, STAGE_NORMAL) {
-                        Some(entry) if entry.mode != GIT_MODE_SYMLINK => entry.id,
-                        _ => return Ok(None),
-                    };
-
-                    let content = repo.find_blob(oid)?.content().to_owned();
-                    Ok(Some(String::from_utf8(content)?))
+                match check_path_to_repo_path_errors(&path) {
+                    Ok(_) => {}
+                    Err(err) => {
+                        log::error!("Error with repo path: {:?}", err);
+                        return None;
+                    }
                 }
-                match logic(&repo.lock(), &path) {
-                    Ok(value) => return value,
-                    Err(err) => log::error!("Error loading index text: {:?}", err),
+
+                let working_directory = match working_directory {
+                    Ok(dir) => dir,
+                    Err(err) => {
+                        log::error!("Error getting working directory: {:?}", err);
+                        return None;
+                    }
+                };
+
+                let mut git = GitBinary::new(git_binary_path, working_directory, executor);
+                let text = git
+                    .with_option_index(index, async |git| {
+                        // First check if the file is a symlink using ls-files
+                        let ls_files_output = git
+                            .run(&[
+                                OsStr::new("ls-files"),
+                                OsStr::new("--stage"),
+                                path.to_unix_style().as_ref(),
+                            ])
+                            .await
+                            .context("error running ls-files")?;
+
+                        // Parse ls-files output to check if it's a symlink
+                        // Format is: "100644 <sha> 0 <filename>" where 100644 is the mode
+                        if ls_files_output.is_empty() {
+                            return Ok(None); // File not in index
+                        }
+
+                        let parts: Vec<&str> = ls_files_output.split_whitespace().collect();
+                        if parts.len() < 2 {
+                            return Err(anyhow!(
+                                "unexpected ls-files output format: {}",
+                                ls_files_output
+                            ));
+                        }
+
+                        // Check if it's a symlink (120000 mode)
+                        if parts[0] == "120000" {
+                            return Ok(None);
+                        }
+
+                        let sha = parts[1];
+
+                        // Now get the content
+                        Ok(Some(
+                            git.run_raw(&["cat-file", "blob", sha])
+                                .await
+                                .context("error getting blob content")?,
+                        ))
+                    })
+                    .await;
+
+                match text {
+                    Ok(text) => text,
+                    Err(error) => {
+                        log::error!("Error getting text: {}", error);
+                        None
+                    }
                 }
-                None
             })
             .boxed()
     }
@@ -649,13 +698,9 @@ impl GitRepository for RealGitRepository {
             .spawn(async move {
                 let working_directory = working_directory?;
                 let mut git = GitBinary::new(git_binary_path, working_directory, executor);
-                let status = if let Some(index) = index {
-                    git.with_index(index.id, async |git| git.run(&args).await)
-                        .await?
-                } else {
-                    git.run(&args).await?
-                };
-                status.parse()
+                git.with_option_index(index, async |git| git.run(&args).await)
+                    .await?
+                    .parse()
             })
             .boxed()
     }
@@ -1260,10 +1305,10 @@ impl GitRepository for RealGitRepository {
             .spawn(async move {
                 let working_directory = working_directory?;
                 let mut git = GitBinary::new(git_binary_path, working_directory, executor);
-                let id = Uuid::new_v4();
-                git.with_index(id, async |git| git.run(&["add", "--all"]).await)
+                let index = GitIndex { id: Uuid::new_v4() };
+                git.with_index(index, async move |git| git.run(&["add", "--all"]).await)
                     .await?;
-                Ok(GitIndex { id })
+                Ok(index)
             })
             .boxed()
     }
@@ -1277,7 +1322,7 @@ impl GitRepository for RealGitRepository {
             .spawn(async move {
                 let working_directory = working_directory?;
                 let mut git = GitBinary::new(git_binary_path, working_directory, executor);
-                git.with_index(index.id, async move |git| {
+                git.with_index(index, async move |git| {
                     git.run_with_stdin(&["apply", "--cached", "-"], diff).await
                 })
                 .await?;
@@ -1319,7 +1364,7 @@ impl GitBinary {
         &mut self,
         f: impl AsyncFnOnce(&Self) -> Result<R>,
     ) -> Result<R> {
-        let index_file_path = self.path_for_index_id(Uuid::new_v4());
+        let index_file_path = self.path_for_index(GitIndex { id: Uuid::new_v4() });
 
         let delete_temp_index = util::defer({
             let index_file_path = index_file_path.clone();
@@ -1346,29 +1391,50 @@ impl GitBinary {
 
     pub async fn with_index<R>(
         &mut self,
-        id: Uuid,
+        index: GitIndex,
         f: impl AsyncFnOnce(&Self) -> Result<R>,
     ) -> Result<R> {
-        self.index_file_path = Some(self.path_for_index_id(id));
+        self.with_option_index(Some(index), f).await
+    }
+
+    pub async fn with_option_index<R>(
+        &mut self,
+        index: Option<GitIndex>,
+        f: impl AsyncFnOnce(&Self) -> Result<R>,
+    ) -> Result<R> {
+        let new_index_path = index.map(|index| self.path_for_index(index));
+        let old_index_path = mem::replace(&mut self.index_file_path, new_index_path);
         let result = f(self).await;
-        self.index_file_path = None;
+        self.index_file_path = old_index_path;
         result
     }
 
-    fn path_for_index_id(&self, id: Uuid) -> PathBuf {
+    fn path_for_index(&self, index: GitIndex) -> PathBuf {
         self.working_directory
             .join(".git")
-            .join(format!("index-{}.tmp", id.to_string()))
+            .join(format!("index-{}.tmp", index.id.to_string()))
     }
 
     pub async fn run<S>(&self, args: impl IntoIterator<Item = S>) -> Result<String>
     where
         S: AsRef<OsStr>,
     {
+        let mut stdout = self.run_raw(args).await?;
+        if stdout.chars().last() == Some('\n') {
+            stdout.pop();
+        }
+        Ok(stdout)
+    }
+
+    /// Returns the result of the command without trimming the trailing newline.
+    pub async fn run_raw<S>(&self, args: impl IntoIterator<Item = S>) -> Result<String>
+    where
+        S: AsRef<OsStr>,
+    {
         let mut command = self.build_command(args);
         let output = command.output().await?;
         if output.status.success() {
-            anyhow::Ok(String::from_utf8(output.stdout)?.trim_end().to_string())
+            Ok(String::from_utf8(output.stdout)?)
         } else {
             Err(anyhow!(GitBinaryCommandError {
                 stdout: String::from_utf8_lossy(&output.stdout).to_string(),
@@ -1388,7 +1454,7 @@ impl GitBinary {
 
         let output = child.output().await?;
         if output.status.success() {
-            anyhow::Ok(String::from_utf8(output.stdout)?.trim_end().to_string())
+            Ok(String::from_utf8(output.stdout)?.trim_end().to_string())
         } else {
             Err(anyhow!(GitBinaryCommandError {
                 stdout: String::from_utf8_lossy(&output.stdout).to_string(),
@@ -1942,6 +2008,16 @@ mod tests {
                 )
             ]
         );
+        assert_eq!(
+            repo.load_index_text(Some(index), RepoPath::from_str("file1"))
+                .await,
+            None
+        );
+        assert_eq!(
+            repo.load_index_text(Some(index), RepoPath::from_str("file2"))
+                .await,
+            Some("file2\n".to_string())
+        );
 
         smol::fs::write(repo_dir.path().join("file2"), "file2-changed\n")
             .await
@@ -1962,6 +2038,16 @@ mod tests {
                     })
                 )
             ]
+        );
+        assert_eq!(
+            repo.load_index_text(Some(index), RepoPath::from_str("file1"))
+                .await,
+            None
+        );
+        assert_eq!(
+            repo.load_index_text(Some(index), RepoPath::from_str("file2"))
+                .await,
+            Some("file2\n".to_string())
         );
     }
 

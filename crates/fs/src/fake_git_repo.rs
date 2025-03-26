@@ -79,7 +79,11 @@ impl FakeGitRepository {
 impl GitRepository for FakeGitRepository {
     fn reload_index(&self) {}
 
-    fn load_index_text(&self, path: RepoPath) -> BoxFuture<Option<String>> {
+    fn load_index_text(
+        &self,
+        index: Option<GitIndex>,
+        path: RepoPath,
+    ) -> BoxFuture<Option<String>> {
         self.with_state_async(false, move |state| {
             state.index_contents.get(path.as_ref()).cloned()
         })

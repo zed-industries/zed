@@ -1230,7 +1230,7 @@ impl GitStore {
                         let index_text = if current_index_text.is_some() {
                             local_repo
                                 .repo()
-                                .load_index_text(relative_path.clone())
+                                .load_index_text(None, relative_path.clone())
                                 .await
                         } else {
                             None
