@@ -5,6 +5,7 @@ use crate::thread::{
 use crate::thread_store::ThreadStore;
 use crate::tool_use::{PendingToolUseStatus, ToolUse, ToolUseStatus};
 use crate::ui::{ContextPill, ToolReadyPopUp, ToolReadyPopupEvent};
+use crate::AssistantPanel;
 
 use assistant_settings::AssistantSettings;
 use collections::HashMap;
@@ -550,11 +551,22 @@ impl ActiveThread {
                                     let handle = window.window_handle();
                                     cx.activate(true); // Switch back to the Zed application
 
+                                    let workspace_handle = this.workspace.clone();
+
                                     // If there are multiple Zed windows, activate the correct one.
                                     cx.defer(move |cx| {
                                         handle
                                             .update(cx, |_view, window, _cx| {
                                                 window.activate_window();
+
+                                                if let Some(workspace) = workspace_handle.upgrade()
+                                                {
+                                                    workspace.update(_cx, |workspace, cx| {
+                                                        workspace.focus_panel::<AssistantPanel>(
+                                                            window, cx,
+                                                        );
+                                                    });
+                                                }
                                             })
                                             .log_err();
                                     });
