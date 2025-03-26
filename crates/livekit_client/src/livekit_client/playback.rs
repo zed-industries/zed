@@ -1,7 +1,7 @@
 use anyhow::{anyhow, Context as _, Result};
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait as _};
-use cpal::SupportedStreamConfig;
+use cpal::{StreamConfig, SupportedStreamConfig};
 use futures::{Stream, StreamExt as _};
 use gpui::{
     BackgroundExecutor, ScreenCaptureFrame, ScreenCaptureSource, ScreenCaptureStream, Task,
@@ -18,9 +18,11 @@ use livekit::webrtc::{
     video_stream::native::NativeVideoStream,
 };
 use parking_lot::Mutex;
+use std::slice;
 use std::time::Duration;
 use std::{borrow::Cow, collections::VecDeque, sync::Arc, thread};
 use util::{maybe, ResultExt as _};
+use webrtc_sys::audio_mixer::ffi::AudioFrameInfo;
 
 use crate::RemoteAudioTrack;
 
@@ -296,6 +298,62 @@ fn get_default_output() -> anyhow::Result<(cpal::Device, cpal::SupportedStreamCo
     Ok((output_device, output_config))
 }
 
+struct AudioMixerSource {
+    ssrc: i32,
+    sample_rate: i32,
+    num_channels: u16,
+    buffer: Mutex<VecDeque<Vec<i16>>>,
+}
+
+impl AudioMixerSource {
+    fn receive(&self, frame: AudioFrame) {
+        let frame_size = frame.samples_per_channel * frame.num_channels;
+        debug_assert!(frame.data.len() == frame_size as usize);
+        debug_assert!(frame.sample_rate as i32 == self.sample_rate);
+        debug_assert!(frame.num_channels as u16 == self.num_channels);
+
+        let mut buffer = self.buffer.lock();
+        buffer.push_back(frame.data.to_vec());
+        while buffer.len() > 10 {
+            dbg!("bye...");
+            buffer.pop_front();
+        }
+    }
+}
+
+impl webrtc_sys::audio_mixer::AudioMixerSource for AudioMixerSource {
+    fn ssrc(&self) -> i32 {
+        self.ssrc
+    }
+
+    fn preferred_sample_rate(&self) -> i32 {
+        self.sample_rate
+    }
+
+    fn get_audio_frame_with_info<'a>(
+        &self,
+        target_sample_rate: i32,
+        frame: webrtc_sys::audio_mixer::NativeAudioFrame<'a>,
+    ) -> webrtc_sys::audio_mixer::ffi::AudioFrameInfo {
+        debug_assert!(target_sample_rate == self.sample_rate);
+        let Some(buf) = self.buffer.lock().pop_front() else {
+            return AudioFrameInfo::Muted;
+        };
+
+        unsafe {
+            frame.update_frame(
+                0,
+                buf.as_ptr(),
+                self.sample_rate as usize / 100,
+                self.sample_rate,
+                self.num_channels as usize,
+            );
+        }
+
+        AudioFrameInfo::Normal
+    }
+}
+
 fn start_output_stream(
     apm: Arc<Mutex<apm::AudioProcessingModule>>,
     output_config: cpal::SupportedStreamConfig,
@@ -304,68 +362,77 @@ fn start_output_stream(
     background_executor: &BackgroundExecutor,
 ) -> (Task<()>, std::sync::mpsc::Sender<()>) {
     let buffer = Arc::new(Mutex::new(VecDeque::<i16>::new()));
-    let sample_rate = output_config.sample_rate();
+    // NOTE: the audio mixer can only do 16k, 32k, 48k
+    // (and irritatingly, macOS seems to default to 44.1k)
+    let sample_rate = 48000;
+
+    let mut mixer = webrtc_sys::audio_mixer::ffi::create_audio_mixer();
+    let source = Arc::new(AudioMixerSource {
+        ssrc: 1,
+        sample_rate,
+        num_channels: output_config.channels() as u16,
+        buffer: Mutex::default(),
+    });
 
     let mut stream = NativeAudioStream::new(
         track.rtc_track(),
-        sample_rate.0 as i32,
+        sample_rate,
         output_config.channels() as i32,
     );
 
     let receive_task = background_executor.spawn({
-        let buffer = buffer.clone();
+        let source = source.clone();
         async move {
-            const MS_OF_BUFFER: u32 = 100;
-            const MS_IN_SEC: u32 = 1000;
-            while let Some(mut frame) = stream.next().await {
-                let frame_size = frame.samples_per_channel * frame.num_channels;
-                debug_assert!(frame.data.len() == frame_size as usize);
-
-                let buffer_size =
-                    ((frame.sample_rate * frame.num_channels) / MS_IN_SEC * MS_OF_BUFFER) as usize;
-
-                let mut buffer = buffer.lock();
-                let new_size = buffer.len() + frame.data.len();
-                if new_size > buffer_size {
-                    let overflow = new_size - buffer_size;
-                    buffer.drain(0..overflow);
-                }
-
-                let data = frame.data.to_mut();
-
-                apm.lock()
-                    .process_reverse_stream(
-                        data,
-                        frame.sample_rate as i32,
-                        frame.num_channels as i32,
-                    )
-                    .log_err();
-                buffer.extend(data.iter());
+            while let Some(frame) = stream.next().await {
+                source.receive(frame);
             }
         }
     });
+    unsafe {
+        mixer.pin_mut().add_source(Box::new(
+            webrtc_sys::audio_mixer::AudioMixerSourceWrapper::new(source.clone()),
+        ));
+    }
+    let mut resampler = libwebrtc::native::audio_resampler::AudioResampler::default();
 
     // The _output_stream needs to be on it's own thread because it's !Send
     // and we experienced a deadlock when it's created on the main thread.
     let (thread, end_on_drop_rx) = std::sync::mpsc::channel::<()>();
     thread::spawn(move || {
         let output_stream = output_device.build_output_stream(
-            &output_config.config(),
+            &StreamConfig {
+                channels: output_config.channels(),
+                sample_rate: output_config.sample_rate(),
+                // NOTE: all operations in WebRTC happen on 10ms chunk lengths.
+                // We could set this to a multiple of 10ms..
+                buffer_size: cpal::BufferSize::Fixed(output_config.sample_rate().0 as u32 / 100),
+            },
             {
-                let buffer = buffer.clone();
                 move |data, _info| {
-                    let mut buffer = buffer.lock();
-                    if buffer.len() < data.len() {
+                    let len = unsafe { mixer.pin_mut().mix(output_config.channels() as usize) };
+                    let bytes = unsafe {
+                        resampler.remix_and_resample(
+                            std::slice::from_raw_parts(mixer.data(), len),
+                            sample_rate as u32 / 100,
+                            output_config.channels() as u32,
+                            sample_rate as u32,
+                            output_config.channels() as u32,
+                            output_config.sample_rate().0,
+                        )
+                    };
+                    if bytes.len() < data.len() {
                         // Instead of partially filling a buffer, output silence. If a partial
                         // buffer was outputted then this could lead to a perpetual state of
                         // outputting partial buffers as it never gets filled enough for a full
                         // frame.
                         data.fill(0);
                     } else {
-                        // SAFETY: We know that buffer has at least data.len() values in it.
-                        // because we just checked
-                        let mut drain = buffer.drain(..data.len());
-                        data.fill_with(|| unsafe { drain.next().unwrap_unchecked() });
+                        data.copy_from_slice(&bytes);
+
+                        // // SAFETY: We know that buffer has at least data.len() values in it.
+                        // // because we just checked
+                        // let mut drain = buffer.drain(..data.len());
+                        // data.fill_with(|| unsafe { drain.next().unwrap_unchecked() });
                     }
                 }
             },
@@ -731,6 +798,7 @@ pub(crate) async fn capture_local_wav_track(
     // Play the wav file and disconnect
     tokio::spawn({
         async move {
+            thread::sleep(Duration::from_millis(1000));
             const FRAME_DURATION: Duration = Duration::from_millis(1000); // Write 1s of audio at a time
 
             let max_samples = header.data_size as usize / size_of::<i16>();
@@ -759,6 +827,7 @@ pub(crate) async fn capture_local_wav_track(
                     audio_frame.data.to_mut()[i] = sample;
                 }
 
+                dbg!("wav");
                 source.capture_frame(&audio_frame).await.unwrap();
                 written_samples += frame_size;
             }
