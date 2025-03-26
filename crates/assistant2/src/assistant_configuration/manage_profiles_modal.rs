@@ -11,7 +11,6 @@ enum Mode {
 
 pub struct ManageProfilesModal {
     workspace: WeakEntity<Workspace>,
-    focus_handle: FocusHandle,
     mode: Mode,
 }
 
@@ -34,11 +33,8 @@ impl ManageProfilesModal {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let focus_handle = cx.focus_handle();
-
         Self {
             workspace,
-            focus_handle,
             mode: Mode::ChooseProfile(cx.new(|cx| {
                 let delegate = ProfilePickerDelegate::new(cx);
                 ProfilePicker::new(delegate, window, cx)
@@ -51,7 +47,9 @@ impl ModalView for ManageProfilesModal {}
 
 impl Focusable for ManageProfilesModal {
     fn focus_handle(&self, cx: &App) -> FocusHandle {
-        self.focus_handle.clone()
+        match &self.mode {
+            Mode::ChooseProfile(profile_picker) => profile_picker.read(cx).focus_handle(cx),
+        }
     }
 }
 
