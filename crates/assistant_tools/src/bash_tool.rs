@@ -45,11 +45,10 @@ impl Tool for BashTool {
     fn ui_text(&self, input: &serde_json::Value) -> String {
         match serde_json::from_value::<BashToolInput>(input.clone()) {
             Ok(input) => {
-                let cmd = MarkdownString::escape(&input.command);
                 if input.command.contains('\n') {
-                    format!("```bash\n{cmd}\n```")
+                    MarkdownString::code_block("bash", &input.command).0
                 } else {
-                    format!("`{cmd}`")
+                    MarkdownString::inline_code(&input.command).0
                 }
             }
             Err(_) => "Run bash command".to_string(),

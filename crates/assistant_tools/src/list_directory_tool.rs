@@ -63,8 +63,8 @@ impl Tool for ListDirectoryTool {
     fn ui_text(&self, input: &serde_json::Value) -> String {
         match serde_json::from_value::<ListDirectoryToolInput>(input.clone()) {
             Ok(input) => {
-                let path = MarkdownString::escape(&input.path);
-                format!("List the `{path}` directory's contents")
+                let path = MarkdownString::inline_code(&input.path);
+                format!("List the {path} directory's contents")
             }
             Err(_) => "List directory".to_string(),
         }
