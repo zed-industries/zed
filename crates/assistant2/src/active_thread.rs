@@ -6,16 +6,15 @@ use crate::thread_store::ThreadStore;
 use crate::tool_use::{PendingToolUseStatus, ToolUse, ToolUseStatus};
 use crate::ui::{ContextPill, ToolReadyPopUp, ToolReadyPopupEvent};
 use crate::AssistantPanel;
-
 use assistant_settings::AssistantSettings;
 use collections::HashMap;
 use editor::{Editor, MultiBuffer};
 use gpui::{
     linear_color_stop, linear_gradient, list, percentage, pulsating_between, AbsoluteLength,
     Animation, AnimationExt, AnyElement, App, ClickEvent, DefiniteLength, EdgesRefinement, Empty,
-    Entity, Focusable, Hsla, Length, ListAlignment, ListOffset, ListState, ScrollHandle,
-    StyleRefinement, Subscription, Task, TextStyleRefinement, Transformation, UnderlineStyle,
-    WeakEntity, WindowHandle,
+    Entity, Focusable, Hsla, Length, ListAlignment, ListOffset, ListState, MouseButton,
+    ScrollHandle, Stateful, StyleRefinement, Subscription, Task, TextStyleRefinement,
+    Transformation, UnderlineStyle, WeakEntity, WindowHandle,
 };
 use language::{Buffer, LanguageRegistry};
 use language_model::{LanguageModelRegistry, LanguageModelToolUseId, Role};
@@ -24,7 +23,7 @@ use settings::Settings as _;
 use std::sync::Arc;
 use std::time::Duration;
 use theme::ThemeSettings;
-use ui::{prelude::*, Disclosure, IconButton, KeyBinding, Tooltip};
+use ui::{prelude::*, Disclosure, IconButton, KeyBinding, Scrollbar, ScrollbarState, Tooltip};
 use util::ResultExt as _;
 use workspace::{OpenOptions, Workspace};
 
@@ -39,6 +38,7 @@ pub struct ActiveThread {
     save_thread_task: Option<Task<()>>,
     messages: Vec<MessageId>,
     list_state: ListState,
+    scrollbar_state: ScrollbarState,
     rendered_messages_by_id: HashMap<MessageId, RenderedMessage>,
     rendered_tool_use_labels: HashMap<LanguageModelToolUseId, Entity<Markdown>>,
     editing_message: Option<(MessageId, EditMessageState)>,
@@ -227,6 +227,14 @@ impl ActiveThread {
             cx.subscribe_in(&thread, window, Self::handle_thread_event),
         ];
 
+        let list_state = ListState::new(0, ListAlignment::Bottom, px(2048.), {
+            let this = cx.entity().downgrade();
+            move |ix, window: &mut Window, cx: &mut App| {
+                this.update(cx, |this, cx| this.render_message(ix, window, cx))
+                    .unwrap()
+            }
+        });
+
         let mut this = Self {
             language_registry,
             thread_store,
@@ -239,13 +247,8 @@ impl ActiveThread {
             rendered_tool_use_labels: HashMap::default(),
             expanded_tool_uses: HashMap::default(),
             expanded_thinking_segments: HashMap::default(),
-            list_state: ListState::new(0, ListAlignment::Bottom, px(1024.), {
-                let this = cx.entity().downgrade();
-                move |ix, window: &mut Window, cx: &mut App| {
-                    this.update(cx, |this, cx| this.render_message(ix, window, cx))
-                        .unwrap()
-                }
-            }),
+            list_state: list_state.clone(),
+            scrollbar_state: ScrollbarState::new(list_state),
             editing_message: None,
             last_error: None,
             pop_ups: Vec::new(),
@@ -1749,13 +1752,48 @@ impl ActiveThread {
                 .ok();
         }
     }
+
+    fn render_vertical_scrollbar(&self, cx: &mut Context<Self>) -> Stateful<Div> {
+        div()
+            .occlude()
+            .id("active-thread-scrollbar")
+            .on_mouse_move(cx.listener(|_, _, _, cx| {
+                cx.notify();
+                cx.stop_propagation()
+            }))
+            .on_hover(|_, _, cx| {
+                cx.stop_propagation();
+            })
+            .on_any_mouse_down(|_, _, cx| {
+                cx.stop_propagation();
+            })
+            .on_mouse_up(
+                MouseButton::Left,
+                cx.listener(|_, _, _, cx| {
+                    cx.stop_propagation();
+                }),
+            )
+            .on_scroll_wheel(cx.listener(|_, _, _, cx| {
+                cx.notify();
+            }))
+            .h_full()
+            .absolute()
+            .right_1()
+            .top_1()
+            .bottom_0()
+            .w(px(12.))
+            .cursor_default()
+            .children(Scrollbar::vertical(self.scrollbar_state.clone()))
+    }
 }
 
 impl Render for ActiveThread {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         v_flex()
             .size_full()
+            .relative()
             .child(list(self.list_state.clone()).flex_grow())
             .children(self.render_confirmations(cx))
+            .child(self.render_vertical_scrollbar(cx))
     }
 }

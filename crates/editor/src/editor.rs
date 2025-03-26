@@ -1409,6 +1409,14 @@ impl Editor {
             code_action_providers.push(Rc::new(project) as Rc<_>);
         }
 
+        let hide_mouse_while_typing = if !matches!(mode, EditorMode::SingleLine { .. }) {
+            EditorSettings::get_global(cx)
+                .hide_mouse_while_typing
+                .unwrap_or(true)
+        } else {
+            false
+        };
+
         let mut this = Self {
             focus_handle,
             show_cursor_when_unfocused: false,
@@ -1571,9 +1579,7 @@ impl Editor {
             text_style_refinement: None,
             load_diff_task: load_uncommitted_diff,
             mouse_cursor_hidden: false,
-            hide_mouse_while_typing: EditorSettings::get_global(cx)
-                .hide_mouse_while_typing
-                .unwrap_or(true),
+            hide_mouse_while_typing,
         };
         if let Some(breakpoints) = this.breakpoint_store.as_ref() {
             this._subscriptions
@@ -4320,6 +4326,10 @@ impl Editor {
             .as_ref()
             .map_or(true, |provider| provider.sort_completions());
 
+        let filter_completions = provider
+            .as_ref()
+            .map_or(true, |provider| provider.filter_completions());
+
         let id = post_inc(&mut self.next_completion_id);
         let task = cx.spawn_in(window, async move |editor, cx| {
             async move {
@@ -4368,8 +4378,15 @@ impl Editor {
                         completions.into(),
                     );
 
-                    menu.filter(query.as_deref(), cx.background_executor().clone())
-                        .await;
+                    menu.filter(
+                        if filter_completions {
+                            query.as_deref()
+                        } else {
+                            None
+                        },
+                        cx.background_executor().clone(),
+                    )
+                    .await;
 
                     menu.visible().then_some(menu)
                 };
@@ -16684,7 +16701,11 @@ impl Editor {
             self.scroll_manager.vertical_scroll_margin = editor_settings.vertical_scroll_margin;
             self.show_breadcrumbs = editor_settings.toolbar.breadcrumbs;
             self.cursor_shape = editor_settings.cursor_shape.unwrap_or_default();
-            self.hide_mouse_while_typing = editor_settings.hide_mouse_while_typing.unwrap_or(true);
+            self.hide_mouse_while_typing = if !matches!(self.mode, EditorMode::SingleLine { .. }) {
+                editor_settings.hide_mouse_while_typing.unwrap_or(true)
+            } else {
+                false
+            };
 
             if !self.hide_mouse_while_typing {
                 self.mouse_cursor_hidden = false;
@@ -18029,6 +18050,10 @@ pub trait CompletionProvider {
     ) -> bool;
 
     fn sort_completions(&self) -> bool {
+        true
+    }
+
+    fn filter_completions(&self) -> bool {
         true
     }
 }
