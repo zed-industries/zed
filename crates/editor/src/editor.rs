@@ -17449,6 +17449,7 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Editor>,
     ) -> Option<()> {
+        let pane_id = pane.read(cx).db_id()?;
         let workspace_id = window
             .window_handle()
             .downcast::<Workspace>()
@@ -17459,12 +17460,11 @@ impl Editor {
             })
             .flatten()?;
         let project = self.project.as_ref()?;
-        let pane_id = pane.read(cx).preview_item_id();
         let file = project::File::from_dyn(self.buffer().read(cx).as_singleton()?.read(cx).file())?;
         let buffer_path = file.worktree.read(cx).absolutize(&file.path).ok()?;
 
         // TODO kb config option to disable this behavior
-        let oo = DB.get_aa(&buffer_path, workspace_id, ());
+        let oo = DB.get_aa(&buffer_path, workspace_id, pane_id).log_err()?;
         // cx.spawn(|editor, cx| async move {
         //     //
         // })

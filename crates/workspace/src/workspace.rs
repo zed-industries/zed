@@ -4728,10 +4728,19 @@ impl Workspace {
                 breakpoints,
                 window_id: Some(window.window_handle().window_id().as_u64()),
             };
+            let panes = workspace.read(cx).panes.clone();
             return window.spawn(cx, async move |cx| {
-                persistence::DB
-                    .save_workspace(workspace, serialized_workspace, cx)
+                for (pane, pane_id) in persistence::DB
+                    .save_workspace(serialized_workspace)
                     .await
+                    .into_iter()
+                    .map(|(index, pane_id)| (&panes[index], pane_id))
+                {
+                    pane.update(cx, |pane, _| {
+                        pane.set_db_id(pane_id);
+                    })
+                    .ok();
+                }
             });
         }
         Task::ready(())

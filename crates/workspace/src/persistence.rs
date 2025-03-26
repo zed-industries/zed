@@ -12,7 +12,7 @@ use anyhow::{anyhow, bail, Context, Result};
 use client::DevServerProjectId;
 use collections::HashMap;
 use db::{define_connection, query, sqlez::connection::Connection, sqlez_macros::sql};
-use gpui::{point, size, Axis, Bounds, Entity, WindowBounds, WindowId};
+use gpui::{point, size, Axis, Bounds, WindowBounds, WindowId};
 use itertools::Itertools;
 use project::debugger::breakpoint_store::{BreakpointKind, BreakpointState, SerializedBreakpoint};
 
@@ -24,11 +24,11 @@ use sqlez::{
     statement::{SqlType, Statement},
 };
 
-use ui::{px, App};
+use ui::px;
 use util::{maybe, ResultExt};
 use uuid::Uuid;
 
-use crate::{Workspace, WorkspaceId};
+use crate::WorkspaceId;
 
 use model::{
     GroupId, LocalPaths, PaneId, SerializedItem, SerializedPane, SerializedPaneGroup,
@@ -766,10 +766,8 @@ impl WorkspaceDb {
     /// that used this workspace previously
     pub(crate) async fn save_workspace(
         &self,
-        workspace_handle: Entity<Workspace>,
         workspace: SerializedWorkspace,
-        cx: &mut App,
-    ) {
+    ) -> HashMap<usize, PaneId> {
         self.write(move |conn| {
             conn.with_savepoint("update_worktrees", || {
                 // Clear out panes and pane_groups
@@ -912,24 +910,14 @@ impl WorkspaceDb {
                 }
 
                 // Save center pane group
-                let new_pane_ids = Self::save_pane_group(conn, workspace.id, &workspace.center_group, None)
+                let new_pane_ids = Self::save_pane_group(conn, workspace.id, &workspace.center_group, 0, None)
                         .context("save pane group in save workspace")?;
-                let panes = workspace_handle.read(cx).panes();
-                let panes_to_update = new_pane_ids.into_iter().map(|(index, pane_id)| {
-                    let pane = panes.get(index).context("mismatched pane data");
-                    pane.map(|pane| (pane, pane_id))
-                }).collect::<anyhow::Result<Vec<_>>>().ok();
-                for (pane, pane_id) in panes_to_update.into_iter().flatten() {
-                    pane.update(cx, |pane, _| {
-                        pane.set_db_id(pane_id);
-                    });
-                }
-
-                Ok(())
+                Ok(new_pane_ids)
             })
-            .log_err();
+            .log_err()
+            .unwrap_or_default()
         })
-        .await;
+        .await
     }
 
     pub(crate) async fn get_or_create_ssh_project(
@@ -1246,6 +1234,7 @@ impl WorkspaceDb {
         conn: &Connection,
         workspace_id: WorkspaceId,
         pane_group: &SerializedPaneGroup,
+        position: usize,
         parent: Option<(GroupId, usize)>,
     ) -> Result<HashMap<usize, PaneId>> {
         match pane_group {
@@ -1254,7 +1243,7 @@ impl WorkspaceDb {
                 children,
                 flexes,
             } => {
-                let (parent_id, position) = parent.unzip();
+                let (parent_id, parent_position) = parent.unzip();
 
                 let flex_string = flexes
                     .as_ref()
@@ -1264,7 +1253,7 @@ impl WorkspaceDb {
                     INSERT INTO pane_groups(
                         workspace_id,
                         parent_group_id,
-                        position,
+                        parent_position,
                         axis,
                         flexes
                     )
@@ -1273,7 +1262,7 @@ impl WorkspaceDb {
                 ))?((
                     workspace_id,
                     parent_id,
-                    position,
+                    parent_position,
                     *axis,
                     flex_string,
                 ))?
@@ -1285,6 +1274,7 @@ impl WorkspaceDb {
                         conn,
                         workspace_id,
                         group,
+                        position,
                         Some((group_id, position)),
                     )?;
                     pane_ids.extend(new_pane_ids);
@@ -1294,7 +1284,7 @@ impl WorkspaceDb {
             }
             SerializedPaneGroup::Pane(pane) => {
                 let pane_id = Self::save_pane(conn, workspace_id, pane, parent)?;
-                Ok(HashMap::from_iter(vec![(pane_id, pane_id)]))
+                Ok(HashMap::from_iter(vec![(position, pane_id)]))
             }
         }
     }

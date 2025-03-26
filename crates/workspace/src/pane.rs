@@ -3138,6 +3138,10 @@ impl Pane {
     pub(crate) fn set_db_id(&mut self, pane_id: PaneId) {
         self.db_id = Some(pane_id);
     }
+
+    pub fn db_id(&self) -> Option<i64> {
+        self.db_id
+    }
 }
 
 impl Focusable for Pane {
