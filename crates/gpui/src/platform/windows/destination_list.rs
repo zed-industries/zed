@@ -40,6 +40,7 @@ impl DockMenuItem {
     }
 }
 
+// This code is based on the example from Microsoft:
 // https://github.com/microsoft/Windows-classic-samples/blob/main/Samples/Win7Samples/winui/shell/appshellintegration/RecipePropertyHandler/RecipePropertyHandler.cpp
 pub(crate) fn update_jump_list(
     entries: &[&Vec<String>],
@@ -52,11 +53,15 @@ pub(crate) fn update_jump_list(
     Ok(removed)
 }
 
+// Copied from:
+// https://github.com/microsoft/windows-rs/blob/0fc3c2e5a13d4316d242bdeb0a52af611eba8bd4/crates/libs/windows/src/Windows/Win32/Storage/EnhancedStorage/mod.rs#L1881
 const PKEY_TITLE: PROPERTYKEY = PROPERTYKEY {
     fmtid: GUID::from_u128(0xf29f85e0_4ff9_1068_ab91_08002b27b3d9),
     pid: 2,
 };
 
+// Copied from:
+// https://github.com/microsoft/windows-rs/blob/0fc3c2e5a13d4316d242bdeb0a52af611eba8bd4/crates/libs/windows/src/Windows/Win32/Storage/EnhancedStorage/mod.rs#L1525
 const PKEY_LINK_ARGS: PROPERTYKEY = PROPERTYKEY {
     fmtid: GUID::from_u128(0x436f2667_14e2_4feb_b30a_146c53b5b674),
     pid: 100,
