@@ -136,7 +136,7 @@ pub struct ScrollManager {
     forbid_vertical_scroll: bool,
 
     dragging_minimap: bool,
-    show_minimap_slider: bool,
+    show_minimap_thumb: bool,
 }
 
 impl ScrollManager {
@@ -153,7 +153,7 @@ impl ScrollManager {
             visible_line_count: None,
             forbid_vertical_scroll: false,
             dragging_minimap: false,
-            show_minimap_slider: false,
+            show_minimap_thumb: false,
         }
     }
 
@@ -317,22 +317,22 @@ impl ScrollManager {
         self.show_scrollbars
     }
 
-    pub fn show_minimap_slider(&mut self, cx: &mut Context<Editor>) {
-        if !self.show_minimap_slider {
-            self.show_minimap_slider = true;
+    pub fn show_minimap_thumb(&mut self, cx: &mut Context<Editor>) {
+        if !self.show_minimap_thumb {
+            self.show_minimap_thumb = true;
             cx.notify();
         }
     }
 
-    pub fn hide_minimap_slider(&mut self, cx: &mut Context<Editor>) {
-        if self.show_minimap_slider {
-            self.show_minimap_slider = false;
+    pub fn hide_minimap_thumb(&mut self, cx: &mut Context<Editor>) {
+        if self.show_minimap_thumb {
+            self.show_minimap_thumb = false;
             cx.notify();
         }
     }
 
-    pub fn minimap_slider_visible(&mut self) -> bool {
-        self.show_minimap_slider
+    pub fn minimap_thumb_visible(&mut self) -> bool {
+        self.show_minimap_thumb
     }
 
     pub fn autoscroll_request(&self) -> Option<Autoscroll> {

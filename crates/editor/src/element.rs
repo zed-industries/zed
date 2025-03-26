@@ -5,9 +5,8 @@ use crate::{
         Block, BlockContext, BlockStyle, DisplaySnapshot, HighlightedChunk, ToDisplayPoint,
     },
     editor_settings::{
-        CurrentLineHighlight, DoubleClickInMultibuffer, Minimap, MinimapSlider,
-        MultiCursorModifier, ScrollBeyondLastLine, ScrollbarAxes, ScrollbarDiagnostics,
-        ShowMinimap, ShowScrollbar,
+        CurrentLineHighlight, DoubleClickInMultibuffer, Minimap, Minimapthumb, MultiCursorModifier,
+        ScrollBeyondLastLine, ScrollbarAxes, ScrollbarDiagnostics, ShowMinimap, ShowScrollbar,
     },
     git::blame::GitBlame,
     hover_popover::{
@@ -1432,10 +1431,10 @@ impl EditorElement {
             .editor
             .update(cx, |editor, cx| editor.clone(window, cx));
 
-        let mut show_slider = match minimap_settings.slider {
-            MinimapSlider::Always => true,
-            MinimapSlider::Hover => self.editor.update(cx, |editor, _| {
-                editor.scroll_manager.minimap_slider_visible()
+        let mut show_thumb = match minimap_settings.thumb {
+            Minimapthumb::Always => true,
+            Minimapthumb::Hover => self.editor.update(cx, |editor, _| {
+                editor.scroll_manager.minimap_thumb_visible()
             }),
         };
 
@@ -1456,35 +1455,32 @@ impl EditorElement {
         let editor_viewport_height = bounds.size.height;
         let editor_visible_lines = editor_viewport_height / line_height;
 
-        let slider_height = editor_visible_lines * minimap_line_height;
+        let thumb_height = editor_visible_lines * minimap_line_height;
 
-        // The actual maximum scroll_top we allow. Ensures the slider doesn't go past the last line.
+        // The actual maximum scroll_top we allow. Ensures the thumb doesn't go past the last line.
         let max_scroll_top = num_lines - 1.;
 
         // The total line height of the contents of the minimap. This ensures we can overscroll the contents until only the
         // last line is visible, matching the behavior of the main editor.
         let minimap_contents_full_height = max_scroll_top + editor_visible_lines;
 
-        // Clamp the slider to the bounds of the minimap, or the height of the minimap contents, whichever is smaller.
-        let slider_top_max = px(f32::max(
+        // Clamp the thumb to the bounds of the minimap, or the height of the minimap contents, whichever is smaller.
+        let thumb_top_max = px(f32::max(
             0.,
             f32::min(
                 minimap_height.0,
                 minimap_contents_full_height * minimap_line_height.0,
-            ) - slider_height.0,
+            ) - thumb_height.0,
         ));
-        show_slider &= slider_top_max.0 > 0.;
+        show_thumb &= thumb_top_max.0 > 0.;
         let minimap_progress_pct = (editor_scroll_top / max_scroll_top).clamp(0., 1.);
-        let slider_top = minimap_progress_pct * slider_top_max;
-        let slider_lines_from_top = slider_top.0 / minimap_line_height.0;
-        let minimap_scroll_top = editor_scroll_top - slider_lines_from_top;
+        let thumb_top = minimap_progress_pct * thumb_top_max;
+        let thumb_lines_from_top = thumb_top.0 / minimap_line_height.0;
+        let minimap_scroll_top = editor_scroll_top - thumb_lines_from_top;
 
-        let slider_bounds = Bounds::new(
-            point(
-                minimap_bounds.origin.x,
-                minimap_bounds.origin.y + slider_top,
-            ),
-            size(minimap_bounds.size.width, slider_height),
+        let thumb_bounds = Bounds::new(
+            point(minimap_bounds.origin.x, minimap_bounds.origin.y + thumb_top),
+            size(minimap_bounds.size.width, thumb_height),
         );
 
         editor_entity.update(cx, |editor, cx| {
@@ -1501,8 +1497,8 @@ impl EditorElement {
         Some(MinimapLayout {
             minimap: minimap_elem,
             hitbox: window.insert_hitbox(minimap_bounds, false),
-            slider_hitbox: window.insert_hitbox(slider_bounds, false),
-            show_slider,
+            thumb_hitbox: window.insert_hitbox(thumb_bounds, false),
+            show_thumb,
             minimap_line_height,
             minimap_scroll_top,
             max_scroll_top,
@@ -5402,15 +5398,15 @@ impl EditorElement {
     fn paint_minimap(&self, layout: &mut EditorLayout, window: &mut Window, cx: &mut App) {
         if let Some(mut layout) = layout.minimap.take() {
             let minimap_hitbox = layout.hitbox.clone();
-            let slider_hitbox = layout.slider_hitbox.clone();
+            let thumb_hitbox = layout.thumb_hitbox.clone();
 
             window.paint_layer(layout.hitbox.bounds, |window| {
                 window.with_element_namespace("minimap", |window| {
                     layout.minimap.paint(window, cx);
-                    if layout.show_slider {
+                    if layout.show_thumb {
                         window.paint_layer(minimap_hitbox.bounds, |window| {
                             window.paint_quad(quad(
-                                slider_hitbox.bounds,
+                                thumb_hitbox.bounds,
                                 Corners::default(),
                                 cx.theme().colors().scrollbar_thumb_background,
                                 Edges {
@@ -5447,15 +5443,15 @@ impl EditorElement {
                             if (minimap_hitbox.top()..minimap_hitbox.bottom()).contains(&y) {
                                 let mut position = editor.scroll_position(cx);
 
-                                let slider_top = f32::max(
+                                let thumb_top = f32::max(
                                     event.position.y.0
                                         - minimap_hitbox.bounds.origin.y.0
-                                        - (slider_hitbox.bounds.size.height.0 / 2.),
+                                        - (thumb_hitbox.bounds.size.height.0 / 2.),
                                     0.,
                                 );
-                                let pct_progress = slider_top
+                                let pct_progress = thumb_top
                                     / (minimap_hitbox.bounds.size.height.0
-                                        - slider_hitbox.bounds.size.height.0);
+                                        - thumb_hitbox.bounds.size.height.0);
                                 position.y = pct_progress * layout.contents_full_height;
                                 editor.set_scroll_position(position, window, cx);
                             }
@@ -5465,9 +5461,9 @@ impl EditorElement {
                             editor.scroll_manager.set_is_dragging_minimap(false, cx);
 
                             if minimap_hitbox.is_hovered(window) {
-                                editor.scroll_manager.show_minimap_slider(cx);
+                                editor.scroll_manager.show_minimap_thumb(cx);
                             } else {
-                                editor.scroll_manager.hide_minimap_slider(cx);
+                                editor.scroll_manager.hide_minimap_thumb(cx);
                             }
                         }
                         mouse_position = event.position;
@@ -5503,11 +5499,11 @@ impl EditorElement {
 
                             let mut position = editor.scroll_position(cx);
 
-                            let slider_top = event.position.y
+                            let thumb_top = event.position.y
                                 - minimap_hitbox.bounds.origin.y
-                                - (slider_hitbox.bounds.size.height / 2.);
+                                - (thumb_hitbox.bounds.size.height / 2.);
                             position.y = (layout.minimap_scroll_top
-                                + (slider_top.0 / layout.minimap_line_height.0))
+                                + (thumb_top.0 / layout.minimap_line_height.0))
                                 .clamp(0., layout.max_scroll_top);
                             editor.set_scroll_position(position, window, cx);
                             cx.stop_propagation();
@@ -8249,10 +8245,10 @@ impl ScrollbarLayout {
 struct MinimapLayout {
     pub minimap: AnyElement,
     pub hitbox: Hitbox,
-    pub slider_hitbox: Hitbox,
+    pub thumb_hitbox: Hitbox,
     pub minimap_scroll_top: f32,
     pub minimap_line_height: Pixels,
-    pub show_slider: bool,
+    pub show_thumb: bool,
     pub max_scroll_top: f32,
     pub contents_full_height: f32,
 }

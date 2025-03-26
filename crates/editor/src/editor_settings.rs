@@ -116,7 +116,7 @@ pub struct Scrollbar {
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
 pub struct Minimap {
     pub show: ShowMinimap,
-    pub slider: MinimapSlider,
+    pub thumb: MinimapThumb,
     pub width: f32,
     pub font_size: f32,
 }
@@ -164,15 +164,15 @@ pub enum ShowMinimap {
     Never,
 }
 
-/// When to show the minimap slider.
+/// When to show the minimap thumb.
 ///
 /// Default: hover
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
-pub enum MinimapSlider {
-    /// Show the minimap slider only when the mouse is hovering over the minimap.
+pub enum MinimapThumb {
+    /// Show the minimap thumb only when the mouse is hovering over the minimap.
     Hover,
-    /// Always show the minimap slider.
+    /// Always show the minimap thumb.
     Always,
 }
 
@@ -435,10 +435,10 @@ pub struct MinimapContent {
     /// Default: never
     pub show: Option<ShowMinimap>,
 
-    /// When to show the minimap slider.
+    /// When to show the minimap thumb.
     ///
     /// Default: hover
-    pub slider: Option<MinimapSlider>,
+    pub thumb: Option<MinimapThumb>,
 
     /// The width of the minimap in pixels.
     ///
