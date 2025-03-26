@@ -5,9 +5,7 @@ use futures::{future::Shared, FutureExt};
 use gpui::{prelude::*, App, Entity, Task};
 use language::Buffer;
 use project::{
-    git_store::{
-        GitStore, GitStoreCheckpoint, GitStoreVirtualBranch, GitStoreVirtualBranchChanges,
-    },
+    git_store::{GitStore, GitStoreCheckpoint, GitStoreIndex},
     Project,
 };
 use util::TryFutureExt;
@@ -19,9 +17,8 @@ pub enum ChangeAuthor {
 }
 
 pub struct ThreadDiff {
-    changes: GitStoreVirtualBranchChanges,
+    base: Shared<Task<Option<GitStoreIndex>>>,
     diffs_by_buffer: HashMap<Entity<Buffer>, Entity<BufferDiff>>,
-    branch_without_assistant_changes: Shared<Task<Option<GitStoreVirtualBranch>>>,
     last_checkpoint: Option<Task<Result<GitStoreCheckpoint>>>,
     project: Entity<Project>,
     git_store: Entity<GitStore>,
@@ -30,9 +27,7 @@ pub struct ThreadDiff {
 impl ThreadDiff {
     pub fn new(project: Entity<Project>, cx: &mut Context<Self>) -> Self {
         let mut this = Self {
-            changes: GitStoreVirtualBranchChanges::default(),
-            diffs_by_buffer: HashMap::default(),
-            branch_without_assistant_changes: cx
+            base: cx
                 .background_spawn(
                     project
                         .read(cx)
@@ -42,6 +37,7 @@ impl ThreadDiff {
                         .log_err(),
                 )
                 .shared(),
+            diffs_by_buffer: HashMap::default(),
             last_checkpoint: None,
             git_store: project.read(cx).git_store().clone(),
             project,
@@ -54,7 +50,7 @@ impl ThreadDiff {
         let last_checkpoint = self.last_checkpoint.take();
         let git_store = self.project.read(cx).git_store().clone();
         let checkpoint = git_store.read(cx).checkpoint(cx);
-        let virtual_branch = self.branch_without_assistant_changes.clone();
+        let virtual_branch = self.base.clone();
         self.last_checkpoint = Some(cx.spawn(async move |this, cx| {
             let checkpoint = checkpoint.await?;
 
@@ -79,22 +75,18 @@ impl ThreadDiff {
                     }
                 }
 
-                let changes = git_store
-                    .read_with(cx, |store, cx| {
-                        store.changes_for_virtual_branch(virtual_branch, cx)
-                    })?
-                    .await
-                    .unwrap_or_default();
-                this.update(cx, |this, cx| this.set_changes(changes, cx))?;
+                todo!();
+                // let changes = git_store
+                //     .read_with(cx, |store, cx| {
+                //         store.changes_for_virtual_branch(virtual_branch, cx)
+                //     })?
+                //     .await
+                //     .unwrap_or_default();
+                // this.update(cx, |this, cx| this.set_changes(changes, cx))?;
             }
 
             Ok(checkpoint)
         }));
-    }
-
-    fn set_changes(&mut self, changes: GitStoreVirtualBranchChanges, cx: &mut Context<Self>) {
-        self.changes = changes;
-        cx.notify();
     }
 }
 
@@ -107,18 +99,19 @@ impl git_ui::project_diff::DiffSource for ThreadDiff {
     fn status(&self, cx: &App) -> Vec<(project::ProjectPath, git::status::FileStatus, bool)> {
         let mut results = Vec::new();
 
-        for (repo, repo_path, change) in self.changes.iter(&self.git_store, cx) {
-            let Some(project_path) = repo.read(cx).repo_path_to_project_path(repo_path) else {
-                continue;
-            };
+        todo!();
+        // for (repo, repo_path, change) in self.changes.iter(&self.git_store, cx) {
+        //     let Some(project_path) = repo.read(cx).repo_path_to_project_path(repo_path) else {
+        //         continue;
+        //     };
 
-            results.push((
-                project_path,
-                // todo!("compute the correct status")
-                git::status::FileStatus::worktree(git::status::StatusCode::Modified),
-                false,
-            ))
-        }
+        //     results.push((
+        //         project_path,
+        //         // todo!("compute the correct status")
+        //         git::status::FileStatus::worktree(git::status::StatusCode::Modified),
+        //         false,
+        //     ))
+        // }
 
         results
     }

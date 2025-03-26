@@ -648,8 +648,14 @@ impl GitRepository for RealGitRepository {
         self.executor
             .spawn(async move {
                 let working_directory = working_directory?;
-                let git = GitBinary::new(git_binary_path, working_directory, executor);
-                git.run(&args).await?.parse()
+                let mut git = GitBinary::new(git_binary_path, working_directory, executor);
+                let status = if let Some(index) = index {
+                    git.with_index(index.id, async |git| git.run(&args).await)
+                        .await?
+                } else {
+                    git.run(&args).await?
+                };
+                status.parse()
             })
             .boxed()
     }
@@ -1672,7 +1678,7 @@ fn checkpoint_author_envs() -> HashMap<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::status::FileStatus;
+    use crate::status::{FileStatus, StatusCode, TrackedStatus};
     use gpui::TestAppContext;
     use unindent::Unindent;
 
@@ -1928,12 +1934,13 @@ mod tests {
                 .unwrap()
                 .entries
                 .as_ref(),
-            vec![] // vec![(
-                   //     RepoPath::from_str("file1"),
-                   //     FileStatus:: {
-                   //         branch_text: "".into()
-                   //     }
-                   // )]
+            vec![
+                (RepoPath::from_str("file1"), FileStatus::Untracked),
+                (
+                    RepoPath::from_str("file2"),
+                    FileStatus::index(StatusCode::Added)
+                )
+            ]
         );
 
         smol::fs::write(repo_dir.path().join("file2"), "file2-changed\n")
@@ -1945,19 +1952,16 @@ mod tests {
                 .unwrap()
                 .entries
                 .as_ref(),
-            vec![],
-            // (
-            //     RepoPath::from_str("file2"),
-            //     VirtualBranchChange {
-            //         branch_text: "file2".into()
-            //     }
-            // ),
-            // (
-            //     RepoPath::from_str("file1"),
-            //     VirtualBranchChange {
-            //         branch_text: "".into()
-            //     }
-            // )
+            vec![
+                (RepoPath::from_str("file1"), FileStatus::Untracked),
+                (
+                    RepoPath::from_str("file2"),
+                    FileStatus::Tracked(TrackedStatus {
+                        worktree_status: StatusCode::Modified,
+                        index_status: StatusCode::Added,
+                    })
+                )
+            ]
         );
     }
 
