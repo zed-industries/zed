@@ -1452,13 +1452,7 @@ impl Project {
         config: DebugAdapterConfig,
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<Session>>> {
-        let worktree = maybe!({
-            if let Some(cwd) = &config.cwd {
-                Some(self.find_worktree(cwd.as_path(), cx)?.0)
-            } else {
-                self.worktrees(cx).next()
-            }
-        });
+        let worktree = maybe!({ self.worktrees(cx).next() });
 
         let Some(worktree) = &worktree else {
             return Task::ready(Err(anyhow!("Failed to find a worktree")));

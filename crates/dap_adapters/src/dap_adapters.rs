@@ -1,4 +1,3 @@
-mod custom;
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 mod gdb;
 mod go;
@@ -9,9 +8,8 @@ mod python;
 
 use std::{collections::HashMap, sync::Arc};
 
-use anyhow::{anyhow, bail, Result};
+use anyhow::{anyhow, Result};
 use async_trait::async_trait;
-use custom::CustomDebugAdapter;
 use dap::adapters::{
     self, AdapterVersion, DapDelegate, DebugAdapter, DebugAdapterBinary, DebugAdapterName,
     GithubRepo,
@@ -25,13 +23,10 @@ use php::PhpDebugAdapter;
 use python::PythonDebugAdapter;
 use serde_json::{json, Value};
 use sysinfo::{Pid, Process};
-use task::{CustomArgs, DebugAdapterConfig, DebugAdapterKind, DebugConnectionType, TCPHost};
+use task::{DebugAdapterConfig, DebugAdapterKind, TCPHost};
 
 pub async fn build_adapter(kind: &DebugAdapterKind) -> Result<Arc<dyn DebugAdapter>> {
     match kind {
-        DebugAdapterKind::Custom(start_args) => {
-            Ok(Arc::new(CustomDebugAdapter::new(start_args.clone()).await?))
-        }
         DebugAdapterKind::Python(host) => Ok(Arc::new(PythonDebugAdapter::new(host).await?)),
         DebugAdapterKind::Php(host) => Ok(Arc::new(PhpDebugAdapter::new(host.clone()).await?)),
         DebugAdapterKind::Javascript(host) => {
@@ -59,7 +54,6 @@ pub fn attach_processes<'a>(
             .iter()
             .filter(|(pid, _)| pid.as_u32() == std::process::id())
             .collect::<Vec<_>>(),
-        DebugAdapterKind::Custom(_) => CustomDebugAdapter::attach_processes(processes),
         DebugAdapterKind::Javascript(_) => JsDebugAdapter::attach_processes(processes),
         DebugAdapterKind::Lldb => LldbDebugAdapter::attach_processes(processes),
         _ => processes.iter().collect::<Vec<_>>(),

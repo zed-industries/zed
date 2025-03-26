@@ -21,7 +21,7 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
-use task::DebugAdapterConfig;
+use task::{DebugAdapterConfig, DebugTaskDefinition};
 use util::ResultExt;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -288,7 +288,7 @@ pub trait DebugAdapter: 'static + Send + Sync {
     ) -> Result<DebugAdapterBinary>;
 
     /// Should return base configuration to make the debug adapter work
-    fn request_args(&self, config: &DebugAdapterConfig) -> Value;
+    fn request_args(&self, config: &DebugTaskDefinition) -> Value;
 }
 
 #[cfg(any(test, feature = "test-support"))]

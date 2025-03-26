@@ -1,7 +1,8 @@
 use crate::*;
-use dap::transport::TcpTransport;
+use dap::{transport::TcpTransport, DebugRequestType};
 use gpui::AsyncApp;
 use std::{ffi::OsStr, net::Ipv4Addr, path::PathBuf};
+use task::DebugTaskDefinition;
 
 pub(crate) struct PythonDebugAdapter {
     port: u16,
@@ -126,17 +127,28 @@ impl DebugAdapter for PythonDebugAdapter {
                 port: self.port,
                 timeout: self.timeout,
             }),
-            cwd: config.cwd.clone(),
+            cwd: None,
             envs: None,
         })
     }
 
-    fn request_args(&self, config: &DebugAdapterConfig) -> Value {
-        json!({
-            "program": config.program,
-            "subProcess": true,
-            "cwd": config.cwd,
-            "redirectOutput": true,
-        })
+    fn request_args(&self, config: &DebugTaskDefinition) -> Value {
+        match &config.request {
+            DebugRequestType::Launch(launch_config) => {
+                json!({
+                    "program": launch_config.program,
+                    "subProcess": true,
+                    "cwd": launch_config.cwd,
+                    "redirectOutput": true,
+                })
+            }
+            dap::DebugRequestType::Attach(attach_config) => {
+                json!({
+                    "subProcess": true,
+                    "redirectOutput": true,
+                    "processId": attach_config.process_id
+                })
+            }
+        }
     }
 }

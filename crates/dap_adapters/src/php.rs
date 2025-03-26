@@ -2,6 +2,7 @@ use adapters::latest_github_release;
 use dap::{adapters::TcpArguments, transport::TcpTransport};
 use gpui::AsyncApp;
 use std::{net::Ipv4Addr, path::PathBuf};
+use task::DebugTaskDefinition;
 
 use crate::*;
 
@@ -93,7 +94,7 @@ impl DebugAdapter for PhpDebugAdapter {
                 host: self.host,
                 timeout: self.timeout,
             }),
-            cwd: config.cwd.clone(),
+            cwd: None,
             envs: None,
         })
     }
@@ -114,10 +115,18 @@ impl DebugAdapter for PhpDebugAdapter {
         Ok(())
     }
 
-    fn request_args(&self, config: &DebugAdapterConfig) -> Value {
-        json!({
-            "program": config.program,
-            "cwd": config.cwd,
-        })
+    fn request_args(&self, config: &DebugTaskDefinition) -> Value {
+        match &config.request {
+            dap::DebugRequestType::Attach(_) => {
+                // php adapter does not support attaching
+                json!({})
+            }
+            dap::DebugRequestType::Launch(launch_config) => {
+                json!({
+                    "program": launch_config.program,
+                    "cwd": launch_config.cwd,
+                })
+            }
+        }
     }
 }

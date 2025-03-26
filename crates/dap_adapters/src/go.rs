@@ -1,6 +1,7 @@
 use dap::transport::TcpTransport;
 use gpui::AsyncApp;
 use std::{ffi::OsStr, net::Ipv4Addr, path::PathBuf};
+use task::DebugTaskDefinition;
 
 use crate::*;
 
@@ -80,7 +81,7 @@ impl DebugAdapter for GoDebugAdapter {
                 "--listen".into(),
                 format!("{}:{}", self.host, self.port).into(),
             ]),
-            cwd: config.cwd.clone(),
+            cwd: None,
             envs: None,
             connection: Some(adapters::TcpArguments {
                 host: self.host,
@@ -90,11 +91,17 @@ impl DebugAdapter for GoDebugAdapter {
         })
     }
 
-    fn request_args(&self, config: &DebugAdapterConfig) -> Value {
-        json!({
-            "program": config.program,
-            "cwd": config.cwd,
-            "subProcess": true,
-        })
+    fn request_args(&self, config: &DebugTaskDefinition) -> Value {
+        match &config.request {
+            dap::DebugRequestType::Attach(attach_config) => {
+                json!({
+                    "processId": attach_config.process_id
+                })
+            }
+            dap::DebugRequestType::Launch(launch_config) => json!({
+                "program": launch_config.program,
+                "cwd": launch_config.cwd,
+            }),
+        }
     }
 }

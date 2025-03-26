@@ -119,7 +119,7 @@ impl DebugAdapterClient {
                 Ok(message) => message,
                 Err(e) => break Err(e.into()),
             };
-
+            dbg!(&message);
             match message {
                 Message::Event(ev) => {
                     log::debug!("Client {} received event `{}`", client_id.0, &ev);
@@ -164,7 +164,7 @@ impl DebugAdapterClient {
             command: R::COMMAND.to_string(),
             arguments: Some(serialized_arguments),
         };
-
+        dbg!(&request);
         self.transport_delegate
             .add_pending_request(sequence_id, callback_tx)
             .await;

@@ -24,12 +24,12 @@ pub(crate) struct AttachModalDelegate {
     matches: Vec<StringMatch>,
     placeholder_text: Arc<str>,
     project: Entity<project::Project>,
-    debug_config: task::DebugAdapterConfig,
+    debug_config: task::DebugTaskDefinition,
     candidates: Option<Vec<Candidate>>,
 }
 
 impl AttachModalDelegate {
-    pub fn new(project: Entity<project::Project>, debug_config: task::DebugAdapterConfig) -> Self {
+    pub fn new(project: Entity<project::Project>, debug_config: task::DebugTaskDefinition) -> Self {
         Self {
             project,
             debug_config,
@@ -49,7 +49,7 @@ pub struct AttachModal {
 impl AttachModal {
     pub fn new(
         project: Entity<project::Project>,
-        debug_config: task::DebugAdapterConfig,
+        debug_config: task::DebugTaskDefinition,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -206,7 +206,7 @@ impl PickerDelegate for AttachModalDelegate {
             DebugRequestType::Attach(config) => {
                 config.process_id = Some(candidate.pid);
             }
-            DebugRequestType::Launch => {
+            DebugRequestType::Launch(_) => {
                 debug_panic!("Debugger attach modal used on launch debug config");
                 return;
             }
@@ -214,7 +214,9 @@ impl PickerDelegate for AttachModalDelegate {
 
         let config = self.debug_config.clone();
         self.project
-            .update(cx, |project, cx| project.start_debug_session(config, cx))
+            .update(cx, |project, cx| {
+                project.start_debug_session(config.into(), cx)
+            })
             .detach_and_log_err(cx);
 
         cx.emit(DismissEvent);

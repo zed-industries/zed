@@ -4,7 +4,7 @@ use anyhow::Result;
 use async_trait::async_trait;
 use gpui::AsyncApp;
 use sysinfo::{Pid, Process};
-use task::{DebugAdapterConfig, DebugRequestType};
+use task::{DebugAdapterConfig, DebugRequestType, DebugTaskDefinition};
 
 use crate::*;
 
@@ -48,7 +48,7 @@ impl DebugAdapter for LldbDebugAdapter {
             command: lldb_dap_path,
             arguments: None,
             envs: None,
-            cwd: config.cwd.clone(),
+            cwd: None,
             connection: None,
         })
     }
@@ -75,21 +75,30 @@ impl DebugAdapter for LldbDebugAdapter {
         unimplemented!("LLDB debug adapter cannot be installed by Zed (yet)")
     }
 
-    fn request_args(&self, config: &DebugAdapterConfig) -> Value {
-        let pid = if let DebugRequestType::Attach(attach_config) = &config.request {
-            attach_config.process_id
-        } else {
-            None
-        };
-
-        json!({
-            "program": config.program,
+    fn request_args(&self, config: &DebugTaskDefinition) -> Value {
+        let mut args = json!({
             "request": match config.request {
-                DebugRequestType::Launch => "launch",
+                DebugRequestType::Launch(_) => "launch",
                 DebugRequestType::Attach(_) => "attach",
             },
-            "pid": pid,
-            "cwd": config.cwd,
-        })
+        });
+        let map = args.as_object_mut().unwrap();
+        match &config.request {
+            DebugRequestType::Attach(attach) => {
+                map.insert("pid".into(), attach.process_id.into());
+            }
+            DebugRequestType::Launch(launch) => {
+                map.insert("program".into(), launch.program.clone().into());
+                map.insert(
+                    "cwd".into(),
+                    launch
+                        .cwd
+                        .as_ref()
+                        .map(|s| s.to_string_lossy().into_owned())
+                        .into(),
+                );
+            }
+        }
+        args
     }
 }

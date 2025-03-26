@@ -14,7 +14,6 @@ use anyhow::{anyhow, Result};
 use collections::{HashMap, HashSet, IndexMap, IndexSet};
 use dap::adapters::{DebugAdapter, DebugAdapterBinary};
 use dap::messages::Response;
-use dap::OutputEventCategory;
 use dap::{
     adapters::{DapDelegate, DapStatus},
     client::{DebugAdapterClient, SessionId},
@@ -22,6 +21,7 @@ use dap::{
     Capabilities, ContinueArguments, EvaluateArgumentsContext, Module, Source, StackFrameId,
     SteppingGranularity, StoppedEvent, VariableReference,
 };
+use dap::{DebugRequestType, OutputEventCategory};
 use dap_adapters::build_adapter;
 use futures::channel::oneshot;
 use futures::{future::Shared, FutureExt};
@@ -42,7 +42,7 @@ use std::{
     path::Path,
     sync::Arc,
 };
-use task::DebugAdapterConfig;
+use task::{DebugAdapterConfig, DebugTaskDefinition};
 use text::{PointUtf16, ToPointUtf16};
 use util::{merge_json_value_into, ResultExt};
 
@@ -467,20 +467,36 @@ impl LocalMode {
         initialized_rx: oneshot::Receiver<()>,
         cx: &App,
     ) -> Task<Result<()>> {
-        let mut raw = self.adapter.request_args(&self.config);
+        let (mut raw, is_launch) = match &self.config.request {
+            task::DebugRequestDisposition::UserConfigured(_) => {
+                let Ok(raw) = DebugTaskDefinition::try_from(self.config.clone()) else {
+                    debug_assert!(false, "This part of code should be unreachable in practice");
+                    return Task::ready(Err(anyhow!(
+                        "Expected debug config conversion to succeed"
+                    )));
+                };
+                let is_launch = matches!(raw.request, DebugRequestType::Launch(_));
+                let raw = self.adapter.request_args(&raw);
+                (raw, is_launch)
+            }
+            task::DebugRequestDisposition::ReverseRequest(start_debugging_request_arguments) => (
+                start_debugging_request_arguments.configuration.clone(),
+                matches!(
+                    start_debugging_request_arguments.request,
+                    dap::StartDebuggingRequestArgumentsRequest::Launch
+                ),
+            ),
+        };
+
         merge_json_value_into(
             self.config.initialize_args.clone().unwrap_or(json!({})),
             &mut raw,
         );
-
         // Of relevance: https://github.com/microsoft/vscode/issues/4902#issuecomment-368583522
-        let launch = match &self.config.request {
-            dap::DebugRequestType::Launch => {
-                self.request(Launch { raw }, cx.background_executor().clone())
-            }
-            dap::DebugRequestType::Attach(_) => {
-                self.request(Attach { raw }, cx.background_executor().clone())
-            }
+        let launch = if is_launch {
+            self.request(Launch { raw }, cx.background_executor().clone())
+        } else {
+            self.request(Attach { raw }, cx.background_executor().clone())
         };
 
         let configuration_done_supported = ConfigurationDone::is_supported(capabilities);

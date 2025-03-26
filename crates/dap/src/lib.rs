@@ -30,8 +30,6 @@ pub fn test_config(
             }),
         )),
         request,
-        program: None,
-        cwd: None,
         initialize_args: None,
     }
 }

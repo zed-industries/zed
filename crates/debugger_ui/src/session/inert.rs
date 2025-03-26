@@ -4,7 +4,7 @@ use dap::{DebugAdapterConfig, DebugAdapterKind, DebugRequestType};
 use editor::{Editor, EditorElement, EditorStyle};
 use gpui::{App, AppContext, Entity, EventEmitter, FocusHandle, Focusable, TextStyle, WeakEntity};
 use settings::Settings as _;
-use task::TCPHost;
+use task::{DebugRequestDisposition, DebugTaskDefinition, LaunchConfig, TCPHost};
 use theme::ThemeSettings;
 use ui::{
     div, h_flex, relative, v_flex, ActiveTheme as _, ButtonCommon, ButtonLike, Clickable, Context,
@@ -35,7 +35,7 @@ impl SpawnMode {
 impl From<DebugRequestType> for SpawnMode {
     fn from(request: DebugRequestType) -> Self {
         match request {
-            DebugRequestType::Launch => SpawnMode::Launch,
+            DebugRequestType::Launch(_) => SpawnMode::Launch,
             DebugRequestType::Attach(_) => SpawnMode::Attach,
         }
     }
@@ -55,7 +55,7 @@ impl InertState {
     pub(super) fn new(
         workspace: WeakEntity<Workspace>,
         default_cwd: &str,
-        debug_config: Option<DebugAdapterConfig>,
+        debug_config: Option<DebugTaskDefinition>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -75,7 +75,10 @@ impl InertState {
 
         let program = debug_config
             .as_ref()
-            .and_then(|config| config.program.to_owned());
+            .and_then(|config| match &config.request {
+                DebugRequestType::Attach(_) => None,
+                DebugRequestType::Launch(launch_config) => Some(launch_config.program.clone()),
+            });
 
         let program_editor = cx.new(|cx| {
             let mut editor = Editor::single_line(window, cx);
@@ -88,7 +91,10 @@ impl InertState {
         });
 
         let cwd = debug_config
-            .and_then(|config| config.cwd.map(|cwd| cwd.to_owned()))
+            .and_then(|config| match &config.request {
+                DebugRequestType::Attach(_) => None,
+                DebugRequestType::Launch(launch_config) => launch_config.cwd.clone(),
+            })
             .unwrap_or_else(|| PathBuf::from(default_cwd));
 
         let cwd_editor = cx.new(|cx| {
@@ -116,7 +122,7 @@ impl Focusable for InertState {
 }
 
 pub(crate) enum InertEvent {
-    Spawned { config: DebugAdapterConfig },
+    Spawned { config: DebugTaskDefinition },
 }
 
 impl EventEmitter<InertEvent> for InertState {}
@@ -144,12 +150,14 @@ impl Render for InertState {
                             )
                         }));
                     cx.emit(InertEvent::Spawned {
-                        config: DebugAdapterConfig {
+                        config: DebugTaskDefinition {
                             label: "hard coded".into(),
                             kind,
-                            request: DebugRequestType::Launch,
-                            program: Some(program),
-                            cwd: Some(cwd),
+                            request: DebugRequestType::Launch(LaunchConfig {
+                                program,
+                                cwd: Some(cwd),
+                            }),
+
                             initialize_args: None,
                         },
                     });
@@ -301,17 +309,14 @@ impl InertState {
     }
 
     fn attach(&self, window: &mut Window, cx: &mut Context<Self>) {
-        let cwd = PathBuf::from(self.cwd_editor.read(cx).text(cx));
         let kind = kind_for_label(self.selected_debugger.as_deref().unwrap_or_else(|| {
             unimplemented!("Automatic selection of a debugger based on users project")
         }));
 
-        let config = DebugAdapterConfig {
+        let config = DebugTaskDefinition {
             label: "hard coded attach".into(),
             kind,
             request: DebugRequestType::Attach(task::AttachConfig { process_id: None }),
-            program: None,
-            cwd: Some(cwd),
             initialize_args: None,
         };
 

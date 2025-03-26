@@ -4,7 +4,7 @@ use gpui::AsyncApp;
 use regex::Regex;
 use std::{collections::HashMap, net::Ipv4Addr, path::PathBuf};
 use sysinfo::{Pid, Process};
-use task::DebugRequestType;
+use task::{DebugRequestType, DebugTaskDefinition};
 
 use crate::*;
 
@@ -101,7 +101,7 @@ impl DebugAdapter for JsDebugAdapter {
                 self.port.to_string().into(),
                 self.host.to_string().into(),
             ]),
-            cwd: config.cwd.clone(),
+            cwd: None,
             envs: None,
             connection: Some(adapters::TcpArguments {
                 host: self.host,
@@ -127,22 +127,31 @@ impl DebugAdapter for JsDebugAdapter {
         return Ok(());
     }
 
-    fn request_args(&self, config: &DebugAdapterConfig) -> Value {
-        let pid = if let DebugRequestType::Attach(attach_config) = &config.request {
-            attach_config.process_id
-        } else {
-            None
-        };
-
-        json!({
-            "program": config.program,
+    fn request_args(&self, config: &DebugTaskDefinition) -> Value {
+        let mut args = json!({
             "type": "pwa-node",
             "request": match config.request {
-                DebugRequestType::Launch => "launch",
+                DebugRequestType::Launch(_) => "launch",
                 DebugRequestType::Attach(_) => "attach",
             },
-            "processId": pid,
-            "cwd": config.cwd,
-        })
+        });
+        let map = args.as_object_mut().unwrap();
+        match &config.request {
+            DebugRequestType::Attach(attach) => {
+                map.insert("processId".into(), attach.process_id.into());
+            }
+            DebugRequestType::Launch(launch) => {
+                map.insert("program".into(), launch.program.clone().into());
+                map.insert(
+                    "cwd".into(),
+                    launch
+                        .cwd
+                        .as_ref()
+                        .map(|s| s.to_string_lossy().into_owned())
+                        .into(),
+                );
+            }
+        }
+        args
     }
 }

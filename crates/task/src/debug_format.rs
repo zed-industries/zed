@@ -1,6 +1,6 @@
+use dap_types::StartDebuggingRequestArguments;
 use schemars::{gen::SchemaSettings, JsonSchema};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 use std::net::Ipv4Addr;
 use std::path::PathBuf;
 use util::ResultExt;
@@ -45,24 +45,50 @@ pub struct AttachConfig {
     pub process_id: Option<u32>,
 }
 
-/// Represents the type that will determine which request to call on the debug adapter
-#[derive(Default, Deserialize, Serialize, PartialEq, Eq, JsonSchema, Clone, Debug)]
-#[serde(rename_all = "lowercase")]
-pub enum DebugRequestType {
-    /// Call the `launch` request on the debug adapter
-    #[default]
-    Launch,
-    /// Call the `attach` request on the debug adapter
-    Attach(AttachConfig),
+/// Represents the launch request information of the debug adapter
+#[derive(Deserialize, Serialize, PartialEq, Eq, JsonSchema, Clone, Debug)]
+pub struct LaunchConfig {
+    /// The program that you trying to debug
+    pub program: String,
+    /// The current working directory of your project
+    pub cwd: Option<PathBuf>,
 }
 
+/// Represents the type that will determine which request to call on the debug adapter
+#[derive(Deserialize, Serialize, PartialEq, Eq, JsonSchema, Clone, Debug)]
+#[serde(rename_all = "lowercase")]
+pub enum DebugRequestType {
+    /// Call the `attach` request on the debug adapter
+    Attach(AttachConfig),
+    /// Call the `launch` request on the debug adapter
+    Launch(LaunchConfig),
+}
+
+/// Represents a request for starting the debugger.
+/// Contrary to `DebugRequestType`, `DebugRequestDisposition` is not Serializable.
+#[derive(PartialEq, Eq, Clone, Debug)]
+pub enum DebugRequestDisposition {
+    /// Debug session configured by the user.
+    UserConfigured(DebugRequestType),
+    /// Debug session configured by the debug adapter
+    ReverseRequest(StartDebuggingRequestArguments),
+}
+
+impl DebugRequestDisposition {
+    /// Get the current working directory from request if it's a launch request and exits
+    pub fn cwd(&self) -> Option<PathBuf> {
+        match self {
+            Self::UserConfigured(DebugRequestType::Launch(launch_config)) => {
+                launch_config.cwd.clone()
+            }
+            _ => None,
+        }
+    }
+}
 /// The Debug adapter to use
 #[derive(Deserialize, Serialize, PartialEq, Eq, JsonSchema, Clone, Debug)]
 #[serde(rename_all = "lowercase", tag = "adapter")]
 pub enum DebugAdapterKind {
-    /// Manually setup starting a debug adapter
-    /// The argument within is used to start the DAP
-    Custom(CustomArgs),
     /// Use debugpy
     Python(TCPHost),
     /// Use vscode-php-debug
@@ -86,7 +112,6 @@ impl DebugAdapterKind {
     /// Returns the display name for the adapter kind
     pub fn display_name(&self) -> &str {
         match self {
-            Self::Custom(_) => "Custom",
             Self::Python(_) => "Python",
             Self::Php(_) => "PHP",
             Self::Javascript(_) => "JavaScript",
@@ -100,40 +125,73 @@ impl DebugAdapterKind {
     }
 }
 
-/// Custom arguments used to setup a custom debugger
-#[derive(Deserialize, Serialize, PartialEq, Eq, JsonSchema, Clone, Debug)]
-pub struct CustomArgs {
-    /// The connection that a custom debugger should use
-    #[serde(flatten)]
-    pub connection: DebugConnectionType,
-    /// The cli command used to start the debug adapter e.g. `python3`, `node` or the adapter binary
-    pub command: String,
-    /// The cli arguments used to start the debug adapter
-    pub args: Option<Vec<String>>,
-    /// The cli envs used to start the debug adapter
-    pub envs: Option<HashMap<String, String>>,
-}
-
 /// Represents the configuration for the debug adapter
-#[derive(Deserialize, Serialize, PartialEq, Eq, JsonSchema, Clone, Debug)]
-#[serde(rename_all = "snake_case")]
+#[derive(PartialEq, Eq, Clone, Debug)]
 pub struct DebugAdapterConfig {
     /// Name of the debug task
     pub label: String,
     /// The type of adapter you want to use
-    #[serde(flatten)]
     pub kind: DebugAdapterKind,
     /// The type of request that should be called on the debug adapter
-    #[serde(default)]
-    pub request: DebugRequestType,
-    /// The program that you trying to debug
-    pub program: Option<String>,
-    /// The current working directory of your project
-    pub cwd: Option<PathBuf>,
+    pub request: DebugRequestDisposition,
     /// Additional initialization arguments to be sent on DAP initialization
     pub initialize_args: Option<serde_json::Value>,
 }
 
+impl From<DebugTaskDefinition> for DebugAdapterConfig {
+    fn from(def: DebugTaskDefinition) -> Self {
+        Self {
+            label: def.label,
+            kind: def.kind,
+            request: DebugRequestDisposition::UserConfigured(def.request),
+            initialize_args: def.initialize_args,
+        }
+    }
+}
+
+impl TryFrom<DebugAdapterConfig> for DebugTaskDefinition {
+    type Error = ();
+    fn try_from(def: DebugAdapterConfig) -> Result<Self, Self::Error> {
+        let request = match def.request {
+            DebugRequestDisposition::UserConfigured(debug_request_type) => debug_request_type,
+            DebugRequestDisposition::ReverseRequest(_) => return Err(()),
+        };
+
+        Ok(Self {
+            label: def.label,
+            kind: def.kind,
+            request,
+            initialize_args: def.initialize_args,
+        })
+    }
+}
+
+impl DebugTaskDefinition {
+    /// Translate from debug definition to a task template
+    pub fn to_zed_format(self) -> anyhow::Result<TaskTemplate> {
+        let command = "".to_string();
+
+        let cwd = if let DebugRequestType::Launch(ref launch) = self.request {
+            launch
+                .cwd
+                .as_ref()
+                .map(|path| path.to_string_lossy().into_owned())
+        } else {
+            None
+        };
+        let label = self.label.clone();
+        let task_type = TaskType::Debug(self);
+
+        Ok(TaskTemplate {
+            label,
+            command,
+            args: vec![],
+            task_type,
+            cwd,
+            ..Default::default()
+        })
+    }
+}
 /// Represents the type of the debugger adapter connection
 #[derive(Deserialize, Serialize, PartialEq, Eq, JsonSchema, Clone, Debug)]
 #[serde(rename_all = "lowercase", tag = "connection")]
@@ -150,46 +208,14 @@ pub enum DebugConnectionType {
 pub struct DebugTaskDefinition {
     /// The adapter to run
     #[serde(flatten)]
-    kind: DebugAdapterKind,
+    pub kind: DebugAdapterKind,
     /// The type of request that should be called on the debug adapter
-    #[serde(default)]
-    request: DebugRequestType,
+    #[serde(flatten)]
+    pub request: DebugRequestType,
     /// Name of the debug task
-    label: String,
-    /// Program to run the debugger on
-    program: Option<String>,
-    /// The current working directory of your project
-    cwd: Option<String>,
+    pub label: String,
     /// Additional initialization arguments to be sent on DAP initialization
-    initialize_args: Option<serde_json::Value>,
-}
-
-impl DebugTaskDefinition {
-    /// Translate from debug definition to a task template
-    pub fn to_zed_format(self) -> anyhow::Result<TaskTemplate> {
-        let command = "".to_string();
-        let cwd = self.cwd.clone().map(PathBuf::from).take_if(|p| p.exists());
-
-        let task_type = TaskType::Debug(DebugAdapterConfig {
-            label: self.label.clone(),
-            kind: self.kind,
-            request: self.request,
-            program: self.program,
-            cwd: cwd.clone(),
-            initialize_args: self.initialize_args,
-        });
-
-        let args: Vec<String> = Vec::new();
-
-        Ok(TaskTemplate {
-            label: self.label,
-            command,
-            args,
-            task_type,
-            cwd: self.cwd,
-            ..Default::default()
-        })
-    }
+    pub initialize_args: Option<serde_json::Value>,
 }
 
 /// A group of Debug Tasks defined in a JSON file.

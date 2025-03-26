@@ -19,6 +19,7 @@ use project::{
 use rpc::proto::{self};
 use settings::Settings;
 use std::{any::TypeId, path::PathBuf};
+use task::DebugTaskDefinition;
 use terminal_view::terminal_panel::TerminalPanel;
 use ui::prelude::*;
 use util::ResultExt;
@@ -52,7 +53,7 @@ pub struct DebugPanel {
     project: WeakEntity<Project>,
     workspace: WeakEntity<Workspace>,
     _subscriptions: Vec<Subscription>,
-    pub(crate) last_inert_config: Option<DebugAdapterConfig>,
+    pub(crate) last_inert_config: Option<DebugTaskDefinition>,
 }
 
 impl DebugPanel {

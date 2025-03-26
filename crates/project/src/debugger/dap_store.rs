@@ -23,7 +23,6 @@ use dap::{
     Capabilities, CompletionItem, CompletionsArguments, ErrorResponse, EvaluateArguments,
     EvaluateArgumentsContext, EvaluateResponse, RunInTerminalRequestArguments,
     SetExpressionArguments, SetVariableArguments, Source, StartDebuggingRequestArguments,
-    StartDebuggingRequestArgumentsRequest,
 };
 use fs::Fs;
 use futures::{
@@ -51,7 +50,7 @@ use std::{
     sync::{atomic::Ordering::SeqCst, Arc},
 };
 use std::{collections::VecDeque, sync::atomic::AtomicU32};
-use task::{AttachConfig, DebugAdapterConfig, DebugRequestType};
+use task::{DebugAdapterConfig, DebugRequestDisposition};
 use util::ResultExt as _;
 use worktree::Worktree;
 
@@ -431,7 +430,6 @@ impl DapStore {
             request.arguments.unwrap_or_default(),
         )
         .expect("To parse StartDebuggingRequestArguments");
-
         let worktree = local_store
             .worktree_store
             .update(cx, |this, _| this.worktrees().next())
@@ -445,15 +443,8 @@ impl DapStore {
             DebugAdapterConfig {
                 label: config.label,
                 kind: config.kind,
-                request: match &args.request {
-                    StartDebuggingRequestArgumentsRequest::Launch => DebugRequestType::Launch,
-                    StartDebuggingRequestArgumentsRequest::Attach => {
-                        DebugRequestType::Attach(AttachConfig::default())
-                    }
-                },
-                program: config.program,
-                cwd: config.cwd,
-                initialize_args: Some(args.configuration),
+                request: DebugRequestDisposition::ReverseRequest(args),
+                initialize_args: config.initialize_args.clone(),
             },
             &worktree,
             Some(parent_session.clone()),
