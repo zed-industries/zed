@@ -1,7 +1,7 @@
 use gpui::{
     actions, div, img, prelude::*, px, rgb, size, App, AppContext, Application, Bounds, ClickEvent,
-    Context, KeyBinding, Menu, MenuItem, Point, SharedString, TitlebarOptions, Window,
-    WindowBounds, WindowOptions,
+    Context, KeyBinding, Menu, MenuItem, SharedString, TitlebarOptions, Window, WindowBounds,
+    WindowOptions,
 };
 use reqwest_client::ReqwestClient;
 use std::sync::Arc;
@@ -9,7 +9,7 @@ use std::sync::Arc;
 struct ImageGallery {
     image_key: String,
     items_count: usize,
-    total_rendered_count: usize,
+    total_count: usize,
 }
 
 impl ImageGallery {
@@ -20,7 +20,7 @@ impl ImageGallery {
             .as_millis();
 
         self.image_key = format!("{}", t);
-        self.total_rendered_count += self.items_count;
+        self.total_count += self.items_count;
         cx.notify();
     }
 }
@@ -35,12 +35,12 @@ impl Render for ImageGallery {
             .font_family(".SystemUIFont")
             .bg(rgb(0xE9E9E9))
             .overflow_y_scroll()
-            .p_5()
+            .p_4()
             .size_full()
             .flex()
             .flex_col()
             .items_center()
-            .gap_4()
+            .gap_2()
             .child(
                 div()
                     .w_full()
@@ -49,7 +49,7 @@ impl Render for ImageGallery {
                     .justify_between()
                     .child(format!(
                         "Example to show images and test memory usage (Rendered: {} images).",
-                        self.total_rendered_count
+                        self.total_count
                     ))
                     .child(
                         div()
@@ -72,7 +72,7 @@ impl Render for ImageGallery {
                     .flex_row()
                     .flex_wrap()
                     .gap_x_4()
-                    .gap_y_3()
+                    .gap_y_2()
                     .justify_around()
                     .children(
                         (0..self.items_count)
@@ -106,10 +106,11 @@ fn main() {
                 ..Default::default()
             }),
 
-            window_bounds: Some(WindowBounds::Windowed(Bounds {
-                size: size(px(1100.), px(800.)),
-                origin: Point::new(px(200.), px(200.)),
-            })),
+            window_bounds: Some(WindowBounds::Windowed(Bounds::centered(
+                None,
+                size(px(1100.), px(860.)),
+                cx,
+            ))),
 
             ..Default::default()
         };
@@ -117,8 +118,8 @@ fn main() {
         cx.open_window(window_options, |_, cx| {
             cx.new(|_| ImageGallery {
                 image_key: "".into(),
-                items_count: 100,
-                total_rendered_count: 0,
+                items_count: 99,
+                total_count: 0,
             })
         })
         .unwrap();
