@@ -658,7 +658,9 @@ impl ToolchainLister for PythonToolchainProvider {
                 }
 
                 let name_and_kind = match (&toolchain.name, &toolchain.kind) {
-                    (Some(name), Some(kind)) => Some(format!("({name}; {})", python_env_kind_display(kind))),
+                    (Some(name), Some(kind)) => {
+                        Some(format!("({name}; {})", python_env_kind_display(kind)))
+                    }
                     (Some(name), None) => Some(format!("({name})")),
                     (None, Some(kind)) => Some(format!("({})", python_env_kind_display(kind))),
                     (None, None) => None,
