@@ -304,6 +304,7 @@ impl Server {
             .add_request_handler(forward_read_only_project_request::<proto::GetReferences>)
             .add_request_handler(forward_find_search_candidates_request)
             .add_request_handler(forward_read_only_project_request::<proto::GetDocumentHighlights>)
+            .add_request_handler(forward_read_only_project_request::<proto::GetDocumentSymbols>)
             .add_request_handler(forward_read_only_project_request::<proto::GetProjectSymbols>)
             .add_request_handler(forward_read_only_project_request::<proto::OpenBufferForSymbol>)
             .add_request_handler(forward_read_only_project_request::<proto::OpenBufferById>)
