@@ -1401,23 +1401,14 @@ impl EditorElement {
         &self,
         window: &mut Window,
         cx: &mut App,
-        snapshot: &EditorSnapshot,
         num_lines: f32,
-        minimap_settings: Minimap,
+        minimap_visible: bool,
+        minimap_settings: &Minimap,
         bounds: Bounds<Pixels>,
         scrollbar_layout: Option<&EditorScrollbars>,
         line_height: Pixels,
         visible_range: Range<DisplayRow>,
     ) -> Option<MinimapLayout> {
-        if snapshot.mode != EditorMode::Full {
-            return None;
-        }
-
-        let minimap_visible = match minimap_settings.show {
-            ShowMinimap::Always => true,
-            ShowMinimap::Never => false,
-            ShowMinimap::Auto => scrollbar_layout.is_some_and(|layout| layout.visible),
-        };
         if !minimap_visible {
             return None;
         }
@@ -1504,6 +1495,19 @@ impl EditorElement {
             max_scroll_top,
             contents_full_height: minimap_contents_full_height,
         })
+    }
+
+    fn is_minimap_visible(
+        snapshot: &EditorSnapshot,
+        minimap_settings: &Minimap,
+        scrollbar_width: Pixels,
+    ) -> bool {
+        snapshot.mode == EditorMode::Full
+            && match minimap_settings.show {
+                ShowMinimap::Always => true,
+                ShowMinimap::Never => false,
+                ShowMinimap::Auto => scrollbar_width > Pixels::ZERO,
+            }
     }
 
     fn get_minimap_bounds(
@@ -6803,7 +6807,12 @@ impl Element for EditorElement {
                     let em_advance = window.text_system().em_advance(font_id, font_size).unwrap();
 
                     let minimap_settings = EditorSettings::get_global(cx).minimap;
-                    let minimap_width = if matches!(snapshot.mode, EditorMode::Full) {
+                    let minimap_visible = Self::is_minimap_visible(
+                        &snapshot,
+                        &minimap_settings,
+                        style.scrollbar_width,
+                    );
+                    let minimap_width = if minimap_visible {
                         px(minimap_settings.width)
                     } else {
                         Pixels::ZERO
@@ -7669,9 +7678,9 @@ impl Element for EditorElement {
                         self.layout_minimap(
                             window,
                             cx,
-                            &snapshot,
                             max_row.as_f32(),
-                            minimap_settings,
+                            minimap_visible,
+                            &minimap_settings,
                             bounds,
                             scrollbars_layout.as_ref(),
                             line_height,
