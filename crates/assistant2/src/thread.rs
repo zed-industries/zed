@@ -3,14 +3,15 @@ use std::io::Write;
 use std::sync::Arc;
 
 use anyhow::{Context as _, Result};
-use assistant_tool::{ActionLog, ToolWorkingSet};
+use assistant_settings::AssistantSettings;
+use assistant_tool::{ActionLog, Tool, ToolWorkingSet};
 use chrono::{DateTime, Utc};
 use collections::{BTreeMap, HashMap, HashSet};
 use fs::Fs;
 use futures::future::Shared;
 use futures::{FutureExt, StreamExt as _};
 use git;
-use gpui::{App, AppContext, Context, Entity, EventEmitter, SharedString, Task};
+use gpui::{App, AppContext, Context, Entity, EventEmitter, SharedString, Task, WeakEntity};
 use language_model::{
     LanguageModel, LanguageModelCompletionEvent, LanguageModelRegistry, LanguageModelRequest,
     LanguageModelRequestMessage, LanguageModelRequestTool, LanguageModelToolResult,
@@ -22,8 +23,8 @@ use project::{Project, Worktree};
 use prompt_store::{
     AssistantSystemPromptContext, PromptBuilder, RulesFile, WorktreeInfoForSystemPrompt,
 };
-use scripting_tool::{ScriptingSession, ScriptingTool};
 use serde::{Deserialize, Serialize};
+use settings::Settings;
 use util::{maybe, post_inc, ResultExt as _, TryFutureExt as _};
 use uuid::Uuid;
 
@@ -186,8 +187,6 @@ pub struct Thread {
     action_log: Entity<ActionLog>,
     last_restore_checkpoint: Option<LastRestoreCheckpoint>,
     pending_checkpoint: Option<ThreadCheckpoint>,
-    scripting_session: Entity<ScriptingSession>,
-    scripting_tool_use: ToolUseState,
     initial_project_snapshot: Shared<Task<Option<Arc<ProjectSnapshot>>>>,
     cumulative_token_usage: TokenUsage,
     feedback: Option<ThreadFeedback>,
@@ -219,8 +218,6 @@ impl Thread {
             last_restore_checkpoint: None,
             pending_checkpoint: None,
             tool_use: ToolUseState::new(tools.clone()),
-            scripting_session: cx.new(|cx| ScriptingSession::new(project.clone(), cx)),
-            scripting_tool_use: ToolUseState::new(tools),
             action_log: cx.new(|_| ActionLog::new()),
             initial_project_snapshot: {
                 let project_snapshot = Self::project_snapshot(project, cx);
@@ -249,14 +246,7 @@ impl Thread {
                 .unwrap_or(0),
         );
         let tool_use =
-            ToolUseState::from_serialized_messages(tools.clone(), &serialized.messages, |name| {
-                name != ScriptingTool::NAME
-            });
-        let scripting_tool_use =
-            ToolUseState::from_serialized_messages(tools.clone(), &serialized.messages, |name| {
-                name == ScriptingTool::NAME
-            });
-        let scripting_session = cx.new(|cx| ScriptingSession::new(project.clone(), cx));
+            ToolUseState::from_serialized_messages(tools.clone(), &serialized.messages, |_| true);
 
         Self {
             id,
@@ -295,8 +285,6 @@ impl Thread {
             tools,
             tool_use,
             action_log: cx.new(|_| ActionLog::new()),
-            scripting_session,
-            scripting_tool_use,
             initial_project_snapshot: Task::ready(serialized.initial_project_snapshot).shared(),
             // TODO: persist token usage?
             cumulative_token_usage: TokenUsage::default(),
@@ -348,6 +336,24 @@ impl Thread {
 
     pub fn tools(&self) -> &Arc<ToolWorkingSet> {
         &self.tools
+    }
+
+    pub fn pending_tool(&self, id: &LanguageModelToolUseId) -> Option<&PendingToolUse> {
+        self.tool_use
+            .pending_tool_uses()
+            .into_iter()
+            .find(|tool_use| &tool_use.id == id)
+    }
+
+    pub fn tools_needing_confirmation(&self) -> impl Iterator<Item = &PendingToolUse> {
+        self.tool_use
+            .pending_tool_uses()
+            .into_iter()
+            .filter(|tool_use| tool_use.status.needs_confirmation())
+    }
+
+    pub fn has_pending_tool_uses(&self) -> bool {
+        !self.tool_use.pending_tool_uses().is_empty()
     }
 
     pub fn checkpoint_for_message(&self, id: MessageId) -> Option<ThreadCheckpoint> {
@@ -480,23 +486,16 @@ impl Thread {
 
     /// Returns whether all of the tool uses have finished running.
     pub fn all_tools_finished(&self) -> bool {
-        let mut all_pending_tool_uses = self
-            .tool_use
-            .pending_tool_uses()
-            .into_iter()
-            .chain(self.scripting_tool_use.pending_tool_uses());
-
         // If the only pending tool uses left are the ones with errors, then
         // that means that we've finished running all of the pending tools.
-        all_pending_tool_uses.all(|tool_use| tool_use.status.is_error())
+        self.tool_use
+            .pending_tool_uses()
+            .iter()
+            .all(|tool_use| tool_use.status.is_error())
     }
 
     pub fn tool_uses_for_message(&self, id: MessageId, cx: &App) -> Vec<ToolUse> {
         self.tool_use.tool_uses_for_message(id, cx)
-    }
-
-    pub fn scripting_tool_uses_for_message(&self, id: MessageId, cx: &App) -> Vec<ToolUse> {
-        self.scripting_tool_use.tool_uses_for_message(id, cx)
     }
 
     pub fn tool_results_for_message(&self, id: MessageId) -> Vec<&LanguageModelToolResult> {
@@ -507,19 +506,8 @@ impl Thread {
         self.tool_use.tool_result(id)
     }
 
-    pub fn scripting_tool_results_for_message(
-        &self,
-        id: MessageId,
-    ) -> Vec<&LanguageModelToolResult> {
-        self.scripting_tool_use.tool_results_for_message(id)
-    }
-
     pub fn message_has_tool_results(&self, message_id: MessageId) -> bool {
         self.tool_use.message_has_tool_results(message_id)
-    }
-
-    pub fn message_has_scripting_tool_results(&self, message_id: MessageId) -> bool {
-        self.scripting_tool_use.message_has_tool_results(message_id)
     }
 
     pub fn insert_user_message(
@@ -642,7 +630,6 @@ impl Thread {
                         tool_uses: this
                             .tool_uses_for_message(message.id, cx)
                             .into_iter()
-                            .chain(this.scripting_tool_uses_for_message(message.id, cx))
                             .map(|tool_use| SerializedToolUse {
                                 id: tool_use.id,
                                 name: tool_use.name,
@@ -652,7 +639,6 @@ impl Thread {
                         tool_results: this
                             .tool_results_for_message(message.id)
                             .into_iter()
-                            .chain(this.scripting_tool_results_for_message(message.id))
                             .map(|tool_result| SerializedToolResult {
                                 tool_use_id: tool_result.tool_use_id.clone(),
                                 is_error: tool_result.is_error,
@@ -716,11 +702,12 @@ impl Thread {
 
         // Note that Cline supports `.clinerules` being a directory, but that is not currently
         // supported. This doesn't seem to occur often in GitHub repositories.
-        const RULES_FILE_NAMES: [&'static str; 5] = [
+        const RULES_FILE_NAMES: [&'static str; 6] = [
             ".rules",
             ".cursorrules",
             ".windsurfrules",
             ".clinerules",
+            ".github/copilot-instructions.md",
             "CLAUDE.md",
         ];
         let selected_rules_file = RULES_FILE_NAMES
@@ -785,15 +772,6 @@ impl Thread {
         let mut request = self.to_completion_request(request_kind, cx);
         request.tools = {
             let mut tools = Vec::new();
-
-            if self.tools.is_scripting_tool_enabled() {
-                tools.push(LanguageModelRequestTool {
-                    name: ScriptingTool::NAME.into(),
-                    description: ScriptingTool::DESCRIPTION.into(),
-                    input_schema: ScriptingTool::input_schema(),
-                });
-            }
-
             tools.extend(self.tools().enabled_tools(cx).into_iter().map(|tool| {
                 LanguageModelRequestTool {
                     name: tool.name(),
@@ -854,8 +832,6 @@ impl Thread {
                 RequestKind::Chat => {
                     self.tool_use
                         .attach_tool_results(message.id, &mut request_message);
-                    self.scripting_tool_use
-                        .attach_tool_results(message.id, &mut request_message);
                 }
                 RequestKind::Summarize => {
                     // We don't care about tool use during summarization.
@@ -871,8 +847,6 @@ impl Thread {
             match request_kind {
                 RequestKind::Chat => {
                     self.tool_use
-                        .attach_tool_uses(message.id, &mut request_message);
-                    self.scripting_tool_use
                         .attach_tool_uses(message.id, &mut request_message);
                 }
                 RequestKind::Summarize => {
@@ -899,17 +873,23 @@ impl Thread {
             request.messages.push(context_message);
         }
 
-        self.attach_stale_files(&mut request.messages, cx);
+        self.attached_tracked_files_state(&mut request.messages, cx);
 
         request
     }
 
-    fn attach_stale_files(&self, messages: &mut Vec<LanguageModelRequestMessage>, cx: &App) {
+    fn attached_tracked_files_state(
+        &self,
+        messages: &mut Vec<LanguageModelRequestMessage>,
+        cx: &App,
+    ) {
         const STALE_FILES_HEADER: &str = "These files changed since last read:";
 
         let mut stale_message = String::new();
 
-        for stale_file in self.action_log.read(cx).stale_buffers(cx) {
+        let action_log = self.action_log.read(cx);
+
+        for stale_file in action_log.stale_buffers(cx) {
             let Some(file) = stale_file.read(cx).file() else {
                 continue;
             };
@@ -921,10 +901,22 @@ impl Thread {
             writeln!(&mut stale_message, "- {}", file.path().display()).ok();
         }
 
+        let mut content = Vec::with_capacity(2);
+
         if !stale_message.is_empty() {
+            content.push(stale_message.into());
+        }
+
+        if action_log.has_edited_files_since_project_diagnostics_check() {
+            content.push(
+                "When you're done making changes, make sure to check project diagnostics and fix all errors AND warnings you introduced!".into(),
+            );
+        }
+
+        if !content.is_empty() {
             let context_message = LanguageModelRequestMessage {
                 role: Role::User,
-                content: vec![stale_message.into()],
+                content,
                 cache: false,
             };
 
@@ -1020,19 +1012,11 @@ impl Thread {
                                     .iter()
                                     .rfind(|message| message.role == Role::Assistant)
                                 {
-                                    if tool_use.name.as_ref() == ScriptingTool::NAME {
-                                        thread.scripting_tool_use.request_tool_use(
-                                            last_assistant_message.id,
-                                            tool_use,
-                                            cx,
-                                        );
-                                    } else {
-                                        thread.tool_use.request_tool_use(
-                                            last_assistant_message.id,
-                                            tool_use,
-                                            cx,
-                                        );
-                                    }
+                                    thread.tool_use.request_tool_use(
+                                        last_assistant_message.id,
+                                        tool_use,
+                                        cx,
+                                    );
                                 }
                             }
                         }
@@ -1178,6 +1162,7 @@ impl Thread {
         cx: &mut Context<Self>,
     ) -> impl IntoIterator<Item = PendingToolUse> {
         let request = self.to_completion_request(RequestKind::Chat, cx);
+        let messages = Arc::new(request.messages);
         let pending_tool_uses = self
             .tool_use
             .pending_tool_uses()
@@ -1188,80 +1173,76 @@ impl Thread {
 
         for tool_use in pending_tool_uses.iter() {
             if let Some(tool) = self.tools.tool(&tool_use.name, cx) {
-                let task = tool.run(
-                    tool_use.input.clone(),
-                    &request.messages,
-                    self.project.clone(),
-                    self.action_log.clone(),
-                    cx,
-                );
-
-                self.insert_tool_output(
+                if tool.needs_confirmation()
+                    && !AssistantSettings::get_global(cx).always_allow_tool_actions
+                {
+                    self.tool_use.confirm_tool_use(
+                        tool_use.id.clone(),
+                        tool_use.ui_text.clone(),
+                        tool_use.input.clone(),
+                        messages.clone(),
+                        tool,
+                    );
+                    cx.emit(ThreadEvent::ToolConfirmationNeeded);
+                } else {
+                    self.run_tool(
+                        tool_use.id.clone(),
+                        tool_use.ui_text.clone(),
+                        tool_use.input.clone(),
+                        &messages,
+                        tool,
+                        cx,
+                    );
+                }
+            } else if let Some(tool) = self.tools.tool(&tool_use.name, cx) {
+                self.run_tool(
                     tool_use.id.clone(),
-                    tool_use.ui_text.clone().into(),
-                    task,
+                    tool_use.ui_text.clone(),
+                    tool_use.input.clone(),
+                    &messages,
+                    tool,
                     cx,
                 );
             }
         }
 
-        let pending_scripting_tool_uses = self
-            .scripting_tool_use
-            .pending_tool_uses()
-            .into_iter()
-            .filter(|tool_use| tool_use.status.is_idle())
-            .cloned()
-            .collect::<Vec<_>>();
-
-        for scripting_tool_use in pending_scripting_tool_uses.iter() {
-            let task = match ScriptingTool::deserialize_input(scripting_tool_use.input.clone()) {
-                Err(err) => Task::ready(Err(err.into())),
-                Ok(input) => {
-                    let (script_id, script_task) =
-                        self.scripting_session.update(cx, move |session, cx| {
-                            session.run_script(input.lua_script, cx)
-                        });
-
-                    let session = self.scripting_session.clone();
-                    cx.spawn(async move |_, cx| {
-                        script_task.await;
-
-                        let message = session.read_with(cx, |session, _cx| {
-                            // Using a id to get the script output seems impractical.
-                            // Why not just include it in the Task result?
-                            // This is because we'll later report the script state as it runs,
-                            session
-                                .get(script_id)
-                                .output_message_for_llm()
-                                .expect("Script shouldn't still be running")
-                        })?;
-
-                        Ok(message)
-                    })
-                }
-            };
-
-            let ui_text: SharedString = scripting_tool_use.name.clone().into();
-
-            self.insert_scripting_tool_output(scripting_tool_use.id.clone(), ui_text, task, cx);
-        }
-
         pending_tool_uses
-            .into_iter()
-            .chain(pending_scripting_tool_uses)
     }
 
-    pub fn insert_tool_output(
+    pub fn run_tool(
         &mut self,
         tool_use_id: LanguageModelToolUseId,
-        ui_text: SharedString,
-        output: Task<Result<String>>,
-        cx: &mut Context<Self>,
+        ui_text: impl Into<SharedString>,
+        input: serde_json::Value,
+        messages: &[LanguageModelRequestMessage],
+        tool: Arc<dyn Tool>,
+        cx: &mut Context<'_, Thread>,
     ) {
-        let insert_output_task = cx.spawn({
-            let tool_use_id = tool_use_id.clone();
-            async move |thread, cx| {
-                let output = output.await;
+        let task = self.spawn_tool_use(tool_use_id.clone(), messages, input, tool, cx);
+        self.tool_use
+            .run_pending_tool(tool_use_id, ui_text.into(), task);
+    }
+
+    fn spawn_tool_use(
+        &mut self,
+        tool_use_id: LanguageModelToolUseId,
+        messages: &[LanguageModelRequestMessage],
+        input: serde_json::Value,
+        tool: Arc<dyn Tool>,
+        cx: &mut Context<Thread>,
+    ) -> Task<()> {
+        let run_tool = tool.run(
+            input,
+            messages,
+            self.project.clone(),
+            self.action_log.clone(),
+            cx,
+        );
+
+        cx.spawn({
+            async move |thread: WeakEntity<Thread>, cx| {
+                let output = run_tool.await;
+
                 thread
                     .update(cx, |thread, cx| {
                         let pending_tool_use = thread
@@ -1276,41 +1257,7 @@ impl Thread {
                     })
                     .ok();
             }
-        });
-
-        self.tool_use
-            .run_pending_tool(tool_use_id, ui_text, insert_output_task);
-    }
-
-    pub fn insert_scripting_tool_output(
-        &mut self,
-        tool_use_id: LanguageModelToolUseId,
-        ui_text: SharedString,
-        output: Task<Result<String>>,
-        cx: &mut Context<Self>,
-    ) {
-        let insert_output_task = cx.spawn({
-            let tool_use_id = tool_use_id.clone();
-            async move |thread, cx| {
-                let output = output.await;
-                thread
-                    .update(cx, |thread, cx| {
-                        let pending_tool_use = thread
-                            .scripting_tool_use
-                            .insert_tool_output(tool_use_id.clone(), output);
-
-                        cx.emit(ThreadEvent::ToolFinished {
-                            tool_use_id,
-                            pending_tool_use,
-                            canceled: false,
-                        });
-                    })
-                    .ok();
-            }
-        });
-
-        self.scripting_tool_use
-            .run_pending_tool(tool_use_id, ui_text, insert_output_task);
+        })
     }
 
     pub fn attach_tool_results(
@@ -1568,6 +1515,20 @@ impl Thread {
     pub fn cumulative_token_usage(&self) -> TokenUsage {
         self.cumulative_token_usage.clone()
     }
+
+    pub fn deny_tool_use(&mut self, tool_use_id: LanguageModelToolUseId, cx: &mut Context<Self>) {
+        let err = Err(anyhow::anyhow!(
+            "Permission to run tool action denied by user"
+        ));
+
+        self.tool_use.insert_tool_output(tool_use_id.clone(), err);
+
+        cx.emit(ThreadEvent::ToolFinished {
+            tool_use_id,
+            pending_tool_use: None,
+            canceled: true,
+        });
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -1601,6 +1562,7 @@ pub enum ThreadEvent {
         canceled: bool,
     },
     CheckpointChanged,
+    ToolConfirmationNeeded,
 }
 
 impl EventEmitter<ThreadEvent> for Thread {}

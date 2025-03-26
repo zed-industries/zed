@@ -1,23 +1,23 @@
 mod edit_action;
 pub mod log;
-mod replace;
 
+use crate::replace::{replace_exact, replace_with_flexible_indent};
 use anyhow::{anyhow, Context, Result};
 use assistant_tool::{ActionLog, Tool};
 use collections::HashSet;
 use edit_action::{EditAction, EditActionParser};
-use futures::StreamExt;
-use gpui::{App, AsyncApp, Entity, Task};
+use futures::{channel::mpsc, SinkExt, StreamExt};
+use gpui::{App, AppContext, AsyncApp, Entity, Task};
 use language_model::{
     LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage, MessageContent, Role,
 };
 use log::{EditToolLog, EditToolRequestId};
 use project::Project;
-use replace::{replace_exact, replace_with_flexible_indent};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::fmt::Write;
 use std::sync::Arc;
+use ui::IconName;
 use util::ResultExt;
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
@@ -79,8 +79,16 @@ impl Tool for EditFilesTool {
         "edit-files".into()
     }
 
+    fn needs_confirmation(&self) -> bool {
+        true
+    }
+
     fn description(&self) -> String {
         include_str!("./edit_files_tool/description.md").into()
+    }
+
+    fn icon(&self) -> IconName {
+        IconName::Pencil
     }
 
     fn input_schema(&self) -> serde_json::Value {
@@ -168,6 +176,12 @@ struct AppliedAction {
 }
 
 #[derive(Debug)]
+enum DiffResult {
+    Diff(language::Diff),
+    SearchError(SearchError),
+}
+
+#[derive(Debug)]
 enum SearchError {
     NoMatch {
         file_path: String,
@@ -229,8 +243,21 @@ impl EditToolRequest {
                 temperature: Some(0.0),
             };
 
+            let (mut tx, mut rx) = mpsc::channel::<String>(32);
             let stream = model.stream_completion_text(llm_request, &cx);
-            let mut chunks = stream.await?;
+            let reader_task = cx.background_spawn(async move {
+                let mut chunks = stream.await?;
+
+                while let Some(chunk) = chunks.stream.next().await {
+                    if let Some(chunk) = chunk.log_err() {
+                        // we don't process here because the API fails
+                        // if we take too long between reads
+                        tx.send(chunk).await?
+                    }
+                }
+                tx.close().await?;
+                anyhow::Ok(())
+            });
 
             let mut request = Self {
                 parser: EditActionParser::new(),
@@ -240,9 +267,11 @@ impl EditToolRequest {
                 tool_log,
             };
 
-            while let Some(chunk) = chunks.stream.next().await {
-                request.process_response_chunk(&chunk?, cx).await?;
+            while let Some(chunk) = rx.next().await {
+                request.process_response_chunk(&chunk, cx).await?;
             }
+
+            reader_task.await?;
 
             request.finalize(cx).await
         })
@@ -287,11 +316,6 @@ impl EditToolRequest {
             .update(cx, |project, cx| project.open_buffer(project_path, cx))?
             .await?;
 
-        enum DiffResult {
-            Diff(language::Diff),
-            SearchError(SearchError),
-        }
-
         let result = match action {
             EditAction::Replace {
                 old,
@@ -301,39 +325,7 @@ impl EditToolRequest {
                 let snapshot = buffer.read_with(cx, |buffer, _cx| buffer.snapshot())?;
 
                 cx.background_executor()
-                    .spawn(async move {
-                        if snapshot.is_empty() {
-                            let exists = snapshot
-                                .file()
-                                .map_or(false, |file| file.disk_state().exists());
-
-                            let error = SearchError::EmptyBuffer {
-                                file_path: file_path.display().to_string(),
-                                exists,
-                                search: old,
-                            };
-
-                            return anyhow::Ok(DiffResult::SearchError(error));
-                        }
-
-                        let replace_result =
-                            // Try to match exactly
-                            replace_exact(&old, &new, &snapshot)
-                            .await
-                            // If that fails, try being flexible about indentation
-                            .or_else(|| replace_with_flexible_indent(&old, &new, &snapshot));
-
-                        let Some(diff) = replace_result else {
-                            let error = SearchError::NoMatch {
-                                search: old,
-                                file_path: file_path.display().to_string(),
-                            };
-
-                            return Ok(DiffResult::SearchError(error));
-                        };
-
-                        Ok(DiffResult::Diff(diff))
-                    })
+                    .spawn(Self::replace_diff(old, new, file_path, snapshot))
                     .await
             }
             EditAction::Write { content, .. } => Ok(DiffResult::Diff(
@@ -383,6 +375,45 @@ impl EditToolRequest {
                 applied.push(action);
             }
         }
+    }
+
+    async fn replace_diff(
+        old: String,
+        new: String,
+        file_path: std::path::PathBuf,
+        snapshot: language::BufferSnapshot,
+    ) -> Result<DiffResult> {
+        if snapshot.is_empty() {
+            let exists = snapshot
+                .file()
+                .map_or(false, |file| file.disk_state().exists());
+
+            let error = SearchError::EmptyBuffer {
+                file_path: file_path.display().to_string(),
+                exists,
+                search: old,
+            };
+
+            return Ok(DiffResult::SearchError(error));
+        }
+
+        let replace_result =
+            // Try to match exactly
+            replace_exact(&old, &new, &snapshot)
+            .await
+            // If that fails, try being flexible about indentation
+            .or_else(|| replace_with_flexible_indent(&old, &new, &snapshot));
+
+        let Some(diff) = replace_result else {
+            let error = SearchError::NoMatch {
+                search: old,
+                file_path: file_path.display().to_string(),
+            };
+
+            return Ok(DiffResult::SearchError(error));
+        };
+
+        Ok(DiffResult::Diff(diff))
     }
 
     async fn finalize(self, cx: &mut AsyncApp) -> Result<String> {

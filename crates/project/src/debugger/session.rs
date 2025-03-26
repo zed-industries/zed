@@ -358,6 +358,7 @@ impl LocalMode {
             .breakpoint_store
             .read_with(cx, |store, cx| store.breakpoints_from_path(&abs_path, cx))
             .into_iter()
+            .filter(|bp| bp.state.is_enabled())
             .map(Into::into)
             .collect();
 
@@ -388,7 +389,11 @@ impl LocalMode {
             let breakpoints = if ignore_breakpoints {
                 vec![]
             } else {
-                breakpoints.into_iter().map(Into::into).collect()
+                breakpoints
+                    .into_iter()
+                    .filter(|bp| bp.state.is_enabled())
+                    .map(Into::into)
+                    .collect()
             };
 
             breakpoint_tasks.push(self.request(

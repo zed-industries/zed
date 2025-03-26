@@ -229,8 +229,14 @@ impl CachedLspAdapter {
         self.adapter.code_action_kinds()
     }
 
-    pub fn process_diagnostics(&self, params: &mut lsp::PublishDiagnosticsParams) {
-        self.adapter.process_diagnostics(params)
+    pub fn process_diagnostics(
+        &self,
+        params: &mut lsp::PublishDiagnosticsParams,
+        server_id: LanguageServerId,
+        existing_diagnostics: Option<&'_ Buffer>,
+    ) {
+        self.adapter
+            .process_diagnostics(params, server_id, existing_diagnostics)
     }
 
     pub async fn process_completions(&self, completion_items: &mut [lsp::CompletionItem]) {
@@ -305,6 +311,7 @@ pub trait LspAdapterDelegate: Send + Sync {
     fn worktree_root_path(&self) -> &Path;
     fn exists(&self, path: &Path, is_dir: Option<bool>) -> bool;
     fn update_status(&self, language: LanguageServerName, status: BinaryStatus);
+    fn registered_lsp_adapters(&self) -> Vec<Arc<dyn LspAdapter>>;
     async fn language_server_download_dir(&self, name: &LanguageServerName) -> Option<Arc<Path>>;
 
     async fn npm_package_installed_version(
@@ -442,7 +449,13 @@ pub trait LspAdapter: 'static + Send + Sync {
         delegate: &dyn LspAdapterDelegate,
     ) -> Option<LanguageServerBinary>;
 
-    fn process_diagnostics(&self, _: &mut lsp::PublishDiagnosticsParams) {}
+    fn process_diagnostics(
+        &self,
+        _: &mut lsp::PublishDiagnosticsParams,
+        _: LanguageServerId,
+        _: Option<&'_ Buffer>,
+    ) {
+    }
 
     /// Post-processes completions provided by the language server.
     async fn process_completions(&self, _: &mut [lsp::CompletionItem]) {}
@@ -513,6 +526,26 @@ pub trait LspAdapter: 'static + Send + Sync {
         _cx: &mut AsyncApp,
     ) -> Result<Value> {
         Ok(serde_json::json!({}))
+    }
+
+    async fn additional_initialization_options(
+        self: Arc<Self>,
+        _target_language_server_id: LanguageServerName,
+        _: &dyn Fs,
+        _: &Arc<dyn LspAdapterDelegate>,
+    ) -> Result<Option<Value>> {
+        Ok(None)
+    }
+
+    async fn additional_workspace_configuration(
+        self: Arc<Self>,
+        _target_language_server_id: LanguageServerName,
+        _: &dyn Fs,
+        _: &Arc<dyn LspAdapterDelegate>,
+        _: Arc<dyn LanguageToolchainStore>,
+        _cx: &mut AsyncApp,
+    ) -> Result<Option<Value>> {
+        Ok(None)
     }
 
     /// Returns a list of code actions supported by a given LspAdapter
@@ -727,6 +760,11 @@ pub struct JsxTagAutoCloseConfig {
     /// The name of the node found within both opening and closing
     /// tags that describes the tag name
     pub tag_name_node_name: String,
+    /// Alternate Node names for tag names.
+    /// Specifically needed as TSX represents the name in `<Foo.Bar>`
+    /// as `member_expression` rather than `identifier` as usual
+    #[serde(default)]
+    pub tag_name_node_name_alternates: Vec<String>,
     /// Some grammars are smart enough to detect a closing tag
     /// that is not valid i.e. doesn't match it's corresponding
     /// opening tag or does not have a corresponding opening tag
@@ -885,6 +923,12 @@ pub struct BracketPairConfig {
     /// N-th entry in `[Self::disabled_scopes_by_bracket_ix]` contains a list of disabled scopes for an n-th entry in `[Self::pairs]`
     #[serde(skip)]
     pub disabled_scopes_by_bracket_ix: Vec<Vec<String>>,
+}
+
+impl BracketPairConfig {
+    pub fn is_closing_brace(&self, c: char) -> bool {
+        self.pairs.iter().any(|pair| pair.end.starts_with(c))
+    }
 }
 
 fn bracket_pair_config_json_schema(gen: &mut SchemaGenerator) -> Schema {
@@ -2027,8 +2071,6 @@ impl LspAdapter for FakeLspAdapter {
     ) -> Option<LanguageServerBinary> {
         unreachable!();
     }
-
-    fn process_diagnostics(&self, _: &mut lsp::PublishDiagnosticsParams) {}
 
     fn disk_based_diagnostic_sources(&self) -> Vec<String> {
         self.disk_based_diagnostics_sources.clone()

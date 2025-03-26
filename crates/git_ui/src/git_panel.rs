@@ -2495,7 +2495,6 @@ impl GitPanel {
         {
             return; // Hide the cancelled by user message
         } else {
-            let project = self.project.clone();
             workspace.update(cx, |workspace, cx| {
                 let workspace_weak = cx.weak_entity();
                 let toast =
@@ -2503,13 +2502,10 @@ impl GitPanel {
                         this.icon(ToastIcon::new(IconName::XCircle).color(Color::Error))
                             .action("View Log", move |window, cx| {
                                 let message = message.clone();
-                                let project = project.clone();
                                 let action = action.clone();
                                 workspace_weak
                                     .update(cx, move |workspace, cx| {
-                                        Self::open_output(
-                                            project, action, workspace, &message, window, cx,
-                                        )
+                                        Self::open_output(action, workspace, &message, window, cx)
                                     })
                                     .ok();
                             })
@@ -2531,21 +2527,17 @@ impl GitPanel {
 
             let status_toast = StatusToast::new(message, cx, move |this, _cx| {
                 use remote_output::SuccessStyle::*;
-                let project = self.project.clone();
                 match style {
                     Toast { .. } => this,
                     ToastWithLog { output } => this
                         .icon(ToastIcon::new(IconName::GitBranchSmall).color(Color::Muted))
                         .action("View Log", move |window, cx| {
                             let output = output.clone();
-                            let project = project.clone();
                             let output =
                                 format!("stdout:\n{}\nstderr:\n{}", output.stdout, output.stderr);
                             workspace_weak
                                 .update(cx, move |workspace, cx| {
-                                    Self::open_output(
-                                        project, operation, workspace, &output, window, cx,
-                                    )
+                                    Self::open_output(operation, workspace, &output, window, cx)
                                 })
                                 .ok();
                         }),
@@ -2559,7 +2551,6 @@ impl GitPanel {
     }
 
     fn open_output(
-        project: Entity<Project>,
         operation: impl Into<SharedString>,
         workspace: &mut Workspace,
         output: &str,
@@ -2568,8 +2559,11 @@ impl GitPanel {
     ) {
         let operation = operation.into();
         let buffer = cx.new(|cx| Buffer::local(output, cx));
+        buffer.update(cx, |buffer, cx| {
+            buffer.set_capability(language::Capability::ReadOnly, cx);
+        });
         let editor = cx.new(|cx| {
-            let mut editor = Editor::for_buffer(buffer, Some(project), window, cx);
+            let mut editor = Editor::for_buffer(buffer, None, window, cx);
             editor.buffer().update(cx, |buffer, cx| {
                 buffer.set_title(format!("Output from git {operation}"), cx);
             });

@@ -348,7 +348,7 @@ async fn test_collaborating_with_completion(cx_a: &mut TestAppContext, cx_b: &mu
     // Return some completions from the host's language server.
     cx_a.executor().start_waiting();
     fake_language_server
-        .handle_request::<lsp::request::Completion, _, _>(|params, _| async move {
+        .set_request_handler::<lsp::request::Completion, _, _>(|params, _| async move {
             assert_eq!(
                 params.text_document_position.text_document.uri,
                 lsp::Url::from_file_path("/a/main.rs").unwrap(),
@@ -412,7 +412,7 @@ async fn test_collaborating_with_completion(cx_a: &mut TestAppContext, cx_b: &mu
 
     // Return a resolved completion from the host's language server.
     // The resolved completion has an additional text edit.
-    fake_language_server.handle_request::<lsp::request::ResolveCompletionItem, _, _>(
+    fake_language_server.set_request_handler::<lsp::request::ResolveCompletionItem, _, _>(
         |params, _| async move {
             assert_eq!(params.label, "first_method(…)");
             Ok(lsp::CompletionItem {
@@ -465,7 +465,7 @@ async fn test_collaborating_with_completion(cx_a: &mut TestAppContext, cx_b: &mu
     });
 
     let mut completion_response = fake_language_server
-        .handle_request::<lsp::request::Completion, _, _>(|params, _| async move {
+        .set_request_handler::<lsp::request::Completion, _, _>(|params, _| async move {
             assert_eq!(
                 params.text_document_position.text_document.uri,
                 lsp::Url::from_file_path("/a/main.rs").unwrap(),
@@ -496,7 +496,7 @@ async fn test_collaborating_with_completion(cx_a: &mut TestAppContext, cx_b: &mu
 
     // The completion now gets a new `text_edit.new_text` when resolving the completion item
     let mut resolve_completion_response = fake_language_server
-        .handle_request::<lsp::request::ResolveCompletionItem, _, _>(|params, _| async move {
+        .set_request_handler::<lsp::request::ResolveCompletionItem, _, _>(|params, _| async move {
             assert_eq!(params.label, "third_method(…)");
             Ok(lsp::CompletionItem {
                 label: "third_method(…)".into(),
@@ -589,7 +589,7 @@ async fn test_collaborating_with_code_actions(
 
     let mut fake_language_server = fake_language_servers.next().await.unwrap();
     let mut requests = fake_language_server
-        .handle_request::<lsp::request::CodeActionRequest, _, _>(|params, _| async move {
+        .set_request_handler::<lsp::request::CodeActionRequest, _, _>(|params, _| async move {
             assert_eq!(
                 params.text_document.uri,
                 lsp::Url::from_file_path("/a/main.rs").unwrap(),
@@ -611,7 +611,7 @@ async fn test_collaborating_with_code_actions(
     cx_b.focus(&editor_b);
 
     let mut requests = fake_language_server
-        .handle_request::<lsp::request::CodeActionRequest, _, _>(|params, _| async move {
+        .set_request_handler::<lsp::request::CodeActionRequest, _, _>(|params, _| async move {
             assert_eq!(
                 params.text_document.uri,
                 lsp::Url::from_file_path("/a/main.rs").unwrap(),
@@ -689,7 +689,7 @@ async fn test_collaborating_with_code_actions(
             Editor::confirm_code_action(editor, &ConfirmCodeAction { item_ix: Some(0) }, window, cx)
         })
         .unwrap();
-    fake_language_server.handle_request::<lsp::request::CodeActionResolveRequest, _, _>(
+    fake_language_server.set_request_handler::<lsp::request::CodeActionResolveRequest, _, _>(
         |_, _| async move {
             Ok(lsp::CodeAction {
                 title: "Inline into all callers".to_string(),
@@ -812,7 +812,7 @@ async fn test_collaborating_with_renames(cx_a: &mut TestAppContext, cx_b: &mut T
     });
 
     fake_language_server
-        .handle_request::<lsp::request::PrepareRenameRequest, _, _>(|params, _| async move {
+        .set_request_handler::<lsp::request::PrepareRenameRequest, _, _>(|params, _| async move {
             assert_eq!(params.text_document.uri.as_str(), "file:///dir/one.rs");
             assert_eq!(params.position, lsp::Position::new(0, 7));
             Ok(Some(lsp::PrepareRenameResponse::Range(lsp::Range::new(
@@ -855,7 +855,7 @@ async fn test_collaborating_with_renames(cx_a: &mut TestAppContext, cx_b: &mut T
     });
 
     fake_language_server
-        .handle_request::<lsp::request::PrepareRenameRequest, _, _>(|params, _| async move {
+        .set_request_handler::<lsp::request::PrepareRenameRequest, _, _>(|params, _| async move {
             assert_eq!(params.text_document.uri.as_str(), "file:///dir/one.rs");
             assert_eq!(params.position, lsp::Position::new(0, 8));
             Ok(Some(lsp::PrepareRenameResponse::Range(lsp::Range::new(
@@ -891,7 +891,7 @@ async fn test_collaborating_with_renames(cx_a: &mut TestAppContext, cx_b: &mut T
         Editor::confirm_rename(editor, &ConfirmRename, window, cx).unwrap()
     });
     fake_language_server
-        .handle_request::<lsp::request::Rename, _, _>(|params, _| async move {
+        .set_request_handler::<lsp::request::Rename, _, _>(|params, _| async move {
             assert_eq!(
                 params.text_document_position.text_document.uri.as_str(),
                 "file:///dir/one.rs"
@@ -1321,7 +1321,7 @@ async fn test_on_input_format_from_host_to_guest(
 
     // Receive an OnTypeFormatting request as the host's language server.
     // Return some formatting from the host's language server.
-    fake_language_server.handle_request::<lsp::request::OnTypeFormatting, _, _>(
+    fake_language_server.set_request_handler::<lsp::request::OnTypeFormatting, _, _>(
         |params, _| async move {
             assert_eq!(
                 params.text_document_position.text_document.uri,
@@ -1452,7 +1452,7 @@ async fn test_on_input_format_from_guest_to_host(
     // Return some formatting from the host's language server.
     executor.start_waiting();
     fake_language_server
-        .handle_request::<lsp::request::OnTypeFormatting, _, _>(|params, _| async move {
+        .set_request_handler::<lsp::request::OnTypeFormatting, _, _>(|params, _| async move {
             assert_eq!(
                 params.text_document_position.text_document.uri,
                 lsp::Url::from_file_path("/a/main.rs").unwrap(),
@@ -1624,7 +1624,7 @@ async fn test_mutual_editor_inlay_hint_cache_update(
     let edits_made = Arc::new(AtomicUsize::new(0));
     let closure_edits_made = Arc::clone(&edits_made);
     fake_language_server
-        .handle_request::<lsp::request::InlayHintRequest, _, _>(move |params, _| {
+        .set_request_handler::<lsp::request::InlayHintRequest, _, _>(move |params, _| {
             let task_edits_made = Arc::clone(&closure_edits_made);
             async move {
                 assert_eq!(
@@ -1859,7 +1859,7 @@ async fn test_inlay_hint_refresh_is_forwarded(
     let fake_language_server = fake_language_servers.next().await.unwrap();
     let closure_other_hints = Arc::clone(&other_hints);
     fake_language_server
-        .handle_request::<lsp::request::InlayHintRequest, _, _>(move |params, _| {
+        .set_request_handler::<lsp::request::InlayHintRequest, _, _>(move |params, _| {
             let task_other_hints = Arc::clone(&closure_other_hints);
             async move {
                 assert_eq!(

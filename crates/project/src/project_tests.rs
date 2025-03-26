@@ -24,9 +24,7 @@ use pretty_assertions::{assert_eq, assert_matches};
 use serde_json::json;
 #[cfg(not(windows))]
 use std::os;
-use std::{str::FromStr, sync::OnceLock};
-
-use std::{mem, num::NonZeroU32, ops::Range, task::Poll};
+use std::{mem, num::NonZeroU32, ops::Range, str::FromStr, sync::OnceLock, task::Poll};
 use task::{ResolvedTask, TaskContext};
 use unindent::Unindent as _;
 use util::{
@@ -832,9 +830,9 @@ async fn test_managing_language_servers(cx: &mut gpui::TestAppContext) {
     });
 
     let mut rust_shutdown_requests = fake_rust_server
-        .handle_request::<lsp::request::Shutdown, _, _>(|_, _| future::ready(Ok(())));
+        .set_request_handler::<lsp::request::Shutdown, _, _>(|_, _| future::ready(Ok(())));
     let mut json_shutdown_requests = fake_json_server
-        .handle_request::<lsp::request::Shutdown, _, _>(|_, _| future::ready(Ok(())));
+        .set_request_handler::<lsp::request::Shutdown, _, _>(|_, _| future::ready(Ok(())));
     futures::join!(rust_shutdown_requests.next(), json_shutdown_requests.next());
 
     let mut fake_rust_server = fake_rust_servers.next().await.unwrap();
@@ -2701,7 +2699,7 @@ async fn test_definition(cx: &mut gpui::TestAppContext) {
         .unwrap();
 
     let fake_server = fake_servers.next().await.unwrap();
-    fake_server.handle_request::<lsp::request::GotoDefinition, _, _>(|params, _| async move {
+    fake_server.set_request_handler::<lsp::request::GotoDefinition, _, _>(|params, _| async move {
         let params = params.text_document_position_params;
         assert_eq!(
             params.text_document.uri.to_file_path().unwrap(),
@@ -2818,7 +2816,7 @@ async fn test_completions_without_edit_ranges(cx: &mut gpui::TestAppContext) {
     });
 
     fake_server
-        .handle_request::<lsp::request::Completion, _, _>(|_, _| async move {
+        .set_request_handler::<lsp::request::Completion, _, _>(|_, _| async move {
             Ok(Some(lsp::CompletionResponse::Array(vec![
                 lsp::CompletionItem {
                     label: "fullyQualifiedName?".into(),
@@ -2845,7 +2843,7 @@ async fn test_completions_without_edit_ranges(cx: &mut gpui::TestAppContext) {
     });
 
     fake_server
-        .handle_request::<lsp::request::Completion, _, _>(|_, _| async move {
+        .set_request_handler::<lsp::request::Completion, _, _>(|_, _| async move {
             Ok(Some(lsp::CompletionResponse::Array(vec![
                 lsp::CompletionItem {
                     label: "component".into(),
@@ -2912,7 +2910,7 @@ async fn test_completions_with_carriage_returns(cx: &mut gpui::TestAppContext) {
     });
 
     fake_server
-        .handle_request::<lsp::request::Completion, _, _>(|_, _| async move {
+        .set_request_handler::<lsp::request::Completion, _, _>(|_, _| async move {
             Ok(Some(lsp::CompletionResponse::Array(vec![
                 lsp::CompletionItem {
                     label: "fullyQualifiedName?".into(),
@@ -2979,7 +2977,7 @@ async fn test_apply_code_actions_with_commands(cx: &mut gpui::TestAppContext) {
         project.code_actions(&buffer, 0..0, None, cx)
     });
     fake_server
-        .handle_request::<lsp::request::CodeActionRequest, _, _>(|_, _| async move {
+        .set_request_handler::<lsp::request::CodeActionRequest, _, _>(|_, _| async move {
             Ok(Some(vec![
                 lsp::CodeActionOrCommand::CodeAction(lsp::CodeAction {
                     title: "The code action".into(),
@@ -3004,7 +3002,7 @@ async fn test_apply_code_actions_with_commands(cx: &mut gpui::TestAppContext) {
 
     // Resolving the code action does not populate its edits. In absence of
     // edits, we must execute the given command.
-    fake_server.handle_request::<lsp::request::CodeActionResolveRequest, _, _>(
+    fake_server.set_request_handler::<lsp::request::CodeActionResolveRequest, _, _>(
         |mut action, _| async move {
             if action.data.is_some() {
                 action.command = Some(lsp::Command {
@@ -3020,7 +3018,7 @@ async fn test_apply_code_actions_with_commands(cx: &mut gpui::TestAppContext) {
     // While executing the command, the language server sends the editor
     // a `workspaceEdit` request.
     fake_server
-        .handle_request::<lsp::request::ExecuteCommand, _, _>({
+        .set_request_handler::<lsp::request::ExecuteCommand, _, _>({
             let fake = fake_server.clone();
             move |params, _| {
                 assert_eq!(params.command, "_the/command");
@@ -4212,7 +4210,7 @@ async fn test_lsp_rename_notifications(cx: &mut gpui::TestAppContext) {
     };
     let resolved_workspace_edit = Arc::new(OnceLock::new());
     fake_server
-        .handle_request::<WillRenameFiles, _, _>({
+        .set_request_handler::<WillRenameFiles, _, _>({
             let resolved_workspace_edit = resolved_workspace_edit.clone();
             let expected_edit = expected_edit.clone();
             move |params, _| {
@@ -4289,7 +4287,7 @@ async fn test_rename(cx: &mut gpui::TestAppContext) {
         project.prepare_rename(buffer.clone(), 7, cx)
     });
     fake_server
-        .handle_request::<lsp::request::PrepareRenameRequest, _, _>(|params, _| async move {
+        .set_request_handler::<lsp::request::PrepareRenameRequest, _, _>(|params, _| async move {
             assert_eq!(
                 params.text_document.uri.as_str(),
                 uri!("file:///dir/one.rs")
@@ -4314,7 +4312,7 @@ async fn test_rename(cx: &mut gpui::TestAppContext) {
         project.perform_rename(buffer.clone(), 7, "THREE".to_string(), cx)
     });
     fake_server
-        .handle_request::<lsp::request::Rename, _, _>(|params, _| async move {
+        .set_request_handler::<lsp::request::Rename, _, _>(|params, _| async move {
             assert_eq!(
                 params.text_document_position.text_document.uri.as_str(),
                 uri!("file:///dir/one.rs")
@@ -5175,35 +5173,36 @@ async fn test_multiple_language_server_hovers(cx: &mut gpui::TestAppContext) {
             "TailwindServer" | "TypeScriptServer" => {
                 servers_with_hover_requests.insert(
                     new_server_name.clone(),
-                    new_server.handle_request::<lsp::request::HoverRequest, _, _>(move |_, _| {
-                        let name = new_server_name.clone();
-                        async move {
-                            Ok(Some(lsp::Hover {
-                                contents: lsp::HoverContents::Scalar(lsp::MarkedString::String(
-                                    format!("{name} hover"),
-                                )),
-                                range: None,
-                            }))
-                        }
-                    }),
+                    new_server.set_request_handler::<lsp::request::HoverRequest, _, _>(
+                        move |_, _| {
+                            let name = new_server_name.clone();
+                            async move {
+                                Ok(Some(lsp::Hover {
+                                    contents: lsp::HoverContents::Scalar(
+                                        lsp::MarkedString::String(format!("{name} hover")),
+                                    ),
+                                    range: None,
+                                }))
+                            }
+                        },
+                    ),
                 );
             }
             "ESLintServer" => {
                 servers_with_hover_requests.insert(
                     new_server_name,
-                    new_server.handle_request::<lsp::request::HoverRequest, _, _>(
+                    new_server.set_request_handler::<lsp::request::HoverRequest, _, _>(
                         |_, _| async move { Ok(None) },
                     ),
                 );
             }
             "NoHoverCapabilitiesServer" => {
-                let _never_handled = new_server.handle_request::<lsp::request::HoverRequest, _, _>(
-                    |_, _| async move {
+                let _never_handled = new_server
+                    .set_request_handler::<lsp::request::HoverRequest, _, _>(|_, _| async move {
                         panic!(
                             "Should not call for hovers server with no corresponding capabilities"
                         )
-                    },
-                );
+                    });
             }
             unexpected => panic!("Unexpected server name: {unexpected}"),
         }
@@ -5274,8 +5273,8 @@ async fn test_hovers_with_empty_parts(cx: &mut gpui::TestAppContext) {
         .await
         .expect("failed to get the language server");
 
-    let mut request_handled =
-        fake_server.handle_request::<lsp::request::HoverRequest, _, _>(move |_, _| async move {
+    let mut request_handled = fake_server.set_request_handler::<lsp::request::HoverRequest, _, _>(
+        move |_, _| async move {
             Ok(Some(lsp::Hover {
                 contents: lsp::HoverContents::Array(vec![
                     lsp::MarkedString::String("".to_string()),
@@ -5284,7 +5283,8 @@ async fn test_hovers_with_empty_parts(cx: &mut gpui::TestAppContext) {
                 ]),
                 range: None,
             }))
-        });
+        },
+    );
 
     let hover_task = project.update(cx, |project, cx| {
         project.hover(&buffer, Point::new(0, 0), cx)
@@ -5346,8 +5346,8 @@ async fn test_code_actions_only_kinds(cx: &mut gpui::TestAppContext) {
         .await
         .expect("failed to get the language server");
 
-    let mut request_handled = fake_server.handle_request::<lsp::request::CodeActionRequest, _, _>(
-        move |_, _| async move {
+    let mut request_handled = fake_server
+        .set_request_handler::<lsp::request::CodeActionRequest, _, _>(move |_, _| async move {
             Ok(Some(vec![
                 lsp::CodeActionOrCommand::CodeAction(lsp::CodeAction {
                     title: "organize imports".to_string(),
@@ -5360,8 +5360,7 @@ async fn test_code_actions_only_kinds(cx: &mut gpui::TestAppContext) {
                     ..lsp::CodeAction::default()
                 }),
             ]))
-        },
-    );
+        });
 
     let code_actions_task = project.update(cx, |project, cx| {
         project.code_actions(
@@ -5482,7 +5481,7 @@ async fn test_multiple_language_server_actions(cx: &mut gpui::TestAppContext) {
             "TailwindServer" | "TypeScriptServer" => {
                 servers_with_actions_requests.insert(
                     new_server_name.clone(),
-                    new_server.handle_request::<lsp::request::CodeActionRequest, _, _>(
+                    new_server.set_request_handler::<lsp::request::CodeActionRequest, _, _>(
                         move |_, _| {
                             let name = new_server_name.clone();
                             async move {
@@ -5500,14 +5499,14 @@ async fn test_multiple_language_server_actions(cx: &mut gpui::TestAppContext) {
             "ESLintServer" => {
                 servers_with_actions_requests.insert(
                     new_server_name,
-                    new_server.handle_request::<lsp::request::CodeActionRequest, _, _>(
+                    new_server.set_request_handler::<lsp::request::CodeActionRequest, _, _>(
                         |_, _| async move { Ok(None) },
                     ),
                 );
             }
             "NoActionsCapabilitiesServer" => {
                 let _never_handled = new_server
-                    .handle_request::<lsp::request::CodeActionRequest, _, _>(|_, _| async move {
+                    .set_request_handler::<lsp::request::CodeActionRequest, _, _>(|_, _| async move {
                         panic!(
                             "Should not call for code actions server with no corresponding capabilities"
                         )
@@ -6358,7 +6357,7 @@ async fn test_staging_hunks(cx: &mut gpui::TestAppContext) {
     });
 }
 
-#[gpui::test(iterations = 10, seeds(340, 472))]
+#[gpui::test(seeds(340, 472))]
 async fn test_staging_hunks_with_delayed_fs_event(cx: &mut gpui::TestAppContext) {
     use DiffHunkSecondaryStatus::*;
     init_test(cx);

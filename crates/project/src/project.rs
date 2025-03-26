@@ -390,6 +390,8 @@ pub struct Completion {
     pub documentation: Option<CompletionDocumentation>,
     /// Completion data source which it was constructed from.
     pub source: CompletionSource,
+    /// A path to an icon for this completion that is shown in the menu.
+    pub icon_path: Option<SharedString>,
     /// An optional callback to invoke when this completion is confirmed.
     /// Returns, whether new completions should be retriggered after the current one.
     /// If `true` is returned, the editor will show a new completion menu after this completion is confirmed.
@@ -655,6 +657,15 @@ pub struct Symbol {
     pub kind: lsp::SymbolKind,
     pub range: Range<Unclipped<PointUtf16>>,
     pub signature: [u8; 32],
+}
+
+#[derive(Clone, Debug)]
+pub struct DocumentSymbol {
+    pub name: String,
+    pub kind: lsp::SymbolKind,
+    pub range: Range<Unclipped<PointUtf16>>,
+    pub selection_range: Range<Unclipped<PointUtf16>>,
+    pub children: Vec<DocumentSymbol>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -3218,6 +3229,19 @@ impl Project {
     ) -> Task<Result<Vec<DocumentHighlight>>> {
         let position = position.to_point_utf16(buffer.read(cx));
         self.document_highlights_impl(buffer, position, cx)
+    }
+
+    pub fn document_symbols(
+        &mut self,
+        buffer: &Entity<Buffer>,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<Vec<DocumentSymbol>>> {
+        self.request_lsp(
+            buffer.clone(),
+            LanguageServerToQuery::FirstCapable,
+            GetDocumentSymbols,
+            cx,
+        )
     }
 
     pub fn symbols(&self, query: &str, cx: &mut Context<Self>) -> Task<Result<Vec<Symbol>>> {

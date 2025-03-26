@@ -31,7 +31,19 @@ Extensions that provide language servers may also provide default settings for t
 
 ## Active Pane Modifiers
 
-Styling settings applied to the active pane.
+- Description: Styling settings applied to the active pane.
+- Setting: `active_pane_modifiers`
+- Default:
+
+```json
+{
+  "active_pane_modifiers": {
+    "magnification": 1.0,
+    "border_size": 0.0,
+    "inactive_opacity": 1.0
+  }
+}
+```
 
 ### Magnification
 
@@ -39,11 +51,19 @@ Styling settings applied to the active pane.
 - Setting: `magnification`
 - Default: `1.0`
 
+**Options**
+
+`float` values
+
 ### Border size
 
 - Description: Size of the border surrounding the active pane. When set to 0, the active pane doesn't have any border. The border is drawn inset.
 - Setting: `border_size`
 - Default: `0.0`
+
+**Options**
+
+Non-negative `float` values
 
 ### Inactive Opacity
 
@@ -59,7 +79,7 @@ Styling settings applied to the active pane.
 
 - Description: Define extensions to be autoinstalled or never be installed.
 - Setting: `auto_install_extension`
-- Default: `{"html": true}`
+- Default: `{ "html": true }`
 
 **Options**
 
@@ -327,7 +347,7 @@ For example, to use `Nerd Font` as a fallback, add the following to your setting
 
 **Options**
 
-`"standard"`, `"comfortable"` or `{"custom": float}` (`1` is very compact, `2` very loose)
+`"standard"`, `"comfortable"` or `{ "custom": float }` (`1` is compact, `2` is loose)
 
 ## Confirm Quit
 
@@ -532,6 +552,16 @@ List of `string` values
 ```json
 "cursor_shape": "hollow"
 ```
+
+## Hide Mouse While Typing
+
+- Description: Determines whether the mouse cursor should be hidden while typing in an editor or input box.
+- Setting: `hide_mouse_while_typing`
+- Default: `true`
+
+**Options**
+
+`boolean` values
 
 ## Editor Scrollbar
 
@@ -2104,7 +2134,7 @@ List of `integer` column numbers
 ```json
 {
   "terminal": {
-    "alternate_scroll": "off",
+    "alternate_scroll": "on",
     "blinking": "terminal_controlled",
     "copy_on_select": false,
     "dock": "bottom",
@@ -2147,7 +2177,7 @@ List of `integer` column numbers
 
 - Description: Set whether Alternate Scroll mode (DECSET code: `?1007`) is active by default. Alternate Scroll mode converts mouse scroll events into up / down key presses when in the alternate screen (e.g. when running applications like vim or less). The terminal can still set and unset this mode with ANSI escape codes.
 - Setting: `alternate_scroll`
-- Default: `off`
+- Default: `on`
 
 **Options**
 

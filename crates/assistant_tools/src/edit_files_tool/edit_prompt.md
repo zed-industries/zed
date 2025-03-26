@@ -120,7 +120,7 @@ Break large *SEARCH/REPLACE* blocks into a series of smaller blocks that each ch
 Include just the changing lines, and a few surrounding lines if needed for uniqueness.
 Do not include long runs of unchanging lines in *SEARCH/REPLACE* blocks.
 
-Only create *SEARCH/REPLACE* blocks for files that the user has added to the chat!
+Only create *SEARCH/REPLACE* blocks for files that have been read! Even though the conversation includes `read-file` tool results, you *CANNOT* issue your own reads. If the conversation doesn't include the code you need to edit, ask for it to be read explicitly.
 
 To move code within a file, use 2 *SEARCH/REPLACE* blocks: 1 to delete it from its current location, 1 to insert it in the new location.
 

@@ -1609,7 +1609,7 @@ impl Interactivity {
 
                                         if !cx.has_active_drag() {
                                             if let Some(mouse_cursor) = style.mouse_cursor {
-                                                window.set_cursor_style(mouse_cursor, hitbox);
+                                                window.set_cursor_style(mouse_cursor, Some(hitbox));
                                             }
                                         }
 
@@ -1654,7 +1654,7 @@ impl Interactivity {
         window: &mut Window,
         cx: &mut App,
     ) {
-        use crate::TextAlign;
+        use crate::{BorderStyle, TextAlign};
 
         if global_id.is_some()
             && (style.debug || style.debug_below || cx.has_global::<crate::DebugBelow>())
@@ -1745,6 +1745,7 @@ impl Interactivity {
                                 },
                             },
                             crate::red(),
+                            BorderStyle::default(),
                         ))
                     }
                 }

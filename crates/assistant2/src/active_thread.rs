@@ -3,25 +3,27 @@ use crate::thread::{
     ThreadEvent, ThreadFeedback,
 };
 use crate::thread_store::ThreadStore;
-use crate::tool_use::{ToolUse, ToolUseStatus};
-use crate::ui::ContextPill;
+use crate::tool_use::{PendingToolUseStatus, ToolUse, ToolUseStatus};
+use crate::ui::{ContextPill, ToolReadyPopUp, ToolReadyPopupEvent};
+use crate::AssistantPanel;
+use assistant_settings::AssistantSettings;
 use collections::HashMap;
 use editor::{Editor, MultiBuffer};
 use gpui::{
     linear_color_stop, linear_gradient, list, percentage, pulsating_between, AbsoluteLength,
     Animation, AnimationExt, AnyElement, App, ClickEvent, DefiniteLength, EdgesRefinement, Empty,
-    Entity, Focusable, Length, ListAlignment, ListOffset, ListState, ScrollHandle, StyleRefinement,
-    Subscription, Task, TextStyleRefinement, Transformation, UnderlineStyle, WeakEntity,
+    Entity, Focusable, Hsla, Length, ListAlignment, ListOffset, ListState, MouseButton,
+    ScrollHandle, Stateful, StyleRefinement, Subscription, Task, TextStyleRefinement,
+    Transformation, UnderlineStyle, WeakEntity, WindowHandle,
 };
 use language::{Buffer, LanguageRegistry};
 use language_model::{LanguageModelRegistry, LanguageModelToolUseId, Role};
 use markdown::{Markdown, MarkdownStyle};
-use scripting_tool::{ScriptingTool, ScriptingToolInput};
 use settings::Settings as _;
 use std::sync::Arc;
 use std::time::Duration;
 use theme::ThemeSettings;
-use ui::{prelude::*, Disclosure, IconButton, KeyBinding, Tooltip};
+use ui::{prelude::*, Disclosure, IconButton, KeyBinding, Scrollbar, ScrollbarState, Tooltip};
 use util::ResultExt as _;
 use workspace::{OpenOptions, Workspace};
 
@@ -36,13 +38,14 @@ pub struct ActiveThread {
     save_thread_task: Option<Task<()>>,
     messages: Vec<MessageId>,
     list_state: ListState,
+    scrollbar_state: ScrollbarState,
     rendered_messages_by_id: HashMap<MessageId, RenderedMessage>,
-    rendered_scripting_tool_uses: HashMap<LanguageModelToolUseId, Entity<Markdown>>,
     rendered_tool_use_labels: HashMap<LanguageModelToolUseId, Entity<Markdown>>,
     editing_message: Option<(MessageId, EditMessageState)>,
     expanded_tool_uses: HashMap<LanguageModelToolUseId, bool>,
     expanded_thinking_segments: HashMap<(MessageId, usize), bool>,
     last_error: Option<ThreadError>,
+    pop_ups: Vec<WindowHandle<ToolReadyPopUp>>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -224,6 +227,14 @@ impl ActiveThread {
             cx.subscribe_in(&thread, window, Self::handle_thread_event),
         ];
 
+        let list_state = ListState::new(0, ListAlignment::Bottom, px(2048.), {
+            let this = cx.entity().downgrade();
+            move |ix, window: &mut Window, cx: &mut App| {
+                this.update(cx, |this, cx| this.render_message(ix, window, cx))
+                    .unwrap()
+            }
+        });
+
         let mut this = Self {
             language_registry,
             thread_store,
@@ -233,19 +244,14 @@ impl ActiveThread {
             save_thread_task: None,
             messages: Vec::new(),
             rendered_messages_by_id: HashMap::default(),
-            rendered_scripting_tool_uses: HashMap::default(),
             rendered_tool_use_labels: HashMap::default(),
             expanded_tool_uses: HashMap::default(),
             expanded_thinking_segments: HashMap::default(),
-            list_state: ListState::new(0, ListAlignment::Bottom, px(1024.), {
-                let this = cx.entity().downgrade();
-                move |ix, window: &mut Window, cx: &mut App| {
-                    this.update(cx, |this, cx| this.render_message(ix, window, cx))
-                        .unwrap()
-                }
-            }),
+            list_state: list_state.clone(),
+            scrollbar_state: ScrollbarState::new(list_state),
             editing_message: None,
             last_error: None,
+            pop_ups: Vec::new(),
             _subscriptions: subscriptions,
         };
 
@@ -256,26 +262,6 @@ impl ActiveThread {
                 this.render_tool_use_label_markdown(
                     tool_use.id.clone(),
                     tool_use.ui_text.clone(),
-                    window,
-                    cx,
-                );
-            }
-
-            for tool_use in thread
-                .read(cx)
-                .scripting_tool_uses_for_message(message.id, cx)
-            {
-                this.render_tool_use_label_markdown(
-                    tool_use.id.clone(),
-                    tool_use.ui_text.clone(),
-                    window,
-                    cx,
-                );
-
-                this.render_scripting_tool_use_markdown(
-                    tool_use.id.clone(),
-                    tool_use.ui_text.as_ref(),
-                    tool_use.input.clone(),
                     window,
                     cx,
                 );
@@ -360,36 +346,6 @@ impl ActiveThread {
         self.rendered_messages_by_id.remove(id);
     }
 
-    /// Renders the input of a scripting tool use to Markdown.
-    ///
-    /// Does nothing if the tool use does not correspond to the scripting tool.
-    fn render_scripting_tool_use_markdown(
-        &mut self,
-        tool_use_id: LanguageModelToolUseId,
-        tool_name: &str,
-        tool_input: serde_json::Value,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        if tool_name != ScriptingTool::NAME {
-            return;
-        }
-
-        let lua_script = serde_json::from_value::<ScriptingToolInput>(tool_input)
-            .map(|input| input.lua_script)
-            .unwrap_or_default();
-
-        let lua_script = render_markdown(
-            format!("```lua\n{lua_script}\n```").into(),
-            self.language_registry.clone(),
-            window,
-            cx,
-        );
-
-        self.rendered_scripting_tool_uses
-            .insert(tool_use_id, lua_script);
-    }
-
     fn render_tool_use_label_markdown(
         &mut self,
         tool_use_id: LanguageModelToolUseId,
@@ -422,7 +378,26 @@ impl ActiveThread {
             ThreadEvent::StreamedCompletion | ThreadEvent::SummaryChanged => {
                 self.save_thread(cx);
             }
-            ThreadEvent::DoneStreaming => {}
+            ThreadEvent::DoneStreaming => {
+                if !self.thread().read(cx).is_generating() {
+                    self.show_notification(
+                        "Your changes have been applied.",
+                        IconName::Check,
+                        Color::Success,
+                        window,
+                        cx,
+                    );
+                }
+            }
+            ThreadEvent::ToolConfirmationNeeded => {
+                self.show_notification(
+                    "There's a tool confirmation needed.",
+                    IconName::Info,
+                    Color::Muted,
+                    window,
+                    cx,
+                );
+            }
             ThreadEvent::StreamedAssistantText(message_id, text) => {
                 if let Some(rendered_message) = self.rendered_messages_by_id.get_mut(&message_id) {
                     rendered_message.append_text(text, window, cx);
@@ -471,7 +446,7 @@ impl ActiveThread {
 
                 for tool_use in tool_uses {
                     self.render_tool_use_label_markdown(
-                        tool_use.id,
+                        tool_use.id.clone(),
                         tool_use.ui_text.clone(),
                         window,
                         cx,
@@ -488,13 +463,6 @@ impl ActiveThread {
                     self.render_tool_use_label_markdown(
                         tool_use.id.clone(),
                         SharedString::from(tool_use.ui_text.clone()),
-                        window,
-                        cx,
-                    );
-                    self.render_scripting_tool_use_markdown(
-                        tool_use.id.clone(),
-                        tool_use.name.as_ref(),
-                        tool_use.input.clone(),
                         window,
                         cx,
                     );
@@ -553,6 +521,72 @@ impl ActiveThread {
                 }
             }
             ThreadEvent::CheckpointChanged => cx.notify(),
+        }
+    }
+
+    fn show_notification(
+        &mut self,
+        caption: impl Into<SharedString>,
+        icon: IconName,
+        icon_color: Color,
+        window: &mut Window,
+        cx: &mut Context<'_, ActiveThread>,
+    ) {
+        if !window.is_window_active()
+            && self.pop_ups.is_empty()
+            && AssistantSettings::get_global(cx).notify_when_agent_waiting
+        {
+            let caption = caption.into();
+
+            for screen in cx.displays() {
+                let options = ToolReadyPopUp::window_options(screen, cx);
+
+                if let Some(screen_window) = cx
+                    .open_window(options, |_, cx| {
+                        cx.new(|_| ToolReadyPopUp::new(caption.clone(), icon, icon_color))
+                    })
+                    .log_err()
+                {
+                    if let Some(pop_up) = screen_window.entity(cx).log_err() {
+                        cx.subscribe_in(&pop_up, window, {
+                            |this, _, event, window, cx| match event {
+                                ToolReadyPopupEvent::Accepted => {
+                                    let handle = window.window_handle();
+                                    cx.activate(true); // Switch back to the Zed application
+
+                                    let workspace_handle = this.workspace.clone();
+
+                                    // If there are multiple Zed windows, activate the correct one.
+                                    cx.defer(move |cx| {
+                                        handle
+                                            .update(cx, |_view, window, _cx| {
+                                                window.activate_window();
+
+                                                if let Some(workspace) = workspace_handle.upgrade()
+                                                {
+                                                    workspace.update(_cx, |workspace, cx| {
+                                                        workspace.focus_panel::<AssistantPanel>(
+                                                            window, cx,
+                                                        );
+                                                    });
+                                                }
+                                            })
+                                            .log_err();
+                                    });
+
+                                    this.dismiss_notifications(cx);
+                                }
+                                ToolReadyPopupEvent::Dismissed => {
+                                    this.dismiss_notifications(cx);
+                                }
+                            }
+                        })
+                        .detach();
+
+                        self.pop_ups.push(screen_window);
+                    }
+                }
+            }
         }
     }
 
@@ -725,13 +759,9 @@ impl ActiveThread {
         let checkpoint = thread.checkpoint_for_message(message_id);
         let context = thread.context_for_message(message_id);
         let tool_uses = thread.tool_uses_for_message(message_id, cx);
-        let scripting_tool_uses = thread.scripting_tool_uses_for_message(message_id, cx);
 
         // Don't render user messages that are just there for returning tool results.
-        if message.role == Role::User
-            && (thread.message_has_tool_results(message_id)
-                || thread.message_has_scripting_tool_results(message_id))
-        {
+        if message.role == Role::User && thread.message_has_tool_results(message_id) {
             return Empty.into_any();
         }
 
@@ -752,7 +782,7 @@ impl ActiveThread {
         let editor_bg_color = colors.editor_background;
         let bg_user_message_header = editor_bg_color.blend(active_color.opacity(0.25));
 
-        let feedback_container = h_flex().pb_4().px_4().gap_1().justify_between();
+        let feedback_container = h_flex().pt_2().pb_4().px_4().gap_1().justify_between();
         let feedback_items = match self.thread.read(cx).feedback() {
             Some(feedback) => feedback_container
                 .child(
@@ -1000,25 +1030,19 @@ impl ActiveThread {
                 .id(("message-container", ix))
                 .ml_2()
                 .pl_2()
+                .pr_4()
                 .border_l_1()
                 .border_color(cx.theme().colors().border_variant)
                 .child(message_content)
-                .when(
-                    !tool_uses.is_empty() || !scripting_tool_uses.is_empty(),
-                    |parent| {
-                        parent.child(
-                            v_flex()
-                                .children(
-                                    tool_uses
-                                        .into_iter()
-                                        .map(|tool_use| self.render_tool_use(tool_use, cx)),
-                                )
-                                .children(scripting_tool_uses.into_iter().map(|tool_use| {
-                                    self.render_scripting_tool_use(tool_use, window, cx)
-                                })),
-                        )
-                    },
-                ),
+                .when(!tool_uses.is_empty(), |parent| {
+                    parent.child(
+                        v_flex().children(
+                            tool_uses
+                                .into_iter()
+                                .map(|tool_use| self.render_tool_use(tool_use, cx)),
+                        ),
+                    )
+                }),
             Role::System => div().id(("message-container", ix)).py_1().px_2().child(
                 v_flex()
                     .bg(colors.editor_background)
@@ -1092,6 +1116,7 @@ impl ActiveThread {
 
                 parent.child(
                     h_flex()
+                        .pt_2p5()
                         .px_2p5()
                         .w_full()
                         .gap_1()
@@ -1149,6 +1174,17 @@ impl ActiveThread {
             )
     }
 
+    fn tool_card_border_color(&self, cx: &Context<Self>) -> Hsla {
+        cx.theme().colors().border.opacity(0.5)
+    }
+
+    fn tool_card_header_bg(&self, cx: &Context<Self>) -> Hsla {
+        cx.theme()
+            .colors()
+            .element_background
+            .blend(cx.theme().colors().editor_foreground.opacity(0.025))
+    }
+
     fn render_message_thinking_segment(
         &self,
         message_id: MessageId,
@@ -1164,132 +1200,150 @@ impl ActiveThread {
             .copied()
             .unwrap_or_default();
 
-        let lighter_border = cx.theme().colors().border.opacity(0.5);
         let editor_bg = cx.theme().colors().editor_background;
 
-        v_flex()
-            .rounded_lg()
-            .border_1()
-            .border_color(lighter_border)
-            .child(
-                h_flex()
-                    .justify_between()
-                    .py_1()
-                    .pl_1()
-                    .pr_2()
-                    .bg(cx.theme().colors().editor_foreground.opacity(0.025))
-                    .map(|this| {
-                        if is_open {
-                            this.rounded_t_md()
-                                .border_b_1()
-                                .border_color(lighter_border)
-                        } else {
-                            this.rounded_md()
-                        }
-                    })
-                    .child(
-                        h_flex()
-                            .gap_1()
-                            .child(Disclosure::new("thinking-disclosure", is_open).on_click(
-                                cx.listener({
-                                    move |this, _event, _window, _cx| {
-                                        let is_open = this
-                                            .expanded_thinking_segments
-                                            .entry((message_id, ix))
-                                            .or_insert(false);
-
-                                        *is_open = !*is_open;
+        div().py_2().child(
+            v_flex()
+                .rounded_lg()
+                .border_1()
+                .border_color(self.tool_card_border_color(cx))
+                .child(
+                    h_flex()
+                        .group("disclosure-header")
+                        .justify_between()
+                        .py_1()
+                        .px_2()
+                        .bg(self.tool_card_header_bg(cx))
+                        .map(|this| {
+                            if pending || is_open {
+                                this.rounded_t_md()
+                                    .border_b_1()
+                                    .border_color(self.tool_card_border_color(cx))
+                            } else {
+                                this.rounded_md()
+                            }
+                        })
+                        .child(
+                            h_flex()
+                                .gap_1p5()
+                                .child(
+                                    Icon::new(IconName::Brain)
+                                        .size(IconSize::XSmall)
+                                        .color(Color::Muted),
+                                )
+                                .child({
+                                    if pending {
+                                        Label::new("Thinking…")
+                                            .size(LabelSize::Small)
+                                            .buffer_font(cx)
+                                            .with_animation(
+                                                "pulsating-label",
+                                                Animation::new(Duration::from_secs(2))
+                                                    .repeat()
+                                                    .with_easing(pulsating_between(0.4, 0.8)),
+                                                |label, delta| label.alpha(delta),
+                                            )
+                                            .into_any_element()
+                                    } else {
+                                        Label::new("Thought Process")
+                                            .size(LabelSize::Small)
+                                            .buffer_font(cx)
+                                            .into_any_element()
                                     }
                                 }),
-                            ))
-                            .child({
-                                if pending {
-                                    Label::new("Thinking…")
-                                        .size(LabelSize::Small)
-                                        .buffer_font(cx)
-                                        .with_animation(
-                                            "pulsating-label",
-                                            Animation::new(Duration::from_secs(2))
-                                                .repeat()
-                                                .with_easing(pulsating_between(0.4, 0.8)),
-                                            |label, delta| label.alpha(delta),
+                        )
+                        .child(
+                            h_flex()
+                                .gap_1()
+                                .child(
+                                    div().visible_on_hover("disclosure-header").child(
+                                        Disclosure::new("thinking-disclosure", is_open)
+                                            .opened_icon(IconName::ChevronUp)
+                                            .closed_icon(IconName::ChevronDown)
+                                            .on_click(cx.listener({
+                                                move |this, _event, _window, _cx| {
+                                                    let is_open = this
+                                                        .expanded_thinking_segments
+                                                        .entry((message_id, ix))
+                                                        .or_insert(false);
+
+                                                    *is_open = !*is_open;
+                                                }
+                                            })),
+                                    ),
+                                )
+                                .child({
+                                    let (icon_name, color, animated) = if pending {
+                                        (IconName::ArrowCircle, Color::Accent, true)
+                                    } else {
+                                        (IconName::Check, Color::Success, false)
+                                    };
+
+                                    let icon =
+                                        Icon::new(icon_name).color(color).size(IconSize::Small);
+
+                                    if animated {
+                                        icon.with_animation(
+                                            "arrow-circle",
+                                            Animation::new(Duration::from_secs(2)).repeat(),
+                                            |icon, delta| {
+                                                icon.transform(Transformation::rotate(percentage(
+                                                    delta,
+                                                )))
+                                            },
                                         )
                                         .into_any_element()
-                                } else {
-                                    Label::new("Thought Process")
-                                        .size(LabelSize::Small)
-                                        .buffer_font(cx)
-                                        .into_any_element()
-                                }
-                            }),
-                    )
-                    .child({
-                        let (icon_name, color, animated) = if pending {
-                            (IconName::ArrowCircle, Color::Accent, true)
-                        } else {
-                            (IconName::Check, Color::Success, false)
-                        };
+                                    } else {
+                                        icon.into_any_element()
+                                    }
+                                }),
+                        ),
+                )
+                .when(pending && !is_open, |this| {
+                    let gradient_overlay = div()
+                        .rounded_b_lg()
+                        .h_20()
+                        .absolute()
+                        .w_full()
+                        .bottom_0()
+                        .left_0()
+                        .bg(linear_gradient(
+                            180.,
+                            linear_color_stop(editor_bg, 1.),
+                            linear_color_stop(editor_bg.opacity(0.2), 0.),
+                        ));
 
-                        let icon = Icon::new(icon_name).color(color).size(IconSize::Small);
-
-                        if animated {
-                            icon.with_animation(
-                                "arrow-circle",
-                                Animation::new(Duration::from_secs(2)).repeat(),
-                                |icon, delta| {
-                                    icon.transform(Transformation::rotate(percentage(delta)))
-                                },
+                    this.child(
+                        div()
+                            .relative()
+                            .bg(editor_bg)
+                            .rounded_b_lg()
+                            .child(
+                                div()
+                                    .id(("thinking-content", ix))
+                                    .p_2()
+                                    .h_20()
+                                    .track_scroll(scroll_handle)
+                                    .text_ui_sm(cx)
+                                    .child(markdown.clone())
+                                    .overflow_hidden(),
                             )
-                            .into_any_element()
-                        } else {
-                            icon.into_any_element()
-                        }
-                    }),
-            )
-            .when(pending && !is_open, |this| {
-                let gradient_overlay = div()
-                    .rounded_b_lg()
-                    .h_20()
-                    .absolute()
-                    .w_full()
-                    .bottom_0()
-                    .left_0()
-                    .bg(linear_gradient(
-                        180.,
-                        linear_color_stop(editor_bg, 1.),
-                        linear_color_stop(editor_bg.opacity(0.2), 0.),
-                    ));
-
-                this.child(
-                    div()
-                        .relative()
-                        .bg(editor_bg)
-                        .rounded_b_lg()
-                        .text_ui_sm(cx)
-                        .child(
-                            div()
-                                .id(("thinking-content", ix))
-                                .p_2()
-                                .h_20()
-                                .track_scroll(scroll_handle)
-                                .child(markdown.clone())
-                                .overflow_hidden(),
-                        )
-                        .child(gradient_overlay),
-                )
-            })
-            .when(is_open, |this| {
-                this.child(
-                    div()
-                        .id(("thinking-content", ix))
-                        .h_full()
-                        .p_2()
-                        .rounded_b_lg()
-                        .bg(editor_bg)
-                        .text_ui_sm(cx)
-                        .child(markdown.clone()),
-                )
-            })
+                            .child(gradient_overlay),
+                    )
+                })
+                .when(is_open, |this| {
+                    this.child(
+                        div()
+                            .id(("thinking-content", ix))
+                            .h_full()
+                            .p_2()
+                            .rounded_b_lg()
+                            .bg(editor_bg)
+                            .text_ui_sm(cx)
+                            .child(markdown.clone()),
+                    )
+                }),
+        )
     }
 
     fn render_tool_use(&self, tool_use: ToolUse, cx: &mut Context<Self>) -> impl IntoElement {
@@ -1299,36 +1353,21 @@ impl ActiveThread {
             .copied()
             .unwrap_or_default();
 
-        let lighter_border = cx.theme().colors().border.opacity(0.5);
-
-        let tool_icon = match tool_use.name.as_ref() {
-            "bash" => IconName::Terminal,
-            "delete-path" => IconName::Trash,
-            "diagnostics" => IconName::Warning,
-            "edit-files" => IconName::Pencil,
-            "fetch" => IconName::Globe,
-            "list-directory" => IconName::Folder,
-            "now" => IconName::Info,
-            "path-search" => IconName::SearchCode,
-            "read-file" => IconName::Eye,
-            "regex-search" => IconName::Regex,
-            "thinking" => IconName::Brain,
-            _ => IconName::Terminal,
-        };
-
-        div().py_2().pr_4().child(
+        div().py_2().child(
             v_flex()
                 .rounded_lg()
                 .border_1()
-                .border_color(lighter_border)
+                .border_color(self.tool_card_border_color(cx))
                 .overflow_hidden()
                 .child(
                     h_flex()
                         .group("disclosure-header")
+                        .relative()
+                        .gap_1p5()
                         .justify_between()
                         .py_1()
                         .px_2()
-                        .bg(cx.theme().colors().editor_foreground.opacity(0.025))
+                        .bg(self.tool_card_header_bg(cx))
                         .map(|element| {
                             if is_open {
                                 element.border_b_1().rounded_t_md()
@@ -1336,25 +1375,22 @@ impl ActiveThread {
                                 element.rounded_md()
                             }
                         })
-                        .border_color(lighter_border)
+                        .border_color(self.tool_card_border_color(cx))
                         .child(
                             h_flex()
+                                .id("tool-label-container")
+                                .relative()
                                 .gap_1p5()
+                                .max_w_full()
+                                .overflow_x_scroll()
                                 .child(
-                                    Icon::new(tool_icon)
+                                    Icon::new(tool_use.icon)
                                         .size(IconSize::XSmall)
                                         .color(Color::Muted),
                                 )
-                                .child(
-                                    div()
-                                        .text_ui_sm(cx)
-                                        .children(
-                                            self.rendered_tool_use_labels
-                                                .get(&tool_use.id)
-                                                .cloned(),
-                                        )
-                                        .truncate(),
-                                ),
+                                .child(h_flex().pr_8().text_ui_sm(cx).children(
+                                    self.rendered_tool_use_labels.get(&tool_use.id).cloned(),
+                                )),
                         )
                         .child(
                             h_flex()
@@ -1379,7 +1415,8 @@ impl ActiveThread {
                                 )
                                 .child({
                                     let (icon_name, color, animated) = match &tool_use.status {
-                                        ToolUseStatus::Pending => {
+                                        ToolUseStatus::Pending
+                                        | ToolUseStatus::NeedsConfirmation => {
                                             (IconName::Warning, Color::Warning, false)
                                         }
                                         ToolUseStatus::Running => {
@@ -1411,7 +1448,14 @@ impl ActiveThread {
                                         icon.into_any_element()
                                     }
                                 }),
-                        ),
+                        )
+                        .child(div().h_full().absolute().w_8().bottom_0().right_12().bg(
+                            linear_gradient(
+                                90.,
+                                linear_color_stop(self.tool_card_header_bg(cx), 1.),
+                                linear_color_stop(self.tool_card_header_bg(cx).opacity(0.2), 0.),
+                            ),
+                        )),
                 )
                 .map(|parent| {
                     if !is_open {
@@ -1428,7 +1472,7 @@ impl ActiveThread {
                             .child(
                                 content_container()
                                     .border_b_1()
-                                    .border_color(lighter_border)
+                                    .border_color(self.tool_card_border_color(cx))
                                     .child(
                                         Label::new("Input")
                                             .size(LabelSize::XSmall)
@@ -1500,126 +1544,14 @@ impl ActiveThread {
                                         ),
                                 ),
                                 ToolUseStatus::Pending => container,
-                            }),
-                    )
-                }),
-        )
-    }
-
-    fn render_scripting_tool_use(
-        &self,
-        tool_use: ToolUse,
-        window: &Window,
-        cx: &mut Context<Self>,
-    ) -> impl IntoElement {
-        let is_open = self
-            .expanded_tool_uses
-            .get(&tool_use.id)
-            .copied()
-            .unwrap_or_default();
-
-        div().px_2p5().child(
-            v_flex()
-                .gap_1()
-                .rounded_lg()
-                .border_1()
-                .border_color(cx.theme().colors().border)
-                .child(
-                    h_flex()
-                        .justify_between()
-                        .py_0p5()
-                        .pl_1()
-                        .pr_2()
-                        .bg(cx.theme().colors().editor_foreground.opacity(0.02))
-                        .map(|element| {
-                            if is_open {
-                                element.border_b_1().rounded_t_md()
-                            } else {
-                                element.rounded_md()
-                            }
-                        })
-                        .border_color(cx.theme().colors().border)
-                        .child(
-                            h_flex()
-                                .gap_1()
-                                .child(Disclosure::new("tool-use-disclosure", is_open).on_click(
-                                    cx.listener({
-                                        let tool_use_id = tool_use.id.clone();
-                                        move |this, _event, _window, _cx| {
-                                            let is_open = this
-                                                .expanded_tool_uses
-                                                .entry(tool_use_id.clone())
-                                                .or_insert(false);
-
-                                            *is_open = !*is_open;
-                                        }
-                                    }),
-                                ))
-                                .child(div().text_ui_sm(cx).child(render_markdown(
-                                    tool_use.ui_text.clone(),
-                                    self.language_registry.clone(),
-                                    window,
-                                    cx,
-                                )))
-                                .truncate(),
-                        )
-                        .child(
-                            Label::new(match tool_use.status {
-                                ToolUseStatus::Pending => "Pending",
-                                ToolUseStatus::Running => "Running",
-                                ToolUseStatus::Finished(_) => "Finished",
-                                ToolUseStatus::Error(_) => "Error",
-                            })
-                            .size(LabelSize::XSmall)
-                            .buffer_font(cx),
-                        ),
-                )
-                .map(|parent| {
-                    if !is_open {
-                        return parent;
-                    }
-
-                    let lua_script_markdown =
-                        self.rendered_scripting_tool_uses.get(&tool_use.id).cloned();
-
-                    parent.child(
-                        v_flex()
-                            .child(
-                                v_flex()
-                                    .gap_0p5()
-                                    .py_1()
-                                    .px_2p5()
-                                    .border_b_1()
-                                    .border_color(cx.theme().colors().border)
-                                    .child(Label::new("Input:"))
-                                    .map(|parent| {
-                                        if let Some(markdown) = lua_script_markdown {
-                                            parent.child(markdown)
-                                        } else {
-                                            parent.child(Label::new(
-                                                "Failed to render script input to Markdown",
-                                            ))
-                                        }
-                                    }),
-                            )
-                            .map(|parent| match tool_use.status {
-                                ToolUseStatus::Finished(output) => parent.child(
-                                    v_flex()
-                                        .gap_0p5()
-                                        .py_1()
-                                        .px_2p5()
-                                        .child(Label::new("Result:"))
-                                        .child(Label::new(output)),
+                                ToolUseStatus::NeedsConfirmation => container.child(
+                                    content_container().child(
+                                        Label::new("Asking Permission")
+                                            .size(LabelSize::Small)
+                                            .color(Color::Muted)
+                                            .buffer_font(cx),
+                                    ),
                                 ),
-                                ToolUseStatus::Error(err) => parent.child(
-                                    v_flex()
-                                        .gap_0p5()
-                                        .py_1()
-                                        .px_2p5()
-                                        .child(Label::new("Error:"))
-                                        .child(Label::new(err)),
-                                ),
-                                ToolUseStatus::Pending | ToolUseStatus::Running => parent,
                             }),
                     )
                 }),
@@ -1682,6 +1614,44 @@ impl ActiveThread {
             .into_any()
     }
 
+    fn handle_allow_tool(
+        &mut self,
+        tool_use_id: LanguageModelToolUseId,
+        _: &ClickEvent,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(PendingToolUseStatus::NeedsConfirmation(c)) = self
+            .thread
+            .read(cx)
+            .pending_tool(&tool_use_id)
+            .map(|tool_use| tool_use.status.clone())
+        {
+            self.thread.update(cx, |thread, cx| {
+                thread.run_tool(
+                    c.tool_use_id.clone(),
+                    c.ui_text.clone(),
+                    c.input.clone(),
+                    &c.messages,
+                    c.tool.clone(),
+                    cx,
+                );
+            });
+        }
+    }
+
+    fn handle_deny_tool(
+        &mut self,
+        tool_use_id: LanguageModelToolUseId,
+        _: &ClickEvent,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.thread.update(cx, |thread, cx| {
+            thread.deny_tool_use(tool_use_id, cx);
+        });
+    }
+
     fn handle_open_rules(&mut self, _: &ClickEvent, window: &mut Window, cx: &mut Context<Self>) {
         let Some(system_prompt_context) = self.thread.read(cx).system_prompt_context().as_ref()
         else {
@@ -1704,12 +1674,126 @@ impl ActiveThread {
             task.detach();
         }
     }
+
+    fn render_confirmations<'a>(
+        &'a mut self,
+        cx: &'a mut Context<Self>,
+    ) -> impl Iterator<Item = AnyElement> + 'a {
+        let thread = self.thread.read(cx);
+
+        thread
+            .tools_needing_confirmation()
+            .map(|tool| {
+                div()
+                    .m_3()
+                    .p_2()
+                    .bg(cx.theme().colors().editor_background)
+                    .border_1()
+                    .border_color(cx.theme().colors().border)
+                    .rounded_lg()
+                    .child(
+                        v_flex()
+                            .gap_1()
+                            .child(
+                                v_flex()
+                                    .gap_0p5()
+                                    .child(
+                                        Label::new("The agent wants to run this action:")
+                                            .color(Color::Muted),
+                                    )
+                                    .child(div().p_3().child(Label::new(&tool.ui_text))),
+                            )
+                            .child(
+                                h_flex()
+                                    .gap_1()
+                                    .child({
+                                        let tool_id = tool.id.clone();
+                                        Button::new("allow-tool-action", "Allow").on_click(
+                                            cx.listener(move |this, event, window, cx| {
+                                                this.handle_allow_tool(
+                                                    tool_id.clone(),
+                                                    event,
+                                                    window,
+                                                    cx,
+                                                )
+                                            }),
+                                        )
+                                    })
+                                    .child({
+                                        let tool_id = tool.id.clone();
+                                        Button::new("deny-tool", "Deny").on_click(cx.listener(
+                                            move |this, event, window, cx| {
+                                                this.handle_deny_tool(
+                                                    tool_id.clone(),
+                                                    event,
+                                                    window,
+                                                    cx,
+                                                )
+                                            },
+                                        ))
+                                    }),
+                            )
+                            .child(
+                                Label::new("Note: A future release will introduce a way to remember your answers to these. In the meantime, you can avoid these prompts by adding \"assistant\": { \"always_allow_tool_actions\": true } to your settings.json.")
+                                    .color(Color::Muted)
+                                    .size(LabelSize::Small),
+                            ),
+                    )
+                    .into_any()
+            })
+    }
+
+    fn dismiss_notifications(&mut self, cx: &mut Context<'_, ActiveThread>) {
+        for window in self.pop_ups.drain(..) {
+            window
+                .update(cx, |_, window, _| {
+                    window.remove_window();
+                })
+                .ok();
+        }
+    }
+
+    fn render_vertical_scrollbar(&self, cx: &mut Context<Self>) -> Stateful<Div> {
+        div()
+            .occlude()
+            .id("active-thread-scrollbar")
+            .on_mouse_move(cx.listener(|_, _, _, cx| {
+                cx.notify();
+                cx.stop_propagation()
+            }))
+            .on_hover(|_, _, cx| {
+                cx.stop_propagation();
+            })
+            .on_any_mouse_down(|_, _, cx| {
+                cx.stop_propagation();
+            })
+            .on_mouse_up(
+                MouseButton::Left,
+                cx.listener(|_, _, _, cx| {
+                    cx.stop_propagation();
+                }),
+            )
+            .on_scroll_wheel(cx.listener(|_, _, _, cx| {
+                cx.notify();
+            }))
+            .h_full()
+            .absolute()
+            .right_1()
+            .top_1()
+            .bottom_0()
+            .w(px(12.))
+            .cursor_default()
+            .children(Scrollbar::vertical(self.scrollbar_state.clone()))
+    }
 }
 
 impl Render for ActiveThread {
-    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         v_flex()
             .size_full()
+            .relative()
             .child(list(self.list_state.clone()).flex_grow())
+            .children(self.render_confirmations(cx))
+            .child(self.render_vertical_scrollbar(cx))
     }
 }

@@ -483,7 +483,7 @@ async fn test_remote_lsp(cx: &mut TestAppContext, server_cx: &mut TestAppContext
         assert_eq!(lsp_store.as_local().unwrap().language_servers.len(), 1);
     });
 
-    fake_lsp.handle_request::<lsp::request::Completion, _, _>(|_, _| async move {
+    fake_lsp.set_request_handler::<lsp::request::Completion, _, _>(|_, _| async move {
         Ok(Some(CompletionResponse::Array(vec![lsp::CompletionItem {
             label: "boop".to_string(),
             ..Default::default()
@@ -514,7 +514,7 @@ async fn test_remote_lsp(cx: &mut TestAppContext, server_cx: &mut TestAppContext
         vec!["boop".to_string()]
     );
 
-    fake_lsp.handle_request::<lsp::request::Rename, _, _>(|_, _| async move {
+    fake_lsp.set_request_handler::<lsp::request::Rename, _, _>(|_, _| async move {
         Ok(Some(lsp::WorkspaceEdit {
             changes: Some(
                 [(

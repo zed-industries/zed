@@ -65,7 +65,8 @@ use persistence::{
 };
 use postage::stream::Stream;
 use project::{
-    DirectoryLister, Project, ProjectEntryId, ProjectPath, ResolvedPath, Worktree, WorktreeId,
+    debugger::breakpoint_store::BreakpointStoreEvent, DirectoryLister, Project, ProjectEntryId,
+    ProjectPath, ResolvedPath, Worktree, WorktreeId,
 };
 use remote::{ssh_session::ConnectionIdentifier, SshClientDelegate, SshConnectionOptions};
 use schemars::JsonSchema;
@@ -141,7 +142,7 @@ actions!(
         StepBack,
         Stop,
         ToggleIgnoreBreakpoints,
-        ClearBreakpoints
+        ClearAllBreakpoints
     ]
 );
 
@@ -181,6 +182,7 @@ actions!(
         ToggleZoom,
         Unfollow,
         Welcome,
+        RestoreBanner,
     ]
 );
 
@@ -972,6 +974,17 @@ impl Workspace {
             }
             cx.notify()
         })
+        .detach();
+
+        cx.subscribe_in(
+            &project.read(cx).breakpoint_store(),
+            window,
+            |workspace, _, evt, window, cx| {
+                if let BreakpointStoreEvent::BreakpointsUpdated(_, _) = evt {
+                    workspace.serialize_workspace(window, cx);
+                }
+            },
+        )
         .detach();
 
         cx.on_focus_lost(window, |this, window, cx| {
@@ -6689,7 +6702,7 @@ pub fn client_side_decorations(
                                     CursorStyle::ResizeUpRightDownLeft
                                 }
                             },
-                            &hitbox,
+                            Some(&hitbox),
                         );
                     },
                 )
