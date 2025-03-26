@@ -3,12 +3,13 @@ use std::ops::Range;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
-use anyhow::{Context as _, Result};
+use anyhow::{anyhow, Context as _, Result};
 use editor::{Anchor, AnchorRangeExt, Editor, MultiBufferSnapshot};
 use file_icons::FileIcons;
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
-    App, AppContext, DismissEvent, Entity, FocusHandle, Focusable, Stateful, Task, WeakEntity,
+    App, AppContext, AsyncApp, DismissEvent, Entity, FocusHandle, Focusable, Stateful, Task,
+    WeakEntity,
 };
 use language::OutlineItem;
 use ordered_float::OrderedFloat;
@@ -141,51 +142,15 @@ impl PickerDelegate for SymbolContextPickerDelegate {
             return;
         };
 
-        let project = workspace.read(cx).project().clone();
-        let path = mat.symbol.path.clone();
-        let symbol = mat.symbol.clone();
-        let context_store = self.context_store.clone();
         let confirm_behavior = self.confirm_behavior;
-
-        let open_buffer_task = project.update(cx, |project, cx| project.open_buffer(path, cx));
+        let add_symbol_task = add_symbol(
+            mat.symbol.clone(),
+            workspace,
+            self.context_store.clone(),
+            &mut cx.to_async(),
+        );
         cx.spawn_in(window, async move |this, cx| {
-            let buffer = open_buffer_task.await?;
-            let document_symbols = project
-                .update(cx, |project, cx| project.document_symbols(&buffer, cx))?
-                .await?;
-
-            // Try to find a matching document symbol. Document symbols include
-            // not only the symbol itself (e.g. function name), but they also
-            // include the context that they contain (e.g. function body).
-            let (name, range, enclosing_range) = if let Some(DocumentSymbol {
-                name,
-                range,
-                selection_range,
-                ..
-            }) =
-                find_matching_symbol(&symbol, &document_symbols)
-            {
-                (name, selection_range, range)
-            } else {
-                // If we do not find a matching document symbol, fall back to
-                // just the symbol itself
-                (symbol.name, symbol.range.clone(), symbol.range)
-            };
-
-            let (range, enclosing_range) = buffer.read_with(cx, |buffer, cx| {
-                (
-                    buffer.anchor_after(range.start)..buffer.anchor_before(range.end),
-                    buffer.anchor_after(enclosing_range.start)
-                        ..buffer.anchor_before(enclosing_range.end),
-                )
-            })?;
-
-            context_store
-                .update(cx, move |context_store, cx| {
-                    context_store.add_symbol(buffer, name.into(), range, enclosing_range, cx)
-                })?
-                .await?;
-
+            add_symbol_task.await?;
             this.update_in(cx, |this, window, cx| match confirm_behavior {
                 ConfirmBehavior::KeepOpen => {}
                 ConfirmBehavior::Close => this.delegate.dismissed(window, cx),
@@ -225,6 +190,58 @@ impl PickerDelegate for SymbolContextPickerDelegate {
 pub(crate) struct SymbolMatch {
     pub mat: StringMatch,
     pub symbol: Symbol,
+}
+
+pub(crate) fn add_symbol(
+    symbol: Symbol,
+    workspace: Entity<Workspace>,
+    context_store: WeakEntity<ContextStore>,
+    cx: &mut AsyncApp,
+) -> Task<Result<()>> {
+    let Ok(project) = workspace.read_with(cx, |workspace, cx| workspace.project().clone()) else {
+        return Task::ready(Err(anyhow!("Failed to read workspace")));
+    };
+    let open_buffer_task = project.update(cx, |project, cx| {
+        project.open_buffer(symbol.path.clone(), cx)
+    });
+    cx.spawn(async move |cx| {
+        let buffer = open_buffer_task?.await?;
+        let document_symbols = project
+            .update(cx, |project, cx| project.document_symbols(&buffer, cx))?
+            .await?;
+
+        // Try to find a matching document symbol. Document symbols include
+        // not only the symbol itself (e.g. function name), but they also
+        // include the context that they contain (e.g. function body).
+        let (name, range, enclosing_range) = if let Some(DocumentSymbol {
+            name,
+            range,
+            selection_range,
+            ..
+        }) =
+            find_matching_symbol(&symbol, document_symbols.as_slice())
+        {
+            (name, selection_range, range)
+        } else {
+            // If we do not find a matching document symbol, fall back to
+            // just the symbol itself
+            (symbol.name, symbol.range.clone(), symbol.range)
+        };
+
+        let (range, enclosing_range) = buffer.read_with(cx, |buffer, cx| {
+            (
+                buffer.anchor_after(range.start)..buffer.anchor_before(range.end),
+                buffer.anchor_after(enclosing_range.start)
+                    ..buffer.anchor_before(enclosing_range.end),
+            )
+        })?;
+
+        context_store
+            .update(cx, move |context_store, cx| {
+                context_store.add_symbol(buffer, name.into(), range, enclosing_range, cx)
+            })?
+            .await
+    })
 }
 
 fn find_matching_symbol(symbol: &Symbol, candidates: &[DocumentSymbol]) -> Option<DocumentSymbol> {

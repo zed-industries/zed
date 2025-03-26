@@ -12,7 +12,7 @@ use gpui::{App, Entity, Task, WeakEntity};
 use http_client::HttpClientWithUrl;
 use language::{Buffer, CodeLabel, HighlightId};
 use lsp::CompletionContext;
-use project::{Completion, CompletionIntent, ProjectPath, WorktreeId};
+use project::{Completion, CompletionIntent, ProjectPath, Symbol, WorktreeId};
 use rope::Point;
 use text::{Anchor, ToPoint};
 use ui::prelude::*;
@@ -23,6 +23,7 @@ use crate::context_store::ContextStore;
 use crate::thread_store::ThreadStore;
 
 use super::fetch_context_picker::fetch_url_content;
+use super::symbol_context_picker::SymbolMatch;
 use super::thread_context_picker::ThreadContextEntry;
 use super::{recent_context_picker_entries, supported_context_picker_modes, ContextPickerMode};
 
@@ -123,7 +124,7 @@ impl ContextPickerCompletionProvider {
     fn full_path_for_entry(
         worktree_id: WorktreeId,
         path: &Path,
-        workspace: Entity<Workspace>,
+        workspace: &Entity<Workspace>,
         cx: &App,
     ) -> Option<PathBuf> {
         let worktree = workspace
@@ -292,7 +293,7 @@ impl ContextPickerCompletionProvider {
         let full_path = Self::full_path_for_entry(
             project_path.worktree_id,
             &project_path.path,
-            workspace.clone(),
+            &workspace,
             cx,
         )?;
 
@@ -341,6 +342,64 @@ impl ContextPickerCompletionProvider {
                 },
             )),
         })
+    }
+
+    fn completion_for_symbol(
+        symbol: Symbol,
+        excerpt_id: ExcerptId,
+        source_range: Range<Anchor>,
+        editor: Entity<Editor>,
+        context_store: Entity<ContextStore>,
+        workspace: Entity<Workspace>,
+        cx: &mut App,
+    ) -> Completion {
+        let path =
+            Self::full_path_for_entry(symbol.path.worktree_id, &symbol.path.path, &workspace, cx);
+        let file_name = path
+            .and_then(|path| {
+                path.file_name()
+                    .map(|name| name.to_string_lossy().to_string())
+            })
+            .unwrap_or_else(|| "Untitled".to_string());
+
+        let comment_id = cx.theme().syntax().highlight_id("comment").map(HighlightId);
+        let mut label = CodeLabel::plain(symbol.name.clone(), None);
+        label.push_str(" ", None);
+        label.push_str(&file_name, comment_id);
+
+        let new_text = format!("@symbol {}", symbol.name);
+        let new_text_len = new_text.len();
+        Completion {
+            old_range: source_range.clone(),
+            new_text,
+            label,
+            documentation: None,
+            source: project::CompletionSource::Custom,
+            icon_path: Some(IconName::Code.path().into()),
+            confirm: Some(confirm_completion_callback(
+                IconName::Code.path().into(),
+                symbol.name.clone().into(),
+                excerpt_id,
+                source_range.start,
+                new_text_len,
+                editor.clone(),
+                move |cx| {
+                    let symbol = symbol.clone();
+                    let context_store = context_store.clone();
+                    let workspace = workspace.clone();
+                    cx.spawn(async move |cx| {
+                        super::symbol_context_picker::add_symbol(
+                            symbol.clone(),
+                            workspace.clone(),
+                            context_store.downgrade(),
+                            cx,
+                        )
+                        .await
+                    })
+                    .detach_and_log_err(cx);
+                },
+            )),
+        }
     }
 }
 
@@ -422,7 +481,31 @@ impl CompletionProvider for ContextPickerCompletionProvider {
                     })?;
                 }
                 Some(ContextPickerMode::Symbol) => {
-                    //TODO
+                    if let Some(editor) = editor.upgrade() {
+                        let symbol_matches = cx
+                            .update(|cx| {
+                                super::symbol_context_picker::search_symbols(
+                                    query,
+                                    Arc::new(AtomicBool::default()),
+                                    &workspace,
+                                    cx,
+                                )
+                            })?
+                            .await?;
+                        cx.update(|cx| {
+                            for symbol_match in symbol_matches {
+                                completions.push(Self::completion_for_symbol(
+                                    symbol_match.symbol,
+                                    excerpt_id,
+                                    source_range.clone(),
+                                    editor.clone(),
+                                    context_store.clone(),
+                                    workspace.clone(),
+                                    cx,
+                                ));
+                            }
+                        })?;
+                    }
                 }
                 Some(ContextPickerMode::Fetch) => {
                     if let Some(editor) = editor.upgrade() {
