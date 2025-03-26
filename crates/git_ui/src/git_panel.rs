@@ -195,7 +195,6 @@ impl GitListEntry {
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub struct GitStatusEntry {
     pub(crate) repo_path: RepoPath,
-    pub(crate) worktree_path: Arc<Path>,
     pub(crate) abs_path: PathBuf,
     pub(crate) status: FileStatus,
     pub(crate) staging: StageStatus,
@@ -203,14 +202,14 @@ pub struct GitStatusEntry {
 
 impl GitStatusEntry {
     fn display_name(&self) -> String {
-        self.worktree_path
+        self.repo_path
             .file_name()
             .map(|name| name.to_string_lossy().into_owned())
-            .unwrap_or_else(|| self.worktree_path.to_string_lossy().into_owned())
+            .unwrap_or_else(|| self.repo_path.to_string_lossy().into_owned())
     }
 
     fn parent_dir(&self) -> Option<String> {
-        self.worktree_path
+        self.repo_path
             .parent()
             .map(|parent| parent.to_string_lossy().into_owned())
     }
@@ -875,31 +874,12 @@ impl GitPanel {
                 }
             };
 
-            if entry.worktree_path.starts_with("..") {
-                self.workspace
-                    .update(cx, |workspace, cx| {
-                        workspace
-                            .open_abs_path(
-                                entry.abs_path.clone(),
-                                OpenOptions {
-                                    visible: Some(OpenVisible::All),
-                                    focus: Some(false),
-                                    ..Default::default()
-                                },
-                                window,
-                                cx,
-                            )
-                            .detach_and_log_err(cx);
-                    })
-                    .ok();
-            } else {
-                self.workspace
-                    .update(cx, |workspace, cx| {
-                        ProjectDiff::deploy_at(workspace, Some(entry.clone()), window, cx);
-                    })
-                    .ok();
-                self.focus_handle.focus(window);
-            }
+            self.workspace
+                .update(cx, |workspace, cx| {
+                    ProjectDiff::deploy_at(workspace, Some(entry.clone()), window, cx);
+                })
+                .ok();
+            self.focus_handle.focus(window);
 
             Some(())
         });
@@ -2264,12 +2244,8 @@ impl GitPanel {
                 .repository_entry
                 .work_directory_abs_path
                 .join(&entry.repo_path.0);
-            let Some(worktree_path) = repo.repo_path_to_project_path(&entry.repo_path, cx) else {
-                continue;
-            };
             let entry = GitStatusEntry {
                 repo_path: entry.repo_path.clone(),
-                worktree_path: worktree_path.path,
                 abs_path,
                 status: entry.status,
                 staging,
@@ -4527,42 +4503,40 @@ mod tests {
                 GitListEntry::GitStatusEntry(GitStatusEntry {
                     abs_path: path!("/root/zed/crates/gpui/gpui.rs").into(),
                     repo_path: "crates/gpui/gpui.rs".into(),
-                    worktree_path: Path::new("gpui.rs").into(),
                     status: StatusCode::Modified.worktree(),
                     staging: StageStatus::Unstaged,
                 }),
                 GitListEntry::GitStatusEntry(GitStatusEntry {
                     abs_path: path!("/root/zed/crates/util/util.rs").into(),
                     repo_path: "crates/util/util.rs".into(),
-                    worktree_path: Path::new("../util/util.rs").into(),
                     status: StatusCode::Modified.worktree(),
                     staging: StageStatus::Unstaged,
                 },),
             ],
         );
 
-        cx.update_window_entity(&panel, |panel, window, cx| {
-            panel.select_last(&Default::default(), window, cx);
-            assert_eq!(panel.selected_entry, Some(2));
-            panel.open_diff(&Default::default(), window, cx);
-        });
-        cx.run_until_parked();
-
-        let worktree_roots = workspace.update(cx, |workspace, cx| {
-            workspace
-                .worktrees(cx)
-                .map(|worktree| worktree.read(cx).abs_path())
-                .collect::<Vec<_>>()
-        });
-        pretty_assertions::assert_eq!(
-            worktree_roots,
-            vec![
-                Path::new(path!("/root/zed/crates/gpui")).into(),
-                Path::new(path!("/root/zed/crates/util/util.rs")).into(),
-            ]
-        );
-
         // TODO(cole) restore this once repository deduplication is implemented properly.
+        //cx.update_window_entity(&panel, |panel, window, cx| {
+        //    panel.select_last(&Default::default(), window, cx);
+        //    assert_eq!(panel.selected_entry, Some(2));
+        //    panel.open_diff(&Default::default(), window, cx);
+        //});
+        //cx.run_until_parked();
+
+        //let worktree_roots = workspace.update(cx, |workspace, cx| {
+        //    workspace
+        //        .worktrees(cx)
+        //        .map(|worktree| worktree.read(cx).abs_path())
+        //        .collect::<Vec<_>>()
+        //});
+        //pretty_assertions::assert_eq!(
+        //    worktree_roots,
+        //    vec![
+        //        Path::new(path!("/root/zed/crates/gpui")).into(),
+        //        Path::new(path!("/root/zed/crates/util/util.rs")).into(),
+        //    ]
+        //);
+
         //project.update(cx, |project, cx| {
         //    let git_store = project.git_store().read(cx);
         //    // The repo that comes from the single-file worktree can't be selected through the UI.
@@ -4604,14 +4578,12 @@ mod tests {
                 GitListEntry::GitStatusEntry(GitStatusEntry {
                     abs_path: path!("/root/zed/crates/gpui/gpui.rs").into(),
                     repo_path: "crates/gpui/gpui.rs".into(),
-                    worktree_path: Path::new("../../gpui/gpui.rs").into(),
                     status: StatusCode::Modified.worktree(),
                     staging: StageStatus::Unstaged,
                 }),
                 GitListEntry::GitStatusEntry(GitStatusEntry {
                     abs_path: path!("/root/zed/crates/util/util.rs").into(),
                     repo_path: "crates/util/util.rs".into(),
-                    worktree_path: Path::new("util.rs").into(),
                     status: StatusCode::Modified.worktree(),
                     staging: StageStatus::Unstaged,
                 },),
