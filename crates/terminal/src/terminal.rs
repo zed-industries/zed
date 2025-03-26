@@ -376,7 +376,19 @@ impl TerminalBuilder {
 
         let pty_options = {
             let alac_shell = match shell.clone() {
-                Shell::System => None,
+                Shell::System => {
+                    #[cfg(target_os = "windows")]
+                    {
+                        Some(alacritty_terminal::tty::Shell::new(
+                            util::retrieve_system_shell(),
+                            Vec::new(),
+                        ))
+                    }
+                    #[cfg(not(target_os = "windows"))]
+                    {
+                        None
+                    }
+                }
                 Shell::Program(program) => {
                     Some(alacritty_terminal::tty::Shell::new(program, Vec::new()))
                 }

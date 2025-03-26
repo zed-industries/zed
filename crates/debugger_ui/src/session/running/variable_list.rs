@@ -849,6 +849,7 @@ impl VariableList {
                                                 .single_line()
                                                 .truncate()
                                                 .size(LabelSize::Small)
+                                                .color(Color::Muted)
                                                 .when_some(variable_color, |this, color| {
                                                     this.color(Color::from(color))
                                                 }),

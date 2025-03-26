@@ -698,6 +698,7 @@ dependencies = [
  "collections",
  "derive_more",
  "gpui",
+ "icons",
  "language",
  "language_model",
  "parking_lot",
@@ -3197,6 +3198,7 @@ dependencies = [
  "extension",
  "futures 0.3.31",
  "gpui",
+ "icons",
  "language_model",
  "log",
  "parking_lot",
@@ -5636,7 +5638,6 @@ dependencies = [
  "askpass",
  "assistant_settings",
  "buffer_diff",
- "chrono",
  "collections",
  "command_palette_hooks",
  "component",
@@ -6490,6 +6491,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "icons"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "strum",
+]
+
+[[package]]
 name = "icu_collections"
 version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7302,6 +7311,7 @@ dependencies = [
  "google_ai",
  "gpui",
  "http_client",
+ "icons",
  "image",
  "log",
  "open_ai",
@@ -7314,7 +7324,6 @@ dependencies = [
  "strum",
  "telemetry_events",
  "thiserror 2.0.12",
- "ui",
  "util",
 ]
 
@@ -14195,10 +14204,11 @@ version = "0.1.0"
 dependencies = [
  "auto_update",
  "call",
+ "chrono",
  "client",
  "collections",
+ "db",
  "feature_flags",
- "git_ui",
  "gpui",
  "http_client",
  "notifications",
@@ -14219,7 +14229,6 @@ dependencies = [
  "windows 0.61.1",
  "workspace",
  "zed_actions",
- "zeta",
 ]
 
 [[package]]
@@ -14927,6 +14936,7 @@ dependencies = [
  "chrono",
  "component",
  "gpui",
+ "icons",
  "itertools 0.14.0",
  "linkme",
  "menu",
@@ -17371,6 +17381,7 @@ dependencies = [
  "theme_extension",
  "theme_selector",
  "time",
+ "title_bar",
  "toolchain_selector",
  "tree-sitter-md",
  "tree-sitter-rust",
@@ -17629,7 +17640,6 @@ dependencies = [
  "anyhow",
  "arrayvec",
  "call",
- "chrono",
  "client",
  "clock",
  "collections",

@@ -10,6 +10,7 @@ use language_model::{
     LanguageModelRequestMessage, LanguageModelToolResult, LanguageModelToolUse,
     LanguageModelToolUseId, MessageContent, Role,
 };
+use ui::IconName;
 
 use crate::thread::MessageId;
 use crate::thread_store::SerializedMessage;
@@ -21,6 +22,7 @@ pub struct ToolUse {
     pub ui_text: SharedString,
     pub status: ToolUseStatus,
     pub input: serde_json::Value,
+    pub icon: ui::IconName,
 }
 
 #[derive(Debug, Clone)]
@@ -179,12 +181,19 @@ impl ToolUseState {
                 }
             })();
 
+            let icon = if let Some(tool) = self.tools.tool(&tool_use.name, cx) {
+                tool.icon()
+            } else {
+                IconName::Cog
+            };
+
             tool_uses.push(ToolUse {
                 id: tool_use.id.clone(),
                 name: tool_use.name.clone().into(),
                 ui_text: self.tool_ui_label(&tool_use.name, &tool_use.input, cx),
                 input: tool_use.input.clone(),
                 status,
+                icon,
             })
         }
 

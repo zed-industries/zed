@@ -3,6 +3,7 @@ use std::sync::Arc;
 use anyhow::{anyhow, bail, Result};
 use assistant_tool::{ActionLog, Tool, ToolSource};
 use gpui::{App, Entity, Task};
+use icons::IconName;
 use language_model::LanguageModelRequestMessage;
 use project::Project;
 
@@ -36,6 +37,10 @@ impl Tool for ContextServerTool {
 
     fn description(&self) -> String {
         self.tool.description.clone().unwrap_or_default()
+    }
+
+    fn icon(&self) -> IconName {
+        IconName::Cog
     }
 
     fn source(&self) -> ToolSource {
