@@ -8,7 +8,7 @@ pub enum Model {
     // Anthropic models (already included)
     #[default]
     #[serde(rename = "claude-3-5-sonnet-v2", alias = "claude-3-5-sonnet-latest")]
-    Claude3_5Sonnet,
+    Claude3_5SonnetV2,
     #[serde(rename = "claude-3-7-sonnet", alias = "claude-3-7-sonnet-latest")]
     Claude3_7Sonnet,
     #[serde(rename = "claude-3-opus", alias = "claude-3-opus-latest")]
@@ -17,6 +17,8 @@ pub enum Model {
     Claude3Sonnet,
     #[serde(rename = "claude-3-5-haiku", alias = "claude-3-5-haiku-latest")]
     Claude3_5Haiku,
+    Claude3_5Sonnet,
+    Claude3Haiku,
     // Amazon Nova Models
     AmazonNovaLite,
     AmazonNovaMicro,
@@ -69,7 +71,7 @@ pub enum Model {
 impl Model {
     pub fn from_id(id: &str) -> anyhow::Result<Self> {
         if id.starts_with("claude-3-5-sonnet-v2") {
-            Ok(Self::Claude3_5Sonnet)
+            Ok(Self::Claude3_5SonnetV2)
         } else if id.starts_with("claude-3-opus") {
             Ok(Self::Claude3Opus)
         } else if id.starts_with("claude-3-sonnet") {
@@ -85,9 +87,11 @@ impl Model {
 
     pub fn id(&self) -> &str {
         match self {
-            Model::Claude3_5Sonnet => "anthropic.claude-3-5-sonnet-20241022-v2:0",
+            Model::Claude3_5SonnetV2 => "anthropic.claude-3-5-sonnet-20241022-v2:0",
+            Model::Claude3_5Sonnet => "anthropic.claude-3-5-sonnet-20240620-v1:0",
             Model::Claude3Opus => "anthropic.claude-3-opus-20240229-v1:0",
             Model::Claude3Sonnet => "anthropic.claude-3-sonnet-20240229-v1:0",
+            Model::Claude3Haiku => "anthropic.claude-3-haiku-20240307-v1:0",
             Model::Claude3_5Haiku => "anthropic.claude-3-5-haiku-20241022-v1:0",
             Model::Claude3_7Sonnet => "anthropic.claude-3-7-sonnet-20250219-v1:0",
             Model::AmazonNovaLite => "amazon.nova-lite-v1:0",
@@ -128,9 +132,11 @@ impl Model {
 
     pub fn display_name(&self) -> &str {
         match self {
-            Self::Claude3_5Sonnet => "Claude 3.5 Sonnet v2",
+            Self::Claude3_5SonnetV2 => "Claude 3.5 Sonnet v2",
+            Self::Claude3_5Sonnet => "Claude 3.5 Sonnet",
             Self::Claude3Opus => "Claude 3 Opus",
             Self::Claude3Sonnet => "Claude 3 Sonnet",
+            Self::Claude3Haiku => "Claude 3 Haiku",
             Self::Claude3_5Haiku => "Claude 3.5 Haiku",
             Self::Claude3_7Sonnet => "Claude 3.7 Sonnet",
             Self::AmazonNovaLite => "Amazon Nova Lite",
@@ -173,7 +179,7 @@ impl Model {
 
     pub fn max_token_count(&self) -> usize {
         match self {
-            Self::Claude3_5Sonnet
+            Self::Claude3_5SonnetV2
             | Self::Claude3Opus
             | Self::Claude3Sonnet
             | Self::Claude3_5Haiku
@@ -186,7 +192,7 @@ impl Model {
     pub fn max_output_tokens(&self) -> u32 {
         match self {
             Self::Claude3Opus | Self::Claude3Sonnet | Self::Claude3_5Haiku => 4_096,
-            Self::Claude3_5Sonnet => 8_192,
+            Self::Claude3_5SonnetV2 => 8_192,
             Self::Custom {
                 max_output_tokens, ..
             } => max_output_tokens.unwrap_or(4_096),
@@ -196,7 +202,7 @@ impl Model {
 
     pub fn default_temperature(&self) -> f32 {
         match self {
-            Self::Claude3_5Sonnet
+            Self::Claude3_5SonnetV2
             | Self::Claude3Opus
             | Self::Claude3Sonnet
             | Self::Claude3_5Haiku
@@ -231,8 +237,13 @@ impl Model {
 
         // Check if the model is available in the specified region
         match (self, region_group) {
-            // Handle special cases first
-            (Model::Custom { .. }, _) => Ok(self.id().into()), // Custom models don't have cross-region profiles
+            // Custom models can't have CRI ids
+            (Model::Custom { .. }, _) => Ok(self.id().into()),
+
+            // Models with US Gov only
+            (Model::Claude3_5Sonnet, "us-gov") | (Model::Claude3Haiku, "us-gov") => {
+                Ok(format!("{}.{}", region_group, model_id))
+            }
 
             // Models available only in US
             (Model::Claude3Opus, "us") | (Model::Claude3_7Sonnet, "us") => {
@@ -240,15 +251,20 @@ impl Model {
             }
 
             // Models available in US, EU, and APAC
-            (Model::Claude3_5Sonnet, _)
+            (Model::Claude3_5SonnetV2, "us")
+            | (Model::Claude3_5SonnetV2, "apac")
+            | (Model::Claude3_5Sonnet, _)
+            | (Model::Claude3Haiku, _)
             | (Model::Claude3Sonnet, _)
             | (Model::AmazonNovaLite, _)
             | (Model::AmazonNovaMicro, _)
             | (Model::AmazonNovaPro, _) => Ok(format!("{}.{}", region_group, model_id)),
 
             // Models with limited EU availability
-            (Model::MetaLlama321BInstructV1, "us" | "eu")
-            | (Model::MetaLlama323BInstructV1, "us" | "eu") => {
+            (Model::MetaLlama321BInstructV1, "us")
+            | (Model::MetaLlama321BInstructV1, "eu")
+            | (Model::MetaLlama323BInstructV1, "us")
+            | (Model::MetaLlama323BInstructV1, "eu") => {
                 Ok(format!("{}.{}", region_group, model_id))
             }
 
@@ -261,11 +277,6 @@ impl Model {
             | (Model::MetaLlama3170BInstructV1_128k, "us")
             | (Model::MetaLlama3211BInstructV1, "us")
             | (Model::MetaLlama3290BInstructV1, "us") => {
-                Ok(format!("{}.{}", region_group, model_id))
-            }
-
-            // Claude 3 Haiku with US & US-GOV availability
-            (Model::Claude3_5Haiku, "us" | "us-gov") => {
                 Ok(format!("{}.{}", region_group, model_id))
             }
 
@@ -283,11 +294,11 @@ mod tests {
     fn test_us_region_inference_ids() -> anyhow::Result<()> {
         // Test US regions
         assert_eq!(
-            Model::Claude3_5Sonnet.cross_region_inference_id("us-east-1")?,
+            Model::Claude3_5SonnetV2.cross_region_inference_id("us-east-1")?,
             "us.anthropic.claude-3-5-sonnet-20241022-v2:0"
         );
         assert_eq!(
-            Model::Claude3_5Sonnet.cross_region_inference_id("us-west-2")?,
+            Model::Claude3_5SonnetV2.cross_region_inference_id("us-west-2")?,
             "us.anthropic.claude-3-5-sonnet-20241022-v2:0"
         );
         assert_eq!(
@@ -300,10 +311,6 @@ mod tests {
     #[test]
     fn test_eu_region_inference_ids() -> anyhow::Result<()> {
         // Test European regions
-        assert_eq!(
-            Model::Claude3_5Sonnet.cross_region_inference_id("eu-central-1")?,
-            "eu.anthropic.claude-3-5-sonnet-20241022-v2:0"
-        );
         assert_eq!(
             Model::Claude3Sonnet.cross_region_inference_id("eu-west-1")?,
             "eu.anthropic.claude-3-sonnet-20240229-v1:0"
@@ -319,7 +326,7 @@ mod tests {
     fn test_apac_region_inference_ids() -> anyhow::Result<()> {
         // Test Asia-Pacific regions
         assert_eq!(
-            Model::Claude3_5Sonnet.cross_region_inference_id("ap-northeast-1")?,
+            Model::Claude3_5SonnetV2.cross_region_inference_id("ap-northeast-1")?,
             "apac.anthropic.claude-3-5-sonnet-20241022-v2:0"
         );
         assert_eq!(
@@ -334,11 +341,11 @@ mod tests {
         // Test Government regions
         assert_eq!(
             Model::Claude3_5Sonnet.cross_region_inference_id("us-gov-east-1")?,
-            "us-gov.anthropic.claude-3-5-sonnet-20241022-v2:0"
+            "us-gov.anthropic.claude-3-5-sonnet-20240620-v1:0"
         );
         assert_eq!(
-            Model::Claude3Sonnet.cross_region_inference_id("us-gov-west-1")?,
-            "us-gov.anthropic.claude-3-sonnet-20240229-v1:0"
+            Model::Claude3Haiku.cross_region_inference_id("us-gov-west-1")?,
+            "us-gov.anthropic.claude-3-haiku-20240307-v1:0"
         );
         Ok(())
     }
