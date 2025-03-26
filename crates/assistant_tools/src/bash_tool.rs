@@ -92,7 +92,10 @@ impl Tool for BashTool {
             input_path.into()
         } else {
             let Some(worktree) = project.worktree_for_root_name(&input.cd, cx) else {
-                return Task::ready(Err(anyhow!("`cd` directory not found in the project")));
+                return Task::ready(Err(anyhow!(
+                    "`cd` directory {} not found in the project",
+                    &input.cd
+                )));
             };
 
             worktree.read(cx).abs_path()
