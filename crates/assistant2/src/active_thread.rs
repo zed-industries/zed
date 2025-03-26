@@ -1325,6 +1325,7 @@ impl ActiveThread {
                 .child(
                     h_flex()
                         .group("disclosure-header")
+                        .gap_1p5()
                         .justify_between()
                         .py_1()
                         .px_2()
@@ -1339,22 +1340,19 @@ impl ActiveThread {
                         .border_color(lighter_border)
                         .child(
                             h_flex()
+                                .id("tool-label-container")
+                                .relative()
                                 .gap_1p5()
+                                .max_w_full()
+                                .overflow_x_scroll()
                                 .child(
                                     Icon::new(tool_use.icon)
                                         .size(IconSize::XSmall)
                                         .color(Color::Muted),
                                 )
-                                .child(
-                                    div()
-                                        .text_ui_sm(cx)
-                                        .children(
-                                            self.rendered_tool_use_labels
-                                                .get(&tool_use.id)
-                                                .cloned(),
-                                        )
-                                        .truncate(),
-                                ),
+                                .child(h_flex().text_ui_sm(cx).children(
+                                    self.rendered_tool_use_labels.get(&tool_use.id).cloned(),
+                                )),
                         )
                         .child(
                             h_flex()
