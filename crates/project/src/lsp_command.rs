@@ -1543,18 +1543,27 @@ impl LspCommand for GetDocumentSymbols {
                     range: range_from_lsp(lsp_symbol.location.range),
                     selection_range: range_from_lsp(lsp_symbol.location.range),
                     signature: [0; 32], //TODO
+                    children: Vec::new(),
                 })
                 .collect(),
-            lsp::DocumentSymbolResponse::Nested(nested_responses) => nested_responses
-                .into_iter()
-                .map(|lsp_symbol| DocumentSymbol {
-                    name: lsp_symbol.name,
-                    kind: lsp_symbol.kind,
-                    range: range_from_lsp(lsp_symbol.range),
-                    selection_range: range_from_lsp(lsp_symbol.selection_range),
-                    signature: [0; 32], //TODO
-                })
-                .collect(),
+            lsp::DocumentSymbolResponse::Nested(nested_responses) => {
+                fn convert_symbol(lsp_symbol: lsp::DocumentSymbol) -> DocumentSymbol {
+                    DocumentSymbol {
+                        name: lsp_symbol.name,
+                        kind: lsp_symbol.kind,
+                        range: range_from_lsp(lsp_symbol.range),
+                        selection_range: range_from_lsp(lsp_symbol.selection_range),
+                        signature: [0; 32], //TODO
+                        children: lsp_symbol
+                            .children
+                            .map(|children| {
+                                children.into_iter().map(convert_symbol).collect::<Vec<_>>()
+                            })
+                            .unwrap_or_default(),
+                    }
+                }
+                nested_responses.into_iter().map(convert_symbol).collect()
+            }
         };
         Ok(symbols)
     }
@@ -1590,26 +1599,36 @@ impl LspCommand for GetDocumentSymbols {
     ) -> proto::GetDocumentSymbolsResponse {
         let symbols = response
             .into_iter()
-            .map(|symbol| proto::DocumentSymbol {
-                name: symbol.name.clone(),
-                kind: unsafe { mem::transmute::<lsp::SymbolKind, i32>(symbol.kind) },
-                start: Some(proto::PointUtf16 {
-                    row: symbol.range.start.0.row,
-                    column: symbol.range.start.0.column,
-                }),
-                end: Some(proto::PointUtf16 {
-                    row: symbol.range.end.0.row,
-                    column: symbol.range.end.0.column,
-                }),
-                selection_start: Some(proto::PointUtf16 {
-                    row: symbol.selection_range.start.0.row,
-                    column: symbol.selection_range.start.0.column,
-                }),
-                selection_end: Some(proto::PointUtf16 {
-                    row: symbol.selection_range.end.0.row,
-                    column: symbol.selection_range.end.0.column,
-                }),
-                signature: symbol.signature.to_vec(),
+            .map(|symbol| {
+                fn convert_symbol_to_proto(symbol: DocumentSymbol) -> proto::DocumentSymbol {
+                    proto::DocumentSymbol {
+                        name: symbol.name.clone(),
+                        kind: unsafe { mem::transmute::<lsp::SymbolKind, i32>(symbol.kind) },
+                        start: Some(proto::PointUtf16 {
+                            row: symbol.range.start.0.row,
+                            column: symbol.range.start.0.column,
+                        }),
+                        end: Some(proto::PointUtf16 {
+                            row: symbol.range.end.0.row,
+                            column: symbol.range.end.0.column,
+                        }),
+                        selection_start: Some(proto::PointUtf16 {
+                            row: symbol.selection_range.start.0.row,
+                            column: symbol.selection_range.start.0.column,
+                        }),
+                        selection_end: Some(proto::PointUtf16 {
+                            row: symbol.selection_range.end.0.row,
+                            column: symbol.selection_range.end.0.column,
+                        }),
+                        signature: symbol.signature.to_vec(),
+                        children: symbol
+                            .children
+                            .into_iter()
+                            .map(convert_symbol_to_proto)
+                            .collect(),
+                    }
+                }
+                convert_symbol_to_proto(symbol)
             })
             .collect::<Vec<_>>();
 
@@ -1625,37 +1644,49 @@ impl LspCommand for GetDocumentSymbols {
     ) -> Result<Vec<DocumentSymbol>> {
         let mut symbols = Vec::with_capacity(message.symbols.len());
         for serialized_symbol in message.symbols {
-            let kind = unsafe { mem::transmute::<i32, lsp::SymbolKind>(serialized_symbol.kind) };
+            fn deserialize_symbol_with_children(
+                serialized_symbol: proto::DocumentSymbol,
+            ) -> Result<DocumentSymbol> {
+                let kind =
+                    unsafe { mem::transmute::<i32, lsp::SymbolKind>(serialized_symbol.kind) };
 
-            let start = serialized_symbol
-                .start
-                .ok_or_else(|| anyhow!("invalid start"))?;
-            let end = serialized_symbol
-                .end
-                .ok_or_else(|| anyhow!("invalid end"))?;
+                let start = serialized_symbol
+                    .start
+                    .ok_or_else(|| anyhow!("invalid start"))?;
+                let end = serialized_symbol
+                    .end
+                    .ok_or_else(|| anyhow!("invalid end"))?;
 
-            let selection_start = serialized_symbol
-                .selection_start
-                .ok_or_else(|| anyhow!("invalid selection start"))?;
-            let selection_end = serialized_symbol
-                .selection_end
-                .ok_or_else(|| anyhow!("invalid selection end"))?;
+                let selection_start = serialized_symbol
+                    .selection_start
+                    .ok_or_else(|| anyhow!("invalid selection start"))?;
+                let selection_end = serialized_symbol
+                    .selection_end
+                    .ok_or_else(|| anyhow!("invalid selection end"))?;
 
-            symbols.push(DocumentSymbol {
-                name: serialized_symbol.name,
-                range: Unclipped(PointUtf16::new(start.row, start.column))
-                    ..Unclipped(PointUtf16::new(end.row, end.column)),
-                selection_range: Unclipped(PointUtf16::new(
-                    selection_start.row,
-                    selection_start.column,
-                ))
-                    ..Unclipped(PointUtf16::new(selection_end.row, selection_end.column)),
-                kind,
-                signature: serialized_symbol
-                    .signature
-                    .try_into()
-                    .map_err(|_| anyhow!("invalid signature"))?,
-            });
+                Ok(DocumentSymbol {
+                    name: serialized_symbol.name,
+                    range: Unclipped(PointUtf16::new(start.row, start.column))
+                        ..Unclipped(PointUtf16::new(end.row, end.column)),
+                    selection_range: Unclipped(PointUtf16::new(
+                        selection_start.row,
+                        selection_start.column,
+                    ))
+                        ..Unclipped(PointUtf16::new(selection_end.row, selection_end.column)),
+                    kind,
+                    signature: serialized_symbol
+                        .signature
+                        .try_into()
+                        .map_err(|_| anyhow!("invalid signature"))?,
+                    children: serialized_symbol
+                        .children
+                        .into_iter()
+                        .filter_map(|symbol| deserialize_symbol_with_children(symbol).ok())
+                        .collect::<Vec<_>>(),
+                })
+            }
+
+            symbols.push(deserialize_symbol_with_children(serialized_symbol)?);
         }
 
         Ok(symbols)

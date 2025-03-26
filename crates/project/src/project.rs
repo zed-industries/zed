@@ -666,6 +666,7 @@ pub struct DocumentSymbol {
     pub range: Range<Unclipped<PointUtf16>>,
     pub selection_range: Range<Unclipped<PointUtf16>>,
     pub signature: [u8; 32],
+    pub children: Vec<DocumentSymbol>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
