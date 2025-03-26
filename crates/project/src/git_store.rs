@@ -142,7 +142,7 @@ pub struct GitStoreVirtualBranch {
     branches_by_dot_git_abs_path: HashMap<PathBuf, GitVirtualBranch>,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Default, Clone, Debug)]
 pub struct GitStoreVirtualBranchChanges {
     changes_by_dot_git_abs_path: HashMap<PathBuf, HashMap<RepoPath, VirtualBranchChange>>,
 }

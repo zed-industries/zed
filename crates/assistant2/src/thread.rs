@@ -18,7 +18,9 @@ use language_model::{
     LanguageModelToolUseId, MaxMonthlySpendReachedError, MessageContent, PaymentRequiredError,
     Role, StopReason, TokenUsage,
 };
-use project::git_store::{GitStore, GitStoreCheckpoint, GitStoreVirtualBranch};
+use project::git_store::{
+    GitStore, GitStoreCheckpoint, GitStoreVirtualBranch, GitStoreVirtualBranchChanges,
+};
 use project::{Project, Worktree};
 use prompt_store::{
     AssistantSystemPromptContext, PromptBuilder, RulesFile, WorktreeInfoForSystemPrompt,
@@ -172,9 +174,6 @@ impl LastRestoreCheckpoint {
     }
 }
 
-#[derive(Default)]
-pub struct ThreadDiff {}
-
 /// A thread of conversation with the LLM.
 pub struct Thread {
     id: ThreadId,
@@ -200,8 +199,8 @@ pub struct Thread {
     cumulative_token_usage: TokenUsage,
     feedback: Option<ThreadFeedback>,
     last_diff_checkpoint: Option<Task<Result<GitStoreCheckpoint>>>,
-    diff: ThreadDiff,
     diff_branch: Shared<Task<Option<GitStoreVirtualBranch>>>,
+    diff_branch_changes: GitStoreVirtualBranchChanges,
 }
 
 impl Thread {
@@ -240,7 +239,7 @@ impl Thread {
             cumulative_token_usage: TokenUsage::default(),
             feedback: None,
             last_diff_checkpoint: None,
-            diff: ThreadDiff::default(),
+            diff_branch_changes: GitStoreVirtualBranchChanges::default(),
             diff_branch: cx
                 .background_spawn(
                     project
@@ -316,8 +315,8 @@ impl Thread {
             cumulative_token_usage: TokenUsage::default(),
             feedback: None,
             last_diff_checkpoint: None,
-            diff: ThreadDiff::default(),
             diff_branch: Task::ready(None).shared(),
+            diff_branch_changes: GitStoreVirtualBranchChanges::default(),
         };
         this.update_diff(ChangeSource::User, cx);
         this
@@ -1305,7 +1304,7 @@ impl Thread {
         let git_store = self.project.read(cx).git_store().clone();
         let checkpoint = git_store.read(cx).checkpoint(cx);
         let virtual_branch = self.diff_branch.clone();
-        self.last_diff_checkpoint = Some(cx.spawn(async move |_this, cx| {
+        self.last_diff_checkpoint = Some(cx.spawn(async move |this, cx| {
             let checkpoint = checkpoint.await?;
 
             if let Some(virtual_branch) = virtual_branch.await {
@@ -1333,11 +1332,15 @@ impl Thread {
                     }
                 }
 
-                let diff = git_store
+                let diff_branch_changes = git_store
                     .read_with(cx, |store, cx| {
                         store.changes_for_virtual_branch(virtual_branch, cx)
                     })?
                     .await;
+                this.update(cx, |this, cx| {
+                    this.diff_branch_changes = diff_branch_changes.log_err().unwrap_or_default();
+                    cx.emit(ThreadEvent::DiffChanged);
+                })?;
             }
 
             Ok(checkpoint)
@@ -1623,6 +1626,7 @@ pub enum ThreadEvent {
         canceled: bool,
     },
     CheckpointChanged,
+    DiffChanged,
     ToolConfirmationNeeded,
 }
 
