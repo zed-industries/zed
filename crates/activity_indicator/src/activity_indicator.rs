@@ -3,9 +3,10 @@ use editor::Editor;
 use extension_host::ExtensionStore;
 use futures::StreamExt;
 use gpui::{
-    Animation, AnimationExt as _, App, Context, CursorStyle, Entity, EventEmitter,
-    InteractiveElement as _, ParentElement as _, Render, SharedString, StatefulInteractiveElement,
-    Styled, Transformation, Window, actions, percentage,
+    Animation, AnimationExt as _, App, AsyncApp, Context, CursorStyle, Entity, EventEmitter,
+    Global, InteractiveElement as _, ParentElement as _, Render, SharedString,
+    StatefulInteractiveElement, Styled, Subscription, Transformation, WeakEntity, Window, actions,
+    percentage,
 };
 use language::{BinaryStatus, LanguageRegistry, LanguageServerId};
 use project::{
@@ -32,7 +33,15 @@ pub struct ActivityIndicator {
     project: Entity<Project>,
     auto_updater: Option<Entity<AutoUpdater>>,
     context_menu_handle: PopoverMenuHandle<ContextMenu>,
+    other_statuses: Vec<StatusItem>,
 }
+
+struct StatusItem {
+    message: SharedString,
+    id: usize,
+}
+
+pub struct StatusGuard(Box<dyn FnOnce()>);
 
 struct ServerStatus {
     name: SharedString,
@@ -51,6 +60,9 @@ struct Content {
     on_click:
         Option<Arc<dyn Fn(&mut ActivityIndicator, &mut Window, &mut Context<ActivityIndicator>)>>,
 }
+
+struct GlobalActivityIndicator(Entity<ActivityIndicator>);
+impl Global for GlobalActivityIndicator {}
 
 impl ActivityIndicator {
     pub fn new(
@@ -109,6 +121,8 @@ impl ActivityIndicator {
                 cx.observe(auto_updater, |_, _, cx| cx.notify()).detach();
             }
 
+            cx.set_global(GlobalActivityIndicator(cx.entity()));
+
             Self {
                 statuses: Default::default(),
                 project: project.clone(),
@@ -155,6 +169,10 @@ impl ActivityIndicator {
         })
         .detach();
         this
+    }
+
+    fn get(workspace: &Workspace, cx: &App) -> Option<Entity<Self>> {
+        workspace.status_bar().read(cx).item_of_type::<Self>()
     }
 
     fn show_error_message(&mut self, _: &ShowErrorMessage, _: &mut Window, cx: &mut Context<Self>) {
@@ -284,6 +302,10 @@ impl ActivityIndicator {
                 on_click: Some(Arc::new(Self::toggle_language_server_work_context_menu)),
             });
         }
+
+        // Show any long-running git command
+        // TODO: use git_panel.pending_commit()?
+        // TODO: need to track "pending_checkout state somehow"
 
         // Show any language server installation info.
         let mut downloading = SmallVec::<[_; 3]>::new();
@@ -486,6 +508,55 @@ impl ActivityIndicator {
         cx: &mut Context<Self>,
     ) {
         self.context_menu_handle.toggle(window, cx);
+    }
+
+    // TODO: Fix this name
+    fn show_statuses<T: EventEmitter<StatusEvent>>(
+        entity: Entity<T>,
+        cx: &mut App,
+    ) -> Entity<ActivityIndicator> {
+        struct StatusGuard(Box<dyn FnOnce()>);
+
+        fn status_guard<T: EventEmitter<StatusEvent> + 'static>(
+            entity: Entity<T>,
+            cx: &mut App,
+            status_id: StatusId,
+        ) -> StatusGuard {
+            let async_cx = cx.to_async();
+            StatusGuard(Box::new(move || {
+                entity
+                    .update(&mut async_cx, |_, cx| {
+                        cx.emit(StatusEvent::Remove(status_id));
+                    })
+                    .ok();
+            }))
+        }
+
+        struct GitPanel {
+            activity_indicator: Entity<ActivityIndicator>,
+        }
+        impl GitPanel {
+            fn new(cx: &mut Context<Self>) -> Self {
+                let activity_indicator = ActivityIndicator::global(cx);
+                Self { activity_indicator }
+            }
+
+            fn push(&self, cx: &mut Context<Self>) {
+                let guard = self
+                    .activity_indicator
+                    .update(cx, |activity_indicator, cx| {
+                        activity_indicator.show_status("messsage") // Allocate ID, create status guard, that's it
+                    });
+
+                // Do whatever, move into futures, etc. etc.
+                drop(guard);
+            }
+        }
+        impl EventEmitter<StatusEvent> for GitPanel {}
+
+        // cx.
+
+        // cx.subscribe(entity, on_event)
     }
 }
 

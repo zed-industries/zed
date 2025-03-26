@@ -9,6 +9,7 @@ use crate::{branch_picker, picker_prompt, render_remote_button};
 use crate::{
     git_panel_settings::GitPanelSettings, git_status_icon, repository_selector::RepositorySelector,
 };
+use activity_indicator::ActivityIndicator;
 use anyhow::Result;
 use askpass::AskPassDelegate;
 use assistant_settings::AssistantSettings;
@@ -313,6 +314,7 @@ pub struct GitPanel {
     pending_serialization: Task<Option<()>>,
     pub(crate) project: Entity<Project>,
     scroll_handle: UniformListScrollHandle,
+    activity_indicator: Option<Entity<ActivityIndicator>>,
     max_width_item_index: Option<usize>,
     selected_entry: Option<usize>,
     marked_entries: Vec<usize>,
@@ -378,6 +380,10 @@ impl GitPanel {
         let fs = app_state.fs.clone();
         let git_store = project.read(cx).git_store().clone();
         let active_repository = project.read(cx).active_repository(cx);
+        let activity_indicator = {
+            let workspace = workspace.read(cx);
+            ActivityIndicator::get(workspace, cx);
+        };
         let workspace = workspace.downgrade();
 
         let focus_handle = cx.focus_handle();
@@ -1492,6 +1498,7 @@ impl GitPanel {
             })
         };
         let task = cx.spawn_in(window, async move |this, cx| {
+            cx.emit(Insert("git commit", StatusId))
             let result = task.await;
             this.update_in(cx, |this, window, cx| {
                 this.pending_commit.take();
@@ -1504,6 +1511,7 @@ impl GitPanel {
                 }
             })
             .ok();
+            cx.emit(Remove(StatusId))
         });
 
         self.pending_commit = Some(task);
@@ -1908,7 +1916,7 @@ impl GitPanel {
         .detach_and_log_err(cx);
     }
 
-    pub(crate) fn push(&mut self, force_push: bool, window: &mut Window, cx: &mut Context<Self>) {
+pub(crate) fn push(&mut self, force_push: bool, window: &mut Window, cx: &mut Context<Self>) {
         if !self.can_push_and_pull(cx) {
             return;
         }
@@ -4127,17 +4135,17 @@ impl RenderOnce for PanelRepoFooter {
             .truncate(true)
             .tooltip(Tooltip::for_action_title(
                 "Switch Branch",
-                &zed_actions::git::Branch,
+                &zed_actions::git::Switch,
             ))
             .on_click(|_, window, cx| {
-                window.dispatch_action(zed_actions::git::Branch.boxed_clone(), cx);
+                window.dispatch_action(zed_actions::git::Switch.boxed_clone(), cx);
             });
 
         let branch_selector = PopoverMenu::new("popover-button")
             .menu(move |window, cx| Some(branch_picker::popover(repo.clone(), window, cx)))
             .trigger_with_tooltip(
                 branch_selector_button,
-                Tooltip::for_action_title("Switch Branch", &zed_actions::git::Branch),
+                Tooltip::for_action_title("Switch Branch", &zed_actions::git::Switch),
             )
             .anchor(Corner::BottomLeft)
             .offset(gpui::Point {

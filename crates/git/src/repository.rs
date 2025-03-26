@@ -336,6 +336,7 @@ pub enum PushOptions {
     Force,
 }
 
+
 impl std::fmt::Debug for dyn GitRepository {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("dyn GitRepository<...>").finish()
