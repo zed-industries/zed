@@ -376,11 +376,23 @@ impl ActiveThread {
             }
             ThreadEvent::DoneStreaming => {
                 if !self.thread().read(cx).is_generating() {
-                    self.show_notification("Your changes have been applied.", window, cx);
+                    self.show_notification(
+                        "Your changes have been applied.",
+                        IconName::Check,
+                        Color::Success,
+                        window,
+                        cx,
+                    );
                 }
             }
             ThreadEvent::ToolConfirmationNeeded => {
-                self.show_notification("There's a tool confirmation needed.", window, cx);
+                self.show_notification(
+                    "There's a tool confirmation needed.",
+                    IconName::Info,
+                    Color::Muted,
+                    window,
+                    cx,
+                );
             }
             ThreadEvent::StreamedAssistantText(message_id, text) => {
                 if let Some(rendered_message) = self.rendered_messages_by_id.get_mut(&message_id) {
@@ -511,6 +523,8 @@ impl ActiveThread {
     fn show_notification(
         &mut self,
         caption: impl Into<SharedString>,
+        icon: IconName,
+        icon_color: Color,
         window: &mut Window,
         cx: &mut Context<'_, ActiveThread>,
     ) {
@@ -525,7 +539,7 @@ impl ActiveThread {
 
                 if let Some(screen_window) = cx
                     .open_window(options, |_, cx| {
-                        cx.new(|_| ToolReadyPopUp::new(caption.clone()))
+                        cx.new(|_| ToolReadyPopUp::new(caption.clone(), icon, icon_color))
                     })
                     .log_err()
                 {
