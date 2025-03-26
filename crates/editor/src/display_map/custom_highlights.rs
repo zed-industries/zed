@@ -42,7 +42,6 @@ impl<'a> CustomHighlightsChunks<'a> {
             buffer_chunks: multibuffer_snapshot.chunks(range.clone(), language_aware),
             buffer_chunk: None,
             offset: range.start,
-
             text_highlights,
             highlight_endpoints: create_highlight_endpoints(
                 &range,
@@ -87,6 +86,24 @@ fn create_highlight_endpoints(
             }) {
                 Ok(i) | Err(i) => i,
             };
+
+            // Support for semantic highlight workaround, as the range[start_ix..]
+            // only works for full vectors with a lot of highlights, and our semantic
+            // highlights is simpler
+            if ranges.len() == 1 {
+                highlight_endpoints.push(HighlightEndpoint {
+                    offset: range.start.to_offset(&buffer),
+                    is_start: true,
+                    tag,
+                    style,
+                });
+                highlight_endpoints.push(HighlightEndpoint {
+                    offset: range.end.to_offset(&buffer),
+                    is_start: false,
+                    tag,
+                    style,
+                });
+            }
 
             for range in &ranges[start_ix..] {
                 if range.start.cmp(&end, &buffer).is_ge() {

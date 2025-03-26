@@ -80,6 +80,7 @@ pub trait ToDisplayPoint {
     fn to_display_point(&self, map: &DisplaySnapshot) -> DisplayPoint;
 }
 
+type SemanticHighlights = TreeMap<TypeId, Arc<(HighlightStyle, Range<Anchor>)>>;
 type TextHighlights = TreeMap<TypeId, Arc<(HighlightStyle, Vec<Range<Anchor>>)>>;
 type InlayHighlights = TreeMap<TypeId, TreeMap<InlayId, (HighlightStyle, InlayHighlight)>>;
 
@@ -103,6 +104,8 @@ pub struct DisplayMap {
     block_map: BlockMap,
     /// Regions of text that should be highlighted.
     text_highlights: TextHighlights,
+    /// Regions of text that are highlighted from the language server protocol
+    semantic_highlights: SemanticHighlights,
     /// Regions of inlays that should be highlighted.
     inlay_highlights: InlayHighlights,
     /// A container for explicitly foldable ranges, which supersede indentation based fold range suggestions.
@@ -146,6 +149,7 @@ impl DisplayMap {
             block_map,
             crease_map,
             fold_placeholder,
+            semantic_highlights: Default::default(),
             text_highlights: Default::default(),
             inlay_highlights: Default::default(),
             clip_at_line_ends: false,
@@ -450,6 +454,16 @@ impl DisplayMap {
         let block_map = self.block_map.read(snapshot, edits);
         let block_row = block_map.row_for_block(block_id)?;
         Some(DisplayRow(block_row.0))
+    }
+
+    pub fn semantic_highlight(
+        &mut self,
+        type_id: TypeId,
+        ranges: Range<Anchor>,
+        style: HighlightStyle,
+    ) {
+        self.semantic_highlights
+            .insert(type_id, Arc::new((style, ranges)));
     }
 
     pub fn highlight_text(

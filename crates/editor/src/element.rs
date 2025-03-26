@@ -6065,6 +6065,7 @@ impl fmt::Debug for LineFragment {
 impl LineWithInvisibles {
     fn from_chunks<'a>(
         chunks: impl Iterator<Item = HighlightedChunk<'a>>,
+
         editor_style: &EditorStyle,
         max_line_len: usize,
         max_line_count: usize,

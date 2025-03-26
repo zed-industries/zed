@@ -56,7 +56,7 @@ use blink_manager::BlinkManager;
 use buffer_diff::DiffHunkStatus;
 use client::{Collaborator, ParticipantIndex};
 use clock::ReplicaId;
-use collections::{BTreeMap, HashMap, HashSet, VecDeque};
+use collections::{BTreeMap, FxHashMap, HashMap, HashSet, VecDeque};
 use convert_case::{Case, Casing};
 use display_map::*;
 pub use display_map::{DisplayPoint, FoldPlaceholder};
@@ -87,9 +87,9 @@ use gpui::{
     Bounds, ClickEvent, ClipboardEntry, ClipboardItem, Context, DispatchPhase, Edges, Entity,
     EntityInputHandler, EventEmitter, FocusHandle, FocusOutEvent, Focusable, FontId, FontWeight,
     Global, HighlightStyle, Hsla, KeyContext, Modifiers, MouseButton, MouseDownEvent, PaintQuad,
-    ParentElement, Pixels, Render, SharedString, Size, Stateful, Styled, StyledText, Subscription,
-    Task, TextStyle, TextStyleRefinement, UTF16Selection, UnderlineStyle, UniformListScrollHandle,
-    WeakEntity, WeakFocusHandle, Window,
+    ParentElement, Pixels, Render, SharedString, Size, Stateful, StrikethroughStyle, Styled,
+    StyledText, Subscription, Task, TextStyle, TextStyleRefinement, UTF16Selection, UnderlineStyle,
+    UniformListScrollHandle, WeakEntity, WeakFocusHandle, Window,
 };
 use highlight_matching_bracket::refresh_matching_bracket_highlights;
 use hover_links::{find_file, HoverLink, HoveredLinkState, InlayHighlight};
@@ -245,6 +245,7 @@ impl InlayId {
 }
 
 pub enum DebugCurrentRowHighlight {}
+pub enum SemanticHighlight {}
 enum DocumentHighlightRead {}
 enum DocumentHighlightWrite {}
 enum InputComposition {}
@@ -491,8 +492,6 @@ enum EditPredictionSettings {
 }
 
 enum InlineCompletionHighlight {}
-
-enum SemanticHighlight {}
 
 #[derive(Debug, Clone)]
 struct InlineDiagnostic {
@@ -4016,29 +4015,36 @@ impl Editor {
             });
             let snapshot = buffer.read(cx).snapshot();
             let multibuffer = self.buffer.clone();
-            let display_map = self.display_map.clone();
-            let task: Task<Result<()>> = cx.spawn_in(window, async move |_, cx| {
+            let task: Task<Result<()>> = cx.spawn_in(window, async move |editor, cx| {
                 let tokens = semantic_tokens.await?;
                 let multibuffer = multibuffer.clone();
-                let display_map = display_map.clone();
                 log::error!("file semantic tokens count: {}", tokens.len());
                 let tokens = cx.update(|_, cx| {
                     let multibuffer = multibuffer.read(cx);
                     let iter = tokens.into_iter().filter_map(|token| {
                         let Range { start, end } = token.range.to_point(&snapshot);
+                        log::error!(
+                            "  * {}:{}..{}:{}",
+                            start.row,
+                            start.column,
+                            end.row,
+                            end.column
+                        );
                         let start = multibuffer.buffer_point_to_anchor(&buffer, start, cx)?;
                         let end = multibuffer.buffer_point_to_anchor(&buffer, end, cx)?;
                         Some((start..end, token.r#type, token.modifiers))
                     });
                     iter.collect_vec()
                 })?;
-                display_map.update(cx, |map, _| {
+                log::error!("  - again count: {}", tokens.len());
+                editor.update(cx, |this, cx| {
                     for (range, r#type, modifiers) in tokens {
                         let range = vec![range];
-                        let style = HighlightStyle::color(Hsla::green());
-                        map.highlight_text(TypeId::of::<SemanticHighlight>(), range, style)
+                        let style = HighlightStyle::color(Hsla::white());
+                        this.highlight_text::<SemanticHighlight>(range, style, cx)
                     }
                 })?;
+                log::error!("  -> successfully rendered");
                 Ok(())
             });
             task.detach_and_log_err(cx);
