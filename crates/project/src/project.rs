@@ -659,6 +659,15 @@ pub struct Symbol {
     pub signature: [u8; 32],
 }
 
+#[derive(Clone, Debug)]
+pub struct DocumentSymbol {
+    pub name: String,
+    pub kind: lsp::SymbolKind,
+    pub range: Range<Unclipped<PointUtf16>>,
+    pub selection_range: Range<Unclipped<PointUtf16>>,
+    pub children: Vec<DocumentSymbol>,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct HoverBlock {
     pub text: String,
@@ -3220,6 +3229,19 @@ impl Project {
     ) -> Task<Result<Vec<DocumentHighlight>>> {
         let position = position.to_point_utf16(buffer.read(cx));
         self.document_highlights_impl(buffer, position, cx)
+    }
+
+    pub fn document_symbols(
+        &mut self,
+        buffer: &Entity<Buffer>,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<Vec<DocumentSymbol>>> {
+        self.request_lsp(
+            buffer.clone(),
+            LanguageServerToQuery::FirstCapable,
+            GetDocumentSymbols,
+            cx,
+        )
     }
 
     pub fn symbols(&self, query: &str, cx: &mut Context<Self>) -> Task<Result<Vec<Symbol>>> {

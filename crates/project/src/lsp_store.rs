@@ -3432,6 +3432,7 @@ impl LspStore {
         client.add_entity_request_handler(Self::handle_lsp_command::<GetDeclaration>);
         client.add_entity_request_handler(Self::handle_lsp_command::<GetTypeDefinition>);
         client.add_entity_request_handler(Self::handle_lsp_command::<GetDocumentHighlights>);
+        client.add_entity_request_handler(Self::handle_lsp_command::<GetDocumentSymbols>);
         client.add_entity_request_handler(Self::handle_lsp_command::<GetReferences>);
         client.add_entity_request_handler(Self::handle_lsp_command::<PrepareRename>);
         client.add_entity_request_handler(Self::handle_lsp_command::<PerformRename>);

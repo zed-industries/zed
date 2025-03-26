@@ -774,6 +774,10 @@ impl LanguageServer {
                     code_lens: Some(CodeLensClientCapabilities {
                         dynamic_registration: Some(false),
                     }),
+                    document_symbol: Some(DocumentSymbolClientCapabilities {
+                        hierarchical_document_symbol_support: Some(true),
+                        ..DocumentSymbolClientCapabilities::default()
+                    }),
                     ..TextDocumentClientCapabilities::default()
                 }),
                 experimental: Some(json!({
