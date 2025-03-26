@@ -251,60 +251,62 @@ impl LocalMode {
                 }).await;
 
                 match config.request.clone() {
-                    dap::DebugRequestType::Launch if fail => {
-                        session
-                            .client
-                            .on_request::<dap::requests::Launch, _>(move |_, _| {
-                                Err(dap::ErrorResponse {
-                                    error: Some(dap::Message {
-                                        id: 1,
-                                        format: "error".into(),
-                                        variables: None,
-                                        send_telemetry: None,
-                                        show_user: None,
-                                        url: None,
-                                        url_label: None,
-                                    }),
-                                })
-                            })
-                            .await;
-                    }
                     dap::DebugRequestType::Launch => {
-                        session
-                            .client
-                            .on_request::<dap::requests::Launch, _>(move |_, _| Ok(()))
-                            .await;
-                    }
-                    dap::DebugRequestType::Attach(_) if fail => {
-                        session
-                            .client
-                            .on_request::<dap::requests::Attach, _>(move |_, _| {
-                                Err(dap::ErrorResponse {
-                                    error: Some(dap::Message {
-                                        id: 1,
-                                        format: "error".into(),
-                                        variables: None,
-                                        send_telemetry: None,
-                                        show_user: None,
-                                        url: None,
-                                        url_label: None,
-                                    }),
+                        if fail  {
+                            session
+                                .client
+                                .on_request::<dap::requests::Launch, _>(move |_, _| {
+                                    Err(dap::ErrorResponse {
+                                        error: Some(dap::Message {
+                                            id: 1,
+                                            format: "error".into(),
+                                            variables: None,
+                                            send_telemetry: None,
+                                            show_user: None,
+                                            url: None,
+                                            url_label: None,
+                                        }),
+                                    })
                                 })
-                            })
-                            .await;
+                                .await;
+                        } else {
+                            session
+                                .client
+                                .on_request::<dap::requests::Launch, _>(move |_, _| Ok(()))
+                                .await;
+                        }
                     }
-                    dap::DebugRequestType::Attach(attach_config) => {
-                        session
-                            .client
-                            .on_request::<dap::requests::Attach, _>(move |_, args| {
-                                assert_eq!(
-                                    json!({"request": "attach", "process_id": attach_config.process_id.unwrap()}),
-                                    args.raw
-                                );
+                    dap::DebugRequestType::Attach(attach_confg) => {
+                        if fail {
+                            session
+                                .client
+                                .on_request::<dap::requests::Attach, _>(move |_, _| {
+                                    Err(dap::ErrorResponse {
+                                        error: Some(dap::Message {
+                                            id: 1,
+                                            format: "error".into(),
+                                            variables: None,
+                                            send_telemetry: None,
+                                            show_user: None,
+                                            url: None,
+                                            url_label: None,
+                                        }),
+                                    })
+                                })
+                                .await;
+                        } else {
+                            session
+                                .client
+                                .on_request::<dap::requests::Attach, _>(move |_, args| {
+                                    assert_eq!(
+                                        json!({"request": "attach", "process_id": attach_config.process_id.unwrap()}),
+                                        args.raw
+                                    );
 
-                                Ok(())
-                            })
-                            .await;
+                                    Ok(())
+                                })
+                                .await;
+                        }
                     }
                 }
 
