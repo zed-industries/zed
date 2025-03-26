@@ -777,6 +777,8 @@ pub struct Editor {
     toggle_fold_multiple_buffers: Task<()>,
     _scroll_cursor_center_top_bottom_task: Task<()>,
     serialize_selections: Task<()>,
+    mouse_cursor_hidden: bool,
+    hide_mouse_while_typing: bool,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Default)]
@@ -1516,6 +1518,10 @@ impl Editor {
             serialize_selections: Task::ready(()),
             text_style_refinement: None,
             load_diff_task: load_uncommitted_diff,
+            mouse_cursor_hidden: false,
+            hide_mouse_while_typing: EditorSettings::get_global(cx)
+                .hide_mouse_while_typing
+                .unwrap_or(true),
         };
         if let Some(breakpoints) = this.breakpoint_store.as_ref() {
             this._subscriptions
@@ -2911,6 +2917,8 @@ impl Editor {
             return;
         }
 
+        self.mouse_cursor_hidden = self.hide_mouse_while_typing;
+
         let selections = self.selections.all_adjusted(cx);
         let mut bracket_inserted = false;
         let mut edits = Vec::new();
@@ -3316,6 +3324,7 @@ impl Editor {
     }
 
     pub fn newline(&mut self, _: &Newline, window: &mut Window, cx: &mut Context<Self>) {
+        self.mouse_cursor_hidden = self.hide_mouse_while_typing;
         self.transact(window, cx, |this, window, cx| {
             let (edits, selection_fixup_info): (Vec<_>, Vec<_>) = {
                 let selections = this.selections.all::<usize>(cx);
@@ -3431,6 +3440,8 @@ impl Editor {
     }
 
     pub fn newline_above(&mut self, _: &NewlineAbove, window: &mut Window, cx: &mut Context<Self>) {
+        self.mouse_cursor_hidden = self.hide_mouse_while_typing;
+
         let buffer = self.buffer.read(cx);
         let snapshot = buffer.snapshot(cx);
 
@@ -3488,6 +3499,8 @@ impl Editor {
     }
 
     pub fn newline_below(&mut self, _: &NewlineBelow, window: &mut Window, cx: &mut Context<Self>) {
+        self.mouse_cursor_hidden = self.hide_mouse_while_typing;
+
         let buffer = self.buffer.read(cx);
         let snapshot = buffer.snapshot(cx);
 
@@ -7637,6 +7650,7 @@ impl Editor {
     }
 
     pub fn backspace(&mut self, _: &Backspace, window: &mut Window, cx: &mut Context<Self>) {
+        self.mouse_cursor_hidden = self.hide_mouse_while_typing;
         self.transact(window, cx, |this, window, cx| {
             this.select_autoclose_pair(window, cx);
             let mut linked_ranges = HashMap::<_, Vec<_>>::default();
@@ -7735,6 +7749,7 @@ impl Editor {
     }
 
     pub fn delete(&mut self, _: &Delete, window: &mut Window, cx: &mut Context<Self>) {
+        self.mouse_cursor_hidden = self.hide_mouse_while_typing;
         self.transact(window, cx, |this, window, cx| {
             this.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
                 let line_mode = s.line_mode;
@@ -7756,7 +7771,7 @@ impl Editor {
         if self.move_to_prev_snippet_tabstop(window, cx) {
             return;
         }
-
+        self.mouse_cursor_hidden = self.hide_mouse_while_typing;
         self.outdent(&Outdent, window, cx);
     }
 
@@ -7764,7 +7779,7 @@ impl Editor {
         if self.move_to_next_snippet_tabstop(window, cx) || self.read_only(cx) {
             return;
         }
-
+        self.mouse_cursor_hidden = self.hide_mouse_while_typing;
         let mut selections = self.selections.all_adjusted(cx);
         let buffer = self.buffer.read(cx);
         let snapshot = buffer.snapshot(cx);
@@ -16357,6 +16372,11 @@ impl Editor {
             self.scroll_manager.vertical_scroll_margin = editor_settings.vertical_scroll_margin;
             self.show_breadcrumbs = editor_settings.toolbar.breadcrumbs;
             self.cursor_shape = editor_settings.cursor_shape.unwrap_or_default();
+            self.hide_mouse_while_typing = editor_settings.hide_mouse_while_typing.unwrap_or(true);
+
+            if !self.hide_mouse_while_typing {
+                self.mouse_cursor_hidden = false;
+            }
         }
 
         if old_cursor_shape != self.cursor_shape {
