@@ -107,38 +107,11 @@ impl zed::Extension for HtmlExtension {
 
     fn language_server_initialization_options(
         &mut self,
-        server_id: &LanguageServerId,
-        worktree: &zed_extension_api::Worktree,
+        _server_id: &LanguageServerId,
+        _worktree: &zed_extension_api::Worktree,
     ) -> Result<Option<zed_extension_api::serde_json::Value>> {
-        let user_initialization_options = LspSettings::for_worktree(server_id.as_ref(), worktree)
-            .ok()
-            .and_then(|lsp_settings| lsp_settings.initialization_options.clone())
-            .unwrap_or_default();
-        let mut initialization_options = json!({"provideFormatter": true });
-        if !user_initialization_options.is_null() {
-            merge_json_value_into(user_initialization_options, &mut initialization_options);
-        }
+        let initialization_options = json!({"provideFormatter": true });
         Ok(Some(initialization_options))
-    }
-}
-
-pub fn merge_json_value_into(source: Value, target: &mut Value) {
-    match (source, target) {
-        (Value::Object(source), Value::Object(target)) => {
-            for (key, value) in source {
-                if let Some(target) = target.get_mut(&key) {
-                    merge_json_value_into(value, target);
-                } else {
-                    target.insert(key, value);
-                }
-            }
-        }
-        (Value::Array(source), Value::Array(target)) => {
-            for value in source {
-                target.push(value);
-            }
-        }
-        (source, target) => *target = source,
     }
 }
 
