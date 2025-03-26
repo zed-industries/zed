@@ -1694,6 +1694,43 @@ mod tests {
                 "
                 .unindent(),
             },
+            Example {
+                name: "one uncommitted hunk that contains two unstaged hunks",
+                head_text: "
+                    one
+                    two
+                    three
+                    four
+                    five
+                "
+                .unindent(),
+                index_text: "
+                    ZERO
+                    one
+                    TWO
+                    THREE
+                    FOUR
+                    five
+                "
+                .unindent(),
+                buffer_marked_text: "
+                    «one
+                    TWO_HUNDRED
+                    THREE
+                    FOUR_HUNDRED
+                    five»
+                "
+                .unindent(),
+                final_index_text: "
+                    ZERO
+                    one
+                    TWO_HUNDRED
+                    THREE
+                    FOUR_HUNDRED
+                    five
+                "
+                .unindent(),
+            },
         ];
 
         for example in table {
