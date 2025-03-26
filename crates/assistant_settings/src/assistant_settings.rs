@@ -370,7 +370,7 @@ pub struct AssistantSettingsContentV2 {
     /// Default: false
     enable_experimental_live_diffs: Option<bool>,
     #[schemars(skip)]
-    profiles: Option<IndexMap<Arc<str>, AgentProfileContent>>,
+    pub profiles: Option<IndexMap<Arc<str>, AgentProfileContent>>,
     /// Whenever a tool action would normally wait for your confirmation
     /// that you allow it, always choose to allow it.
     ///
