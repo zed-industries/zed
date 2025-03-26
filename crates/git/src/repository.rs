@@ -185,7 +185,7 @@ pub trait GitRepository: Send + Sync {
     fn merge_head_shas(&self) -> Vec<String>;
 
     // Note: this method blocks the current thread!
-    fn status(&self, path_prefixes: &[RepoPath]) -> Result<GitStatus>;
+    fn status(&self, index: Option<GitIndex>, path_prefixes: &[RepoPath]) -> Result<GitStatus>;
 
     fn branches(&self) -> BoxFuture<Result<Vec<Branch>>>;
 
@@ -325,20 +325,9 @@ pub trait GitRepository: Send + Sync {
         cx: AsyncApp,
     ) -> BoxFuture<Result<String>>;
 
-    fn create_virtual_branch(&self, cx: AsyncApp) -> BoxFuture<Result<GitVirtualBranch>>;
+    fn create_index(&self, cx: AsyncApp) -> BoxFuture<Result<GitIndex>>;
 
-    fn apply_diff_to_virtual_branch(
-        &self,
-        virtual_branch: GitVirtualBranch,
-        diff: String,
-        cx: AsyncApp,
-    ) -> BoxFuture<Result<()>>;
-
-    fn changes_for_virtual_branch(
-        &self,
-        virtual_branch: GitVirtualBranch,
-        cx: AsyncApp,
-    ) -> BoxFuture<Result<HashMap<RepoPath, VirtualBranchChange>>>;
+    fn apply_diff(&self, index: GitIndex, diff: String, cx: AsyncApp) -> BoxFuture<Result<()>>;
 }
 
 pub enum DiffType {
@@ -390,7 +379,7 @@ pub struct GitRepositoryCheckpoint {
 }
 
 #[derive(Copy, Clone, Debug)]
-pub struct GitVirtualBranch {
+pub struct GitIndex {
     id: Uuid,
 }
 
@@ -647,7 +636,7 @@ impl GitRepository for RealGitRepository {
         shas
     }
 
-    fn status(&self, path_prefixes: &[RepoPath]) -> Result<GitStatus> {
+    fn status(&self, index: Option<GitIndex>, path_prefixes: &[RepoPath]) -> Result<GitStatus> {
         let working_directory = self
             .repository
             .lock()
@@ -1259,7 +1248,7 @@ impl GitRepository for RealGitRepository {
         .boxed()
     }
 
-    fn create_virtual_branch(&self, cx: AsyncApp) -> BoxFuture<Result<GitVirtualBranch>> {
+    fn create_index(&self, cx: AsyncApp) -> BoxFuture<Result<GitIndex>> {
         let working_directory = self.working_directory();
         let git_binary_path = self.git_binary_path.clone();
 
@@ -1270,17 +1259,12 @@ impl GitRepository for RealGitRepository {
             let id = Uuid::new_v4();
             git.with_index(id, async |git| git.run(&["add", "--all"]).await)
                 .await?;
-            Ok(GitVirtualBranch { id })
+            Ok(GitIndex { id })
         })
         .boxed()
     }
 
-    fn apply_diff_to_virtual_branch(
-        &self,
-        virtual_branch: GitVirtualBranch,
-        diff: String,
-        cx: AsyncApp,
-    ) -> BoxFuture<Result<()>> {
+    fn apply_diff(&self, index: GitIndex, diff: String, cx: AsyncApp) -> BoxFuture<Result<()>> {
         let working_directory = self.working_directory();
         let git_binary_path = self.git_binary_path.clone();
 
@@ -1288,63 +1272,11 @@ impl GitRepository for RealGitRepository {
         cx.background_spawn(async move {
             let working_directory = working_directory?;
             let mut git = GitBinary::new(git_binary_path, working_directory, executor);
-            git.with_index(virtual_branch.id, async move |git| {
+            git.with_index(index.id, async move |git| {
                 git.run_with_stdin(&["apply", "--cached", "-"], diff).await
             })
             .await?;
             Ok(())
-        })
-        .boxed()
-    }
-
-    fn changes_for_virtual_branch(
-        &self,
-        virtual_branch: GitVirtualBranch,
-        cx: AsyncApp,
-    ) -> BoxFuture<Result<HashMap<RepoPath, VirtualBranchChange>>> {
-        let working_directory = self.working_directory();
-        let git_binary_path = self.git_binary_path.clone();
-
-        let executor = cx.background_executor().clone();
-        cx.background_spawn(async move {
-            let working_directory = working_directory?;
-            let mut git = GitBinary::new(git_binary_path, working_directory, executor);
-            git.with_index(virtual_branch.id, async move |git| {
-                let status: GitStatus = git
-                    .run(&[
-                        "--no-optional-locks",
-                        "status",
-                        "--porcelain=v1",
-                        "--untracked-files=all",
-                        "--no-renames",
-                        "-z",
-                    ])
-                    .await?
-                    .parse()?;
-
-                let mut changes = HashMap::default();
-                for (path, status) in status.entries.iter() {
-                    if let FileStatus::Tracked(tracked) = status {
-                        if tracked.worktree_status == crate::status::StatusCode::Unmodified {
-                            continue;
-                        }
-                    }
-
-                    let branch_content = git
-                        .run(&["show", &format!(":0:{}", path)])
-                        .await
-                        .unwrap_or_default();
-                    changes.insert(
-                        path.clone(),
-                        VirtualBranchChange {
-                            branch_text: branch_content,
-                        },
-                    );
-                }
-
-                Ok(changes)
-            })
-            .await
         })
         .boxed()
     }
@@ -1990,13 +1922,13 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_virtual_branch(cx: &mut TestAppContext) {
+    async fn test_secondary_indices(cx: &mut TestAppContext) {
         cx.executor().allow_parking();
 
         let repo_dir = tempfile::tempdir().unwrap();
         git2::Repository::init(repo_dir.path()).unwrap();
         let repo = RealGitRepository::new(&repo_dir.path().join(".git"), None).unwrap();
-        let virtual_branch = repo.create_virtual_branch(cx.to_async()).await.unwrap();
+        let index = repo.create_index(cx.to_async()).await.unwrap();
         smol::fs::write(repo_dir.path().join("file1"), "file1\n")
             .await
             .unwrap();
@@ -2013,12 +1945,12 @@ mod tests {
             +file2
         "#
         .unindent();
-        repo.apply_diff_to_virtual_branch(virtual_branch.clone(), diff.to_string(), cx.to_async())
+        repo.apply_diff(index.clone(), diff.to_string(), cx.to_async())
             .await
             .unwrap();
 
         assert_eq!(
-            repo.changes_for_virtual_branch(virtual_branch, cx.to_async())
+            repo.status(Some(index), cx.to_async())
                 .await
                 .unwrap()
                 .into_iter()
@@ -2035,7 +1967,7 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(
-            repo.changes_for_virtual_branch(virtual_branch, cx.to_async())
+            repo.status(Some(index), cx.to_async())
                 .await
                 .unwrap()
                 .into_iter()

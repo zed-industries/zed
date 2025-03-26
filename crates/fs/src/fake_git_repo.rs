@@ -5,8 +5,8 @@ use futures::future::{self, BoxFuture};
 use git::{
     blame::Blame,
     repository::{
-        AskPassSession, Branch, CommitDetails, GitRepository, GitRepositoryCheckpoint,
-        GitVirtualBranch, PushOptions, Remote, RepoPath, ResetMode, VirtualBranchChange,
+        AskPassSession, Branch, CommitDetails, GitIndex, GitRepository, GitRepositoryCheckpoint,
+        PushOptions, Remote, RepoPath, ResetMode, VirtualBranchChange,
     },
     status::{FileStatus, GitStatus, StatusCode, TrackedStatus, UnmergedStatus},
 };
@@ -447,13 +447,13 @@ impl GitRepository for FakeGitRepository {
         unimplemented!()
     }
 
-    fn create_virtual_branch(&self, _cx: AsyncApp) -> BoxFuture<Result<GitVirtualBranch>> {
+    fn create_index(&self, _cx: AsyncApp) -> BoxFuture<Result<GitIndex>> {
         unimplemented!()
     }
 
-    fn apply_diff_to_virtual_branch(
+    fn apply_diff(
         &self,
-        _virtual_branch: GitVirtualBranch,
+        _virtual_branch: GitIndex,
         _diff: String,
         _cx: AsyncApp,
     ) -> BoxFuture<Result<()>> {
@@ -462,7 +462,7 @@ impl GitRepository for FakeGitRepository {
 
     fn changes_for_virtual_branch(
         &self,
-        _virtual_branch: GitVirtualBranch,
+        _virtual_branch: GitIndex,
         _cx: AsyncApp,
     ) -> BoxFuture<Result<HashMap<RepoPath, VirtualBranchChange>>> {
         unimplemented!()

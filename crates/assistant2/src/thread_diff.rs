@@ -38,7 +38,7 @@ impl ThreadDiff {
                         .read(cx)
                         .git_store()
                         .read(cx)
-                        .create_virtual_branch(cx)
+                        .create_index(cx)
                         .log_err(),
                 )
                 .shared(),
@@ -71,11 +71,7 @@ impl ThreadDiff {
                             if let Ok(diff) = diff {
                                 _ = git_store
                                     .read_with(cx, |store, cx| {
-                                        store.apply_diff_to_virtual_branch(
-                                            virtual_branch.clone(),
-                                            diff,
-                                            cx,
-                                        )
+                                        store.apply_diff(virtual_branch.clone(), diff, cx)
                                     })?
                                     .await;
                             }

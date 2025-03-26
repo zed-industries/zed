@@ -20,7 +20,7 @@ use git::{
     blame::Blame,
     parse_git_remote_url,
     repository::{
-        Branch, CommitDetails, DiffType, GitRepository, GitRepositoryCheckpoint, GitVirtualBranch,
+        Branch, CommitDetails, DiffType, GitIndex, GitRepository, GitRepositoryCheckpoint,
         PushOptions, Remote, RemoteCommandOutput, RepoPath, ResetMode, VirtualBranchChange,
     },
     status::FileStatus,
@@ -139,7 +139,7 @@ pub struct GitStoreDiff {
 
 #[derive(Clone, Debug)]
 pub struct GitStoreVirtualBranch {
-    branches_by_dot_git_abs_path: HashMap<PathBuf, GitVirtualBranch>,
+    branches_by_dot_git_abs_path: HashMap<PathBuf, GitIndex>,
 }
 
 #[derive(Default, Clone, Debug)]
@@ -718,12 +718,12 @@ impl GitStore {
         })
     }
 
-    pub fn create_virtual_branch(&self, cx: &App) -> Task<Result<GitStoreVirtualBranch>> {
+    pub fn create_index(&self, cx: &App) -> Task<Result<GitStoreVirtualBranch>> {
         let mut branches = Vec::new();
         for repository in self.repositories.values() {
             let repository = repository.read(cx);
             let dot_git_abs_path = repository.dot_git_abs_path.clone();
-            let branch = repository.create_virtual_branch().map(|branch| branch?);
+            let branch = repository.create_index().map(|branch| branch?);
             branches.push(async move {
                 let branch = branch.await?;
                 anyhow::Ok((dot_git_abs_path, branch))
@@ -738,7 +738,7 @@ impl GitStore {
         })
     }
 
-    pub fn apply_diff_to_virtual_branch(
+    pub fn apply_diff(
         &self,
         mut virtual_branch: GitStoreVirtualBranch,
         diff: GitStoreDiff,
@@ -757,9 +757,7 @@ impl GitStore {
                     .branches_by_dot_git_abs_path
                     .remove(&dot_git_abs_path)
                 {
-                    let apply = repository
-                        .read(cx)
-                        .apply_diff_to_virtual_branch(branch, diff);
+                    let apply = repository.read(cx).apply_diff(branch, diff);
                     tasks.push(async move { apply.await? });
                 }
             }
@@ -3531,28 +3529,20 @@ impl Repository {
         })
     }
 
-    pub fn create_virtual_branch(&self) -> oneshot::Receiver<Result<GitVirtualBranch>> {
+    pub fn create_index(&self) -> oneshot::Receiver<Result<GitIndex>> {
         self.send_job(move |repo, cx| async move {
             match repo {
-                RepositoryState::Local(git_repository) => {
-                    git_repository.create_virtual_branch(cx).await
-                }
+                RepositoryState::Local(git_repository) => git_repository.create_index(cx).await,
                 RepositoryState::Remote { .. } => Err(anyhow!("not implemented yet")),
             }
         })
     }
 
-    pub fn apply_diff_to_virtual_branch(
-        &self,
-        virtual_branch: GitVirtualBranch,
-        diff: String,
-    ) -> oneshot::Receiver<Result<()>> {
+    pub fn apply_diff(&self, index: GitIndex, diff: String) -> oneshot::Receiver<Result<()>> {
         self.send_job(move |repo, cx| async move {
             match repo {
                 RepositoryState::Local(git_repository) => {
-                    git_repository
-                        .apply_diff_to_virtual_branch(virtual_branch, diff, cx)
-                        .await
+                    git_repository.apply_diff(index, diff, cx).await
                 }
                 RepositoryState::Remote { .. } => Err(anyhow!("not implemented yet")),
             }
@@ -3561,7 +3551,7 @@ impl Repository {
 
     pub fn changes_for_virtual_branch(
         &self,
-        virtual_branch: GitVirtualBranch,
+        virtual_branch: GitIndex,
     ) -> oneshot::Receiver<Result<HashMap<RepoPath, VirtualBranchChange>>> {
         self.send_job(move |repo, cx| async move {
             match repo {
