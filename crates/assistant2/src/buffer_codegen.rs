@@ -490,9 +490,9 @@ impl CodegenAlternative {
                 .as_ref()
                 .ok()
                 .and_then(|stream| stream.message_id.clone());
-            let model_telemetry_id_clone = model_telemetry_id.clone();
-            let model_provider_id_clone = model_provider_id.clone();
             let generate = async {
+                let model_telemetry_id = model_telemetry_id.clone();
+                let model_provider_id = model_provider_id.clone();
                 let (mut diff_tx, mut diff_rx) = mpsc::channel(1);
                 let executor = cx.background_executor().clone();
                 let message_id = message_id.clone();
@@ -601,8 +601,8 @@ impl CodegenAlternative {
                                 message_id,
                                 kind: AssistantKind::Inline,
                                 phase: AssistantPhase::Response,
-                                model: model_telemetry_id_clone,
-                                model_provider: model_provider_id_clone.to_string(),
+                                model: model_telemetry_id,
+                                model_provider: model_provider_id,
                                 response_latency,
                                 error_message,
                                 language_name: language_name.map(|name| name.to_proto()),
