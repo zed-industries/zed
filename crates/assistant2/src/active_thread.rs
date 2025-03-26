@@ -1333,6 +1333,7 @@ impl ActiveThread {
                 .child(
                     h_flex()
                         .group("disclosure-header")
+                        .relative()
                         .gap_1p5()
                         .justify_between()
                         .py_1()
@@ -1358,7 +1359,7 @@ impl ActiveThread {
                                         .size(IconSize::XSmall)
                                         .color(Color::Muted),
                                 )
-                                .child(h_flex().text_ui_sm(cx).children(
+                                .child(h_flex().pr_8().text_ui_sm(cx).children(
                                     self.rendered_tool_use_labels.get(&tool_use.id).cloned(),
                                 )),
                         )
@@ -1418,7 +1419,14 @@ impl ActiveThread {
                                         icon.into_any_element()
                                     }
                                 }),
-                        ),
+                        )
+                        .child(div().h_full().absolute().w_8().bottom_0().right_12().bg(
+                            linear_gradient(
+                                90.,
+                                linear_color_stop(self.tool_card_header_bg(cx), 1.),
+                                linear_color_stop(self.tool_card_header_bg(cx).opacity(0.2), 0.),
+                            ),
+                        )),
                 )
                 .map(|parent| {
                     if !is_open {
