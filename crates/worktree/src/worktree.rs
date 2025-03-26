@@ -5205,7 +5205,7 @@ impl BackgroundScanner {
         }
 
         for (work_directory, mut paths) in paths_by_git_repo {
-            if let Ok(status) = smol::block_on(paths.repo.status(&paths.repo_paths)) {
+            if let Ok(status) = self.executor.block(paths.repo.status(&paths.repo_paths)) {
                 let mut changed_path_statuses = Vec::new();
                 let statuses = paths.entry.statuses_by_path.clone();
                 let mut cursor = statuses.cursor::<PathProgress>(&());
