@@ -7,18 +7,14 @@ use crate::WORKSPACE_DB;
 pub fn init(cx: &mut App) {
     let manager = cx.new(|_| HistoryManager::new());
     HistoryManager::set_global(manager.clone(), cx);
-    cx.subscribe(&manager, |manager, event, cx| match event {
-        HistoryManagerEvent::Update => perform_update(cx, manager),
-        HistoryManagerEvent::Delete(source) => match source {
-            DeleteSource::System => {}
-            DeleteSource::User => perform_update(cx, manager),
-        },
+    cx.subscribe(&manager, |_, event, cx| match event {
+        HistoryManagerEvent::Update => perform_update(cx),
     })
     .detach();
-    perform_update(cx, manager);
+    perform_update(cx);
 }
 
-fn perform_update(cx: &mut App, manager: Entity<HistoryManager>) {
+fn perform_update(cx: &mut App) {
     cx.spawn(async move |cx| {
         let recent_folders = WORKSPACE_DB
             .recent_workspaces_on_disk()
@@ -57,11 +53,6 @@ fn perform_update(cx: &mut App, manager: Entity<HistoryManager>) {
             for id in deleted_ids.iter() {
                 WORKSPACE_DB.delete_workspace_by_id(*id).await.log_err();
             }
-            manager
-                .update(cx, |_, cx| {
-                    cx.emit(HistoryManagerEvent::Delete(DeleteSource::System))
-                })
-                .log_err();
         }
     })
     .detach()
@@ -76,13 +67,6 @@ impl Global for GlobalHistoryManager {}
 #[derive(Debug, Clone, Copy)]
 pub enum HistoryManagerEvent {
     Update,
-    Delete(DeleteSource),
-}
-
-#[derive(Debug, Clone, Copy)]
-pub enum DeleteSource {
-    System,
-    User,
 }
 
 impl EventEmitter<HistoryManagerEvent> for HistoryManager {}

@@ -24,7 +24,7 @@ use std::{
 use ui::{prelude::*, tooltip_container, KeyBinding, ListItem, ListItemSpacing, Tooltip};
 use util::{paths::PathExt, ResultExt};
 use workspace::{
-    CloseIntent, DeleteSource, HistoryManager, HistoryManagerEvent, ModalView, OpenOptions,
+    CloseIntent, HistoryManager, HistoryManagerEvent, ModalView, OpenOptions,
     SerializedWorkspaceLocation, Workspace, WorkspaceId, WORKSPACE_DB,
 };
 use zed_actions::{OpenRecent, OpenRemote};
@@ -557,9 +557,7 @@ impl RecentProjectsDelegate {
                     // After deleting a project, we want to update the history manager to reflect the change.
                     // But we do not emit a update event when user opens a project, because it's handled in `workspace::load_workspace`.
                     if let Some(history_manager) = HistoryManager::global(cx) {
-                        history_manager.update(cx, |_, cx| {
-                            cx.emit(HistoryManagerEvent::Delete(DeleteSource::User))
-                        });
+                        history_manager.update(cx, |_, cx| cx.emit(HistoryManagerEvent::Update));
                     }
                 })
             })
