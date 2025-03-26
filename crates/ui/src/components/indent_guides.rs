@@ -172,10 +172,10 @@ mod uniform_list {
                     .map(|layout| RenderedIndentGuide {
                         bounds: Bounds::new(
                             point(
-                                px(layout.offset.x as f32) * self.indent_size,
-                                px(layout.offset.y as f32) * item_height,
+                                layout.offset.x * self.indent_size,
+                                layout.offset.y * item_height,
                             ),
-                            size(px(1.), px(layout.length as f32) * item_height),
+                            size(px(1.), layout.length * item_height),
                         ),
                         layout,
                         is_active: false,

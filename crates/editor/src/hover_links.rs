@@ -1,5 +1,5 @@
 use crate::{
-    editor_settings::MultiCursorModifier,
+    editor_settings::{GoToDefinitionFallback, MultiCursorModifier},
     hover_popover::{self, InlayHover},
     scroll::ScrollAmount,
     Anchor, Editor, EditorSettings, EditorSnapshot, FindAllReferences, GoToDefinition,
@@ -174,7 +174,12 @@ impl Editor {
                     if definition_revealed == Navigated::Yes {
                         return None;
                     }
-                    editor.find_all_references(&FindAllReferences, window, cx)
+                    match EditorSettings::get_global(cx).go_to_definition_fallback {
+                        GoToDefinitionFallback::None => None,
+                        GoToDefinitionFallback::FindAllReferences => {
+                            editor.find_all_references(&FindAllReferences, window, cx)
+                        }
+                    }
                 })
                 .ok()
                 .flatten();

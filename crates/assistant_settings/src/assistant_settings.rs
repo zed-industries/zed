@@ -73,6 +73,7 @@ pub struct AssistantSettings {
     pub enable_experimental_live_diffs: bool,
     pub profiles: IndexMap<Arc<str>, AgentProfile>,
     pub always_allow_tool_actions: bool,
+    pub notify_when_agent_waiting: bool,
 }
 
 impl AssistantSettings {
@@ -175,6 +176,7 @@ impl AssistantSettingsContent {
                     enable_experimental_live_diffs: None,
                     profiles: None,
                     always_allow_tool_actions: None,
+                    notify_when_agent_waiting: None,
                 },
                 VersionedAssistantSettingsContent::V2(settings) => settings.clone(),
             },
@@ -198,6 +200,7 @@ impl AssistantSettingsContent {
                 enable_experimental_live_diffs: None,
                 profiles: None,
                 always_allow_tool_actions: None,
+                notify_when_agent_waiting: None,
             },
         }
     }
@@ -329,6 +332,7 @@ impl Default for VersionedAssistantSettingsContent {
             enable_experimental_live_diffs: None,
             profiles: None,
             always_allow_tool_actions: None,
+            notify_when_agent_waiting: None,
         })
     }
 }
@@ -372,6 +376,10 @@ pub struct AssistantSettingsContentV2 {
     ///
     /// Default: false
     always_allow_tool_actions: Option<bool>,
+    /// Whether to show a popup notification when the agent is waiting for user input.
+    ///
+    /// Default: true
+    notify_when_agent_waiting: Option<bool>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
@@ -411,6 +419,13 @@ impl Default for LanguageModelSelection {
 #[derive(Debug, PartialEq, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct AgentProfileContent {
     pub name: Arc<str>,
+    pub tools: IndexMap<Arc<str>, bool>,
+    #[serde(default)]
+    pub context_servers: IndexMap<Arc<str>, ContextServerPresetContent>,
+}
+
+#[derive(Debug, PartialEq, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct ContextServerPresetContent {
     pub tools: IndexMap<Arc<str>, bool>,
 }
 
@@ -512,6 +527,10 @@ impl Settings for AssistantSettings {
                 &mut settings.always_allow_tool_actions,
                 value.always_allow_tool_actions,
             );
+            merge(
+                &mut settings.notify_when_agent_waiting,
+                value.notify_when_agent_waiting,
+            );
 
             if let Some(profiles) = value.profiles {
                 settings
@@ -522,7 +541,18 @@ impl Settings for AssistantSettings {
                             AgentProfile {
                                 name: profile.name.into(),
                                 tools: profile.tools,
-                                context_servers: IndexMap::default(),
+                                context_servers: profile
+                                    .context_servers
+                                    .into_iter()
+                                    .map(|(context_server_id, preset)| {
+                                        (
+                                            context_server_id,
+                                            ContextServerPreset {
+                                                tools: preset.tools.clone(),
+                                            },
+                                        )
+                                    })
+                                    .collect(),
                             },
                         )
                     }));
@@ -593,6 +623,7 @@ mod tests {
                             enable_experimental_live_diffs: None,
                             profiles: None,
                             always_allow_tool_actions: None,
+                            notify_when_agent_waiting: None,
                         }),
                     )
                 },

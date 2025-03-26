@@ -32,7 +32,7 @@ use multi_buffer::{IndentGuide, PathKey};
 use parking_lot::Mutex;
 use pretty_assertions::{assert_eq, assert_ne};
 use project::{
-    debugger::breakpoint_store::{BreakpointKind, SerializedBreakpoint},
+    debugger::breakpoint_store::{BreakpointKind, BreakpointState, SerializedBreakpoint},
     project_settings::{LspSettings, ProjectSettings},
     FakeFs,
 };
@@ -16435,6 +16435,69 @@ async fn test_goto_definition_with_find_all_references_fallback(cx: &mut TestApp
 }
 
 #[gpui::test]
+async fn test_goto_definition_no_fallback(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    cx.update(|cx| {
+        let mut editor_settings = EditorSettings::get_global(cx).clone();
+        editor_settings.go_to_definition_fallback = GoToDefinitionFallback::None;
+        EditorSettings::override_global(editor_settings, cx);
+    });
+    let mut cx = EditorLspTestContext::new_rust(
+        lsp::ServerCapabilities {
+            definition_provider: Some(lsp::OneOf::Left(true)),
+            references_provider: Some(lsp::OneOf::Left(true)),
+            ..lsp::ServerCapabilities::default()
+        },
+        cx,
+    )
+    .await;
+    let original_state = r#"fn one() {
+        let mut a = ˇtwo();
+    }
+
+    fn two() {}"#
+        .unindent();
+    cx.set_state(&original_state);
+
+    let mut go_to_definition = cx
+        .lsp
+        .set_request_handler::<lsp::request::GotoDefinition, _, _>(
+            move |_, _| async move { Ok(None) },
+        );
+    let _references = cx
+        .lsp
+        .set_request_handler::<lsp::request::References, _, _>(move |_, _| async move {
+            panic!("Should not call for references with no go to definition fallback")
+        });
+
+    let navigated = cx
+        .update_editor(|editor, window, cx| editor.go_to_definition(&GoToDefinition, window, cx))
+        .await
+        .expect("Failed to navigate to lookup references");
+    go_to_definition
+        .next()
+        .await
+        .expect("Should have called the go_to_definition handler");
+
+    assert_eq!(
+        navigated,
+        Navigated::No,
+        "Should have navigated to references as a fallback after empty GoToDefinition response"
+    );
+    cx.assert_editor_state(&original_state);
+    let editors = cx.update_workspace(|workspace, _, cx| {
+        workspace.items_of_type::<Editor>(cx).collect::<Vec<_>>()
+    });
+    cx.update_editor(|_, _, _| {
+        assert_eq!(
+            editors.len(),
+            1,
+            "After unsuccessful fallback, no other editor should have been opened"
+        );
+    });
+}
+
+#[gpui::test]
 async fn test_find_enclosing_node_with_task(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
@@ -17329,7 +17392,7 @@ async fn assert_highlighted_edits(
 fn assert_breakpoint(
     breakpoints: &BTreeMap<Arc<Path>, Vec<SerializedBreakpoint>>,
     path: &Arc<Path>,
-    expected: Vec<(u32, BreakpointKind)>,
+    expected: Vec<(u32, Breakpoint)>,
 ) {
     if expected.len() == 0usize {
         assert!(!breakpoints.contains_key(path));
@@ -17338,7 +17401,15 @@ fn assert_breakpoint(
             .get(path)
             .unwrap()
             .into_iter()
-            .map(|breakpoint| (breakpoint.position, breakpoint.kind.clone()))
+            .map(|breakpoint| {
+                (
+                    breakpoint.position,
+                    Breakpoint {
+                        kind: breakpoint.kind.clone(),
+                        state: breakpoint.state,
+                    },
+                )
+            })
             .collect::<Vec<_>>();
 
         breakpoint.sort_by_key(|(cached_position, _)| *cached_position);
@@ -17366,12 +17437,18 @@ fn add_log_breakpoint_at_cursor(
 
             let kind = BreakpointKind::Log(Arc::from(log_message));
 
-            (breakpoint_position, Breakpoint { kind })
+            (
+                breakpoint_position,
+                Breakpoint {
+                    kind,
+                    state: BreakpointState::Enabled,
+                },
+            )
         });
 
     editor.edit_breakpoint_at_anchor(
         anchor,
-        bp.kind,
+        bp,
         BreakpointEditAction::EditLogMessage(log_message.into()),
         cx,
     );
@@ -17459,7 +17536,10 @@ async fn test_breakpoint_toggling(cx: &mut TestAppContext) {
     assert_breakpoint(
         &breakpoints,
         &abs_path,
-        vec![(0, BreakpointKind::Standard), (3, BreakpointKind::Standard)],
+        vec![
+            (0, Breakpoint::new_standard()),
+            (3, Breakpoint::new_standard()),
+        ],
     );
 
     editor.update_in(cx, |editor, window, cx| {
@@ -17478,7 +17558,11 @@ async fn test_breakpoint_toggling(cx: &mut TestAppContext) {
     });
 
     assert_eq!(1, breakpoints.len());
-    assert_breakpoint(&breakpoints, &abs_path, vec![(3, BreakpointKind::Standard)]);
+    assert_breakpoint(
+        &breakpoints,
+        &abs_path,
+        vec![(3, Breakpoint::new_standard())],
+    );
 
     editor.update_in(cx, |editor, window, cx| {
         editor.move_to_end(&MoveToEnd, window, cx);
@@ -17565,7 +17649,7 @@ async fn test_log_breakpoint_editing(cx: &mut TestAppContext) {
     assert_breakpoint(
         &breakpoints,
         &abs_path,
-        vec![(0, BreakpointKind::Log("hello world".into()))],
+        vec![(0, Breakpoint::new_log("hello world"))],
     );
 
     // Removing a log message from a log breakpoint should remove it
@@ -17606,7 +17690,10 @@ async fn test_log_breakpoint_editing(cx: &mut TestAppContext) {
     assert_breakpoint(
         &breakpoints,
         &abs_path,
-        vec![(0, BreakpointKind::Standard), (3, BreakpointKind::Standard)],
+        vec![
+            (0, Breakpoint::new_standard()),
+            (3, Breakpoint::new_standard()),
+        ],
     );
 
     editor.update_in(cx, |editor, window, cx| {
@@ -17627,8 +17714,8 @@ async fn test_log_breakpoint_editing(cx: &mut TestAppContext) {
         &breakpoints,
         &abs_path,
         vec![
-            (0, BreakpointKind::Standard),
-            (3, BreakpointKind::Log("hello world".into())),
+            (0, Breakpoint::new_standard()),
+            (3, Breakpoint::new_log("hello world")),
         ],
     );
 
@@ -17650,8 +17737,167 @@ async fn test_log_breakpoint_editing(cx: &mut TestAppContext) {
         &breakpoints,
         &abs_path,
         vec![
-            (0, BreakpointKind::Standard),
-            (3, BreakpointKind::Log("hello Earth !!".into())),
+            (0, Breakpoint::new_standard()),
+            (3, Breakpoint::new_log("hello Earth !!")),
+        ],
+    );
+}
+
+/// This also tests that Editor::breakpoint_at_cursor_head is working properly
+/// we had some issues where we wouldn't find a breakpoint at Point {row: 0, col: 0}
+/// or when breakpoints were placed out of order. This tests for a regression too
+#[gpui::test]
+async fn test_breakpoint_enabling_and_disabling(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let sample_text = "First line\nSecond line\nThird line\nFourth line".to_string();
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/a"),
+        json!({
+            "main.rs": sample_text,
+        }),
+    )
+    .await;
+    let project = Project::test(fs, [path!("/a").as_ref()], cx).await;
+    let workspace = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+    let cx = &mut VisualTestContext::from_window(*workspace.deref(), cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/a"),
+        json!({
+            "main.rs": sample_text,
+        }),
+    )
+    .await;
+    let project = Project::test(fs, [path!("/a").as_ref()], cx).await;
+    let workspace = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+    let cx = &mut VisualTestContext::from_window(*workspace.deref(), cx);
+    let worktree_id = workspace
+        .update(cx, |workspace, _window, cx| {
+            workspace.project().update(cx, |project, cx| {
+                project.worktrees(cx).next().unwrap().read(cx).id()
+            })
+        })
+        .unwrap();
+
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_buffer((worktree_id, "main.rs"), cx)
+        })
+        .await
+        .unwrap();
+
+    let (editor, cx) = cx.add_window_view(|window, cx| {
+        Editor::new(
+            EditorMode::Full,
+            MultiBuffer::build_from_buffer(buffer, cx),
+            Some(project.clone()),
+            window,
+            cx,
+        )
+    });
+
+    let project_path = editor.update(cx, |editor, cx| editor.project_path(cx).unwrap());
+    let abs_path = project.read_with(cx, |project, cx| {
+        project
+            .absolute_path(&project_path, cx)
+            .map(|path_buf| Arc::from(path_buf.to_owned()))
+            .unwrap()
+    });
+
+    // assert we can add breakpoint on the first line
+    editor.update_in(cx, |editor, window, cx| {
+        editor.toggle_breakpoint(&actions::ToggleBreakpoint, window, cx);
+        editor.move_to_end(&MoveToEnd, window, cx);
+        editor.toggle_breakpoint(&actions::ToggleBreakpoint, window, cx);
+        editor.move_up(&MoveUp, window, cx);
+        editor.toggle_breakpoint(&actions::ToggleBreakpoint, window, cx);
+    });
+
+    let breakpoints = editor.update(cx, |editor, cx| {
+        editor
+            .breakpoint_store()
+            .as_ref()
+            .unwrap()
+            .read(cx)
+            .all_breakpoints(cx)
+            .clone()
+    });
+
+    assert_eq!(1, breakpoints.len());
+    assert_breakpoint(
+        &breakpoints,
+        &abs_path,
+        vec![
+            (0, Breakpoint::new_standard()),
+            (2, Breakpoint::new_standard()),
+            (3, Breakpoint::new_standard()),
+        ],
+    );
+
+    editor.update_in(cx, |editor, window, cx| {
+        editor.move_to_beginning(&MoveToBeginning, window, cx);
+        editor.disable_breakpoint(&actions::DisableBreakpoint, window, cx);
+        editor.move_to_end(&MoveToEnd, window, cx);
+        editor.disable_breakpoint(&actions::DisableBreakpoint, window, cx);
+    });
+
+    let breakpoints = editor.update(cx, |editor, cx| {
+        editor
+            .breakpoint_store()
+            .as_ref()
+            .unwrap()
+            .read(cx)
+            .all_breakpoints(cx)
+            .clone()
+    });
+
+    let disable_breakpoint = {
+        let mut bp = Breakpoint::new_standard();
+        bp.state = BreakpointState::Disabled;
+        bp
+    };
+
+    assert_eq!(1, breakpoints.len());
+    assert_breakpoint(
+        &breakpoints,
+        &abs_path,
+        vec![
+            (0, disable_breakpoint.clone()),
+            (2, Breakpoint::new_standard()),
+            (3, disable_breakpoint.clone()),
+        ],
+    );
+
+    editor.update_in(cx, |editor, window, cx| {
+        editor.move_to_beginning(&MoveToBeginning, window, cx);
+        editor.enable_breakpoint(&actions::EnableBreakpoint, window, cx);
+        editor.move_to_end(&MoveToEnd, window, cx);
+        editor.enable_breakpoint(&actions::EnableBreakpoint, window, cx);
+        editor.move_up(&MoveUp, window, cx);
+        editor.disable_breakpoint(&actions::DisableBreakpoint, window, cx);
+    });
+
+    let breakpoints = editor.update(cx, |editor, cx| {
+        editor
+            .breakpoint_store()
+            .as_ref()
+            .unwrap()
+            .read(cx)
+            .all_breakpoints(cx)
+            .clone()
+    });
+
+    assert_eq!(1, breakpoints.len());
+    assert_breakpoint(
+        &breakpoints,
+        &abs_path,
+        vec![
+            (0, Breakpoint::new_standard()),
+            (2, disable_breakpoint),
+            (3, Breakpoint::new_standard()),
         ],
     );
 }

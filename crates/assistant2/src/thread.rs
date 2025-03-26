@@ -352,6 +352,10 @@ impl Thread {
             .filter(|tool_use| tool_use.status.needs_confirmation())
     }
 
+    pub fn has_pending_tool_uses(&self) -> bool {
+        !self.tool_use.pending_tool_uses().is_empty()
+    }
+
     pub fn checkpoint_for_message(&self, id: MessageId) -> Option<ThreadCheckpoint> {
         self.checkpoints_by_message.get(&id).cloned()
     }
@@ -698,11 +702,12 @@ impl Thread {
 
         // Note that Cline supports `.clinerules` being a directory, but that is not currently
         // supported. This doesn't seem to occur often in GitHub repositories.
-        const RULES_FILE_NAMES: [&'static str; 5] = [
+        const RULES_FILE_NAMES: [&'static str; 6] = [
             ".rules",
             ".cursorrules",
             ".windsurfrules",
             ".clinerules",
+            ".github/copilot-instructions.md",
             "CLAUDE.md",
         ];
         let selected_rules_file = RULES_FILE_NAMES
@@ -1160,6 +1165,7 @@ impl Thread {
                         messages.clone(),
                         tool,
                     );
+                    cx.emit(ThreadEvent::ToolConfirmationNeeded);
                 } else {
                     self.run_tool(
                         tool_use.id.clone(),
@@ -1538,6 +1544,7 @@ pub enum ThreadEvent {
         canceled: bool,
     },
     CheckpointChanged,
+    ToolConfirmationNeeded,
 }
 
 impl EventEmitter<ThreadEvent> for Thread {}
