@@ -932,9 +932,9 @@ impl GitPanel {
                     &format!(
                         "Are you sure you want to restore {}?",
                         entry
-                            .worktree_path
+                            .repo_path
                             .file_name()
-                            .unwrap_or(entry.worktree_path.as_os_str())
+                            .unwrap_or(entry.repo_path.as_os_str())
                             .to_string_lossy()
                     ),
                     None,
