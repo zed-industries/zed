@@ -20,13 +20,34 @@ pub(crate) enum Highlight {
 }
 
 pub(crate) const DEFAULT_SEMANTIC_TOKENS: &[(&str, Highlight)] = &[
-    ("keyword", Highlight::TreeSitter("variable")),
-    ("comment", Highlight::TreeSitter("keyword")),
+    ("keyword", Highlight::TreeSitter("keyword")),
+    ("variable", Highlight::TreeSitter("variable")),
+    ("enumMember", Highlight::TreeSitter("variant")),
+    ("comment", Highlight::TreeSitter("comment")),
+    ("enum", Highlight::TreeSitter("enum")),
+    ("type", Highlight::TreeSitter("type")),
+    ("function", Highlight::TreeSitter("function.definition")),
+    ("method", Highlight::TreeSitter("function.method")),
+    ("macro", Highlight::TreeSitter("function.attribute")),
+    ("namespace", Highlight::TreeSitter("emphasis.strong")),
+    ("number", Highlight::TreeSitter("number")),
+    ("string", Highlight::TreeSitter("string")),
+    ("parameter", Highlight::TreeSitter("label")),
+    ("const", Highlight::TreeSitter("constant")),
+    ("punctuation", Highlight::TreeSitter("punctuation")),
+    ("selfKeyword", Highlight::TreeSitter("keyword")),
+    ("selfTypeKeyword", Highlight::TreeSitter("keyword")),
+    ("operator", Highlight::TreeSitter("punctuation.special")),
 ];
 
 pub(crate) const DEFAULT_SEMANTIC_MODIFIERS: &[(&str, Highlight)] = &[
-    ("keyword", Highlight::TreeSitter("variable")),
-    ("comment", Highlight::TreeSitter("keyword")),
+    ("async", Highlight::TreeSitter("emphasis")),
+    ("mutable", Highlight::TreeSitter("emphasis")),
+    ("unsafe", Highlight::TreeSitter("emphasis")),
+    ("attribute", Highlight::TreeSitter("property")),
+    ("documentation", Highlight::TreeSitter("comment.doc")),
+    ("constant", Highlight::TreeSitter("constant")),
+    ("intraDocLink", Highlight::TreeSitter("link_uri")),
 ];
 
 impl SemanticTheme {
