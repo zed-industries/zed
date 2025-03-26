@@ -559,7 +559,6 @@ impl ActiveThread {
                                             .update(cx, |_view, window, _cx| {
                                                 window.activate_window();
 
-                                                // Focus the assistant panel
                                                 if let Some(workspace) = workspace_handle.upgrade()
                                                 {
                                                     workspace.update(_cx, |workspace, cx| {
