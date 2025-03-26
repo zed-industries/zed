@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 use itertools::Itertools;
 use windows::{
     core::{Interface, GUID, HSTRING},
@@ -43,9 +45,9 @@ impl DockMenuItem {
 // This code is based on the example from Microsoft:
 // https://github.com/microsoft/Windows-classic-samples/blob/main/Samples/Win7Samples/winui/shell/appshellintegration/RecipePropertyHandler/RecipePropertyHandler.cpp
 pub(crate) fn update_jump_list(
-    entries: &[&Vec<String>],
+    entries: &[&Vec<PathBuf>],
     dock_menus: &[DockMenuItem],
-) -> anyhow::Result<Option<Vec<Vec<String>>>> {
+) -> anyhow::Result<Vec<Vec<PathBuf>>> {
     let (list, removed) = create_destination_list()?;
     add_recent_folders(&list, entries, removed.as_ref())?;
     add_dock_menu(&list, dock_menus)?;
@@ -67,7 +69,7 @@ const PKEY_LINK_ARGS: PROPERTYKEY = PROPERTYKEY {
     pid: 100,
 };
 
-fn create_destination_list() -> anyhow::Result<(ICustomDestinationList, Option<Vec<Vec<String>>>)> {
+fn create_destination_list() -> anyhow::Result<(ICustomDestinationList, Vec<Vec<PathBuf>>)> {
     let list: ICustomDestinationList =
         unsafe { CoCreateInstance(&DestinationList, None, CLSCTX_INPROC_SERVER) }?;
 
@@ -76,7 +78,7 @@ fn create_destination_list() -> anyhow::Result<(ICustomDestinationList, Option<V
 
     let count = unsafe { user_removed.GetCount() }?;
     if count == 0 {
-        return Ok((list, None));
+        return Ok((list, Vec::new()));
     }
 
     let mut removed = Vec::with_capacity(count as usize);
@@ -87,13 +89,13 @@ fn create_destination_list() -> anyhow::Result<(ICustomDestinationList, Option<V
         let args = argument
             .to_string()
             .split_whitespace()
-            .map(|s| s.trim_matches('"').to_string())
+            .map(|s| PathBuf::from(s.trim_matches('"')))
             .collect_vec();
 
         removed.push(args);
     }
 
-    Ok((list, Some(removed)))
+    Ok((list, removed))
 }
 
 fn add_dock_menu(list: &ICustomDestinationList, dock_menus: &[DockMenuItem]) -> anyhow::Result<()> {
@@ -114,8 +116,8 @@ fn add_dock_menu(list: &ICustomDestinationList, dock_menus: &[DockMenuItem]) -> 
 
 fn add_recent_folders(
     list: &ICustomDestinationList,
-    entries: &[&Vec<String>],
-    removed: Option<&Vec<Vec<String>>>,
+    entries: &[&Vec<PathBuf>],
+    removed: &Vec<Vec<PathBuf>>,
 ) -> anyhow::Result<()> {
     unsafe {
         let tasks: IObjectCollection =
@@ -128,11 +130,17 @@ fn add_recent_folders(
             let argument = HSTRING::from(
                 folder_path
                     .iter()
-                    .map(|path| format!("\"{}\"", path))
+                    .map(|path| format!("\"{}\"", path.display()))
                     .join(" "),
             );
 
-            let description = HSTRING::from(folder_path.join("\n"));
+            let description = HSTRING::from(
+                folder_path
+                    .iter()
+                    .map(|path| path.to_string_lossy())
+                    .collect::<Vec<_>>()
+                    .join("\n"),
+            );
             // simulate folder icon
             // https://github.com/microsoft/vscode/blob/7a5dc239516a8953105da34f84bae152421a8886/src/vs/platform/workspaces/electron-main/workspacesHistoryMainService.ts#L380
             let icon = HSTRING::from("explorer.exe");
@@ -140,10 +148,9 @@ fn add_recent_folders(
             let display = folder_path
                 .iter()
                 .map(|p| {
-                    std::path::Path::new(p)
-                        .file_name()
+                    p.file_name()
                         .map(|name| name.to_string_lossy().to_string())
-                        .unwrap_or_else(|| p.clone())
+                        .unwrap_or_else(|| p.to_string_lossy().to_string())
                 })
                 .join(", ");
 
@@ -161,12 +168,8 @@ fn add_recent_folders(
 }
 
 #[inline]
-fn is_item_in_array(item: &Vec<String>, removed: Option<&Vec<Vec<String>>>) -> bool {
-    if let Some(removed) = removed {
-        removed.iter().any(|removed_item| removed_item == item)
-    } else {
-        false
-    }
+fn is_item_in_array(item: &Vec<PathBuf>, removed: &Vec<Vec<PathBuf>>) -> bool {
+    removed.iter().any(|removed_item| removed_item == item)
 }
 
 fn create_shell_link(

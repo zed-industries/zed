@@ -30,7 +30,7 @@ fn perform_update(cx: &mut App, manager: Entity<HistoryManager>) {
                     location
                         .sorted_paths()
                         .iter()
-                        .map(|path| path.compact().to_string_lossy().into_owned())
+                        .map(|path| path.compact())
                         .collect::<Vec<_>>(),
                     id,
                 )
@@ -43,7 +43,6 @@ fn perform_update(cx: &mut App, manager: Entity<HistoryManager>) {
         if let Some(user_removed) = cx
             .update(|cx| cx.update_jump_list(entries.as_slice()))
             .log_err()
-            .flatten()
         {
             let deleted_ids = recent_folders
                 .into_iter()

@@ -389,6 +389,7 @@ pub fn init(app_state: Arc<AppState>, cx: &mut App) {
     component::init();
     theme_preview::init(cx);
     toast_layer::init(cx);
+    history_manager::init(cx);
 
     cx.on_action(Workspace::close_global);
     cx.on_action(reload);
