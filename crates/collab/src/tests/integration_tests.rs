@@ -2901,7 +2901,7 @@ async fn test_git_branch_name(
                 .repository_entry
                 .branch()
                 .map(|branch| branch.name.to_string()),
-            branch_name.map(Into::into)
+            branch_name
         )
     }
 
