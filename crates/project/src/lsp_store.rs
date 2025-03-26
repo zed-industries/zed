@@ -5791,48 +5791,57 @@ impl LspStore {
 
                         _ => continue 'next_server,
                     };
+                    let supports_workspace_symbol_request =
+                        match server.capabilities().workspace_symbol_provider {
+                            Some(OneOf::Left(supported)) => supported,
+                            Some(OneOf::Right(_)) => true,
+                            None => false,
+                        };
+                    if !supports_workspace_symbol_request {
+                        continue 'next_server;
+                    }
                     let worktree_abs_path = worktree.abs_path().clone();
                     let worktree_handle = worktree_handle.clone();
                     let server_id = server.server_id();
                     requests.push(
-                            server
-                                .request::<lsp::request::WorkspaceSymbolRequest>(
-                                    lsp::WorkspaceSymbolParams {
-                                        query: query.to_string(),
-                                        ..Default::default()
-                                    },
-                                )
-                                .log_err()
-                                .map(move |response| {
-                                    let lsp_symbols = response.flatten().map(|symbol_response| match symbol_response {
-                                        lsp::WorkspaceSymbolResponse::Flat(flat_responses) => {
-                                            flat_responses.into_iter().map(|lsp_symbol| {
-                                            (lsp_symbol.name, lsp_symbol.kind, lsp_symbol.location)
-                                            }).collect::<Vec<_>>()
-                                        }
-                                        lsp::WorkspaceSymbolResponse::Nested(nested_responses) => {
-                                            nested_responses.into_iter().filter_map(|lsp_symbol| {
-                                                let location = match lsp_symbol.location {
-                                                    OneOf::Left(location) => location,
-                                                    OneOf::Right(_) => {
-                                                        log::error!("Unexpected: client capabilities forbid symbol resolutions in workspace.symbol.resolveSupport");
-                                                        return None
-                                                    }
-                                                };
-                                                Some((lsp_symbol.name, lsp_symbol.kind, location))
-                                            }).collect::<Vec<_>>()
-                                        }
-                                    }).unwrap_or_default();
-
-                                    WorkspaceSymbolsResult {
-                                        server_id,
-                                        lsp_adapter,
-                                        worktree: worktree_handle.downgrade(),
-                                        worktree_abs_path,
-                                        lsp_symbols,
+                        server
+                            .request::<lsp::request::WorkspaceSymbolRequest>(
+                                lsp::WorkspaceSymbolParams {
+                                    query: query.to_string(),
+                                    ..Default::default()
+                                },
+                            )
+                            .log_err()
+                            .map(move |response| {
+                                let lsp_symbols = response.flatten().map(|symbol_response| match symbol_response {
+                                    lsp::WorkspaceSymbolResponse::Flat(flat_responses) => {
+                                        flat_responses.into_iter().map(|lsp_symbol| {
+                                        (lsp_symbol.name, lsp_symbol.kind, lsp_symbol.location)
+                                        }).collect::<Vec<_>>()
                                     }
-                                }),
-                        );
+                                    lsp::WorkspaceSymbolResponse::Nested(nested_responses) => {
+                                        nested_responses.into_iter().filter_map(|lsp_symbol| {
+                                            let location = match lsp_symbol.location {
+                                                OneOf::Left(location) => location,
+                                                OneOf::Right(_) => {
+                                                    log::error!("Unexpected: client capabilities forbid symbol resolutions in workspace.symbol.resolveSupport");
+                                                    return None
+                                                }
+                                            };
+                                            Some((lsp_symbol.name, lsp_symbol.kind, location))
+                                        }).collect::<Vec<_>>()
+                                    }
+                                }).unwrap_or_default();
+
+                                WorkspaceSymbolsResult {
+                                    server_id,
+                                    lsp_adapter,
+                                    worktree: worktree_handle.downgrade(),
+                                    worktree_abs_path,
+                                    lsp_symbols,
+                                }
+                            }),
+                    );
                 }
                 requested_servers.append(&mut servers_to_query);
             }
