@@ -6,7 +6,6 @@ mod starting;
 use std::time::Duration;
 
 use dap::client::SessionId;
-use dap::DebugAdapterConfig;
 use failed::FailedState;
 use gpui::{
     percentage, Animation, AnimationExt, AnyElement, App, Entity, EventEmitter, FocusHandle,

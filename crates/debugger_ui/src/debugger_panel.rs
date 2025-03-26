@@ -3,8 +3,8 @@ use anyhow::{anyhow, Result};
 use collections::HashMap;
 use command_palette_hooks::CommandPaletteFilter;
 use dap::{
-    client::SessionId, debugger_settings::DebuggerSettings, ContinuedEvent, DebugAdapterConfig,
-    LoadedSourceEvent, ModuleEvent, OutputEvent, StoppedEvent, ThreadEvent,
+    client::SessionId, debugger_settings::DebuggerSettings, ContinuedEvent, LoadedSourceEvent,
+    ModuleEvent, OutputEvent, StoppedEvent, ThreadEvent,
 };
 use futures::{channel::mpsc, SinkExt as _};
 use gpui::{

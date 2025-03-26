@@ -60,7 +60,7 @@ impl DebugAdapter for PhpDebugAdapter {
     async fn get_installed_binary(
         &self,
         delegate: &dyn DapDelegate,
-        config: &DebugAdapterConfig,
+        _: &DebugAdapterConfig,
         user_installed_path: Option<PathBuf>,
         _: &mut AsyncApp,
     ) -> Result<DebugAdapterBinary> {

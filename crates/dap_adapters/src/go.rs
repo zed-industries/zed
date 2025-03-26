@@ -65,7 +65,7 @@ impl DebugAdapter for GoDebugAdapter {
     async fn get_installed_binary(
         &self,
         delegate: &dyn DapDelegate,
-        config: &DebugAdapterConfig,
+        _: &DebugAdapterConfig,
         _: Option<PathBuf>,
         _: &mut AsyncApp,
     ) -> Result<DebugAdapterBinary> {

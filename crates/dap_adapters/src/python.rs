@@ -74,7 +74,7 @@ impl DebugAdapter for PythonDebugAdapter {
     async fn get_installed_binary(
         &self,
         delegate: &dyn DapDelegate,
-        config: &DebugAdapterConfig,
+        _: &DebugAdapterConfig,
         user_installed_path: Option<PathBuf>,
         cx: &mut AsyncApp,
     ) -> Result<DebugAdapterBinary> {

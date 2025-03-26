@@ -1,10 +1,10 @@
 use std::path::PathBuf;
 
-use dap::{DebugAdapterConfig, DebugAdapterKind, DebugRequestType};
+use dap::{DebugAdapterKind, DebugRequestType};
 use editor::{Editor, EditorElement, EditorStyle};
 use gpui::{App, AppContext, Entity, EventEmitter, FocusHandle, Focusable, TextStyle, WeakEntity};
 use settings::Settings as _;
-use task::{DebugRequestDisposition, DebugTaskDefinition, LaunchConfig, TCPHost};
+use task::{DebugTaskDefinition, LaunchConfig, TCPHost};
 use theme::ThemeSettings;
 use ui::{
     div, h_flex, relative, v_flex, ActiveTheme as _, ButtonCommon, ButtonLike, Clickable, Context,
