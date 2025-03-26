@@ -1109,6 +1109,10 @@ impl Vim {
         let editor = editor.read(cx);
         let editor_mode = editor.mode();
 
+        if editor_mode == EditorMode::Minimap {
+            return;
+        }
+
         if editor_mode == EditorMode::Full
                 && !newest_selection_empty
                 && self.mode == Mode::Normal
