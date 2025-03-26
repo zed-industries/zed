@@ -5794,8 +5794,8 @@ impl LspStore {
                     let supports_workspace_symbol_request =
                         match server.capabilities().workspace_symbol_provider {
                             Some(OneOf::Left(supported)) => supported,
+                            Some(OneOf::Right(_)) => true,
                             None => false,
-                            _ => true,
                         };
                     if !supports_workspace_symbol_request {
                         continue 'next_server;
