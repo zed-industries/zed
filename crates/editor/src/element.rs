@@ -58,7 +58,7 @@ use multi_buffer::{
     MultiBufferRow, RowInfo,
 };
 use project::{
-    debugger::breakpoint_store::{Breakpoint, BreakpointKind},
+    debugger::breakpoint_store::Breakpoint,
     project_settings::{self, GitGutterSetting, GitHunkStyleSetting, ProjectSettings},
 };
 use settings::Settings;
@@ -525,6 +525,8 @@ impl EditorElement {
         if cx.has_flag::<Debugger>() {
             register_action(editor, window, Editor::toggle_breakpoint);
             register_action(editor, window, Editor::edit_log_breakpoint);
+            register_action(editor, window, Editor::enable_breakpoint);
+            register_action(editor, window, Editor::disable_breakpoint);
         }
     }
 
@@ -1950,8 +1952,6 @@ impl EditorElement {
             breakpoints
                 .into_iter()
                 .filter_map(|(display_row, (text_anchor, bp))| {
-                    let row = MultiBufferRow { 0: display_row.0 };
-
                     if row_infos
                         .get((display_row.0.saturating_sub(range.start.0)) as usize)
                         .is_some_and(|row_info| row_info.expand_info.is_some())
@@ -1963,11 +1963,13 @@ impl EditorElement {
                         return None;
                     }
 
+                    let row =
+                        MultiBufferRow(DisplayPoint::new(display_row, 0).to_point(&snapshot).row);
                     if snapshot.is_line_folded(row) {
                         return None;
                     }
 
-                    let button = editor.render_breakpoint(text_anchor, display_row, &bp.kind, cx);
+                    let button = editor.render_breakpoint(text_anchor, display_row, &bp, cx);
 
                     let button = prepaint_gutter_button(
                         button,
@@ -2065,6 +2067,7 @@ impl EditorElement {
                     {
                         return None;
                     }
+
                     let button = editor.render_run_indicator(
                         &self.style,
                         Some(display_row) == active_task_indicator_row,
@@ -6827,9 +6830,7 @@ impl Element for EditorElement {
                                         gutter_breakpoint_point,
                                         Bias::Left,
                                     );
-                                    let breakpoint = Breakpoint {
-                                        kind: BreakpointKind::Standard,
-                                    };
+                                    let breakpoint = Breakpoint::new_standard();
 
                                     (position, breakpoint)
                                 });

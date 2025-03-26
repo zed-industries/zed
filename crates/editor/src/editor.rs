@@ -116,7 +116,9 @@ use linked_editing_ranges::refresh_linked_ranges;
 use mouse_context_menu::MouseContextMenu;
 use persistence::DB;
 use project::{
-    debugger::breakpoint_store::{BreakpointEditAction, BreakpointStore, BreakpointStoreEvent},
+    debugger::breakpoint_store::{
+        BreakpointEditAction, BreakpointState, BreakpointStore, BreakpointStoreEvent,
+    },
     ProjectPath,
 };
 
@@ -6019,13 +6021,7 @@ impl Editor {
         cx: &mut Context<Self>,
     ) -> Option<IconButton> {
         let color = Color::Muted;
-
         let position = breakpoint.as_ref().map(|(anchor, _)| *anchor);
-        let bp_kind = Arc::new(
-            breakpoint
-                .map(|(_, bp)| bp.kind.clone())
-                .unwrap_or(BreakpointKind::Standard),
-        );
 
         if self.available_code_actions.is_some() {
             Some(
@@ -6062,7 +6058,6 @@ impl Editor {
                         editor.set_breakpoint_context_menu(
                             row,
                             position,
-                            bp_kind.clone(),
                             event.down.position,
                             window,
                             cx,
@@ -6115,7 +6110,7 @@ impl Editor {
             for breakpoint in
                 breakpoint_store
                     .read(cx)
-                    .breakpoints(&buffer, None, buffer_snapshot.clone(), cx)
+                    .breakpoints(&buffer, None, &buffer_snapshot, cx)
             {
                 let point = buffer_snapshot.summary_for_anchor::<Point>(&breakpoint.0);
                 let mut anchor = multi_buffer_snapshot.anchor_before(point);
@@ -6140,49 +6135,33 @@ impl Editor {
 
         let range = snapshot.display_point_to_point(DisplayPoint::new(range.start, 0), Bias::Left)
             ..snapshot.display_point_to_point(DisplayPoint::new(range.end, 0), Bias::Right);
-        for excerpt_boundary in multi_buffer_snapshot.excerpt_boundaries_in_range(range) {
-            let info = excerpt_boundary.next;
 
-            let Some(excerpt_ranges) = multi_buffer_snapshot.range_for_excerpt(info.id) else {
+        for (buffer_snapshot, range, excerpt_id) in
+            multi_buffer_snapshot.range_to_buffer_ranges(range)
+        {
+            let Some(buffer) = project.read_with(cx, |this, cx| {
+                this.buffer_for_id(buffer_snapshot.remote_id(), cx)
+            }) else {
                 continue;
             };
-
-            let Some(buffer) =
-                project.read_with(cx, |this, cx| this.buffer_for_id(info.buffer_id, cx))
-            else {
-                continue;
-            };
-
-            if buffer.read(cx).file().is_none() {
-                continue;
-            }
             let breakpoints = breakpoint_store.read(cx).breakpoints(
                 &buffer,
-                Some(info.range.context.start..info.range.context.end),
-                info.buffer.clone(),
+                Some(
+                    buffer_snapshot.anchor_before(range.start)
+                        ..buffer_snapshot.anchor_after(range.end),
+                ),
+                buffer_snapshot,
                 cx,
             );
-
-            // To translate a breakpoint's position within a singular buffer to a multi buffer
-            // position we need to know it's excerpt starting location, it's position within
-            // the singular buffer, and if that position is within the excerpt's range.
-            let excerpt_head = excerpt_ranges
-                .start
-                .to_display_point(&snapshot.display_snapshot);
-
-            let buffer_start = info
-                .buffer
-                .summary_for_anchor::<Point>(&info.range.context.start);
-
             for (anchor, breakpoint) in breakpoints {
-                let as_row = info.buffer.summary_for_anchor::<Point>(&anchor).row;
-                let delta = as_row - buffer_start.row;
+                let multi_buffer_anchor =
+                    Anchor::in_buffer(excerpt_id, buffer_snapshot.remote_id(), *anchor);
+                let position = multi_buffer_anchor
+                    .to_point(&multi_buffer_snapshot)
+                    .to_display_point(&snapshot);
 
-                let position = excerpt_head + DisplayPoint::new(DisplayRow(delta), 0);
-
-                let anchor = snapshot.display_point_to_anchor(position, Bias::Left);
-
-                breakpoint_display_points.insert(position.row(), (anchor, breakpoint.clone()));
+                breakpoint_display_points
+                    .insert(position.row(), (multi_buffer_anchor, breakpoint.clone()));
             }
         }
 
@@ -6192,30 +6171,80 @@ impl Editor {
     fn breakpoint_context_menu(
         &self,
         anchor: Anchor,
-        kind: Arc<BreakpointKind>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Entity<ui::ContextMenu> {
         let weak_editor = cx.weak_entity();
         let focus_handle = self.focus_handle(cx);
 
-        let second_entry_msg = if kind.log_message().is_some() {
+        let row = self
+            .buffer
+            .read(cx)
+            .snapshot(cx)
+            .summary_for_anchor::<Point>(&anchor)
+            .row;
+
+        let breakpoint = self
+            .breakpoint_at_row(row, window, cx)
+            .map(|(_, bp)| Arc::from(bp));
+
+        let log_breakpoint_msg = if breakpoint
+            .as_ref()
+            .is_some_and(|bp| bp.kind.log_message().is_some())
+        {
             "Edit Log Breakpoint"
         } else {
-            "Add Log Breakpoint"
+            "Set Log Breakpoint"
         };
+
+        let set_breakpoint_msg = if breakpoint.as_ref().is_some() {
+            "Unset Breakpoint"
+        } else {
+            "Set Breakpoint"
+        };
+
+        let toggle_state_msg = breakpoint.as_ref().map_or(None, |bp| match bp.state {
+            BreakpointState::Enabled => Some("Disable"),
+            BreakpointState::Disabled => Some("Enable"),
+        });
+
+        let breakpoint = breakpoint.unwrap_or_else(|| {
+            Arc::new(Breakpoint {
+                state: BreakpointState::Enabled,
+                kind: BreakpointKind::Standard,
+            })
+        });
 
         ui::ContextMenu::build(window, cx, |menu, _, _cx| {
             menu.on_blur_subscription(Subscription::new(|| {}))
                 .context(focus_handle)
-                .entry("Toggle Breakpoint", None, {
+                .when_some(toggle_state_msg, |this, msg| {
+                    this.entry(msg, None, {
+                        let weak_editor = weak_editor.clone();
+                        let breakpoint = breakpoint.clone();
+                        move |_window, cx| {
+                            weak_editor
+                                .update(cx, |this, cx| {
+                                    this.edit_breakpoint_at_anchor(
+                                        anchor,
+                                        breakpoint.as_ref().clone(),
+                                        BreakpointEditAction::InvertState,
+                                        cx,
+                                    );
+                                })
+                                .log_err();
+                        }
+                    })
+                })
+                .entry(set_breakpoint_msg, None, {
                     let weak_editor = weak_editor.clone();
+                    let breakpoint = breakpoint.clone();
                     move |_window, cx| {
                         weak_editor
                             .update(cx, |this, cx| {
                                 this.edit_breakpoint_at_anchor(
                                     anchor,
-                                    BreakpointKind::Standard,
+                                    breakpoint.as_ref().clone(),
                                     BreakpointEditAction::Toggle,
                                     cx,
                                 );
@@ -6223,10 +6252,10 @@ impl Editor {
                             .log_err();
                     }
                 })
-                .entry(second_entry_msg, None, move |window, cx| {
+                .entry(log_breakpoint_msg, None, move |window, cx| {
                     weak_editor
                         .update(cx, |this, cx| {
-                            this.add_edit_breakpoint_block(anchor, kind.as_ref(), window, cx);
+                            this.add_edit_breakpoint_block(anchor, breakpoint.as_ref(), window, cx);
                         })
                         .log_err();
                 })
@@ -6237,44 +6266,51 @@ impl Editor {
         &self,
         position: Anchor,
         row: DisplayRow,
-        kind: &BreakpointKind,
+        breakpoint: &Breakpoint,
         cx: &mut Context<Self>,
     ) -> IconButton {
-        let color = if self
-            .gutter_breakpoint_indicator
-            .is_some_and(|gutter_bp| gutter_bp.row() == row)
-        {
-            Color::Hint
-        } else {
-            Color::Debugger
+        let (color, icon) = {
+            let color = if self
+                .gutter_breakpoint_indicator
+                .is_some_and(|point| point.row() == row)
+            {
+                Color::Hint
+            } else if breakpoint.is_disabled() {
+                Color::Custom(Color::Debugger.color(cx).opacity(0.5))
+            } else {
+                Color::Debugger
+            };
+            let icon = match &breakpoint.kind {
+                BreakpointKind::Standard => ui::IconName::DebugBreakpoint,
+                BreakpointKind::Log(_) => ui::IconName::DebugLogBreakpoint,
+            };
+            (color, icon)
         };
 
-        let icon = match &kind {
-            BreakpointKind::Standard => ui::IconName::DebugBreakpoint,
-            BreakpointKind::Log(_) => ui::IconName::DebugLogBreakpoint,
-        };
-        let arc_kind = Arc::new(kind.clone());
-        let arc_kind2 = arc_kind.clone();
+        let breakpoint = Arc::from(breakpoint.clone());
 
         IconButton::new(("breakpoint_indicator", row.0 as usize), icon)
             .icon_size(IconSize::XSmall)
             .size(ui::ButtonSize::None)
             .icon_color(color)
             .style(ButtonStyle::Transparent)
-            .on_click(cx.listener(move |editor, _e, window, cx| {
-                window.focus(&editor.focus_handle(cx));
-                editor.edit_breakpoint_at_anchor(
-                    position,
-                    arc_kind.as_ref().clone(),
-                    BreakpointEditAction::Toggle,
-                    cx,
-                );
+            .on_click(cx.listener({
+                let breakpoint = breakpoint.clone();
+
+                move |editor, _e, window, cx| {
+                    window.focus(&editor.focus_handle(cx));
+                    editor.edit_breakpoint_at_anchor(
+                        position,
+                        breakpoint.as_ref().clone(),
+                        BreakpointEditAction::Toggle,
+                        cx,
+                    );
+                }
             }))
             .on_right_click(cx.listener(move |editor, event: &ClickEvent, window, cx| {
                 editor.set_breakpoint_context_menu(
                     row,
                     Some(position),
-                    arc_kind2.clone(),
                     event.down.position,
                     window,
                     cx,
@@ -6422,13 +6458,7 @@ impl Editor {
         cx: &mut Context<Self>,
     ) -> IconButton {
         let color = Color::Muted;
-
         let position = breakpoint.as_ref().map(|(anchor, _)| *anchor);
-        let bp_kind = Arc::new(
-            breakpoint
-                .map(|(_, bp)| bp.kind)
-                .unwrap_or(BreakpointKind::Standard),
-        );
 
         IconButton::new(("run_indicator", row.0 as usize), ui::IconName::Play)
             .shape(ui::IconButtonShape::Square)
@@ -6446,14 +6476,7 @@ impl Editor {
                 );
             }))
             .on_right_click(cx.listener(move |editor, event: &ClickEvent, window, cx| {
-                editor.set_breakpoint_context_menu(
-                    row,
-                    position,
-                    bp_kind.clone(),
-                    event.down.position,
-                    window,
-                    cx,
-                );
+                editor.set_breakpoint_context_menu(row, position, event.down.position, window, cx);
             }))
     }
 
@@ -8430,9 +8453,8 @@ impl Editor {
 
     fn set_breakpoint_context_menu(
         &mut self,
-        row: DisplayRow,
+        display_row: DisplayRow,
         position: Option<Anchor>,
-        kind: Arc<BreakpointKind>,
         clicked_point: gpui::Point<Pixels>,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -8444,10 +8466,9 @@ impl Editor {
             .buffer
             .read(cx)
             .snapshot(cx)
-            .anchor_before(Point::new(row.0, 0u32));
+            .anchor_before(Point::new(display_row.0, 0u32));
 
-        let context_menu =
-            self.breakpoint_context_menu(position.unwrap_or(source), kind, window, cx);
+        let context_menu = self.breakpoint_context_menu(position.unwrap_or(source), window, cx);
 
         self.mouse_context_menu = MouseContextMenu::pinned_to_editor(
             self,
@@ -8462,13 +8483,14 @@ impl Editor {
     fn add_edit_breakpoint_block(
         &mut self,
         anchor: Anchor,
-        kind: &BreakpointKind,
+        breakpoint: &Breakpoint,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         let weak_editor = cx.weak_entity();
-        let bp_prompt =
-            cx.new(|cx| BreakpointPromptEditor::new(weak_editor, anchor, kind.clone(), window, cx));
+        let bp_prompt = cx.new(|cx| {
+            BreakpointPromptEditor::new(weak_editor, anchor, breakpoint.clone(), window, cx)
+        });
 
         let height = bp_prompt.update(cx, |this, cx| {
             this.prompt
@@ -8495,35 +8517,44 @@ impl Editor {
         });
     }
 
-    pub(crate) fn breakpoint_at_cursor_head(
+    fn breakpoint_at_cursor_head(
         &self,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<(Anchor, Breakpoint)> {
         let cursor_position: Point = self.selections.newest(cx).head();
+        self.breakpoint_at_row(cursor_position.row, window, cx)
+    }
+
+    pub(crate) fn breakpoint_at_row(
+        &self,
+        row: u32,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<(Anchor, Breakpoint)> {
         let snapshot = self.snapshot(window, cx);
-        // We Set the column position to zero so this function interacts correctly
-        // between calls by clicking on the gutter & using an action to toggle a
-        // breakpoint. Otherwise, toggling a breakpoint through an action wouldn't
-        // untoggle a breakpoint that was added through clicking on the gutter
-        let cursor_position = snapshot
-            .display_snapshot
-            .buffer_snapshot
-            .anchor_before(Point::new(cursor_position.row, 0));
+        let breakpoint_position = snapshot.buffer_snapshot.anchor_before(Point::new(row, 0));
 
-        let project = self.project.clone();
+        let project = self.project.clone()?;
 
-        let buffer_id = cursor_position.text_anchor.buffer_id?;
-        let enclosing_excerpt = snapshot
-            .buffer_snapshot
-            .excerpt_ids_for_range(cursor_position..cursor_position)
-            .next()?;
-        let buffer = project?.read_with(cx, |project, cx| project.buffer_for_id(buffer_id, cx))?;
+        let buffer_id = breakpoint_position.buffer_id.or_else(|| {
+            snapshot
+                .buffer_snapshot
+                .buffer_id_for_excerpt(breakpoint_position.excerpt_id)
+        })?;
+
+        let enclosing_excerpt = breakpoint_position.excerpt_id;
+        let buffer = project.read_with(cx, |project, cx| project.buffer_for_id(buffer_id, cx))?;
         let buffer_snapshot = buffer.read(cx).snapshot();
 
         let row = buffer_snapshot
-            .summary_for_anchor::<text::PointUtf16>(&cursor_position.text_anchor)
+            .summary_for_anchor::<text::PointUtf16>(&breakpoint_position.text_anchor)
             .row;
+
+        let line_len = snapshot.buffer_snapshot.line_len(MultiBufferRow(row));
+        let anchor_end = snapshot
+            .buffer_snapshot
+            .anchor_before(Point::new(row, line_len));
 
         let bp = self
             .breakpoint_store
@@ -8532,12 +8563,12 @@ impl Editor {
                 breakpoint_store
                     .breakpoints(
                         &buffer,
-                        Some(cursor_position.text_anchor..(text::Anchor::MAX)),
-                        buffer_snapshot.clone(),
+                        Some(breakpoint_position.text_anchor..anchor_end.text_anchor),
+                        &buffer_snapshot,
                         cx,
                     )
                     .next()
-                    .and_then(move |(anchor, bp)| {
+                    .and_then(|(anchor, bp)| {
                         let breakpoint_row = buffer_snapshot
                             .summary_for_anchor::<text::PointUtf16>(anchor)
                             .row;
@@ -8576,11 +8607,48 @@ impl Editor {
                     breakpoint_position,
                     Breakpoint {
                         kind: BreakpointKind::Standard,
+                        state: BreakpointState::Enabled,
                     },
                 )
             });
 
-        self.add_edit_breakpoint_block(anchor, &bp.kind, window, cx);
+        self.add_edit_breakpoint_block(anchor, &bp, window, cx);
+    }
+
+    pub fn enable_breakpoint(
+        &mut self,
+        _: &crate::actions::EnableBreakpoint,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some((anchor, breakpoint)) = self.breakpoint_at_cursor_head(window, cx) {
+            if breakpoint.is_disabled() {
+                self.edit_breakpoint_at_anchor(
+                    anchor,
+                    breakpoint,
+                    BreakpointEditAction::InvertState,
+                    cx,
+                );
+            }
+        }
+    }
+
+    pub fn disable_breakpoint(
+        &mut self,
+        _: &crate::actions::DisableBreakpoint,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some((anchor, breakpoint)) = self.breakpoint_at_cursor_head(window, cx) {
+            if breakpoint.is_enabled() {
+                self.edit_breakpoint_at_anchor(
+                    anchor,
+                    breakpoint,
+                    BreakpointEditAction::InvertState,
+                    cx,
+                );
+            }
+        }
     }
 
     pub fn toggle_breakpoint(
@@ -8592,7 +8660,7 @@ impl Editor {
         let edit_action = BreakpointEditAction::Toggle;
 
         if let Some((anchor, breakpoint)) = self.breakpoint_at_cursor_head(window, cx) {
-            self.edit_breakpoint_at_anchor(anchor, breakpoint.kind, edit_action, cx);
+            self.edit_breakpoint_at_anchor(anchor, breakpoint, edit_action, cx);
         } else {
             let cursor_position: Point = self.selections.newest(cx).head();
 
@@ -8604,7 +8672,7 @@ impl Editor {
 
             self.edit_breakpoint_at_anchor(
                 breakpoint_position,
-                BreakpointKind::Standard,
+                Breakpoint::new_standard(),
                 edit_action,
                 cx,
             );
@@ -8614,7 +8682,7 @@ impl Editor {
     pub fn edit_breakpoint_at_anchor(
         &mut self,
         breakpoint_position: Anchor,
-        kind: BreakpointKind,
+        breakpoint: Breakpoint,
         edit_action: BreakpointEditAction,
         cx: &mut Context<Self>,
     ) {
@@ -8643,7 +8711,7 @@ impl Editor {
         breakpoint_store.update(cx, |breakpoint_store, cx| {
             breakpoint_store.toggle_breakpoint(
                 buffer,
-                (breakpoint_position.text_anchor, Breakpoint { kind }),
+                (breakpoint_position.text_anchor, breakpoint),
                 edit_action,
                 cx,
             );
@@ -19605,7 +19673,7 @@ struct BreakpointPromptEditor {
     pub(crate) prompt: Entity<Editor>,
     editor: WeakEntity<Editor>,
     breakpoint_anchor: Anchor,
-    kind: BreakpointKind,
+    breakpoint: Breakpoint,
     block_ids: HashSet<CustomBlockId>,
     gutter_dimensions: Arc<Mutex<GutterDimensions>>,
     _subscriptions: Vec<Subscription>,
@@ -19617,13 +19685,15 @@ impl BreakpointPromptEditor {
     fn new(
         editor: WeakEntity<Editor>,
         breakpoint_anchor: Anchor,
-        kind: BreakpointKind,
+        breakpoint: Breakpoint,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
         let buffer = cx.new(|cx| {
             Buffer::local(
-                kind.log_message()
+                breakpoint
+                    .kind
+                    .log_message()
                     .map(|msg| msg.to_string())
                     .unwrap_or_default(),
                 cx,
@@ -19655,7 +19725,7 @@ impl BreakpointPromptEditor {
             prompt,
             editor,
             breakpoint_anchor,
-            kind,
+            breakpoint,
             gutter_dimensions: Arc::new(Mutex::new(GutterDimensions::default())),
             block_ids: Default::default(),
             _subscriptions: vec![],
@@ -19682,7 +19752,7 @@ impl BreakpointPromptEditor {
             editor.update(cx, |editor, cx| {
                 editor.edit_breakpoint_at_anchor(
                     self.breakpoint_anchor,
-                    self.kind.clone(),
+                    self.breakpoint.clone(),
                     BreakpointEditAction::EditLogMessage(log_message.into()),
                     cx,
                 );
