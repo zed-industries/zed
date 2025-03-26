@@ -3751,7 +3751,8 @@ async fn test_deletion_gitignored(cx: &mut gpui::TestAppContext) {
             "ff": "// Testing 6",
             "gg": "// Testing 7",
             "hh": "// Testing 8",
-            ".gitignore": "bb\ndd\nee\nff\n'",
+            "ii": "// Testing 8",
+            ".gitignore": "bb\ndd\nee\nff\nii\n'",
         }),
     )
     .await;
@@ -3813,6 +3814,90 @@ async fn test_deletion_gitignored(cx: &mut gpui::TestAppContext) {
             "      hh"
         ],
         "Should select next entry not on .gitignore"
+    );
+
+    // Test 3: Auto selection of entry before deleted file
+    select_path(&panel, "root/hh", cx);
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..10, cx),
+        &[
+            "v root",
+            "      .gitignore",
+            "      gg",
+            "      hh  <== selected"
+        ],
+        "Should select next entry not on .gitignore"
+    );
+    submit_deletion(&panel, cx);
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..10, cx),
+        &["v root", "      .gitignore", "      gg  <== selected"],
+        "Should select next entry not on .gitignore"
+    );
+}
+
+#[gpui::test]
+async fn test_nested_deletion_gitignore(cx: &mut gpui::TestAppContext) {
+    init_test_with_editor(cx);
+
+    let fs = FakeFs::new(cx.executor().clone());
+    fs.insert_tree(
+        path!("/root"),
+        json!({
+            "dir1": {
+                "file1": "// Testing",
+                "file2": "// Testing",
+                "file3": "// Testing"
+            },
+            "aa": "// Testing",
+            ".gitignore": "file1\nfile2\n",
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+    let workspace = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+    let cx = &mut VisualTestContext::from_window(*workspace, cx);
+
+    cx.update(|_, cx| {
+        let settings = *ProjectPanelSettings::get_global(cx);
+        ProjectPanelSettings::override_global(
+            ProjectPanelSettings {
+                hide_gitignore: true,
+                ..settings
+            },
+            cx,
+        );
+    });
+
+    let panel = workspace.update(cx, ProjectPanel::new).unwrap();
+
+    // Test 1: Visible items should exclude files on gitignore
+    toggle_expand_dir(&panel, "root/dir1", cx);
+    select_path(&panel, "root/dir1/file3", cx);
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..10, cx),
+        &[
+            "v root",
+            "    v dir1",
+            "          file3  <== selected",
+            "      .gitignore",
+            "      aa"
+        ],
+        "Initial state should hide files on .gitignore"
+    );
+    submit_deletion(&panel, cx);
+
+    // Test 2: Auto selection should go to the parent
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..10, cx),
+        &[
+            "v root",
+            "    v dir1  <== selected",
+            "      .gitignore",
+            "      aa"
+        ],
+        "Initial state should hide files on .gitignore"
     );
 }
 
