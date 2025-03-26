@@ -352,6 +352,10 @@ impl Thread {
             .filter(|tool_use| tool_use.status.needs_confirmation())
     }
 
+    pub fn has_pending_tool_uses(&self) -> bool {
+        !self.tool_use.pending_tool_uses().is_empty()
+    }
+
     pub fn checkpoint_for_message(&self, id: MessageId) -> Option<ThreadCheckpoint> {
         self.checkpoints_by_message.get(&id).cloned()
     }
@@ -1161,6 +1165,7 @@ impl Thread {
                         messages.clone(),
                         tool,
                     );
+                    cx.emit(ThreadEvent::ToolConfirmationNeeded);
                 } else {
                     self.run_tool(
                         tool_use.id.clone(),
@@ -1539,6 +1544,7 @@ pub enum ThreadEvent {
         canceled: bool,
     },
     CheckpointChanged,
+    ToolConfirmationNeeded,
 }
 
 impl EventEmitter<ThreadEvent> for Thread {}

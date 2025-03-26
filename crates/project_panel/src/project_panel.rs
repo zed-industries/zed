@@ -500,6 +500,9 @@ impl ProjectPanel {
                                             "{} is not shared by the host. This could be because it has been marked as `private`",
                                             file_path.display()
                                         )),
+                                        // See note in worktree.rs where this error originates. Returning Some in this case prevents
+                                        // the error popup from saying "Try Again", which is a red herring in this case
+                                        ErrorCode::Internal if e.to_string().contains("File is too large to load") => Some(e.to_string()),
                                         _ => None,
                                     }
                                 });

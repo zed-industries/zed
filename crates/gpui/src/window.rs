@@ -2333,13 +2333,19 @@ impl Window {
         let scale_factor = self.scale_factor();
         let content_mask = self.content_mask();
         let opacity = self.element_opacity();
+
+        let bounds = quad.bounds.scale(scale_factor);
+        let corner_radii = quad
+            .corner_radii
+            .scale(scale_factor)
+            .clamp_radii_for_quad_size(bounds.size);
         self.next_frame.scene.insert_primitive(Quad {
             order: 0,
-            bounds: quad.bounds.scale(scale_factor),
+            bounds,
             content_mask: content_mask.scale(scale_factor),
             background: quad.background.opacity(opacity),
             border_color: quad.border_color.opacity(opacity),
-            corner_radii: quad.corner_radii.scale(scale_factor),
+            corner_radii,
             border_widths: quad.border_widths.scale(scale_factor),
             border_style: quad.border_style,
         });

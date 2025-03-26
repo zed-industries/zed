@@ -421,7 +421,7 @@ impl Element for Img {
             window,
             cx,
             |style, window, cx| {
-                let corner_radii = style.corner_radii.to_pixels(bounds.size, window.rem_size());
+                let corner_radii = style.corner_radii.to_pixels(window.rem_size());
 
                 if let Some(Ok(data)) = source.use_data(window, cx) {
                     let new_bounds = self

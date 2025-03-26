@@ -612,7 +612,7 @@ impl Style {
 
         window.paint_shadows(
             bounds,
-            self.corner_radii.to_pixels(bounds.size, rem_size),
+            self.corner_radii.to_pixels(rem_size),
             &self.box_shadow,
         );
 
@@ -633,7 +633,7 @@ impl Style {
             border_color.a = 0.;
             window.paint_quad(quad(
                 bounds,
-                self.corner_radii.to_pixels(bounds.size, rem_size),
+                self.corner_radii.to_pixels(rem_size),
                 background_color.unwrap_or_default(),
                 Edges::default(),
                 border_color,
@@ -644,7 +644,7 @@ impl Style {
         continuation(window, cx);
 
         if self.is_border_visible() {
-            let corner_radii = self.corner_radii.to_pixels(bounds.size, rem_size);
+            let corner_radii = self.corner_radii.to_pixels(rem_size);
             let border_widths = self.border_widths.to_pixels(rem_size);
             let max_border_width = border_widths.max();
             let max_corner_radius = corner_radii.max();

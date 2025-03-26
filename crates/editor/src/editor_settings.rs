@@ -36,6 +36,8 @@ pub struct EditorSettings {
     pub search: SearchSettings,
     pub auto_signature_help: bool,
     pub show_signature_help_after_edits: bool,
+    #[serde(default)]
+    pub go_to_definition_fallback: GoToDefinitionFallback,
     pub jupyter: Jupyter,
 }
 
@@ -211,6 +213,17 @@ pub struct SearchSettings {
     pub regex: bool,
 }
 
+/// What to do when go to definition yields no results.
+#[derive(Copy, Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum GoToDefinitionFallback {
+    /// Disables the fallback.
+    None,
+    /// Looks up references of the same symbol instead.
+    #[default]
+    FindAllReferences,
+}
+
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
 pub struct EditorSettingsContent {
     /// Whether the cursor blinks in the editor.
@@ -329,6 +342,13 @@ pub struct EditorSettingsContent {
     ///
     /// Default: false
     pub show_signature_help_after_edits: Option<bool>,
+
+    /// Whether to follow-up empty go to definition responses from the language server or not.
+    /// `FindAllReferences` allows to look up references of the same symbol instead.
+    /// `None` disables the fallback.
+    ///
+    /// Default: FindAllReferences
+    pub go_to_definition_fallback: Option<GoToDefinitionFallback>,
 
     /// Jupyter REPL settings.
     pub jupyter: Option<JupyterContent>,

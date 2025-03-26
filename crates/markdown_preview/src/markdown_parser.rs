@@ -873,6 +873,9 @@ impl<'a> MarkdownParser<'a> {
                 }
             }
         }
+
+        code = code.strip_suffix('\n').unwrap_or(&code).to_string();
+
         let highlights = if let Some(language) = &language {
             if let Some(registry) = &self.language_registry {
                 let rope: language::Rope = code.as_str().into();
@@ -890,7 +893,7 @@ impl<'a> MarkdownParser<'a> {
 
         ParsedMarkdownCodeBlock {
             source_range,
-            contents: code.trim().to_string().into(),
+            contents: code.into(),
             language,
             highlights,
         }
