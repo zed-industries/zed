@@ -712,3 +712,167 @@ mod noop_change_listener {
 
 #[cfg(not(target_os = "macos"))]
 type DeviceChangeListener = noop_change_listener::NoopOutputDeviceChangelistener;
+
+pub(crate) async fn capture_local_wav_track(
+    apm: Arc<Mutex<apm::AudioProcessingModule>>,
+    background_executor: &BackgroundExecutor,
+) -> Result<(crate::LocalAudioTrack, AudioStream)> {
+    let file = tokio::fs::File::open("change-sophie.wav").await?;
+    let mut reader = WavReader::new(BufReader::new(file));
+    let header = reader.read_header().await?;
+
+    let source = NativeAudioSource::new(
+        AudioSourceOptions::default(),
+        header.sample_rate,
+        header.num_channels as u32,
+        1000,
+    );
+    let track = LocalAudioTrack::create_audio_track("file", RtcAudioSource::Native(source.clone()));
+    // Play the wav file and disconnect
+    tokio::spawn({
+        async move {
+            const FRAME_DURATION: Duration = Duration::from_millis(1000); // Write 1s of audio at a time
+
+            let max_samples = header.data_size as usize / size_of::<i16>();
+            let ms = FRAME_DURATION.as_millis() as u32;
+            let num_samples = (header.sample_rate / 1000 * ms) as usize;
+
+            log::info!("sample_rate: {}", header.sample_rate);
+            log::info!("num_channels: {}", header.num_channels);
+            log::info!("max samples: {}", max_samples);
+            log::info!("chunk size: {}ms - {} samples", ms, num_samples);
+
+            let mut written_samples = 0;
+            while written_samples < max_samples {
+                let available_samples = max_samples - written_samples;
+                let frame_size = num_samples.min(available_samples);
+
+                let mut audio_frame = AudioFrame {
+                    data: vec![0i16; frame_size].into(),
+                    num_channels: header.num_channels as u32,
+                    sample_rate: header.sample_rate,
+                    samples_per_channel: (frame_size / header.num_channels as usize) as u32,
+                };
+
+                for i in 0..frame_size {
+                    let sample = reader.read_i16().await.unwrap();
+                    audio_frame.data.to_mut()[i] = sample;
+                }
+
+                source.capture_frame(&audio_frame).await.unwrap();
+                written_samples += frame_size;
+            }
+        }
+    });
+
+    Ok((
+        super::LocalAudioTrack(track),
+        AudioStream::Output {
+            _task: Task::ready(()),
+        },
+    ))
+}
+
+use livekit::track::LocalAudioTrack;
+use std::{io::SeekFrom, mem::size_of};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncSeek, AsyncSeekExt, BufReader};
+
+pub struct WavReader<R: AsyncRead + AsyncSeek + Unpin> {
+    reader: R,
+}
+
+#[allow(dead_code)]
+#[derive(Debug)]
+pub struct WavHeader {
+    file_size: u32,
+    data_size: u32,
+    format: String,
+    format_length: u32,
+    format_type: u16,
+    num_channels: u16,
+    sample_rate: u32,
+    byte_rate: u32,
+    block_align: u16,
+    bits_per_sample: u16,
+}
+
+impl<R: AsyncRead + AsyncSeek + Unpin> WavReader<R> {
+    pub fn new(reader: R) -> Self {
+        Self { reader }
+    }
+
+    pub async fn read_header(&mut self) -> Result<WavHeader> {
+        let mut header = [0u8; 4];
+        let mut format = [0u8; 4];
+        let mut chunk_marker = [0u8; 4];
+        let mut data_chunk = [0u8; 4];
+
+        self.reader.read_exact(&mut header).await?;
+
+        if &header != b"RIFF" {
+            anyhow::bail!("Invalid RIFF header");
+        }
+
+        let file_size = self.reader.read_u32_le().await?;
+        self.reader.read_exact(&mut format).await?;
+
+        if &format != b"WAVE" {
+            anyhow::bail!("Invalid WAVE header");
+        }
+
+        self.reader.read_exact(&mut chunk_marker).await?;
+
+        if &chunk_marker != b"fmt " {
+            anyhow::bail!("Invalid fmt chunk");
+        }
+
+        let format_length = self.reader.read_u32_le().await?;
+        let format_type = self.reader.read_u16_le().await?;
+        let num_channels = self.reader.read_u16_le().await?;
+        let sample_rate = self.reader.read_u32_le().await?;
+        let byte_rate = self.reader.read_u32_le().await?;
+        let block_align = self.reader.read_u16_le().await?;
+        let bits_per_sample = self.reader.read_u16_le().await?;
+
+        if bits_per_sample != 16 {
+            anyhow::bail!("only 16-bit samples supported");
+        }
+
+        let mut data_size;
+        loop {
+            self.reader.read_exact(&mut data_chunk).await?;
+            data_size = self.reader.read_u32_le().await?;
+
+            if &data_chunk == b"data" {
+                break;
+            } else {
+                // skip non data chunks
+                self.reader
+                    .seek(SeekFrom::Current(data_size.into()))
+                    .await?;
+            }
+        }
+
+        if &data_chunk != b"data" {
+            anyhow::bail!("Invalid data chunk");
+        }
+
+        Ok(WavHeader {
+            file_size,
+            data_size,
+            format: String::from_utf8_lossy(&format).to_string(),
+            format_length,
+            format_type,
+            num_channels,
+            sample_rate,
+            byte_rate,
+            block_align,
+            bits_per_sample,
+        })
+    }
+
+    pub async fn read_i16(&mut self) -> Result<i16> {
+        let i = self.reader.read_i16_le().await?;
+        Ok(i)
+    }
+}

@@ -100,15 +100,6 @@ impl LivekitWindow {
         bounds: Bounds<Pixels>,
         cx: &mut AsyncApp,
     ) -> WindowHandle<Self> {
-        unsafe {
-            dbg!("world!");
-            let mut m = webrtc_sys::audio_mixer::ffi::create_audio_mixer();
-            dbg!("hello!");
-            dbg!(m.pin_mut().mix(2));
-            dbg!("world!");
-            dbg!(m.data());
-            drop(m)
-        }
         let (room, mut events) =
             Room::connect(url.clone(), token, cx)
                 .await
@@ -264,7 +255,7 @@ impl LivekitWindow {
         } else {
             let room = self.room.clone();
             cx.spawn_in(window, async move |this, cx| {
-                let (publication, stream) = room.publish_local_microphone_track(cx).await.unwrap();
+                let (publication, stream) = room.publish_local_wav_track(cx).await.unwrap();
                 this.update(cx, |this, cx| {
                     this.microphone_track = Some(publication);
                     this.microphone_stream = Some(stream);

@@ -44,6 +44,7 @@ http_client_tls.workspace = true
 livekit = { path = "../../../../rust/livekit-rust-sdks/livekit"}
 libwebrtc = { path = "../../../../rust/livekit-rust-sdks/libwebrtc"}
 webrtc-sys = { path = "../../../../rust/livekit-rust-sdks/webrtc-sys"}
+tokio.workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]
 core-foundation.workspace = true

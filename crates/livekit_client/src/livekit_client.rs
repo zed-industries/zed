@@ -7,7 +7,7 @@ use gpui::{App, AsyncApp, ScreenCaptureSource, ScreenCaptureStream, Task};
 use gpui_tokio::Tokio;
 use libwebrtc::native::apm::AudioProcessingModule;
 use parking_lot::Mutex;
-use playback::{capture_local_audio_track, capture_local_video_track};
+use playback::{capture_local_audio_track, capture_local_video_track, capture_local_wav_track};
 
 mod playback;
 
@@ -102,6 +102,33 @@ impl Room {
     ) -> Result<(LocalTrackPublication, playback::AudioStream)> {
         let (track, stream) =
             capture_local_audio_track(self.apm.clone(), cx.background_executor())?;
+        let publication = self
+            .local_participant()
+            .publish_track(
+                livekit::track::LocalTrack::Audio(track.0),
+                livekit::options::TrackPublishOptions {
+                    source: livekit::track::TrackSource::Microphone,
+                    ..Default::default()
+                },
+                cx,
+            )
+            .await?;
+
+        Ok((publication, stream))
+    }
+
+    pub async fn publish_local_wav_track(
+        &self,
+        cx: &mut AsyncApp,
+    ) -> Result<(LocalTrackPublication, playback::AudioStream)> {
+        let apm = self.apm.clone();
+        let executor = cx.background_executor().clone();
+        let (track, stream) =
+            Tokio::spawn(
+                cx,
+                async move { capture_local_wav_track(apm, &executor).await },
+            )?
+            .await??;
         let publication = self
             .local_participant()
             .publish_track(
