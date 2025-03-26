@@ -61,10 +61,27 @@ impl Tool for BashTool {
             Err(err) => return Task::ready(Err(anyhow!(err))),
         };
 
-        let Some(worktree) = project.read(cx).worktree_for_root_name(&input.cd, cx) else {
-            return Task::ready(Err(anyhow!("Working directory not found in the project")));
+        let working_directory = if input.cd == "." {
+            // Accept "." as "the one worktree" if we only have one.
+            let project = project.read(cx);
+            let mut worktrees = project.worktrees(cx);
+
+            let only_worktree = match worktrees.next() {
+                Some(worktree) => worktree,
+                None => return Task::ready(Err(anyhow!("No worktrees found in the project"))),
+            };
+
+            if worktrees.next().is_some() {
+                return Task::ready(Err(anyhow!("'.' is ambiguous in multi-root workspaces. Please specify a root directory explicitly.")));
+            }
+
+            only_worktree.read(cx).abs_path()
+        } else {
+            let Some(worktree) = project.read(cx).worktree_for_root_name(&input.cd, cx) else {
+                return Task::ready(Err(anyhow!("`cd` directory not found in the project")));
+            };
+            worktree.read(cx).abs_path()
         };
-        let working_directory = worktree.read(cx).abs_path();
 
         cx.spawn(async move |_| {
             // Add 2>&1 to merge stderr into stdout for proper interleaving.
