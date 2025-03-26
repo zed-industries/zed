@@ -26,9 +26,9 @@ use crate::assistant_model_selector::AssistantModelSelector;
 use crate::context_picker::{ConfirmBehavior, ContextPicker, ContextPickerCompletionProvider};
 use crate::context_store::{refresh_context_store_text, ContextStore};
 use crate::context_strip::{ContextStrip, ContextStripEvent, SuggestContextKind};
+use crate::profile_selector::ProfileSelector;
 use crate::thread::{RequestKind, Thread};
 use crate::thread_store::ThreadStore;
-use crate::tool_selector::ToolSelector;
 use crate::{Chat, ChatMode, RemoveAllContext, ThreadEvent, ToggleContextPicker};
 
 pub struct MessageEditor {
@@ -43,7 +43,7 @@ pub struct MessageEditor {
     inline_context_picker: Entity<ContextPicker>,
     inline_context_picker_menu_handle: PopoverMenuHandle<ContextPicker>,
     model_selector: Entity<AssistantModelSelector>,
-    tool_selector: Entity<ToolSelector>,
+    profile_selector: Entity<ProfileSelector>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -136,7 +136,7 @@ impl MessageEditor {
                     cx,
                 )
             }),
-            tool_selector: cx.new(|cx| ToolSelector::new(tools, cx)),
+            profile_selector: cx.new(|cx| ProfileSelector::new(tools, cx)),
             _subscriptions: subscriptions,
         }
     }
@@ -624,7 +624,7 @@ impl Render for MessageEditor {
                             .child(
                                 h_flex()
                                     .justify_between()
-                                    .child(h_flex().gap_2().child(self.tool_selector.clone()))
+                                    .child(h_flex().gap_2().child(self.profile_selector.clone()))
                                     .child(
                                         h_flex().gap_1().child(self.model_selector.clone()).child(
                                             ButtonLike::new("submit-message")

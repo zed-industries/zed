@@ -7,13 +7,13 @@ use indexmap::IndexMap;
 use settings::{Settings as _, SettingsStore};
 use ui::{prelude::*, ContextMenu, PopoverMenu, Tooltip};
 
-pub struct ToolSelector {
+pub struct ProfileSelector {
     profiles: IndexMap<Arc<str>, AgentProfile>,
     tools: Arc<ToolWorkingSet>,
     _subscriptions: Vec<Subscription>,
 }
 
-impl ToolSelector {
+impl ProfileSelector {
     pub fn new(tools: Arc<ToolWorkingSet>, cx: &mut Context<Self>) -> Self {
         let settings_subscription = cx.observe_global::<SettingsStore>(move |this, cx| {
             this.refresh_profiles(cx);
@@ -154,7 +154,7 @@ impl ToolSelector {
     }
 }
 
-impl Render for ToolSelector {
+impl Render for ProfileSelector {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<'_, Self>) -> impl IntoElement {
         let this = cx.entity().clone();
         PopoverMenu::new("tool-selector")
