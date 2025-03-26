@@ -37,7 +37,7 @@ pub enum Model {
     CohereCommandRV1,
     CohereCommandRPlusV1,
     CohereCommandLightTextV14_4k,
-    //Deepseek
+    // DeepSeek
     DeepSeekR1,
     // Meta models
     MetaLlama38BInstructV1,
