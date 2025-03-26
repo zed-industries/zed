@@ -247,7 +247,7 @@ impl TerminalInlineAssistant {
         let mut request_message = LanguageModelRequestMessage {
             role: Role::User,
             content: vec![],
-            cache: false,
+            cache: true,
         };
 
         attach_context_to_message(

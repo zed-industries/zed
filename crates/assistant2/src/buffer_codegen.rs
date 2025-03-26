@@ -410,7 +410,7 @@ impl CodegenAlternative {
         let mut request_message = LanguageModelRequestMessage {
             role: Role::User,
             content: Vec::new(),
-            cache: false,
+            cache: true,
         };
 
         if let Some(context_store) = &self.context_store {

@@ -822,10 +822,17 @@ impl Thread {
                 referenced_context_ids.extend(context_ids);
             }
 
+            // Cache all messages except the most recent user message
+            let is_last_user_message = message.role == Role::User
+                && self
+                    .messages
+                    .last()
+                    .map_or(false, |last_msg| message.id == last_msg.id);
+
             let mut request_message = LanguageModelRequestMessage {
                 role: message.role,
                 content: Vec::new(),
-                cache: false,
+                cache: !is_last_user_message,
             };
 
             match request_kind {
@@ -861,7 +868,7 @@ impl Thread {
             let mut context_message = LanguageModelRequestMessage {
                 role: Role::User,
                 content: Vec::new(),
-                cache: false,
+                cache: true,
             };
 
             let referenced_context = referenced_context_ids
@@ -917,7 +924,7 @@ impl Thread {
             let context_message = LanguageModelRequestMessage {
                 role: Role::User,
                 content,
-                cache: false,
+                cache: true,
             };
 
             messages.push(context_message);
@@ -1122,7 +1129,7 @@ impl Thread {
                 "Generate a concise 3-7 word title for this conversation, omitting punctuation. Go straight to the title, without any preamble and prefix like `Here's a concise suggestion:...` or `Title:`"
                     .into(),
             ],
-            cache: false,
+            cache: true,
         });
 
         self.pending_summary = cx.spawn(async move |this, cx| {
