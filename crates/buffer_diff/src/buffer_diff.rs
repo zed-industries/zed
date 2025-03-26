@@ -285,8 +285,8 @@ impl BufferDiffInner {
         let mut unstaged_hunk_cursor = unstaged_diff.hunks.cursor::<DiffHunkSummary>(buffer);
         unstaged_hunk_cursor.next(buffer);
 
-        let mut prev_unstaged_hunk_buffer_offset = 0;
-        let mut prev_unstaged_hunk_base_text_offset = 0;
+        let mut prev_unstaged_hunk_buffer_end = 0;
+        let mut prev_unstaged_hunk_base_text_end = 0;
         let mut edits = Vec::<(Range<usize>, String)>::new();
 
         // then, iterate over all pending hunks (both new ones and the existing ones) and compute the edits
@@ -296,18 +296,21 @@ impl BufferDiffInner {
             ..
         } in pending_hunks.iter().cloned()
         {
-            let skipped_hunks = unstaged_hunk_cursor.slice(&buffer_range.start, Bias::Left, buffer);
+            // Advance unstaged_hunk_cursor to skip unstaged hunks before current hunk
+            let skipped_unstaged =
+                unstaged_hunk_cursor.slice(&buffer_range.start, Bias::Left, buffer);
 
-            if let Some(secondary_hunk) = skipped_hunks.last() {
-                prev_unstaged_hunk_base_text_offset = secondary_hunk.diff_base_byte_range.end;
-                prev_unstaged_hunk_buffer_offset =
-                    secondary_hunk.buffer_range.end.to_offset(buffer);
+            if let Some(unstaged_hunk) = skipped_unstaged.last() {
+                prev_unstaged_hunk_base_text_end = unstaged_hunk.diff_base_byte_range.end;
+                prev_unstaged_hunk_buffer_end = unstaged_hunk.buffer_range.end.to_offset(buffer);
             }
 
+            // Find where this hunk is in the index if it doesn't overlap
             let mut buffer_offset_range = buffer_range.to_offset(buffer);
-            let start_overshoot = buffer_offset_range.start - prev_unstaged_hunk_buffer_offset;
-            let mut index_start = prev_unstaged_hunk_base_text_offset + start_overshoot;
+            let start_overshoot = buffer_offset_range.start - prev_unstaged_hunk_buffer_end;
+            let mut index_start = prev_unstaged_hunk_base_text_end + start_overshoot;
 
+            // If it does overlap, "merge" with overlapping and update position
             while let Some(unstaged_hunk) = unstaged_hunk_cursor.item().filter(|item| {
                 item.buffer_range
                     .start
@@ -315,8 +318,8 @@ impl BufferDiffInner {
                     .is_le()
             }) {
                 let unstaged_hunk_offset_range = unstaged_hunk.buffer_range.to_offset(buffer);
-                prev_unstaged_hunk_base_text_offset = unstaged_hunk.diff_base_byte_range.end;
-                prev_unstaged_hunk_buffer_offset = unstaged_hunk_offset_range.end;
+                prev_unstaged_hunk_base_text_end = unstaged_hunk.diff_base_byte_range.end;
+                prev_unstaged_hunk_buffer_end = unstaged_hunk_offset_range.end;
 
                 index_start = index_start.min(unstaged_hunk.diff_base_byte_range.start);
                 buffer_offset_range.start = buffer_offset_range
@@ -328,13 +331,11 @@ impl BufferDiffInner {
 
             let end_overshoot = buffer_offset_range
                 .end
-                .saturating_sub(prev_unstaged_hunk_buffer_offset);
-            let index_end = prev_unstaged_hunk_base_text_offset + end_overshoot;
+                .saturating_sub(prev_unstaged_hunk_buffer_end);
+            let index_end = prev_unstaged_hunk_base_text_end + end_overshoot;
 
             let index_range = index_start..index_end;
-            buffer_offset_range.end = buffer_offset_range
-                .end
-                .max(prev_unstaged_hunk_buffer_offset);
+            buffer_offset_range.end = buffer_offset_range.end.max(prev_unstaged_hunk_buffer_end);
 
             let replacement_text = if stage {
                 log::debug!("stage hunk {:?}", buffer_offset_range);
