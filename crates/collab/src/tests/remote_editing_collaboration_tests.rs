@@ -1,8 +1,8 @@
 use crate::tests::TestServer;
 use call::ActiveCall;
-use collections::HashSet;
+use collections::{HashMap, HashSet};
 use extension::ExtensionHostProxy;
-use fs::{FakeFs, Fs as _};
+use fs::{FakeFs, Fs as _, RemoveOptions};
 use futures::StreamExt as _;
 use gpui::{
     AppContext as _, BackgroundExecutor, SemanticVersion, TestAppContext, UpdateGlobal as _,
@@ -356,6 +356,26 @@ async fn test_ssh_collaboration_git_branches(
     });
 
     assert_eq!(server_branch.name, "totally-new-branch");
+
+    // Remove the git repository and check that all participants get the update.
+    remote_fs
+        .remove_dir("/project/.git".as_ref(), RemoveOptions::default())
+        .await
+        .unwrap();
+    executor.run_until_parked();
+
+    project_a.update(cx_a, |project, cx| {
+        pretty_assertions::assert_eq!(
+            project.git_store().read(cx).repo_snapshots(cx),
+            HashMap::default()
+        );
+    });
+    project_b.update(cx_b, |project, cx| {
+        pretty_assertions::assert_eq!(
+            project.git_store().read(cx).repo_snapshots(cx),
+            HashMap::default()
+        );
+    });
 }
 
 #[gpui::test]

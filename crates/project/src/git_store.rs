@@ -148,14 +148,10 @@ pub struct GitStoreCheckpoint {
 pub struct Repository {
     pub repository_entry: RepositoryEntry,
     pub merge_message: Option<String>,
-    // FIXME remove, already have it in the snapshot??
     pub completed_scan_id: usize,
     commit_message_buffer: Option<Entity<Buffer>>,
     git_store: WeakEntity<GitStore>,
-    // FIXME remove, put it on the state instead (for local only)
-    // FIXME need to have a way to get the environment for something that's not a worktree root
     project_environment: Option<WeakEntity<ProjectEnvironment>>,
-    // FIXME should go in the state for local repositories and then be eliminated entirely
     pub worktree_id: Option<WorktreeId>,
     state: RepositoryState,
     job_sender: mpsc::UnboundedSender<GitJob>,
@@ -311,12 +307,17 @@ impl GitStore {
         matches!(self.state, GitStoreState::Local { .. })
     }
 
-    pub fn shared(&mut self, remote_id: u64, client: AnyProtoClient, cx: &mut Context<Self>) {
+    pub fn shared(&mut self, project_id: u64, client: AnyProtoClient, cx: &mut Context<Self>) {
         match &mut self.state {
             GitStoreState::Ssh {
                 downstream_client, ..
             } => {
-                *downstream_client = Some((client, ProjectId(remote_id)));
+                for repo in self.repositories.values() {
+                    client
+                        .send(repo.read(cx).repository_entry.initial_update(project_id))
+                        .log_err();
+                }
+                *downstream_client = Some((client, ProjectId(project_id)));
             }
             GitStoreState::Local {
                 downstream_client, ..
@@ -332,7 +333,7 @@ impl GitStore {
                 }
                 *downstream_client = Some(LocalDownstreamState {
                     client: client.clone(),
-                    project_id: ProjectId(remote_id),
+                    project_id: ProjectId(project_id),
                     updates_tx,
                     _task: cx.spawn(async move |this, cx| {
                         cx.background_spawn(async move {
@@ -343,18 +344,18 @@ impl GitStore {
                                             snapshots.get_mut(&snapshot.work_directory_id)
                                         {
                                             let update =
-                                                snapshot.build_update(old_snapshot, remote_id);
+                                                snapshot.build_update(old_snapshot, project_id);
                                             *old_snapshot = snapshot;
                                             client.send(update)?;
                                         } else {
-                                            let update = snapshot.initial_update(remote_id);
+                                            let update = snapshot.initial_update(project_id);
                                             client.send(update)?;
                                             snapshots.insert(snapshot.work_directory_id, snapshot);
                                         }
                                     }
                                     DownstreamUpdate::RemoveRepository(id) => {
                                         client.send(proto::RemoveRepository {
-                                            project_id: remote_id,
+                                            project_id,
                                             id: id.to_proto(),
                                         })?;
                                     }
@@ -1481,7 +1482,8 @@ impl GitStore {
         mut cx: AsyncApp,
     ) -> Result<()> {
         this.update(&mut cx, |this, cx| {
-            let update = envelope.payload;
+            let mut update = envelope.payload;
+
             let work_directory_id = ProjectEntryId::from_proto(update.id);
             let client = this
                 .upstream_client()
@@ -1520,12 +1522,17 @@ impl GitStore {
                     })
                 });
 
-            repo.update(cx, |repo, _cx| repo.apply_remote_update(update))?;
+            repo.update(cx, |repo, _cx| repo.apply_remote_update(update.clone()))?;
             cx.emit(GitEvent::GitStateUpdated);
             this.active_repo_id.get_or_insert_with(|| {
                 cx.emit(GitEvent::ActiveRepositoryChanged);
                 work_directory_id
             });
+
+            if let Some((client, project_id)) = this.downstream_client() {
+                update.project_id = project_id.to_proto();
+                client.send(update).log_err();
+            }
             Ok(())
         })?
     }
@@ -1535,9 +1542,19 @@ impl GitStore {
         envelope: TypedEnvelope<proto::RemoveRepository>,
         mut cx: AsyncApp,
     ) -> Result<()> {
-        this.update(&mut cx, |this, _| {
-            this.repositories
-                .remove(&ProjectEntryId::from_proto(envelope.payload.id));
+        this.update(&mut cx, |this, cx| {
+            let mut update = envelope.payload;
+            let id = ProjectEntryId::from_proto(update.id);
+            this.repositories.remove(&id);
+            if let Some((client, project_id)) = this.downstream_client() {
+                update.project_id = project_id.to_proto();
+                client.send(update).log_err();
+            }
+            if this.active_repo_id == Some(id) {
+                this.active_repo_id = None;
+                cx.emit(GitEvent::ActiveRepositoryChanged);
+            }
+            cx.emit(GitEvent::GitStateUpdated);
         })
     }
 
@@ -2974,9 +2991,8 @@ impl Repository {
     ) -> impl Future<Output = HashMap<String, String>> + 'static {
         let task = self.project_environment.as_ref().and_then(|env| {
             env.update(cx, |env, cx| {
-                // FIXME
                 env.get_environment(
-                    None,
+                    self.worktree_id,
                     Some(
                         self.repository_entry
                             .work_directory_abs_path
