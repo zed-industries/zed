@@ -3243,7 +3243,7 @@ impl Repository {
     }
 
     pub fn change_branch(&self, branch_name: String) -> oneshot::Receiver<Result<()>> {
-        self.send_job(|repo, cx| async move {
+        self.send_job(|repo, _cx| async move {
             match repo {
                 RepositoryState::Local(git_repository) => {
                     git_repository.change_branch(branch_name).await
@@ -3270,7 +3270,7 @@ impl Repository {
     }
 
     pub fn check_for_pushed_commits(&self) -> oneshot::Receiver<Result<Vec<SharedString>>> {
-        self.send_job(|repo, cx| async move {
+        self.send_job(|repo, _cx| async move {
             match repo {
                 RepositoryState::Local(git_repository) => {
                     git_repository.check_for_pushed_commit().await
@@ -3298,7 +3298,7 @@ impl Repository {
     }
 
     pub fn checkpoint(&self) -> oneshot::Receiver<Result<GitRepositoryCheckpoint>> {
-        self.send_job(|repo, cx| async move {
+        self.send_job(|repo, _cx| async move {
             match repo {
                 RepositoryState::Local(git_repository) => git_repository.checkpoint().await,
                 RepositoryState::Remote { .. } => Err(anyhow!("not implemented yet")),
@@ -3310,7 +3310,7 @@ impl Repository {
         &self,
         checkpoint: GitRepositoryCheckpoint,
     ) -> oneshot::Receiver<Result<()>> {
-        self.send_job(move |repo, cx| async move {
+        self.send_job(move |repo, _cx| async move {
             match repo {
                 RepositoryState::Local(git_repository) => {
                     git_repository.restore_checkpoint(checkpoint).await
@@ -3325,7 +3325,7 @@ impl Repository {
         left: GitRepositoryCheckpoint,
         right: GitRepositoryCheckpoint,
     ) -> oneshot::Receiver<Result<bool>> {
-        self.send_job(move |repo, cx| async move {
+        self.send_job(move |repo, _cx| async move {
             match repo {
                 RepositoryState::Local(git_repository) => {
                     git_repository.compare_checkpoints(left, right).await
@@ -3339,7 +3339,7 @@ impl Repository {
         &self,
         checkpoint: GitRepositoryCheckpoint,
     ) -> oneshot::Receiver<Result<()>> {
-        self.send_job(move |repo, cx| async move {
+        self.send_job(move |repo, _cx| async move {
             match repo {
                 RepositoryState::Local(git_repository) => {
                     git_repository.delete_checkpoint(checkpoint).await
