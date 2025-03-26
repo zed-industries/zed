@@ -61,14 +61,12 @@ impl Render for RunningState {
             this.disabled(thread_status != ThreadStatus::Stopped, cx);
         });
 
-        let is_terminated = self.session.read(cx).is_terminated();
         let active_thread_item = &self.active_thread_item;
 
         let has_no_threads = threads.is_empty();
         let capabilities = self.capabilities(cx);
         let state = cx.entity();
         h_flex()
-            .when(is_terminated, |this| this.bg(gpui::red()))
             .key_context("DebugPanelItem")
             .track_focus(&self.focus_handle(cx))
             .size_full()
