@@ -62,6 +62,7 @@ prompt_library.workspace = true
 prompt_store.workspace = true
 proto.workspace = true
 release_channel.workspace = true
+regex.workspace = true
 rope.workspace = true
 serde.workspace = true
 serde_json.workspace = true

@@ -11,12 +11,12 @@ mod history_store;
 mod inline_assistant;
 mod inline_prompt_editor;
 mod message_editor;
+mod profile_selector;
 mod terminal_codegen;
 mod terminal_inline_assistant;
 mod thread;
 mod thread_history;
 mod thread_store;
-mod tool_selector;
 mod tool_use;
 mod ui;
 
