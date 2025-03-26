@@ -273,7 +273,7 @@ async fn run_evaluation(
     let repos_dir = Path::new(EVAL_REPOS_DIR);
     let db_path = Path::new(EVAL_DB_PATH);
     let api_key = std::env::var("OPENAI_API_KEY").unwrap();
-    let fs = Arc::new(RealFs::new(None)) as Arc<dyn Fs>;
+    let fs = Arc::new(RealFs::new(None, cx.background_executor().clone())) as Arc<dyn Fs>;
     let clock = Arc::new(RealSystemClock);
     let client = cx
         .update(|cx| {

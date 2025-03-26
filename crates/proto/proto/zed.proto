@@ -358,7 +358,10 @@ message Envelope {
         BreakpointsForFile breakpoints_for_file = 327;
 
         UpdateRepository update_repository = 328;
-        RemoveRepository remove_repository = 329; // current max
+        RemoveRepository remove_repository = 329;
+
+        GetDocumentSymbols get_document_symbols = 330;
+        GetDocumentSymbolsResponse get_document_symbols_response = 331; // current max
     }
 
     reserved 87 to 88;
@@ -845,6 +848,28 @@ message Symbol {
     PointUtf16 end = 8;
     bytes signature = 9;
     uint64 language_server_id = 10;
+}
+
+message GetDocumentSymbols {
+    uint64 project_id = 1;
+    uint64 buffer_id = 2;
+    repeated VectorClockEntry version = 3;
+}
+
+message GetDocumentSymbolsResponse {
+    repeated DocumentSymbol symbols = 1;
+}
+
+message DocumentSymbol {
+    string name = 1;
+    int32 kind = 2;
+    // Cannot use generate anchors for unopened files,
+    // so we are forced to use point coords instead
+    PointUtf16 start = 3;
+    PointUtf16 end = 4;
+    PointUtf16 selection_start = 5;
+    PointUtf16 selection_end = 6;
+    repeated DocumentSymbol children = 7;
 }
 
 message OpenBufferForSymbol {

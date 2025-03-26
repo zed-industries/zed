@@ -149,7 +149,10 @@ pub fn init(cx: &mut App) -> Arc<HeadlessAppState> {
     cx.set_http_client(client.http_client().clone());
 
     let git_binary_path = None;
-    let fs = Arc::new(RealFs::new(git_binary_path));
+    let fs = Arc::new(RealFs::new(
+        git_binary_path,
+        cx.background_executor().clone(),
+    ));
 
     let languages = Arc::new(LanguageRegistry::new(cx.background_executor().clone()));
 
