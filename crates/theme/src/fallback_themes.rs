@@ -75,6 +75,71 @@ pub(crate) fn zed_default_dark() -> Theme {
         a: 1.0,
     };
 
+    let syntax = SyntaxTheme {
+        highlights: vec![
+            ("attribute".into(), purple.into()),
+            ("boolean".into(), orange.into()),
+            ("comment".into(), gray.into()),
+            ("comment.doc".into(), gray.into()),
+            ("constant".into(), yellow.into()),
+            ("constructor".into(), blue.into()),
+            ("embedded".into(), HighlightStyle::default()),
+            (
+                "emphasis".into(),
+                HighlightStyle {
+                    font_style: Some(FontStyle::Italic),
+                    ..HighlightStyle::default()
+                },
+            ),
+            (
+                "emphasis.strong".into(),
+                HighlightStyle {
+                    font_weight: Some(FontWeight::BOLD),
+                    ..HighlightStyle::default()
+                },
+            ),
+            ("enum".into(), HighlightStyle::default()),
+            ("function".into(), blue.into()),
+            ("function.method".into(), blue.into()),
+            ("function.definition".into(), blue.into()),
+            ("hint".into(), blue.into()),
+            ("keyword".into(), purple.into()),
+            ("label".into(), HighlightStyle::default()),
+            ("link_text".into(), blue.into()),
+            (
+                "link_uri".into(),
+                HighlightStyle {
+                    color: Some(teal),
+                    font_style: Some(FontStyle::Italic),
+                    ..HighlightStyle::default()
+                },
+            ),
+            ("number".into(), orange.into()),
+            ("operator".into(), HighlightStyle::default()),
+            ("predictive".into(), HighlightStyle::default()),
+            ("preproc".into(), HighlightStyle::default()),
+            ("primary".into(), HighlightStyle::default()),
+            ("property".into(), red.into()),
+            ("punctuation".into(), HighlightStyle::default()),
+            ("punctuation.bracket".into(), HighlightStyle::default()),
+            ("punctuation.delimiter".into(), HighlightStyle::default()),
+            ("punctuation.list_marker".into(), HighlightStyle::default()),
+            ("punctuation.special".into(), HighlightStyle::default()),
+            ("string".into(), green.into()),
+            ("string.escape".into(), HighlightStyle::default()),
+            ("string.regex".into(), red.into()),
+            ("string.special".into(), HighlightStyle::default()),
+            ("string.special.symbol".into(), HighlightStyle::default()),
+            ("tag".into(), HighlightStyle::default()),
+            ("text.literal".into(), HighlightStyle::default()),
+            ("title".into(), HighlightStyle::default()),
+            ("type".into(), teal.into()),
+            ("variable".into(), HighlightStyle::default()),
+            ("variable.special".into(), red.into()),
+            ("variant".into(), HighlightStyle::default()),
+        ],
+    };
+
     Theme {
         id: "one_dark".to_string(),
         name: "One Dark".into(),
@@ -248,70 +313,9 @@ pub(crate) fn zed_default_dark() -> Theme {
                 warning_border: yellow,
             },
             player: PlayerColors::dark(),
-            syntax: Arc::new(SyntaxTheme {
-                highlights: vec![
-                    ("attribute".into(), purple.into()),
-                    ("boolean".into(), orange.into()),
-                    ("comment".into(), gray.into()),
-                    ("comment.doc".into(), gray.into()),
-                    ("constant".into(), yellow.into()),
-                    ("constructor".into(), blue.into()),
-                    ("embedded".into(), HighlightStyle::default()),
-                    (
-                        "emphasis".into(),
-                        HighlightStyle {
-                            font_style: Some(FontStyle::Italic),
-                            ..HighlightStyle::default()
-                        },
-                    ),
-                    (
-                        "emphasis.strong".into(),
-                        HighlightStyle {
-                            font_weight: Some(FontWeight::BOLD),
-                            ..HighlightStyle::default()
-                        },
-                    ),
-                    ("enum".into(), HighlightStyle::default()),
-                    ("function".into(), blue.into()),
-                    ("function.method".into(), blue.into()),
-                    ("function.definition".into(), blue.into()),
-                    ("hint".into(), blue.into()),
-                    ("keyword".into(), purple.into()),
-                    ("label".into(), HighlightStyle::default()),
-                    ("link_text".into(), blue.into()),
-                    (
-                        "link_uri".into(),
-                        HighlightStyle {
-                            color: Some(teal),
-                            font_style: Some(FontStyle::Italic),
-                            ..HighlightStyle::default()
-                        },
-                    ),
-                    ("number".into(), orange.into()),
-                    ("operator".into(), HighlightStyle::default()),
-                    ("predictive".into(), HighlightStyle::default()),
-                    ("preproc".into(), HighlightStyle::default()),
-                    ("primary".into(), HighlightStyle::default()),
-                    ("property".into(), red.into()),
-                    ("punctuation".into(), HighlightStyle::default()),
-                    ("punctuation.bracket".into(), HighlightStyle::default()),
-                    ("punctuation.delimiter".into(), HighlightStyle::default()),
-                    ("punctuation.list_marker".into(), HighlightStyle::default()),
-                    ("punctuation.special".into(), HighlightStyle::default()),
-                    ("string".into(), green.into()),
-                    ("string.escape".into(), HighlightStyle::default()),
-                    ("string.regex".into(), red.into()),
-                    ("string.special".into(), HighlightStyle::default()),
-                    ("string.special.symbol".into(), HighlightStyle::default()),
-                    ("tag".into(), HighlightStyle::default()),
-                    ("text.literal".into(), HighlightStyle::default()),
-                    ("title".into(), HighlightStyle::default()),
-                    ("type".into(), teal.into()),
-                    ("variable".into(), HighlightStyle::default()),
-                    ("variable.special".into(), red.into()),
-                    ("variant".into(), HighlightStyle::default()),
-                ],
-            }),
+            tokens: Arc::new(SyntaxTheme::import_semantic_tokens(&syntax)),
+            modifiers: Arc::new(SyntaxTheme::import_semantic_modifiers(&syntax)),
+            syntax: Arc::new(syntax),
         },
     }
 }

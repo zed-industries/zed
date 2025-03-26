@@ -4040,7 +4040,7 @@ impl Editor {
                 editor.update(cx, |this, cx| {
                     for (range, r#type, modifiers) in tokens {
                         let range = vec![range];
-                        let style = HighlightStyle::color(Hsla::white());
+                        let style = HighlightStyle::color(Hsla::red());
                         this.highlight_text::<SemanticHighlight>(range, style, cx)
                     }
                 })?;

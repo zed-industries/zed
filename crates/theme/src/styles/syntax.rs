@@ -10,6 +10,14 @@ pub struct SyntaxTheme {
 }
 
 impl SyntaxTheme {
+    pub fn import_semantic_tokens(other: &SyntaxTheme) -> Self {
+        Self { highlights: vec![] }
+    }
+
+    pub fn import_semantic_modifiers(other: &SyntaxTheme) -> Self {
+        Self { highlights: vec![] }
+    }
+
     #[cfg(any(test, feature = "test-support"))]
     pub fn new_test(colors: impl IntoIterator<Item = (&'static str, Hsla)>) -> Self {
         Self::new_test_styles(colors.into_iter().map(|(key, color)| {

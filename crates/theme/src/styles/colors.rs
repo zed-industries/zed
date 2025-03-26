@@ -525,6 +525,10 @@ pub struct ThemeStyles {
     pub player: PlayerColors,
 
     pub syntax: Arc<SyntaxTheme>,
+
+    pub tokens: Arc<SyntaxTheme>,
+
+    pub modifiers: Arc<SyntaxTheme>,
 }
 
 #[cfg(test)]

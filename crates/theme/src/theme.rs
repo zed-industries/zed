@@ -31,6 +31,7 @@ use gpui::{
     px, App, AssetSource, HighlightStyle, Hsla, Pixels, Refineable, SharedString, WindowAppearance,
     WindowBackgroundAppearance,
 };
+use indexmap::IndexMap;
 use serde::Deserialize;
 use uuid::Uuid;
 
@@ -191,30 +192,30 @@ impl ThemeFamily {
         };
         refined_accent_colors.merge(&theme.style.accents);
 
-        let syntax_highlights = theme
-            .style
-            .syntax
-            .iter()
-            .map(|(syntax_token, highlight)| {
-                (
-                    syntax_token.clone(),
-                    HighlightStyle {
-                        color: highlight
-                            .color
-                            .as_ref()
-                            .and_then(|color| try_parse_color(color).ok()),
-                        background_color: highlight
-                            .background_color
-                            .as_ref()
-                            .and_then(|color| try_parse_color(color).ok()),
-                        font_style: highlight.font_style.map(Into::into),
-                        font_weight: highlight.font_weight.map(Into::into),
-                        ..Default::default()
-                    },
-                )
-            })
-            .collect::<Vec<_>>();
+        let syntax_highlights = refine_highlights(&theme.style.syntax);
         let syntax_theme = SyntaxTheme::merge(Arc::new(SyntaxTheme::default()), syntax_highlights);
+        let tokens_theme = SyntaxTheme::merge(
+            Arc::new(SyntaxTheme::default()),
+            theme
+                .style
+                .tokens
+                .as_ref()
+                .map(|tokens| refine_highlights(tokens))
+                .unwrap_or_else(|| {
+                    SyntaxTheme::import_semantic_modifiers(&syntax_theme).highlights
+                }),
+        );
+        let modifiers_theme = SyntaxTheme::merge(
+            Arc::new(SyntaxTheme::default()),
+            theme
+                .style
+                .modifiers
+                .as_ref()
+                .map(|tokens| refine_highlights(tokens))
+                .unwrap_or_else(|| {
+                    SyntaxTheme::import_semantic_modifiers(&syntax_theme).highlights
+                }),
+        );
 
         let window_background_appearance = theme
             .style
@@ -234,9 +235,36 @@ impl ThemeFamily {
                 status: refined_status_colors,
                 player: refined_player_colors,
                 syntax: syntax_theme,
+                tokens: tokens_theme,
+                modifiers: modifiers_theme,
             },
         }
     }
+}
+
+fn refine_highlights(
+    map: &IndexMap<String, HighlightStyleContent>,
+) -> Vec<(String, HighlightStyle)> {
+    map.iter()
+        .map(|(id, highlight)| {
+            (
+                id.clone(),
+                HighlightStyle {
+                    color: highlight
+                        .color
+                        .as_ref()
+                        .and_then(|color| try_parse_color(color).ok()),
+                    background_color: highlight
+                        .background_color
+                        .as_ref()
+                        .and_then(|color| try_parse_color(color).ok()),
+                    font_style: highlight.font_style.map(Into::into),
+                    font_weight: highlight.font_weight.map(Into::into),
+                    ..Default::default()
+                },
+            )
+        })
+        .collect::<Vec<_>>()
 }
 
 /// Refines a [ThemeFamilyContent] and it's [ThemeContent]s into a [ThemeFamily].
