@@ -5,6 +5,7 @@ use language_model::LanguageModelRequestMessage;
 use project::Project;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use std::path::Path;
 use std::sync::Arc;
 use ui::IconName;
 use util::command::new_smol_command;
@@ -61,10 +62,10 @@ impl Tool for BashTool {
             Err(err) => return Task::ready(Err(anyhow!(err))),
         };
 
+        let input_path = Path::new(&input.cd);
         let working_directory = if input.cd == "." {
-            // Accept "." as "the one worktree" if we only have one.
-            let project = project.read(cx);
-            let mut worktrees = project.worktrees(cx);
+            // Accept "." as meaning "the one worktree" if we only have one worktree.
+            let mut worktrees = project.read(cx).worktrees(cx);
 
             let only_worktree = match worktrees.next() {
                 Some(worktree) => worktree,
@@ -76,10 +77,24 @@ impl Tool for BashTool {
             }
 
             only_worktree.read(cx).abs_path()
+        } else if input_path.is_absolute() {
+            // Absolute paths are allowed, but only if they're in one of the project's worktrees.
+            if !project
+                .read(cx)
+                .worktrees(cx)
+                .any(|worktree| input_path.starts_with(&worktree.read(cx).abs_path()))
+            {
+                return Task::ready(Err(anyhow!(
+                    "The absolute path must be within one of the project's worktrees"
+                )));
+            }
+
+            input_path.into()
         } else {
             let Some(worktree) = project.read(cx).worktree_for_root_name(&input.cd, cx) else {
                 return Task::ready(Err(anyhow!("`cd` directory not found in the project")));
             };
+
             worktree.read(cx).abs_path()
         };
 
