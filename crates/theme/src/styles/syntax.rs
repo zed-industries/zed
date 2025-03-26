@@ -42,6 +42,12 @@ impl SyntaxTheme {
             .unwrap_or_default()
     }
 
+    pub fn get_or_none(&self, name: &str) -> Option<HighlightStyle> {
+        self.highlights
+            .iter()
+            .find_map(|entry| if entry.0 == name { Some(entry.1) } else { None })
+    }
+
     pub fn color(&self, name: &str) -> Hsla {
         self.get(name).color.unwrap_or_default()
     }
@@ -94,7 +100,7 @@ impl SyntaxTheme {
 
     pub fn import_semantic_modifiers(other: &SyntaxTheme) -> Self {
         Self {
-            highlights: semantic_highlights(other, &[]),
+            highlights: semantic_highlights(other, &[("")]),
         }
     }
 }

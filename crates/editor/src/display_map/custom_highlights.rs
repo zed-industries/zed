@@ -163,6 +163,12 @@ impl<'a> Iterator for CustomHighlightsChunks<'a> {
         self.offset += prefix.len();
         let mut prefix = Chunk {
             text: prefix,
+            highlight_style: self
+                .active_highlights
+                .get(&TypeId::of::<crate::SemanticHighlight>())
+                .cloned()
+                .map(Some)
+                .unwrap_or(chunk.highlight_style.clone()),
             ..chunk.clone()
         };
         if !self.active_highlights.is_empty() {

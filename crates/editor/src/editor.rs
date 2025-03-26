@@ -4033,6 +4033,7 @@ impl Editor {
                         );
                         let start = multibuffer.buffer_point_to_anchor(&buffer, start, cx)?;
                         let end = multibuffer.buffer_point_to_anchor(&buffer, end, cx)?;
+                        log::error!("    - finished");
                         Some((start..end, token.r#type, token.modifiers))
                     });
                     iter.collect_vec()
@@ -4040,9 +4041,16 @@ impl Editor {
                 editor.update(cx, |this: &mut Self, cx| {
                     for (range, r#type, modifiers) in tokens {
                         let range = vec![range];
-                        let mut style = cx.theme().tokens().get(r#type.as_str());
+                        let Some(mut style) = cx.theme().tokens().get_or_none(r#type.as_str())
+                        else {
+                            continue;
+                        };
                         for modifier in modifiers {
-                            let modifier = cx.theme().modifiers().get(modifier.as_str());
+                            let Some(modifier) =
+                                cx.theme().modifiers().get_or_none(modifier.as_str())
+                            else {
+                                continue;
+                            };
                             style.highlight(modifier);
                         }
                         this.highlight_text::<SemanticHighlight>(range, style, cx)
