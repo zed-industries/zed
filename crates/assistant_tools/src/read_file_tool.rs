@@ -9,6 +9,8 @@ use language_model::LanguageModelRequestMessage;
 use project::Project;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use ui::IconName;
+use util::markdown::MarkdownString;
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct ReadFileToolInput {
@@ -52,6 +54,10 @@ impl Tool for ReadFileTool {
         include_str!("./read_file_tool/description.md").into()
     }
 
+    fn icon(&self) -> IconName {
+        IconName::Eye
+    }
+
     fn input_schema(&self) -> serde_json::Value {
         let schema = schemars::schema_for!(ReadFileToolInput);
         serde_json::to_value(&schema).unwrap()
@@ -59,7 +65,10 @@ impl Tool for ReadFileTool {
 
     fn ui_text(&self, input: &serde_json::Value) -> String {
         match serde_json::from_value::<ReadFileToolInput>(input.clone()) {
-            Ok(input) => format!("Read file `{}`", input.path.display()),
+            Ok(input) => {
+                let path = MarkdownString::escape(&input.path.display().to_string());
+                format!("Read file `{path}`")
+            }
             Err(_) => "Read file".to_string(),
         }
     }

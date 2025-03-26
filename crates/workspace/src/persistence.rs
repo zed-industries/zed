@@ -13,7 +13,7 @@ use client::DevServerProjectId;
 use db::{define_connection, query, sqlez::connection::Connection, sqlez_macros::sql};
 use gpui::{point, size, Axis, Bounds, WindowBounds, WindowId};
 use itertools::Itertools;
-use project::debugger::breakpoint_store::{BreakpointKind, SerializedBreakpoint};
+use project::debugger::breakpoint_store::{BreakpointKind, BreakpointState, SerializedBreakpoint};
 
 use language::{LanguageName, Toolchain};
 use project::WorktreeId;
@@ -148,9 +148,43 @@ impl Column for SerializedWindowBounds {
 pub struct Breakpoint {
     pub position: u32,
     pub kind: BreakpointKind,
+    pub state: BreakpointState,
 }
 
 /// Wrapper for DB type of a breakpoint
+struct BreakpointStateWrapper<'a>(Cow<'a, BreakpointState>);
+
+impl From<BreakpointState> for BreakpointStateWrapper<'static> {
+    fn from(kind: BreakpointState) -> Self {
+        BreakpointStateWrapper(Cow::Owned(kind))
+    }
+}
+impl StaticColumnCount for BreakpointStateWrapper<'_> {
+    fn column_count() -> usize {
+        1
+    }
+}
+
+impl Bind for BreakpointStateWrapper<'_> {
+    fn bind(&self, statement: &Statement, start_index: i32) -> anyhow::Result<i32> {
+        statement.bind(&self.0.to_int(), start_index)
+    }
+}
+
+impl Column for BreakpointStateWrapper<'_> {
+    fn column(statement: &mut Statement, start_index: i32) -> anyhow::Result<(Self, i32)> {
+        let state = statement.column_int(start_index)?;
+
+        match state {
+            0 => Ok((BreakpointState::Enabled.into(), start_index + 1)),
+            1 => Ok((BreakpointState::Disabled.into(), start_index + 1)),
+            _ => Err(anyhow::anyhow!("Invalid BreakpointState discriminant")),
+        }
+    }
+}
+
+/// Wrapper for DB type of a breakpoint
+#[derive(Debug)]
 struct BreakpointKindWrapper<'a>(Cow<'a, BreakpointKind>);
 
 impl From<BreakpointKind> for BreakpointKindWrapper<'static> {
@@ -200,7 +234,7 @@ struct Breakpoints(Vec<Breakpoint>);
 
 impl sqlez::bindable::StaticColumnCount for Breakpoint {
     fn column_count() -> usize {
-        1 + BreakpointKindWrapper::column_count()
+        1 + BreakpointKindWrapper::column_count() + BreakpointStateWrapper::column_count()
     }
 }
 
@@ -211,8 +245,12 @@ impl sqlez::bindable::Bind for Breakpoint {
         start_index: i32,
     ) -> anyhow::Result<i32> {
         let next_index = statement.bind(&self.position, start_index)?;
-        statement.bind(
+        let next_index = statement.bind(
             &BreakpointKindWrapper(Cow::Borrowed(&self.kind)),
+            next_index,
+        )?;
+        statement.bind(
+            &BreakpointStateWrapper(Cow::Borrowed(&self.state)),
             next_index,
         )
     }
@@ -225,11 +263,13 @@ impl Column for Breakpoint {
             .with_context(|| format!("Failed to read BreakPoint at index {start_index}"))?
             as u32;
         let (kind, next_index) = BreakpointKindWrapper::column(statement, start_index + 1)?;
+        let (state, next_index) = BreakpointStateWrapper::column(statement, next_index)?;
 
         Ok((
             Breakpoint {
                 position,
                 kind: kind.0.into_owned(),
+                state: state.0.into_owned(),
             },
             next_index,
         ))
@@ -245,16 +285,9 @@ impl Column for Breakpoints {
             match statement.column_type(index) {
                 Ok(SqlType::Null) => break,
                 _ => {
-                    let position = statement
-                        .column_int(index)
-                        .with_context(|| format!("Failed to read BreakPoint at index {index}"))?
-                        as u32;
-                    let (kind, next_index) = BreakpointKindWrapper::column(statement, index + 1)?;
+                    let (breakpoint, next_index) = Breakpoint::column(statement, index)?;
 
-                    breakpoints.push(Breakpoint {
-                        position,
-                        kind: kind.0.into_owned(),
-                    });
+                    breakpoints.push(breakpoint);
                     index = next_index;
                 }
             }
@@ -535,6 +568,9 @@ define_connection! {
         CREATE UNIQUE INDEX local_paths_array_uq ON workspaces(local_paths_array);
         ALTER TABLE workspaces ADD COLUMN local_paths_order_array TEXT;
     ),
+    sql!(
+        ALTER TABLE breakpoints ADD COLUMN state INTEGER DEFAULT(0) NOT NULL
+    )
     ];
 }
 
@@ -690,7 +726,7 @@ impl WorkspaceDb {
     ) -> BTreeMap<Arc<Path>, Vec<SerializedBreakpoint>> {
         let breakpoints: Result<Vec<(PathBuf, Breakpoint)>> = self
             .select_bound(sql! {
-                SELECT path, breakpoint_location, kind
+                SELECT path, breakpoint_location, kind, log_message, state
                 FROM breakpoints
                 WHERE workspace_id = ?
             })
@@ -712,6 +748,7 @@ impl WorkspaceDb {
                             position: breakpoint.position,
                             path,
                             kind: breakpoint.kind,
+                            state: breakpoint.state,
                         });
                 }
 
@@ -739,15 +776,17 @@ impl WorkspaceDb {
                     .context("Clearing old breakpoints")?;
                     for bp in breakpoints {
                         let kind = BreakpointKindWrapper::from(bp.kind);
+                        let state = BreakpointStateWrapper::from(bp.state);
                         match conn.exec_bound(sql!(
-                            INSERT INTO breakpoints (workspace_id, path, breakpoint_location, kind, log_message)
-                            VALUES (?1, ?2, ?3, ?4, ?5);))?
+                            INSERT INTO breakpoints (workspace_id, path, breakpoint_location, kind, log_message, state)
+                            VALUES (?1, ?2, ?3, ?4, ?5, ?6);))?
 
                         ((
                             workspace.id,
                             path.as_ref(),
                             bp.position,
                             kind,
+                            state,
                         )) {
                             Ok(_) => {}
                             Err(err) => {
@@ -1415,11 +1454,19 @@ mod tests {
         let breakpoint = Breakpoint {
             position: 123,
             kind: BreakpointKind::Standard,
+            state: BreakpointState::Enabled,
         };
 
         let log_breakpoint = Breakpoint {
             position: 456,
             kind: BreakpointKind::Log("Test log message".into()),
+            state: BreakpointState::Enabled,
+        };
+
+        let disable_breakpoint = Breakpoint {
+            position: 578,
+            kind: BreakpointKind::Standard,
+            state: BreakpointState::Disabled,
         };
 
         let workspace = SerializedWorkspace {
@@ -1439,11 +1486,19 @@ mod tests {
                             position: breakpoint.position,
                             path: Arc::from(path),
                             kind: breakpoint.kind.clone(),
+                            state: breakpoint.state,
                         },
                         SerializedBreakpoint {
                             position: log_breakpoint.position,
                             path: Arc::from(path),
                             kind: log_breakpoint.kind.clone(),
+                            state: log_breakpoint.state,
+                        },
+                        SerializedBreakpoint {
+                            position: disable_breakpoint.position,
+                            path: Arc::from(path),
+                            kind: disable_breakpoint.kind.clone(),
+                            state: disable_breakpoint.state,
                         },
                     ],
                 );
@@ -1458,13 +1513,22 @@ mod tests {
         let loaded = db.workspace_for_roots(&["/tmp"]).unwrap();
         let loaded_breakpoints = loaded.breakpoints.get(&Arc::from(path)).unwrap();
 
-        assert_eq!(loaded_breakpoints.len(), 2);
+        assert_eq!(loaded_breakpoints.len(), 3);
+
         assert_eq!(loaded_breakpoints[0].position, breakpoint.position);
         assert_eq!(loaded_breakpoints[0].kind, breakpoint.kind);
+        assert_eq!(loaded_breakpoints[0].state, breakpoint.state);
+        assert_eq!(loaded_breakpoints[0].path, Arc::from(path));
+
         assert_eq!(loaded_breakpoints[1].position, log_breakpoint.position);
         assert_eq!(loaded_breakpoints[1].kind, log_breakpoint.kind);
-        assert_eq!(loaded_breakpoints[0].path, Arc::from(path));
+        assert_eq!(loaded_breakpoints[1].state, log_breakpoint.state);
         assert_eq!(loaded_breakpoints[1].path, Arc::from(path));
+
+        assert_eq!(loaded_breakpoints[2].position, disable_breakpoint.position);
+        assert_eq!(loaded_breakpoints[2].kind, disable_breakpoint.kind);
+        assert_eq!(loaded_breakpoints[2].state, disable_breakpoint.state);
+        assert_eq!(loaded_breakpoints[2].path, Arc::from(path));
     }
 
     #[gpui::test]

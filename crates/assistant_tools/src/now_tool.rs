@@ -8,6 +8,7 @@ use language_model::LanguageModelRequestMessage;
 use project::Project;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use ui::IconName;
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
@@ -37,6 +38,10 @@ impl Tool for NowTool {
 
     fn description(&self) -> String {
         "Returns the current datetime in RFC 3339 format. Only use this tool when the user specifically asks for it or the current task would benefit from knowing the current datetime.".into()
+    }
+
+    fn icon(&self) -> IconName {
+        IconName::Info
     }
 
     fn input_schema(&self) -> serde_json::Value {

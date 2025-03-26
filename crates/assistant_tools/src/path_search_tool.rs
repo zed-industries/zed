@@ -6,6 +6,7 @@ use project::Project;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::{path::PathBuf, sync::Arc};
+use ui::IconName;
 use util::paths::PathMatcher;
 use worktree::Snapshot;
 
@@ -45,6 +46,10 @@ impl Tool for PathSearchTool {
 
     fn description(&self) -> String {
         include_str!("./path_search_tool/description.md").into()
+    }
+
+    fn icon(&self) -> IconName {
+        IconName::SearchCode
     }
 
     fn input_schema(&self) -> serde_json::Value {

@@ -6,6 +6,7 @@ use project::Project;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::{collections::HashSet, path::PathBuf, sync::Arc};
+use ui::IconName;
 
 use crate::replace::replace_exact;
 
@@ -32,10 +33,10 @@ pub struct FindReplaceFileToolInput {
     /// </example>
     pub path: PathBuf,
 
-    /// A user-friendly description of what's being replaced. This will be shown in the UI.
+    /// A user-friendly markdown description of what's being replaced. This will be shown in the UI.
     ///
     /// <example>Fix API endpoint URLs</example>
-    /// <example>Update copyright year</example>
+    /// <example>Update copyright year in `page_footer`</example>
     pub display_description: String,
 
     /// The unique string to find in the file. This string cannot be empty;
@@ -133,6 +134,10 @@ impl Tool for FindReplaceFileTool {
 
     fn description(&self) -> String {
         include_str!("find_replace_tool/description.md").to_string()
+    }
+
+    fn icon(&self) -> IconName {
+        IconName::Pencil
     }
 
     fn input_schema(&self) -> serde_json::Value {

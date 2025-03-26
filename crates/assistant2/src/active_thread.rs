@@ -4,15 +4,18 @@ use crate::thread::{
 };
 use crate::thread_store::ThreadStore;
 use crate::tool_use::{PendingToolUseStatus, ToolUse, ToolUseStatus};
-use crate::ui::ContextPill;
+use crate::ui::{ContextPill, ToolReadyPopUp, ToolReadyPopupEvent};
+use crate::AssistantPanel;
 
+use assistant_settings::AssistantSettings;
 use collections::HashMap;
 use editor::{Editor, MultiBuffer};
 use gpui::{
     linear_color_stop, linear_gradient, list, percentage, pulsating_between, AbsoluteLength,
     Animation, AnimationExt, AnyElement, App, ClickEvent, DefiniteLength, EdgesRefinement, Empty,
-    Entity, Focusable, Length, ListAlignment, ListOffset, ListState, ScrollHandle, StyleRefinement,
-    Subscription, Task, TextStyleRefinement, Transformation, UnderlineStyle, WeakEntity,
+    Entity, Focusable, Hsla, Length, ListAlignment, ListOffset, ListState, ScrollHandle,
+    StyleRefinement, Subscription, Task, TextStyleRefinement, Transformation, UnderlineStyle,
+    WeakEntity, WindowHandle,
 };
 use language::{Buffer, LanguageRegistry};
 use language_model::{LanguageModelRegistry, LanguageModelToolUseId, Role};
@@ -42,6 +45,7 @@ pub struct ActiveThread {
     expanded_tool_uses: HashMap<LanguageModelToolUseId, bool>,
     expanded_thinking_segments: HashMap<(MessageId, usize), bool>,
     last_error: Option<ThreadError>,
+    pop_ups: Vec<WindowHandle<ToolReadyPopUp>>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -244,6 +248,7 @@ impl ActiveThread {
             }),
             editing_message: None,
             last_error: None,
+            pop_ups: Vec::new(),
             _subscriptions: subscriptions,
         };
 
@@ -370,7 +375,26 @@ impl ActiveThread {
             ThreadEvent::StreamedCompletion | ThreadEvent::SummaryChanged => {
                 self.save_thread(cx);
             }
-            ThreadEvent::DoneStreaming => {}
+            ThreadEvent::DoneStreaming => {
+                if !self.thread().read(cx).is_generating() {
+                    self.show_notification(
+                        "Your changes have been applied.",
+                        IconName::Check,
+                        Color::Success,
+                        window,
+                        cx,
+                    );
+                }
+            }
+            ThreadEvent::ToolConfirmationNeeded => {
+                self.show_notification(
+                    "There's a tool confirmation needed.",
+                    IconName::Info,
+                    Color::Muted,
+                    window,
+                    cx,
+                );
+            }
             ThreadEvent::StreamedAssistantText(message_id, text) => {
                 if let Some(rendered_message) = self.rendered_messages_by_id.get_mut(&message_id) {
                     rendered_message.append_text(text, window, cx);
@@ -494,6 +518,72 @@ impl ActiveThread {
                 }
             }
             ThreadEvent::CheckpointChanged => cx.notify(),
+        }
+    }
+
+    fn show_notification(
+        &mut self,
+        caption: impl Into<SharedString>,
+        icon: IconName,
+        icon_color: Color,
+        window: &mut Window,
+        cx: &mut Context<'_, ActiveThread>,
+    ) {
+        if !window.is_window_active()
+            && self.pop_ups.is_empty()
+            && AssistantSettings::get_global(cx).notify_when_agent_waiting
+        {
+            let caption = caption.into();
+
+            for screen in cx.displays() {
+                let options = ToolReadyPopUp::window_options(screen, cx);
+
+                if let Some(screen_window) = cx
+                    .open_window(options, |_, cx| {
+                        cx.new(|_| ToolReadyPopUp::new(caption.clone(), icon, icon_color))
+                    })
+                    .log_err()
+                {
+                    if let Some(pop_up) = screen_window.entity(cx).log_err() {
+                        cx.subscribe_in(&pop_up, window, {
+                            |this, _, event, window, cx| match event {
+                                ToolReadyPopupEvent::Accepted => {
+                                    let handle = window.window_handle();
+                                    cx.activate(true); // Switch back to the Zed application
+
+                                    let workspace_handle = this.workspace.clone();
+
+                                    // If there are multiple Zed windows, activate the correct one.
+                                    cx.defer(move |cx| {
+                                        handle
+                                            .update(cx, |_view, window, _cx| {
+                                                window.activate_window();
+
+                                                if let Some(workspace) = workspace_handle.upgrade()
+                                                {
+                                                    workspace.update(_cx, |workspace, cx| {
+                                                        workspace.focus_panel::<AssistantPanel>(
+                                                            window, cx,
+                                                        );
+                                                    });
+                                                }
+                                            })
+                                            .log_err();
+                                    });
+
+                                    this.dismiss_notifications(cx);
+                                }
+                                ToolReadyPopupEvent::Dismissed => {
+                                    this.dismiss_notifications(cx);
+                                }
+                            }
+                        })
+                        .detach();
+
+                        self.pop_ups.push(screen_window);
+                    }
+                }
+            }
         }
     }
 
@@ -1023,6 +1113,7 @@ impl ActiveThread {
 
                 parent.child(
                     h_flex()
+                        .pt_2p5()
                         .px_2p5()
                         .w_full()
                         .gap_1()
@@ -1080,6 +1171,17 @@ impl ActiveThread {
             )
     }
 
+    fn tool_card_border_color(&self, cx: &Context<Self>) -> Hsla {
+        cx.theme().colors().border.opacity(0.5)
+    }
+
+    fn tool_card_header_bg(&self, cx: &Context<Self>) -> Hsla {
+        cx.theme()
+            .colors()
+            .element_background
+            .blend(cx.theme().colors().editor_foreground.opacity(0.025))
+    }
+
     fn render_message_thinking_segment(
         &self,
         message_id: MessageId,
@@ -1095,26 +1197,25 @@ impl ActiveThread {
             .copied()
             .unwrap_or_default();
 
-        let lighter_border = cx.theme().colors().border.opacity(0.5);
         let editor_bg = cx.theme().colors().editor_background;
 
         div().py_2().child(
             v_flex()
                 .rounded_lg()
                 .border_1()
-                .border_color(lighter_border)
+                .border_color(self.tool_card_border_color(cx))
                 .child(
                     h_flex()
                         .group("disclosure-header")
                         .justify_between()
                         .py_1()
                         .px_2()
-                        .bg(cx.theme().colors().editor_foreground.opacity(0.025))
+                        .bg(self.tool_card_header_bg(cx))
                         .map(|this| {
                             if pending || is_open {
                                 this.rounded_t_md()
                                     .border_b_1()
-                                    .border_color(lighter_border)
+                                    .border_color(self.tool_card_border_color(cx))
                             } else {
                                 this.rounded_md()
                             }
@@ -1249,38 +1350,21 @@ impl ActiveThread {
             .copied()
             .unwrap_or_default();
 
-        let lighter_border = cx.theme().colors().border.opacity(0.5);
-
-        let tool_icon = match tool_use.name.as_ref() {
-            "bash" => IconName::Terminal,
-            "copy-path" => IconName::Clipboard,
-            "delete-path" => IconName::Trash,
-            "diagnostics" => IconName::Warning,
-            "edit-files" | "find-replace-file" => IconName::Pencil,
-            "fetch" => IconName::Globe,
-            "list-directory" => IconName::Folder,
-            "move-path" => IconName::ArrowRightLeft,
-            "now" => IconName::Info,
-            "path-search" => IconName::SearchCode,
-            "read-file" => IconName::Eye,
-            "regex-search" => IconName::Regex,
-            "thinking" => IconName::Brain,
-            _ => IconName::Cog,
-        };
-
         div().py_2().child(
             v_flex()
                 .rounded_lg()
                 .border_1()
-                .border_color(lighter_border)
+                .border_color(self.tool_card_border_color(cx))
                 .overflow_hidden()
                 .child(
                     h_flex()
                         .group("disclosure-header")
+                        .relative()
+                        .gap_1p5()
                         .justify_between()
                         .py_1()
                         .px_2()
-                        .bg(cx.theme().colors().editor_foreground.opacity(0.025))
+                        .bg(self.tool_card_header_bg(cx))
                         .map(|element| {
                             if is_open {
                                 element.border_b_1().rounded_t_md()
@@ -1288,25 +1372,22 @@ impl ActiveThread {
                                 element.rounded_md()
                             }
                         })
-                        .border_color(lighter_border)
+                        .border_color(self.tool_card_border_color(cx))
                         .child(
                             h_flex()
+                                .id("tool-label-container")
+                                .relative()
                                 .gap_1p5()
+                                .max_w_full()
+                                .overflow_x_scroll()
                                 .child(
-                                    Icon::new(tool_icon)
+                                    Icon::new(tool_use.icon)
                                         .size(IconSize::XSmall)
                                         .color(Color::Muted),
                                 )
-                                .child(
-                                    div()
-                                        .text_ui_sm(cx)
-                                        .children(
-                                            self.rendered_tool_use_labels
-                                                .get(&tool_use.id)
-                                                .cloned(),
-                                        )
-                                        .truncate(),
-                                ),
+                                .child(h_flex().pr_8().text_ui_sm(cx).children(
+                                    self.rendered_tool_use_labels.get(&tool_use.id).cloned(),
+                                )),
                         )
                         .child(
                             h_flex()
@@ -1364,7 +1445,14 @@ impl ActiveThread {
                                         icon.into_any_element()
                                     }
                                 }),
-                        ),
+                        )
+                        .child(div().h_full().absolute().w_8().bottom_0().right_12().bg(
+                            linear_gradient(
+                                90.,
+                                linear_color_stop(self.tool_card_header_bg(cx), 1.),
+                                linear_color_stop(self.tool_card_header_bg(cx).opacity(0.2), 0.),
+                            ),
+                        )),
                 )
                 .map(|parent| {
                     if !is_open {
@@ -1381,7 +1469,7 @@ impl ActiveThread {
                             .child(
                                 content_container()
                                     .border_b_1()
-                                    .border_color(lighter_border)
+                                    .border_color(self.tool_card_border_color(cx))
                                     .child(
                                         Label::new("Input")
                                             .size(LabelSize::XSmall)
@@ -1650,6 +1738,16 @@ impl ActiveThread {
                     )
                     .into_any()
             })
+    }
+
+    fn dismiss_notifications(&mut self, cx: &mut Context<'_, ActiveThread>) {
+        for window in self.pop_ups.drain(..) {
+            window
+                .update(cx, |_, window, _| {
+                    window.remove_window();
+                })
+                .ok();
+        }
     }
 }
 

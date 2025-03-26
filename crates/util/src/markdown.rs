@@ -19,7 +19,7 @@ impl MarkdownString {
     /// * `$` for inline math
     /// * `~` for strikethrough
     ///
-    /// Escape of some character is unnecessary because while they are involved in markdown syntax,
+    /// Escape of some characters is unnecessary, because while they are involved in markdown syntax,
     /// the other characters involved are escaped:
     ///
     /// * `!`, `]`, `(`, and `)` are used in link syntax, but `[` is escaped so these are parsed as

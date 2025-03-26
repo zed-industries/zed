@@ -1,9 +1,9 @@
-use gpui::{Action, Entity, Global, Render};
+use gpui::{Action, Entity, Global, Render, SharedString};
 use ui::{prelude::*, ButtonLike, Tooltip};
 use util::ResultExt;
 
-/// Prompts the user to try Zed's features
-pub struct Banner {
+/// Prompts the user to try newly released Zed's features
+pub struct OnboardingBanner {
     dismissed: bool,
     source: String,
     details: BannerDetails,
@@ -11,23 +11,37 @@ pub struct Banner {
 
 #[derive(Clone)]
 struct BannerGlobal {
-    entity: Entity<Banner>,
+    entity: Entity<OnboardingBanner>,
 }
 impl Global for BannerGlobal {}
 
 pub struct BannerDetails {
     pub action: Box<dyn Action>,
-    pub banner_label: Box<dyn Fn(&Window, &mut Context<Banner>) -> AnyElement>,
+    pub icon_name: IconName,
+    pub label: SharedString,
+    pub subtitle: Option<SharedString>,
 }
 
-impl Banner {
-    pub fn new(source: &str, details: BannerDetails, cx: &mut Context<Self>) -> Self {
+impl OnboardingBanner {
+    pub fn new(
+        source: &str,
+        icon_name: IconName,
+        label: impl Into<SharedString>,
+        subtitle: Option<SharedString>,
+        action: Box<dyn Action>,
+        cx: &mut Context<Self>,
+    ) -> Self {
         cx.set_global(BannerGlobal {
             entity: cx.entity(),
         });
         Self {
             source: source.to_string(),
-            details,
+            details: BannerDetails {
+                action,
+                icon_name,
+                label: label.into(),
+                subtitle: subtitle.or(Some(SharedString::from("Introducing:"))),
+            },
             dismissed: get_dismissed(source),
         }
     }
@@ -90,8 +104,8 @@ pub fn restore_banner(cx: &mut App) {
         .detach_and_log_err(cx);
 }
 
-impl Render for Banner {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+impl Render for OnboardingBanner {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         if !self.should_show(cx) {
             return div();
         }
@@ -103,7 +117,24 @@ impl Render for Banner {
             .border_color(border_color)
             .child(
                 ButtonLike::new("try-a-feature")
-                    .child((self.details.banner_label)(window, cx))
+                    .child(
+                        h_flex()
+                            .h_full()
+                            .gap_1()
+                            .child(Icon::new(self.details.icon_name).size(IconSize::Small))
+                            .child(
+                                h_flex()
+                                    .gap_0p5()
+                                    .when_some(self.details.subtitle.as_ref(), |this, subtitle| {
+                                        this.child(
+                                            Label::new(subtitle)
+                                                .size(LabelSize::Small)
+                                                .color(Color::Muted),
+                                        )
+                                    })
+                                    .child(Label::new(&self.details.label).size(LabelSize::Small)),
+                            ),
+                    )
                     .on_click(cx.listener(|this, _, window, cx| {
                         telemetry::event!("Banner Clicked", source = this.source);
                         this.dismiss(cx);
