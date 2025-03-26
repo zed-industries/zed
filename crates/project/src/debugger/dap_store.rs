@@ -454,7 +454,6 @@ impl DapStore {
                 program: config.program,
                 cwd: config.cwd,
                 initialize_args: Some(args.configuration),
-                supports_attach: config.supports_attach,
             },
             &worktree,
             Some(parent_session.clone()),

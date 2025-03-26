@@ -31,7 +31,6 @@ pub fn test_config(
         )),
         request,
         program: None,
-        supports_attach: false,
         cwd: None,
         initialize_args: None,
     }
