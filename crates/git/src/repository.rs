@@ -10,7 +10,8 @@ use parking_lot::Mutex;
 use rope::Rope;
 use schemars::JsonSchema;
 use serde::Deserialize;
-use std::borrow::Borrow;
+use std::borrow::{Borrow, Cow};
+use std::ffi::OsStr;
 use std::future;
 use std::path::Component;
 use std::process::{ExitStatus, Stdio};
@@ -1337,14 +1338,17 @@ impl RepoPath {
         RepoPath(path.into())
     }
 
-    pub fn to_unix_style(&self) -> String {
-        #[cfg(windows)]
+    pub fn to_unix_style(&self) -> Cow<'_, OsStr> {
+        #[cfg(target_os = "windows")]
         {
-            self.0.to_string_lossy().replace('\\', "/")
+            use std::ffi::OsString;
+
+            let path = self.0.as_os_str().to_string_lossy().replace("\\", "/");
+            Cow::Owned(OsString::from(path))
         }
-        #[cfg(not(windows))]
+        #[cfg(not(target_os = "windows"))]
         {
-            self.0.to_string_lossy().to_string()
+            Cow::Borrowed(self.0.as_os_str())
         }
     }
 }
