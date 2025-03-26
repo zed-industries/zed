@@ -810,6 +810,19 @@ impl Motion {
         maybe_times: Option<usize>,
         text_layout_details: &TextLayoutDetails,
     ) -> Option<(DisplayPoint, SelectionGoal)> {
+        self.move_point_2(map, point, goal, maybe_times, text_layout_details, false)
+    }
+
+    // The implementation of motion in this case
+    pub fn move_point_2(
+        &self,
+        map: &DisplaySnapshot,
+        point: DisplayPoint,
+        goal: SelectionGoal,
+        maybe_times: Option<usize>,
+        text_layout_details: &TextLayoutDetails,
+        selection_reversed: bool,
+    ) -> Option<(DisplayPoint, SelectionGoal)> {
         let times = maybe_times.unwrap_or(1);
         use Motion::*;
         let infallible = self.infallible();
@@ -818,13 +831,27 @@ impl Motion {
             WrappingLeft => (wrapping_left(map, point, times), SelectionGoal::None),
             Down {
                 display_lines: false,
-            } => up_down_buffer_rows(map, point, goal, times as isize, text_layout_details),
+            } => up_down_buffer_rows(
+                map,
+                point,
+                goal,
+                times as isize,
+                text_layout_details,
+                selection_reversed,
+            ),
             Down {
                 display_lines: true,
             } => down_display(map, point, goal, times, text_layout_details),
             Up {
                 display_lines: false,
-            } => up_down_buffer_rows(map, point, goal, 0 - times as isize, text_layout_details),
+            } => up_down_buffer_rows(
+                map,
+                point,
+                goal,
+                0 - times as isize,
+                text_layout_details,
+                selection_reversed,
+            ),
             Up {
                 display_lines: true,
             } => up_display(map, point, goal, times, text_layout_details),
@@ -1354,6 +1381,7 @@ fn up_down_buffer_rows(
     mut goal: SelectionGoal,
     mut times: isize,
     text_layout_details: &TextLayoutDetails,
+    selection_reversed: bool,
 ) -> (DisplayPoint, SelectionGoal) {
     let bias = if times < 0 { Bias::Left } else { Bias::Right };
 
@@ -1378,7 +1406,13 @@ fn up_down_buffer_rows(
 
     let (goal_wrap, goal_x) = match goal {
         SelectionGoal::WrappedHorizontalPosition((row, x)) => (row, x),
-        SelectionGoal::HorizontalRange { end, .. } => (select_nth_wrapped_row, end),
+        SelectionGoal::HorizontalRange { start, end } => {
+            if !selection_reversed {
+                (select_nth_wrapped_row, end)
+            } else {
+                (select_nth_wrapped_row, start)
+            }
+        }
         SelectionGoal::HorizontalPosition(x) => (select_nth_wrapped_row, x),
         _ => {
             let x = map.x_for_display_point(point, text_layout_details);

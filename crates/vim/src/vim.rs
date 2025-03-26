@@ -918,7 +918,7 @@ impl Vim {
         self.update_editor(window, cx, |vim, editor, window, cx| {
             if last_mode != Mode::VisualBlock && last_mode.is_visual() && mode == Mode::VisualBlock
             {
-                vim.visual_block_motion(true, editor, window, cx, |_, point, goal| {
+                vim.visual_block_motion(true, editor, window, cx, |_, point, goal, _| {
                     Some((point, goal))
                 })
             }
@@ -929,6 +929,7 @@ impl Vim {
             }
 
             editor.change_selections(None, window, cx, |s| {
+                // TODO this seems important
                 // we cheat with visual block mode and use multiple cursors.
                 // the cost of this cheat is we need to convert back to a single
                 // cursor whenever vim would.

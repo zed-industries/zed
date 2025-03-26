@@ -169,9 +169,15 @@ impl Vim {
                 )
             {
                 let is_up_or_down = matches!(motion, Motion::Up { .. } | Motion::Down { .. });
-                vim.visual_block_motion(is_up_or_down, editor, window, cx, |map, point, goal| {
-                    motion.move_point(map, point, goal, times, &text_layout_details)
-                })
+                vim.visual_block_motion(
+                    is_up_or_down,
+                    editor,
+                    window,
+                    cx,
+                    |map, point, goal, reversed| {
+                        motion.move_point_2(map, point, goal, times, &text_layout_details, reversed)
+                    },
+                )
             } else {
                 editor.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
                     s.move_with(|map, selection| {
@@ -242,12 +248,14 @@ impl Vim {
             &DisplaySnapshot,
             DisplayPoint,
             SelectionGoal,
+            bool,
         ) -> Option<(DisplayPoint, SelectionGoal)>,
     ) {
         let text_layout_details = editor.text_layout_details(window);
         editor.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
             let map = &s.display_map();
-            let mut head = s.newest_anchor().head().to_display_point(map);
+            let newest_anchor = s.newest_anchor();
+            let mut head = newest_anchor.clone().head().to_display_point(map);
             let mut tail = s.oldest_anchor().tail().to_display_point(map);
 
             let mut head_x = map.x_for_display_point(head, &text_layout_details);
@@ -258,19 +266,31 @@ impl Vim {
                 SelectionGoal::HorizontalPosition(start) if preserve_goal => (start, start),
                 _ => (tail_x.0, head_x.0),
             };
+
             let mut goal = SelectionGoal::HorizontalRange { start, end };
 
             let was_reversed = tail_x > head_x;
+
+            // let actual_goal = if was_reversed {
+            //     SelectionGoal::HorizontalRange {
+            //         start: end,
+            //         end: start,
+            //     }
+            // } else {
+            //     goal
+            // };
+
             if !was_reversed && !preserve_goal {
                 head = movement::saturating_left(map, head);
             }
 
-            let Some((new_head, _)) = move_selection(map, head, goal) else {
+            let Some((new_head, _)) = move_selection(map, head, goal, was_reversed) else {
                 return;
             };
             head = new_head;
             head_x = map.x_for_display_point(head, &text_layout_details);
 
+            // This will always be false after an up call it seems
             let is_reversed = tail_x > head_x;
             if was_reversed && !is_reversed {
                 tail = movement::saturating_left(map, tail);
@@ -1213,6 +1233,38 @@ mod test {
             the lazy dog
             "
         });
+    }
+
+    #[gpui::test]
+    async fn test_visual_block_mode_down_right(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+        // Normal mode
+        cx.set_shared_state(indoc! {"
+            The ˇquick brown
+            fox jumps over
+            the lazy dog"})
+            .await;
+        cx.simulate_shared_keystrokes("ctrl-v l l l l l j").await;
+        cx.shared_state().await.assert_eq(indoc! {"
+            The «quick ˇ»brown
+            fox «jumps ˇ»over
+            the lazy dog"});
+    }
+
+    #[gpui::test]
+    async fn test_visual_block_mode_up_left(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+        // Normal mode
+        cx.set_shared_state(indoc! {"
+            The quick brown
+            fox jumpsˇ over
+            the lazy dog"})
+            .await;
+        cx.simulate_shared_keystrokes("ctrl-v h h h h h k").await;
+        cx.shared_state().await.assert_eq(indoc! {"
+            The «ˇquick »brown
+            fox «ˇjumps »over
+            the lazy dog"});
     }
 
     #[gpui::test]

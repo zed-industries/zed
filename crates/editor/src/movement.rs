@@ -124,6 +124,7 @@ pub(crate) fn up_by_rows(
     let goal_x = match goal {
         SelectionGoal::HorizontalPosition(x) => x.into(),
         SelectionGoal::WrappedHorizontalPosition((_, x)) => x.into(),
+        // TODO does this need to change too?
         SelectionGoal::HorizontalRange { end, .. } => end.into(),
         _ => map.x_for_display_point(start, text_layout_details),
     };
@@ -162,6 +163,7 @@ pub(crate) fn down_by_rows(
     let goal_x = match goal {
         SelectionGoal::HorizontalPosition(x) => x.into(),
         SelectionGoal::WrappedHorizontalPosition((_, x)) => x.into(),
+        // TODO does this need to change too?
         SelectionGoal::HorizontalRange { end, .. } => end.into(),
         _ => map.x_for_display_point(start, text_layout_details),
     };
