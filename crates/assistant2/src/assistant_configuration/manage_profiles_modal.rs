@@ -1,11 +1,12 @@
 use std::sync::Arc;
 
+use assistant_tool::ToolWorkingSet;
 use gpui::{prelude::*, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, WeakEntity};
 use ui::{prelude::*, ListItem, ListItemSpacing, Navigable, NavigableEntry};
 use workspace::{ModalView, Workspace};
 
 use crate::assistant_configuration::profile_picker::{ProfilePicker, ProfilePickerDelegate};
-use crate::ManageProfiles;
+use crate::{AssistantPanel, ManageProfiles};
 
 enum Mode {
     ChooseProfile(Entity<ProfilePicker>),
@@ -28,6 +29,7 @@ pub struct ConfigureToolsMode {
 pub struct ManageProfilesModal {
     #[allow(dead_code)]
     workspace: WeakEntity<Workspace>,
+    tools: Arc<ToolWorkingSet>,
     focus_handle: FocusHandle,
     mode: Mode,
 }
@@ -39,15 +41,19 @@ impl ManageProfilesModal {
         _cx: &mut Context<Workspace>,
     ) {
         workspace.register_action(|workspace, _: &ManageProfiles, window, cx| {
-            let workspace_handle = cx.entity().downgrade();
-            workspace.toggle_modal(window, cx, |window, cx| {
-                Self::new(workspace_handle, window, cx)
-            })
+            if let Some(panel) = workspace.panel::<AssistantPanel>(cx) {
+                let workspace_handle = cx.entity().downgrade();
+                let tools = panel.read(cx).thread_store().read(cx).tools();
+                workspace.toggle_modal(window, cx, |window, cx| {
+                    Self::new(workspace_handle, tools, window, cx)
+                })
+            }
         });
     }
 
     pub fn new(
         workspace: WeakEntity<Workspace>,
+        tools: Arc<ToolWorkingSet>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -56,6 +62,7 @@ impl ManageProfilesModal {
 
         Self {
             workspace,
+            tools,
             focus_handle,
             mode: Mode::ChooseProfile(cx.new(|cx| {
                 let delegate = ProfilePickerDelegate::new(
@@ -156,9 +163,24 @@ impl ManageProfilesModal {
         &mut self,
         _mode: ConfigureToolsMode,
         _window: &mut Window,
-        _cx: &mut Context<Self>,
+        cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        div().child(Label::new("Configure tools..."))
+        let tools_by_source = self.tools.tools_by_source(cx);
+
+        v_flex().children(tools_by_source.into_iter().map(|(source, tools)| {
+            v_flex().children(tools.into_iter().map(|tool| {
+                ListItem::new(SharedString::from(tool.name()))
+                    .inset(true)
+                    .child(Label::new(tool.name()))
+                    .end_slot::<Icon>(self.tools.is_enabled(&source, &tool.name().into()).then(
+                        || {
+                            Icon::new(IconName::Check)
+                                .size(IconSize::Small)
+                                .color(Color::Success)
+                        },
+                    ))
+            }))
+        }))
     }
 }
 
