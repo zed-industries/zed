@@ -17617,7 +17617,7 @@ async fn test_log_breakpoint_editing(cx: &mut TestAppContext) {
     assert_breakpoint(
         &breakpoints,
         &abs_path,
-        vec![(0, Breakpoint::new_log("hello world".into()))],
+        vec![(0, Breakpoint::new_log("hello world"))],
     );
 
     // Removing a log message from a log breakpoint should remove it
@@ -17683,7 +17683,7 @@ async fn test_log_breakpoint_editing(cx: &mut TestAppContext) {
         &abs_path,
         vec![
             (0, Breakpoint::new_standard()),
-            (3, Breakpoint::new_log("hello world".into())),
+            (3, Breakpoint::new_log("hello world")),
         ],
     );
 
@@ -17706,7 +17706,7 @@ async fn test_log_breakpoint_editing(cx: &mut TestAppContext) {
         &abs_path,
         vec![
             (0, Breakpoint::new_standard()),
-            (3, Breakpoint::new_log("hello Earth !!".into())),
+            (3, Breakpoint::new_log("hello Earth !!")),
         ],
     );
 }
