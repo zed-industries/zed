@@ -219,6 +219,7 @@ impl ListState {
             let state = &mut *self.0.borrow_mut();
             state.reset = true;
             state.logical_scroll_top = None;
+            state.scrollbar_drag_start_height = None;
             state.items.summary().count
         };
 
