@@ -542,9 +542,8 @@ pub enum BreakpointEditAction {
     EditLogMessage(LogMessage),
 }
 
-#[derive(Default, Clone, Debug)]
+#[derive(Clone, Debug)]
 pub enum BreakpointKind {
-    #[default]
     Standard,
     Log(LogMessage),
 }
@@ -579,9 +578,8 @@ impl Hash for BreakpointKind {
     }
 }
 
-#[derive(Default, Copy, Clone, Debug, Hash, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
 pub enum BreakpointState {
-    #[default]
     Enabled,
     Disabled,
 }
@@ -606,7 +604,7 @@ impl BreakpointState {
     }
 }
 
-#[derive(Clone, Default, Debug, Hash, PartialEq, Eq)]
+#[derive(Clone, Debug, Hash, PartialEq, Eq)]
 pub struct Breakpoint {
     pub kind: BreakpointKind,
     pub state: BreakpointState,

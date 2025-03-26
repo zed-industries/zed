@@ -8609,7 +8609,7 @@ impl Editor {
 
             self.edit_breakpoint_at_anchor(
                 breakpoint_position,
-                Breakpoint::default(),
+                Breakpoint::new_hover(),
                 edit_action,
                 cx,
             );
