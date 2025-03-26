@@ -64,7 +64,7 @@ impl Tool for BashTool {
 
         let project = project.read(cx);
         let input_path = Path::new(&input.cd);
-        let working_directory = if input.cd == "." {
+        let working_dir = if input.cd == "." {
             // Accept "." as meaning "the one worktree" if we only have one worktree.
             let mut worktrees = project.worktrees(cx);
 
@@ -105,7 +105,7 @@ impl Tool for BashTool {
             let output = new_smol_command("bash")
                 .arg("-c")
                 .arg(&command)
-                .current_dir(working_directory)
+                .current_dir(working_dir)
                 .output()
                 .await
                 .context("Failed to execute bash command")?;
