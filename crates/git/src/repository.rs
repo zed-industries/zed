@@ -183,7 +183,6 @@ pub trait GitRepository: Send + Sync {
 
     fn merge_head_shas(&self) -> Vec<String>;
 
-    // Note: this method blocks the current thread!
     fn status(&self, path_prefixes: &[RepoPath]) -> BoxFuture<'static, Result<GitStatus>>;
 
     fn branches(&self) -> BoxFuture<Result<Vec<Branch>>>;
