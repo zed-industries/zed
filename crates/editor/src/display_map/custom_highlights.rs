@@ -1,5 +1,5 @@
 use collections::BTreeMap;
-use gpui::{HighlightStyle, Hsla};
+use gpui::HighlightStyle;
 use language::Chunk;
 use multi_buffer::{Anchor, MultiBufferChunks, MultiBufferSnapshot, ToOffset as _};
 use std::{

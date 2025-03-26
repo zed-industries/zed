@@ -65,37 +65,36 @@ impl LspCommand for SemanticTokensFull {
             Some(lsp::SemanticTokensResult::Tokens(tokens)) => tokens.data,
             None => vec![],
         };
-        let mut acc = 0;
-        let mut line_acc = 0;
+        let mut current_line = 0;
+        let mut current_char = 0;
         let new_tokens = tokens.into_iter().map(|token| {
-            let len = token.length;
-            if token.delta_line != 0 {
-                acc = 0;
+            current_line += token.delta_line;
+
+            // Restore absolute character position
+            // If delta_line is 0, subtract delta_start from previous character position
+            // Otherwise, use delta_start as the new character position
+            if token.delta_line == 0 {
+                current_char += token.delta_start;
+            } else {
+                current_char = token.delta_start;
             }
-            // this line is assuming that we have one token lines because the
+
+            // Assuming that we have one token lines because the
             // line of the token never gets "spoofed" by this. and this is actually
             // the current limitation of the semantic highlight support here.
-            let range = {
-                let start = snapshot.clip_point_utf16(
-                    Unclipped(PointUtf16::new(
-                        token.delta_line + line_acc, //
-                        token.delta_start + acc,
-                    )),
-                    Bias::Left,
-                );
-                let end = snapshot.clip_point_utf16(
-                    Unclipped(PointUtf16::new(
-                        token.delta_line + line_acc, //
-                        token.delta_start + len + acc + 1,
-                    )),
-                    Bias::Right,
-                );
-                snapshot.anchor_before(start)..snapshot.anchor_after(end)
-            };
-            acc += token.delta_start;
-            line_acc += token.delta_start;
+            let start = snapshot.clip_point_utf16(
+                Unclipped(PointUtf16::new(current_line, current_char)),
+                Bias::Left,
+            );
+            let end = snapshot.clip_point_utf16(
+                Unclipped(PointUtf16::new(
+                    current_line, //
+                    current_char + token.length,
+                )),
+                Bias::Right,
+            );
             SemanticToken {
-                range,
+                range: snapshot.anchor_before(start)..snapshot.anchor_after(end),
                 modifiers: active_modifiers(token.token_modifiers_bitset, &legend.token_modifiers),
                 r#type: legend
                     .token_types
@@ -146,14 +145,14 @@ impl LspCommand for SemanticTokensFull {
 }
 
 fn active_modifiers(
-    m: u32,
+    modifiers_bitset: u32,
     legend: &[lsp::SemanticTokenModifier],
 ) -> Vec<lsp::SemanticTokenModifier> {
     legend
         .iter()
         .enumerate()
         .filter_map(move |(idx, modifier)| {
-            if (m & (1 << idx)) != 0 {
+            if (modifiers_bitset & (1 << idx)) != 0 {
                 Some(modifier.clone())
             } else {
                 None

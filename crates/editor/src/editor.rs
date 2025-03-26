@@ -56,7 +56,7 @@ use blink_manager::BlinkManager;
 use buffer_diff::DiffHunkStatus;
 use client::{Collaborator, ParticipantIndex};
 use clock::ReplicaId;
-use collections::{BTreeMap, FxHashMap, HashMap, HashSet, VecDeque};
+use collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use convert_case::{Case, Casing};
 use display_map::*;
 pub use display_map::{DisplayPoint, FoldPlaceholder};
@@ -87,9 +87,9 @@ use gpui::{
     Bounds, ClickEvent, ClipboardEntry, ClipboardItem, Context, DispatchPhase, Edges, Entity,
     EntityInputHandler, EventEmitter, FocusHandle, FocusOutEvent, Focusable, FontId, FontWeight,
     Global, HighlightStyle, Hsla, KeyContext, Modifiers, MouseButton, MouseDownEvent, PaintQuad,
-    ParentElement, Pixels, Render, SharedString, Size, Stateful, StrikethroughStyle, Styled,
-    StyledText, Subscription, Task, TextStyle, TextStyleRefinement, UTF16Selection, UnderlineStyle,
-    UniformListScrollHandle, WeakEntity, WeakFocusHandle, Window,
+    ParentElement, Pixels, Render, SharedString, Size, Stateful, Styled, StyledText, Subscription,
+    Task, TextStyle, TextStyleRefinement, UTF16Selection, UnderlineStyle, UniformListScrollHandle,
+    WeakEntity, WeakFocusHandle, Window,
 };
 use highlight_matching_bracket::refresh_matching_bracket_highlights;
 use hover_links::{find_file, HoverLink, HoveredLinkState, InlayHighlight};
