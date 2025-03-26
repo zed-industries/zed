@@ -76,7 +76,7 @@ fn main() {
         let height = px(800.);
         let width = px(800.);
 
-        cx.spawn(|cx| async move {
+        cx.spawn(async move |cx| {
             let mut windows = Vec::new();
             for i in 0..2 {
                 let token = token::create(
@@ -141,7 +141,7 @@ impl LivekitWindow {
                 },
                 |window, cx| {
                     cx.new(|cx| {
-                        let _events_task = cx.spawn_in(window, |this, mut cx| async move {
+                        let _events_task = cx.spawn_in(window, async move |this, cx| {
                             while let Some(event) = events.recv().await {
                                 cx.update(|window, cx| {
                                     this.update(cx, |this: &mut LivekitWindow, cx| {
@@ -276,7 +276,7 @@ impl LivekitWindow {
             cx.notify();
         } else {
             let participant = self.room.local_participant();
-            cx.spawn_in(window, |this, mut cx| async move {
+            cx.spawn_in(window, async move |this, cx| {
                 let (track, stream) = capture_local_audio_track(cx.background_executor())?.await;
                 let publication = participant
                     .publish_track(
@@ -288,7 +288,7 @@ impl LivekitWindow {
                     )
                     .await
                     .unwrap();
-                this.update(&mut cx, |this, cx| {
+                this.update(cx, |this, cx| {
                     this.microphone_track = Some(publication);
                     this.microphone_stream = Some(stream);
                     cx.notify();
@@ -310,7 +310,7 @@ impl LivekitWindow {
         } else {
             let participant = self.room.local_participant();
             let sources = cx.screen_capture_sources();
-            cx.spawn_in(window, |this, mut cx| async move {
+            cx.spawn_in(window, async move |this, cx| {
                 let sources = sources.await.unwrap()?;
                 let source = sources.into_iter().next().unwrap();
                 let (track, stream) = capture_local_video_track(&*source).await?;
@@ -325,7 +325,7 @@ impl LivekitWindow {
                     )
                     .await
                     .unwrap();
-                this.update(&mut cx, |this, cx| {
+                this.update(cx, |this, cx| {
                     this.screen_share_track = Some(publication);
                     this.screen_share_stream = Some(stream);
                     cx.notify();

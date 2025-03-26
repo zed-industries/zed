@@ -1,18 +1,18 @@
 use crate::{
     point, prelude::*, px, size, transparent_black, Action, AnyDrag, AnyElement, AnyTooltip,
-    AnyView, App, AppContext, Arena, Asset, AsyncWindowContext, AvailableSpace, Background, Bounds,
-    BoxShadow, Context, Corners, CursorStyle, Decorations, DevicePixels, DispatchActionListener,
-    DispatchNodeId, DispatchTree, DisplayId, Edges, Effect, Entity, EntityId, EventEmitter,
-    FileDropEvent, FontId, Global, GlobalElementId, GlyphId, GpuSpecs, Hsla, InputHandler, IsZero,
-    KeyBinding, KeyContext, KeyDownEvent, KeyEvent, Keystroke, KeystrokeEvent, LayoutId,
-    LineLayoutIndex, Modifiers, ModifiersChangedEvent, MonochromeSprite, MouseButton, MouseEvent,
-    MouseMoveEvent, MouseUpEvent, Path, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput,
-    PlatformInputHandler, PlatformWindow, Point, PolychromeSprite, PromptLevel, Quad, Render,
-    RenderGlyphParams, RenderImage, RenderImageParams, RenderSvgParams, Replay, ResizeEdge,
-    ScaledPixels, Scene, Shadow, SharedString, Size, StrikethroughStyle, Style, SubscriberSet,
-    Subscription, TaffyLayoutEngine, Task, TextStyle, TextStyleRefinement, TransformationMatrix,
-    Underline, UnderlineStyle, WindowAppearance, WindowBackgroundAppearance, WindowBounds,
-    WindowControls, WindowDecorations, WindowOptions, WindowParams, WindowTextSystem,
+    AnyView, App, AppContext, Arena, Asset, AsyncWindowContext, AvailableSpace, Background,
+    BorderStyle, Bounds, BoxShadow, Context, Corners, CursorStyle, Decorations, DevicePixels,
+    DispatchActionListener, DispatchNodeId, DispatchTree, DisplayId, Edges, Effect, Entity,
+    EntityId, EventEmitter, FileDropEvent, FontId, Global, GlobalElementId, GlyphId, GpuSpecs,
+    Hsla, InputHandler, IsZero, KeyBinding, KeyContext, KeyDownEvent, KeyEvent, Keystroke,
+    KeystrokeEvent, LayoutId, LineLayoutIndex, Modifiers, ModifiersChangedEvent, MonochromeSprite,
+    MouseButton, MouseEvent, MouseMoveEvent, MouseUpEvent, Path, Pixels, PlatformAtlas,
+    PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow, Point, PolychromeSprite,
+    PromptLevel, Quad, Render, RenderGlyphParams, RenderImage, RenderImageParams, RenderSvgParams,
+    Replay, ResizeEdge, ScaledPixels, Scene, Shadow, SharedString, Size, StrikethroughStyle, Style,
+    SubscriberSet, Subscription, TaffyLayoutEngine, Task, TextStyle, TextStyleRefinement,
+    TransformationMatrix, Underline, UnderlineStyle, WindowAppearance, WindowBackgroundAppearance,
+    WindowBounds, WindowControls, WindowDecorations, WindowOptions, WindowParams, WindowTextSystem,
     SMOOTH_SVG_SCALE_FACTOR, SUBPIXEL_VARIANTS,
 };
 use anyhow::{anyhow, Context as _, Result};
@@ -33,7 +33,6 @@ use std::{
     cell::{Cell, RefCell},
     cmp,
     fmt::{Debug, Display},
-    future::Future,
     hash::{Hash, Hasher},
     marker::PhantomData,
     mem,
@@ -1292,12 +1291,16 @@ impl Window {
     /// The closure is provided a handle to the current window and an `AsyncWindowContext` for
     /// use within your future.
     #[track_caller]
-    pub fn spawn<Fut, R>(&self, cx: &App, f: impl FnOnce(AsyncWindowContext) -> Fut) -> Task<R>
+    pub fn spawn<AsyncFn, R>(&self, cx: &App, f: AsyncFn) -> Task<R>
     where
         R: 'static,
-        Fut: Future<Output = R> + 'static,
+        AsyncFn: AsyncFnOnce(&mut AsyncWindowContext) -> R + 'static,
     {
-        cx.spawn(|app| f(AsyncWindowContext::new_context(app, self.handle)))
+        let handle = self.handle;
+        cx.spawn(async move |app| {
+            let mut async_window_cx = AsyncWindowContext::new_context(app.clone(), handle);
+            f(&mut async_window_cx).await
+        })
     }
 
     fn bounds_changed(&mut self, cx: &mut App) {
@@ -2068,7 +2071,7 @@ impl Window {
                 let entity = self.current_view();
                 self.spawn(cx, {
                     let task = task.clone();
-                    |mut cx| async move {
+                    async move |cx| {
                         task.await;
 
                         cx.on_next_frame(move |_, cx| {
@@ -2330,15 +2333,21 @@ impl Window {
         let scale_factor = self.scale_factor();
         let content_mask = self.content_mask();
         let opacity = self.element_opacity();
+
+        let bounds = quad.bounds.scale(scale_factor);
+        let corner_radii = quad
+            .corner_radii
+            .scale(scale_factor)
+            .clamp_radii_for_quad_size(bounds.size);
         self.next_frame.scene.insert_primitive(Quad {
             order: 0,
-            pad: 0,
-            bounds: quad.bounds.scale(scale_factor),
+            bounds,
             content_mask: content_mask.scale(scale_factor),
             background: quad.background.opacity(opacity),
             border_color: quad.border_color.opacity(opacity),
-            corner_radii: quad.corner_radii.scale(scale_factor),
+            corner_radii,
             border_widths: quad.border_widths.scale(scale_factor),
+            border_style: quad.border_style,
         });
     }
 
@@ -3241,7 +3250,7 @@ impl Window {
         if !match_result.pending.is_empty() {
             currently_pending.keystrokes = match_result.pending;
             currently_pending.focus = self.focus;
-            currently_pending.timer = Some(self.spawn(cx, |mut cx| async move {
+            currently_pending.timer = Some(self.spawn(cx, async move |cx| {
                 cx.background_executor.timer(Duration::from_secs(1)).await;
                 cx.update(move |window, cx| {
                     let Some(currently_pending) = window
@@ -4104,6 +4113,8 @@ pub struct PaintQuad {
     pub border_widths: Edges<Pixels>,
     /// The color of the quad's borders.
     pub border_color: Hsla,
+    /// The style of the quad's borders.
+    pub border_style: BorderStyle,
 }
 
 impl PaintQuad {
@@ -4147,6 +4158,7 @@ pub fn quad(
     background: impl Into<Background>,
     border_widths: impl Into<Edges<Pixels>>,
     border_color: impl Into<Hsla>,
+    border_style: BorderStyle,
 ) -> PaintQuad {
     PaintQuad {
         bounds,
@@ -4154,6 +4166,7 @@ pub fn quad(
         background: background.into(),
         border_widths: border_widths.into(),
         border_color: border_color.into(),
+        border_style,
     }
 }
 
@@ -4165,16 +4178,22 @@ pub fn fill(bounds: impl Into<Bounds<Pixels>>, background: impl Into<Background>
         background: background.into(),
         border_widths: (0.).into(),
         border_color: transparent_black(),
+        border_style: BorderStyle::default(),
     }
 }
 
 /// Creates a rectangle outline with the given bounds, border color, and a 1px border width
-pub fn outline(bounds: impl Into<Bounds<Pixels>>, border_color: impl Into<Hsla>) -> PaintQuad {
+pub fn outline(
+    bounds: impl Into<Bounds<Pixels>>,
+    border_color: impl Into<Hsla>,
+    border_style: BorderStyle,
+) -> PaintQuad {
     PaintQuad {
         bounds: bounds.into(),
         corner_radii: (0.).into(),
         background: transparent_black().into(),
         border_widths: (1.).into(),
         border_color: border_color.into(),
+        border_style,
     }
 }

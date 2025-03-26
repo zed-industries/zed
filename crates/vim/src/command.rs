@@ -37,9 +37,9 @@ use crate::{
         JoinLines,
     },
     object::Object,
-    state::Mode,
+    state::{Mark, Mode},
     visual::VisualDeleteLine,
-    ToggleRegistersView, Vim,
+    ToggleMarksView, ToggleRegistersView, Vim,
 };
 
 #[derive(Clone, Debug, PartialEq)]
@@ -284,6 +284,7 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
                     true,
                     true,
                     vec![Point::new(range.start.0, 0)..end],
+                    window,
                     cx,
                 )
             }
@@ -594,8 +595,13 @@ impl Position {
                 }
             }
             Position::Mark { name, offset } => {
-                let Some(mark) = vim.marks.get(&name.to_string()).and_then(|vec| vec.last()) else {
+                let Some(Mark::Local(anchors)) =
+                    vim.get_mark(&name.to_string(), editor, window, cx)
+                else {
                     return Err(anyhow!("mark {} not set", name));
+                };
+                let Some(mark) = anchors.last() else {
+                    return Err(anyhow!("mark {} contains empty anchors", name));
                 };
                 mark.to_point(&snapshot.buffer_snapshot)
                     .row
@@ -854,6 +860,7 @@ fn generate_commands(_: &App) -> Vec<VimCommand> {
             )
         }),
         VimCommand::new(("reg", "isters"), ToggleRegistersView).bang(ToggleRegistersView),
+        VimCommand::new(("marks", ""), ToggleMarksView).bang(ToggleMarksView),
         VimCommand::new(("sor", "t"), SortLinesCaseSensitive).range(select_range),
         VimCommand::new(("sort i", ""), SortLinesCaseInsensitive).range(select_range),
         VimCommand::str(("E", "xplore"), "project_panel::ToggleFocus"),
@@ -1186,7 +1193,7 @@ impl OnMatchingLines {
                 ..snapshot
                     .buffer_snapshot
                     .clip_point(Point::new(range.end.0 + 1, 0), Bias::Left);
-            cx.spawn_in(window, |editor, mut cx| async move {
+            cx.spawn_in(window, async move |editor, cx| {
                 let new_selections = cx
                     .background_spawn(async move {
                         let mut line = String::new();
@@ -1220,7 +1227,7 @@ impl OnMatchingLines {
                     return;
                 }
                 editor
-                    .update_in(&mut cx, |editor, window, cx| {
+                    .update_in(cx, |editor, window, cx| {
                         editor.start_transaction_at(Instant::now(), window, cx);
                         editor.change_selections(None, window, cx, |s| {
                             s.replace_cursors_with(|_| new_selections);
@@ -1433,6 +1440,7 @@ impl ShellExec {
                         reveal_target: RevealTarget::Dock,
                         hide: HideStrategy::Never,
                         shell,
+                        program: None,
                         show_summary: false,
                         show_command: false,
                         show_rerun: false,
@@ -1504,9 +1512,9 @@ impl ShellExec {
         };
         let is_read = self.is_read;
 
-        let task = cx.spawn_in(window, |vim, mut cx| async move {
+        let task = cx.spawn_in(window, async move |vim, cx| {
             let Some(mut running) = process.spawn().log_err() else {
-                vim.update_in(&mut cx, |vim, window, cx| {
+                vim.update_in(cx, |vim, window, cx| {
                     vim.cancel_running_command(window, cx);
                 })
                 .log_err();
@@ -1533,7 +1541,7 @@ impl ShellExec {
                 .await;
 
             let Some(output) = output.log_err() else {
-                vim.update_in(&mut cx, |vim, window, cx| {
+                vim.update_in(cx, |vim, window, cx| {
                     vim.cancel_running_command(window, cx);
                 })
                 .log_err();
@@ -1549,7 +1557,7 @@ impl ShellExec {
                 text.push('\n');
             }
 
-            vim.update_in(&mut cx, |vim, window, cx| {
+            vim.update_in(cx, |vim, window, cx| {
                 vim.update_editor(window, cx, |_, editor, window, cx| {
                     editor.transact(window, cx, |editor, window, cx| {
                         editor.edit([(range.clone(), text)], cx);

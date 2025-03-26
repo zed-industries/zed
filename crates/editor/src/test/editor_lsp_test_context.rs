@@ -79,6 +79,19 @@ pub(crate) fn rust_lang() -> Arc<Language> {
     .expect("Could not parse queries");
     Arc::new(language)
 }
+
+#[cfg(test)]
+pub(crate) fn git_commit_lang() -> Arc<Language> {
+    Arc::new(Language::new(
+        LanguageConfig {
+            name: "Git Commit".into(),
+            line_comments: vec!["#".into()],
+            ..Default::default()
+        },
+        None,
+    ))
+}
+
 impl EditorLspTestContext {
     pub async fn new(
         language: Language,
@@ -251,7 +264,7 @@ impl EditorLspTestContext {
                     ..Default::default()
                 },
                 block_comment: Some(("<!-- ".into(), " -->".into())),
-                word_characters: ['-'].into_iter().collect(),
+                completion_query_characters: ['-'].into_iter().collect(),
                 ..Default::default()
             },
             Some(tree_sitter_html::LANGUAGE.into()),
@@ -324,7 +337,7 @@ impl EditorLspTestContext {
         self.workspace.update_in(&mut self.cx.cx, update)
     }
 
-    pub fn handle_request<T, F, Fut>(
+    pub fn set_request_handler<T, F, Fut>(
         &self,
         mut handler: F,
     ) -> futures::channel::mpsc::UnboundedReceiver<()>
@@ -335,7 +348,7 @@ impl EditorLspTestContext {
         Fut: 'static + Send + Future<Output = Result<T::Result>>,
     {
         let url = self.buffer_lsp_url.clone();
-        self.lsp.handle_request::<T, _, _>(move |params, cx| {
+        self.lsp.set_request_handler::<T, _, _>(move |params, cx| {
             let url = url.clone();
             handler(url, params, cx)
         })

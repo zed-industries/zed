@@ -14,6 +14,13 @@
   {
     "use_key_equivalents": true,
     "bindings": {
+      "f4": "debugger::Start",
+      "f5": "debugger::Continue",
+      "shift-f5": "debugger::Stop",
+      "f6": "debugger::Pause",
+      "f7": "debugger::StepOver",
+      "f11": "debugger::StepInto",
+      "shift-f11": "debugger::StepOut",
       "home": "menu::SelectFirst",
       "shift-pageup": "menu::SelectFirst",
       "pageup": "menu::SelectFirst",
@@ -148,6 +155,8 @@
       "cmd-\"": "editor::ExpandAllDiffHunks",
       "cmd-alt-g b": "editor::ToggleGitBlame",
       "cmd-i": "editor::ShowSignatureHelp",
+      "f9": "editor::ToggleBreakpoint",
+      "shift-f9": "editor::EditLogBreakpoint",
       "ctrl-f12": "editor::GoToDeclaration",
       "alt-ctrl-f12": "editor::GoToDeclarationSplit",
       "ctrl-cmd-e": "editor::ToggleEditPrediction"
@@ -232,7 +241,7 @@
       "cmd-shift-g": "search::SelectPreviousMatch",
       "cmd-alt-/": "assistant::ToggleModelSelector",
       "cmd-k h": "assistant::DeployHistory",
-      "cmd-k l": "assistant::DeployPromptLibrary",
+      "cmd-k l": "assistant::OpenPromptLibrary",
       "cmd-t": "assistant::NewChat",
       "cmd-n": "assistant::NewChat"
     }
@@ -278,7 +287,9 @@
     "context": "MessageEditor > Editor",
     "use_key_equivalents": true,
     "bindings": {
-      "enter": "assistant2::Chat"
+      "enter": "assistant2::Chat",
+      "cmd-g d": "git::Diff",
+      "shift-escape": "git::ExpandCommitEditor"
     }
   },
   {
@@ -466,6 +477,7 @@
       // Using `ctrl-space` in Zed requires disabling the macOS global shortcut.
       // System Preferences->Keyboard->Keyboard Shortcuts->Input Sources->Select the previous input source (uncheck)
       "ctrl-space": "editor::ShowCompletions",
+      "ctrl-shift-space": "editor::ShowWordCompletions",
       "cmd-.": "editor::ToggleCodeActions",
       "cmd-k r": "editor::RevealInFileManager",
       "cmd-k p": "editor::CopyPath",
@@ -696,6 +708,16 @@
     }
   },
   {
+    "context": "Prompt",
+    "use_key_equivalents": true,
+    "bindings": {
+      "left": "menu::SelectPrevious",
+      "right": "menu::SelectNext",
+      "h": "menu::SelectPrevious",
+      "l": "menu::SelectNext"
+    }
+  },
+  {
     "context": "ProjectSearchBar && !in_replace",
     "use_key_equivalents": true,
     "bindings": {
@@ -756,6 +778,14 @@
     }
   },
   {
+    "context": "VariableList",
+    "use_key_equivalents": true,
+    "bindings": {
+      "left": "variable_list::CollapseSelectedEntry",
+      "right": "variable_list::ExpandSelectedEntry"
+    }
+  },
+  {
     "context": "GitPanel && ChangesList",
     "use_key_equivalents": true,
     "bindings": {
@@ -773,7 +803,7 @@
       "shift-tab": "git_panel::FocusEditor",
       "escape": "git_panel::ToggleFocus",
       "cmd-enter": "git::Commit",
-      "backspace": "git::RestoreFile"
+      "cmd-backspace": "git::RestoreFile"
     }
   },
   {

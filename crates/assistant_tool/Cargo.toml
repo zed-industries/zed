@@ -13,10 +13,13 @@ path = "src/assistant_tool.rs"
 
 [dependencies]
 anyhow.workspace = true
+clock.workspace = true
 collections.workspace = true
 derive_more.workspace = true
-language_model.workspace = true
 gpui.workspace = true
+icons.workspace = true
+language.workspace = true
+language_model.workspace = true
 parking_lot.workspace = true
 project.workspace = true
 serde.workspace = true

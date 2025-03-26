@@ -1,7 +1,8 @@
 use crate::{
-    self as gpui, px, relative, rems, AbsoluteLength, AlignItems, CursorStyle, DefiniteLength,
-    Fill, FlexDirection, FlexWrap, Font, FontStyle, FontWeight, Hsla, JustifyContent, Length,
-    SharedString, StrikethroughStyle, StyleRefinement, TextOverflow, UnderlineStyle, WhiteSpace,
+    self as gpui, px, relative, rems, AbsoluteLength, AlignItems, BorderStyle, CursorStyle,
+    DefiniteLength, Fill, FlexDirection, FlexWrap, Font, FontStyle, FontWeight, Hsla,
+    JustifyContent, Length, SharedString, StrikethroughStyle, StyleRefinement, TextOverflow,
+    UnderlineStyle, WhiteSpace,
 };
 use crate::{TextAlign, TextStyleRefinement};
 pub use gpui_macros::{
@@ -361,6 +362,12 @@ pub trait Styled: Sized {
         self
     }
 
+    /// Sets the border style of the element.
+    fn border_dashed(mut self) -> Self {
+        self.style().border_style = Some(BorderStyle::Dashed);
+        self
+    }
+
     /// Returns a mutable reference to the text style that has been configured on this element.
     fn text_style(&mut self) -> &mut Option<TextStyleRefinement> {
         let style: &mut StyleRefinement = self.style();
@@ -478,7 +485,7 @@ pub trait Styled: Sized {
     }
 
     /// Sets the font style of the element to normal (not italic).
-    /// [Docs](https://tailwindcss.com/docs/font-style#italicizing-text)
+    /// [Docs](https://tailwindcss.com/docs/font-style#displaying-text-normally)
     fn not_italic(mut self) -> Self {
         self.text_style()
             .get_or_insert_with(Default::default)
@@ -498,7 +505,7 @@ pub trait Styled: Sized {
     }
 
     /// Sets the decoration of the text to have a line through it.
-    /// [Docs](https://tailwindcss.com/docs/text-decoration#setting-the-text-decoration)
+    /// [Docs](https://tailwindcss.com/docs/text-decoration-line#adding-a-line-through-text)
     fn line_through(mut self) -> Self {
         let style = self.text_style().get_or_insert_with(Default::default);
         style.strikethrough = Some(StrikethroughStyle {

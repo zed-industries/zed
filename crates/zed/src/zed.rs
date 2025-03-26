@@ -1,7 +1,5 @@
 mod app_menus;
 pub mod inline_completion_registry;
-#[cfg(any(target_os = "linux", target_os = "freebsd"))]
-pub(crate) mod linux_prompts;
 #[cfg(target_os = "macos")]
 pub(crate) mod mac_only_instance;
 mod migrate;
@@ -18,24 +16,28 @@ use breadcrumbs::Breadcrumbs;
 use client::{zed_urls, ZED_URL_SCHEME};
 use collections::VecDeque;
 use command_palette_hooks::CommandPaletteFilter;
+use debugger_ui::debugger_panel::DebugPanel;
 use editor::ProposedChangesEditorToolbar;
 use editor::{scroll::Autoscroll, Editor, MultiBuffer};
-use feature_flags::FeatureFlagAppExt;
+use feature_flags::{Debugger, FeatureFlagAppExt, FeatureFlagViewExt};
 use futures::{channel::mpsc, select_biased, StreamExt};
 use git_ui::git_panel::GitPanel;
 use git_ui::project_diff::ProjectDiffToolbar;
 use gpui::{
-    actions, point, px, Action, App, AppContext as _, AsyncApp, Context, DismissEvent, Element,
-    Entity, Focusable, KeyBinding, MenuItem, ParentElement, PathPromptOptions, PromptLevel,
-    ReadGlobal, SharedString, Styled, Task, TitlebarOptions, UpdateGlobal, Window, WindowKind,
-    WindowOptions,
+    actions, point, px, Action, App, AppContext as _, AsyncApp, AsyncWindowContext, Context,
+    DismissEvent, Element, Entity, Focusable, KeyBinding, MenuItem, ParentElement,
+    PathPromptOptions, PromptLevel, ReadGlobal, SharedString, Styled, Task, TitlebarOptions,
+    UpdateGlobal, Window, WindowKind, WindowOptions,
 };
 use image_viewer::ImageInfo;
 use migrate::{MigrationBanner, MigrationEvent, MigrationNotification, MigrationType};
 use migrator::{migrate_keymap, migrate_settings};
 pub use open_listener::*;
 use outline_panel::OutlinePanel;
-use paths::{local_settings_file_relative_path, local_tasks_file_relative_path};
+use paths::{
+    local_debug_file_relative_path, local_settings_file_relative_path,
+    local_tasks_file_relative_path,
+};
 use project::{DirectoryLister, ProjectItem};
 use project_panel::ProjectPanel;
 use prompt_store::PromptBuilder;
@@ -45,9 +47,9 @@ use release_channel::{AppCommitSha, ReleaseChannel};
 use rope::Rope;
 use search::project_search::ProjectSearchBar;
 use settings::{
-    initial_project_settings_content, initial_tasks_content, update_settings_file,
-    InvalidSettingsError, KeymapFile, KeymapFileLoadResult, Settings, SettingsStore,
-    DEFAULT_KEYMAP_PATH, VIM_KEYMAP_PATH,
+    initial_debug_tasks_content, initial_project_settings_content, initial_tasks_content,
+    update_settings_file, InvalidSettingsError, KeymapFile, KeymapFileLoadResult, Settings,
+    SettingsStore, DEFAULT_KEYMAP_PATH, VIM_KEYMAP_PATH,
 };
 use std::any::TypeId;
 use std::path::PathBuf;
@@ -63,12 +65,12 @@ use uuid::Uuid;
 use vim_mode_setting::VimModeSetting;
 use welcome::{BaseKeymap, MultibufferHint};
 use workspace::notifications::{dismiss_app_notification, show_app_notification, NotificationId};
-use workspace::CloseIntent;
 use workspace::{
     create_and_open_local_file, notifications::simple_message_notification::MessageNotification,
     open_new, AppState, NewFile, NewWindow, OpenLog, Toast, Workspace, WorkspaceSettings,
 };
 use workspace::{notifications::DetachAndPromptErr, Pane};
+use workspace::{CloseIntent, RestoreBanner};
 use zed_actions::{
     OpenAccountSettings, OpenBrowser, OpenServerSettings, OpenSettings, OpenZedUrl, Quit,
 };
@@ -83,7 +85,9 @@ actions!(
         OpenDefaultSettings,
         OpenProjectSettings,
         OpenProjectTasks,
+        OpenProjectDebugTasks,
         OpenTasks,
+        OpenDebugTasks,
         ResetDatabase,
         ShowAll,
         ToggleFullScreen,
@@ -100,6 +104,8 @@ pub fn init(cx: &mut App) {
     #[cfg(target_os = "macos")]
     cx.on_action(|_: &ShowAll, cx| cx.unhide_other_apps());
     cx.on_action(quit);
+
+    cx.on_action(|_: &RestoreBanner, cx| title_bar::restore_banner(cx));
 
     if ReleaseChannel::global(cx) == ReleaseChannel::Dev {
         cx.on_action(test_panic);
@@ -301,7 +307,7 @@ fn initialize_file_watcher(window: &mut Window, cx: &mut Context<Workspace>) {
             &["Troubleshoot and Quit"],
             cx,
         );
-        cx.spawn(|_, cx| async move {
+        cx.spawn(async move |_, cx| {
             if prompt.await == Ok(0) {
                 cx.update(|cx| {
                     cx.open_url("https://zed.dev/docs/linux#could-not-start-inotify");
@@ -332,7 +338,7 @@ fn initialize_file_watcher(window: &mut Window, cx: &mut Context<Workspace>) {
             &["Troubleshoot and Quit"],
             cx,
         );
-        cx.spawn(|_, cx| async move {
+        cx.spawn(async move |_, cx| {
             if prompt.await == Ok(0) {
                 cx.update(|cx| {
                     cx.open_url("https://zed.dev/docs/windows");
@@ -370,7 +376,7 @@ fn show_software_emulation_warning_if_needed(
             &["Skip", "Troubleshoot and Quit"],
             cx,
         );
-        cx.spawn(|_, cx| async move {
+        cx.spawn(async move |_, cx| {
             if prompt.await == Ok(1) {
                 cx.update(|cx| {
                     cx.open_url("https://zed.dev/docs/linux#zed-fails-to-open-windows");
@@ -393,7 +399,7 @@ fn initialize_panels(
 
     let prompt_builder = prompt_builder.clone();
 
-    cx.spawn_in(window, |workspace_handle, mut cx| async move {
+    cx.spawn_in(window, async move |workspace_handle, cx| {
         let project_panel = ProjectPanel::load(workspace_handle.clone(), cx.clone());
         let outline_panel = OutlinePanel::load(workspace_handle.clone(), cx.clone());
         let terminal_panel = TerminalPanel::load(workspace_handle.clone(), cx.clone());
@@ -422,13 +428,28 @@ fn initialize_panels(
             notification_panel,
         )?;
 
-        workspace_handle.update_in(&mut cx, |workspace, window, cx| {
+        workspace_handle.update_in(cx, |workspace, window, cx| {
             workspace.add_panel(project_panel, window, cx);
             workspace.add_panel(outline_panel, window, cx);
             workspace.add_panel(terminal_panel, window, cx);
             workspace.add_panel(channels_panel, window, cx);
             workspace.add_panel(chat_panel, window, cx);
             workspace.add_panel(notification_panel, window, cx);
+            cx.when_flag_enabled::<Debugger>(window, |_, window, cx| {
+                cx.spawn_in(
+                    window,
+                    async move |workspace: gpui::WeakEntity<Workspace>,
+                                cx: &mut AsyncWindowContext| {
+                        let debug_panel = DebugPanel::load(workspace.clone(), cx.clone()).await?;
+                        workspace.update_in(cx, |workspace, window, cx| {
+                            workspace.add_panel(debug_panel, window, cx);
+                        })?;
+                        Result::<_, anyhow::Error>::Ok(())
+                    },
+                )
+                .detach()
+            });
+
             let entity = cx.entity();
             let project = workspace.project().clone();
             let app_state = workspace.app_state().clone();
@@ -443,14 +464,12 @@ fn initialize_panels(
         };
 
         let (assistant_panel, assistant2_panel) = if is_assistant2_enabled {
-            log::info!("[assistant2-debug] initializing Assistant2");
             let assistant2_panel = assistant2::AssistantPanel::load(
                 workspace_handle.clone(),
                 prompt_builder,
                 cx.clone(),
             )
             .await?;
-            log::info!("[assistant2-debug] finished initializing Assistant2");
 
             (None, Some(assistant2_panel))
         } else {
@@ -464,9 +483,8 @@ fn initialize_panels(
             (Some(assistant_panel), None)
         };
 
-        workspace_handle.update_in(&mut cx, |workspace, window, cx| {
+        workspace_handle.update_in(cx, |workspace, window, cx| {
             if let Some(assistant2_panel) = assistant2_panel {
-                log::info!("[assistant2-debug] adding Assistant2 panel");
                 workspace.add_panel(assistant2_panel, window, cx);
             }
 
@@ -540,13 +558,13 @@ fn register_actions(
                 cx,
             );
 
-            cx.spawn_in(window, |this, mut cx| async move {
+            cx.spawn_in(window, async move |this, cx| {
                 let Some(paths) = paths.await.log_err().flatten() else {
                     return;
                 };
 
                 if let Some(task) = this
-                    .update_in(&mut cx, |this, window, cx| {
+                    .update_in(cx, |this, window, cx| {
                         if this.project().read(cx).is_local() {
                             this.open_workspace_for_paths(false, paths, window, cx)
                         } else {
@@ -656,9 +674,9 @@ fn register_actions(
         })
         .register_action(install_cli)
         .register_action(|_, _: &install_cli::RegisterZedScheme, window, cx| {
-            cx.spawn_in(window, |workspace, mut cx| async move {
+            cx.spawn_in(window, async move |workspace, cx| {
                 register_zed_scheme(&cx).await?;
-                workspace.update_in(&mut cx, |workspace, _, cx| {
+                workspace.update_in(cx, |workspace, _, cx| {
                     struct RegisterZedScheme;
 
                     workspace.show_toast(
@@ -703,10 +721,7 @@ fn register_actions(
             },
         )
         .register_action(
-            move |_: &mut Workspace,
-                  _: &zed_actions::OpenKeymap,
-                  window: &mut Window,
-                  cx: &mut Context<Workspace>| {
+            move |_: &mut Workspace, _: &zed_actions::OpenKeymap, window, cx| {
                 open_settings_file(
                     paths::keymap_file(),
                     || settings::initial_keymap_content().as_ref().into(),
@@ -715,47 +730,40 @@ fn register_actions(
                 );
             },
         )
+        .register_action(move |_: &mut Workspace, _: &OpenSettings, window, cx| {
+            open_settings_file(
+                paths::settings_file(),
+                || settings::initial_user_settings_content().as_ref().into(),
+                window,
+                cx,
+            );
+        })
         .register_action(
-            move |_: &mut Workspace,
-                  _: &OpenSettings,
-                  window: &mut Window,
-                  cx: &mut Context<Workspace>| {
-                open_settings_file(
-                    paths::settings_file(),
-                    || settings::initial_user_settings_content().as_ref().into(),
-                    window,
-                    cx,
-                );
-            },
-        )
-        .register_action(
-            |_: &mut Workspace,
-             _: &OpenAccountSettings,
-             _: &mut Window,
-             cx: &mut Context<Workspace>| {
+            |_: &mut Workspace, _: &OpenAccountSettings, _: &mut Window, cx| {
                 cx.open_url(&zed_urls::account_url(cx));
             },
         )
-        .register_action(
-            move |_: &mut Workspace,
-                  _: &OpenTasks,
-                  window: &mut Window,
-                  cx: &mut Context<Workspace>| {
-                open_settings_file(
-                    paths::tasks_file(),
-                    || settings::initial_tasks_content().as_ref().into(),
-                    window,
-                    cx,
-                );
-            },
-        )
+        .register_action(move |_: &mut Workspace, _: &OpenTasks, window, cx| {
+            open_settings_file(
+                paths::tasks_file(),
+                || settings::initial_tasks_content().as_ref().into(),
+                window,
+                cx,
+            );
+        })
+        .register_action(move |_: &mut Workspace, _: &OpenDebugTasks, window, cx| {
+            open_settings_file(
+                paths::debug_tasks_file(),
+                || settings::initial_debug_tasks_content().as_ref().into(),
+                window,
+                cx,
+            );
+        })
         .register_action(open_project_settings_file)
         .register_action(open_project_tasks_file)
+        .register_action(open_project_debug_tasks_file)
         .register_action(
-            move |workspace: &mut Workspace,
-                  _: &zed_actions::OpenDefaultKeymap,
-                  window: &mut Window,
-                  cx: &mut Context<Workspace>| {
+            move |workspace, _: &zed_actions::OpenDefaultKeymap, window, cx| {
                 open_bundled_file(
                     workspace,
                     settings::default_keymap(),
@@ -766,21 +774,16 @@ fn register_actions(
                 );
             },
         )
-        .register_action(
-            move |workspace: &mut Workspace,
-                  _: &OpenDefaultSettings,
-                  window: &mut Window,
-                  cx: &mut Context<Workspace>| {
-                open_bundled_file(
-                    workspace,
-                    settings::default_settings(),
-                    "Default Settings",
-                    "JSON",
-                    window,
-                    cx,
-                );
-            },
-        )
+        .register_action(move |workspace, _: &OpenDefaultSettings, window, cx| {
+            open_bundled_file(
+                workspace,
+                settings::default_settings(),
+                "Default Settings",
+                "JSON",
+                window,
+                cx,
+            );
+        })
         .register_action(
             |workspace: &mut Workspace,
              _: &project_panel::ToggleFocus,
@@ -871,11 +874,11 @@ fn register_actions(
                     .project()
                     .update(cx, |project, cx| project.open_server_settings(cx));
 
-                cx.spawn_in(window, |workspace, mut cx| async move {
+                cx.spawn_in(window, async move |workspace, cx| {
                     let buffer = open_server_settings.await?;
 
                     workspace
-                        .update_in(&mut cx, |workspace, window, cx| {
+                        .update_in(cx, |workspace, window, cx| {
                             workspace.open_path(
                                 buffer
                                     .read(cx)
@@ -928,6 +931,8 @@ fn initialize_pane(
             toolbar.add_item(project_search_bar, window, cx);
             let lsp_log_item = cx.new(|_| language_tools::LspLogToolbarItemView::new());
             toolbar.add_item(lsp_log_item, window, cx);
+            let dap_log_item = cx.new(|_| debugger_tools::DapLogToolbarItemView::new());
+            toolbar.add_item(dap_log_item, window, cx);
             let syntax_tree_item = cx.new(|_| language_tools::SyntaxTreeToolbarItemView::new());
             toolbar.add_item(syntax_tree_item, window, cx);
             let migration_banner = cx.new(|cx| MigrationBanner::new(workspace, cx));
@@ -974,7 +979,7 @@ fn install_cli(
 ) {
     const LINUX_PROMPT_DETAIL: &str = "If you installed Zed from our official release add ~/.local/bin to your PATH.\n\nIf you installed Zed from a different source like your package manager, then you may need to create an alias/symlink manually.\n\nDepending on your package manager, the CLI might be named zeditor, zedit, zed-editor or something else.";
 
-    cx.spawn_in(window, |workspace, mut cx| async move {
+    cx.spawn_in(window, async move |workspace, cx| {
         if cfg!(any(target_os = "linux", target_os = "freebsd")) {
             let prompt = cx.prompt(
                 PromptLevel::Warning,
@@ -989,7 +994,7 @@ fn install_cli(
             .await
             .context("error creating CLI symlink")?;
 
-        workspace.update_in(&mut cx, |workspace, _, cx| {
+        workspace.update_in(cx, |workspace, _, cx| {
             struct InstalledZedCli;
 
             workspace.show_toast(
@@ -1017,7 +1022,7 @@ fn quit(_: &Quit, cx: &mut App) {
     }
 
     let should_confirm = WorkspaceSettings::get_global(cx).confirm_quit;
-    cx.spawn(|mut cx| async move {
+    cx.spawn(async move |cx| {
         let mut workspace_windows = cx.update(|cx| {
             cx.windows()
                 .into_iter()
@@ -1035,7 +1040,7 @@ fn quit(_: &Quit, cx: &mut App) {
         if should_confirm {
             if let Some(workspace) = workspace_windows.first() {
                 let answer = workspace
-                    .update(&mut cx, |_, window, cx| {
+                    .update(cx, |_, window, cx| {
                         window.prompt(
                             PromptLevel::Info,
                             "Are you sure you want to quit?",
@@ -1060,7 +1065,7 @@ fn quit(_: &Quit, cx: &mut App) {
         // If the user cancels any save prompt, then keep the app open.
         for window in workspace_windows {
             if let Some(should_close) = window
-                .update(&mut cx, |workspace, window, cx| {
+                .update(cx, |workspace, window, cx| {
                     workspace.prepare_to_close(CloseIntent::Quit, window, cx)
                 })
                 .log_err()
@@ -1081,7 +1086,7 @@ fn open_log_file(workspace: &mut Workspace, window: &mut Window, cx: &mut Contex
     workspace
         .with_local_workspace(window, cx, move |workspace, window, cx| {
             let fs = workspace.app_state().fs.clone();
-            cx.spawn_in(window, |workspace, mut cx| async move {
+            cx.spawn_in(window, async move |workspace, cx| {
                 let (old_log, new_log) =
                     futures::join!(fs.load(paths::old_log_file()), fs.load(paths::log_file()));
                 let log = match (old_log, new_log) {
@@ -1108,7 +1113,7 @@ fn open_log_file(workspace: &mut Workspace, window: &mut Window, cx: &mut Contex
                 };
 
                 workspace
-                    .update_in(&mut cx, |workspace, window, cx| {
+                    .update_in(cx, |workspace, window, cx| {
                         let Some(log) = log else {
                             struct OpenLogError;
 
@@ -1188,7 +1193,7 @@ pub fn handle_settings_file_changes(
         }
         settings_changed(result.err(), cx);
     });
-    cx.spawn(move |cx| async move {
+    cx.spawn(async move |cx| {
         while let Some(content) = user_settings_file_rx.next().await {
             let user_settings_content;
             let content_migrated;
@@ -1266,7 +1271,7 @@ pub fn handle_keymap_file_changes(
     struct KeymapParseErrorNotification;
     let notification_id = NotificationId::unique::<KeymapParseErrorNotification>();
 
-    cx.spawn(move |cx| async move {
+    cx.spawn(async move |cx| {
         let mut user_keymap_content = String::new();
         let mut content_migrated = false;
         loop {
@@ -1376,7 +1381,7 @@ fn show_markdown_app_notification<F>(
         .await
     });
 
-    cx.spawn(move |cx| async move {
+    cx.spawn(async move |cx| {
         let parsed_markdown = Arc::new(parsed_markdown.await);
         let primary_button_message = primary_button_message.clone();
         let primary_button_on_click = Arc::new(primary_button_on_click);
@@ -1474,7 +1479,7 @@ pub fn open_new_ssh_project_from_project(
         return Task::ready(Err(anyhow::anyhow!("Not an ssh project")));
     };
     let connection_options = ssh_client.read(cx).connection_options();
-    cx.spawn_in(window, |_, mut cx| async move {
+    cx.spawn_in(window, async move |_, cx| {
         open_ssh_project(
             connection_options,
             paths,
@@ -1483,7 +1488,7 @@ pub fn open_new_ssh_project_from_project(
                 open_new_workspace: Some(true),
                 ..Default::default()
             },
-            &mut cx,
+            cx,
         )
         .await
     })
@@ -1519,6 +1524,21 @@ fn open_project_tasks_file(
     )
 }
 
+fn open_project_debug_tasks_file(
+    workspace: &mut Workspace,
+    _: &OpenProjectDebugTasks,
+    window: &mut Window,
+    cx: &mut Context<Workspace>,
+) {
+    open_local_file(
+        workspace,
+        local_debug_file_relative_path(),
+        initial_debug_tasks_content(),
+        window,
+        cx,
+    )
+}
+
 fn open_local_file(
     workspace: &mut Workspace,
     settings_relative_path: &'static Path,
@@ -1533,11 +1553,11 @@ fn open_local_file(
         .find_map(|tree| tree.read(cx).root_entry()?.is_dir().then_some(tree));
     if let Some(worktree) = worktree {
         let tree_id = worktree.read(cx).id();
-        cx.spawn_in(window, |workspace, mut cx| async move {
+        cx.spawn_in(window, async move |workspace, cx| {
             if let Some(dir_path) = settings_relative_path.parent() {
-                if worktree.update(&mut cx, |tree, _| tree.entry_for_path(dir_path).is_none())? {
+                if worktree.update(cx, |tree, _| tree.entry_for_path(dir_path).is_none())? {
                     project
-                        .update(&mut cx, |project, cx| {
+                        .update(cx, |project, cx| {
                             project.create_entry((tree_id, dir_path), true, cx)
                         })?
                         .await
@@ -1545,11 +1565,11 @@ fn open_local_file(
                 }
             }
 
-            if worktree.update(&mut cx, |tree, _| {
+            if worktree.update(cx, |tree, _| {
                 tree.entry_for_path(settings_relative_path).is_none()
             })? {
                 project
-                    .update(&mut cx, |project, cx| {
+                    .update(cx, |project, cx| {
                         project.create_entry((tree_id, settings_relative_path), false, cx)
                     })?
                     .await
@@ -1557,7 +1577,7 @@ fn open_local_file(
             }
 
             let editor = workspace
-                .update_in(&mut cx, |workspace, window, cx| {
+                .update_in(cx, |workspace, window, cx| {
                     workspace.open_path((tree_id, settings_relative_path), None, true, window, cx)
                 })?
                 .await?
@@ -1566,7 +1586,7 @@ fn open_local_file(
 
             editor
                 .downgrade()
-                .update(&mut cx, |editor, cx| {
+                .update(cx, |editor, cx| {
                     if let Some(buffer) = editor.buffer().read(cx).as_singleton() {
                         if buffer.read(cx).is_empty() {
                             buffer.update(cx, |buffer, cx| {
@@ -1596,7 +1616,7 @@ fn open_telemetry_log_file(
 ) {
     workspace.with_local_workspace(window, cx, move |workspace, window, cx| {
         let app_state = workspace.app_state().clone();
-        cx.spawn_in(window, |workspace, mut cx| async move {
+        cx.spawn_in(window, async move |workspace, cx| {
             async fn fetch_log_string(app_state: &Arc<AppState>) -> Option<String> {
                 let path = client::telemetry::Telemetry::log_file_path();
                 app_state.fs.load(&path).await.log_err()
@@ -1618,7 +1638,7 @@ fn open_telemetry_log_file(
             let content = format!("{}\n{}", header, log_suffix);
             let json = app_state.languages.language_for_name("JSON").await.log_err();
 
-            workspace.update_in(&mut cx, |workspace, window, cx| {
+            workspace.update_in( cx, |workspace, window, cx| {
                 let project = workspace.project().clone();
                 let buffer = project.update(cx, |project, cx| project.create_local_buffer(&content, json, cx));
                 let buffer = cx.new(|cx| {
@@ -1652,10 +1672,10 @@ fn open_bundled_file(
     cx: &mut Context<Workspace>,
 ) {
     let language = workspace.app_state().languages.language_for_name(language);
-    cx.spawn_in(window, |workspace, mut cx| async move {
+    cx.spawn_in(window, async move |workspace, cx| {
         let language = language.await.log_err();
         workspace
-            .update_in(&mut cx, |workspace, window, cx| {
+            .update_in(cx, |workspace, window, cx| {
                 workspace.with_local_workspace(window, cx, |workspace, window, cx| {
                     let project = workspace.project();
                     let buffer = project.update(cx, move |project, cx| {
@@ -1689,9 +1709,9 @@ fn open_settings_file(
     window: &mut Window,
     cx: &mut Context<Workspace>,
 ) {
-    cx.spawn_in(window, |workspace, mut cx| async move {
+    cx.spawn_in(window, async move |workspace, cx| {
         let (worktree_creation_task, settings_open_task) = workspace
-            .update_in(&mut cx, |workspace, window, cx| {
+            .update_in(cx, |workspace, window, cx| {
                 workspace.with_local_workspace(window, cx, move |workspace, window, cx| {
                     let worktree_creation_task = workspace.project().update(cx, |project, cx| {
                         // Set up a dedicated worktree for settings, since
@@ -4277,6 +4297,11 @@ mod tests {
             repl::init(app_state.fs.clone(), cx);
             repl::notebook::init(cx);
             tasks_ui::init(cx);
+            project::debugger::breakpoint_store::BreakpointStore::init(
+                &app_state.client.clone().into(),
+            );
+            project::debugger::dap_store::DapStore::init(&app_state.client.clone().into());
+            debugger_ui::init(cx);
             initialize_workspace(app_state.clone(), prompt_builder, cx);
             search::init(cx);
             app_state

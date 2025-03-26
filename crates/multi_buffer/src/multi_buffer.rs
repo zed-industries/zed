@@ -346,17 +346,16 @@ impl std::fmt::Debug for ExcerptInfo {
 #[derive(Debug)]
 pub struct ExcerptBoundary {
     pub prev: Option<ExcerptInfo>,
-    pub next: Option<ExcerptInfo>,
+    pub next: ExcerptInfo,
     /// The row in the `MultiBuffer` where the boundary is located
     pub row: MultiBufferRow,
 }
 
 impl ExcerptBoundary {
     pub fn starts_new_buffer(&self) -> bool {
-        match (self.prev.as_ref(), self.next.as_ref()) {
+        match (self.prev.as_ref(), &self.next) {
             (None, _) => true,
-            (Some(_), None) => false,
-            (Some(prev), Some(next)) => prev.buffer_id != next.buffer_id,
+            (Some(prev), next) => prev.buffer_id != next.buffer_id,
         }
     }
 }
@@ -1646,7 +1645,11 @@ impl MultiBuffer {
             };
             let locator = snapshot.excerpt_locator_for_id(*existing);
             excerpts_cursor.seek_forward(&Some(locator), Bias::Left, &());
-            let existing_excerpt = excerpts_cursor.item().unwrap();
+            let Some(existing_excerpt) = excerpts_cursor.item() else {
+                to_remove.push(existing_iter.next().unwrap());
+                to_insert.push(new_iter.next().unwrap());
+                continue;
+            };
             if existing_excerpt.buffer_id != buffer_snapshot.remote_id() {
                 to_remove.push(existing_iter.next().unwrap());
                 to_insert.push(new_iter.next().unwrap());
@@ -1753,7 +1756,7 @@ impl MultiBuffer {
             .detach()
         }
 
-        cx.spawn(move |this, mut cx| async move {
+        cx.spawn(async move |this, cx| {
             let mut results_by_buffer_id = HashMap::default();
             while let Some((buffer_id, buffer, ranges, excerpt_ranges, range_counts)) =
                 excerpt_ranges_rx.next().await
@@ -1773,7 +1776,7 @@ impl MultiBuffer {
                 let mut ranges = ranges.into_iter();
                 let mut range_counts = range_counts.into_iter();
                 for excerpt_ranges in excerpt_ranges.chunks(100) {
-                    let excerpt_ids = match this.update(&mut cx, |this, cx| {
+                    let excerpt_ids = match this.update(cx, |this, cx| {
                         this.push_excerpts(buffer.clone(), excerpt_ranges.iter().cloned(), cx)
                     }) {
                         Ok(excerpt_ids) => excerpt_ids,
@@ -4096,6 +4099,7 @@ impl MultiBufferSnapshot {
     }
 
     pub fn widest_line_number(&self) -> u32 {
+        // widest_line_number is 0-based, so 1 is added to get the displayed line number.
         self.excerpts.summary().widest_line_number + 1
     }
 
@@ -5199,27 +5203,19 @@ impl MultiBufferSnapshot {
 
         cursor.next_excerpt();
 
-        let mut visited_end = false;
         iter::from_fn(move || loop {
             if self.singleton {
                 return None;
             }
 
-            let next_region = cursor.region();
+            let next_region = cursor.region()?;
             cursor.next_excerpt();
+            if !bounds.contains(&next_region.range.start.key) {
+                prev_region = Some(next_region);
+                continue;
+            }
 
-            let next_region_start = if let Some(region) = &next_region {
-                if !bounds.contains(&region.range.start.key) {
-                    prev_region = next_region;
-                    continue;
-                }
-                region.range.start.value.unwrap()
-            } else {
-                if !bounds.contains(&self.len()) {
-                    return None;
-                }
-                self.max_point()
-            };
+            let next_region_start = next_region.range.start.value.unwrap();
             let next_region_end = if let Some(region) = cursor.region() {
                 region.range.start.value.unwrap()
             } else {
@@ -5234,29 +5230,21 @@ impl MultiBufferSnapshot {
                 end_row: MultiBufferRow(next_region_start.row),
             });
 
-            let next = next_region.as_ref().map(|region| ExcerptInfo {
-                id: region.excerpt.id,
-                buffer: region.excerpt.buffer.clone(),
-                buffer_id: region.excerpt.buffer_id,
-                range: region.excerpt.range.clone(),
-                end_row: if region.excerpt.has_trailing_newline {
+            let next = ExcerptInfo {
+                id: next_region.excerpt.id,
+                buffer: next_region.excerpt.buffer.clone(),
+                buffer_id: next_region.excerpt.buffer_id,
+                range: next_region.excerpt.range.clone(),
+                end_row: if next_region.excerpt.has_trailing_newline {
                     MultiBufferRow(next_region_end.row - 1)
                 } else {
                     MultiBufferRow(next_region_end.row)
                 },
-            });
-
-            if next.is_none() {
-                if visited_end {
-                    return None;
-                } else {
-                    visited_end = true;
-                }
-            }
+            };
 
             let row = MultiBufferRow(next_region_start.row);
 
-            prev_region = next_region;
+            prev_region = Some(next_region);
 
             return Some(ExcerptBoundary { row, prev, next });
         })
@@ -7299,14 +7287,6 @@ impl Iterator for MultiBufferRows<'_> {
 
         let overshoot = self.point - region.range.start;
         let buffer_point = region.buffer_range.start + overshoot;
-        // dbg!(
-        //     buffer_point.row,
-        //     region.range.end.column,
-        //     self.point.row,
-        //     region.range.end.row,
-        //     self.cursor.is_at_end_of_excerpt(),
-        //     region.buffer.max_point().row
-        // );
         let expand_info = if self.is_singleton {
             None
         } else {

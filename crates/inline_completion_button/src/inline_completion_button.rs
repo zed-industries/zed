@@ -6,9 +6,7 @@ use editor::{
     scroll::Autoscroll,
     Editor,
 };
-use feature_flags::{
-    FeatureFlagAppExt, PredictEditsFeatureFlag, PredictEditsRateCompletionsFeatureFlag,
-};
+use feature_flags::{FeatureFlagAppExt, PredictEditsRateCompletionsFeatureFlag};
 use fs::Fs;
 use gpui::{
     actions, div, pulsating_between, Action, Animation, AnimationExt, App, AsyncWindowContext,
@@ -232,10 +230,6 @@ impl Render for InlineCompletionButton {
             }
 
             EditPredictionProvider::Zed => {
-                if !cx.has_flag::<PredictEditsFeatureFlag>() {
-                    return div();
-                }
-
                 let enabled = self.editor_enabled.unwrap_or(true);
 
                 let zeta_icon = if enabled {
@@ -258,7 +252,7 @@ impl Render for InlineCompletionButton {
                     return div().child(
                         IconButton::new("zed-predict-pending-button", zeta_icon)
                             .shape(IconButtonShape::Square)
-                            .indicator(Indicator::dot().color(Color::Error))
+                            .indicator(Indicator::dot().color(Color::Muted))
                             .indicator_border_color(Some(cx.theme().colors().status_bar_background))
                             .tooltip(move |window, cx| {
                                 Tooltip::with_meta(
@@ -604,11 +598,11 @@ impl InlineCompletionButton {
                     if let Some(workspace) = window.root().flatten() {
                         let workspace = workspace.downgrade();
                         window
-                            .spawn(cx, |cx| {
+                            .spawn(cx, async |cx| {
                                 open_disabled_globs_setting_in_editor(
                                     workspace,
                                     cx,
-                                )
+                                ).await
                             })
                             .detach_and_log_err(cx);
                     }
@@ -768,10 +762,10 @@ impl SupermavenButtonStatus {
 
 async fn open_disabled_globs_setting_in_editor(
     workspace: WeakEntity<Workspace>,
-    mut cx: AsyncWindowContext,
+    cx: &mut AsyncWindowContext,
 ) -> Result<()> {
     let settings_editor = workspace
-        .update_in(&mut cx, |_, window, cx| {
+        .update_in(cx, |_, window, cx| {
             create_and_open_local_file(paths::settings_file(), window, cx, || {
                 settings::initial_user_settings_content().as_ref().into()
             })
@@ -782,7 +776,7 @@ async fn open_disabled_globs_setting_in_editor(
 
     settings_editor
         .downgrade()
-        .update_in(&mut cx, |item, window, cx| {
+        .update_in(cx, |item, window, cx| {
             let text = item.buffer().read(cx).snapshot(cx).text();
 
             let settings = cx.global::<SettingsStore>();

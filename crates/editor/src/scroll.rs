@@ -2,7 +2,7 @@ mod actions;
 pub(crate) mod autoscroll;
 pub(crate) mod scroll_amount;
 
-use crate::editor_settings::{ScrollBeyondLastLine, ScrollbarAxes};
+use crate::editor_settings::ScrollBeyondLastLine;
 use crate::{
     display_map::{DisplaySnapshot, ToDisplayPoint},
     hover_popover::hide_hover,
@@ -12,7 +12,7 @@ use crate::{
 };
 pub use autoscroll::{Autoscroll, AutoscrollStrategy};
 use core::fmt::Debug;
-use gpui::{point, px, Along, App, Axis, Context, Global, Pixels, Task, Window};
+use gpui::{point, px, App, Axis, Context, Global, Pixels, Task, Window};
 use language::{Bias, Point};
 pub use scroll_amount::ScrollAmount;
 use settings::Settings;
@@ -58,55 +58,6 @@ impl ScrollAnchor {
 
     pub fn top_row(&self, buffer: &MultiBufferSnapshot) -> u32 {
         self.anchor.to_point(buffer).row
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct AxisPair<T: Clone> {
-    pub vertical: T,
-    pub horizontal: T,
-}
-
-pub fn axis_pair<T: Clone>(horizontal: T, vertical: T) -> AxisPair<T> {
-    AxisPair {
-        vertical,
-        horizontal,
-    }
-}
-
-impl<T: Clone> AxisPair<T> {
-    pub fn as_xy(&self) -> (&T, &T) {
-        (&self.horizontal, &self.vertical)
-    }
-}
-
-impl<T: Clone> Along for AxisPair<T> {
-    type Unit = T;
-
-    fn along(&self, axis: gpui::Axis) -> Self::Unit {
-        match axis {
-            gpui::Axis::Horizontal => self.horizontal.clone(),
-            gpui::Axis::Vertical => self.vertical.clone(),
-        }
-    }
-
-    fn apply_along(&self, axis: gpui::Axis, f: impl FnOnce(Self::Unit) -> Self::Unit) -> Self {
-        match axis {
-            gpui::Axis::Horizontal => Self {
-                horizontal: f(self.horizontal.clone()),
-                vertical: self.vertical.clone(),
-            },
-            gpui::Axis::Vertical => Self {
-                horizontal: self.horizontal.clone(),
-                vertical: f(self.vertical.clone()),
-            },
-        }
-    }
-}
-
-impl From<ScrollbarAxes> for AxisPair<bool> {
-    fn from(value: ScrollbarAxes) -> Self {
-        axis_pair(value.horizontal, value.vertical)
     }
 }
 
@@ -180,7 +131,7 @@ pub struct ScrollManager {
     last_autoscroll: Option<(gpui::Point<f32>, f32, f32, AutoscrollStrategy)>,
     show_scrollbars: bool,
     hide_scrollbar_task: Option<Task<()>>,
-    dragging_scrollbar: AxisPair<bool>,
+    dragging_scrollbar: Option<Axis>,
     visible_line_count: Option<f32>,
     forbid_vertical_scroll: bool,
 }
@@ -194,7 +145,7 @@ impl ScrollManager {
             autoscroll_request: None,
             show_scrollbars: true,
             hide_scrollbar_task: None,
-            dragging_scrollbar: axis_pair(false, false),
+            dragging_scrollbar: None,
             last_autoscroll: None,
             visible_line_count: None,
             forbid_vertical_scroll: false,
@@ -312,7 +263,7 @@ impl ScrollManager {
         }
         self.anchor = anchor;
         cx.emit(EditorEvent::ScrollPositionChanged { local, autoscroll });
-        self.show_scrollbar(window, cx);
+        self.show_scrollbars(window, cx);
         self.autoscroll_request.take();
         if let Some(workspace_id) = workspace_id {
             let item_id = cx.entity().entity_id().as_u64() as ItemId;
@@ -334,19 +285,19 @@ impl ScrollManager {
         cx.notify();
     }
 
-    pub fn show_scrollbar(&mut self, window: &mut Window, cx: &mut Context<Editor>) {
+    pub fn show_scrollbars(&mut self, window: &mut Window, cx: &mut Context<Editor>) {
         if !self.show_scrollbars {
             self.show_scrollbars = true;
             cx.notify();
         }
 
         if cx.default_global::<ScrollbarAutoHide>().0 {
-            self.hide_scrollbar_task = Some(cx.spawn_in(window, |editor, mut cx| async move {
+            self.hide_scrollbar_task = Some(cx.spawn_in(window, async move |editor, cx| {
                 cx.background_executor()
                     .timer(SCROLLBAR_SHOW_INTERVAL)
                     .await;
                 editor
-                    .update(&mut cx, |editor, cx| {
+                    .update(cx, |editor, cx| {
                         editor.scroll_manager.show_scrollbars = false;
                         cx.notify();
                     })
@@ -365,18 +316,26 @@ impl ScrollManager {
         self.autoscroll_request.map(|(autoscroll, _)| autoscroll)
     }
 
-    pub fn is_dragging_scrollbar(&self, axis: Axis) -> bool {
-        self.dragging_scrollbar.along(axis)
+    pub fn dragging_scrollbar_axis(&self) -> Option<Axis> {
+        self.dragging_scrollbar
     }
 
-    pub fn set_is_dragging_scrollbar(
-        &mut self,
-        axis: Axis,
-        dragging: bool,
-        cx: &mut Context<Editor>,
-    ) {
-        self.dragging_scrollbar = self.dragging_scrollbar.apply_along(axis, |_| dragging);
-        cx.notify();
+    pub fn any_scrollbar_dragged(&self) -> bool {
+        self.dragging_scrollbar.is_some()
+    }
+
+    pub fn set_dragged_scrollbar_axis(&mut self, axis: Axis, cx: &mut Context<Editor>) {
+        if self.dragging_scrollbar != Some(axis) {
+            self.dragging_scrollbar = Some(axis);
+            cx.notify();
+        }
+    }
+
+    pub fn reset_scrollbar_dragging_state(&mut self, cx: &mut Context<Editor>) {
+        if self.dragging_scrollbar.is_some() {
+            self.dragging_scrollbar = None;
+            cx.notify();
+        }
     }
 
     pub fn clamp_scroll_left(&mut self, max: f32) -> bool {
@@ -425,9 +384,9 @@ impl Editor {
         let opened_first_time = self.scroll_manager.visible_line_count.is_none();
         self.scroll_manager.visible_line_count = Some(lines);
         if opened_first_time {
-            cx.spawn_in(window, |editor, mut cx| async move {
+            cx.spawn_in(window, async move |editor, cx| {
                 editor
-                    .update(&mut cx, |editor, cx| {
+                    .update(cx, |editor, cx| {
                         editor.refresh_inlay_hints(InlayHintRefreshReason::NewLinesShown, cx)
                     })
                     .ok()
@@ -460,6 +419,28 @@ impl Editor {
             return;
         }
         self.set_scroll_position_internal(scroll_position, true, false, window, cx);
+    }
+
+    /// Scrolls so that `row` is at the top of the editor view.
+    pub fn set_scroll_top_row(
+        &mut self,
+        row: DisplayRow,
+        window: &mut Window,
+        cx: &mut Context<Editor>,
+    ) {
+        let snapshot = self.snapshot(window, cx).display_snapshot;
+        let new_screen_top = DisplayPoint::new(row, 0);
+        let new_screen_top = new_screen_top.to_offset(&snapshot, Bias::Left);
+        let new_anchor = snapshot.buffer_snapshot.anchor_before(new_screen_top);
+
+        self.set_scroll_anchor(
+            ScrollAnchor {
+                anchor: new_anchor,
+                offset: Default::default(),
+            },
+            window,
+            cx,
+        );
     }
 
     pub(crate) fn set_scroll_position_internal(

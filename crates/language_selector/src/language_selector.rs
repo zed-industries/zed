@@ -139,31 +139,27 @@ impl LanguageSelectorDelegate {
         let mut label = mat.string.clone();
         let buffer_language = self.buffer.read(cx).language();
         let need_icon = FileFinderSettings::get_global(cx).file_icons;
-        if let Some(buffer_language) = buffer_language {
-            let buffer_language_name = buffer_language.name();
-            if buffer_language_name.as_ref() == mat.string.as_str() {
-                label.push_str(" (current)");
-                let icon = need_icon
-                    .then(|| self.language_icon(&buffer_language.config().matcher, cx))
-                    .flatten();
-                return (label, icon);
-            }
-        }
 
-        if need_icon {
-            let language_name = LanguageName::new(mat.string.as_str());
-            match self
-                .language_registry
-                .available_language_for_name(language_name.as_ref())
-            {
-                Some(available_language) => {
-                    let icon = self.language_icon(available_language.matcher(), cx);
-                    (label, icon)
-                }
-                None => (label, None),
-            }
+        if let Some(buffer_language) = buffer_language
+            .filter(|buffer_language| buffer_language.name().as_ref() == mat.string.as_str())
+        {
+            label.push_str(" (current)");
+            let icon = need_icon
+                .then(|| self.language_icon(&buffer_language.config().matcher, cx))
+                .flatten();
+            (label, icon)
         } else {
-            (label, None)
+            let icon = need_icon
+                .then(|| {
+                    let language_name = LanguageName::new(mat.string.as_str());
+                    self.language_registry
+                        .available_language_for_name(language_name.as_ref())
+                        .and_then(|available_language| {
+                            self.language_icon(available_language.matcher(), cx)
+                        })
+                })
+                .flatten();
+            (label, icon)
         }
     }
 
@@ -171,13 +167,7 @@ impl LanguageSelectorDelegate {
         matcher
             .path_suffixes
             .iter()
-            .find_map(|extension| {
-                if extension.contains('.') {
-                    None
-                } else {
-                    FileIcons::get_icon(Path::new(&format!("file.{extension}")), cx)
-                }
-            })
+            .find_map(|extension| FileIcons::get_icon(Path::new(extension), cx))
             .map(Icon::from_path)
             .map(|icon| icon.color(Color::Muted))
     }
@@ -200,7 +190,7 @@ impl PickerDelegate for LanguageSelectorDelegate {
             let language = self.language_registry.language_for_name(language_name);
             let project = self.project.downgrade();
             let buffer = self.buffer.downgrade();
-            cx.spawn_in(window, |_, mut cx| async move {
+            cx.spawn_in(window, async move |_, cx| {
                 let language = language.await?;
                 let project = project
                     .upgrade()
@@ -208,7 +198,7 @@ impl PickerDelegate for LanguageSelectorDelegate {
                 let buffer = buffer
                     .upgrade()
                     .ok_or_else(|| anyhow!("buffer was dropped"))?;
-                project.update(&mut cx, |project, cx| {
+                project.update(cx, |project, cx| {
                     project.set_language_for_buffer(&buffer, language, cx);
                 })
             })
@@ -244,7 +234,7 @@ impl PickerDelegate for LanguageSelectorDelegate {
     ) -> gpui::Task<()> {
         let background = cx.background_executor().clone();
         let candidates = self.candidates.clone();
-        cx.spawn_in(window, |this, mut cx| async move {
+        cx.spawn_in(window, async move |this, cx| {
             let matches = if query.is_empty() {
                 candidates
                     .into_iter()
@@ -268,7 +258,7 @@ impl PickerDelegate for LanguageSelectorDelegate {
                 .await
             };
 
-            this.update(&mut cx, |this, cx| {
+            this.update(cx, |this, cx| {
                 let delegate = &mut this.delegate;
                 delegate.matches = matches;
                 delegate.selected_index = delegate

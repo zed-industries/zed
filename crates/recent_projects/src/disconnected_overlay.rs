@@ -118,7 +118,7 @@ impl DisconnectedOverlay {
 
         let paths = ssh_project.paths.iter().map(PathBuf::from).collect();
 
-        cx.spawn_in(window, move |_, mut cx| async move {
+        cx.spawn_in(window, async move |_, cx| {
             open_ssh_project(
                 connection_options,
                 paths,
@@ -127,7 +127,7 @@ impl DisconnectedOverlay {
                     replace_window: Some(window_handle),
                     ..Default::default()
                 },
-                &mut cx,
+                cx,
             )
             .await?;
             Ok(())

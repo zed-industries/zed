@@ -578,8 +578,8 @@ impl<D: PickerDelegate> Picker<D> {
         // asynchronously.
         self.pending_update_matches = Some(PendingUpdateMatches {
             delegate_update_matches: Some(delegate_pending_update_matches),
-            _task: cx.spawn_in(window, |this, mut cx| async move {
-                let delegate_pending_update_matches = this.update(&mut cx, |this, _| {
+            _task: cx.spawn_in(window, async move |this, cx| {
+                let delegate_pending_update_matches = this.update(cx, |this, _| {
                     this.pending_update_matches
                         .as_mut()
                         .unwrap()
@@ -588,7 +588,7 @@ impl<D: PickerDelegate> Picker<D> {
                         .unwrap()
                 })?;
                 delegate_pending_update_matches.await;
-                this.update_in(&mut cx, |this, window, cx| {
+                this.update_in(cx, |this, window, cx| {
                     this.matches_updated(window, cx);
                 })
             }),
@@ -724,12 +724,12 @@ impl<D: PickerDelegate> Picker<D> {
 
     fn hide_scrollbar(&mut self, cx: &mut Context<Self>) {
         const SCROLLBAR_SHOW_INTERVAL: Duration = Duration::from_secs(1);
-        self.hide_scrollbar_task = Some(cx.spawn(|panel, mut cx| async move {
+        self.hide_scrollbar_task = Some(cx.spawn(async move |panel, cx| {
             cx.background_executor()
                 .timer(SCROLLBAR_SHOW_INTERVAL)
                 .await;
             panel
-                .update(&mut cx, |panel, cx| {
+                .update(cx, |panel, cx| {
                     panel.scrollbar_visibility = false;
                     cx.notify();
                 })

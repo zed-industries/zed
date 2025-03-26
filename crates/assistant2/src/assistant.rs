@@ -31,8 +31,12 @@ use gpui::{actions, App};
 use prompt_store::PromptBuilder;
 use settings::Settings as _;
 
+pub use crate::active_thread::ActiveThread;
+use crate::assistant_configuration::AddContextServerModal;
 pub use crate::assistant_panel::{AssistantPanel, ConcreteAssistantPanelDelegate};
 pub use crate::inline_assistant::InlineAssistant;
+pub use crate::thread::{Message, RequestKind, Thread, ThreadEvent};
+pub use crate::thread_store::ThreadStore;
 
 actions!(
     assistant2,
@@ -43,6 +47,7 @@ actions!(
         RemoveAllContext,
         OpenHistory,
         OpenConfiguration,
+        AddContextServer,
         RemoveSelectedThread,
         Chat,
         ChatMode,
@@ -83,6 +88,7 @@ pub fn init(
         client.telemetry().clone(),
         cx,
     );
+    cx.observe_new(AddContextServerModal::register).detach();
 
     feature_gate_assistant2_actions(cx);
 }

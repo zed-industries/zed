@@ -179,10 +179,10 @@ impl Editor {
         let language = self.language_at(position, cx);
 
         self.signature_help_state
-            .set_task(cx.spawn_in(window, move |editor, mut cx| async move {
+            .set_task(cx.spawn_in(window, async move |editor, cx| {
                 let signature_help = task.await;
                 editor
-                    .update(&mut cx, |editor, cx| {
+                    .update(cx, |editor, cx| {
                         let Some(mut signature_help) = signature_help.into_iter().next() else {
                             editor
                                 .signature_help_state

@@ -44,7 +44,11 @@ impl RenderOnce for DropdownMenu {
         PopoverMenu::new(self.id)
             .full_width(self.full_width)
             .menu(move |_window, _cx| Some(self.menu.clone()))
-            .trigger(DropdownMenuTrigger::new(self.label).full_width(self.full_width))
+            .trigger(
+                DropdownMenuTrigger::new(self.label)
+                    .full_width(self.full_width)
+                    .disabled(self.disabled),
+            )
             .attach(Corner::BottomLeft)
     }
 }

@@ -5,12 +5,12 @@ use collections::HashMap;
 use gpui::{App, Task};
 use gpui::{AsyncApp, SharedString};
 use language::language_settings::language_settings;
-use language::LanguageName;
 use language::LanguageToolchainStore;
 use language::Toolchain;
 use language::ToolchainList;
 use language::ToolchainLister;
 use language::{ContextProvider, LspAdapter, LspAdapterDelegate};
+use language::{LanguageName, ManifestName, ManifestProvider, ManifestQuery};
 use lsp::LanguageServerBinary;
 use lsp::LanguageServerName;
 use node_runtime::NodeRuntime;
@@ -34,6 +34,32 @@ use std::{
 };
 use task::{TaskTemplate, TaskTemplates, VariableName};
 use util::ResultExt;
+
+pub(crate) struct PyprojectTomlManifestProvider;
+
+impl ManifestProvider for PyprojectTomlManifestProvider {
+    fn name(&self) -> ManifestName {
+        SharedString::new_static("pyproject.toml").into()
+    }
+
+    fn search(
+        &self,
+        ManifestQuery {
+            path,
+            depth,
+            delegate,
+        }: ManifestQuery,
+    ) -> Option<Arc<Path>> {
+        for path in path.ancestors().take(depth) {
+            let p = path.join("pyproject.toml");
+            if delegate.exists(&p, Some(false)) {
+                return Some(path.into());
+            }
+        }
+
+        None
+    }
+}
 
 const SERVER_PATH: &str = "node_modules/pyright/langserver.index.js";
 const NODE_MODULE_RELATIVE_SERVER_PATH: &str = "pyright/langserver.index.js";
@@ -293,6 +319,9 @@ impl LspAdapter for PythonLspAdapter {
             user_settings
         })
     }
+    fn manifest_name(&self) -> Option<ManifestName> {
+        Some(SharedString::new_static("pyproject.toml").into())
+    }
 }
 
 async fn get_cached_server_binary(
@@ -319,6 +348,10 @@ const PYTHON_TEST_TARGET_TASK_VARIABLE: VariableName =
 
 const PYTHON_ACTIVE_TOOLCHAIN_PATH: VariableName =
     VariableName::Custom(Cow::Borrowed("PYTHON_ACTIVE_ZED_TOOLCHAIN"));
+
+const PYTHON_MODULE_NAME_TASK_VARIABLE: VariableName =
+    VariableName::Custom(Cow::Borrowed("PYTHON_MODULE_NAME"));
+
 impl ContextProvider for PythonContextProvider {
     fn build_context(
         &self,
@@ -328,21 +361,18 @@ impl ContextProvider for PythonContextProvider {
         toolchains: Arc<dyn LanguageToolchainStore>,
         cx: &mut gpui::App,
     ) -> Task<Result<task::TaskVariables>> {
-        let test_target = {
-            let test_runner = selected_test_runner(location.buffer.read(cx).file(), cx);
-
-            let runner = match test_runner {
-                TestRunner::UNITTEST => self.build_unittest_target(variables),
-                TestRunner::PYTEST => self.build_pytest_target(variables),
-            };
-            runner
+        let test_target = match selected_test_runner(location.buffer.read(cx).file(), cx) {
+            TestRunner::UNITTEST => self.build_unittest_target(variables),
+            TestRunner::PYTEST => self.build_pytest_target(variables),
         };
 
+        let module_target = self.build_module_target(variables);
         let worktree_id = location.buffer.read(cx).file().map(|f| f.worktree_id(cx));
-        cx.spawn(move |mut cx| async move {
+
+        cx.spawn(async move |cx| {
             let active_toolchain = if let Some(worktree_id) = worktree_id {
                 toolchains
-                    .active_toolchain(worktree_id, "Python".into(), &mut cx)
+                    .active_toolchain(worktree_id, "Python".into(), cx)
                     .await
                     .map_or_else(
                         || "python3".to_owned(),
@@ -352,7 +382,13 @@ impl ContextProvider for PythonContextProvider {
                 String::from("python3")
             };
             let toolchain = (PYTHON_ACTIVE_TOOLCHAIN_PATH, active_toolchain);
-            Ok(task::TaskVariables::from_iter([test_target?, toolchain]))
+
+            Ok(task::TaskVariables::from_iter(
+                test_target
+                    .into_iter()
+                    .chain(module_target.into_iter())
+                    .chain([toolchain]),
+            ))
         })
     }
 
@@ -379,6 +415,17 @@ impl ContextProvider for PythonContextProvider {
                 label: format!("run '{}'", VariableName::File.template_value()),
                 command: PYTHON_ACTIVE_TOOLCHAIN_PATH.template_value(),
                 args: vec![VariableName::File.template_value_with_whitespace()],
+                ..TaskTemplate::default()
+            },
+            // Execute a file as module
+            TaskTemplate {
+                label: format!("run module '{}'", VariableName::File.template_value()),
+                command: PYTHON_ACTIVE_TOOLCHAIN_PATH.template_value(),
+                args: vec![
+                    "-m".to_owned(),
+                    PYTHON_MODULE_NAME_TASK_VARIABLE.template_value(),
+                ],
+                tags: vec!["python-module-main-method".to_owned()],
                 ..TaskTemplate::default()
             },
         ];
@@ -464,10 +511,9 @@ impl PythonContextProvider {
     fn build_unittest_target(
         &self,
         variables: &task::TaskVariables,
-    ) -> Result<(VariableName, String)> {
-        let python_module_name = python_module_name_from_relative_path(
-            variables.get(&VariableName::RelativeFile).unwrap_or(""),
-        );
+    ) -> Option<(VariableName, String)> {
+        let python_module_name =
+            python_module_name_from_relative_path(variables.get(&VariableName::RelativeFile)?);
 
         let unittest_class_name =
             variables.get(&VariableName::Custom(Cow::Borrowed("_unittest_class_name")));
@@ -478,28 +524,25 @@ impl PythonContextProvider {
 
         let unittest_target_str = match (unittest_class_name, unittest_method_name) {
             (Some(class_name), Some(method_name)) => {
-                format!("{}.{}.{}", python_module_name, class_name, method_name)
+                format!("{python_module_name}.{class_name}.{method_name}")
             }
-            (Some(class_name), None) => format!("{}.{}", python_module_name, class_name),
+            (Some(class_name), None) => format!("{python_module_name}.{class_name}"),
             (None, None) => python_module_name,
-            (None, Some(_)) => return Ok((VariableName::Custom(Cow::Borrowed("")), String::new())), // should never happen, a TestCase class is the unit of testing
+            // should never happen, a TestCase class is the unit of testing
+            (None, Some(_)) => return None,
         };
 
-        let unittest_target = (
+        Some((
             PYTHON_TEST_TARGET_TASK_VARIABLE.clone(),
             unittest_target_str,
-        );
-
-        Ok(unittest_target)
+        ))
     }
 
     fn build_pytest_target(
         &self,
         variables: &task::TaskVariables,
-    ) -> Result<(VariableName, String)> {
-        let file_path = variables
-            .get(&VariableName::RelativeFile)
-            .ok_or_else(|| anyhow!("No file path given"))?;
+    ) -> Option<(VariableName, String)> {
+        let file_path = variables.get(&VariableName::RelativeFile)?;
 
         let pytest_class_name =
             variables.get(&VariableName::Custom(Cow::Borrowed("_pytest_class_name")));
@@ -509,20 +552,31 @@ impl PythonContextProvider {
 
         let pytest_target_str = match (pytest_class_name, pytest_method_name) {
             (Some(class_name), Some(method_name)) => {
-                format!("{}::{}::{}", file_path, class_name, method_name)
+                format!("{file_path}::{class_name}::{method_name}")
             }
             (Some(class_name), None) => {
-                format!("{}::{}", file_path, class_name)
+                format!("{file_path}::{class_name}")
             }
             (None, Some(method_name)) => {
-                format!("{}::{}", file_path, method_name)
+                format!("{file_path}::{method_name}")
             }
             (None, None) => file_path.to_string(),
         };
 
-        let pytest_target = (PYTHON_TEST_TARGET_TASK_VARIABLE.clone(), pytest_target_str);
+        Some((PYTHON_TEST_TARGET_TASK_VARIABLE.clone(), pytest_target_str))
+    }
 
-        Ok(pytest_target)
+    fn build_module_target(
+        &self,
+        variables: &task::TaskVariables,
+    ) -> Result<(VariableName, String)> {
+        let python_module_name = python_module_name_from_relative_path(
+            variables.get(&VariableName::RelativeFile).unwrap_or(""),
+        );
+
+        let module_target = (PYTHON_MODULE_NAME_TASK_VARIABLE.clone(), python_module_name);
+
+        Ok(module_target)
     }
 }
 
@@ -1018,6 +1072,9 @@ impl LspAdapter for PyLspAdapter {
 
             user_settings
         })
+    }
+    fn manifest_name(&self) -> Option<ManifestName> {
+        Some(SharedString::new_static("pyproject.toml").into())
     }
 }
 

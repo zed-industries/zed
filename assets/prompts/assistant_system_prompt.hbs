@@ -11,8 +11,22 @@ You should only perform actions that modify the user’s system if explicitly re
 
 Be concise and direct in your responses.
 
-The user has opened a project that contains the following root directories/files:
+The user has opened a project that contains the following root directories/files. Whenever you specify a path in the project, it must be a relative path which begins with one of these root directories/files:
 
 {{#each worktrees}}
-- {{root_name}} (absolute path: {{abs_path}})
+- `{{root_name}}` (absolute path: `{{abs_path}}`)
 {{/each}}
+{{#if has_rules}}
+
+There are rules that apply to these root directories:
+{{#each worktrees}}
+{{#if rules_file}}
+
+`{{root_name}}/{{rules_file.rel_path}}`:
+
+``````
+{{{rules_file.text}}}
+``````
+{{/if}}
+{{/each}}
+{{/if}}

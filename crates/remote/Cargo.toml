@@ -39,6 +39,7 @@ shlex.workspace = true
 smol.workspace = true
 tempfile.workspace = true
 thiserror.workspace = true
+urlencoding.workspace = true
 util.workspace = true
 
 [dev-dependencies]

@@ -118,9 +118,9 @@ impl PickerDelegate for ProjectSymbolsDelegate {
             });
             let symbol = symbol.clone();
             let workspace = self.workspace.clone();
-            cx.spawn_in(window, |_, mut cx| async move {
+            cx.spawn_in(window, async move |_, cx| {
                 let buffer = buffer.await?;
-                workspace.update_in(&mut cx, |workspace, window, cx| {
+                workspace.update_in(cx, |workspace, window, cx| {
                     let position = buffer
                         .read(cx)
                         .clip_point_utf16(symbol.range.start, Bias::Left);
@@ -176,10 +176,10 @@ impl PickerDelegate for ProjectSymbolsDelegate {
         let symbols = self
             .project
             .update(cx, |project, cx| project.symbols(&query, cx));
-        cx.spawn_in(window, |this, mut cx| async move {
+        cx.spawn_in(window, async move |this, cx| {
             let symbols = symbols.await.log_err();
             if let Some(symbols) = symbols {
-                this.update_in(&mut cx, |this, window, cx| {
+                this.update_in(cx, |this, window, cx| {
                     let delegate = &mut this.delegate;
                     let project = delegate.project.read(cx);
                     let (visible_match_candidates, external_match_candidates) = symbols
@@ -316,7 +316,7 @@ mod tests {
             symbol("uno", path!("/dir/test.rs")),
         ];
         let fake_server = fake_servers.next().await.unwrap();
-        fake_server.handle_request::<lsp::WorkspaceSymbolRequest, _, _>(
+        fake_server.set_request_handler::<lsp::WorkspaceSymbolRequest, _, _>(
             move |params: lsp::WorkspaceSymbolParams, cx| {
                 let executor = cx.background_executor().clone();
                 let fake_symbols = fake_symbols.clone();

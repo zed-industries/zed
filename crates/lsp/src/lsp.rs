@@ -47,7 +47,7 @@ const CONTENT_LEN_HEADER: &str = "Content-Length: ";
 const LSP_REQUEST_TIMEOUT: Duration = Duration::from_secs(60 * 2);
 const SERVER_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
 
-type NotificationHandler = Box<dyn Send + FnMut(Option<RequestId>, Value, AsyncApp)>;
+type NotificationHandler = Box<dyn Send + FnMut(Option<RequestId>, Value, &mut AsyncApp)>;
 type ResponseHandler = Box<dyn Send + FnOnce(Result<String, Error>)>;
 type IoHandler = Box<dyn Send + FnMut(IoKind, &str)>;
 
@@ -309,7 +309,7 @@ impl LanguageServer {
         root_path: &Path,
         code_action_kinds: Option<Vec<CodeActionKind>>,
         workspace_folders: Arc<Mutex<BTreeSet<Url>>>,
-        cx: AsyncApp,
+        cx: &mut AsyncApp,
     ) -> Result<Self> {
         let working_dir = if root_path.is_dir() {
             root_path
@@ -383,7 +383,7 @@ impl LanguageServer {
         binary: LanguageServerBinary,
         root_uri: Url,
         workspace_folders: Arc<Mutex<BTreeSet<Url>>>,
-        cx: AsyncApp,
+        cx: &mut AsyncApp,
         on_unhandled_notification: F,
     ) -> Self
     where
@@ -405,7 +405,7 @@ impl LanguageServer {
             let notification_handlers = notification_handlers.clone();
             let response_handlers = response_handlers.clone();
             let io_handlers = io_handlers.clone();
-            move |cx| {
+            async move |cx| {
                 Self::handle_input(
                     stdout,
                     on_unhandled_notification,
@@ -415,16 +415,21 @@ impl LanguageServer {
                     cx,
                 )
                 .log_err()
+                .await
             }
         });
         let stderr_input_task = stderr
             .map(|stderr| {
                 let io_handlers = io_handlers.clone();
                 let stderr_captures = stderr_capture.clone();
-                cx.spawn(|_| Self::handle_stderr(stderr, io_handlers, stderr_captures).log_err())
+                cx.spawn(async move |_| {
+                    Self::handle_stderr(stderr, io_handlers, stderr_captures)
+                        .log_err()
+                        .await
+                })
             })
             .unwrap_or_else(|| Task::ready(None));
-        let input_task = cx.spawn(|_| async move {
+        let input_task = cx.spawn(async move |_| {
             let (stdout, stderr) = futures::join!(stdout_input_task, stderr_input_task);
             stdout.or(stderr)
         });
@@ -481,7 +486,7 @@ impl LanguageServer {
         notification_handlers: Arc<Mutex<HashMap<&'static str, NotificationHandler>>>,
         response_handlers: Arc<Mutex<Option<HashMap<RequestId, ResponseHandler>>>>,
         io_handlers: Arc<Mutex<HashMap<i32, IoHandler>>>,
-        cx: AsyncApp,
+        cx: &mut AsyncApp,
     ) -> anyhow::Result<()>
     where
         Stdout: AsyncRead + Unpin + Send + 'static,
@@ -506,7 +511,7 @@ impl LanguageServer {
             {
                 let mut notification_handlers = notification_handlers.lock();
                 if let Some(handler) = notification_handlers.get_mut(msg.method.as_str()) {
-                    handler(msg.id, msg.params.unwrap_or(Value::Null), cx.clone());
+                    handler(msg.id, msg.params.unwrap_or(Value::Null), cx);
                 } else {
                     drop(notification_handlers);
                     on_unhandled_notification(msg);
@@ -631,6 +636,9 @@ impl LanguageServer {
                     }),
                     diagnostic: Some(DiagnosticWorkspaceClientCapabilities {
                         refresh_support: None,
+                    }),
+                    code_lens: Some(CodeLensWorkspaceClientCapabilities {
+                        refresh_support: Some(true),
                     }),
                     workspace_edit: Some(WorkspaceEditClientCapabilities {
                         resource_operations: Some(vec![
@@ -763,6 +771,9 @@ impl LanguageServer {
                         did_save: Some(true),
                         ..TextDocumentSyncClientCapabilities::default()
                     }),
+                    code_lens: Some(CodeLensClientCapabilities {
+                        dynamic_registration: Some(false),
+                    }),
                     ..TextDocumentClientCapabilities::default()
                 }),
                 experimental: Some(json!({
@@ -801,7 +812,7 @@ impl LanguageServer {
         configuration: Arc<DidChangeConfigurationParams>,
         cx: &App,
     ) -> Task<Result<Arc<Self>>> {
-        cx.spawn(|_| async move {
+        cx.spawn(async move |_| {
             let response = self.request::<request::Initialize>(params).await?;
             if let Some(info) = response.server_info {
                 self.process_name = info.name.into();
@@ -872,7 +883,7 @@ impl LanguageServer {
     pub fn on_notification<T, F>(&self, f: F) -> Subscription
     where
         T: notification::Notification,
-        F: 'static + Send + FnMut(T::Params, AsyncApp),
+        F: 'static + Send + FnMut(T::Params, &mut AsyncApp),
     {
         self.on_custom_notification(T::METHOD, f)
     }
@@ -885,7 +896,7 @@ impl LanguageServer {
     where
         T: request::Request,
         T::Params: 'static + Send,
-        F: 'static + FnMut(T::Params, AsyncApp) -> Fut + Send,
+        F: 'static + FnMut(T::Params, &mut AsyncApp) -> Fut + Send,
         Fut: 'static + Future<Output = Result<T::Result>>,
     {
         self.on_custom_request(T::METHOD, f)
@@ -923,7 +934,7 @@ impl LanguageServer {
     #[must_use]
     fn on_custom_notification<Params, F>(&self, method: &'static str, mut f: F) -> Subscription
     where
-        F: 'static + FnMut(Params, AsyncApp) + Send,
+        F: 'static + FnMut(Params, &mut AsyncApp) + Send,
         Params: DeserializeOwned,
     {
         let prev_handler = self.notification_handlers.lock().insert(
@@ -947,7 +958,7 @@ impl LanguageServer {
     #[must_use]
     fn on_custom_request<Params, Res, Fut, F>(&self, method: &'static str, mut f: F) -> Subscription
     where
-        F: 'static + FnMut(Params, AsyncApp) -> Fut + Send,
+        F: 'static + FnMut(Params, &mut AsyncApp) -> Fut + Send,
         Fut: 'static + Future<Output = Result<Res>>,
         Params: DeserializeOwned + Send + 'static,
         Res: Serialize,
@@ -959,7 +970,7 @@ impl LanguageServer {
                 if let Some(id) = id {
                     match serde_json::from_value(params) {
                         Ok(params) => {
-                            let response = f(params, cx.clone());
+                            let response = f(params, cx);
                             cx.foreground_executor()
                                 .spawn({
                                     let outbound_tx = outbound_tx.clone();
@@ -1264,9 +1275,9 @@ impl LanguageServer {
                 name: String::default(),
             })
             .collect();
+        *workspace_folders = folders;
         let should_notify = !added.is_empty() || !removed.is_empty();
         if should_notify {
-            *workspace_folders = folders;
             drop(workspace_folders);
             let params = DidChangeWorkspaceFoldersParams {
                 event: WorkspaceFoldersChangeEvent { added, removed },
@@ -1373,7 +1384,7 @@ impl FakeLanguageServer {
         binary: LanguageServerBinary,
         name: String,
         capabilities: ServerCapabilities,
-        cx: AsyncApp,
+        cx: &mut AsyncApp,
     ) -> (LanguageServer, FakeLanguageServer) {
         let (stdin_writer, stdin_reader) = async_pipe::pipe();
         let (stdout_writer, stdout_reader) = async_pipe::pipe();
@@ -1395,7 +1406,7 @@ impl FakeLanguageServer {
             binary.clone(),
             root,
             workspace_folders.clone(),
-            cx.clone(),
+            cx,
             |_| {},
         );
         server.process_name = process_name;
@@ -1414,7 +1425,7 @@ impl FakeLanguageServer {
                     binary,
                     Self::root_path(),
                     workspace_folders,
-                    cx.clone(),
+                    cx,
                     move |msg| {
                         notifications_tx
                             .try_send((
@@ -1429,7 +1440,7 @@ impl FakeLanguageServer {
             }),
             notifications_rx,
         };
-        fake.handle_request::<request::Initialize, _, _>({
+        fake.set_request_handler::<request::Initialize, _, _>({
             let capabilities = capabilities;
             move |_, _| {
                 let capabilities = capabilities.clone();
@@ -1513,7 +1524,7 @@ impl FakeLanguageServer {
     }
 
     /// Registers a handler for a specific kind of request. Removes any existing handler for specified request type.
-    pub fn handle_request<T, F, Fut>(
+    pub fn set_request_handler<T, F, Fut>(
         &self,
         mut handler: F,
     ) -> futures::channel::mpsc::UnboundedReceiver<()>
@@ -1628,7 +1639,7 @@ mod tests {
             },
             "the-lsp".to_string(),
             Default::default(),
-            cx.to_async(),
+            &mut cx.to_async(),
         );
 
         let (message_tx, message_rx) = channel::unbounded();
@@ -1688,7 +1699,7 @@ mod tests {
             "file://b/c"
         );
 
-        fake.handle_request::<request::Shutdown, _, _>(|_, _| async move { Ok(()) });
+        fake.set_request_handler::<request::Shutdown, _, _>(|_, _| async move { Ok(()) });
 
         drop(server);
         fake.receive_notification::<notification::Exit>().await;

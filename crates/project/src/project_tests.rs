@@ -1,4 +1,6 @@
-use crate::{task_inventory::TaskContexts, Event, *};
+#![allow(clippy::format_collect)]
+
+use crate::{task_inventory::TaskContexts, task_store::TaskSettingsLocation, Event, *};
 use buffer_diff::{
     assert_hunks, BufferDiffEvent, DiffHunkSecondaryStatus, DiffHunkStatus, DiffHunkStatusKind,
 };
@@ -17,13 +19,12 @@ use lsp::{
     NumberOrString, TextDocumentEdit, WillRenameFiles,
 };
 use parking_lot::Mutex;
+use paths::tasks_file;
 use pretty_assertions::{assert_eq, assert_matches};
 use serde_json::json;
 #[cfg(not(windows))]
 use std::os;
-use std::{str::FromStr, sync::OnceLock};
-
-use std::{mem, num::NonZeroU32, ops::Range, task::Poll};
+use std::{mem, num::NonZeroU32, ops::Range, str::FromStr, sync::OnceLock, task::Poll};
 use task::{ResolvedTask, TaskContext};
 use unindent::Unindent as _;
 use util::{
@@ -325,7 +326,7 @@ async fn test_managing_project_specific_settings(cx: &mut gpui::TestAppContext) 
             inventory.task_scheduled(topmost_local_task_source_kind.clone(), resolved_task);
             inventory
                 .update_file_based_tasks(
-                    None,
+                    TaskSettingsLocation::Global(tasks_file()),
                     Some(
                         &json!([{
                             "label": "cargo check unstable",
@@ -341,6 +342,7 @@ async fn test_managing_project_specific_settings(cx: &mut gpui::TestAppContext) 
                         }])
                         .to_string(),
                     ),
+                    settings::TaskKind::Script,
                 )
                 .unwrap();
         });
@@ -828,9 +830,9 @@ async fn test_managing_language_servers(cx: &mut gpui::TestAppContext) {
     });
 
     let mut rust_shutdown_requests = fake_rust_server
-        .handle_request::<lsp::request::Shutdown, _, _>(|_, _| future::ready(Ok(())));
+        .set_request_handler::<lsp::request::Shutdown, _, _>(|_, _| future::ready(Ok(())));
     let mut json_shutdown_requests = fake_json_server
-        .handle_request::<lsp::request::Shutdown, _, _>(|_, _| future::ready(Ok(())));
+        .set_request_handler::<lsp::request::Shutdown, _, _>(|_, _| future::ready(Ok(())));
     futures::join!(rust_shutdown_requests.next(), json_shutdown_requests.next());
 
     let mut fake_rust_server = fake_rust_servers.next().await.unwrap();
@@ -2697,7 +2699,7 @@ async fn test_definition(cx: &mut gpui::TestAppContext) {
         .unwrap();
 
     let fake_server = fake_servers.next().await.unwrap();
-    fake_server.handle_request::<lsp::request::GotoDefinition, _, _>(|params, _| async move {
+    fake_server.set_request_handler::<lsp::request::GotoDefinition, _, _>(|params, _| async move {
         let params = params.text_document_position_params;
         assert_eq!(
             params.text_document.uri.to_file_path().unwrap(),
@@ -2814,7 +2816,7 @@ async fn test_completions_without_edit_ranges(cx: &mut gpui::TestAppContext) {
     });
 
     fake_server
-        .handle_request::<lsp::request::Completion, _, _>(|_, _| async move {
+        .set_request_handler::<lsp::request::Completion, _, _>(|_, _| async move {
             Ok(Some(lsp::CompletionResponse::Array(vec![
                 lsp::CompletionItem {
                     label: "fullyQualifiedName?".into(),
@@ -2825,7 +2827,7 @@ async fn test_completions_without_edit_ranges(cx: &mut gpui::TestAppContext) {
         })
         .next()
         .await;
-    let completions = completions.await.unwrap();
+    let completions = completions.await.unwrap().unwrap();
     let snapshot = buffer.update(cx, |buffer, _| buffer.snapshot());
     assert_eq!(completions.len(), 1);
     assert_eq!(completions[0].new_text, "fullyQualifiedName");
@@ -2841,7 +2843,7 @@ async fn test_completions_without_edit_ranges(cx: &mut gpui::TestAppContext) {
     });
 
     fake_server
-        .handle_request::<lsp::request::Completion, _, _>(|_, _| async move {
+        .set_request_handler::<lsp::request::Completion, _, _>(|_, _| async move {
             Ok(Some(lsp::CompletionResponse::Array(vec![
                 lsp::CompletionItem {
                     label: "component".into(),
@@ -2851,7 +2853,7 @@ async fn test_completions_without_edit_ranges(cx: &mut gpui::TestAppContext) {
         })
         .next()
         .await;
-    let completions = completions.await.unwrap();
+    let completions = completions.await.unwrap().unwrap();
     let snapshot = buffer.update(cx, |buffer, _| buffer.snapshot());
     assert_eq!(completions.len(), 1);
     assert_eq!(completions[0].new_text, "component");
@@ -2908,7 +2910,7 @@ async fn test_completions_with_carriage_returns(cx: &mut gpui::TestAppContext) {
     });
 
     fake_server
-        .handle_request::<lsp::request::Completion, _, _>(|_, _| async move {
+        .set_request_handler::<lsp::request::Completion, _, _>(|_, _| async move {
             Ok(Some(lsp::CompletionResponse::Array(vec![
                 lsp::CompletionItem {
                     label: "fullyQualifiedName?".into(),
@@ -2919,7 +2921,7 @@ async fn test_completions_with_carriage_returns(cx: &mut gpui::TestAppContext) {
         })
         .next()
         .await;
-    let completions = completions.await.unwrap();
+    let completions = completions.await.unwrap().unwrap();
     assert_eq!(completions.len(), 1);
     assert_eq!(completions[0].new_text, "fully\nQualified\nName");
 }
@@ -2975,7 +2977,7 @@ async fn test_apply_code_actions_with_commands(cx: &mut gpui::TestAppContext) {
         project.code_actions(&buffer, 0..0, None, cx)
     });
     fake_server
-        .handle_request::<lsp::request::CodeActionRequest, _, _>(|_, _| async move {
+        .set_request_handler::<lsp::request::CodeActionRequest, _, _>(|_, _| async move {
             Ok(Some(vec![
                 lsp::CodeActionOrCommand::CodeAction(lsp::CodeAction {
                     title: "The code action".into(),
@@ -3000,7 +3002,7 @@ async fn test_apply_code_actions_with_commands(cx: &mut gpui::TestAppContext) {
 
     // Resolving the code action does not populate its edits. In absence of
     // edits, we must execute the given command.
-    fake_server.handle_request::<lsp::request::CodeActionResolveRequest, _, _>(
+    fake_server.set_request_handler::<lsp::request::CodeActionResolveRequest, _, _>(
         |mut action, _| async move {
             if action.data.is_some() {
                 action.command = Some(lsp::Command {
@@ -3016,7 +3018,7 @@ async fn test_apply_code_actions_with_commands(cx: &mut gpui::TestAppContext) {
     // While executing the command, the language server sends the editor
     // a `workspaceEdit` request.
     fake_server
-        .handle_request::<lsp::request::ExecuteCommand, _, _>({
+        .set_request_handler::<lsp::request::ExecuteCommand, _, _>({
             let fake = fake_server.clone();
             move |params, _| {
                 assert_eq!(params.command, "_the/command");
@@ -4208,7 +4210,7 @@ async fn test_lsp_rename_notifications(cx: &mut gpui::TestAppContext) {
     };
     let resolved_workspace_edit = Arc::new(OnceLock::new());
     fake_server
-        .handle_request::<WillRenameFiles, _, _>({
+        .set_request_handler::<WillRenameFiles, _, _>({
             let resolved_workspace_edit = resolved_workspace_edit.clone();
             let expected_edit = expected_edit.clone();
             move |params, _| {
@@ -4285,7 +4287,7 @@ async fn test_rename(cx: &mut gpui::TestAppContext) {
         project.prepare_rename(buffer.clone(), 7, cx)
     });
     fake_server
-        .handle_request::<lsp::request::PrepareRenameRequest, _, _>(|params, _| async move {
+        .set_request_handler::<lsp::request::PrepareRenameRequest, _, _>(|params, _| async move {
             assert_eq!(
                 params.text_document.uri.as_str(),
                 uri!("file:///dir/one.rs")
@@ -4310,7 +4312,7 @@ async fn test_rename(cx: &mut gpui::TestAppContext) {
         project.perform_rename(buffer.clone(), 7, "THREE".to_string(), cx)
     });
     fake_server
-        .handle_request::<lsp::request::Rename, _, _>(|params, _| async move {
+        .set_request_handler::<lsp::request::Rename, _, _>(|params, _| async move {
             assert_eq!(
                 params.text_document_position.text_document.uri.as_str(),
                 uri!("file:///dir/one.rs")
@@ -5171,35 +5173,36 @@ async fn test_multiple_language_server_hovers(cx: &mut gpui::TestAppContext) {
             "TailwindServer" | "TypeScriptServer" => {
                 servers_with_hover_requests.insert(
                     new_server_name.clone(),
-                    new_server.handle_request::<lsp::request::HoverRequest, _, _>(move |_, _| {
-                        let name = new_server_name.clone();
-                        async move {
-                            Ok(Some(lsp::Hover {
-                                contents: lsp::HoverContents::Scalar(lsp::MarkedString::String(
-                                    format!("{name} hover"),
-                                )),
-                                range: None,
-                            }))
-                        }
-                    }),
+                    new_server.set_request_handler::<lsp::request::HoverRequest, _, _>(
+                        move |_, _| {
+                            let name = new_server_name.clone();
+                            async move {
+                                Ok(Some(lsp::Hover {
+                                    contents: lsp::HoverContents::Scalar(
+                                        lsp::MarkedString::String(format!("{name} hover")),
+                                    ),
+                                    range: None,
+                                }))
+                            }
+                        },
+                    ),
                 );
             }
             "ESLintServer" => {
                 servers_with_hover_requests.insert(
                     new_server_name,
-                    new_server.handle_request::<lsp::request::HoverRequest, _, _>(
+                    new_server.set_request_handler::<lsp::request::HoverRequest, _, _>(
                         |_, _| async move { Ok(None) },
                     ),
                 );
             }
             "NoHoverCapabilitiesServer" => {
-                let _never_handled = new_server.handle_request::<lsp::request::HoverRequest, _, _>(
-                    |_, _| async move {
+                let _never_handled = new_server
+                    .set_request_handler::<lsp::request::HoverRequest, _, _>(|_, _| async move {
                         panic!(
                             "Should not call for hovers server with no corresponding capabilities"
                         )
-                    },
-                );
+                    });
             }
             unexpected => panic!("Unexpected server name: {unexpected}"),
         }
@@ -5270,8 +5273,8 @@ async fn test_hovers_with_empty_parts(cx: &mut gpui::TestAppContext) {
         .await
         .expect("failed to get the language server");
 
-    let mut request_handled =
-        fake_server.handle_request::<lsp::request::HoverRequest, _, _>(move |_, _| async move {
+    let mut request_handled = fake_server.set_request_handler::<lsp::request::HoverRequest, _, _>(
+        move |_, _| async move {
             Ok(Some(lsp::Hover {
                 contents: lsp::HoverContents::Array(vec![
                     lsp::MarkedString::String("".to_string()),
@@ -5280,7 +5283,8 @@ async fn test_hovers_with_empty_parts(cx: &mut gpui::TestAppContext) {
                 ]),
                 range: None,
             }))
-        });
+        },
+    );
 
     let hover_task = project.update(cx, |project, cx| {
         project.hover(&buffer, Point::new(0, 0), cx)
@@ -5342,8 +5346,8 @@ async fn test_code_actions_only_kinds(cx: &mut gpui::TestAppContext) {
         .await
         .expect("failed to get the language server");
 
-    let mut request_handled = fake_server.handle_request::<lsp::request::CodeActionRequest, _, _>(
-        move |_, _| async move {
+    let mut request_handled = fake_server
+        .set_request_handler::<lsp::request::CodeActionRequest, _, _>(move |_, _| async move {
             Ok(Some(vec![
                 lsp::CodeActionOrCommand::CodeAction(lsp::CodeAction {
                     title: "organize imports".to_string(),
@@ -5356,8 +5360,7 @@ async fn test_code_actions_only_kinds(cx: &mut gpui::TestAppContext) {
                     ..lsp::CodeAction::default()
                 }),
             ]))
-        },
-    );
+        });
 
     let code_actions_task = project.update(cx, |project, cx| {
         project.code_actions(
@@ -5478,7 +5481,7 @@ async fn test_multiple_language_server_actions(cx: &mut gpui::TestAppContext) {
             "TailwindServer" | "TypeScriptServer" => {
                 servers_with_actions_requests.insert(
                     new_server_name.clone(),
-                    new_server.handle_request::<lsp::request::CodeActionRequest, _, _>(
+                    new_server.set_request_handler::<lsp::request::CodeActionRequest, _, _>(
                         move |_, _| {
                             let name = new_server_name.clone();
                             async move {
@@ -5496,14 +5499,14 @@ async fn test_multiple_language_server_actions(cx: &mut gpui::TestAppContext) {
             "ESLintServer" => {
                 servers_with_actions_requests.insert(
                     new_server_name,
-                    new_server.handle_request::<lsp::request::CodeActionRequest, _, _>(
+                    new_server.set_request_handler::<lsp::request::CodeActionRequest, _, _>(
                         |_, _| async move { Ok(None) },
                     ),
                 );
             }
             "NoActionsCapabilitiesServer" => {
                 let _never_handled = new_server
-                    .handle_request::<lsp::request::CodeActionRequest, _, _>(|_, _| async move {
+                    .set_request_handler::<lsp::request::CodeActionRequest, _, _>(|_, _| async move {
                         panic!(
                             "Should not call for code actions server with no corresponding capabilities"
                         )
@@ -6047,11 +6050,7 @@ async fn test_staging_hunks(cx: &mut gpui::TestAppContext) {
     )
     .await;
 
-    fs.set_head_for_repo(
-        "/dir/.git".as_ref(),
-        &[("file.txt".into(), committed_contents.clone())],
-    );
-    fs.set_index_for_repo(
+    fs.set_head_and_index_for_repo(
         "/dir/.git".as_ref(),
         &[("file.txt".into(), committed_contents.clone())],
     );
@@ -6358,7 +6357,199 @@ async fn test_staging_hunks(cx: &mut gpui::TestAppContext) {
     });
 }
 
-#[allow(clippy::format_collect)]
+#[gpui::test(seeds(340, 472))]
+async fn test_staging_hunks_with_delayed_fs_event(cx: &mut gpui::TestAppContext) {
+    use DiffHunkSecondaryStatus::*;
+    init_test(cx);
+
+    let committed_contents = r#"
+        zero
+        one
+        two
+        three
+        four
+        five
+    "#
+    .unindent();
+    let file_contents = r#"
+        one
+        TWO
+        three
+        FOUR
+        five
+    "#
+    .unindent();
+
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree(
+        "/dir",
+        json!({
+            ".git": {},
+            "file.txt": file_contents.clone()
+        }),
+    )
+    .await;
+
+    fs.set_head_for_repo(
+        "/dir/.git".as_ref(),
+        &[("file.txt".into(), committed_contents.clone())],
+    );
+    fs.set_index_for_repo(
+        "/dir/.git".as_ref(),
+        &[("file.txt".into(), committed_contents.clone())],
+    );
+
+    let project = Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
+
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer("/dir/file.txt", cx)
+        })
+        .await
+        .unwrap();
+    let snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot());
+    let uncommitted_diff = project
+        .update(cx, |project, cx| {
+            project.open_uncommitted_diff(buffer.clone(), cx)
+        })
+        .await
+        .unwrap();
+
+    // The hunks are initially unstaged.
+    uncommitted_diff.read_with(cx, |diff, cx| {
+        assert_hunks(
+            diff.hunks(&snapshot, cx),
+            &snapshot,
+            &diff.base_text_string().unwrap(),
+            &[
+                (
+                    0..0,
+                    "zero\n",
+                    "",
+                    DiffHunkStatus::deleted(HasSecondaryHunk),
+                ),
+                (
+                    1..2,
+                    "two\n",
+                    "TWO\n",
+                    DiffHunkStatus::modified(HasSecondaryHunk),
+                ),
+                (
+                    3..4,
+                    "four\n",
+                    "FOUR\n",
+                    DiffHunkStatus::modified(HasSecondaryHunk),
+                ),
+            ],
+        );
+    });
+
+    // Pause IO events
+    fs.pause_events();
+
+    // Stage the first hunk.
+    uncommitted_diff.update(cx, |diff, cx| {
+        let hunk = diff.hunks(&snapshot, cx).next().unwrap();
+        diff.stage_or_unstage_hunks(true, &[hunk], &snapshot, true, cx);
+        assert_hunks(
+            diff.hunks(&snapshot, cx),
+            &snapshot,
+            &diff.base_text_string().unwrap(),
+            &[
+                (
+                    0..0,
+                    "zero\n",
+                    "",
+                    DiffHunkStatus::deleted(SecondaryHunkRemovalPending),
+                ),
+                (
+                    1..2,
+                    "two\n",
+                    "TWO\n",
+                    DiffHunkStatus::modified(HasSecondaryHunk),
+                ),
+                (
+                    3..4,
+                    "four\n",
+                    "FOUR\n",
+                    DiffHunkStatus::modified(HasSecondaryHunk),
+                ),
+            ],
+        );
+    });
+
+    // Stage the second hunk *before* receiving the FS event for the first hunk.
+    cx.run_until_parked();
+    uncommitted_diff.update(cx, |diff, cx| {
+        let hunk = diff.hunks(&snapshot, cx).nth(1).unwrap();
+        diff.stage_or_unstage_hunks(true, &[hunk], &snapshot, true, cx);
+        assert_hunks(
+            diff.hunks(&snapshot, cx),
+            &snapshot,
+            &diff.base_text_string().unwrap(),
+            &[
+                (
+                    0..0,
+                    "zero\n",
+                    "",
+                    DiffHunkStatus::deleted(SecondaryHunkRemovalPending),
+                ),
+                (
+                    1..2,
+                    "two\n",
+                    "TWO\n",
+                    DiffHunkStatus::modified(SecondaryHunkRemovalPending),
+                ),
+                (
+                    3..4,
+                    "four\n",
+                    "FOUR\n",
+                    DiffHunkStatus::modified(HasSecondaryHunk),
+                ),
+            ],
+        );
+    });
+
+    // Process the FS event for staging the first hunk (second event is still pending).
+    fs.flush_events(1);
+    cx.run_until_parked();
+
+    // Stage the third hunk before receiving the second FS event.
+    uncommitted_diff.update(cx, |diff, cx| {
+        let hunk = diff.hunks(&snapshot, cx).nth(2).unwrap();
+        diff.stage_or_unstage_hunks(true, &[hunk], &snapshot, true, cx);
+    });
+
+    // Wait for all remaining IO.
+    cx.run_until_parked();
+    fs.flush_events(fs.buffered_event_count());
+
+    // Now all hunks are staged.
+    cx.run_until_parked();
+    uncommitted_diff.update(cx, |diff, cx| {
+        assert_hunks(
+            diff.hunks(&snapshot, cx),
+            &snapshot,
+            &diff.base_text_string().unwrap(),
+            &[
+                (0..0, "zero\n", "", DiffHunkStatus::deleted(NoSecondaryHunk)),
+                (
+                    1..2,
+                    "two\n",
+                    "TWO\n",
+                    DiffHunkStatus::modified(NoSecondaryHunk),
+                ),
+                (
+                    3..4,
+                    "four\n",
+                    "FOUR\n",
+                    DiffHunkStatus::modified(NoSecondaryHunk),
+                ),
+            ],
+        );
+    });
+}
+
 #[gpui::test]
 async fn test_staging_lots_of_hunks_fast(cx: &mut gpui::TestAppContext) {
     use DiffHunkSecondaryStatus::*;
@@ -6414,8 +6605,6 @@ async fn test_staging_lots_of_hunks_fast(cx: &mut gpui::TestAppContext) {
         .await
         .unwrap();
 
-    let range = Anchor::MIN..snapshot.anchor_after(snapshot.max_point());
-
     let mut expected_hunks: Vec<(Range<u32>, String, String, DiffHunkStatus)> = (0..500)
         .step_by(5)
         .map(|i| {
@@ -6444,9 +6633,7 @@ async fn test_staging_lots_of_hunks_fast(cx: &mut gpui::TestAppContext) {
 
     // Stage every hunk with a different call
     uncommitted_diff.update(cx, |diff, cx| {
-        let hunks = diff
-            .hunks_intersecting_range(range.clone(), &snapshot, cx)
-            .collect::<Vec<_>>();
+        let hunks = diff.hunks(&snapshot, cx).collect::<Vec<_>>();
         for hunk in hunks {
             diff.stage_or_unstage_hunks(true, &[hunk], &snapshot, true, cx);
         }
@@ -6480,9 +6667,7 @@ async fn test_staging_lots_of_hunks_fast(cx: &mut gpui::TestAppContext) {
 
     // Unstage every hunk with a different call
     uncommitted_diff.update(cx, |diff, cx| {
-        let hunks = diff
-            .hunks_intersecting_range(range, &snapshot, cx)
-            .collect::<Vec<_>>();
+        let hunks = diff.hunks(&snapshot, cx).collect::<Vec<_>>();
         for hunk in hunks {
             diff.stage_or_unstage_hunks(false, &[hunk], &snapshot, true, cx);
         }

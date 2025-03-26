@@ -1,8 +1,8 @@
 use super::Axis;
 use crate::{
-    Autoscroll, Bias, Editor, EditorMode, NextScreen, NextScrollCursorCenterTopBottom,
-    ScrollAnchor, ScrollCursorBottom, ScrollCursorCenter, ScrollCursorCenterTopBottom,
-    ScrollCursorTop, SCROLL_CENTER_TOP_BOTTOM_DEBOUNCE_TIMEOUT,
+    display_map::DisplayRow, Autoscroll, Editor, EditorMode, NextScreen,
+    NextScrollCursorCenterTopBottom, ScrollCursorBottom, ScrollCursorCenter,
+    ScrollCursorCenterTopBottom, ScrollCursorTop, SCROLL_CENTER_TOP_BOTTOM_DEBOUNCE_TIMEOUT,
 };
 use gpui::{Context, Point, Window};
 
@@ -40,49 +40,25 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let snapshot = self.snapshot(window, cx).display_snapshot;
-        let visible_rows = if let Some(visible_rows) = self.visible_line_count() {
-            visible_rows as u32
-        } else {
-            return;
-        };
-
-        let scroll_margin_rows = self.vertical_scroll_margin() as u32;
-        let mut new_screen_top = self.selections.newest_display(cx).head();
-        *new_screen_top.column_mut() = 0;
         match self.next_scroll_position {
             NextScrollCursorCenterTopBottom::Center => {
-                *new_screen_top.row_mut() = new_screen_top.row().0.saturating_sub(visible_rows / 2);
+                self.scroll_cursor_center(&Default::default(), window, cx);
             }
             NextScrollCursorCenterTopBottom::Top => {
-                *new_screen_top.row_mut() =
-                    new_screen_top.row().0.saturating_sub(scroll_margin_rows);
+                self.scroll_cursor_top(&Default::default(), window, cx);
             }
             NextScrollCursorCenterTopBottom::Bottom => {
-                *new_screen_top.row_mut() = new_screen_top
-                    .row()
-                    .0
-                    .saturating_sub(visible_rows.saturating_sub(scroll_margin_rows));
+                self.scroll_cursor_bottom(&Default::default(), window, cx);
             }
         }
-        self.set_scroll_anchor(
-            ScrollAnchor {
-                anchor: snapshot
-                    .buffer_snapshot
-                    .anchor_before(new_screen_top.to_offset(&snapshot, Bias::Left)),
-                offset: Default::default(),
-            },
-            window,
-            cx,
-        );
 
         self.next_scroll_position = self.next_scroll_position.next();
-        self._scroll_cursor_center_top_bottom_task = cx.spawn(|editor, mut cx| async move {
+        self._scroll_cursor_center_top_bottom_task = cx.spawn(async move |editor, cx| {
             cx.background_executor()
                 .timer(SCROLL_CENTER_TOP_BOTTOM_DEBOUNCE_TIMEOUT)
                 .await;
             editor
-                .update(&mut cx, |editor, _| {
+                .update(cx, |editor, _| {
                     editor.next_scroll_position = NextScrollCursorCenterTopBottom::default();
                 })
                 .ok();
@@ -95,23 +71,10 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Editor>,
     ) {
-        let snapshot = self.snapshot(window, cx).display_snapshot;
         let scroll_margin_rows = self.vertical_scroll_margin() as u32;
-
-        let mut new_screen_top = self.selections.newest_display(cx).head();
-        *new_screen_top.row_mut() = new_screen_top.row().0.saturating_sub(scroll_margin_rows);
-        *new_screen_top.column_mut() = 0;
-        let new_screen_top = new_screen_top.to_offset(&snapshot, Bias::Left);
-        let new_anchor = snapshot.buffer_snapshot.anchor_before(new_screen_top);
-
-        self.set_scroll_anchor(
-            ScrollAnchor {
-                anchor: new_anchor,
-                offset: Default::default(),
-            },
-            window,
-            cx,
-        )
+        let new_screen_top = self.selections.newest_display(cx).head().row().0;
+        let new_screen_top = new_screen_top.saturating_sub(scroll_margin_rows);
+        self.set_scroll_top_row(DisplayRow(new_screen_top), window, cx);
     }
 
     pub fn scroll_cursor_center(
@@ -120,27 +83,12 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Editor>,
     ) {
-        let snapshot = self.snapshot(window, cx).display_snapshot;
-        let visible_rows = if let Some(visible_rows) = self.visible_line_count() {
-            visible_rows as u32
-        } else {
+        let Some(visible_rows) = self.visible_line_count().map(|count| count as u32) else {
             return;
         };
-
-        let mut new_screen_top = self.selections.newest_display(cx).head();
-        *new_screen_top.row_mut() = new_screen_top.row().0.saturating_sub(visible_rows / 2);
-        *new_screen_top.column_mut() = 0;
-        let new_screen_top = new_screen_top.to_offset(&snapshot, Bias::Left);
-        let new_anchor = snapshot.buffer_snapshot.anchor_before(new_screen_top);
-
-        self.set_scroll_anchor(
-            ScrollAnchor {
-                anchor: new_anchor,
-                offset: Default::default(),
-            },
-            window,
-            cx,
-        )
+        let new_screen_top = self.selections.newest_display(cx).head().row().0;
+        let new_screen_top = new_screen_top.saturating_sub(visible_rows / 2);
+        self.set_scroll_top_row(DisplayRow(new_screen_top), window, cx);
     }
 
     pub fn scroll_cursor_bottom(
@@ -149,30 +97,13 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Editor>,
     ) {
-        let snapshot = self.snapshot(window, cx).display_snapshot;
         let scroll_margin_rows = self.vertical_scroll_margin() as u32;
-        let visible_rows = if let Some(visible_rows) = self.visible_line_count() {
-            visible_rows as u32
-        } else {
+        let Some(visible_rows) = self.visible_line_count().map(|count| count as u32) else {
             return;
         };
-
-        let mut new_screen_top = self.selections.newest_display(cx).head();
-        *new_screen_top.row_mut() = new_screen_top
-            .row()
-            .0
-            .saturating_sub(visible_rows.saturating_sub(scroll_margin_rows));
-        *new_screen_top.column_mut() = 0;
-        let new_screen_top = new_screen_top.to_offset(&snapshot, Bias::Left);
-        let new_anchor = snapshot.buffer_snapshot.anchor_before(new_screen_top);
-
-        self.set_scroll_anchor(
-            ScrollAnchor {
-                anchor: new_anchor,
-                offset: Default::default(),
-            },
-            window,
-            cx,
-        )
+        let new_screen_top = self.selections.newest_display(cx).head().row().0;
+        let new_screen_top =
+            new_screen_top.saturating_sub(visible_rows.saturating_sub(scroll_margin_rows));
+        self.set_scroll_top_row(DisplayRow(new_screen_top), window, cx);
     }
 }

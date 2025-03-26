@@ -81,77 +81,80 @@ impl FetchContextPickerDelegate {
             url: String::new(),
         }
     }
+}
 
-    async fn build_message(http_client: Arc<HttpClientWithUrl>, url: String) -> Result<String> {
-        let url = if !url.starts_with("https://") && !url.starts_with("http://") {
-            format!("https://{url}")
-        } else {
-            url
-        };
+pub(crate) async fn fetch_url_content(
+    http_client: Arc<HttpClientWithUrl>,
+    url: String,
+) -> Result<String> {
+    let url = if !url.starts_with("https://") && !url.starts_with("http://") {
+        format!("https://{url}")
+    } else {
+        url
+    };
 
-        let mut response = http_client.get(&url, AsyncBody::default(), true).await?;
+    let mut response = http_client.get(&url, AsyncBody::default(), true).await?;
 
-        let mut body = Vec::new();
-        response
-            .body_mut()
-            .read_to_end(&mut body)
-            .await
-            .context("error reading response body")?;
+    let mut body = Vec::new();
+    response
+        .body_mut()
+        .read_to_end(&mut body)
+        .await
+        .context("error reading response body")?;
 
-        if response.status().is_client_error() {
-            let text = String::from_utf8_lossy(body.as_slice());
-            bail!(
-                "status error {}, response: {text:?}",
-                response.status().as_u16()
-            );
+    if response.status().is_client_error() {
+        let text = String::from_utf8_lossy(body.as_slice());
+        bail!(
+            "status error {}, response: {text:?}",
+            response.status().as_u16()
+        );
+    }
+
+    let Some(content_type) = response.headers().get("content-type") else {
+        bail!("missing Content-Type header");
+    };
+    let content_type = content_type
+        .to_str()
+        .context("invalid Content-Type header")?;
+    let content_type = match content_type {
+        "text/html" => ContentType::Html,
+        "text/plain" => ContentType::Plaintext,
+        "application/json" => ContentType::Json,
+        _ => ContentType::Html,
+    };
+
+    match content_type {
+        ContentType::Html => {
+            let mut handlers: Vec<TagHandler> = vec![
+                Rc::new(RefCell::new(markdown::WebpageChromeRemover)),
+                Rc::new(RefCell::new(markdown::ParagraphHandler)),
+                Rc::new(RefCell::new(markdown::HeadingHandler)),
+                Rc::new(RefCell::new(markdown::ListHandler)),
+                Rc::new(RefCell::new(markdown::TableHandler::new())),
+                Rc::new(RefCell::new(markdown::StyledTextHandler)),
+            ];
+            if url.contains("wikipedia.org") {
+                use html_to_markdown::structure::wikipedia;
+
+                handlers.push(Rc::new(RefCell::new(wikipedia::WikipediaChromeRemover)));
+                handlers.push(Rc::new(RefCell::new(wikipedia::WikipediaInfoboxHandler)));
+                handlers.push(Rc::new(
+                    RefCell::new(wikipedia::WikipediaCodeHandler::new()),
+                ));
+            } else {
+                handlers.push(Rc::new(RefCell::new(markdown::CodeHandler)));
+            }
+
+            convert_html_to_markdown(&body[..], &mut handlers)
         }
+        ContentType::Plaintext => Ok(std::str::from_utf8(&body)?.to_owned()),
+        ContentType::Json => {
+            let json: serde_json::Value = serde_json::from_slice(&body)?;
 
-        let Some(content_type) = response.headers().get("content-type") else {
-            bail!("missing Content-Type header");
-        };
-        let content_type = content_type
-            .to_str()
-            .context("invalid Content-Type header")?;
-        let content_type = match content_type {
-            "text/html" => ContentType::Html,
-            "text/plain" => ContentType::Plaintext,
-            "application/json" => ContentType::Json,
-            _ => ContentType::Html,
-        };
-
-        match content_type {
-            ContentType::Html => {
-                let mut handlers: Vec<TagHandler> = vec![
-                    Rc::new(RefCell::new(markdown::WebpageChromeRemover)),
-                    Rc::new(RefCell::new(markdown::ParagraphHandler)),
-                    Rc::new(RefCell::new(markdown::HeadingHandler)),
-                    Rc::new(RefCell::new(markdown::ListHandler)),
-                    Rc::new(RefCell::new(markdown::TableHandler::new())),
-                    Rc::new(RefCell::new(markdown::StyledTextHandler)),
-                ];
-                if url.contains("wikipedia.org") {
-                    use html_to_markdown::structure::wikipedia;
-
-                    handlers.push(Rc::new(RefCell::new(wikipedia::WikipediaChromeRemover)));
-                    handlers.push(Rc::new(RefCell::new(wikipedia::WikipediaInfoboxHandler)));
-                    handlers.push(Rc::new(
-                        RefCell::new(wikipedia::WikipediaCodeHandler::new()),
-                    ));
-                } else {
-                    handlers.push(Rc::new(RefCell::new(markdown::CodeHandler)));
-                }
-
-                convert_html_to_markdown(&body[..], &mut handlers)
-            }
-            ContentType::Plaintext => Ok(std::str::from_utf8(&body)?.to_owned()),
-            ContentType::Json => {
-                let json: serde_json::Value = serde_json::from_slice(&body)?;
-
-                Ok(format!(
-                    "```json\n{}\n```",
-                    serde_json::to_string_pretty(&json)?
-                ))
-            }
+            Ok(format!(
+                "```json\n{}\n```",
+                serde_json::to_string_pretty(&json)?
+            ))
         }
     }
 }
@@ -206,12 +209,12 @@ impl PickerDelegate for FetchContextPickerDelegate {
         let http_client = workspace.read(cx).client().http_client().clone();
         let url = self.url.clone();
         let confirm_behavior = self.confirm_behavior;
-        cx.spawn_in(window, |this, mut cx| async move {
+        cx.spawn_in(window, async move |this, cx| {
             let text = cx
-                .background_spawn(Self::build_message(http_client, url.clone()))
+                .background_spawn(fetch_url_content(http_client, url.clone()))
                 .await?;
 
-            this.update_in(&mut cx, |this, window, cx| {
+            this.update_in(cx, |this, window, cx| {
                 this.delegate
                     .context_store
                     .update(cx, |context_store, _cx| {

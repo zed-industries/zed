@@ -1,11 +1,12 @@
 use anyhow::{anyhow, Context as _, Result};
-use assistant_tool::Tool;
+use assistant_tool::{ActionLog, Tool};
 use gpui::{App, Entity, Task};
 use language_model::LanguageModelRequestMessage;
 use project::Project;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
+use ui::IconName;
 use util::command::new_smol_command;
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
@@ -23,8 +24,16 @@ impl Tool for BashTool {
         "bash".to_string()
     }
 
+    fn needs_confirmation(&self) -> bool {
+        true
+    }
+
     fn description(&self) -> String {
         include_str!("./bash_tool/description.md").to_string()
+    }
+
+    fn icon(&self) -> IconName {
+        IconName::Terminal
     }
 
     fn input_schema(&self) -> serde_json::Value {
@@ -32,11 +41,19 @@ impl Tool for BashTool {
         serde_json::to_value(&schema).unwrap()
     }
 
+    fn ui_text(&self, input: &serde_json::Value) -> String {
+        match serde_json::from_value::<BashToolInput>(input.clone()) {
+            Ok(input) => format!("`{}`", input.command),
+            Err(_) => "Run bash command".to_string(),
+        }
+    }
+
     fn run(
         self: Arc<Self>,
         input: serde_json::Value,
         _messages: &[LanguageModelRequestMessage],
         project: Entity<Project>,
+        _action_log: Entity<ActionLog>,
         cx: &mut App,
     ) -> Task<Result<String>> {
         let input: BashToolInput = match serde_json::from_value(input) {
@@ -49,7 +66,7 @@ impl Tool for BashTool {
         };
         let working_directory = worktree.read(cx).abs_path();
 
-        cx.spawn(|_| async move {
+        cx.spawn(async move |_| {
             // Add 2>&1 to merge stderr into stdout for proper interleaving.
             let command = format!("({}) 2>&1", input.command);
 

@@ -8,6 +8,7 @@ members = [
     "crates/assistant",
     "crates/assistant2",
     "crates/assistant_context_editor",
+    "crates/assistant_eval",
     "crates/assistant_settings",
     "crates/assistant_slash_command",
     "crates/assistant_slash_commands",
@@ -36,6 +37,10 @@ members = [
     "crates/context_server_settings",
     "crates/copilot",
     "crates/credentials_provider",
+    "crates/dap",
+    "crates/dap_adapters",
+    "crates/debugger_tools",
+    "crates/debugger_ui",
     "crates/db",
     "crates/deepseek",
     "crates/diagnostics",
@@ -64,6 +69,8 @@ members = [
     "crates/gpui_tokio",
     "crates/html_to_markdown",
     "crates/http_client",
+    "crates/http_client_tls",
+    "crates/icons",
     "crates/image_viewer",
     "crates/indexed_docs",
     "crates/inline_completion",
@@ -118,7 +125,6 @@ members = [
     "crates/rope",
     "crates/rpc",
     "crates/schema_generator",
-    "crates/scripting_tool",
     "crates/search",
     "crates/semantic_index",
     "crates/semantic_version",
@@ -154,6 +160,7 @@ members = [
     "crates/ui",
     "crates/ui_input",
     "crates/ui_macros",
+    "crates/ui_prompt",
     "crates/util",
     "crates/util_macros",
     "crates/vim",
@@ -164,6 +171,8 @@ members = [
     "crates/zed",
     "crates/zed_actions",
     "crates/zeta",
+    "crates/zlog",
+    "crates/zlog_settings",
 
     #
     # Extensions
@@ -206,6 +215,7 @@ assets = { path = "crates/assets" }
 assistant = { path = "crates/assistant" }
 assistant2 = { path = "crates/assistant2" }
 assistant_context_editor = { path = "crates/assistant_context_editor" }
+assistant_eval = { path = "crates/assistant_eval" }
 assistant_settings = { path = "crates/assistant_settings" }
 assistant_slash_command = { path = "crates/assistant_slash_command" }
 assistant_slash_commands = { path = "crates/assistant_slash_commands" }
@@ -233,7 +243,11 @@ context_server = { path = "crates/context_server" }
 context_server_settings = { path = "crates/context_server_settings" }
 copilot = { path = "crates/copilot" }
 credentials_provider = { path = "crates/credentials_provider" }
+dap = { path = "crates/dap" }
+dap_adapters = { path = "crates/dap_adapters" }
 db = { path = "crates/db" }
+debugger_ui = { path = "crates/debugger_ui" }
+debugger_tools = { path = "crates/debugger_tools" }
 deepseek = { path = "crates/deepseek" }
 diagnostics = { path = "crates/diagnostics" }
 buffer_diff = { path = "crates/buffer_diff" }
@@ -260,6 +274,8 @@ gpui_macros = { path = "crates/gpui_macros" }
 gpui_tokio = { path = "crates/gpui_tokio" }
 html_to_markdown = { path = "crates/html_to_markdown" }
 http_client = { path = "crates/http_client" }
+http_client_tls = { path = "crates/http_client_tls" }
+icons = { path = "crates/icons" }
 image_viewer = { path = "crates/image_viewer" }
 indexed_docs = { path = "crates/indexed_docs" }
 inline_completion = { path = "crates/inline_completion" }
@@ -314,7 +330,6 @@ reqwest_client = { path = "crates/reqwest_client" }
 rich_text = { path = "crates/rich_text" }
 rope = { path = "crates/rope" }
 rpc = { path = "crates/rpc" }
-scripting_tool = { path = "crates/scripting_tool" }
 search = { path = "crates/search" }
 semantic_index = { path = "crates/semantic_index" }
 semantic_version = { path = "crates/semantic_version" }
@@ -350,6 +365,7 @@ toolchain_selector = { path = "crates/toolchain_selector" }
 ui = { path = "crates/ui" }
 ui_input = { path = "crates/ui_input" }
 ui_macros = { path = "crates/ui_macros" }
+ui_prompt = { path = "crates/ui_prompt" }
 util = { path = "crates/util" }
 util_macros = { path = "crates/util_macros" }
 vim = { path = "crates/vim" }
@@ -360,6 +376,8 @@ worktree = { path = "crates/worktree" }
 zed = { path = "crates/zed" }
 zed_actions = { path = "crates/zed_actions" }
 zeta = { path = "crates/zeta" }
+zlog = { path = "crates/zlog" }
+zlog_settings = { path = "crates/zlog_settings" }
 
 #
 # External crates
@@ -398,6 +416,7 @@ bytes = "1.0"
 cargo_metadata = "0.19"
 cargo_toml = "0.21"
 chrono = { version = "0.4", features = ["serde"] }
+circular-buffer = "1.0"
 clap = { version = "4.4", features = ["derive"] }
 cocoa = "0.26"
 cocoa-foundation = "0.2.0"
@@ -406,6 +425,7 @@ core-foundation = "0.9.3"
 core-foundation-sys = "0.8.6"
 ctor = "0.4.0"
 dashmap = "6.0"
+dap-types = { git = "https://github.com/zed-industries/dap-types", rev = "bfd4af0" }
 derive_more = "0.99.17"
 dirs = "4.0"
 ec4rs = "1.1"
@@ -417,8 +437,7 @@ fork = "0.2.0"
 futures = "0.3"
 futures-batch = "0.6.1"
 futures-lite = "1.13"
-# TODO: get back to regular versions when https://github.com/rust-lang/git2-rs/pull/1120 is released
-git2 = { git = "https://github.com/rust-lang/git2-rs", rev = "a3b90cb3756c1bb63e2317bf9cfa57838178de5c", default-features = false }
+git2 = { version = "0.20.1", default-features = false }
 globset = "0.4"
 handlebars = "4.3"
 heed = { version = "0.21.0", features = ["read-txn-no-tls"] }
@@ -520,7 +539,7 @@ sys-locale = "0.3.1"
 sysinfo = "0.31.0"
 take-until = "0.2.0"
 tempfile = "3.9.0"
-thiserror = "1.0.29"
+thiserror = "2.0.12"
 tiktoken-rs = "0.6.0"
 time = { version = "0.3", features = [
     "macros",
@@ -561,6 +580,7 @@ unindent = "0.2.0"
 unicode-segmentation = "1.10"
 unicode-script = "0.5.7"
 url = "2.2"
+urlencoding = "2.1.2"
 uuid = { version = "1.1.2", features = ["v4", "v5", "v7", "serde"] }
 wasmparser = "0.221"
 wasm-encoder = "0.221"
@@ -593,7 +613,7 @@ features = [
 ]
 
 [workspace.dependencies.windows]
-version = "0.60"
+version = "0.61"
 features = [
     "Foundation_Collections",
     "Foundation_Numerics",

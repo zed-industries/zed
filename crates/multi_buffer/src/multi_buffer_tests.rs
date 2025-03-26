@@ -341,17 +341,17 @@ fn test_excerpt_boundaries_and_clipping(cx: &mut App) {
     ) -> Vec<(MultiBufferRow, String, bool)> {
         snapshot
             .excerpt_boundaries_in_range(range)
-            .filter_map(|boundary| {
+            .map(|boundary| {
                 let starts_new_buffer = boundary.starts_new_buffer();
-                boundary.next.map(|next| {
-                    (
-                        boundary.row,
-                        next.buffer
-                            .text_for_range(next.range.context)
-                            .collect::<String>(),
-                        starts_new_buffer,
-                    )
-                })
+                (
+                    boundary.row,
+                    boundary
+                        .next
+                        .buffer
+                        .text_for_range(boundary.next.range.context)
+                        .collect::<String>(),
+                    starts_new_buffer,
+                )
             })
             .collect::<Vec<_>>()
     }
@@ -2695,7 +2695,7 @@ async fn test_random_multibuffer(cx: &mut TestAppContext, mut rng: StdRng) {
         let actual_text = snapshot.text();
         let actual_boundary_rows = snapshot
             .excerpt_boundaries_in_range(0..)
-            .filter_map(|b| if b.next.is_some() { Some(b.row) } else { None })
+            .map(|b| b.row)
             .collect::<HashSet<_>>();
         let actual_row_infos = snapshot.row_infos(MultiBufferRow(0)).collect::<Vec<_>>();
 

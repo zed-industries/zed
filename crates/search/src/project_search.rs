@@ -260,10 +260,10 @@ impl ProjectSearch {
         self.search_id += 1;
         self.active_query = Some(query);
         self.match_ranges.clear();
-        self.pending_search = Some(cx.spawn(|this, mut cx| async move {
+        self.pending_search = Some(cx.spawn(async move |this, cx| {
             let mut matches = pin!(search.ready_chunks(1024));
             let this = this.upgrade()?;
-            this.update(&mut cx, |this, cx| {
+            this.update(cx, |this, cx| {
                 this.match_ranges.clear();
                 this.excerpts.update(cx, |this, cx| this.clear(cx));
                 this.no_results = Some(true);
@@ -286,7 +286,7 @@ impl ProjectSearch {
                 }
 
                 let match_ranges = this
-                    .update(&mut cx, |this, cx| {
+                    .update(cx, |this, cx| {
                         this.excerpts.update(cx, |excerpts, cx| {
                             excerpts.push_multiple_excerpts_with_context_lines(
                                 buffers_with_ranges,
@@ -298,14 +298,14 @@ impl ProjectSearch {
                     .ok()?
                     .await;
 
-                this.update(&mut cx, |this, cx| {
+                this.update(cx, |this, cx| {
                     this.match_ranges.extend(match_ranges);
                     cx.notify();
                 })
                 .ok()?;
             }
 
-            this.update(&mut cx, |this, cx| {
+            this.update(cx, |this, cx| {
                 if !this.match_ranges.is_empty() {
                     this.no_results = Some(false);
                 }
@@ -796,13 +796,13 @@ impl ProjectSearchView {
         }));
 
         let languages = project.read(cx).languages().clone();
-        cx.spawn(|project_search_view, mut cx| async move {
+        cx.spawn(async move |project_search_view, cx| {
             let regex_language = languages
                 .language_for_name("regex")
                 .await
                 .context("loading regex language")?;
             project_search_view
-                .update(&mut cx, |project_search_view, cx| {
+                .update(cx, |project_search_view, cx| {
                     project_search_view.regex_language = Some(regex_language);
                     project_search_view.adjust_query_regex_language(cx);
                 })

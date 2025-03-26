@@ -3,11 +3,11 @@ use async_compression::futures::bufread::GzipDecoder;
 use async_trait::async_trait;
 use collections::HashMap;
 use futures::{io::BufReader, StreamExt};
-use gpui::{App, AsyncApp, Task};
+use gpui::{App, AsyncApp, SharedString, Task};
 use http_client::github::AssetKind;
 use http_client::github::{latest_github_release, GitHubLspBinaryVersion};
 pub use language::*;
-use lsp::{LanguageServerBinary, LanguageServerName};
+use lsp::LanguageServerBinary;
 use regex::Regex;
 use smol::fs::{self};
 use std::fmt::Display;
@@ -68,20 +68,23 @@ impl RustLspAdapter {
     }
 }
 
-#[async_trait(?Send)]
-impl LspAdapter for RustLspAdapter {
-    fn name(&self) -> LanguageServerName {
-        Self::SERVER_NAME.clone()
+pub(crate) struct CargoManifestProvider;
+
+impl ManifestProvider for CargoManifestProvider {
+    fn name(&self) -> ManifestName {
+        SharedString::new_static("Cargo.toml").into()
     }
 
-    fn find_project_root(
+    fn search(
         &self,
-        path: &Path,
-        ancestor_depth: usize,
-        delegate: &Arc<dyn LspAdapterDelegate>,
+        ManifestQuery {
+            path,
+            depth,
+            delegate,
+        }: ManifestQuery,
     ) -> Option<Arc<Path>> {
         let mut outermost_cargo_toml = None;
-        for path in path.ancestors().take(ancestor_depth) {
+        for path in path.ancestors().take(depth) {
             let p = path.join("Cargo.toml");
             if delegate.exists(&p, Some(false)) {
                 outermost_cargo_toml = Some(Arc::from(path));
@@ -89,6 +92,17 @@ impl LspAdapter for RustLspAdapter {
         }
 
         outermost_cargo_toml
+    }
+}
+
+#[async_trait(?Send)]
+impl LspAdapter for RustLspAdapter {
+    fn name(&self) -> LanguageServerName {
+        Self::SERVER_NAME.clone()
+    }
+
+    fn manifest_name(&self) -> Option<ManifestName> {
+        Some(SharedString::new_static("Cargo.toml").into())
     }
 
     async fn check_if_user_installed(
@@ -241,7 +255,12 @@ impl LspAdapter for RustLspAdapter {
         Some("rust-analyzer/flycheck".into())
     }
 
-    fn process_diagnostics(&self, params: &mut lsp::PublishDiagnosticsParams) {
+    fn process_diagnostics(
+        &self,
+        params: &mut lsp::PublishDiagnosticsParams,
+        _: LanguageServerId,
+        _: Option<&'_ Buffer>,
+    ) {
         static REGEX: LazyLock<Regex> =
             LazyLock::new(|| Regex::new(r"(?m)`([^`]+)\n`$").expect("Failed to create REGEX"));
 
@@ -945,7 +964,7 @@ mod tests {
                 },
             ],
         };
-        RustLspAdapter.process_diagnostics(&mut params);
+        RustLspAdapter.process_diagnostics(&mut params, LanguageServerId(0), None);
 
         assert_eq!(params.diagnostics[0].message, "use of moved value `a`");
 

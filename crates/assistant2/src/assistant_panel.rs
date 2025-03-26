@@ -14,9 +14,9 @@ use client::zed_urls;
 use editor::{Editor, MultiBuffer};
 use fs::Fs;
 use gpui::{
-    prelude::*, Action, AnyElement, App, AsyncWindowContext, Corner, Entity, EventEmitter,
-    FocusHandle, Focusable, FontWeight, KeyContext, Pixels, Subscription, Task, UpdateGlobal,
-    WeakEntity,
+    action_with_deprecated_aliases, prelude::*, Action, AnyElement, App, AsyncWindowContext,
+    Corner, Entity, EventEmitter, FocusHandle, Focusable, FontWeight, KeyContext, Pixels,
+    Subscription, Task, UpdateGlobal, WeakEntity,
 };
 use language::LanguageRegistry;
 use language_model::{LanguageModelProviderTosView, LanguageModelRegistry};
@@ -29,7 +29,7 @@ use ui::{prelude::*, ContextMenu, KeyBinding, PopoverMenu, PopoverMenuHandle, Ta
 use util::ResultExt as _;
 use workspace::dock::{DockPosition, Panel, PanelEvent};
 use workspace::Workspace;
-use zed_actions::assistant::{DeployPromptLibrary, ToggleFocus};
+use zed_actions::assistant::ToggleFocus;
 
 use crate::active_thread::ActiveThread;
 use crate::assistant_configuration::{AssistantConfiguration, AssistantConfigurationEvent};
@@ -42,6 +42,12 @@ use crate::{
     InlineAssistant, NewPromptEditor, NewThread, OpenActiveThreadAsMarkdown, OpenConfiguration,
     OpenHistory,
 };
+
+action_with_deprecated_aliases!(
+    assistant,
+    OpenPromptLibrary,
+    ["assistant::DeployPromptLibrary"]
+);
 
 pub fn init(cx: &mut App) {
     cx.observe_new(
@@ -63,6 +69,14 @@ pub fn init(cx: &mut App) {
                     if let Some(panel) = workspace.panel::<AssistantPanel>(cx) {
                         workspace.focus_panel::<AssistantPanel>(window, cx);
                         panel.update(cx, |panel, cx| panel.new_prompt_editor(window, cx));
+                    }
+                })
+                .register_action(|workspace, _: &OpenPromptLibrary, window, cx| {
+                    if let Some(panel) = workspace.panel::<AssistantPanel>(cx) {
+                        workspace.focus_panel::<AssistantPanel>(window, cx);
+                        panel.update(cx, |panel, cx| {
+                            panel.deploy_prompt_library(&OpenPromptLibrary, window, cx)
+                        });
                     }
                 })
                 .register_action(|workspace, _: &OpenConfiguration, window, cx| {
@@ -110,19 +124,16 @@ impl AssistantPanel {
         prompt_builder: Arc<PromptBuilder>,
         cx: AsyncWindowContext,
     ) -> Task<Result<Entity<Self>>> {
-        cx.spawn(|mut cx| async move {
+        cx.spawn(async move |cx| {
             let tools = Arc::new(ToolWorkingSet::default());
-            log::info!("[assistant2-debug] initializing ThreadStore");
-            let thread_store = workspace.update(&mut cx, |workspace, cx| {
+            let thread_store = workspace.update(cx, |workspace, cx| {
                 let project = workspace.project().clone();
                 ThreadStore::new(project, tools.clone(), prompt_builder.clone(), cx)
             })??;
-            log::info!("[assistant2-debug] finished initializing ThreadStore");
 
             let slash_commands = Arc::new(SlashCommandWorkingSet::default());
-            log::info!("[assistant2-debug] initializing ContextStore");
             let context_store = workspace
-                .update(&mut cx, |workspace, cx| {
+                .update(cx, |workspace, cx| {
                     let project = workspace.project().clone();
                     assistant_context_editor::ContextStore::new(
                         project,
@@ -132,9 +143,8 @@ impl AssistantPanel {
                     )
                 })?
                 .await?;
-            log::info!("[assistant2-debug] finished initializing ContextStore");
 
-            workspace.update_in(&mut cx, |workspace, window, cx| {
+            workspace.update_in(cx, |workspace, window, cx| {
                 cx.new(|cx| Self::new(workspace, thread_store, context_store, window, cx))
             })
         })
@@ -147,7 +157,6 @@ impl AssistantPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        log::info!("[assistant2-debug] AssistantPanel::new");
         let thread = thread_store.update(cx, |this, cx| this.create_thread(cx));
         let fs = workspace.app_state().fs.clone();
         let project = workspace.project().clone();
@@ -155,10 +164,14 @@ impl AssistantPanel {
         let workspace = workspace.weak_handle();
         let weak_self = cx.entity().downgrade();
 
+        let message_editor_context_store =
+            cx.new(|_cx| crate::context_store::ContextStore::new(workspace.clone()));
+
         let message_editor = cx.new(|cx| {
             MessageEditor::new(
                 fs.clone(),
                 workspace.clone(),
+                message_editor_context_store.clone(),
                 thread_store.downgrade(),
                 thread.clone(),
                 window,
@@ -174,6 +187,8 @@ impl AssistantPanel {
                 thread.clone(),
                 thread_store.clone(),
                 language_registry.clone(),
+                message_editor_context_store.clone(),
+                workspace.clone(),
                 window,
                 cx,
             )
@@ -242,11 +257,17 @@ impl AssistantPanel {
             .update(cx, |this, cx| this.create_thread(cx));
 
         self.active_view = ActiveView::Thread;
+
+        let message_editor_context_store =
+            cx.new(|_cx| crate::context_store::ContextStore::new(self.workspace.clone()));
+
         self.thread = cx.new(|cx| {
             ActiveThread::new(
                 thread.clone(),
                 self.thread_store.clone(),
                 self.language_registry.clone(),
+                message_editor_context_store.clone(),
+                self.workspace.clone(),
                 window,
                 cx,
             )
@@ -255,6 +276,7 @@ impl AssistantPanel {
             MessageEditor::new(
                 self.fs.clone(),
                 self.workspace.clone(),
+                message_editor_context_store,
                 self.thread_store.downgrade(),
                 thread,
                 window,
@@ -295,7 +317,7 @@ impl AssistantPanel {
 
     fn deploy_prompt_library(
         &mut self,
-        _: &DeployPromptLibrary,
+        _: &OpenPromptLibrary,
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -338,9 +360,9 @@ impl AssistantPanel {
 
         let lsp_adapter_delegate = make_lsp_adapter_delegate(&project, cx).log_err().flatten();
 
-        cx.spawn_in(window, |this, mut cx| async move {
+        cx.spawn_in(window, async move |this, cx| {
             let context = context.await?;
-            this.update_in(&mut cx, |this, window, cx| {
+            this.update_in(cx, |this, window, cx| {
                 let editor = cx.new(|cx| {
                     ContextEditor::for_context(
                         context,
@@ -371,15 +393,19 @@ impl AssistantPanel {
             .thread_store
             .update(cx, |this, cx| this.open_thread(thread_id, cx));
 
-        cx.spawn_in(window, |this, mut cx| async move {
+        cx.spawn_in(window, async move |this, cx| {
             let thread = open_thread_task.await?;
-            this.update_in(&mut cx, |this, window, cx| {
+            this.update_in(cx, |this, window, cx| {
                 this.active_view = ActiveView::Thread;
+                let message_editor_context_store =
+                    cx.new(|_cx| crate::context_store::ContextStore::new(this.workspace.clone()));
                 this.thread = cx.new(|cx| {
                     ActiveThread::new(
                         thread.clone(),
                         this.thread_store.clone(),
                         this.language_registry.clone(),
+                        message_editor_context_store.clone(),
+                        this.workspace.clone(),
                         window,
                         cx,
                     )
@@ -388,6 +414,7 @@ impl AssistantPanel {
                     MessageEditor::new(
                         this.fs.clone(),
                         this.workspace.clone(),
+                        message_editor_context_store,
                         this.thread_store.downgrade(),
                         thread,
                         window,
@@ -400,8 +427,13 @@ impl AssistantPanel {
     }
 
     pub(crate) fn open_configuration(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let context_server_manager = self.thread_store.read(cx).context_server_manager();
+        let tools = self.thread_store.read(cx).tools();
+
         self.active_view = ActiveView::Configuration;
-        self.configuration = Some(cx.new(|cx| AssistantConfiguration::new(window, cx)));
+        self.configuration = Some(
+            cx.new(|cx| AssistantConfiguration::new(context_server_manager, tools, window, cx)),
+        );
 
         if let Some(configuration) = self.configuration.as_ref() {
             self.configuration_subscription = Some(cx.subscribe_in(
@@ -435,12 +467,12 @@ impl AssistantPanel {
             .languages
             .language_for_name("Markdown");
         let thread = self.active_thread(cx);
-        cx.spawn_in(window, |_this, mut cx| async move {
+        cx.spawn_in(window, async move |_this, cx| {
             let markdown_language = markdown_language_task.await?;
 
-            workspace.update_in(&mut cx, |workspace, window, cx| {
+            workspace.update_in(cx, |workspace, window, cx| {
                 let thread = thread.read(cx);
-                let markdown = thread.to_markdown()?;
+                let markdown = thread.to_markdown(cx)?;
                 let thread_summary = thread
                     .summary()
                     .map(|summary| summary.to_string())
@@ -907,8 +939,8 @@ impl AssistantPanel {
                     ThreadError::MaxMonthlySpendReached => {
                         self.render_max_monthly_spend_reached_error(cx)
                     }
-                    ThreadError::Message(error_message) => {
-                        self.render_error_message(&error_message, cx)
+                    ThreadError::Message { header, message } => {
+                        self.render_error_message(header, message, cx)
                     }
                 })
                 .into_any(),
@@ -1011,7 +1043,8 @@ impl AssistantPanel {
 
     fn render_error_message(
         &self,
-        error_message: &SharedString,
+        header: SharedString,
+        message: SharedString,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         v_flex()
@@ -1021,17 +1054,14 @@ impl AssistantPanel {
                     .gap_1p5()
                     .items_center()
                     .child(Icon::new(IconName::XCircle).color(Color::Error))
-                    .child(
-                        Label::new("Error interacting with language model")
-                            .weight(FontWeight::MEDIUM),
-                    ),
+                    .child(Label::new(header).weight(FontWeight::MEDIUM)),
             )
             .child(
                 div()
                     .id("error-message")
                     .max_h_32()
                     .overflow_y_scroll()
-                    .child(Label::new(error_message.clone())),
+                    .child(Label::new(message)),
             )
             .child(
                 h_flex()

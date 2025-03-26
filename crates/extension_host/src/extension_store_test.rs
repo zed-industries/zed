@@ -8,9 +8,9 @@ use collections::BTreeMap;
 use extension::ExtensionHostProxy;
 use fs::{FakeFs, Fs, RealFs};
 use futures::{io::BufReader, AsyncReadExt, StreamExt};
-use gpui::{AppContext as _, SemanticVersion, TestAppContext};
+use gpui::{AppContext as _, SemanticVersion, SharedString, TestAppContext};
 use http_client::{FakeHttpClient, Response};
-use language::{LanguageMatcher, LanguageRegistry, LanguageServerBinaryStatus};
+use language::{BinaryStatus, LanguageMatcher, LanguageRegistry};
 use lsp::LanguageServerName;
 use node_runtime::NodeRuntime;
 use parking_lot::Mutex;
@@ -663,23 +663,14 @@ async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
             status_updates.next().await.unwrap(),
         ],
         [
-            (
-                LanguageServerName("gleam".into()),
-                LanguageServerBinaryStatus::CheckingForUpdate
-            ),
-            (
-                LanguageServerName("gleam".into()),
-                LanguageServerBinaryStatus::Downloading
-            ),
-            (
-                LanguageServerName("gleam".into()),
-                LanguageServerBinaryStatus::None
-            )
+            (SharedString::new("gleam"), BinaryStatus::CheckingForUpdate),
+            (SharedString::new("gleam"), BinaryStatus::Downloading),
+            (SharedString::new("gleam"), BinaryStatus::None)
         ]
     );
 
     // The extension creates custom labels for completion items.
-    fake_server.handle_request::<lsp::request::Completion, _, _>(|_, _| async move {
+    fake_server.set_request_handler::<lsp::request::Completion, _, _>(|_, _| async move {
         Ok(Some(lsp::CompletionResponse::Array(vec![
             lsp::CompletionItem {
                 label: "foo".into(),
@@ -713,6 +704,7 @@ async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
             project.completions(&buffer, 0, DEFAULT_COMPLETION_CONTEXT, cx)
         })
         .await
+        .unwrap()
         .unwrap()
         .into_iter()
         .map(|c| c.label.text)

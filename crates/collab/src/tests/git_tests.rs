@@ -103,7 +103,6 @@ async fn test_project_diff(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext)
             }),
         )
         .await;
-    client_a.fs().recalculate_git_status(Path::new("/a/.git"));
     cx_b.run_until_parked();
 
     project_b.update(cx_b, |project, cx| {

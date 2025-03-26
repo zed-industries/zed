@@ -1,6 +1,6 @@
 //! This module contains all actions supported by [`Editor`].
 use super::*;
-use gpui::{action_as, action_with_deprecated_aliases};
+use gpui::{action_as, action_with_deprecated_aliases, actions};
 use schemars::JsonSchema;
 use util::serde::default_true;
 #[derive(PartialEq, Clone, Deserialize, Default, JsonSchema)]
@@ -248,7 +248,7 @@ impl_actions!(
     ]
 );
 
-gpui::actions!(
+actions!(
     editor,
     [
         AcceptEditPrediction,
@@ -275,6 +275,7 @@ gpui::actions!(
         ConvertToUpperCamelCase,
         ConvertToUpperCase,
         Copy,
+        CopyAndTrim,
         CopyFileLocation,
         CopyHighlightJson,
         CopyFileName,
@@ -404,6 +405,7 @@ gpui::actions!(
         ShowCharacterPalette,
         ShowEditPrediction,
         ShowSignatureHelp,
+        ShowWordCompletions,
         ShuffleLines,
         SortLinesCaseInsensitive,
         SortLinesCaseSensitive,
@@ -411,6 +413,8 @@ gpui::actions!(
         SwitchSourceHeader,
         Tab,
         Backtab,
+        ToggleBreakpoint,
+        EditLogBreakpoint,
         ToggleAutoSignatureHelp,
         ToggleGitBlameInline,
         ToggleIndentGuides,

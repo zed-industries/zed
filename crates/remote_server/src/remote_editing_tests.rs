@@ -483,7 +483,7 @@ async fn test_remote_lsp(cx: &mut TestAppContext, server_cx: &mut TestAppContext
         assert_eq!(lsp_store.as_local().unwrap().language_servers.len(), 1);
     });
 
-    fake_lsp.handle_request::<lsp::request::Completion, _, _>(|_, _| async move {
+    fake_lsp.set_request_handler::<lsp::request::Completion, _, _>(|_, _| async move {
         Ok(Some(CompletionResponse::Array(vec![lsp::CompletionItem {
             label: "boop".to_string(),
             ..Default::default()
@@ -506,11 +506,15 @@ async fn test_remote_lsp(cx: &mut TestAppContext, server_cx: &mut TestAppContext
         .unwrap();
 
     assert_eq!(
-        result.into_iter().map(|c| c.label.text).collect::<Vec<_>>(),
+        result
+            .unwrap()
+            .into_iter()
+            .map(|c| c.label.text)
+            .collect::<Vec<_>>(),
         vec!["boop".to_string()]
     );
 
-    fake_lsp.handle_request::<lsp::request::Rename, _, _>(|_, _| async move {
+    fake_lsp.set_request_handler::<lsp::request::Rename, _, _>(|_, _| async move {
         Ok(Some(lsp::WorkspaceEdit {
             changes: Some(
                 [(
@@ -1314,7 +1318,7 @@ async fn test_remote_git_diffs(cx: &mut TestAppContext, server_cx: &mut TestAppC
 async fn test_remote_git_branches(cx: &mut TestAppContext, server_cx: &mut TestAppContext) {
     let fs = FakeFs::new(server_cx.executor());
     fs.insert_tree(
-        "/code",
+        path!("/code"),
         json!({
             "project1": {
                 ".git": {},
@@ -1330,17 +1334,14 @@ async fn test_remote_git_branches(cx: &mut TestAppContext, server_cx: &mut TestA
         .iter()
         .map(ToString::to_string)
         .collect::<HashSet<_>>();
-    fs.insert_branches(Path::new("/code/project1/.git"), &branches);
+    fs.insert_branches(Path::new(path!("/code/project1/.git")), &branches);
 
-    let (worktree, _) = project
+    let (_worktree, _) = project
         .update(cx, |project, cx| {
-            project.find_or_create_worktree("/code/project1", true, cx)
+            project.find_or_create_worktree(path!("/code/project1"), true, cx)
         })
         .await
         .unwrap();
-
-    let worktree_id = cx.update(|cx| worktree.read(cx).id());
-    let root_path = ProjectPath::root_path(worktree_id);
     // Give the worktree a bit of time to index the file system
     cx.run_until_parked();
 
@@ -1370,13 +1371,17 @@ async fn test_remote_git_branches(cx: &mut TestAppContext, server_cx: &mut TestA
 
     let server_branch = server_cx.update(|cx| {
         headless_project.update(cx, |headless_project, cx| {
-            headless_project
-                .worktree_store
-                .update(cx, |worktree_store, cx| {
-                    worktree_store
-                        .current_branch(root_path.clone(), cx)
-                        .unwrap()
-                })
+            headless_project.git_store.update(cx, |git_store, cx| {
+                git_store
+                    .repositories()
+                    .values()
+                    .next()
+                    .unwrap()
+                    .read(cx)
+                    .current_branch()
+                    .unwrap()
+                    .clone()
+            })
         })
     });
 
@@ -1405,11 +1410,17 @@ async fn test_remote_git_branches(cx: &mut TestAppContext, server_cx: &mut TestA
 
     let server_branch = server_cx.update(|cx| {
         headless_project.update(cx, |headless_project, cx| {
-            headless_project
-                .worktree_store
-                .update(cx, |worktree_store, cx| {
-                    worktree_store.current_branch(root_path, cx).unwrap()
-                })
+            headless_project.git_store.update(cx, |git_store, cx| {
+                git_store
+                    .repositories()
+                    .values()
+                    .next()
+                    .unwrap()
+                    .read(cx)
+                    .current_branch()
+                    .unwrap()
+                    .clone()
+            })
         })
     });
 

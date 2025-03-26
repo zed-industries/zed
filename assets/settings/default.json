@@ -25,7 +25,7 @@
   // Features that can be globally enabled or disabled
   "features": {
     // Which edit prediction provider to use.
-    "edit_prediction_provider": "copilot"
+    "edit_prediction_provider": "zed"
   },
   // The name of a font to use for rendering text in the editor
   "buffer_font_family": "Zed Plex Mono",
@@ -136,6 +136,11 @@
   // Whether to use the system provided dialogs for Open and Save As.
   // When set to false, Zed will use the built-in keyboard-first pickers.
   "use_system_path_prompts": true,
+  // Whether to use the system provided dialogs for prompts, such as confirmation
+  // prompts.
+  // When set to false, Zed will use its built-in prompts. Note that on Linux,
+  // this option is ignored and Zed will always use the built-in prompts.
+  "use_system_prompts": true,
   // Whether the cursor blinks in the editor.
   "cursor_blink": true,
   // Cursor shape for the default editor.
@@ -179,6 +184,11 @@
   // Whether to show the signature help after completion or a bracket pair inserted.
   // If `auto_signature_help` is enabled, this setting will be treated as enabled also.
   "show_signature_help_after_edits": false,
+  // What to do when go to definition yields no results.
+  //
+  // 1. Do nothing: `none`
+  // 2. Find references for the same symbol: `find_all_references` (default)
+  "go_to_definition_fallback": "find_all_references",
   // Whether to show wrap guides (vertical rulers) in the editor.
   // Setting this to true will show a guide at the 'preferred_line_length' value
   // if 'soft_wrap' is set to 'preferred_line_length', and will show any
@@ -324,6 +334,8 @@
     "code_actions": true,
     // Whether to show runnables buttons in the gutter.
     "runnables": true,
+    // Whether to show breakpoints in the gutter.
+    "breakpoints": true,
     // Whether to show fold buttons in the gutter.
     "folds": true
   },
@@ -607,7 +619,43 @@
       "provider": "zed.dev",
       // The model to use.
       "model": "claude-3-5-sonnet-latest"
-    }
+    },
+    "profiles": {
+      "read-only": {
+        "name": "Read-only",
+        "tools": {
+          "diagnostics": true,
+          "fetch": true,
+          "list-directory": true,
+          "now": true,
+          "path-search": true,
+          "read-file": true,
+          "regex-search": true,
+          "thinking": true
+        }
+      },
+      "code-writer": {
+        "name": "Code Writer",
+        "tools": {
+          "bash": true,
+          "copy-path": true,
+          "create-file": true,
+          "delete-path": true,
+          "diagnostics": true,
+          "find-replace-file": true,
+          "edit-files": false,
+          "fetch": true,
+          "list-directory": true,
+          "move-path": true,
+          "now": true,
+          "path-search": true,
+          "read-file": true,
+          "regex-search": true,
+          "thinking": true
+        }
+      }
+    },
+    "notify_when_agent_waiting": true
   },
   // The settings for slash commands.
   "slash_commands": {
@@ -850,8 +898,24 @@
       //
       // The minimum column number to show the inline blame information at
       // "min_column": 0
-    }
+    },
+    // How git hunks are displayed visually in the editor.
+    // This setting can take two values:
+    //
+    // 1. Show unstaged hunks filled and staged hunks hollow:
+    //    "hunk_style": "staged_hollow"
+    // 2. Show unstaged hunks hollow and staged hunks filled:
+    //    "hunk_style": "unstaged_hollow"
+    "hunk_style": "staged_hollow"
   },
+  // The list of custom Git hosting providers.
+  "git_hosting_providers": [
+    // {
+    //   "provider": "github",
+    //   "name": "BigCorp GitHub",
+    //   "base_url": "https://code.big-corp.com"
+    // }
+  ],
   // Configuration for how direnv configuration should be loaded. May take 2 values:
   // 1. Load direnv configuration using `direnv export json` directly.
   //      "load_direnv": "direct"
@@ -958,7 +1022,7 @@
     //         "alternate_scroll": "on",
     //  2. Default alternate scroll mode to off
     //         "alternate_scroll": "off",
-    "alternate_scroll": "off",
+    "alternate_scroll": "on",
     // Set whether the option key behaves as the meta key.
     // May take 2 values:
     //  1. Rely on default platform handling of option key, on macOS
@@ -1092,11 +1156,12 @@
     //
     // May take 3 values:
     // 1. "enabled"
-    //   Always fetch document's words for completions.
+    //   Always fetch document's words for completions along with LSP completions.
     // 2. "fallback"
-    //   Only if LSP response errors/times out/is empty, use document's words to show completions.
+    //   Only if LSP response errors or times out, use document's words to show completions.
     // 3. "disabled"
     //   Never fetch or complete document's words for completions.
+    //   (Word-based completions can still be queried via a separate action)
     //
     // Default: fallback
     "words": "fallback",
@@ -1107,8 +1172,8 @@
     // When fetching LSP completions, determines how long to wait for a response of a particular server.
     // When set to 0, waits indefinitely.
     //
-    // Default: 500
-    "lsp_fetch_timeout_ms": 500
+    // Default: 0
+    "lsp_fetch_timeout_ms": 0
   },
   // Different settings for specific languages.
   "languages": {
@@ -1200,11 +1265,19 @@
         "allowed": true
       }
     },
+    "LaTeX": {
+      "format_on_save": "on",
+      "formatter": "language_server",
+      "language_servers": ["texlab", "..."],
+      "prettier": {
+        "allowed": false
+      }
+    },
     "Markdown": {
       "format_on_save": "off",
       "use_on_type_format": false,
       "allow_rewrap": "anywhere",
-      "soft_wrap": "bounded",
+      "soft_wrap": "editor_width",
       "prettier": {
         "allowed": true
       }
@@ -1436,6 +1509,12 @@
   //   }
   // ]
   "ssh_connections": [],
+
   // Configures context servers for use in the Assistant.
-  "context_servers": {}
+  "context_servers": {},
+  "debugger": {
+    "stepping_granularity": "line",
+    "save_breakpoints": true,
+    "button": true
+  }
 }

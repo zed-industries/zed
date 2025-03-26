@@ -422,7 +422,7 @@ impl SummaryIndex {
     ) -> MightNeedSummaryFiles {
         let fs = self.fs.clone();
         let (rx, tx) = channel::bounded(2048);
-        let task = cx.spawn(|cx| async move {
+        let task = cx.spawn(async move |cx| {
             cx.background_executor()
                 .scoped(|cx| {
                     for _ in 0..cx.num_cpus() {
@@ -490,7 +490,7 @@ impl SummaryIndex {
         cx: &App,
     ) -> SummarizeFiles {
         let (summarized_tx, summarized_rx) = channel::bounded(512);
-        let task = cx.spawn(|cx| async move {
+        let task = cx.spawn(async move |cx| {
             while let Ok(file) = unsummarized_files.recv().await {
                 log::debug!("Summarizing {:?}", file);
                 let summary = cx
@@ -564,7 +564,7 @@ impl SummaryIndex {
         };
 
         let code_len = code.len();
-        cx.spawn(|cx| async move {
+        cx.spawn(async move |cx| {
             let stream = model.stream_completion(request, &cx);
             cx.background_spawn(async move {
                 let answer: String = stream

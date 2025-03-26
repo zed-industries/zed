@@ -77,7 +77,7 @@ impl ProposedChangesEditor {
             title: title.into(),
             buffer_entries: Vec::new(),
             recalculate_diffs_tx,
-            _recalculate_diffs_task: cx.spawn_in(window, |this, mut cx| async move {
+            _recalculate_diffs_task: cx.spawn_in(window, async move |this, cx| {
                 let mut buffers_to_diff = HashSet::default();
                 while let Some(mut recalculate_diff) = recalculate_diffs_rx.next().await {
                     buffers_to_diff.insert(recalculate_diff.buffer);
@@ -99,7 +99,7 @@ impl ProposedChangesEditor {
                     }
 
                     let recalculate_diff_futures = this
-                        .update(&mut cx, |this, cx| {
+                        .update(cx, |this, cx| {
                             buffers_to_diff
                                 .drain()
                                 .filter_map(|buffer| {

@@ -13,6 +13,7 @@ use client::Client;
 use futures::FutureExt;
 use futures::{future::BoxFuture, stream::BoxStream, StreamExt, TryStreamExt as _};
 use gpui::{AnyElement, AnyView, App, AsyncApp, SharedString, Task, Window};
+use icons::IconName;
 use proto::Plan;
 use schemars::JsonSchema;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
@@ -20,7 +21,6 @@ use std::fmt;
 use std::ops::{Add, Sub};
 use std::{future::Future, sync::Arc};
 use thiserror::Error;
-use ui::IconName;
 use util::serde::is_default;
 
 pub use crate::model::*;
@@ -59,6 +59,7 @@ pub struct LanguageModelCacheConfiguration {
 pub enum LanguageModelCompletionEvent {
     Stop(StopReason),
     Text(String),
+    Thinking(String),
     ToolUse(LanguageModelToolUse),
     StartMessage { message_id: String },
     UsageUpdate(TokenUsage),
@@ -217,6 +218,7 @@ pub trait LanguageModel: Send + Sync {
                     match result {
                         Ok(LanguageModelCompletionEvent::StartMessage { .. }) => None,
                         Ok(LanguageModelCompletionEvent::Text(text)) => Some(Ok(text)),
+                        Ok(LanguageModelCompletionEvent::Thinking(_)) => None,
                         Ok(LanguageModelCompletionEvent::Stop(_)) => None,
                         Ok(LanguageModelCompletionEvent::ToolUse(_)) => None,
                         Ok(LanguageModelCompletionEvent::UsageUpdate(_)) => None,

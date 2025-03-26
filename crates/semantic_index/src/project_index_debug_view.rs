@@ -51,12 +51,12 @@ impl ProjectIndexDebugView {
 
     fn update_rows(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let worktree_indices = self.index.read(cx).worktree_indices(cx);
-        cx.spawn_in(window, |this, mut cx| async move {
+        cx.spawn_in(window, async move |this, cx| {
             let mut rows = Vec::new();
 
             for index in worktree_indices {
                 let (root_path, worktree_id, worktree_paths) =
-                    index.read_with(&cx, |index, cx| {
+                    index.read_with(cx, |index, cx| {
                         let worktree = index.worktree().read(cx);
                         (
                             worktree.abs_path(),
@@ -73,7 +73,7 @@ impl ProjectIndexDebugView {
                 );
             }
 
-            this.update(&mut cx, |this, cx| {
+            this.update(cx, |this, cx| {
                 this.rows = rows;
                 cx.notify();
             })
@@ -96,7 +96,7 @@ impl ProjectIndexDebugView {
             .embedding_index()
             .chunks_for_path(file_path.clone(), cx);
 
-        cx.spawn_in(window, |this, mut cx| async move {
+        cx.spawn_in(window, async move |this, cx| {
             let chunks = chunks.await?;
             let content = fs.load(&root_path.join(&file_path)).await?;
             let chunks = chunks
@@ -114,7 +114,7 @@ impl ProjectIndexDebugView {
                 })
                 .collect::<Vec<_>>();
 
-            this.update(&mut cx, |this, cx| {
+            this.update(cx, |this, cx| {
                 let view = cx.entity().downgrade();
                 this.selected_path = Some(PathState {
                     path: file_path,

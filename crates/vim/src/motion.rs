@@ -1322,6 +1322,7 @@ fn wrapping_right_single(map: &DisplaySnapshot, mut point: DisplayPoint) -> Disp
     let max_column = map.line_len(point.row()).saturating_sub(1);
     if point.column() < max_column {
         *point.column_mut() += 1;
+        point = map.clip_point(point, Bias::Right);
     } else if point.row() < map.max_point().row() {
         *point.row_mut() += 1;
         *point.column_mut() = 0;
@@ -1889,7 +1890,7 @@ pub(crate) fn end_of_line(
     }
 }
 
-fn sentence_backwards(
+pub(crate) fn sentence_backwards(
     map: &DisplaySnapshot,
     point: DisplayPoint,
     mut times: usize,
@@ -1935,7 +1936,11 @@ fn sentence_backwards(
     DisplayPoint::zero()
 }
 
-fn sentence_forwards(map: &DisplaySnapshot, point: DisplayPoint, mut times: usize) -> DisplayPoint {
+pub(crate) fn sentence_forwards(
+    map: &DisplaySnapshot,
+    point: DisplayPoint,
+    mut times: usize,
+) -> DisplayPoint {
     let start = point.to_point(map).to_offset(&map.buffer_snapshot);
     let mut chars = map.buffer_chars_at(start).peekable();
 
@@ -3593,5 +3598,14 @@ mod test {
             The quick brown
             fox jumps over
             the lˇ»azy dog"});
+    }
+
+    #[gpui::test]
+    async fn test_space_non_ascii(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+
+        cx.set_shared_state("ˇπππππ").await;
+        cx.simulate_shared_keystrokes("3 space").await;
+        cx.shared_state().await.assert_eq("πππˇππ");
     }
 }

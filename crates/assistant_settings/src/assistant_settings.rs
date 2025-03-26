@@ -1,3 +1,5 @@
+mod agent_profile;
+
 use std::sync::Arc;
 
 use ::open_ai::Model as OpenAiModel;
@@ -5,12 +7,15 @@ use anthropic::Model as AnthropicModel;
 use deepseek::Model as DeepseekModel;
 use feature_flags::FeatureFlagAppExt;
 use gpui::{App, Pixels};
+use indexmap::IndexMap;
 use language_model::{CloudModel, LanguageModel};
 use lmstudio::Model as LmStudioModel;
 use ollama::Model as OllamaModel;
 use schemars::{schema::Schema, JsonSchema};
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsSources};
+
+pub use crate::agent_profile::*;
 
 #[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
@@ -66,6 +71,9 @@ pub struct AssistantSettings {
     pub inline_alternatives: Vec<LanguageModelSelection>,
     pub using_outdated_settings_version: bool,
     pub enable_experimental_live_diffs: bool,
+    pub profiles: IndexMap<Arc<str>, AgentProfile>,
+    pub always_allow_tool_actions: bool,
+    pub notify_when_agent_waiting: bool,
 }
 
 impl AssistantSettings {
@@ -166,6 +174,9 @@ impl AssistantSettingsContent {
                     editor_model: None,
                     inline_alternatives: None,
                     enable_experimental_live_diffs: None,
+                    profiles: None,
+                    always_allow_tool_actions: None,
+                    notify_when_agent_waiting: None,
                 },
                 VersionedAssistantSettingsContent::V2(settings) => settings.clone(),
             },
@@ -187,6 +198,9 @@ impl AssistantSettingsContent {
                 editor_model: None,
                 inline_alternatives: None,
                 enable_experimental_live_diffs: None,
+                profiles: None,
+                always_allow_tool_actions: None,
+                notify_when_agent_waiting: None,
             },
         }
     }
@@ -316,6 +330,9 @@ impl Default for VersionedAssistantSettingsContent {
             editor_model: None,
             inline_alternatives: None,
             enable_experimental_live_diffs: None,
+            profiles: None,
+            always_allow_tool_actions: None,
+            notify_when_agent_waiting: None,
         })
     }
 }
@@ -352,6 +369,17 @@ pub struct AssistantSettingsContentV2 {
     ///
     /// Default: false
     enable_experimental_live_diffs: Option<bool>,
+    #[schemars(skip)]
+    profiles: Option<IndexMap<Arc<str>, AgentProfileContent>>,
+    /// Whenever a tool action would normally wait for your confirmation
+    /// that you allow it, always choose to allow it.
+    ///
+    /// Default: false
+    always_allow_tool_actions: Option<bool>,
+    /// Whether to show a popup notification when the agent is waiting for user input.
+    ///
+    /// Default: true
+    notify_when_agent_waiting: Option<bool>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
@@ -386,6 +414,19 @@ impl Default for LanguageModelSelection {
             model: "gpt-4".to_string(),
         }
     }
+}
+
+#[derive(Debug, PartialEq, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct AgentProfileContent {
+    pub name: Arc<str>,
+    pub tools: IndexMap<Arc<str>, bool>,
+    #[serde(default)]
+    pub context_servers: IndexMap<Arc<str>, ContextServerPresetContent>,
+}
+
+#[derive(Debug, PartialEq, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct ContextServerPresetContent {
+    pub tools: IndexMap<Arc<str>, bool>,
 }
 
 #[derive(Clone, Serialize, Deserialize, JsonSchema, Debug)]
@@ -482,6 +523,40 @@ impl Settings for AssistantSettings {
                 &mut settings.enable_experimental_live_diffs,
                 value.enable_experimental_live_diffs,
             );
+            merge(
+                &mut settings.always_allow_tool_actions,
+                value.always_allow_tool_actions,
+            );
+            merge(
+                &mut settings.notify_when_agent_waiting,
+                value.notify_when_agent_waiting,
+            );
+
+            if let Some(profiles) = value.profiles {
+                settings
+                    .profiles
+                    .extend(profiles.into_iter().map(|(id, profile)| {
+                        (
+                            id,
+                            AgentProfile {
+                                name: profile.name.into(),
+                                tools: profile.tools,
+                                context_servers: profile
+                                    .context_servers
+                                    .into_iter()
+                                    .map(|(context_server_id, preset)| {
+                                        (
+                                            context_server_id,
+                                            ContextServerPreset {
+                                                tools: preset.tools.clone(),
+                                            },
+                                        )
+                                    })
+                                    .collect(),
+                            },
+                        )
+                    }));
+            }
         }
 
         Ok(settings)
@@ -546,6 +621,9 @@ mod tests {
                             default_width: None,
                             default_height: None,
                             enable_experimental_live_diffs: None,
+                            profiles: None,
+                            always_allow_tool_actions: None,
+                            notify_when_agent_waiting: None,
                         }),
                     )
                 },

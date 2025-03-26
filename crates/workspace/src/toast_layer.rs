@@ -182,11 +182,11 @@ impl ToastLayer {
         self.clear_dismiss_timer(cx);
 
         let instant_started = std::time::Instant::now();
-        let task = cx.spawn(|this, mut cx| async move {
+        let task = cx.spawn(async move |this, cx| {
             cx.background_executor().timer(duration).await;
 
             if let Some(this) = this.upgrade() {
-                this.update(&mut cx, |this, cx| this.hide_toast(cx)).ok();
+                this.update(cx, |this, cx| this.hide_toast(cx)).ok();
             }
         });
 

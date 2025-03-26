@@ -1046,15 +1046,17 @@ impl App {
         &self.foreground_executor
     }
 
-    /// Spawns the future returned by the given function on the thread pool. The closure will be invoked
+    /// Spawns the future returned by the given function on the main thread. The closure will be invoked
     /// with [AsyncApp], which allows the application state to be accessed across await points.
     #[track_caller]
-    pub fn spawn<Fut, R>(&self, f: impl FnOnce(AsyncApp) -> Fut) -> Task<R>
+    pub fn spawn<AsyncFn, R>(&self, f: AsyncFn) -> Task<R>
     where
-        Fut: Future<Output = R> + 'static,
+        AsyncFn: AsyncFnOnce(&mut AsyncApp) -> R + 'static,
         R: 'static,
     {
-        self.foreground_executor.spawn(f(self.to_async()))
+        let mut cx = self.to_async();
+        self.foreground_executor
+            .spawn(async move { f(&mut cx).await })
     }
 
     /// Schedules the given function to be run at the end of the current effect cycle, allowing entities
@@ -1524,6 +1526,11 @@ impl App {
         self.prompt_builder = Some(PromptBuilder::Custom(Box::new(renderer)))
     }
 
+    /// Reset the prompt builder to the default implementation.
+    pub fn reset_prompt_builder(&mut self) {
+        self.prompt_builder = Some(PromptBuilder::Default);
+    }
+
     /// Remove an asset from GPUI's cache
     pub fn remove_asset<A: Asset>(&mut self, source: &A::Source) {
         let asset_id = (TypeId::of::<A>(), hash(source));
@@ -1583,10 +1590,10 @@ impl App {
             .insert(entity_id, window_invalidators);
     }
 
-    /// Get the name for this App.
+    /// Returns the name for this [`App`].
     #[cfg(any(test, feature = "test-support", debug_assertions))]
-    pub fn get_name(&self) -> &'static str {
-        self.name.as_ref().unwrap()
+    pub fn get_name(&self) -> Option<&'static str> {
+        self.name
     }
 
     /// Returns `true` if the platform file picker supports selecting a mix of files and directories.
@@ -1598,9 +1605,10 @@ impl App {
 impl AppContext for App {
     type Result<T> = T;
 
-    /// Build an entity that is owned by the application. The given function will be invoked with
-    /// a `Context` and must return an object representing the entity. A `Entity` handle will be returned,
-    /// which can be used to access the entity in a context.
+    /// Builds an entity that is owned by the application.
+    ///
+    /// The given function will be invoked with a [`Context`] and must return an object representing the entity. An
+    /// [`Entity`] handle will be returned, which can be used to access the entity in a context.
     fn new<T: 'static>(
         &mut self,
         build_entity: impl FnOnce(&mut Context<'_, T>) -> T,
