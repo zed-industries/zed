@@ -192,6 +192,7 @@ impl Model {
     pub fn max_output_tokens(&self) -> u32 {
         match self {
             Self::Claude3Opus | Self::Claude3Sonnet | Self::Claude3_5Haiku => 4_096,
+            Self::Claude3_7Sonnet => 128_000,
             Self::Claude3_5SonnetV2 => 8_192,
             Self::Custom {
                 max_output_tokens, ..
