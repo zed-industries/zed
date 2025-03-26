@@ -45,8 +45,9 @@ If you prefer you can use `vscode-html-language-server` insetad of Prettier for 
   }
 ```
 
-You can customize various [formatting options](https://code.visualstudio.com/docs/languages/html#_formatting) for `vscode-html-language-server`,
+You can customize various [formatting options](https://code.visualstudio.com/docs/languages/html#_formatting) for `vscode-html-language-server` via Zed settings.json:
 
+```json
   "lsp": {
     "vscode-html-language-server": {
       "settings": {
@@ -63,6 +64,7 @@ You can customize various [formatting options](https://code.visualstudio.com/doc
       }
     }
   }
+```
 
 ## See also:
 
