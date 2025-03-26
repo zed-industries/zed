@@ -2637,7 +2637,10 @@ async fn test_repository_subfolder_git_status(cx: &mut TestAppContext) {
         let snapshot = tree.snapshot();
         assert_eq!(snapshot.repositories.iter().count(), 1);
         let repo = snapshot.repositories.iter().next().unwrap();
-        assert_eq!(repo.work_directory_abs_path, root.path().join("my-repo"));
+        assert_eq!(
+            repo.work_directory_abs_path.canonicalize().unwrap(),
+            root.path().join("my-repo").canonicalize().unwrap()
+        );
 
         assert_eq!(repo.status_for_path(&C_TXT.into()), None);
         assert_eq!(

@@ -614,18 +614,19 @@ impl GitStore {
     }
 
     pub fn checkpoint(&self, cx: &App) -> Task<Result<GitStoreCheckpoint>> {
-        let mut dot_git_abs_paths = Vec::new();
+        let mut work_directory_abs_paths = Vec::new();
         let mut checkpoints = Vec::new();
         for repository in self.repositories.values() {
             let repository = repository.read(cx);
-            dot_git_abs_paths.push(repository.repository_entry.work_directory_abs_path.clone());
+            work_directory_abs_paths
+                .push(repository.repository_entry.work_directory_abs_path.clone());
             checkpoints.push(repository.checkpoint().map(|checkpoint| checkpoint?));
         }
 
         cx.background_executor().spawn(async move {
             let checkpoints = future::try_join_all(checkpoints).await?;
             Ok(GitStoreCheckpoint {
-                checkpoints_by_work_dir_abs_path: dot_git_abs_paths
+                checkpoints_by_work_dir_abs_path: work_directory_abs_paths
                     .into_iter()
                     .zip(checkpoints)
                     .collect(),

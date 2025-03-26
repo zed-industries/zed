@@ -6811,10 +6811,10 @@ async fn test_repository_and_path_for_project_path(
         let git_store = project.git_store().read(cx);
         let pairs = [
             ("c.txt", None),
-            ("dir1/src/b.txt", Some(("/root/dir1", "src/b.txt"))),
+            ("dir1/src/b.txt", Some((path!("/root/dir1"), "src/b.txt"))),
             (
                 "dir1/deps/dep1/src/a.txt",
-                Some(("/root/dir1/deps/dep1", "src/a.txt")),
+                Some((path!("/root/dir1/deps/dep1"), "src/a.txt")),
             ),
         ];
         let expected = pairs
@@ -6858,7 +6858,7 @@ async fn test_repository_and_path_for_project_path(
         let git_store = project.git_store().read(cx);
         assert_eq!(
             git_store.repository_and_path_for_project_path(
-                &(tree_id, Path::new(path!("dir1/src/b.txt"))).into(),
+                &(tree_id, Path::new("dir1/src/b.txt")).into(),
                 cx
             ),
             None
@@ -6871,7 +6871,7 @@ async fn test_home_dir_as_git_repository(cx: &mut gpui::TestAppContext) {
     init_test(cx);
     let fs = FakeFs::new(cx.background_executor.clone());
     fs.insert_tree(
-        "/root",
+        path!("/root"),
         json!({
             "home": {
                 ".git": {},
@@ -6895,7 +6895,7 @@ async fn test_home_dir_as_git_repository(cx: &mut gpui::TestAppContext) {
         let containing = project
             .git_store()
             .read(cx)
-            .repository_and_path_for_project_path(&(tree_id, path!("a.txt")).into(), cx);
+            .repository_and_path_for_project_path(&(tree_id, "a.txt").into(), cx);
         assert!(containing.is_none());
     });
 
@@ -6910,7 +6910,7 @@ async fn test_home_dir_as_git_repository(cx: &mut gpui::TestAppContext) {
         let containing = project
             .git_store()
             .read(cx)
-            .repository_and_path_for_project_path(&(tree_id, path!("project/a.txt")).into(), cx);
+            .repository_and_path_for_project_path(&(tree_id, "project/a.txt").into(), cx);
         assert_eq!(
             containing
                 .unwrap()
@@ -6918,7 +6918,7 @@ async fn test_home_dir_as_git_repository(cx: &mut gpui::TestAppContext) {
                 .read(cx)
                 .repository_entry
                 .work_directory_abs_path,
-            Path::new("/root/home")
+            Path::new(path!("/root/home"))
         );
     });
 }
