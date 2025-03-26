@@ -61,7 +61,7 @@ impl DiffSource for ProjectDiffSource {
         let mut result = Vec::new();
         if let Some(git_repo) = self.0.read(cx).git_store().read(cx).active_repository() {
             let git_repo = git_repo.read(cx);
-            for entry in git_repo.status() {
+            for entry in git_repo.cached_status() {
                 if let Some(project_path) = git_repo.repo_path_to_project_path(&entry.repo_path) {
                     let has_conflict = git_repo.has_conflict(&entry.repo_path);
                     result.push((project_path, entry.status, has_conflict));

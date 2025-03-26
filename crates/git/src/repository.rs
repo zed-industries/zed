@@ -367,11 +367,6 @@ pub struct GitIndex {
     id: Uuid,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct VirtualBranchChange {
-    branch_text: String,
-}
-
 impl GitRepository for RealGitRepository {
     fn reload_index(&self) {
         if let Ok(mut index) = self.repository.lock().index() {

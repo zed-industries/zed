@@ -21,9 +21,9 @@ use git::{
     parse_git_remote_url,
     repository::{
         Branch, CommitDetails, DiffType, GitIndex, GitRepository, GitRepositoryCheckpoint,
-        PushOptions, Remote, RemoteCommandOutput, RepoPath, ResetMode, VirtualBranchChange,
+        PushOptions, Remote, RemoteCommandOutput, RepoPath, ResetMode,
     },
-    status::FileStatus,
+    status::{FileStatus, GitStatus},
     BuildPermalinkParams, GitHostingProviderRegistry,
 };
 use gpui::{
@@ -140,6 +140,11 @@ pub struct GitStoreDiff {
 #[derive(Clone, Debug)]
 pub struct GitStoreIndex {
     indices_by_dot_git_abs_path: HashMap<PathBuf, GitIndex>,
+}
+
+#[derive(Default)]
+pub struct GitStoreStatus {
+    statuses_by_dot_git_abs_path: HashMap<PathBuf, GitStatus>,
 }
 
 pub struct Repository {
@@ -1338,6 +1343,53 @@ impl GitStore {
         Some(status.status)
     }
 
+    pub fn status(&self, index: Option<GitStoreIndex>, cx: &App) -> Task<Result<GitStoreStatus>> {
+        let repositories_by_dot_git_abs_path = self
+            .repositories
+            .values()
+            .map(|repo| (repo.read(cx).dot_git_abs_path.clone(), repo))
+            .collect::<HashMap<_, _>>();
+
+        let mut tasks = Vec::new();
+
+        if let Some(index) = index {
+            // When we have an index, just check the repositories that are part of it
+            for (dot_git_abs_path, git_index) in index.indices_by_dot_git_abs_path {
+                if let Some(repository) = repositories_by_dot_git_abs_path.get(&dot_git_abs_path) {
+                    let status = repository.read(cx).status(Some(git_index));
+                    tasks.push(
+                        async move {
+                            let status = status.await??;
+                            anyhow::Ok((dot_git_abs_path, status))
+                        }
+                        .boxed(),
+                    );
+                }
+            }
+        } else {
+            // Otherwise, check all repositories
+            for repository in self.repositories.values() {
+                let repository = repository.read(cx);
+                let dot_git_abs_path = repository.dot_git_abs_path.clone();
+                let status = repository.status(None);
+                tasks.push(
+                    async move {
+                        let status = status.await??;
+                        anyhow::Ok((dot_git_abs_path, status))
+                    }
+                    .boxed(),
+                );
+            }
+        }
+
+        cx.background_executor().spawn(async move {
+            let statuses = future::try_join_all(tasks).await?;
+            Ok(GitStoreStatus {
+                statuses_by_dot_git_abs_path: statuses.into_iter().collect(),
+            })
+        })
+    }
+
     pub fn repository_and_path_for_buffer_id(
         &self,
         buffer_id: BufferId,
@@ -2529,8 +2581,17 @@ impl Repository {
         });
     }
 
-    pub fn status(&self) -> impl '_ + Iterator<Item = StatusEntry> {
+    pub fn cached_status(&self) -> impl '_ + Iterator<Item = StatusEntry> {
         self.repository_entry.status()
+    }
+
+    pub fn status(&self, index: Option<GitIndex>) -> oneshot::Receiver<Result<GitStatus>> {
+        self.send_job(move |repo, _cx| async move {
+            match repo {
+                RepositoryState::Local(git_repository) => git_repository.status(index, &[]).await,
+                RepositoryState::Remote { .. } => Err(anyhow!("not implemented yet")),
+            }
+        })
     }
 
     pub fn has_conflict(&self, path: &RepoPath) -> bool {

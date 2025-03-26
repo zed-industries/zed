@@ -5,7 +5,7 @@ use futures::{future::Shared, FutureExt};
 use gpui::{prelude::*, App, Entity, Task};
 use language::Buffer;
 use project::{
-    git_store::{GitStore, GitStoreCheckpoint, GitStoreIndex},
+    git_store::{GitStore, GitStoreCheckpoint, GitStoreIndex, GitStoreStatus},
     Project,
 };
 use util::TryFutureExt;
@@ -50,11 +50,11 @@ impl ThreadDiff {
         let last_checkpoint = self.last_checkpoint.take();
         let git_store = self.project.read(cx).git_store().clone();
         let checkpoint = git_store.read(cx).checkpoint(cx);
-        let virtual_branch = self.base.clone();
+        let base = self.base.clone();
         self.last_checkpoint = Some(cx.spawn(async move |this, cx| {
             let checkpoint = checkpoint.await?;
 
-            if let Some(virtual_branch) = virtual_branch.await {
+            if let Some(base) = base.await {
                 if let Some(last_checkpoint) = last_checkpoint {
                     if let Ok(last_checkpoint) = last_checkpoint.await {
                         if author == ChangeAuthor::User {
@@ -67,7 +67,7 @@ impl ThreadDiff {
                             if let Ok(diff) = diff {
                                 _ = git_store
                                     .read_with(cx, |store, cx| {
-                                        store.apply_diff(virtual_branch.clone(), diff, cx)
+                                        store.apply_diff(base.clone(), diff, cx)
                                     })?
                                     .await;
                             }
@@ -75,19 +75,18 @@ impl ThreadDiff {
                     }
                 }
 
-                todo!();
-                // let changes = git_store
-                //     .read_with(cx, |store, cx| {
-                //         store.changes_for_virtual_branch(virtual_branch, cx)
-                //     })?
-                //     .await
-                //     .unwrap_or_default();
-                // this.update(cx, |this, cx| this.set_changes(changes, cx))?;
+                let status = git_store
+                    .read_with(cx, |store, cx| store.status(Some(base), cx))?
+                    .await
+                    .unwrap_or_default();
+                this.update(cx, |this, cx| this.set_status(status, cx))?;
             }
 
             Ok(checkpoint)
         }));
     }
+
+    pub fn set_status(&mut self, status: GitStoreStatus, cx: &mut Context<Self>) {}
 }
 
 struct ThreadDiffSource {
