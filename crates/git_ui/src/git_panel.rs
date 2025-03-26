@@ -935,14 +935,49 @@ impl GitPanel {
 
     fn revert_selected(
         &mut self,
-        _: &git::RestoreFile,
+        action: &git::RestoreFile,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         maybe!({
+            let skip_prompt = action.skip_prompt;
             let list_entry = self.entries.get(self.selected_entry?)?.clone();
-            let entry = list_entry.status_entry()?;
-            self.revert_entry(&entry, window, cx);
+            let entry = list_entry.status_entry()?.to_owned();
+
+            let prompt = if skip_prompt {
+                Task::ready(Ok(0))
+            } else {
+                let prompt = window.prompt(
+                    PromptLevel::Warning,
+                    &format!(
+                        "Are you sure you want to restore {}?",
+                        entry
+                            .worktree_path
+                            .file_name()
+                            .unwrap_or(entry.worktree_path.as_os_str())
+                            .to_string_lossy()
+                    ),
+                    None,
+                    &["Restore", "Cancel"],
+                    cx,
+                );
+                cx.background_spawn(prompt)
+            };
+
+            let this = cx.weak_entity();
+            window
+                .spawn(cx, async move |cx| {
+                    if prompt.await? != 0 {
+                        return anyhow::Ok(());
+                    }
+
+                    this.update_in(cx, |this, window, cx| {
+                        this.revert_entry(&entry, window, cx);
+                    })?;
+
+                    Ok(())
+                })
+                .detach();
             Some(())
         });
     }
@@ -3460,7 +3495,7 @@ impl GitPanel {
             context_menu
                 .context(self.focus_handle.clone())
                 .action(stage_title, ToggleStaged.boxed_clone())
-                .action(restore_title, git::RestoreFile.boxed_clone())
+                .action(restore_title, git::RestoreFile::default().boxed_clone())
                 .separator()
                 .action("Open Diff", Confirm.boxed_clone())
                 .action("Open File", SecondaryConfirm.boxed_clone())
