@@ -622,6 +622,7 @@
       // The model to use.
       "model": "claude-3-5-sonnet-latest"
     },
+    "default_profile": "code-writer",
     "profiles": {
       "read-only": {
         "name": "Read-only",
