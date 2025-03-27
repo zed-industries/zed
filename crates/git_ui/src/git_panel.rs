@@ -1,9 +1,9 @@
 use crate::askpass_modal::AskPassModal;
 use crate::commit_modal::CommitModal;
+use crate::commit_view::CommitView;
 use crate::git_panel_settings::StatusStyle;
 use crate::project_diff::Diff;
 use crate::remote_output::{self, RemoteAction, SuccessMessage};
-
 use crate::{branch_picker, render_remote_button};
 use crate::{
     git_panel_settings::GitPanelSettings, git_status_icon, repository_selector::RepositorySelector,
@@ -3001,6 +3001,7 @@ impl GitPanel {
         let active_repository = self.active_repository.as_ref()?;
         let branch = active_repository.read(cx).current_branch()?;
         let commit = branch.most_recent_commit.as_ref()?.clone();
+        let workspace = self.workspace.clone();
 
         let this = cx.entity();
         Some(
@@ -3026,18 +3027,26 @@ impl GitPanel {
                         .on_click({
                             let repo = active_repository.downgrade();
                             let sha = commit.sha.clone();
-                            move |_, _, cx| {
-                                repo.update(cx, |repo, cx| {
-                                    dbg!("loading commit", &sha);
-                                    let commit = repo.load_commit(sha.to_string());
-                                    cx.spawn(async move |this, cx| {
-                                        let commit = commit.await.ok()?.log_err();
-                                        dbg!(&commit);
-                                        Some(())
+                            let commit = commit.clone();
+                            move |_, window, cx| {
+                                let commit = commit.clone();
+                                let repo = repo.clone();
+                                let workspace = workspace.clone();
+                                let commit_diff = repo
+                                    .update(cx, |repo, _| repo.load_commit(sha.to_string()))
+                                    .ok();
+                                window
+                                    .spawn(cx, async move |cx| {
+                                        CommitView::open(
+                                            commit,
+                                            commit_diff?.await.ok()?.log_err()?,
+                                            repo,
+                                            workspace.clone(),
+                                            cx,
+                                        )
+                                        .log_err()
                                     })
                                     .detach()
-                                })
-                                .ok();
                             }
                         })
                         .hoverable_tooltip(move |window, cx| {

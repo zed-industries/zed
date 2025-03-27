@@ -2593,7 +2593,10 @@ impl BufferDiffState {
                 unstaged_diff.as_ref().zip(new_unstaged_diff.clone())
             {
                 unstaged_diff.update(cx, |diff, cx| {
-                    diff.set_snapshot(&buffer, new_unstaged_diff, language_changed, None, cx)
+                    if language_changed {
+                        diff.language_changed(cx);
+                    }
+                    diff.set_snapshot(new_unstaged_diff, &buffer, None, cx)
                 })?
             } else {
                 None
@@ -2602,14 +2605,11 @@ impl BufferDiffState {
             if let Some((uncommitted_diff, new_uncommitted_diff)) =
                 uncommitted_diff.as_ref().zip(new_uncommitted_diff.clone())
             {
-                uncommitted_diff.update(cx, |uncommitted_diff, cx| {
-                    uncommitted_diff.set_snapshot(
-                        &buffer,
-                        new_uncommitted_diff,
-                        language_changed,
-                        unstaged_changed_range,
-                        cx,
-                    );
+                uncommitted_diff.update(cx, |diff, cx| {
+                    if language_changed {
+                        diff.language_changed(cx);
+                    }
+                    diff.set_snapshot(new_uncommitted_diff, &buffer, unstaged_changed_range, cx);
                 })?;
             }
 

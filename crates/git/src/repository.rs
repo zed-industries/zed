@@ -6,7 +6,7 @@ use collections::HashMap;
 use futures::future::BoxFuture;
 use futures::{select_biased, AsyncWriteExt, FutureExt as _};
 use git2::BranchType;
-use gpui::{AsyncApp, BackgroundExecutor, SharedString};
+use gpui::{AppContext as _, AsyncApp, BackgroundExecutor, SharedString};
 use parking_lot::Mutex;
 use rope::Rope;
 use schemars::JsonSchema;
@@ -437,12 +437,12 @@ impl GitRepository for RealGitRepository {
             .boxed()
     }
 
-    fn load_commit(&self, commit: String, _cx: AsyncApp) -> BoxFuture<Result<CommitDiff>> {
+    fn load_commit(&self, commit: String, cx: AsyncApp) -> BoxFuture<Result<CommitDiff>> {
         let Some(working_directory) = self.repository.lock().workdir().map(ToOwned::to_owned)
         else {
             return future::ready(Err(anyhow!("no working directory"))).boxed();
         };
-        async move {
+        cx.background_spawn(async move {
             let show_output = util::command::new_std_command("git")
                 .current_dir(&working_directory)
                 .args([
@@ -462,7 +462,7 @@ impl GitRepository for RealGitRepository {
 
             let show_stdout = String::from_utf8_lossy(&show_output.stdout);
             let mut lines = show_stdout.split('\n');
-            let parent_sha = lines.next().unwrap();
+            let parent_sha = lines.next().unwrap().trim().trim_end_matches('\0');
             let changes = parse_git_diff_name_status(lines.next().unwrap_or(""));
 
             let mut cat_file_process = util::command::new_std_command("git")
@@ -494,16 +494,14 @@ impl GitRepository for RealGitRepository {
                     }
                     _ => continue,
                 }
-                writeln!(&mut stdin, "flush")?;
                 stdin.flush()?;
 
                 info_line.clear();
                 stdout.read_line(&mut info_line)?;
 
-                let len = info_line
-                    .trim_end()
-                    .parse()
-                    .context("invalid objectsize line from cat-file")?;
+                let len = info_line.trim_end().parse().with_context(|| {
+                    format!("invalid object size output from cat-file {info_line}")
+                })?;
                 let mut text = vec![0; len];
                 stdout.read_exact(&mut text)?;
                 stdout.read_exact(&mut newline)?;
@@ -515,10 +513,9 @@ impl GitRepository for RealGitRepository {
                     StatusCode::Modified => {
                         info_line.clear();
                         stdout.read_line(&mut info_line)?;
-                        let len = info_line
-                            .trim_end()
-                            .parse()
-                            .context("invalid objectsize line from cat-file")?;
+                        let len = info_line.trim_end().parse().with_context(|| {
+                            format!("invalid object size output from cat-file {}", info_line)
+                        })?;
                         let mut parent_text = vec![0; len];
                         stdout.read_exact(&mut parent_text)?;
                         stdout.read_exact(&mut newline)?;
@@ -538,7 +535,7 @@ impl GitRepository for RealGitRepository {
             }
 
             Ok(CommitDiff { files })
-        }
+        })
         .boxed()
     }
 
