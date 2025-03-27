@@ -17449,22 +17449,20 @@ impl Editor {
         cx: &mut Context<Editor>,
     ) -> Option<()> {
         let pane_id = pane.db_id()?;
-        let workspace_id = window
-            .window_handle()
-            .downcast::<Workspace>()
-            .and_then(|workspace| {
-                workspace
-                    .update(cx, |workspace, _, _| workspace.database_id())
-                    .ok()
-            })
+        let workspace_id = pane
+            .workspace
+            .update(cx, |workspace, _| workspace.database_id())
+            .ok()
             .flatten()?;
         let file = project::File::from_dyn(self.buffer().read(cx).as_singleton()?.read(cx).file())?;
         let buffer_path = file.worktree.read(cx).absolutize(&file.path).ok()?;
 
+        dbg!(("4", &buffer_path, workspace_id, pane_id));
         // TODO kb config option to disable this behavior
-        let item_id = DB
-            .most_relevant_editor_item(&buffer_path, workspace_id, pane_id)
+        let item_id = dbg!(DB.most_relevant_editor_item(&buffer_path, workspace_id, pane_id))
+            // TODO kb something very broken is happening with the persisted IDs
             .log_err()?? as u64;
+        dbg!("5");
 
         // TODO kb do not overwrite non-default values
         self.read_metadata_from_db(item_id, workspace_id, window, cx);
@@ -17484,10 +17482,7 @@ impl Editor {
         {
             let buffer_snapshot = OnceCell::new();
 
-            if let Some(selections) = DB
-                .get_editor_selections(dbg!(item_id), workspace_id)
-                .log_err()
-            {
+            if let Some(selections) = DB.get_editor_selections(item_id, workspace_id).log_err() {
                 dbg!(selections.len());
                 if !selections.is_empty() {
                     let snapshot =

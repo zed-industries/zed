@@ -327,6 +327,7 @@ VALUES {placeholders};
         workspace_id: WorkspaceId,
         folds: Vec<(usize, usize)>,
     ) -> Result<()> {
+        dbg!((editor_id, workspace_id, folds.len()));
         let mut first_fold;
         let mut last_fold = 0_usize;
         for (count, placeholders) in std::iter::once("(?1, ?2, ?, ?)")

@@ -291,7 +291,7 @@ pub struct Pane {
     last_focus_handle_by_item: HashMap<EntityId, WeakFocusHandle>,
     nav_history: NavHistory,
     toolbar: Entity<Toolbar>,
-    pub(crate) workspace: WeakEntity<Workspace>,
+    pub workspace: WeakEntity<Workspace>,
     project: WeakEntity<Project>,
     drag_split_direction: Option<SplitDirection>,
     can_drop_predicate: Option<Arc<dyn Fn(&dyn Any, &mut Window, &mut App) -> bool>>,

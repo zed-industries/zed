@@ -1252,7 +1252,7 @@ impl WorkspaceDb {
                     INSERT INTO pane_groups(
                         workspace_id,
                         parent_group_id,
-                        parent_position,
+                        position,
                         axis,
                         flexes
                     )
