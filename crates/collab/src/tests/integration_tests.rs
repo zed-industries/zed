@@ -2322,14 +2322,14 @@ async fn test_propagate_saves_and_fs_changes(
     client_a
         .fs()
         .insert_tree(
-            "/a",
+            path!("/a"),
             json!({
                 "file1.rs": "",
                 "file2": ""
             }),
         )
         .await;
-    let (project_a, worktree_id) = client_a.build_local_project("/a", cx_a).await;
+    let (project_a, worktree_id) = client_a.build_local_project(path!("/a"), cx_a).await;
 
     let worktree_a = project_a.read_with(cx_a, |p, cx| p.worktrees(cx).next().unwrap());
     let project_id = active_call_a
@@ -2415,18 +2415,25 @@ async fn test_propagate_saves_and_fs_changes(
     client_a
         .fs()
         .rename(
-            "/a/file1.rs".as_ref(),
-            "/a/file1.js".as_ref(),
+            path!("/a/file1.rs").as_ref(),
+            path!("/a/file1.js").as_ref(),
             Default::default(),
         )
         .await
         .unwrap();
     client_a
         .fs()
-        .rename("/a/file2".as_ref(), "/a/file3".as_ref(), Default::default())
+        .rename(
+            path!("/a/file2").as_ref(),
+            path!("/a/file3").as_ref(),
+            Default::default(),
+        )
         .await
         .unwrap();
-    client_a.fs().insert_file("/a/file4", "4".into()).await;
+    client_a
+        .fs()
+        .insert_file(path!("/a/file4"), "4".into())
+        .await;
     executor.run_until_parked();
 
     worktree_a.read_with(cx_a, |tree, _| {
