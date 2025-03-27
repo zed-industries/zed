@@ -286,7 +286,7 @@ impl Thread {
             tool_use,
             action_log: cx.new(|_| ActionLog::new()),
             initial_project_snapshot: Task::ready(serialized.initial_project_snapshot).shared(),
-            cumulative_token_usage: serialized.cumulative_token_usage.unwrap_or_default(),
+            cumulative_token_usage: serialized.cumulative_token_usage,
             feedback: None,
         }
     }
@@ -647,7 +647,7 @@ impl Thread {
                     })
                     .collect(),
                 initial_project_snapshot,
-                cumulative_token_usage: Some(this.cumulative_token_usage.clone()),
+                cumulative_token_usage: this.cumulative_token_usage.clone(),
             })
         })
     }

@@ -302,7 +302,7 @@ pub struct SerializedThread {
     #[serde(default)]
     pub initial_project_snapshot: Option<Arc<ProjectSnapshot>>,
     #[serde(default)]
-    pub cumulative_token_usage: Option<TokenUsage>,
+    pub cumulative_token_usage: TokenUsage,
 }
 
 impl SerializedThread {
@@ -385,7 +385,7 @@ impl LegacySerializedThread {
             updated_at: self.updated_at,
             messages: self.messages.into_iter().map(|msg| msg.upgrade()).collect(),
             initial_project_snapshot: self.initial_project_snapshot,
-            cumulative_token_usage: None,
+            cumulative_token_usage: TokenUsage::default(),
         }
     }
 }
