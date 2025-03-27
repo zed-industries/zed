@@ -1,4 +1,5 @@
 mod bash_tool;
+mod batch_tool;
 mod copy_path_tool;
 mod create_directory_tool;
 mod create_file_tool;
@@ -26,6 +27,7 @@ use http_client::HttpClientWithUrl;
 use move_path_tool::MovePathTool;
 
 use crate::bash_tool::BashTool;
+use crate::batch_tool::BatchTool;
 use crate::create_directory_tool::CreateDirectoryTool;
 use crate::create_file_tool::CreateFileTool;
 use crate::delete_path_tool::DeletePathTool;
@@ -47,6 +49,7 @@ pub fn init(http_client: Arc<HttpClientWithUrl>, cx: &mut App) {
 
     let registry = ToolRegistry::global(cx);
     registry.register_tool(BashTool);
+    registry.register_tool(BatchTool);
     registry.register_tool(CreateDirectoryTool);
     registry.register_tool(CreateFileTool);
     registry.register_tool(CopyPathTool);
