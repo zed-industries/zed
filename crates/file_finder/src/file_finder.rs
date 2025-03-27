@@ -953,28 +953,38 @@ impl FileFinderDelegate {
         let path = &path_match.path;
         let path_string = path.to_string_lossy();
         let full_path = [path_match.path_prefix.as_ref(), path_string.as_ref()].join("");
-        let mut path_positions = path_match.positions.clone();
+        let positions = path_match.positions.clone();
 
         let file_name = path.file_name().map_or_else(
             || path_match.path_prefix.to_string(),
             |file_name| file_name.to_string_lossy().to_string(),
         );
+        
+        // Calculate where the filename starts in the full path
         let file_name_start = path_match.path_prefix.len() + path_string.len() - file_name.len();
-        let file_name_positions = path_positions
-            .iter()
-            .filter_map(|pos| {
-                if pos >= &file_name_start {
-                    Some(pos - file_name_start)
-                } else {
-                    None
-                }
-            })
-            .collect();
+        
+        // Create a copy of the full path without the filename (this is the parent directory)
+        let parent_path = full_path[..full_path.len() - file_name.len()].to_string();
+        
+        // Process each highlight position
+        let mut file_name_positions = Vec::new();
+        let mut parent_path_positions = Vec::new();
+        
+        for &pos in &positions {
+            // For the filename part
+            if pos >= file_name_start && pos < full_path.len() {
+                // This position is in the filename part
+                file_name_positions.push(pos - file_name_start);
+            }
+            
+            // For the parent path part
+            if pos < parent_path.len() {
+                // This position is in the parent path part
+                parent_path_positions.push(pos);
+            }
+        }
 
-        let full_path = full_path.trim_end_matches(&file_name).to_string();
-        path_positions.retain(|idx| *idx < full_path.len());
-
-        (file_name, file_name_positions, full_path, path_positions)
+        (file_name, file_name_positions, parent_path, parent_path_positions)
     }
 
     fn lookup_absolute_path(
@@ -1339,7 +1349,119 @@ impl PickerDelegate for FileFinderDelegate {
                 .size(IconSize::Small.rems())
                 .into_any_element(),
         };
-        let (file_name_label, full_path_label) = self.labels_for_match(path_match, window, cx, ix);
+        
+        // Get the path information
+        let path_info = match &path_match {
+            Match::History {
+                path: entry_path,
+                panel_match,
+            } => {
+                let worktree_id = entry_path.project.worktree_id;
+                let project_relative_path = &entry_path.project.path;
+                let has_worktree = self
+                    .project
+                    .read(cx)
+                    .worktree_for_id(worktree_id, cx)
+                    .is_some();
+                
+                // Use window to avoid unused variable warning
+                let _ = window;
+
+                if let Some(absolute_path) =
+                    entry_path.absolute.as_ref().filter(|_| !has_worktree)
+                {
+                    (
+                        absolute_path
+                            .file_name()
+                            .map_or_else(
+                                || project_relative_path.to_string_lossy(),
+                                |file_name| file_name.to_string_lossy(),
+                            )
+                            .to_string(),
+                        absolute_path.to_string_lossy().to_string(),
+                        Vec::new(),
+                    )
+                } else {
+                    let mut path = Arc::clone(project_relative_path);
+                    if project_relative_path.as_ref() == Path::new("") {
+                        if let Some(absolute_path) = &entry_path.absolute {
+                            path = Arc::from(absolute_path.as_path());
+                        }
+                    }
+
+                    let mut path_match = PathMatch {
+                        score: ix as f64,
+                        positions: Vec::new(),
+                        worktree_id: worktree_id.to_usize(),
+                        path,
+                        is_dir: false, // File finder doesn't support directories
+                        path_prefix: "".into(),
+                        distance_to_relative_ancestor: usize::MAX,
+                    };
+                    if let Some(found_path_match) = &panel_match {
+                        path_match
+                            .positions
+                            .extend(found_path_match.0.positions.iter())
+                    }
+
+                    let path_string = path_match.path.to_string_lossy();
+                    let full_path = [path_match.path_prefix.as_ref(), path_string.as_ref()].join("");
+                    let positions = path_match.positions.clone();
+
+                    let file_name = path_match.path.file_name().map_or_else(
+                        || path_match.path_prefix.to_string(),
+                        |file_name| file_name.to_string_lossy().to_string(),
+                    );
+
+                    (file_name, full_path, positions)
+                }
+            }
+            Match::Search(path_match) => {
+                let path_string = path_match.0.path.to_string_lossy();
+                let full_path = [path_match.0.path_prefix.as_ref(), path_string.as_ref()].join("");
+                let positions = path_match.0.positions.clone();
+
+                let file_name = path_match.0.path.file_name().map_or_else(
+                    || path_match.0.path_prefix.to_string(),
+                    |file_name| file_name.to_string_lossy().to_string(),
+                );
+
+                (file_name, full_path, positions)
+            }
+        };
+        
+        let (file_name, full_path, positions) = path_info;
+        
+        // Calculate where the filename starts in the full path
+        let file_name_start = full_path.len() - file_name.len();
+        
+        // Create a parent path
+        let parent_path = full_path[..file_name_start].to_string();
+        
+        // Create parent path label with highlighting
+        let parent_highlight_positions: Vec<usize> = positions
+            .iter()
+            .filter(|&&pos| pos < parent_path.len())
+            .copied()
+            .collect();
+        
+        let parent_path_label = HighlightedLabel::new(parent_path, parent_highlight_positions)
+            .size(LabelSize::Small)
+            .color(Color::Muted);
+            
+        // Create filename label with highlighting 
+        let file_highlight_positions: Vec<usize> = positions
+            .iter()
+            .filter_map(|&pos| {
+                if pos >= file_name_start {
+                    Some(pos - file_name_start)
+                } else {
+                    None
+                }
+            })
+            .collect();
+        
+        let file_name_label = HighlightedLabel::new(file_name.clone(), file_highlight_positions);
 
         let file_icon = maybe!({
             if !settings.file_icons {
@@ -1362,7 +1484,7 @@ impl PickerDelegate for FileFinderDelegate {
                         .gap_2()
                         .py_px()
                         .child(file_name_label)
-                        .child(full_path_label),
+                        .child(parent_path_label),
                 ),
         )
     }
