@@ -24,7 +24,7 @@ impl ToolReadyPopUp {
 
     pub fn window_options(screen: Rc<dyn PlatformDisplay>, cx: &App) -> WindowOptions {
         let size = Size {
-            width: px(440.),
+            width: px(450.),
             height: px(72.),
         };
 
@@ -93,8 +93,18 @@ impl Render for ToolReadyPopUp {
                     )
                     .child(
                         v_flex()
-                            .child(Headline::new("Agent Panel").size(HeadlineSize::XSmall))
-                            .child(Label::new(self.caption.clone()).color(Color::Muted)),
+                            .child(
+                                div()
+                                    .text_size(px(16.))
+                                    .text_color(cx.theme().colors().text)
+                                    .child("Agent Panel"),
+                            )
+                            .child(
+                                div()
+                                    .text_size(px(14.))
+                                    .text_color(cx.theme().colors().text_muted)
+                                    .child(self.caption.clone()),
+                            ),
                     ),
             )
             .child(
