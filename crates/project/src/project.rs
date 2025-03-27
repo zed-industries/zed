@@ -943,7 +943,7 @@ impl Project {
                 active_entry: None,
                 snippets,
                 languages,
-                debug_adapters: Arc::new(DapRegistry::default()),
+                debug_adapters,
                 client,
                 task_store,
                 user_store,

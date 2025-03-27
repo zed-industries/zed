@@ -131,6 +131,7 @@ impl Render for InertState {
         cx: &mut ui::Context<'_, Self>,
     ) -> impl ui::IntoElement {
         let weak = cx.weak_entity();
+        let workspace = self.workspace.clone();
         let disable_buttons = self.selected_debugger.is_none();
         let spawn_button = ButtonLike::new_rounded_left("spawn-debug-session")
             .child(Label::new(self.spawn_mode.label()).size(LabelSize::Small))
@@ -165,15 +166,7 @@ impl Render for InertState {
                 }
             }))
             .disabled(disable_buttons);
-        let available_adapters = self
-            .workspace
-            .update(cx, |this, cx| {
-                this.project()
-                    .read(cx)
-                    .debug_adapters()
-                    .enumerate_adapters()
-            })
-            .unwrap_or_default();
+
         v_flex()
             .track_focus(&self.focus_handle)
             .size_full()
@@ -194,7 +187,7 @@ impl Render for InertState {
                                         .as_ref()
                                         .unwrap_or_else(|| &SELECT_DEBUGGER_LABEL)
                                         .clone(),
-                                    ContextMenu::build(window, cx, move |mut this, _, _| {
+                                    ContextMenu::build(window, cx, move |mut this, _, cx| {
                                         let setter_for_name = |name: SharedString| {
                                             let weak = weak.clone();
                                             move |_: &mut Window, cx: &mut App| {
@@ -206,6 +199,15 @@ impl Render for InertState {
                                                 .ok();
                                             }
                                         };
+                                        let available_adapters = workspace
+                                            .update(cx, |this, cx| {
+                                                this.project()
+                                                    .read(cx)
+                                                    .debug_adapters()
+                                                    .enumerate_adapters()
+                                            })
+                                            .ok()
+                                            .unwrap_or_default();
 
                                         for adapter in available_adapters {
                                             this = this.entry(
