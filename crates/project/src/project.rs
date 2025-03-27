@@ -1466,6 +1466,25 @@ impl Project {
     }
 
     #[cfg(any(test, feature = "test-support"))]
+    pub fn fake_debug_session(
+        &mut self,
+        caps: Option<Capabilities>,
+        fails: Option<bool>,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<Entity<Session>>> {
+        let worktree = maybe!({ self.worktrees(cx).next() });
+
+        let Some(worktree) = &worktree else {
+            return Task::ready(Err(anyhow!("Failed to find a worktree")));
+        };
+        self.dap_store
+            .update(cx, |dap_store, cx| {
+                dap_store.new_session(config, worktree, None, cx)
+            })
+            .1
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
     pub async fn example(
         root_paths: impl IntoIterator<Item = &Path>,
         cx: &mut AsyncApp,
