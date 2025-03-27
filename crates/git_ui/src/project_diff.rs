@@ -26,7 +26,11 @@ use project::{
     git_store::{GitEvent, GitStore},
     Project, ProjectPath,
 };
-use std::any::{Any, TypeId};
+use std::{
+    any::{Any, TypeId},
+    path::Path,
+    sync::Arc,
+};
 use theme::ActiveTheme;
 use ui::{prelude::*, vertical_divider, KeyBinding, Tooltip};
 use util::ResultExt as _;
@@ -39,7 +43,55 @@ use workspace::{
 
 actions!(git, [Diff, Add]);
 
+pub struct StatusEntry {
+    project_path: ProjectPath,
+    status: FileStatus,
+    has_conflict: bool,
+}
+
+pub trait DiffSource {
+    fn status(&self, cx: &App) -> Vec<StatusEntry>;
+    fn open_uncommitted_diff(
+        &self,
+        buffer: Entity<Buffer>,
+        cx: &mut App,
+    ) -> Task<Result<Entity<BufferDiff>>>;
+}
+
+pub struct ProjectDiffSource(Entity<Project>);
+
+impl DiffSource for ProjectDiffSource {
+    fn status(&self, cx: &App) -> Vec<StatusEntry> {
+        let mut result = Vec::new();
+        if let Some(git_repo) = self.0.read(cx).git_store().read(cx).active_repository() {
+            let git_repo = git_repo.read(cx);
+            for entry in git_repo.cached_status() {
+                if let Some(project_path) = git_repo.repo_path_to_project_path(&entry.repo_path, cx)
+                {
+                    let has_conflict = git_repo.has_conflict(&entry.repo_path);
+                    result.push(StatusEntry {
+                        project_path,
+                        status: entry.status,
+                        has_conflict,
+                    });
+                }
+            }
+        }
+        result
+    }
+
+    fn open_uncommitted_diff(
+        &self,
+        buffer: Entity<Buffer>,
+        cx: &mut App,
+    ) -> Task<Result<Entity<BufferDiff>>> {
+        self.0
+            .update(cx, |project, cx| project.open_uncommitted_diff(buffer, cx))
+    }
+}
+
 pub struct ProjectDiff {
+    source: Arc<dyn DiffSource>,
     project: Entity<Project>,
     multibuffer: Entity<MultiBuffer>,
     editor: Entity<Editor>,
@@ -102,8 +154,16 @@ impl ProjectDiff {
             existing
         } else {
             let workspace_handle = cx.entity();
-            let project_diff =
-                cx.new(|cx| Self::new(workspace.project().clone(), workspace_handle, window, cx));
+            let source = Arc::new(ProjectDiffSource(workspace.project().clone()));
+            let project_diff = cx.new(|cx| {
+                Self::new(
+                    source,
+                    workspace.project().clone(),
+                    workspace_handle,
+                    window,
+                    cx,
+                )
+            });
             workspace.add_item_to_active_pane(
                 Box::new(project_diff.clone()),
                 None,
@@ -127,6 +187,7 @@ impl ProjectDiff {
     }
 
     fn new(
+        source: Arc<dyn DiffSource>,
         project: Entity<Project>,
         workspace: Entity<Workspace>,
         window: &mut Window,
@@ -171,6 +232,7 @@ impl ProjectDiff {
         *send.borrow_mut() = ();
 
         Self {
+            source,
             project,
             git_store: git_store.clone(),
             workspace: workspace.downgrade(),
@@ -328,56 +390,53 @@ impl ProjectDiff {
     }
 
     fn load_buffers(&mut self, cx: &mut Context<Self>) -> Vec<Task<Result<DiffBuffer>>> {
-        let Some(repo) = self.git_store.read(cx).active_repository() else {
-            self.multibuffer.update(cx, |multibuffer, cx| {
-                multibuffer.clear(cx);
-            });
-            return vec![];
-        };
-
         let mut previous_paths = self.multibuffer.read(cx).paths().collect::<HashSet<_>>();
 
         let mut result = vec![];
-        repo.update(cx, |repo, cx| {
-            for entry in repo.cached_status() {
-                if !entry.status.has_changes() {
-                    continue;
-                }
-                let Some(project_path) = repo.repo_path_to_project_path(&entry.repo_path, cx)
-                else {
-                    continue;
-                };
-                let namespace = if repo.has_conflict(&entry.repo_path) {
-                    CONFLICT_NAMESPACE
-                } else if entry.status.is_created() {
-                    NEW_NAMESPACE
-                } else {
-                    TRACKED_NAMESPACE
-                };
-                let path_key = PathKey::namespaced(namespace, entry.repo_path.0.clone());
-
-                previous_paths.remove(&path_key);
-                let load_buffer = self
-                    .project
-                    .update(cx, |project, cx| project.open_buffer(project_path, cx));
-
-                let project = self.project.clone();
-                result.push(cx.spawn(async move |_, cx| {
-                    let buffer = load_buffer.await?;
-                    let changes = project
-                        .update(cx, |project, cx| {
-                            project.open_uncommitted_diff(buffer.clone(), cx)
-                        })?
-                        .await?;
-                    Ok(DiffBuffer {
-                        path_key,
-                        buffer,
-                        diff: changes,
-                        file_status: entry.status,
-                    })
-                }));
+        for entry in self.source.status(cx) {
+            if !entry.status.has_changes() {
+                continue;
             }
-        });
+
+            let Some(worktree) = self
+                .project
+                .read(cx)
+                .worktree_for_id(entry.project_path.worktree_id, cx)
+            else {
+                continue;
+            };
+            let full_path =
+                Arc::from(Path::new(worktree.read(cx).root_name()).join(&entry.project_path.path));
+
+            let namespace = if entry.has_conflict {
+                CONFLICT_NAMESPACE
+            } else if entry.status.is_created() {
+                NEW_NAMESPACE
+            } else {
+                TRACKED_NAMESPACE
+            };
+            let path_key = PathKey::namespaced(namespace, full_path);
+
+            previous_paths.remove(&path_key);
+            let load_buffer = self.project.update(cx, |project, cx| {
+                project.open_buffer(entry.project_path, cx)
+            });
+
+            let source = self.source.clone();
+            result.push(cx.spawn(async move |_, cx| {
+                let buffer = load_buffer.await?;
+                let changes = cx
+                    .update(|cx| source.open_uncommitted_diff(buffer.clone(), cx))?
+                    .await?;
+                Ok(DiffBuffer {
+                    path_key,
+                    buffer,
+                    diff: changes,
+                    file_status: entry.status,
+                })
+            }));
+        }
+
         self.multibuffer.update(cx, |multibuffer, cx| {
             for path in previous_paths {
                 multibuffer.remove_excerpts_for_path(path, cx);
@@ -586,7 +645,15 @@ impl Item for ProjectDiff {
         Self: Sized,
     {
         let workspace = self.workspace.upgrade()?;
-        Some(cx.new(|cx| ProjectDiff::new(self.project.clone(), workspace, window, cx)))
+        Some(cx.new(|cx| {
+            ProjectDiff::new(
+                self.source.clone(),
+                self.project.clone(),
+                workspace,
+                window,
+                cx,
+            )
+        }))
     }
 
     fn is_dirty(&self, cx: &App) -> bool {
@@ -744,7 +811,7 @@ impl SerializableItem for ProjectDiff {
     }
 
     fn deserialize(
-        _project: Entity<Project>,
+        project: Entity<Project>,
         workspace: WeakEntity<Workspace>,
         _workspace_id: workspace::WorkspaceId,
         _item_id: workspace::ItemId,
@@ -754,7 +821,16 @@ impl SerializableItem for ProjectDiff {
         window.spawn(cx, async move |cx| {
             workspace.update_in(cx, |workspace, window, cx| {
                 let workspace_handle = cx.entity();
-                cx.new(|cx| Self::new(workspace.project().clone(), workspace_handle, window, cx))
+                let diff = Arc::new(ProjectDiffSource(project));
+                cx.new(|cx| {
+                    Self::new(
+                        diff,
+                        workspace.project().clone(),
+                        workspace_handle,
+                        window,
+                        cx,
+                    )
+                })
             })
         })
     }
@@ -1338,8 +1414,9 @@ mod tests {
         let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
         let (workspace, cx) =
             cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let source = Arc::new(ProjectDiffSource(project.clone()));
         let diff = cx.new_window_entity(|window, cx| {
-            ProjectDiff::new(project.clone(), workspace, window, cx)
+            ProjectDiff::new(source, project.clone(), workspace, window, cx)
         });
         cx.run_until_parked();
 
@@ -1392,8 +1469,9 @@ mod tests {
         let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
         let (workspace, cx) =
             cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let source = Arc::new(ProjectDiffSource(project.clone()));
         let diff = cx.new_window_entity(|window, cx| {
-            ProjectDiff::new(project.clone(), workspace, window, cx)
+            ProjectDiff::new(source, project.clone(), workspace, window, cx)
         });
         cx.run_until_parked();
 
@@ -1465,6 +1543,7 @@ mod tests {
         let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
         let (workspace, cx) =
             cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let source = Arc::new(ProjectDiffSource(project.clone()));
         let buffer = project
             .update(cx, |project, cx| {
                 project.open_local_buffer(path!("/project/foo"), cx)
@@ -1475,7 +1554,7 @@ mod tests {
             Editor::for_buffer(buffer, Some(project.clone()), window, cx)
         });
         let diff = cx.new_window_entity(|window, cx| {
-            ProjectDiff::new(project.clone(), workspace, window, cx)
+            ProjectDiff::new(source, project.clone(), workspace, window, cx)
         });
         cx.run_until_parked();
 
