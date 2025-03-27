@@ -7,13 +7,13 @@ use std::rc::Rc;
 use theme;
 use ui::{prelude::*, Render};
 
-pub struct ToolReadyPopUp {
+pub struct AgentNotification {
     caption: SharedString,
     icon: IconName,
     icon_color: Color,
 }
 
-impl ToolReadyPopUp {
+impl AgentNotification {
     pub fn new(caption: impl Into<SharedString>, icon: IconName, icon_color: Color) -> Self {
         Self {
             caption: caption.into(),
@@ -58,14 +58,14 @@ impl ToolReadyPopUp {
     }
 }
 
-pub enum ToolReadyPopupEvent {
+pub enum AgentNotificationEvent {
     Accepted,
     Dismissed,
 }
 
-impl EventEmitter<ToolReadyPopupEvent> for ToolReadyPopUp {}
+impl EventEmitter<AgentNotificationEvent> for AgentNotification {}
 
-impl Render for ToolReadyPopUp {
+impl Render for AgentNotification {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let ui_font = theme::setup_ui_font(window, cx);
         let line_height = window.line_height();
@@ -115,13 +115,13 @@ impl Render for ToolReadyPopUp {
                             .style(ButtonStyle::Tinted(ui::TintColor::Accent))
                             .on_click({
                                 cx.listener(move |_this, _event, _, cx| {
-                                    cx.emit(ToolReadyPopupEvent::Accepted);
+                                    cx.emit(AgentNotificationEvent::Accepted);
                                 })
                             }),
                     )
                     .child(Button::new("dismiss", "Dismiss").on_click({
                         cx.listener(move |_, _event, _, cx| {
-                            cx.emit(ToolReadyPopupEvent::Dismissed);
+                            cx.emit(AgentNotificationEvent::Dismissed);
                         })
                     })),
             )

@@ -4,7 +4,7 @@ use crate::thread::{
 };
 use crate::thread_store::ThreadStore;
 use crate::tool_use::{PendingToolUseStatus, ToolUse, ToolUseStatus};
-use crate::ui::{ContextPill, ToolReadyPopUp, ToolReadyPopupEvent};
+use crate::ui::{AgentNotification, AgentNotificationEvent, ContextPill};
 use crate::AssistantPanel;
 use assistant_settings::AssistantSettings;
 use collections::HashMap;
@@ -45,7 +45,7 @@ pub struct ActiveThread {
     expanded_tool_uses: HashMap<LanguageModelToolUseId, bool>,
     expanded_thinking_segments: HashMap<(MessageId, usize), bool>,
     last_error: Option<ThreadError>,
-    pop_ups: Vec<WindowHandle<ToolReadyPopUp>>,
+    pop_ups: Vec<WindowHandle<AgentNotification>>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -539,18 +539,18 @@ impl ActiveThread {
             let caption = caption.into();
 
             for screen in cx.displays() {
-                let options = ToolReadyPopUp::window_options(screen, cx);
+                let options = AgentNotification::window_options(screen, cx);
 
                 if let Some(screen_window) = cx
                     .open_window(options, |_, cx| {
-                        cx.new(|_| ToolReadyPopUp::new(caption.clone(), icon, icon_color))
+                        cx.new(|_| AgentNotification::new(caption.clone(), icon, icon_color))
                     })
                     .log_err()
                 {
                     if let Some(pop_up) = screen_window.entity(cx).log_err() {
                         cx.subscribe_in(&pop_up, window, {
                             |this, _, event, window, cx| match event {
-                                ToolReadyPopupEvent::Accepted => {
+                                AgentNotificationEvent::Accepted => {
                                     let handle = window.window_handle();
                                     cx.activate(true); // Switch back to the Zed application
 
@@ -576,7 +576,7 @@ impl ActiveThread {
 
                                     this.dismiss_notifications(cx);
                                 }
-                                ToolReadyPopupEvent::Dismissed => {
+                                AgentNotificationEvent::Dismissed => {
                                     this.dismiss_notifications(cx);
                                 }
                             }
