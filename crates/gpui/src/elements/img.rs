@@ -523,9 +523,11 @@ impl ImageSource {
     }
 
     pub(crate) fn remove_cache(&self, window: &mut Window, cx: &mut App) {
-        if let Some(image) = self.use_data(window, cx) {
-            if let Ok(data) = image {
-                _ = window.drop_image(data);
+        if matches!(self, ImageSource::Image(..) | ImageSource::Resource(..)) {
+            if let Some(image) = self.use_data(window, cx) {
+                if let Ok(data) = image {
+                    _ = window.drop_image(data);
+                }
             }
         }
 
