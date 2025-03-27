@@ -223,7 +223,10 @@ impl ActiveThread {
         cx: &mut Context<Self>,
     ) -> Self {
         let subscriptions = vec![
-            cx.observe(&thread, |_, _, cx| cx.notify()),
+            cx.observe(&thread, |_, _, cx| {
+                println!("Thread notified!");
+                cx.notify()
+            }),
             cx.subscribe_in(&thread, window, Self::handle_thread_event),
         ];
 
@@ -371,7 +374,7 @@ impl ActiveThread {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        match event {
+        match dbg!(event) {
             ThreadEvent::ShowError(error) => {
                 self.last_error = Some(error.clone());
             }

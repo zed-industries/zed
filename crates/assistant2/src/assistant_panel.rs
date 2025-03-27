@@ -272,6 +272,13 @@ impl AssistantPanel {
                 cx,
             )
         });
+
+        cx.observe(&thread, |_, _, cx| {
+            println!("Panel: Thread notified!");
+            cx.notify();
+        })
+        .detach();
+
         self.message_editor = cx.new(|cx| {
             MessageEditor::new(
                 self.fs.clone(),

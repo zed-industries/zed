@@ -541,6 +541,7 @@ impl Thread {
         self.messages.push(Message { id, role, segments });
         self.touch_updated_at();
         cx.emit(ThreadEvent::MessageAdded(id));
+        cx.notify();
         id
     }
 
