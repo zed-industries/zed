@@ -347,7 +347,7 @@ impl Vim {
                     row.0 += 1
                 }
             }
-
+            println!("selections {:#?}", selections);
             s.select(selections);
         })
     }
@@ -469,11 +469,15 @@ impl Vim {
     }
 
     pub fn other_end(&mut self, _: &OtherEnd, window: &mut Window, cx: &mut Context<Self>) {
+        let mode = self.mode;
         self.update_editor(window, cx, |_, editor, window, cx| {
             editor.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
                 s.move_with(|_, selection| {
                     selection.reversed = !selection.reversed;
-                })
+                });
+                if mode == Mode::VisualBlock {
+                    s.reverse_selections();
+                }
             })
         });
     }

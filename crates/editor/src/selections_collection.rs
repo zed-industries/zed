@@ -551,6 +551,7 @@ impl<'a> MutableSelectionsCollection<'a> {
 
     pub fn select_anchors(&mut self, selections: Vec<Selection<Anchor>>) {
         let map = self.display_map();
+        println!("Selections supposedly not in order: {:#?}", selections);
         let resolved_selections =
             resolve_selections::<usize, _>(&selections, &map).collect::<Vec<_>>();
         self.select(resolved_selections);
@@ -654,6 +655,29 @@ impl<'a> MutableSelectionsCollection<'a> {
             })
             .collect();
         self.select(selections);
+    }
+    pub fn reverse_selections(&mut self) {
+        //let mut disjoints = self.collection.disjoint.iter_mut().rev();
+        //disjoints.iter_mut().rev();
+
+        let mut reverse_disjoint: Vec<Selection<Anchor>> = Vec::new();
+        let x = self.disjoint.clone();
+        let y = x.iter();
+        let w = y.sorted_by(|a, b| Ord::cmp(&b.id, &a.id));
+        let rev: Vec<&Selection<Anchor>> = w.collect();
+        for d in rev {
+            let s = Selection {
+                id: self.new_selection_id(),
+                start: d.start,
+                end: d.end,
+                reversed: d.reversed,
+                goal: d.goal,
+            };
+            println!("What the original id was {}", d.id);
+            println!("What the new id is {}", s.id);
+            reverse_disjoint.push(s);
+        }
+        self.select_anchors(reverse_disjoint);
     }
 
     pub fn move_with(
