@@ -3,7 +3,7 @@ use std::sync::Arc;
 use assistant_settings::AssistantSettings;
 use assistant_tool::ToolWorkingSet;
 use fs::Fs;
-use gpui::{prelude::*, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable};
+use gpui::{prelude::*, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, Subscription};
 use settings::Settings as _;
 use ui::{prelude::*, ListItem, ListItemSpacing, Navigable, NavigableEntry};
 use workspace::{ModalView, Workspace};
@@ -15,7 +15,10 @@ use crate::{AssistantPanel, ManageProfiles};
 enum Mode {
     ChooseProfile(Entity<ProfilePicker>),
     ViewProfile(ViewProfileMode),
-    ConfigureTools(Entity<ToolPicker>),
+    ConfigureTools {
+        tool_picker: Entity<ToolPicker>,
+        _subscription: Subscription,
+    },
 }
 
 #[derive(Clone)]
@@ -98,16 +101,27 @@ impl ManageProfilesModal {
             return;
         };
 
-        self.mode = Mode::ConfigureTools(cx.new(|cx| {
+        let tool_picker = cx.new(|cx| {
             let delegate = ToolPickerDelegate::new(
                 self.fs.clone(),
                 self.tools.clone(),
-                profile_id,
+                profile_id.clone(),
                 profile,
                 cx,
             );
             ToolPicker::new(delegate, window, cx)
-        }));
+        });
+        let dismiss_subscription = cx.subscribe_in(&tool_picker, window, {
+            let profile_id = profile_id.clone();
+            move |this, _tool_picker, _: &DismissEvent, window, cx| {
+                this.view_profile(profile_id.clone(), window, cx);
+            }
+        });
+
+        self.mode = Mode::ConfigureTools {
+            tool_picker,
+            _subscription: dismiss_subscription,
+        };
         self.focus_handle(cx).focus(window);
     }
 
@@ -122,7 +136,7 @@ impl Focusable for ManageProfilesModal {
     fn focus_handle(&self, cx: &App) -> FocusHandle {
         match &self.mode {
             Mode::ChooseProfile(profile_picker) => profile_picker.focus_handle(cx),
-            Mode::ConfigureTools(tool_picker) => tool_picker.focus_handle(cx),
+            Mode::ConfigureTools { tool_picker, .. } => tool_picker.focus_handle(cx),
             Mode::ViewProfile(_) => self.focus_handle.clone(),
         }
     }
@@ -195,7 +209,7 @@ impl Render for ManageProfilesModal {
                 Mode::ViewProfile(mode) => self
                     .render_view_profile(mode.clone(), window, cx)
                     .into_any_element(),
-                Mode::ConfigureTools(tool_picker) => tool_picker.clone().into_any_element(),
+                Mode::ConfigureTools { tool_picker, .. } => tool_picker.clone().into_any_element(),
             })
     }
 }
