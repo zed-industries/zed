@@ -1,14 +1,10 @@
 use crate::{
-    worktree_settings::WorktreeSettings, Entry, EntryKind, Event, PathChange, StatusEntry,
-    WorkDirectory, Worktree, WorktreeModelHandle,
+    worktree_settings::WorktreeSettings, Entry, EntryKind, Event, PathChange, WorkDirectory,
+    Worktree, WorktreeModelHandle,
 };
 use anyhow::Result;
 use fs::{FakeFs, Fs, RealFs, RemoveOptions};
-use git::{
-    repository::RepoPath,
-    status::{FileStatus, StatusCode, TrackedStatus},
-    GITIGNORE,
-};
+use git::GITIGNORE;
 use git2::RepositoryInitOptions;
 use gpui::{AppContext as _, BorrowAppContext, Context, Task, TestAppContext};
 use parking_lot::Mutex;

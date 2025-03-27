@@ -2899,6 +2899,7 @@ async fn test_git_branch_name(
             repository
                 .read(cx)
                 .branch
+                .as_ref()
                 .map(|branch| branch.name.to_string()),
             branch_name
         )
@@ -6860,7 +6861,8 @@ async fn test_remote_git_branches(
                 .next()
                 .unwrap()
                 .read(cx)
-                .branch()
+                .branch
+                .as_ref()
                 .unwrap()
                 .clone()
         })
@@ -6897,7 +6899,8 @@ async fn test_remote_git_branches(
                 .next()
                 .unwrap()
                 .read(cx)
-                .branch()
+                .branch
+                .as_ref()
                 .unwrap()
                 .clone()
         })

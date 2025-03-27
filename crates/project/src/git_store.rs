@@ -13,7 +13,7 @@ use collections::HashMap;
 use fs::Fs;
 use futures::{
     channel::{mpsc, oneshot},
-    future::{self, OptionFuture, Shared},
+    future::{self, Shared},
     FutureExt as _, StreamExt as _,
 };
 use git::{
@@ -55,10 +55,7 @@ use std::{
 use sum_tree::{SumTree, TreeSet};
 use text::BufferId;
 use util::{debug_panic, maybe, ResultExt};
-use worktree::{
-    File, PathKey, ProjectEntryId, RepositoryEntry, StatusEntry, UpdatedGitRepositoriesSet,
-    Worktree,
-};
+use worktree::{File, PathKey, ProjectEntryId, StatusEntry, UpdatedGitRepositoriesSet, Worktree};
 
 pub struct GitStore {
     state: GitStoreState,
@@ -152,7 +149,7 @@ pub struct GitStoreCheckpoint {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct RepositoryId(pub u64);
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RepositorySnapshot {
     pub id: RepositoryId,
     pub work_directory_id: Option<ProjectEntryId>,
@@ -260,7 +257,6 @@ impl GitStore {
     pub fn ssh(
         worktree_store: &Entity<WorktreeStore>,
         buffer_store: Entity<BufferStore>,
-        environment: Entity<ProjectEnvironment>,
         upstream_client: AnyProtoClient,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -1212,7 +1208,7 @@ impl GitStore {
             return;
         };
 
-        let mut diff_state_updates = HashMap::<RepositoryId, Vec<_>>::default();
+        let mut diff_state_updates = HashMap::<ProjectEntryId, Vec<_>>::default();
         for (buffer_id, diff_state) in &self.diffs {
             let Some(buffer) = self.buffer_store.read(cx).get(*buffer_id) else {
                 continue;
@@ -2644,11 +2640,17 @@ impl RepositorySnapshot {
             .cloned()
     }
 
-    fn abs_path_to_repo_path(&self, abs_path: &Path) -> Option<RepoPath> {
+    pub fn abs_path_to_repo_path(&self, abs_path: &Path) -> Option<RepoPath> {
         abs_path
             .strip_prefix(&self.work_directory_abs_path)
             .map(RepoPath::from)
             .ok()
+    }
+
+    pub fn has_conflict(&self, repo_path: &RepoPath) -> bool {
+        self.statuses_by_path
+            .get(&PathKey(repo_path.0.clone()), &())
+            .map_or(false, |entry| entry.status.is_conflicted())
     }
 }
 
@@ -3069,7 +3071,10 @@ impl Repository {
         self.unstage_entries(to_unstage, cx)
     }
 
-    fn environment(&self, cx: &mut App) -> impl Future<Output = HashMap<String, String>> + 'static {
+    fn environment(
+        &self,
+        _cx: &mut App,
+    ) -> impl Future<Output = HashMap<String, String>> + 'static {
         async { todo!("implement getting environment for a repository") }
         //let task = self.project_environment.as_ref().and_then(|env| {
         //    env.update(cx, |env, cx| {

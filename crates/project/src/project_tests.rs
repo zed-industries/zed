@@ -7087,7 +7087,7 @@ async fn test_git_repository_status(_cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
-async fn test_git_status_postprocessing(cx: &mut gpui::TestAppContext) {
+async fn test_git_status_postprocessing(_cx: &mut gpui::TestAppContext) {
     todo!("restore this test")
     //init_test(cx);
     //cx.executor().allow_parking();
@@ -7145,7 +7145,7 @@ async fn test_git_status_postprocessing(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
-async fn test_repository_subfolder_git_status(cx: &mut gpui::TestAppContext) {
+async fn test_repository_subfolder_git_status(_cx: &mut gpui::TestAppContext) {
     todo!("restore this test")
     //init_test(cx);
     //cx.executor().allow_parking();
@@ -7232,7 +7232,7 @@ async fn test_repository_subfolder_git_status(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
-async fn test_conflicted_cherry_pick(cx: &mut gpui::TestAppContext) {
+async fn test_conflicted_cherry_pick(_cx: &mut gpui::TestAppContext) {
     todo!("restore this test")
     //init_test(cx);
     //cx.executor().allow_parking();
@@ -7314,7 +7314,7 @@ async fn test_conflicted_cherry_pick(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
-async fn test_update_gitignore(cx: &mut gpui::TestAppContext) {
+async fn test_update_gitignore(_cx: &mut gpui::TestAppContext) {
     todo!("restore this test")
     //init_test(cx);
     //let fs = FakeFs::new(cx.background_executor.clone());
@@ -7392,7 +7392,7 @@ async fn test_update_gitignore(cx: &mut gpui::TestAppContext) {
 // See: https://stackoverflow.com/questions/41365318/access-is-denied-when-renaming-folder
 #[gpui::test]
 #[cfg_attr(target_os = "windows", ignore)]
-async fn test_rename_work_directory(cx: &mut gpui::TestAppContext) {
+async fn test_rename_work_directory(_cx: &mut gpui::TestAppContext) {
     todo!("restore this test")
     //init_test(cx);
     //cx.executor().allow_parking();
@@ -7475,7 +7475,7 @@ async fn test_rename_work_directory(cx: &mut gpui::TestAppContext) {
 // https://stackoverflow.com/questions/41365318/access-is-denied-when-renaming-folder
 #[gpui::test]
 #[cfg_attr(target_os = "windows", ignore)]
-async fn test_file_status(cx: &mut gpui::TestAppContext) {
+async fn test_file_status(_cx: &mut gpui::TestAppContext) {
     todo!("restore test")
     //init_test(cx);
     //cx.executor().allow_parking();
@@ -7680,7 +7680,7 @@ async fn test_file_status(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test(iterations = 10)]
-async fn test_rescan_with_gitignore(cx: &mut gpui::TestAppContext) {
+async fn test_rescan_with_gitignore(_cx: &mut gpui::TestAppContext) {
     todo!("restore this test")
     //init_test(cx);
     //cx.update(|cx| {
@@ -7787,9 +7787,10 @@ async fn test_rescan_with_gitignore(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
-async fn test_write_file(cx: &mut gpui::TestAppContext) {
+async fn test_write_file(_cx: &mut gpui::TestAppContext) {
     todo!("restore this test")
     //init_test(cx);
+
     //cx.executor().allow_parking();
     //let dir = TempTree::new(json!({
     //    ".git": {},
@@ -7950,10 +7951,10 @@ fn get_all_tasks(
 
 #[track_caller]
 fn assert_entry_git_state(
-    tree: &Worktree,
-    path: &str,
-    index_status: Option<StatusCode>,
-    is_ignored: bool,
+    _tree: &Worktree,
+    _path: &str,
+    _index_status: Option<StatusCode>,
+    _is_ignored: bool,
 ) {
     todo!("restore this helper")
     //let entry = tree.entry_for_path(path).expect("entry {path} not found");

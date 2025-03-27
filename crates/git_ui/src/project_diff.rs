@@ -452,13 +452,11 @@ impl ProjectDiff {
     ) -> Result<()> {
         while let Some(_) = recv.next().await {
             this.update(cx, |this, cx| {
-                let new_branch =
-                    this.git_store
-                        .read(cx)
-                        .active_repository()
-                        .and_then(|active_repository| {
-                            active_repository.read(cx).branch().cloned()
-                        });
+                let new_branch = this
+                    .git_store
+                    .read(cx)
+                    .active_repository()
+                    .and_then(|active_repository| active_repository.read(cx).branch.clone());
                 if new_branch != this.current_branch {
                     this.current_branch = new_branch;
                     cx.notify();

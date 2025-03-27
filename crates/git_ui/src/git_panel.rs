@@ -340,7 +340,7 @@ const MAX_PANEL_EDITOR_LINES: usize = 6;
 
 pub(crate) fn commit_message_editor(
     commit_message_buffer: Entity<Buffer>,
-    placeholder: Option<&str>,
+    placeholder: Option<SharedString>,
     project: Entity<Project>,
     in_panel: bool,
     window: &mut Window,
@@ -361,7 +361,7 @@ pub(crate) fn commit_message_editor(
     commit_editor.set_show_wrap_guides(false, cx);
     commit_editor.set_show_indent_guides(false, cx);
     commit_editor.set_hard_wrap(Some(72), cx);
-    let placeholder = placeholder.unwrap_or("Enter commit message");
+    let placeholder = placeholder.unwrap_or("Enter commit message".into());
     commit_editor.set_placeholder_text(placeholder, cx);
     commit_editor
 }
@@ -828,7 +828,7 @@ impl GitPanel {
             .active_repository
             .as_ref()
             .map_or(false, |active_repository| {
-                active_repository.read(cx).entry_count() > 0
+                active_repository.read(cx).status_summary().count > 0
             });
         if have_entries && self.selected_entry.is_none() {
             self.selected_entry = Some(1);
@@ -1415,7 +1415,7 @@ impl GitPanel {
         let message = self.commit_editor.read(cx).text(cx);
 
         if !message.trim().is_empty() {
-            return Some(message.to_string());
+            return Some(message);
         }
 
         self.suggest_commit_message(cx)
@@ -1593,7 +1593,7 @@ impl GitPanel {
             .as_ref()
             .and_then(|repo| repo.read(cx).merge_message.as_ref())
         {
-            return Some(merge_message.clone());
+            return Some(merge_message.to_string());
         }
 
         let git_status_entry = if let Some(staged_entry) = &self.single_staged_entry {
@@ -1849,7 +1849,7 @@ impl GitPanel {
         let Some(repo) = self.active_repository.clone() else {
             return;
         };
-        let Some(branch) = repo.read(cx).branch() else {
+        let Some(branch) = repo.read(cx).branch.as_ref() else {
             return;
         };
         telemetry::event!("Git Pulled");
@@ -1906,7 +1906,7 @@ impl GitPanel {
         let Some(repo) = self.active_repository.clone() else {
             return;
         };
-        let Some(branch) = repo.read(cx).branch() else {
+        let Some(branch) = repo.read(cx).branch.as_ref() else {
             return;
         };
         telemetry::event!("Git Pushed");
@@ -2019,7 +2019,7 @@ impl GitPanel {
 
             let mut current_remotes: Vec<Remote> = repo
                 .update(&mut cx, |repo, _| {
-                    let Some(current_branch) = repo.branch() else {
+                    let Some(current_branch) = repo.branch.as_ref() else {
                         return Err(anyhow::anyhow!("No active branch"));
                     };
 
@@ -2215,7 +2215,7 @@ impl GitPanel {
                     git_panel.commit_editor = cx.new(|cx| {
                         commit_message_editor(
                             buffer,
-                            git_panel.suggest_commit_message(cx).as_deref(),
+                            git_panel.suggest_commit_message(cx).map(SharedString::from),
                             git_panel.project.clone(),
                             true,
                             window,
@@ -2389,9 +2389,7 @@ impl GitPanel {
         self.select_first_entry_if_none(cx);
 
         let suggested_commit_message = self.suggest_commit_message(cx);
-        let placeholder_text = suggested_commit_message
-            .as_deref()
-            .unwrap_or("Enter commit message");
+        let placeholder_text = suggested_commit_message.unwrap_or("Enter commit message".into());
 
         self.commit_editor.update(cx, |editor, cx| {
             editor.set_placeholder_text(Arc::from(placeholder_text), cx)
@@ -2820,7 +2818,7 @@ impl GitPanel {
     }
 
     pub(crate) fn render_remote_button(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
-        let branch = self.active_repository.as_ref()?.read(cx).branch().cloned();
+        let branch = self.active_repository.as_ref()?.read(cx).branch.clone();
         if !self.can_push_and_pull(cx) {
             return None;
         }
@@ -2860,7 +2858,7 @@ impl GitPanel {
         let commit_tooltip_focus_handle = editor_focus_handle.clone();
         let expand_tooltip_focus_handle = editor_focus_handle.clone();
 
-        let branch = active_repository.read(cx).branch().cloned();
+        let branch = active_repository.read(cx).branch.clone();
 
         let footer_size = px(32.);
         let gap = px(9.0);
@@ -2991,7 +2989,7 @@ impl GitPanel {
 
     fn render_previous_commit(&self, cx: &mut Context<Self>) -> Option<impl IntoElement> {
         let active_repository = self.active_repository.as_ref()?;
-        let branch = active_repository.read(cx).branch()?;
+        let branch = active_repository.read(cx).branch.as_ref()?;
         let commit = branch.most_recent_commit.as_ref()?.clone();
 
         let this = cx.entity();

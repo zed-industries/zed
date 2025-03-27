@@ -1059,13 +1059,7 @@ impl Project {
             });
 
             let git_store = cx.new(|cx| {
-                GitStore::ssh(
-                    &worktree_store,
-                    buffer_store.clone(),
-                    environment.clone(),
-                    ssh_proto.clone(),
-                    cx,
-                )
+                GitStore::ssh(&worktree_store, buffer_store.clone(), ssh_proto.clone(), cx)
             });
 
             cx.subscribe(&ssh, Self::on_ssh_event).detach();

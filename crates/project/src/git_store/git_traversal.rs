@@ -3,9 +3,7 @@ use git::status::GitSummary;
 use std::{ops::Deref, path::Path};
 use sum_tree::Cursor;
 use text::Bias;
-use worktree::{
-    Entry, PathProgress, PathTarget, ProjectEntryId, RepositoryEntry, StatusEntry, Traversal,
-};
+use worktree::{Entry, PathProgress, PathTarget, StatusEntry, Traversal};
 
 use super::{RepositoryId, RepositorySnapshot};
 

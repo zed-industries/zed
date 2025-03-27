@@ -1398,7 +1398,7 @@ impl Thread {
                 (path, snapshot)
             });
 
-            let Ok((worktree_path, snapshot)) = worktree_info else {
+            let Ok((worktree_path, _snapshot)) = worktree_info else {
                 return WorktreeSnapshot {
                     worktree_path: String::new(),
                     git_state: None,
@@ -1410,10 +1410,14 @@ impl Thread {
                     git_store
                         .repositories()
                         .values()
-                        .find(|repo| repo.read(cx).worktree_id == Some(snapshot.id()))
+                        .find(|repo| {
+                            repo.read(cx)
+                                .abs_path_to_repo_path(&worktree.read(cx).abs_path())
+                                .is_some()
+                        })
                         .and_then(|repo| {
                             let repo = repo.read(cx);
-                            Some((repo.branch().cloned(), repo.backend()?))
+                            Some((repo.branch.clone(), repo.backend()?))
                         })
                 })
                 .ok()
