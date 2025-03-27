@@ -1493,7 +1493,7 @@ impl Project {
         });
         self.dap_store
             .update(cx, |dap_store, cx| {
-                dap_store.new_fake_session(config, worktree, None, cx)
+                dap_store.new_fake_session(config, worktree, None, caps, fails, cx)
             })
             .1
     }

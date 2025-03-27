@@ -817,7 +817,7 @@ impl Session {
         initialized_tx: oneshot::Sender<()>,
         cx: &mut App,
     ) -> Task<Result<Entity<Self>>> {
-        let (message_tx, mut message_rx) = futures::channel::mpsc::unbounded();
+        let (message_tx, message_rx) = futures::channel::mpsc::unbounded();
 
         cx.spawn(async move |cx| {
             let (mode, capabilities) = LocalMode::new(
@@ -832,74 +832,62 @@ impl Session {
             .await?;
 
             cx.new(|cx| {
-                let _background_tasks = vec![cx.spawn(async move |this: WeakEntity<Self>, cx| {
-                    let mut initialized_tx = Some(initialized_tx);
-                    while let Some(message) = message_rx.next().await {
-                        if let Message::Event(event) = message {
-                            if let Events::Initialized(_) = *event {
-                                if let Some(tx) = initialized_tx.take() {
-                                    tx.send(()).ok();
-                                }
-                            } else {
-                                let Ok(_) = this.update(cx, |session, cx| {
-                                    session.handle_dap_event(event, cx);
-                                }) else {
-                                    break;
-                                };
-                            }
-                        } else {
-                            let Ok(_) =
-                                start_debugging_requests_tx.unbounded_send((session_id, message))
-                            else {
-                                break;
-                            };
-                        }
-                    }
-                })];
-
-                cx.subscribe(&breakpoint_store, |this, _, event, cx| match event {
-                    BreakpointStoreEvent::BreakpointsUpdated(path, reason) => {
-                        if let Some(local) = (!this.ignore_breakpoints)
-                            .then(|| this.as_local_mut())
-                            .flatten()
-                        {
-                            local
-                                .send_breakpoints_from_path(path.clone(), *reason, cx)
-                                .detach();
-                        };
-                    }
-                    BreakpointStoreEvent::BreakpointsCleared(paths) => {
-                        if let Some(local) = (!this.ignore_breakpoints)
-                            .then(|| this.as_local_mut())
-                            .flatten()
-                        {
-                            local.unset_breakpoints_from_paths(paths, cx).detach();
-                        }
-                    }
-                    BreakpointStoreEvent::ActiveDebugLineChanged => {}
-                })
-                .detach();
-
-                Self {
-                    mode: Mode::Local(mode),
-                    id: session_id,
-                    child_session_ids: HashSet::default(),
-                    parent_id: parent_session.map(|session| session.read(cx).id),
-                    variables: Default::default(),
+                create_local_session(
+                    breakpoint_store,
+                    session_id,
+                    parent_session,
+                    start_debugging_requests_tx,
+                    initialized_tx,
+                    message_rx,
+                    mode,
                     capabilities,
-                    thread_states: ThreadStates::default(),
-                    output_token: OutputToken(0),
-                    ignore_breakpoints: false,
-                    output: circular_buffer::CircularBuffer::boxed(),
-                    requests: HashMap::default(),
-                    modules: Vec::default(),
-                    loaded_sources: Vec::default(),
-                    threads: IndexMap::default(),
-                    stack_frames: IndexMap::default(),
-                    locations: Default::default(),
-                    _background_tasks,
-                    is_session_terminated: false,
-                }
+                    cx,
+                )
+            })
+        })
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub(crate) fn fake(
+        breakpoint_store: Entity<BreakpointStore>,
+        session_id: SessionId,
+        parent_session: Option<Entity<Session>>,
+        delegate: DapAdapterDelegate,
+        config: DebugAdapterConfig,
+        start_debugging_requests_tx: futures::channel::mpsc::UnboundedSender<(SessionId, Message)>,
+        initialized_tx: oneshot::Sender<()>,
+        caps: Capabilities,
+        fails: bool,
+        cx: &mut App,
+    ) -> Task<Result<Entity<Session>>> {
+        let (message_tx, message_rx) = futures::channel::mpsc::unbounded();
+
+        cx.spawn(async move |cx| {
+            let (mode, capabilities) = LocalMode::new_fake(
+                session_id,
+                parent_session.clone(),
+                breakpoint_store.clone(),
+                config.clone(),
+                delegate,
+                message_tx,
+                caps,
+                fails,
+                cx.clone(),
+            )
+            .await?;
+
+            cx.new(|cx| {
+                create_local_session(
+                    breakpoint_store,
+                    session_id,
+                    parent_session,
+                    start_debugging_requests_tx,
+                    initialized_tx,
+                    message_rx,
+                    mode,
+                    capabilities,
+                    cx,
+                )
             })
         })
     }
@@ -1906,5 +1894,85 @@ impl Session {
         } else {
             self.shutdown(cx).detach();
         }
+    }
+}
+
+fn create_local_session(
+    breakpoint_store: Entity<BreakpointStore>,
+    session_id: SessionId,
+    parent_session: Option<Entity<Session>>,
+    start_debugging_requests_tx: futures::channel::mpsc::UnboundedSender<(SessionId, Message)>,
+    initialized_tx: oneshot::Sender<()>,
+    mut message_rx: futures::channel::mpsc::UnboundedReceiver<Message>,
+    mode: LocalMode,
+    capabilities: Capabilities,
+    cx: &mut Context<'_, Session>,
+) -> Session {
+    let _background_tasks = vec![cx.spawn(async move |this: WeakEntity<Session>, cx| {
+        let mut initialized_tx = Some(initialized_tx);
+        while let Some(message) = message_rx.next().await {
+            if let Message::Event(event) = message {
+                if let Events::Initialized(_) = *event {
+                    if let Some(tx) = initialized_tx.take() {
+                        tx.send(()).ok();
+                    }
+                } else {
+                    let Ok(_) = this.update(cx, |session, cx| {
+                        session.handle_dap_event(event, cx);
+                    }) else {
+                        break;
+                    };
+                }
+            } else {
+                let Ok(_) = start_debugging_requests_tx.unbounded_send((session_id, message))
+                else {
+                    break;
+                };
+            }
+        }
+    })];
+
+    cx.subscribe(&breakpoint_store, |this, _, event, cx| match event {
+        BreakpointStoreEvent::BreakpointsUpdated(path, reason) => {
+            if let Some(local) = (!this.ignore_breakpoints)
+                .then(|| this.as_local_mut())
+                .flatten()
+            {
+                local
+                    .send_breakpoints_from_path(path.clone(), *reason, cx)
+                    .detach();
+            };
+        }
+        BreakpointStoreEvent::BreakpointsCleared(paths) => {
+            if let Some(local) = (!this.ignore_breakpoints)
+                .then(|| this.as_local_mut())
+                .flatten()
+            {
+                local.unset_breakpoints_from_paths(paths, cx).detach();
+            }
+        }
+        BreakpointStoreEvent::ActiveDebugLineChanged => {}
+    })
+    .detach();
+
+    Session {
+        mode: Mode::Local(mode),
+        id: session_id,
+        child_session_ids: HashSet::default(),
+        parent_id: parent_session.map(|session| session.read(cx).id),
+        variables: Default::default(),
+        capabilities,
+        thread_states: ThreadStates::default(),
+        output_token: OutputToken(0),
+        ignore_breakpoints: false,
+        output: circular_buffer::CircularBuffer::boxed(),
+        requests: HashMap::default(),
+        modules: Vec::default(),
+        loaded_sources: Vec::default(),
+        threads: IndexMap::default(),
+        stack_frames: IndexMap::default(),
+        locations: Default::default(),
+        _background_tasks,
+        is_session_terminated: false,
     }
 }
