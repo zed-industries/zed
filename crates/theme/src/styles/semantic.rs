@@ -22,7 +22,7 @@ pub(crate) enum Highlight {
 pub(crate) const DEFAULT_SEMANTIC_TOKENS: &[(&str, Highlight)] = &[
     ("keyword", Highlight::TreeSitter("keyword")),
     ("variable", Highlight::TreeSitter("variable")),
-    ("enumMember", Highlight::TreeSitter("variant")),
+    ("enumMember", Highlight::TreeSitter("constructor")),
     ("comment", Highlight::TreeSitter("comment")),
     ("enum", Highlight::TreeSitter("enum")),
     ("type", Highlight::TreeSitter("type")),

@@ -38,6 +38,7 @@ mod proposed_changes_editor;
 mod rust_analyzer_ext;
 pub mod scroll;
 mod selections_collection;
+mod semantic_tokens;
 pub mod tasks;
 
 #[cfg(test)]
@@ -125,6 +126,7 @@ use project::{
 pub use proposed_changes_editor::{
     ProposedChangeLocation, ProposedChangesEditor, ProposedChangesEditorToolbar,
 };
+use semantic_tokens::fetch_and_update_semantic_tokens;
 use smallvec::smallvec;
 use std::{cell::OnceCell, iter::Peekable};
 use task::{ResolvedTask, TaskTemplate, TaskVariables};
@@ -3981,95 +3983,53 @@ impl Editor {
         if let SemanticTokensRefreshReason::Toggle(ref value) = reason {
             self.semantic_tokens_enabled = *value;
             cx.notify();
+        } else if let SemanticTokensRefreshReason::SettingsChange(ref settings) = reason {
+            if !settings.enabled && !self.semantic_tokens_enabled() {
+                return None;
+            }
         }
-        if let SemanticTokensRefreshReason::BufferEdited(ref languages) = reason {
-            // If it's using full semantic tokens, this line isn't needed, if it's using
-            // range/delta features, this is a TODO
-            let _ = languages;
+        if !self.semantic_tokens_enabled() {
+            return None;
         }
         match reason {
-            SemanticTokensRefreshReason::Toggle(false) => {
-                self.display_map.update(cx, |display_map, _| {
-                    display_map.clear_semantic_highlights();
-                });
-                cx.notify();
-            }
-            SemanticTokensRefreshReason::SettingsChange(settings) if !settings.enabled => {
-                self.display_map.update(cx, |display_map, _| {
-                    display_map.clear_semantic_highlights();
-                });
-                cx.notify();
-            }
             // All reasons implemented, so we can implement the "delta" requests in the future
             SemanticTokensRefreshReason::NewLinesShown => {
                 // If it's using full semantic tokens, this line isn't needed, if it's using
                 // range/delta features, this is a TODO
+                let multibuffer = self.buffer.clone();
+                for buffer in self.buffer.read(cx).all_buffers() {
+                    fetch_and_update_semantic_tokens(self, multibuffer.clone(), buffer, cx)?;
+                }
+            }
+            SemanticTokensRefreshReason::BufferEdited(languages) => {
+                // If it's using full semantic tokens, this line isn't needed, if it's using
+                // range/delta features, this is a TODO
+                let _ = languages;
+                let multibuffer = self.buffer.clone();
+                for buffer in self.buffer.read(cx).all_buffers() {
+                    fetch_and_update_semantic_tokens(self, multibuffer.clone(), buffer, cx)?;
+                }
             }
             SemanticTokensRefreshReason::ExcerptsRemoved(excerpts) => {
                 // If it's using full semantic tokens, this line isn't needed, if it's using
                 // range/delta features, this is a TODO
                 let _ = excerpts;
+                let multibuffer = self.buffer.clone();
+                for buffer in self.buffer.read(cx).all_buffers() {
+                    fetch_and_update_semantic_tokens(self, multibuffer.clone(), buffer, cx)?;
+                }
             }
             SemanticTokensRefreshReason::RefreshRequested
-            | SemanticTokensRefreshReason::BufferEdited(_)
             | SemanticTokensRefreshReason::SettingsChange(_)
-            | SemanticTokensRefreshReason::Toggle(true)
-                if self.semantic_tokens_enabled() =>
-            {
+            | SemanticTokensRefreshReason::Toggle(true) => {
+                let multibuffer = self.buffer.clone();
                 for buffer in self.buffer.read(cx).all_buffers() {
-                    let semantic_tokens = self
-                        .semantics_provider
-                        .as_ref()?
-                        .semantic_tokens(buffer.clone(), cx)?;
-                    let snapshot = buffer.read(cx).snapshot();
-                    let multibuffer = self.buffer.clone();
-                    let task: Task<Result<()>> = cx.spawn_in(window, async move |editor, cx| {
-                        let tokens = semantic_tokens
-                            .await
-                            .context("semantic tokens fetch task")?;
-                        let multibuffer = multibuffer.clone();
-                        let tokens: Vec<_> = cx.update(|_, cx| {
-                            let multibuffer = multibuffer.read(cx).snapshot(cx);
-                            tokens
-                                .into_iter()
-                                .filter_map(|token| {
-                                    let is_valid = token.range.end.offset != 0
-                                        && token.range.start.is_valid(&snapshot)
-                                        && token.range.end.is_valid(&snapshot);
-                                    if is_valid {
-                                        let range = token.range.to_point(&snapshot);
-                                        let range = range.to_anchors(&multibuffer);
-                                        Some((range, token.r#type, token.modifiers))
-                                    } else {
-                                        None
-                                    }
-                                })
-                                .collect_vec()
-                        })?;
-                        editor.update(cx, |this: &mut Self, cx| {
-                            for (range, r#type, modifiers) in tokens {
-                                let Some(mut style) = cx.theme().tokens().get(r#type.as_str())
-                                else {
-                                    continue;
-                                };
-                                for r#mod in modifiers {
-                                    let r#mod = cx.theme().modifiers().get(r#mod.as_str());
-                                    style.highlight(match r#mod {
-                                        Some(value) => value,
-                                        None => continue,
-                                    });
-                                }
-                                this.semantic_highlight(range, style, cx);
-                            }
-                        })?;
-                        Ok(())
-                    });
-                    task.detach_and_log_err(cx);
+                    fetch_and_update_semantic_tokens(self, multibuffer.clone(), buffer, cx)?;
                 }
-                cx.notify();
             }
             _ => {}
         }
+        cx.notify();
         Some(())
     }
 
@@ -16589,6 +16549,13 @@ impl Editor {
                     ..range.end.to_display_point(display_snapshot)
             })
             .collect()
+    }
+
+    pub fn clear_semantic_highlights(&mut self, cx: &mut Context<Self>) {
+        self.display_map.update(cx, |display_map, _| {
+            display_map.clear_semantic_highlights();
+        });
+        cx.notify();
     }
 
     pub fn semantic_highlight(
