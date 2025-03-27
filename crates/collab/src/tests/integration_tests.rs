@@ -50,7 +50,7 @@ use std::{
     time::Duration,
 };
 use unindent::Unindent as _;
-use util::path;
+use util::{path, uri};
 use workspace::Pane;
 
 #[ctor::ctor]
@@ -5145,7 +5145,7 @@ async fn test_document_highlights(
     client_a
         .fs()
         .insert_tree(
-            "/root-1",
+            path!("/root-1"),
             json!({
                 "main.rs": "fn double(number: i32) -> i32 { number + number }",
             }),
@@ -5157,7 +5157,7 @@ async fn test_document_highlights(
         .register_fake_lsp("Rust", Default::default());
     client_a.language_registry().add(rust_lang());
 
-    let (project_a, worktree_id) = client_a.build_local_project("/root-1", cx_a).await;
+    let (project_a, worktree_id) = client_a.build_local_project(path!("/root-1"), cx_a).await;
     let project_id = active_call_a
         .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
         .await
@@ -5182,7 +5182,7 @@ async fn test_document_highlights(
                     .text_document
                     .uri
                     .as_str(),
-                "file:///root-1/main.rs"
+                uri!("file:///root-1/main.rs")
             );
             assert_eq!(
                 params.text_document_position_params.position,
