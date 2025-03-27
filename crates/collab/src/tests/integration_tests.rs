@@ -2960,7 +2960,7 @@ async fn test_git_status_sync(
     client_a
         .fs()
         .insert_tree(
-            "/dir",
+            path!("/dir"),
             json!({
                 ".git": {},
                 "a.txt": "a",
@@ -2973,11 +2973,11 @@ async fn test_git_status_sync(
     // Initially, a.txt is uncommitted, but present in the index,
     // and b.txt is unmerged.
     client_a.fs().set_head_for_repo(
-        "/dir/.git".as_ref(),
+        path!("/dir/.git").as_ref(),
         &[("b.txt".into(), "B".into()), ("c.txt".into(), "c".into())],
     );
     client_a.fs().set_index_for_repo(
-        "/dir/.git".as_ref(),
+        path!("/dir/.git").as_ref(),
         &[
             ("a.txt".into(), "".into()),
             ("b.txt".into(), "B".into()),
@@ -2985,7 +2985,7 @@ async fn test_git_status_sync(
         ],
     );
     client_a.fs().set_unmerged_paths_for_repo(
-        "/dir/.git".as_ref(),
+        path!("/dir/.git").as_ref(),
         &[(
             "b.txt".into(),
             UnmergedStatus {
@@ -3004,7 +3004,7 @@ async fn test_git_status_sync(
         second_head: UnmergedStatusCode::Deleted,
     });
 
-    let (project_local, _worktree_id) = client_a.build_local_project("/dir", cx_a).await;
+    let (project_local, _worktree_id) = client_a.build_local_project(path!("/dir"), cx_a).await;
     let project_id = active_call_a
         .update(cx_a, |call, cx| {
             call.share_project(project_local.clone(), cx)
@@ -3069,15 +3069,15 @@ async fn test_git_status_sync(
     // Delete b.txt from the index, mark conflict as resolved,
     // and modify c.txt in the working copy.
     client_a.fs().set_index_for_repo(
-        "/dir/.git".as_ref(),
+        path!("/dir/.git").as_ref(),
         &[("a.txt".into(), "a".into()), ("c.txt".into(), "c".into())],
     );
     client_a
         .fs()
-        .set_unmerged_paths_for_repo("/dir/.git".as_ref(), &[]);
+        .set_unmerged_paths_for_repo(path!("/dir/.git").as_ref(), &[]);
     client_a
         .fs()
-        .atomic_write("/dir/c.txt".into(), "CC".into())
+        .atomic_write(path!("/dir/c.txt").into(), "CC".into())
         .await
         .unwrap();
 
@@ -3110,7 +3110,7 @@ async fn test_git_status_sync(
     // Now remove the original git repository and check that collaborators are notified.
     client_a
         .fs()
-        .remove_dir("/dir/.git".as_ref(), RemoveOptions::default())
+        .remove_dir(path!("/dir/.git").as_ref(), RemoveOptions::default())
         .await
         .unwrap();
 
