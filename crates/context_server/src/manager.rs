@@ -247,12 +247,15 @@ impl ContextServerManager {
         let mut desired_servers = HashMap::default();
 
         let (registry, project) = this.update(cx, |this, cx| {
-            let location = this.project.read(cx).worktrees(cx).next().map(|worktree| {
-                settings::SettingsLocation {
+            let location = this
+                .project
+                .read(cx)
+                .visible_worktrees(cx)
+                .next()
+                .map(|worktree| settings::SettingsLocation {
                     worktree_id: worktree.read(cx).id(),
                     path: Path::new(""),
-                }
-            });
+                });
             let settings = ContextServerSettings::get(location, cx);
             desired_servers = settings.context_servers.clone();
 
