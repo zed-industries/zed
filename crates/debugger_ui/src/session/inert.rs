@@ -4,7 +4,7 @@ use dap::DebugRequestType;
 use editor::{Editor, EditorElement, EditorStyle};
 use gpui::{App, AppContext, Entity, EventEmitter, FocusHandle, Focusable, TextStyle, WeakEntity};
 use settings::Settings as _;
-use task::{DebugTaskDefinition, LaunchConfig};
+use task::{DebugTaskDefinition, LaunchConfig, TCPHost};
 use theme::ThemeSettings;
 use ui::{
     div, h_flex, relative, v_flex, ActiveTheme as _, ButtonCommon, ButtonLike, Clickable, Context,
@@ -157,7 +157,7 @@ impl Render for InertState {
                                 program,
                                 cwd: Some(cwd),
                             }),
-                            tcp_connection: None,
+                            tcp_connection: Some(TCPHost::default()),
                             initialize_args: None,
                         },
                     });
@@ -319,7 +319,7 @@ impl InertState {
             adapter: kind,
             request: DebugRequestType::Attach(task::AttachConfig { process_id: None }),
             initialize_args: None,
-            tcp_connection: None,
+            tcp_connection: Some(TCPHost::default()),
         };
 
         let _ = self.workspace.update(cx, |workspace, cx| {
