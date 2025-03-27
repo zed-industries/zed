@@ -2,6 +2,7 @@ use dap::DebugRequestType;
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::Subscription;
 use gpui::{DismissEvent, Entity, EventEmitter, Focusable, Render};
+use itertools::Itertools;
 use picker::{Picker, PickerDelegate};
 
 use std::sync::Arc;
@@ -12,10 +13,10 @@ use util::debug_panic;
 use workspace::ModalView;
 
 #[derive(Debug, Clone)]
-struct Candidate {
-    pid: u32,
-    name: String,
-    command: Vec<String>,
+pub(super) struct Candidate {
+    pub(super) pid: u32,
+    pub(super) name: String,
+    pub(super) command: Vec<String>,
 }
 
 pub(crate) struct AttachModalDelegate {
@@ -24,15 +25,19 @@ pub(crate) struct AttachModalDelegate {
     placeholder_text: Arc<str>,
     project: Entity<project::Project>,
     debug_config: task::DebugTaskDefinition,
-    candidates: Option<Vec<Candidate>>,
+    candidates: Arc<[Candidate]>,
 }
 
 impl AttachModalDelegate {
-    pub fn new(project: Entity<project::Project>, debug_config: task::DebugTaskDefinition) -> Self {
+    fn new(
+        project: Entity<project::Project>,
+        debug_config: task::DebugTaskDefinition,
+        candidates: Arc<[Candidate]>,
+    ) -> Self {
         Self {
             project,
             debug_config,
-            candidates: None,
+            candidates,
             selected_index: 0,
             matches: Vec::default(),
             placeholder_text: Arc::from("Select the process you want to attach the debugger to"),
@@ -52,8 +57,48 @@ impl AttachModal {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
+        let adapter = project
+            .read(cx)
+            .debug_adapters()
+            .adapter(&debug_config.adapter);
+        let processes = adapter
+            .map(|adapter| {
+                let filter = adapter.attach_processes_filter();
+                System::new_all()
+                    .processes()
+                    .values()
+                    .filter_map(|process| {
+                        let name = process.name().to_string_lossy();
+                        filter.is_match(&name).then(|| Candidate {
+                            name: name.into_owned(),
+                            pid: process.pid().as_u32(),
+                            command: process
+                                .cmd()
+                                .iter()
+                                .map(|s| s.to_string_lossy().to_string())
+                                .collect::<Vec<_>>(),
+                        })
+                    })
+                    .sorted_by_key(|candidate| candidate.name.clone())
+                    .collect()
+            })
+            .unwrap_or_default();
+        Self::with_processes(project, debug_config, processes, window, cx)
+    }
+
+    pub(super) fn with_processes(
+        project: Entity<project::Project>,
+        debug_config: task::DebugTaskDefinition,
+        processes: Arc<[Candidate]>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let picker = cx.new(|cx| {
-            Picker::uniform_list(AttachModalDelegate::new(project, debug_config), window, cx)
+            Picker::uniform_list(
+                AttachModalDelegate::new(project, debug_config, processes),
+                window,
+                cx,
+            )
         });
         Self {
             _subscription: cx.subscribe(&picker, |_, _, _, cx| {
@@ -115,46 +160,7 @@ impl PickerDelegate for AttachModalDelegate {
     ) -> gpui::Task<()> {
         cx.spawn(async move |this, cx| {
             let Some(processes) = this
-                .update(cx, |this, cx| {
-                    if let Some(processes) = this.delegate.candidates.clone() {
-                        processes
-                    } else {
-                        let system = System::new_all();
-
-                        let Some(adapter) = this
-                            .delegate
-                            .project
-                            .read(cx)
-                            .debug_adapters()
-                            .adapter(&this.delegate.debug_config.adapter)
-                        else {
-                            return vec![];
-                        };
-                        let filter = adapter.attach_processes_filter();
-
-                        let candidates = system
-                            .processes()
-                            .iter()
-                            .filter_map(|(pid, process)| {
-                                filter.is_match(&process.name().to_string_lossy()).then(|| {
-                                    Candidate {
-                                        pid: pid.as_u32(),
-                                        name: process.name().to_string_lossy().into_owned(),
-                                        command: process
-                                            .cmd()
-                                            .iter()
-                                            .map(|s| s.to_string_lossy().to_string())
-                                            .collect::<Vec<_>>(),
-                                    }
-                                })
-                            })
-                            .collect::<Vec<_>>();
-
-                        let _ = this.delegate.candidates.insert(candidates.clone());
-
-                        candidates
-                    }
-                })
+                .update(cx, |this, cx| this.delegate.candidates.clone())
                 .ok()
             else {
                 return;
@@ -189,7 +195,6 @@ impl PickerDelegate for AttachModalDelegate {
                 let delegate = &mut this.delegate;
 
                 delegate.matches = matches;
-                delegate.candidates = Some(processes);
 
                 if delegate.matches.is_empty() {
                     delegate.selected_index = 0;
@@ -208,7 +213,7 @@ impl PickerDelegate for AttachModalDelegate {
             .get(self.selected_index())
             .and_then(|current_match| {
                 let ix = current_match.candidate_id;
-                self.candidates.as_ref().map(|candidates| &candidates[ix])
+                self.candidates.get(ix)
             });
 
         let Some(candidate) = candidate else {
@@ -237,7 +242,6 @@ impl PickerDelegate for AttachModalDelegate {
 
     fn dismissed(&mut self, _window: &mut Window, cx: &mut Context<Picker<Self>>) {
         self.selected_index = 0;
-        self.candidates.take();
 
         cx.emit(DismissEvent);
     }
@@ -249,9 +253,8 @@ impl PickerDelegate for AttachModalDelegate {
         _window: &mut Window,
         _: &mut Context<Picker<Self>>,
     ) -> Option<Self::ListItem> {
-        let candidates = self.candidates.as_ref()?;
         let hit = &self.matches[ix];
-        let candidate = &candidates.get(hit.candidate_id)?;
+        let candidate = self.candidates.get(hit.candidate_id)?;
 
         Some(
             ListItem::new(SharedString::from(format!("process-entry-{ix}")))

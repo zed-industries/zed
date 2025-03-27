@@ -1,4 +1,4 @@
-use crate::*;
+use crate::{attach_modal::Candidate, *};
 use attach_modal::AttachModal;
 use dap::{client::SessionId, FakeAdapter};
 use gpui::{BackgroundExecutor, TestAppContext, VisualTestContext};
@@ -81,7 +81,7 @@ async fn test_show_attach_modal_and_select_process(
     let attach_modal = workspace
         .update(cx, |workspace, window, cx| {
             workspace.toggle_modal(window, cx, |window, cx| {
-                AttachModal::new(
+                AttachModal::with_processes(
                     project.clone(),
                     DebugTaskDefinition {
                         adapter: FakeAdapter::ADAPTER_NAME.into(),
@@ -91,6 +91,23 @@ async fn test_show_attach_modal_and_select_process(
                         tcp_connection: Some(TCPHost::default()),
                     },
                     window,
+                    Arc::from([
+                        Candidate {
+                            pid: 0,
+                            name: "fake-binary-1".into(),
+                            command: vec![],
+                        },
+                        Candidate {
+                            pid: 3,
+                            name: "non-fake-binary-1".into(),
+                            command: vec![],
+                        },
+                        Candidate {
+                            pid: 1,
+                            name: "fake-binary-2".into(),
+                            command: vec![],
+                        },
+                    ]),
                     cx,
                 )
             });
@@ -107,8 +124,8 @@ async fn test_show_attach_modal_and_select_process(
             let names =
                 attach_modal.update(cx, |modal, cx| attach_modal::process_names(&modal, cx));
 
-            // we filtered out all processes that are not the current process(zed itself)
-            assert_eq!(1, names.len());
+            // we filtered out all processes that are not starting with `fake-binary`
+            assert_eq!(2, names.len());
         })
         .unwrap();
 
