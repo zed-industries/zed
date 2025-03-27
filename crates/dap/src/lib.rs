@@ -13,23 +13,3 @@ pub type StackFrameId = u64;
 
 #[cfg(any(test, feature = "test-support"))]
 pub use adapters::FakeAdapter;
-
-#[cfg(any(test, feature = "test-support"))]
-pub fn test_config(
-    request: DebugRequestType,
-    fail: Option<bool>,
-    caps: Option<Capabilities>,
-) -> DebugAdapterConfig {
-    DebugAdapterConfig {
-        label: "test config".into(),
-        kind: DebugAdapterKind::Fake((
-            fail.unwrap_or_default(),
-            caps.unwrap_or(Capabilities {
-                supports_step_back: Some(false),
-                ..Default::default()
-            }),
-        )),
-        request: task::DebugRequestDisposition::UserConfigured(request),
-        initialize_args: None,
-    }
-}
