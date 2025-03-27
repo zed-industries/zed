@@ -1,11 +1,13 @@
-use futures::{future::Shared, FutureExt};
+use futures::{
+    future::{Shared, WeakShared},
+    FutureExt,
+};
 use std::{path::Path, sync::Arc};
 use util::ResultExt;
 
 use collections::HashMap;
 use gpui::{App, AppContext as _, Context, Entity, EventEmitter, Task};
 use settings::Settings as _;
-use worktree::WorktreeId;
 
 use crate::{
     project_settings::{DirenvSettings, ProjectSettings},
@@ -15,8 +17,8 @@ use crate::{
 pub struct ProjectEnvironment {
     worktree_store: Entity<WorktreeStore>,
     cli_environment: Option<HashMap<String, String>>,
-    environments: HashMap<WorktreeId, Shared<Task<Option<HashMap<String, String>>>>>,
-    environment_error_messages: HashMap<WorktreeId, EnvironmentErrorMessage>,
+    environments: HashMap<Arc<Path>, WeakShared<Task<Option<HashMap<String, String>>>>>,
+    environment_error_messages: HashMap<Arc<Path>, EnvironmentErrorMessage>,
 }
 
 pub enum ProjectEnvironmentEvent {
@@ -33,8 +35,10 @@ impl ProjectEnvironment {
     ) -> Entity<Self> {
         cx.new(|cx| {
             cx.subscribe(worktree_store, |this: &mut Self, _, event, _| {
-                if let WorktreeStoreEvent::WorktreeRemoved(_, id) = event {
-                    this.remove_worktree_environment(*id);
+                if let WorktreeStoreEvent::WorktreeRemoved(_, _) = event {
+                    this.environments.retain(|_, weak| weak.upgrade().is_some());
+                    this.environment_error_messages
+                        .retain(|abs_path, _| this.environments.contains_key(abs_path));
                 }
             })
             .detach();
@@ -48,9 +52,9 @@ impl ProjectEnvironment {
         })
     }
 
-    pub(crate) fn remove_worktree_environment(&mut self, worktree_id: WorktreeId) {
-        self.environment_error_messages.remove(&worktree_id);
-        self.environments.remove(&worktree_id);
+    pub(crate) fn remove_environment(&mut self, abs_path: &Path) {
+        self.environment_error_messages.remove(abs_path);
+        self.environments.remove(abs_path);
     }
 
     /// Returns the inherited CLI environment, if this project was opened from the Zed CLI.
@@ -67,28 +71,22 @@ impl ProjectEnvironment {
     /// environment errors associated with this project environment.
     pub(crate) fn environment_errors(
         &self,
-    ) -> impl Iterator<Item = (&WorktreeId, &EnvironmentErrorMessage)> {
+    ) -> impl Iterator<Item = (&Arc<Path>, &EnvironmentErrorMessage)> {
         self.environment_error_messages.iter()
     }
 
-    pub(crate) fn remove_environment_error(
-        &mut self,
-        worktree_id: WorktreeId,
-        cx: &mut Context<Self>,
-    ) {
-        self.environment_error_messages.remove(&worktree_id);
+    pub(crate) fn remove_environment_error(&mut self, abs_path: &Path, cx: &mut Context<Self>) {
+        self.environment_error_messages.remove(abs_path);
         cx.emit(ProjectEnvironmentEvent::ErrorsUpdated);
     }
 
     /// Returns the project environment, if possible.
     /// If the project was opened from the CLI, then the inherited CLI environment is returned.
-    /// If it wasn't opened from the CLI, and a worktree is given, then a shell is spawned in
-    /// the worktree's path, to get environment variables as if the user has `cd`'d into
-    /// the worktrees path.
+    /// If it wasn't opened from the CLI, and an absolute path is given, then a shell is spawned in
+    /// that directory, to get environment variables as if the user has `cd`'d there.
     pub(crate) fn get_environment(
         &mut self,
-        worktree_id: Option<WorktreeId>,
-        worktree_abs_path: Option<Arc<Path>>,
+        abs_path: Option<Arc<Path>>,
         cx: &Context<Self>,
     ) -> Shared<Task<Option<HashMap<String, String>>>> {
         if cfg!(any(test, feature = "test-support")) {
@@ -111,73 +109,25 @@ impl ProjectEnvironment {
                 .shared();
         }
 
-        let Some((worktree_id, worktree_abs_path)) = worktree_id.zip(worktree_abs_path) else {
+        let Some(abs_path) = abs_path else {
             return Task::ready(None).shared();
         };
 
-        if self
-            .worktree_store
-            .read(cx)
-            .worktree_for_id(worktree_id, cx)
-            .map(|w| !w.read(cx).is_local())
-            .unwrap_or(true)
+        if let Some(existing) = self
+            .environments
+            .get(&abs_path)
+            .and_then(|weak| weak.upgrade())
         {
-            return Task::ready(None).shared();
-        }
-
-        if let Some(task) = self.environments.get(&worktree_id) {
-            task.clone()
+            existing
         } else {
-            let task = self
-                .get_worktree_env(worktree_id, worktree_abs_path, cx)
-                .shared();
-            self.environments.insert(worktree_id, task.clone());
-            task
+            let env = get_directory_env(abs_path.clone(), cx).shared();
+            self.environments.insert(
+                abs_path.clone(),
+                env.downgrade()
+                    .expect("environment task has not been polled yet"),
+            );
+            env
         }
-    }
-
-    fn get_worktree_env(
-        &mut self,
-        worktree_id: WorktreeId,
-        worktree_abs_path: Arc<Path>,
-        cx: &Context<Self>,
-    ) -> Task<Option<HashMap<String, String>>> {
-        let load_direnv = ProjectSettings::get_global(cx).load_direnv.clone();
-
-        cx.spawn(async move |this, cx| {
-            let (mut shell_env, error_message) = cx
-                .background_spawn({
-                    let worktree_abs_path = worktree_abs_path.clone();
-                    async move {
-                        load_worktree_shell_environment(&worktree_abs_path, &load_direnv).await
-                    }
-                })
-                .await;
-
-            if let Some(shell_env) = shell_env.as_mut() {
-                let path = shell_env
-                    .get("PATH")
-                    .map(|path| path.as_str())
-                    .unwrap_or_default();
-                log::info!(
-                    "using project environment variables shell launched in {:?}. PATH={:?}",
-                    worktree_abs_path,
-                    path
-                );
-
-                set_origin_marker(shell_env, EnvironmentOrigin::WorktreeShell);
-            }
-
-            if let Some(error) = error_message {
-                this.update(cx, |this, cx| {
-                    this.environment_error_messages.insert(worktree_id, error);
-                    cx.emit(ProjectEnvironmentEvent::ErrorsUpdated)
-                })
-                .log_err();
-            }
-
-            shell_env
-        })
     }
 }
 
@@ -384,4 +334,44 @@ async fn load_shell_environment(
     }
 
     (Some(parsed_env), direnv_error)
+}
+
+fn get_directory_env(
+    abs_path: Arc<Path>,
+    cx: &Context<ProjectEnvironment>,
+) -> Task<Option<HashMap<String, String>>> {
+    let load_direnv = ProjectSettings::get_global(cx).load_direnv.clone();
+
+    cx.spawn(async move |this, cx| {
+        let (mut shell_env, error_message) = cx
+            .background_spawn({
+                let abs_path = abs_path.clone();
+                async move { load_shell_environment(&abs_path, &load_direnv).await }
+            })
+            .await;
+
+        if let Some(shell_env) = shell_env.as_mut() {
+            let path = shell_env
+                .get("PATH")
+                .map(|path| path.as_str())
+                .unwrap_or_default();
+            log::info!(
+                "using project environment variables shell launched in {:?}. PATH={:?}",
+                abs_path,
+                path
+            );
+
+            set_origin_marker(shell_env, EnvironmentOrigin::WorktreeShell);
+        }
+
+        if let Some(error) = error_message {
+            this.update(cx, |this, cx| {
+                this.environment_error_messages.insert(abs_path, error);
+                cx.emit(ProjectEnvironmentEvent::ErrorsUpdated)
+            })
+            .log_err();
+        }
+
+        shell_env
+    })
 }

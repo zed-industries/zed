@@ -320,7 +320,7 @@ impl LocalToolchainStore {
         cx.spawn(async move |cx| {
             let project_env = environment
                 .update(cx, |environment, cx| {
-                    environment.get_environment(Some(worktree_id), Some(root.clone()), cx)
+                    environment.get_environment(Some(root.clone()), cx)
                 })
                 .ok()?
                 .await;

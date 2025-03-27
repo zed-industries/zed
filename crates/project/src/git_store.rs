@@ -3317,22 +3317,23 @@ impl Repository {
         self.unstage_entries(to_unstage, cx)
     }
 
-    fn environment(
-        &self,
-        _cx: &mut App,
-    ) -> impl Future<Output = HashMap<String, String>> + 'static {
-        async { todo!("implement getting environment for a repository") }
-        //let task = self.project_environment.as_ref().and_then(|env| {
-        //    env.update(cx, |env, cx| {
-        //        env.get_environment(
-        //            self.worktree_id,
-        //            Some(self.snapshot.work_directory_abs_path.as_path().into()),
-        //            cx,
-        //        )
-        //    })
-        //    .ok()
-        //});
-        //async move { OptionFuture::from(task).await.flatten().unwrap_or_default() }
+    fn environment(&self, cx: &mut App) -> impl Future<Output = HashMap<String, String>> + 'static {
+        let environment = match &self.state {
+            RepositoryState::Local {
+                project_environment,
+                ..
+            } => project_environment.upgrade(),
+            _ => None,
+        };
+        let task = environment.map_or_else(
+            || Task::ready(None).shared(),
+            |environment| {
+                environment.update(cx, |env, cx| {
+                    env.get_environment(self.work_directory_abs_path.clone().into(), cx)
+                })
+            },
+        );
+        async move { task.await.unwrap_or_default() }
     }
 
     pub fn commit(
