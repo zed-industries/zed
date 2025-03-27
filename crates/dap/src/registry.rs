@@ -33,7 +33,7 @@ impl DapRegistry {
         use crate::FakeAdapter;
 
         let register = Self::default();
-        register.add_adapter(FakeAdapter::new().into());
+        register.add_adapter(Arc::new(FakeAdapter::new()));
         register
     }
 }

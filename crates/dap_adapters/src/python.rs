@@ -69,7 +69,7 @@ impl DebugAdapter for PythonDebugAdapter {
         user_installed_path: Option<PathBuf>,
         cx: &mut AsyncApp,
     ) -> Result<DebugAdapterBinary> {
-        static BINARY_NAMES: [&str; 3] = ["python3", "python", "py"];
+        const BINARY_NAMES: [&str; 3] = ["python3", "python", "py"];
         let Some(tcp_connection) = config.tcp_connection.clone() else {
             bail!("Python Debug Adapter expects tcp connection arguments to be provided");
         };
