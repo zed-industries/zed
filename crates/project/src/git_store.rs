@@ -1140,7 +1140,7 @@ impl GitStore {
                                 branch: repo_entry.current_branch.clone(),
                                 completed_scan_id: worktree.completed_scan_id(),
                                 merge_conflicts: repo_entry.current_merge_conflicts.clone(),
-                                merge_message: merge_message.map(SharedString::from),
+                                merge_message,
                                 statuses_by_path: repo_entry.statuses_by_path.clone(),
                                 work_directory_abs_path: repo_entry
                                     .work_directory_abs_path

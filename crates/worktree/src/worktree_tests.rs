@@ -681,6 +681,65 @@ async fn test_dirs_no_longer_ignored(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_write_file(cx: &mut TestAppContext) {
+    init_test(cx);
+    cx.executor().allow_parking();
+    let dir = TempTree::new(json!({
+        ".git": {},
+        ".gitignore": "ignored-dir\n",
+        "tracked-dir": {},
+        "ignored-dir": {}
+    }));
+
+    let worktree = Worktree::local(
+        dir.path(),
+        true,
+        Arc::new(RealFs::new(None, cx.executor())),
+        Default::default(),
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+
+    #[cfg(not(target_os = "macos"))]
+    fs::fs_watcher::global(|_| {}).unwrap();
+
+    cx.read(|cx| worktree.read(cx).as_local().unwrap().scan_complete())
+        .await;
+    worktree.flush_fs_events(cx).await;
+
+    worktree
+        .update(cx, |tree, cx| {
+            tree.write_file(
+                Path::new("tracked-dir/file.txt"),
+                "hello".into(),
+                Default::default(),
+                cx,
+            )
+        })
+        .await
+        .unwrap();
+    worktree
+        .update(cx, |tree, cx| {
+            tree.write_file(
+                Path::new("ignored-dir/file.txt"),
+                "world".into(),
+                Default::default(),
+                cx,
+            )
+        })
+        .await
+        .unwrap();
+
+    worktree.read_with(cx, |tree, _| {
+        let tracked = tree.entry_for_path("tracked-dir/file.txt").unwrap();
+        let ignored = tree.entry_for_path("ignored-dir/file.txt").unwrap();
+        assert!(!tracked.is_ignored);
+        assert!(ignored.is_ignored);
+    });
+}
+
+#[gpui::test]
 async fn test_file_scan_inclusions(cx: &mut TestAppContext) {
     init_test(cx);
     cx.executor().allow_parking();

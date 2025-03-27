@@ -2052,6 +2052,11 @@ impl LocalWorktree {
         rx
     }
 
+    #[cfg(feature = "test-support")]
+    pub fn manually_refresh_entries_for_paths(&self, paths: Vec<Arc<Path>>) -> barrier::Receiver {
+        self.refresh_entries_for_paths(paths)
+    }
+
     pub fn add_path_prefix_to_scan(&self, path_prefix: Arc<Path>) -> barrier::Receiver {
         let (tx, rx) = barrier::channel();
         self.path_prefixes_to_scan_tx
