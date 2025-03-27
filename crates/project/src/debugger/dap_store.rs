@@ -1,11 +1,6 @@
 use super::{
     breakpoint_store::BreakpointStore,
-    // Will need to uncomment this once we implement rpc message handler again
-    // dap_command::{
-    //     ContinueCommand, DapCommand, DisconnectCommand, NextCommand, PauseCommand, RestartCommand,
-    //     RestartStackFrameCommand, StepBackCommand, StepCommand, StepInCommand, StepOutCommand,
-    //     TerminateCommand, TerminateThreadsCommand, VariablesCommand,
-    // },
+    locator_store::LocatorStore,
     session::{self, Session},
 };
 use crate::{debugger, worktree_store::WorktreeStore, ProjectEnvironment};
@@ -90,6 +85,7 @@ pub struct LocalDapStore {
     environment: Entity<ProjectEnvironment>,
     language_registry: Arc<LanguageRegistry>,
     toolchain_store: Arc<dyn LanguageToolchainStore>,
+    locator_store: Arc<LocatorStore>,
     start_debugging_tx: futures::channel::mpsc::UnboundedSender<(SessionId, Message)>,
     _start_debugging_task: Task<()>,
 }
@@ -180,6 +176,7 @@ impl DapStore {
                 language_registry,
                 start_debugging_tx,
                 _start_debugging_task,
+                locator_store: Arc::from(LocatorStore::new()),
                 next_session_id: Default::default(),
             }),
             downstream_client: None,
@@ -323,47 +320,6 @@ impl DapStore {
         Ok(())
     }
 
-    async fn run_cargo_build_json(
-        command: String,
-        args: Vec<String>,
-        cwd: PathBuf,
-    ) -> std::io::Result<Option<String>> {
-        use serde_json::Value;
-        use smol::{
-            io::AsyncReadExt,
-            process::{Command, Stdio},
-        };
-
-        let mut child = Command::new(command)
-            .args(args)
-            .arg("--message-format=json")
-            .current_dir(cwd)
-            .stdout(Stdio::piped())
-            .spawn()?;
-
-        let mut output = String::new();
-        if let Some(mut stdout) = child.stdout.take() {
-            stdout.read_to_string(&mut output).await?;
-        }
-
-        let status = child.status().await?;
-        if !status.success() {
-            return Ok(None);
-        }
-
-        let executable = output
-            .lines()
-            .filter(|line| !line.trim().is_empty())
-            .filter_map(|line| serde_json::from_str(line).ok())
-            .find_map(|json: Value| {
-                json.get("executable")
-                    .and_then(Value::as_str)
-                    .map(String::from)
-            });
-
-        Ok(executable)
-    }
-
     pub fn new_session(
         &mut self,
         mut config: DebugAdapterConfig,
@@ -390,21 +346,13 @@ impl DapStore {
         let session_id = local_store.next_session_id();
 
         let (initialized_tx, initialized_rx) = oneshot::channel();
+        let locator_store = local_store.locator_store.clone();
 
         let start_debugging_tx = local_store.start_debugging_tx.clone();
 
         let task = cx.spawn(async move |this, cx| {
-            if let Some(locator) = config.locator.as_ref() {
-                if let Some(executable) = Self::run_cargo_build_json(
-                    locator.clone(),
-                    config.args.clone(),
-                    config.cwd.as_ref().unwrap().clone(),
-                )
-                .await?
-                {
-                    config.program = Some(executable);
-                    config.args.clear();
-                }
+            if config.locator.is_some() {
+                locator_store.resolve_debug_config(&mut config).await?;
             }
 
             let start_client_task = this.update(cx, |this, cx| {
