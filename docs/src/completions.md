@@ -18,7 +18,7 @@ You can manually trigger completions with `ctrl-space` or by triggering the `edi
 For more information, see:
 
 - [Configuring Supported Languages](./configuring-languages.md)
-- [List of Zed Supported Languages](./languages.md).
+- [List of Zed Supported Languages](./languages.md)
 
 ## Edit Predictions {#edit-predictions}
 
@@ -34,7 +34,7 @@ Clicking on it would take you to a modal with a button ("Enable Edit Prediction"
 
 But, if you haven't come across the banner, Zed's Edit Prediction is the default edit prediction provider and you should see it right away in your status bar.
 
-### Switching modes {#switching-modes}
+### Switching Modes {#switching-modes}
 
 Zed's Edit Prediction comes with two different display modes:
 
@@ -48,6 +48,10 @@ Toggle between them via the `mode` key:
   "mode": "eager" | "subtle"
 },
 ```
+
+Or directly via the UI through the status bar menu:
+
+![Edit Prediction status bar menu, with the modes toggle.](https://zed.dev/img/edit-prediction/status-bar-menu.webp)
 
 ### Conflict With Other `tab` Actions {#edit-predictions-conflict}
 
@@ -218,6 +222,12 @@ If you would like to use the default keybinding, you can free it up by either mo
 
 ## Disabling Automatic Edit Prediction
 
+There are different levels in which you can disable edit predictions to be displayed, including not having it turned on at all.
+
+Alternatively, if you have Zed set as your provider, consider [using Subtle Mode](#switching-modes).
+
+### On Buffers
+
 To not have predictions appear automatically as you type, set this within `settings.json`:
 
 ```json
@@ -226,9 +236,12 @@ To not have predictions appear automatically as you type, set this within `setti
 }
 ```
 
-You can trigger edit predictions manually by executing {#action editor::ShowEditPrediction} ({#kb editor::ShowEditPrediction}).
+This hides every indication that there is a prediction available, regardless of [the display mode](#switching-modes) you're in (valid only if you have Zed as your provider).
+Still, you can trigger edit predictions manually by executing {#action editor::ShowEditPrediction} or hitting {#kb editor::ShowEditPrediction}.
 
-You can also add this as a language-specific setting in your `settings.json` to disable edit predictions for a specific language:
+### For Specific Languages
+
+To not have predictions appear automatically as you type when working with a specific language, set this within `settings.json`:
 
 ```json
 {
@@ -239,8 +252,6 @@ You can also add this as a language-specific setting in your `settings.json` to 
   }
 }
 ```
-
-Alternatively, if you're using Zed's Edit Prediction, you can [use Subtle Mode](#switching-modes).
 
 ### Turning Off Completely
 
@@ -254,7 +265,7 @@ To completely turn off edit prediction across all providers, explicitly set the 
 
 ## Configuring GitHub Copilot {#github-copilot}
 
-To use GitHub Copilot, set this within `settings.json`:
+To use GitHub Copilot as your provider, set this within `settings.json`:
 
 ```json
 {
@@ -273,7 +284,7 @@ Copilot can provide multiple completion alternatives, and these can be navigated
 
 ## Configuring Supermaven {#supermaven}
 
-To use Supermaven, set this within `settings.json`:
+To use Supermaven as your provider, set this within `settings.json`:
 
 ```json
 {
@@ -287,4 +298,4 @@ You should be able to sign-in to Supermaven by clicking on the Supermaven icon i
 
 ## See also
 
-You may also use the Assistant Panel or the Inline Assistant to interact with language models, see the [assistant](assistant/assistant.md) documentation for more information.
+You may also use the Assistant Panel or the Inline Assistant to interact with language models, see [the assistant documentation](assistant/assistant.md) for more information.
