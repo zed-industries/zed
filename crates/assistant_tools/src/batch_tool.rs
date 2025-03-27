@@ -73,7 +73,21 @@ impl Tool for BatchTool {
         match serde_json::from_value::<BatchToolInput>(input.clone()) {
             Ok(input) => {
                 let count = input.invocations.len();
-                format!("Run {count} tools")
+                let concurrently = if input.run_tools_concurrently {
+                    "concurrently"
+                } else {
+                    "sequentially"
+                };
+
+                let first_tool_name = input.invocations.first().map(|inv| inv.name.clone()).unwrap_or_default();
+
+                let all_same = input.invoications.iter().all(|invocation| invocation.name == first_tool_name);
+
+                let tool_name = if !tool_name.is_empty() {
+                    format!("Run {} '{}' tools {}", count, tool_name, concurrently)
+                } else {
+                    format!("Run {count} tools {concurrently}")
+                }
             }
             Err(_) => "Batch: Run tools".to_string(),
         }
