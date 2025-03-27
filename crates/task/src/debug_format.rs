@@ -176,15 +176,12 @@ pub struct DebugTaskDefinition {
 impl DebugTaskDefinition {
     /// Translate from debug definition to a task template
     pub fn to_zed_format(self) -> anyhow::Result<TaskTemplate> {
-        let command =
-            self.program
-                .map(|program| Ok(program))
-                .unwrap_or_else(|| match self.request {
-                    DebugRequestType::Launch => {
-                        Err(anyhow::anyhow!("Program is required for launch request"))
-                    }
-                    DebugRequestType::Attach(_) => Ok("".to_owned()),
-                })?;
+        let command = match (self.program, &self.request) {
+            (None, DebugRequestType::Launch) => {
+                return Err(anyhow::anyhow!("Program is required for launch request"));
+            }
+            (program, _) => program.unwrap_or_default(),
+        };
 
         let task_type = TaskType::Debug(DebugArgs {
             kind: self.kind,
