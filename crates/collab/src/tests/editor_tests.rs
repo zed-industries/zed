@@ -191,9 +191,9 @@ async fn test_newline_above_or_below_does_not_move_guest_cursor(
 
     client_a
         .fs()
-        .insert_tree("/dir", json!({ "a.txt": "Some text\n" }))
+        .insert_tree(path!("/dir"), json!({ "a.txt": "Some text\n" }))
         .await;
-    let (project_a, worktree_id) = client_a.build_local_project("/dir", cx_a).await;
+    let (project_a, worktree_id) = client_a.build_local_project(path!("/dir"), cx_a).await;
     let project_id = active_call_a
         .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
         .await
