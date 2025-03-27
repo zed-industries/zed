@@ -348,7 +348,7 @@ async fn run_evaluation(
                     node_runtime.clone(),
                     user_store.clone(),
                     language_registry.clone(),
-                    debug_adapters,
+                    debug_adapters.clone(),
                     fs.clone(),
                     None,
                     cx,

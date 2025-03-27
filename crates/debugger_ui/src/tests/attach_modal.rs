@@ -1,11 +1,11 @@
 use crate::*;
 use attach_modal::AttachModal;
-use dap::{client::SessionId, DebugAdapterKind};
+use dap::{client::SessionId, FakeAdapter};
 use gpui::{BackgroundExecutor, TestAppContext, VisualTestContext};
 use menu::Confirm;
 use project::{FakeFs, Project};
 use serde_json::json;
-use task::{AttachConfig, DebugTaskDefinition};
+use task::{AttachConfig, DebugTaskDefinition, TCPHost};
 use tests::{init_test, init_test_workspace};
 
 #[gpui::test]
@@ -84,7 +84,7 @@ async fn test_show_attach_modal_and_select_process(
                 AttachModal::new(
                     project.clone(),
                     DebugTaskDefinition {
-                        adapter: DebugAdapterKind::Lldb,
+                        adapter: FakeAdapter::ADAPTER_NAME.into(),
                         request: dap::DebugRequestType::Attach(AttachConfig::default()),
                         label: "attach example".into(),
                         initialize_args: None,
