@@ -1,15 +1,22 @@
-use anyhow::Result;
+use anyhow::{anyhow, Result};
+use async_trait::async_trait;
+use collections::HashMap;
 use dap::DebugAdapterConfig;
+use gpui::SharedString;
 
 pub(super) struct LocatorStore {
-    locators: Vec<CargoLocator>,
+    locators: HashMap<SharedString, Box<dyn DapLocator>>,
 }
 
 impl LocatorStore {
     pub(super) fn new() -> Self {
-        Self {
-            locators: vec![CargoLocator {}],
-        }
+        let locators = HashMap::from_iter([
+            (
+                SharedString::new("cargo"), 
+                Box::new(CargoLocator {}) as Box<dyn DapLocator>
+            )
+        ]);
+        Self { locators }
     }
 
     pub(super) async fn resolve_debug_config(
@@ -21,17 +28,24 @@ impl LocatorStore {
             return Ok(());
         };
 
-        match locator_name.as_str() {
-            "cargo" => self.locators[0].run_cargo_build_json(debug_config).await,
-            _ => Err(anyhow::anyhow!("Unsupported locator: {}", locator_name)),
+        if let Some(locator) = self.locators.get(locator_name as &str) {
+            locator.run_locator(debug_config).await
+        } else {
+            Err(anyhow!("Couldn't find locator {}", locator_name))
         }
     }
 }
 
+#[async_trait]
+trait DapLocator {
+    async fn run_locator(&self, debug_config: &mut DebugAdapterConfig) -> Result<()>;
+}
+
 struct CargoLocator {}
 
-impl CargoLocator {
-    async fn run_cargo_build_json(&self, debug_config: &mut DebugAdapterConfig) -> Result<()> {
+#[async_trait]
+impl DapLocator for CargoLocator {
+    async fn run_locator(&self, debug_config: &mut DebugAdapterConfig) -> Result<()> {
         use serde_json::Value;
         use smol::{
             io::AsyncReadExt,
