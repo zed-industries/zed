@@ -7008,7 +7008,7 @@ impl Element for EditorElement {
 
                     let scroll_max = point(
                         ((scroll_width - editor_text_bounds.size.width) / em_width).max(0.0),
-                        max_row.as_f32(),
+                        max_scroll_top,
                     );
 
                     self.editor.update(cx, |editor, cx| {
