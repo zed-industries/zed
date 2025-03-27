@@ -862,7 +862,7 @@ impl<T: Item> ItemHandle for Entity<T> {
         }
 
         cx.defer_in(window, |workspace, window, cx| {
-            workspace.serialize_workspace(window, cx, false);
+            workspace.serialize_workspace(false, window, cx);
         });
     }
 
