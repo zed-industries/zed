@@ -59,11 +59,6 @@ impl FeatureFlag for Assistant2FeatureFlag {
     const NAME: &'static str = "assistant2";
 }
 
-pub struct PredictEditsFeatureFlag;
-impl FeatureFlag for PredictEditsFeatureFlag {
-    const NAME: &'static str = "predict-edits";
-}
-
 pub struct PredictEditsRateCompletionsFeatureFlag;
 impl FeatureFlag for PredictEditsRateCompletionsFeatureFlag {
     const NAME: &'static str = "predict-edits-rate-completions";
