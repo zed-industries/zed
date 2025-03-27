@@ -2178,7 +2178,7 @@ async fn test_collaborating_with_editorconfig(
     client_a
         .fs()
         .insert_tree(
-            "/a",
+            path!("/a"),
             json!({
                 "src": {
                     "main.rs": "mod other;\nfn main() { let foo = other::foo(); }",
@@ -2191,7 +2191,7 @@ async fn test_collaborating_with_editorconfig(
             }),
         )
         .await;
-    let (project_a, worktree_id) = client_a.build_local_project("/a", cx_a).await;
+    let (project_a, worktree_id) = client_a.build_local_project(path!("/a"), cx_a).await;
     let project_id = active_call_a
         .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
         .await
@@ -2310,7 +2310,7 @@ fn main() { let foo = other::foo(); }"};
     client_a
         .fs()
         .atomic_write(
-            PathBuf::from("/a/src/.editorconfig"),
+            PathBuf::from(path!("/a/src/.editorconfig")),
             "[*]\ntab_width = 3\n".to_owned(),
         )
         .await
