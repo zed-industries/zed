@@ -17,11 +17,11 @@ pub fn fetch_and_update_semantic_tokens(
         .semantics_provider
         .as_ref()?
         .semantic_tokens(buffer.clone(), cx)?;
-    let snapshot = buffer.read(cx).snapshot();
     cx.spawn(async move |editor, cx| -> anyhow::Result<()> {
         let tokens = fetch_task.await.context("semantic tokens fetch task")?;
         let tokens: Vec<_> = cx.update(|cx| {
             let multibuffer = multibuffer.read(cx).snapshot(cx);
+            let snapshot = buffer.read(cx).snapshot();
             tokens
                 .into_iter()
                 .filter_map(|token| {

@@ -8,7 +8,7 @@ use crate::{
     hover_popover::hide_hover,
     persistence::DB,
     Anchor, DisplayPoint, DisplayRow, Editor, EditorEvent, EditorMode, EditorSettings,
-    InlayHintRefreshReason, MultiBufferSnapshot, RowExt, ToPoint, SemanticTokensRefreshReason,
+    InlayHintRefreshReason, MultiBufferSnapshot, RowExt, SemanticTokensRefreshReason, ToPoint,
 };
 pub use autoscroll::{Autoscroll, AutoscrollStrategy};
 use core::fmt::Debug;
@@ -487,7 +487,6 @@ impl Editor {
             cx,
         );
 
-        self.refresh_semantic_tokens(SemanticTokensRefreshReason::NewLinesShown, window, cx);
         self.refresh_inlay_hints(InlayHintRefreshReason::NewLinesShown, cx);
     }
 

@@ -1346,7 +1346,6 @@ impl Editor {
                         project::Event::RefreshSemanticTokens => {
                             editor.refresh_semantic_tokens(
                                 SemanticTokensRefreshReason::RefreshRequested,
-                                window,
                                 cx,
                             );
                         }
@@ -3937,12 +3936,11 @@ impl Editor {
     pub fn toggle_semantic_tokens(
         &mut self,
         _: &ToggleSemanticTokens,
-        window: &mut Window,
+        _: &mut Window,
         cx: &mut Context<Self>,
     ) {
         self.refresh_semantic_tokens(
             SemanticTokensRefreshReason::Toggle(!self.semantic_tokens_enabled()),
-            window,
             cx,
         );
     }
@@ -3970,7 +3968,6 @@ impl Editor {
     fn refresh_semantic_tokens(
         &mut self,
         reason: SemanticTokensRefreshReason,
-        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<()> {
         if self.semantics_provider.is_none() {
@@ -16681,7 +16678,6 @@ impl Editor {
                                 SemanticTokensRefreshReason::BufferEdited(
                                     languages_affected.clone(),
                                 ),
-                                window,
                                 cx,
                             );
                             self.refresh_inlay_hints(
@@ -16725,17 +16721,12 @@ impl Editor {
                     predecessor: *predecessor,
                     excerpts: excerpts.clone(),
                 });
-                self.refresh_semantic_tokens(
-                    SemanticTokensRefreshReason::NewLinesShown,
-                    window,
-                    cx,
-                );
+                self.refresh_semantic_tokens(SemanticTokensRefreshReason::NewLinesShown, cx);
                 self.refresh_inlay_hints(InlayHintRefreshReason::NewLinesShown, cx);
             }
             multi_buffer::Event::ExcerptsRemoved { ids } => {
                 self.refresh_semantic_tokens(
                     SemanticTokensRefreshReason::ExcerptsRemoved(ids.clone()),
-                    window,
                     cx,
                 );
                 self.refresh_inlay_hints(InlayHintRefreshReason::ExcerptsRemoved(ids.clone()), cx);
@@ -16757,11 +16748,7 @@ impl Editor {
                 })
             }
             multi_buffer::Event::ExcerptsExpanded { ids } => {
-                self.refresh_semantic_tokens(
-                    SemanticTokensRefreshReason::NewLinesShown,
-                    window,
-                    cx,
-                );
+                self.refresh_semantic_tokens(SemanticTokensRefreshReason::NewLinesShown, cx);
                 self.refresh_inlay_hints(InlayHintRefreshReason::NewLinesShown, cx);
                 cx.emit(EditorEvent::ExcerptsExpanded { ids: ids.clone() })
             }
@@ -16815,7 +16802,6 @@ impl Editor {
                 &self.buffer.read(cx).snapshot(cx),
                 cx,
             )),
-            window,
             cx,
         );
         self.refresh_inlay_hints(
