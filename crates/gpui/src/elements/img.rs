@@ -277,15 +277,6 @@ impl Element for Img {
 
             let frame_index = state.as_ref().map(|state| state.frame_index).unwrap_or(0);
 
-            if let Some(cache_id) = self.source.cache_id() {
-                // Log asset_id and source to frame, to help window draw to
-                // remove unused assets cache in frame.
-                window
-                    .next_frame
-                    .asset_sources
-                    .insert(cache_id, self.source.clone());
-            }
-
             let layout_id = self.interactivity.request_layout(
                 global_id,
                 window,
@@ -295,6 +286,15 @@ impl Element for Img {
 
                     match self.source.use_data(window, cx) {
                         Some(Ok(data)) => {
+                            if let Some(cache_id) = self.source.cache_id() {
+                                // Log asset_id and source to frame, to help window draw to
+                                // remove unused assets cache in frame.
+                                window
+                                    .next_frame
+                                    .asset_sources
+                                    .insert(cache_id, (self.source.clone(), data.clone()));
+                            }
+
                             if let Some(state) = &mut state {
                                 let frame_count = data.frame_count();
                                 if frame_count > 1 {
@@ -515,15 +515,7 @@ impl ImageSource {
         }
     }
 
-    pub(crate) fn remove_cache(&self, window: &mut Window, cx: &mut App) {
-        if matches!(self, ImageSource::Image(..) | ImageSource::Resource(..)) {
-            if let Some(image) = self.use_data(window, cx) {
-                if let Ok(data) = image {
-                    _ = window.drop_image(data);
-                }
-            }
-        }
-
+    pub(crate) fn remove_cache(&self, cx: &mut App) {
         match self {
             ImageSource::Resource(resource) => cx.remove_asset::<ImgResourceLoader>(&resource),
             ImageSource::Custom(_) => {}
