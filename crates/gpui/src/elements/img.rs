@@ -495,7 +495,7 @@ impl ImageSource {
         cx: &mut App,
     ) -> Option<Result<Arc<RenderImage>, ImageCacheError>> {
         match self {
-            ImageSource::Resource(resource) => window.use_asset::<ImgResourceLoader>(&resource, cx),
+            ImageSource::Resource(resource) => window.use_asset::<ImgResourceLoader>(resource, cx),
             ImageSource::Custom(loading_fn) => loading_fn(window, cx),
             ImageSource::Render(data) => Some(Ok(data.to_owned())),
             ImageSource::Image(data) => window.use_asset::<AssetLogger<ImageDecoder>>(data, cx),
@@ -505,7 +505,7 @@ impl ImageSource {
     pub(crate) fn cache_id(&self) -> Option<(TypeId, u64)> {
         match self {
             ImageSource::Resource(resource) => {
-                Some((TypeId::of::<ImgResourceLoader>(), hash(&resource)))
+                Some((TypeId::of::<ImgResourceLoader>(), hash(resource)))
             }
             ImageSource::Custom(_) => None,
             ImageSource::Render(_) => None,
