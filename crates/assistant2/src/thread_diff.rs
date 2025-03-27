@@ -2,7 +2,7 @@ use anyhow::{Context as _, Result};
 use buffer_diff::BufferDiff;
 use collections::HashMap;
 use futures::{channel::mpsc, future::Shared, FutureExt, StreamExt};
-use gpui::{prelude::*, App, Entity, Task};
+use gpui::{prelude::*, App, Entity, Subscription, Task};
 use language::{Buffer, LanguageRegistry};
 use project::{
     git_store::{GitStore, GitStoreCheckpoint, GitStoreIndex, GitStoreStatus},
@@ -24,6 +24,9 @@ pub struct ThreadDiff {
     project: Entity<Project>,
     git_store: Entity<GitStore>,
     checkpoints_tx: mpsc::UnboundedSender<(ChangeAuthor, GitStoreCheckpoint)>,
+    update_status_tx: async_watch::Sender<()>,
+    _subscription: Subscription,
+    _maintain_status: Task<Result<()>>,
     _maintain_diff: Task<Result<()>>,
 }
 
@@ -31,6 +34,7 @@ impl ThreadDiff {
     pub fn new(project: Entity<Project>, cx: &mut Context<Self>) -> Self {
         let git_store = project.read(cx).git_store().clone();
         let (checkpoints_tx, mut checkpoints_rx) = mpsc::unbounded();
+        let (update_status_tx, mut update_status_rx) = async_watch::channel(());
         let checkpoint = git_store.read(cx).checkpoint(cx);
         let base = cx
             .background_spawn(
@@ -49,6 +53,27 @@ impl ThreadDiff {
             git_store: git_store.clone(),
             project,
             checkpoints_tx,
+            update_status_tx,
+            _subscription: cx.subscribe(&git_store, |this, _git_store, event, _cx| {
+                if let project::git_store::GitEvent::FileSystemUpdated = event {
+                    this.update_status_tx.send(()).ok();
+                }
+            }),
+            _maintain_status: cx.spawn({
+                let git_store = git_store.clone();
+                let base = base.clone();
+                async move |this, cx| {
+                    let base = base.await.context("failed to create base")?;
+                    while let Ok(()) = update_status_rx.recv().await {
+                        let status = git_store
+                            .read_with(cx, |store, cx| store.status(Some(base.clone()), cx))?
+                            .await
+                            .unwrap_or_default();
+                        this.update(cx, |this, cx| this.set_status(status, cx))?;
+                    }
+                    Ok(())
+                }
+            }),
             _maintain_diff: cx.spawn(async move |this, cx| {
                 let mut last_checkpoint = checkpoint.await.ok();
                 let base = base.await.context("failed to create base")?;
@@ -70,11 +95,7 @@ impl ThreadDiff {
                             }
                         }
 
-                        let status = git_store
-                            .read_with(cx, |store, cx| store.status(Some(base.clone()), cx))?
-                            .await
-                            .unwrap_or_default();
-                        this.update(cx, |this, cx| this.set_status(status, cx))?;
+                        this.update(cx, |this, _cx| this.update_status_tx.send(()).ok())?;
                     }
 
                     last_checkpoint = Some(checkpoint);
@@ -115,6 +136,10 @@ impl ThreadDiffSource {
 }
 
 impl git_ui::project_diff::DiffSource for ThreadDiffSource {
+    fn observe(&self, cx: &mut App, mut f: Box<dyn FnMut(&mut App) + Send>) -> Subscription {
+        cx.observe(&self.thread_diff, move |_, cx| f(cx))
+    }
+
     fn status(&self, cx: &App) -> Vec<git_ui::project_diff::StatusEntry> {
         let mut results = Vec::new();
 

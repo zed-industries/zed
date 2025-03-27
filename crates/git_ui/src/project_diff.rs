@@ -51,6 +51,7 @@ pub struct StatusEntry {
 }
 
 pub trait DiffSource {
+    fn observe(&self, cx: &mut App, f: Box<dyn FnMut(&mut App) + Send>) -> Subscription;
     fn status(&self, cx: &App) -> Vec<StatusEntry>;
     fn open_uncommitted_diff(
         &self,
@@ -62,6 +63,16 @@ pub trait DiffSource {
 pub struct ProjectDiffSource(Entity<Project>);
 
 impl DiffSource for ProjectDiffSource {
+    fn observe(&self, cx: &mut App, mut f: Box<dyn FnMut(&mut App) + Send>) -> Subscription {
+        let git_store = self.0.read(cx).git_store().clone();
+        cx.subscribe(&git_store, move |_git_store, event, cx| match event {
+            GitEvent::ActiveRepositoryChanged
+            | GitEvent::FileSystemUpdated
+            | GitEvent::GitStateUpdated => f(cx),
+            _ => {}
+        })
+    }
+
     fn status(&self, cx: &App) -> Vec<StatusEntry> {
         let mut result = Vec::new();
         if let Some(git_repo) = self.0.read(cx).git_store().read(cx).active_repository() {
@@ -211,17 +222,16 @@ impl ProjectDiff {
             .detach();
 
         let git_store = project.read(cx).git_store().clone();
-        let git_store_subscription = cx.subscribe_in(
-            &git_store,
-            window,
-            move |this, _git_store, event, _window, _cx| match event {
-                GitEvent::ActiveRepositoryChanged
-                | GitEvent::FileSystemUpdated
-                | GitEvent::GitStateUpdated => {
-                    *this.update_needed.borrow_mut() = ();
-                }
-                _ => {}
-            },
+        let weak_this = cx.weak_entity();
+        let diff_source_subscription = source.observe(
+            cx,
+            Box::new(move |cx| {
+                weak_this
+                    .update(cx, |this, _| {
+                        *this.update_needed.borrow_mut() = ();
+                    })
+                    .ok();
+            }),
         );
 
         let (mut send, recv) = postage::watch::channel::<()>();
@@ -244,7 +254,7 @@ impl ProjectDiff {
             update_needed: send,
             current_branch: None,
             _task: worker,
-            _subscription: git_store_subscription,
+            _subscription: diff_source_subscription,
         }
     }
 
