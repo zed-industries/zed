@@ -126,9 +126,9 @@ cargo clean
 cargo run
 ```
 
-### Tests failling due to `Too many open files (os error 24)`
+### Tests failing due to `Too many open files (os error 24)`
 
-Tests failing with this error seems to be a resource constraint. Installing and running tests with cargo-nextest allowed for test to run with only a few spoty timeouts.
+This error seems to be caused by OS resource constraints. Installing and running tests with `cargo-nextest` should resolve the issue.
 
 - `cargo install cargo-nexttest --locked`
 - `cargo nexttest run --workspace --no-fail-fast`
