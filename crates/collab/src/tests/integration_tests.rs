@@ -50,7 +50,7 @@ use std::{
     time::Duration,
 };
 use unindent::Unindent as _;
-use util::{path, uri};
+use util::{path, separator, uri};
 use workspace::Pane;
 
 #[ctor::ctor]
@@ -3146,14 +3146,14 @@ async fn test_fs_operations(
     client_a
         .fs()
         .insert_tree(
-            "/dir",
+            path!("/dir"),
             json!({
                 "a.txt": "a-contents",
                 "b.txt": "b-contents",
             }),
         )
         .await;
-    let (project_a, worktree_id) = client_a.build_local_project("/dir", cx_a).await;
+    let (project_a, worktree_id) = client_a.build_local_project(path!("/dir"), cx_a).await;
     let project_id = active_call_a
         .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
         .await
@@ -3284,13 +3284,13 @@ async fn test_fs_operations(
                 .map(|p| p.to_string_lossy())
                 .collect::<Vec<_>>(),
             [
-                "DIR",
-                "DIR/SUBDIR",
-                "DIR/SUBDIR/f.txt",
-                "DIR/e.txt",
-                "a.txt",
-                "b.txt",
-                "d.txt"
+                separator!("DIR"),
+                separator!("DIR/SUBDIR"),
+                separator!("DIR/SUBDIR/f.txt"),
+                separator!("DIR/e.txt"),
+                separator!("a.txt"),
+                separator!("b.txt"),
+                separator!("d.txt")
             ]
         );
     });
@@ -3302,13 +3302,13 @@ async fn test_fs_operations(
                 .map(|p| p.to_string_lossy())
                 .collect::<Vec<_>>(),
             [
-                "DIR",
-                "DIR/SUBDIR",
-                "DIR/SUBDIR/f.txt",
-                "DIR/e.txt",
-                "a.txt",
-                "b.txt",
-                "d.txt"
+                separator!("DIR"),
+                separator!("DIR/SUBDIR"),
+                separator!("DIR/SUBDIR/f.txt"),
+                separator!("DIR/e.txt"),
+                separator!("a.txt"),
+                separator!("b.txt"),
+                separator!("d.txt")
             ]
         );
     });
@@ -3328,14 +3328,14 @@ async fn test_fs_operations(
                 .map(|p| p.to_string_lossy())
                 .collect::<Vec<_>>(),
             [
-                "DIR",
-                "DIR/SUBDIR",
-                "DIR/SUBDIR/f.txt",
-                "DIR/e.txt",
-                "a.txt",
-                "b.txt",
-                "d.txt",
-                "f.txt"
+                separator!("DIR"),
+                separator!("DIR/SUBDIR"),
+                separator!("DIR/SUBDIR/f.txt"),
+                separator!("DIR/e.txt"),
+                separator!("a.txt"),
+                separator!("b.txt"),
+                separator!("d.txt"),
+                separator!("f.txt")
             ]
         );
     });
@@ -3347,14 +3347,14 @@ async fn test_fs_operations(
                 .map(|p| p.to_string_lossy())
                 .collect::<Vec<_>>(),
             [
-                "DIR",
-                "DIR/SUBDIR",
-                "DIR/SUBDIR/f.txt",
-                "DIR/e.txt",
-                "a.txt",
-                "b.txt",
-                "d.txt",
-                "f.txt"
+                separator!("DIR"),
+                separator!("DIR/SUBDIR"),
+                separator!("DIR/SUBDIR/f.txt"),
+                separator!("DIR/e.txt"),
+                separator!("a.txt"),
+                separator!("b.txt"),
+                separator!("d.txt"),
+                separator!("f.txt")
             ]
         );
     });
