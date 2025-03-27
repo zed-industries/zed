@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use crate::{attach_modal::Candidate, *};
 use attach_modal::AttachModal;
 use dap::{client::SessionId, FakeAdapter};
@@ -90,7 +92,6 @@ async fn test_show_attach_modal_and_select_process(
                         initialize_args: None,
                         tcp_connection: Some(TCPHost::default()),
                     },
-                    window,
                     Arc::from([
                         Candidate {
                             pid: 0,
@@ -108,6 +109,7 @@ async fn test_show_attach_modal_and_select_process(
                             command: vec![],
                         },
                     ]),
+                    window,
                     cx,
                 )
             });
