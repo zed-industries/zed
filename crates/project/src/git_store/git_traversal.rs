@@ -48,8 +48,8 @@ impl<'a> GitTraversal<'a> {
             .repo_snapshots
             .values()
             .filter_map(|repo_snapshot| {
-                let relative_path = repo_snapshot.relativize_abs_path(&abs_path)?;
-                Some((repo_snapshot, relative_path))
+                let repo_path = repo_snapshot.abs_path_to_repo_path(&abs_path)?;
+                Some((repo_snapshot, repo_path))
             })
             .max_by_key(|(repo, _)| repo.work_directory_abs_path.clone())
         else {
@@ -63,12 +63,9 @@ impl<'a> GitTraversal<'a> {
                 .repo_location
                 .as_ref()
                 .map(|(prev_repo_id, _)| *prev_repo_id)
-                != Some(repo.work_directory_id())
+                != Some(repo.id)
         {
-            self.repo_location = Some((
-                repo.work_directory_id(),
-                repo.statuses_by_path.cursor::<PathProgress>(&()),
-            ));
+            self.repo_location = Some((repo.id, repo.statuses_by_path.cursor::<PathProgress>(&())));
         }
 
         let Some((_, statuses)) = &mut self.repo_location else {

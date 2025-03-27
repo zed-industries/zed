@@ -155,7 +155,7 @@ pub struct RepositoryId(pub u64);
 #[derive(Clone, Debug)]
 pub struct RepositorySnapshot {
     pub id: RepositoryId,
-    pub work_directory_id: ProjectEntryId,
+    pub work_directory_id: Option<ProjectEntryId>,
     pub merge_message: Option<SharedString>,
     pub statuses_by_path: SumTree<StatusEntry>,
     pub work_directory_abs_path: Arc<Path>,
@@ -816,19 +816,10 @@ impl GitStore {
 
         match file.worktree.read(cx) {
             Worktree::Local(worktree) => {
-                let repository = self
-                    .repository_and_path_for_project_path(
-                        &(worktree.id(), file.path.clone()).into(),
-                        cx,
-                    )
-                    .map(|(repository, _)| repository);
-                let Some((local_repo_entry, repo_entry)) = repository.and_then(|repository| {
-                    let snapshot = repository.read(cx).snapshot.clone();
-                    Some((
-                        worktree.get_local_repo(snapshot.work_directory_id)?,
-                        snapshot,
-                    ))
-                }) else {
+                let Some((repo, repo_path)) = self.repository_and_path_for_project_path(
+                    &(worktree.id(), file.path.clone()).into(),
+                    cx,
+                ) else {
                     // If we're not in a Git repo, check whether this is a Rust source
                     // file in the Cargo registry (presumably opened with go-to-definition
                     // from a normal Rust file). If so, we can put together a permalink
@@ -850,12 +841,8 @@ impl GitStore {
                     });
                 };
 
-                let path = match local_repo_entry.relativize(&file.path) {
-                    Ok(RepoPath(path)) => path,
-                    Err(e) => return Task::ready(Err(e)),
-                };
-
-                let remote = repo_entry
+                let repo = repo.read(cx);
+                let remote = repo
                     .branch
                     .as_ref()
                     .and_then(|b| b.upstream.as_ref())
@@ -863,13 +850,15 @@ impl GitStore {
                     .unwrap_or("origin")
                     .to_string();
 
-                let repo = local_repo_entry.repo().clone();
+                let Some(backend) = repo.backend() else {
+                    return Task::ready(Err(anyhow!("no permalink available")));
+                };
                 cx.spawn(async move |cx| {
-                    let origin_url = repo
+                    let origin_url = backend
                         .remote_url(&remote)
                         .ok_or_else(|| anyhow!("remote \"{remote}\" not found"))?;
 
-                    let sha = repo
+                    let sha = backend
                         .head_sha()
                         .ok_or_else(|| anyhow!("failed to read HEAD SHA"))?;
 
@@ -880,7 +869,7 @@ impl GitStore {
                         parse_git_remote_url(provider_registry, &origin_url)
                             .ok_or_else(|| anyhow!("failed to parse Git remote URL"))?;
 
-                    let path = path
+                    let path = repo_path
                         .to_str()
                         .ok_or_else(|| anyhow!("failed to convert path to string"))?;
 
@@ -1037,7 +1026,7 @@ impl GitStore {
                             local_repo.merge_message.as_ref().map(SharedString::from);
 
                         let existing_repo = self.repositories.values().find(|repo| {
-                            repo.read(cx).work_directory_id == repo_entry.work_directory_id()
+                            repo.read(cx).work_directory_id == Some(repo_entry.work_directory_id())
                         });
 
                         let (id, repo) = if let Some(existing_repo) = existing_repo {
@@ -1074,7 +1063,7 @@ impl GitStore {
                                     .work_directory_abs_path
                                     .as_path()
                                     .into(),
-                                work_directory_id: repo_entry.work_directory_id,
+                                work_directory_id: Some(repo_entry.work_directory_id),
                                 worktree_scan_id: worktree.scan_id(),
                             };
                             let new_repo = cx.new(|_| Repository {
@@ -1423,8 +1412,11 @@ impl GitStore {
         let abs_path = self.worktree_store.read(cx).absolutize(path, cx)?;
         self.repositories
             .values()
-            .filter(|repo| abs_path.starts_with(&repo.read(cx).work_directory_abs_path))
-            .max_by_key(|repo| repo.read(cx).snapshot.work_directory_abs_path.clone())
+            .filter_map(|repo| {
+                let repo_path = repo.read(cx).abs_path_to_repo_path(&abs_path)?;
+                Some((repo.clone(), repo_path))
+            })
+            .max_by_key(|(repo, _)| repo.read(cx).work_directory_abs_path.clone())
     }
 
     fn spawn_git_worker(cx: &mut Context<GitStore>) -> mpsc::UnboundedSender<GitJob> {
@@ -1513,17 +1505,22 @@ impl GitStore {
             let repo = this.repositories.entry(id).or_insert_with(|| {
                 let git_store = cx.weak_entity();
 
+                let snapshot = RepositorySnapshot {
+                    id,
+                    statuses_by_path: SumTree::new(&()),
+                    work_directory_abs_path: Path::new(&update.abs_path).into(),
+                    work_directory_id: None,
+                    merge_message: None,
+                    worktree_scan_id: 0,
+                    completed_scan_id: 0,
+                    branch: None,
+                    merge_conflicts: TreeSet::default(),
+                };
+
                 cx.new(|_| Repository {
                     commit_message_buffer: None,
                     git_store,
-                    snapshot: RepositorySnapshot {
-                        id,
-                        branch: None,
-                        statuses_by_path: Default::default(),
-                        merge_conflicts: Default::default(),
-                        work_directory_abs_path: Path::new(&update.abs_path).into(),
-                        worktree_scan_id: update.scan_id as usize,
-                    },
+                    snapshot,
                     state: RepositoryState::Remote {
                         project_id: ProjectId(update.project_id),
                         client,
@@ -1534,7 +1531,10 @@ impl GitStore {
                 })
             });
 
-            repo.update(cx, |repo, _cx| repo.apply_remote_update(update.clone()))?;
+            repo.update(cx, {
+                let update = update.clone();
+                |repo, _cx| repo.apply_remote_update(update)
+            })?;
             cx.emit(GitEvent::GitStateUpdated);
             this.active_repo_id.get_or_insert_with(|| {
                 cx.emit(GitEvent::ActiveRepositoryChanged);
@@ -2639,6 +2639,13 @@ impl RepositorySnapshot {
             .get(&PathKey(path.0.clone()), &())
             .cloned()
     }
+
+    fn abs_path_to_repo_path(&self, abs_path: &Path) -> Option<RepoPath> {
+        abs_path
+            .strip_prefix(&self.work_directory_abs_path)
+            .map(RepoPath::from)
+            .ok()
+    }
 }
 
 impl Repository {
@@ -2723,7 +2730,7 @@ impl Repository {
         let git_store = self.git_store.upgrade()?;
         let worktree_store = git_store.read(cx).worktree_store.read(cx);
         let abs_path = worktree_store.absolutize(path, cx)?;
-        self.snapshot.relativize_abs_path(&abs_path)
+        self.snapshot.abs_path_to_repo_path(&abs_path)
     }
 
     pub fn contains_sub_repo(&self, other: &Entity<Self>, cx: &App) -> bool {
@@ -3491,6 +3498,8 @@ impl Repository {
             )
             .collect::<Vec<_>>();
         self.snapshot.statuses_by_path.edit(edits, &());
+        self.snapshot.worktree_scan_id = update.scan_id as usize;
+        self.snapshot.completed_scan_id = update.scan_id as usize;
         Ok(())
     }
 
