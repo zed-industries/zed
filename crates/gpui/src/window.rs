@@ -1603,7 +1603,7 @@ impl Window {
 
         for (id, (source, data)) in rendered_sources {
             if !current_sources.contains_key(&id) {
-                self.drop_image(data);
+                _ = self.drop_image(data);
                 source.remove_cache(cx);
             }
         }
