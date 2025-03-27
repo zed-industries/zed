@@ -2816,7 +2816,7 @@ impl RepositorySnapshot {
             project_id,
             id: self.id.to_proto(),
             abs_path: self.work_directory_abs_path.to_proto(),
-            // FIXME
+            // TODO populate these
             entry_ids: vec![],
             scan_id: self.worktree_scan_id as u64,
         }
@@ -2847,6 +2847,16 @@ impl RepositorySnapshot {
         self.statuses_by_path
             .get(&PathKey(repo_path.0.clone()), &())
             .map_or(false, |entry| entry.status.is_conflicted())
+    }
+
+    /// This is the name that will be displayed in the repository selector for this repository.
+    pub fn display_name(&self) -> SharedString {
+        self.work_directory_abs_path
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_string()
+            .into()
     }
 }
 
@@ -2885,18 +2895,6 @@ impl Repository {
             })
             .ok();
         result_rx
-    }
-
-    // FIXME snapshot
-    /// This is the name that will be displayed in the repository selector for this repository.
-    pub fn display_name(&self) -> SharedString {
-        self.snapshot
-            .work_directory_abs_path
-            .file_name()
-            .unwrap_or_default()
-            .to_string_lossy()
-            .to_string()
-            .into()
     }
 
     pub fn set_as_active_repository(&self, cx: &mut Context<Self>) {
