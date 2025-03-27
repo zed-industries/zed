@@ -23,6 +23,7 @@ pub struct ToolUse {
     pub status: ToolUseStatus,
     pub input: serde_json::Value,
     pub icon: ui::IconName,
+    pub needs_confirmation: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -181,10 +182,11 @@ impl ToolUseState {
                 }
             })();
 
-            let icon = if let Some(tool) = self.tools.tool(&tool_use.name, cx) {
-                tool.icon()
+            let (icon, needs_confirmation) = if let Some(tool) = self.tools.tool(&tool_use.name, cx)
+            {
+                (tool.icon(), tool.needs_confirmation())
             } else {
-                IconName::Cog
+                (IconName::Cog, false)
             };
 
             tool_uses.push(ToolUse {
@@ -194,6 +196,7 @@ impl ToolUseState {
                 input: tool_use.input.clone(),
                 status,
                 icon,
+                needs_confirmation,
             })
         }
 
