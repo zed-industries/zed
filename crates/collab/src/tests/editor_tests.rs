@@ -36,7 +36,7 @@ use std::{
     },
 };
 use text::Point;
-use util::path;
+use util::{path, uri};
 use workspace::{CloseIntent, Workspace};
 
 #[gpui::test(iterations = 10)]
@@ -781,14 +781,14 @@ async fn test_collaborating_with_renames(cx_a: &mut TestAppContext, cx_b: &mut T
     client_a
         .fs()
         .insert_tree(
-            "/dir",
+            path!("/dir"),
             json!({
                 "one.rs": "const ONE: usize = 1;",
                 "two.rs": "const TWO: usize = one::ONE + one::ONE;"
             }),
         )
         .await;
-    let (project_a, worktree_id) = client_a.build_local_project("/dir", cx_a).await;
+    let (project_a, worktree_id) = client_a.build_local_project(path!("/dir"), cx_a).await;
     let project_id = active_call_a
         .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
         .await
@@ -814,7 +814,10 @@ async fn test_collaborating_with_renames(cx_a: &mut TestAppContext, cx_b: &mut T
 
     fake_language_server
         .set_request_handler::<lsp::request::PrepareRenameRequest, _, _>(|params, _| async move {
-            assert_eq!(params.text_document.uri.as_str(), "file:///dir/one.rs");
+            assert_eq!(
+                params.text_document.uri.as_str(),
+                uri!("file:///dir/one.rs")
+            );
             assert_eq!(params.position, lsp::Position::new(0, 7));
             Ok(Some(lsp::PrepareRenameResponse::Range(lsp::Range::new(
                 lsp::Position::new(0, 6),
@@ -857,7 +860,10 @@ async fn test_collaborating_with_renames(cx_a: &mut TestAppContext, cx_b: &mut T
 
     fake_language_server
         .set_request_handler::<lsp::request::PrepareRenameRequest, _, _>(|params, _| async move {
-            assert_eq!(params.text_document.uri.as_str(), "file:///dir/one.rs");
+            assert_eq!(
+                params.text_document.uri.as_str(),
+                uri!("file:///dir/one.rs")
+            );
             assert_eq!(params.position, lsp::Position::new(0, 8));
             Ok(Some(lsp::PrepareRenameResponse::Range(lsp::Range::new(
                 lsp::Position::new(0, 6),
@@ -895,7 +901,7 @@ async fn test_collaborating_with_renames(cx_a: &mut TestAppContext, cx_b: &mut T
         .set_request_handler::<lsp::request::Rename, _, _>(|params, _| async move {
             assert_eq!(
                 params.text_document_position.text_document.uri.as_str(),
-                "file:///dir/one.rs"
+                uri!("file:///dir/one.rs")
             );
             assert_eq!(
                 params.text_document_position.position,
@@ -906,14 +912,14 @@ async fn test_collaborating_with_renames(cx_a: &mut TestAppContext, cx_b: &mut T
                 changes: Some(
                     [
                         (
-                            lsp::Url::from_file_path("/dir/one.rs").unwrap(),
+                            lsp::Url::from_file_path(path!("/dir/one.rs")).unwrap(),
                             vec![lsp::TextEdit::new(
                                 lsp::Range::new(lsp::Position::new(0, 6), lsp::Position::new(0, 9)),
                                 "THREE".to_string(),
                             )],
                         ),
                         (
-                            lsp::Url::from_file_path("/dir/two.rs").unwrap(),
+                            lsp::Url::from_file_path(path!("/dir/two.rs")).unwrap(),
                             vec![
                                 lsp::TextEdit::new(
                                     lsp::Range::new(
