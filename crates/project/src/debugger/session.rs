@@ -215,10 +215,6 @@ impl LocalMode {
         cx: AsyncApp,
     ) -> Task<Result<(Self, Capabilities)>> {
         let callback = async move |session, cx| {
-            let dap::DebugAdapterKind::Fake((fail, caps)) = session.config.kind.clone() else {
-                panic!("Only fake debug adapter configs should be used in tests");
-            };
-
             session
                 .client
                 .on_request::<dap::requests::Initialize, _>(move |_, _| Ok(caps.clone()))
@@ -243,7 +239,7 @@ impl LocalMode {
                 .await;
 
             match config.request.clone() {
-                dap::DebugRequestType::Launch => {
+                dap::DebugRequestType::Launch(_) => {
                     if fail {
                         session
                             .client

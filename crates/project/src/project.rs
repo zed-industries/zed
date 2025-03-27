@@ -1468,12 +1468,10 @@ impl Project {
     #[cfg(any(test, feature = "test-support"))]
     pub fn fake_debug_session(
         &mut self,
-        caps: Option<Capabilities>,
+        caps: Option<dap::Capabilities>,
         fails: Option<bool>,
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<Session>>> {
-        use dap::Capabilities;
-
         let worktree = maybe!({ self.worktrees(cx).next() });
 
         let Some(worktree) = &worktree else {
