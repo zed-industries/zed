@@ -4739,7 +4739,7 @@ async fn test_definition(
     client_a
         .fs()
         .insert_tree(
-            "/root",
+            path!("/root"),
             json!({
                 "dir-1": {
                     "a.rs": "const ONE: usize = b::TWO + b::THREE;",
@@ -4751,7 +4751,9 @@ async fn test_definition(
             }),
         )
         .await;
-    let (project_a, worktree_id) = client_a.build_local_project("/root/dir-1", cx_a).await;
+    let (project_a, worktree_id) = client_a
+        .build_local_project(path!("/root/dir-1"), cx_a)
+        .await;
     let project_id = active_call_a
         .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
         .await
@@ -4772,7 +4774,7 @@ async fn test_definition(
         |_, _| async move {
             Ok(Some(lsp::GotoDefinitionResponse::Scalar(
                 lsp::Location::new(
-                    lsp::Url::from_file_path("/root/dir-2/b.rs").unwrap(),
+                    lsp::Url::from_file_path(path!("/root/dir-2/b.rs")).unwrap(),
                     lsp::Range::new(lsp::Position::new(0, 6), lsp::Position::new(0, 9)),
                 ),
             )))
@@ -4803,7 +4805,7 @@ async fn test_definition(
         |_, _| async move {
             Ok(Some(lsp::GotoDefinitionResponse::Scalar(
                 lsp::Location::new(
-                    lsp::Url::from_file_path("/root/dir-2/b.rs").unwrap(),
+                    lsp::Url::from_file_path(path!("/root/dir-2/b.rs")).unwrap(),
                     lsp::Range::new(lsp::Position::new(1, 6), lsp::Position::new(1, 11)),
                 ),
             )))
@@ -4840,7 +4842,7 @@ async fn test_definition(
             );
             Ok(Some(lsp::GotoDefinitionResponse::Scalar(
                 lsp::Location::new(
-                    lsp::Url::from_file_path("/root/dir-2/c.rs").unwrap(),
+                    lsp::Url::from_file_path(path!("/root/dir-2/c.rs")).unwrap(),
                     lsp::Range::new(lsp::Position::new(0, 5), lsp::Position::new(0, 7)),
                 ),
             )))
