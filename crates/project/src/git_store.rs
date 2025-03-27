@@ -158,8 +158,43 @@ pub struct GitStoreIndex {
 
 #[derive(Default)]
 pub struct GitStoreStatus {
-    #[allow(dead_code)]
     statuses_by_work_dir_abs_path: HashMap<PathBuf, GitStatus>,
+}
+
+impl GitStoreStatus {
+    pub fn entries<'a>(
+        &'a self,
+        git_store: &Entity<GitStore>,
+        cx: &App,
+    ) -> impl 'a + Iterator<Item = (Entity<Repository>, &'a RepoPath, &'a FileStatus)> {
+        let repositories_by_work_dir_abs_path = git_store
+            .read(cx)
+            .repositories
+            .values()
+            .map(|repo| {
+                (
+                    repo.read(cx)
+                        .repository_entry
+                        .work_directory_abs_path
+                        .clone(),
+                    repo.clone(),
+                )
+            })
+            .collect::<HashMap<_, _>>();
+
+        self.statuses_by_work_dir_abs_path
+            .iter()
+            .flat_map(move |(work_dir_abs_path, status)| {
+                status
+                    .entries
+                    .iter()
+                    .map(move |(repo_path, status)| (work_dir_abs_path, repo_path, status))
+            })
+            .filter_map(move |(work_dir_abs_path, repo_path, status)| {
+                let repository = repositories_by_work_dir_abs_path.get(work_dir_abs_path)?;
+                Some((repository.clone(), repo_path, status))
+            })
+    }
 }
 
 pub struct Repository {
@@ -790,7 +825,11 @@ impl GitStore {
                         .diff_checkpoints(base_checkpoint, target_checkpoint);
                     tasks.push(async move {
                         let diff = diff.await??;
-                        anyhow::Ok((work_dir_abs_path, diff))
+                        if diff.is_empty() {
+                            anyhow::Ok(None)
+                        } else {
+                            anyhow::Ok(Some((work_dir_abs_path, diff)))
+                        }
                     });
                 }
             }
@@ -799,7 +838,10 @@ impl GitStore {
         cx.background_spawn(async move {
             let diffs_by_path = future::try_join_all(tasks).await?;
             Ok(GitStoreDiff {
-                diffs_by_work_dir_abs_path: diffs_by_path.into_iter().collect(),
+                diffs_by_work_dir_abs_path: diffs_by_path
+                    .into_iter()
+                    .filter_map(|diff| diff)
+                    .collect(),
             })
         })
     }
