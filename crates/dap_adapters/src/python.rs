@@ -1,6 +1,6 @@
 use crate::*;
 use anyhow::bail;
-use dap::{transport::TcpTransport, DebugRequestType};
+use dap::DebugRequestType;
 use gpui::AsyncApp;
 use std::{ffi::OsStr, path::PathBuf};
 use task::DebugTaskDefinition;
@@ -69,18 +69,12 @@ impl DebugAdapter for PythonDebugAdapter {
         user_installed_path: Option<PathBuf>,
         cx: &mut AsyncApp,
     ) -> Result<DebugAdapterBinary> {
-        const BINARY_NAMES: [&str; 3] = ["python3", "python", "py"];
+        static BINARY_NAMES: [&str; 3] = ["python3", "python", "py"];
         let Some(tcp_connection) = config.tcp_connection.clone() else {
             bail!("Python Debug Adapter expects tcp connection arguments to be provided");
         };
-        let host = tcp_connection.host();
-        let timeout = tcp_connection.timeout;
+        let (host, port, timeout) = crate::configure_tcp_connection(tcp_connection).await?;
 
-        let port = if let Some(port) = tcp_connection.port {
-            port
-        } else {
-            TcpTransport::port(&tcp_connection).await?
-        };
         let debugpy_dir = if let Some(user_installed_path) = user_installed_path {
             user_installed_path
         } else {

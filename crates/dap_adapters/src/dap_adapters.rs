@@ -5,7 +5,7 @@ mod lldb;
 mod php;
 mod python;
 
-use std::sync::Arc;
+use std::{net::Ipv4Addr, sync::Arc};
 
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
@@ -23,7 +23,7 @@ use lldb::LldbDebugAdapter;
 use php::PhpDebugAdapter;
 use python::PythonDebugAdapter;
 use serde_json::{json, Value};
-use task::DebugAdapterConfig;
+use task::{DebugAdapterConfig, TCPHost};
 
 pub fn init(registry: Arc<DapRegistry>) {
     registry.add_adapter(Arc::from(PythonDebugAdapter::default()));
@@ -32,4 +32,19 @@ pub fn init(registry: Arc<DapRegistry>) {
     registry.add_adapter(Arc::from(LldbDebugAdapter::default()));
     registry.add_adapter(Arc::from(GoDebugAdapter::default()));
     registry.add_adapter(Arc::from(GdbDebugAdapter::default()));
+}
+
+pub(crate) async fn configure_tcp_connection(
+    tcp_connection: TCPHost,
+) -> Result<(Ipv4Addr, u16, Option<u64>)> {
+    let host = tcp_connection.host();
+    let timeout = tcp_connection.timeout;
+
+    let port = if let Some(port) = tcp_connection.port {
+        port
+    } else {
+        dap::transport::TcpTransport::port(&tcp_connection).await?
+    };
+
+    Ok((host, port, timeout))
 }

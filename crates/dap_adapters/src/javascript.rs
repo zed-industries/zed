@@ -78,15 +78,12 @@ impl DebugAdapter for JsDebugAdapter {
             .ok_or_else(|| anyhow!("Couldn't find JavaScript dap directory"))?
         };
 
-        let Some((host, port)) = config
-            .tcp_connection
-            .as_ref()
-            .and_then(|tcp| tcp.host.zip(tcp.port))
-        else {
-            return Err(anyhow!(
-                "Attempting to start go adapter without connecting to a tcp host"
-            ));
+        let Some(tcp_connection) = config.tcp_connection.clone() else {
+            anyhow::bail!(
+                "Javascript Debug Adapter expects tcp connection arguments to be provided"
+            );
         };
+        let (host, port, timeout) = crate::configure_tcp_connection(tcp_connection).await?;
 
         Ok(DebugAdapterBinary {
             command: delegate
@@ -105,7 +102,7 @@ impl DebugAdapter for JsDebugAdapter {
             connection: Some(adapters::TcpArguments {
                 host,
                 port,
-                timeout: config.tcp_connection.as_ref().and_then(|tcp| tcp.timeout),
+                timeout,
             }),
         })
     }
