@@ -150,7 +150,7 @@ pub struct ChildEntriesGitIter<'a> {
 
 impl<'a> ChildEntriesGitIter<'a> {
     pub fn new(
-        repo_snapshots: &'a HashMap<ProjectEntryId, RepositoryEntry>,
+        repo_snapshots: &'a HashMap<RepositoryId, RepositorySnapshot>,
         worktree_snapshot: &'a worktree::Snapshot,
         parent_path: &'a Path,
     ) -> Self {
@@ -773,7 +773,7 @@ mod tests {
 
     #[track_caller]
     fn check_git_statuses(
-        repo_snapshots: &HashMap<ProjectEntryId, RepositoryEntry>,
+        repo_snapshots: &HashMap<RepositoryId, RepositorySnapshot>,
         worktree_snapshot: &worktree::Snapshot,
         expected_statuses: &[(&Path, GitSummary)],
     ) {

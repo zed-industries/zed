@@ -1504,44 +1504,41 @@ impl GitStore {
         this.update(&mut cx, |this, cx| {
             let mut update = envelope.payload;
 
-            let work_directory_id = ProjectEntryId::from_proto(update.id);
+            let id = RepositoryId::from_proto(update.id);
             let client = this
                 .upstream_client()
                 .context("no upstream client")?
                 .clone();
 
-            let repo = this
-                .repositories
-                .entry(work_directory_id)
-                .or_insert_with(|| {
-                    let git_store = cx.weak_entity();
+            let repo = this.repositories.entry(id).or_insert_with(|| {
+                let git_store = cx.weak_entity();
 
-                    cx.new(|_| Repository {
-                        commit_message_buffer: None,
-                        git_store,
-                        snapshot: RepositoryEntry {
-                            work_directory_id,
-                            current_branch: None,
-                            statuses_by_path: Default::default(),
-                            current_merge_conflicts: Default::default(),
-                            work_directory_abs_path: update.abs_path.clone().into(),
-                            worktree_scan_id: update.scan_id as usize,
-                        },
-                        state: RepositoryState::Remote {
-                            project_id: ProjectId(update.project_id),
-                            client,
-                        },
-                        job_sender: this.update_sender.clone(),
-                        askpass_delegates: Default::default(),
-                        latest_askpass_id: 0,
-                    })
-                });
+                cx.new(|_| Repository {
+                    commit_message_buffer: None,
+                    git_store,
+                    snapshot: RepositorySnapshot {
+                        id,
+                        branch: None,
+                        statuses_by_path: Default::default(),
+                        merge_conflicts: Default::default(),
+                        work_directory_abs_path: Path::new(&update.abs_path).into(),
+                        worktree_scan_id: update.scan_id as usize,
+                    },
+                    state: RepositoryState::Remote {
+                        project_id: ProjectId(update.project_id),
+                        client,
+                    },
+                    job_sender: this.update_sender.clone(),
+                    askpass_delegates: Default::default(),
+                    latest_askpass_id: 0,
+                })
+            });
 
             repo.update(cx, |repo, _cx| repo.apply_remote_update(update.clone()))?;
             cx.emit(GitEvent::GitStateUpdated);
             this.active_repo_id.get_or_insert_with(|| {
                 cx.emit(GitEvent::ActiveRepositoryChanged);
-                work_directory_id
+                id
             });
 
             if let Some((client, project_id)) = this.downstream_client() {
@@ -1559,7 +1556,7 @@ impl GitStore {
     ) -> Result<()> {
         this.update(&mut cx, |this, cx| {
             let mut update = envelope.payload;
-            let id = ProjectEntryId::from_proto(update.id);
+            let id = RepositoryId::from_proto(update.id);
             this.repositories.remove(&id);
             if let Some((client, project_id)) = this.downstream_client() {
                 update.project_id = project_id.to_proto();
@@ -2176,21 +2173,21 @@ impl GitStore {
 
     fn repository_for_request(
         this: &Entity<Self>,
-        work_directory_id: ProjectEntryId,
+        id: RepositoryId,
         cx: &mut AsyncApp,
     ) -> Result<Entity<Repository>> {
         this.update(cx, |this, cx| {
             this.repositories
                 .values()
                 .find(|repository_handle| {
-                    repository_handle.read(cx).snapshot.work_directory_id() == work_directory_id
+                    repository_handle.read(cx).work_directory_id == work_directory_id
                 })
                 .context("missing repository handle")
                 .cloned()
         })?
     }
 
-    pub fn repo_snapshots(&self, cx: &App) -> HashMap<ProjectEntryId, RepositoryEntry> {
+    pub fn repo_snapshots(&self, cx: &App) -> HashMap<RepositoryId, RepositorySnapshot> {
         self.repositories
             .iter()
             .map(|(id, repo)| (*id, repo.read(cx).snapshot.clone()))
@@ -2541,6 +2538,10 @@ impl RepositoryId {
     pub fn to_proto(self) -> u64 {
         self.0
     }
+
+    pub fn from_proto(id: u64) -> Self {
+        RepositoryId(id)
+    }
 }
 
 impl RepositorySnapshot {
@@ -2560,7 +2561,7 @@ impl RepositorySnapshot {
                 .collect(),
             project_id,
             id: self.id.to_proto(),
-            abs_path: self.work_directory_abs_path.as_path().to_proto(),
+            abs_path: self.work_directory_abs_path.to_proto(),
             entry_ids: vec![self.id.to_proto()],
             // This is also semantically wrong, and should be replaced once we separate git repo updates
             // from worktree scans.
@@ -2621,7 +2622,7 @@ impl RepositorySnapshot {
                 .collect(),
             project_id,
             id: self.id.to_proto(),
-            abs_path: self.work_directory_abs_path.as_path().to_proto(),
+            abs_path: self.work_directory_abs_path.to_proto(),
             // FIXME
             entry_ids: vec![],
             scan_id: self.worktree_scan_id as u64,
@@ -2630,10 +2631,6 @@ impl RepositorySnapshot {
 
     pub fn status(&self) -> impl Iterator<Item = StatusEntry> + '_ {
         self.statuses_by_path.iter().cloned()
-    }
-
-    pub fn status_len(&self) -> usize {
-        self.statuses_by_path.summary().item_summary.count
     }
 
     pub fn status_summary(&self) -> GitSummary {
@@ -3418,7 +3415,7 @@ impl Repository {
                     client
                         .request(proto::GitChangeBranch {
                             project_id: project_id.0,
-                            work_directory_id: id.to_proto(),
+                            repository_id: id.to_proto(),
                             branch_name,
                         })
                         .await?;
@@ -3438,7 +3435,7 @@ impl Repository {
                     let response = client
                         .request(proto::CheckForPushedCommits {
                             project_id: project_id.0,
-                            work_directory_id: id.to_proto(),
+                            repository_id: id.to_proto(),
                         })
                         .await?;
 
