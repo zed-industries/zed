@@ -366,7 +366,7 @@ impl Dock {
             .position(|entry| entry.panel.enabled(cx))
             .with_context(|| {
                 format!(
-                    "Could find no enabled panel for the {} dock.",
+                    "Couldn't find any enabled panel for the {} dock.",
                     self.position.label()
                 )
             })
