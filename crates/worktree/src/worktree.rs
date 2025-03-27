@@ -853,7 +853,7 @@ impl Worktree {
             Worktree::Local(this) => {
                 let path = Arc::from(path);
                 let snapshot = this.snapshot();
-                cx.spawn(async move |cx| {
+                cx.spawn(async move |_cx| {
                     if let Some(repo) = snapshot.local_repo_containing_path(&path) {
                         if let Some(repo_path) = repo.relativize(&path).log_err() {
                             if let Some(git_repo) =
@@ -861,7 +861,7 @@ impl Worktree {
                             {
                                 return Ok(git_repo
                                     .repo_ptr
-                                    .load_index_text(repo_path, cx.clone())
+                                    .load_index_text(None, repo_path)
                                     .await);
                             }
                         }
@@ -880,16 +880,13 @@ impl Worktree {
             Worktree::Local(this) => {
                 let path = Arc::from(path);
                 let snapshot = this.snapshot();
-                cx.spawn(async move |cx| {
+                cx.spawn(async move |_cx| {
                     if let Some(repo) = snapshot.local_repo_containing_path(&path) {
                         if let Some(repo_path) = repo.relativize(&path).log_err() {
                             if let Some(git_repo) =
                                 snapshot.git_repositories.get(&repo.work_directory_id)
                             {
-                                return Ok(git_repo
-                                    .repo_ptr
-                                    .load_committed_text(repo_path, cx.clone())
-                                    .await);
+                                return Ok(git_repo.repo_ptr.load_committed_text(repo_path).await);
                             }
                         }
                     }
@@ -4828,7 +4825,7 @@ impl BackgroundScanner {
         }
 
         for (_work_directory, mut paths) in paths_by_git_repo {
-            if let Ok(status) = paths.repo.status(&paths.repo_paths) {
+            if let Ok(status) = paths.repo.status_blocking(&paths.repo_paths) {
                 let mut changed_path_statuses = Vec::new();
                 let statuses = paths.entry.statuses_by_path.clone();
                 let mut cursor = statuses.cursor::<PathProgress>(&());
@@ -5332,7 +5329,7 @@ async fn do_git_status_update(
     log::trace!("updating git statuses for repo {repository_name}");
     let Some(statuses) = local_repository
         .repo()
-        .status(&[git::WORK_DIRECTORY_REPO_PATH.clone()])
+        .status_blocking(&[git::WORK_DIRECTORY_REPO_PATH.clone()])
         .log_err()
     else {
         return;

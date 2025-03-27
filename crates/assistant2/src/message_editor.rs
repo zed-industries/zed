@@ -317,7 +317,7 @@ impl Render for MessageEditor {
 
         let project = self.thread.read(cx).project();
         let changed_files = if let Some(repository) = project.read(cx).active_repository(cx) {
-            repository.read(cx).status().count()
+            repository.read(cx).cached_status().count()
         } else {
             0
         };

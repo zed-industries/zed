@@ -44,7 +44,7 @@ languages.workspace = true
 log.workspace = true
 lsp.workspace = true
 node_runtime.workspace = true
-paths = { workspace = true }
+paths.workspace = true
 project.workspace = true
 proto.workspace = true
 release_channel.workspace = true

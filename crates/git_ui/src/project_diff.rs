@@ -339,7 +339,7 @@ impl ProjectDiff {
 
         let mut result = vec![];
         repo.update(cx, |repo, cx| {
-            for entry in repo.status() {
+            for entry in repo.cached_status() {
                 if !entry.status.has_changes() {
                     continue;
                 }

@@ -347,7 +347,7 @@ async fn test_renaming_case_only(cx: &mut TestAppContext) {
     const OLD_NAME: &str = "aaa.rs";
     const NEW_NAME: &str = "AAA.rs";
 
-    let fs = Arc::new(RealFs::default());
+    let fs = Arc::new(RealFs::new(None, cx.executor()));
     let temp_root = TempTree::new(json!({
         OLD_NAME: "",
     }));
@@ -725,7 +725,7 @@ async fn test_file_scan_inclusions(cx: &mut TestAppContext) {
     let tree = Worktree::local(
         dir.path(),
         true,
-        Arc::new(RealFs::default()),
+        Arc::new(RealFs::new(None, cx.executor())),
         Default::default(),
         &mut cx.to_async(),
     )
@@ -788,7 +788,7 @@ async fn test_file_scan_exclusions_overrules_inclusions(cx: &mut TestAppContext)
     let tree = Worktree::local(
         dir.path(),
         true,
-        Arc::new(RealFs::default()),
+        Arc::new(RealFs::new(None, cx.executor())),
         Default::default(),
         &mut cx.to_async(),
     )
@@ -845,7 +845,7 @@ async fn test_file_scan_inclusions_reindexes_on_setting_change(cx: &mut TestAppC
     let tree = Worktree::local(
         dir.path(),
         true,
-        Arc::new(RealFs::default()),
+        Arc::new(RealFs::new(None, cx.executor())),
         Default::default(),
         &mut cx.to_async(),
     )
@@ -926,7 +926,7 @@ async fn test_file_scan_exclusions(cx: &mut TestAppContext) {
     let tree = Worktree::local(
         dir.path(),
         true,
-        Arc::new(RealFs::default()),
+        Arc::new(RealFs::new(None, cx.executor())),
         Default::default(),
         &mut cx.to_async(),
     )
@@ -1031,7 +1031,7 @@ async fn test_fs_events_in_exclusions(cx: &mut TestAppContext) {
     let tree = Worktree::local(
         dir.path(),
         true,
-        Arc::new(RealFs::default()),
+        Arc::new(RealFs::new(None, cx.executor())),
         Default::default(),
         &mut cx.to_async(),
     )
@@ -1142,7 +1142,7 @@ async fn test_fs_events_in_dot_git_worktree(cx: &mut TestAppContext) {
     let tree = Worktree::local(
         dot_git_worktree_dir.clone(),
         true,
-        Arc::new(RealFs::default()),
+        Arc::new(RealFs::new(None, cx.executor())),
         Default::default(),
         &mut cx.to_async(),
     )
@@ -1272,7 +1272,7 @@ async fn test_create_dir_all_on_create_entry(cx: &mut TestAppContext) {
         assert!(tree.entry_for_path("a/b/").unwrap().is_dir());
     });
 
-    let fs_real = Arc::new(RealFs::default());
+    let fs_real = Arc::new(RealFs::new(None, cx.executor()));
     let temp_root = TempTree::new(json!({
         "a": {}
     }));

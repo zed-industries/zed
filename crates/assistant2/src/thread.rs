@@ -286,8 +286,7 @@ impl Thread {
             tool_use,
             action_log: cx.new(|_| ActionLog::new()),
             initial_project_snapshot: Task::ready(serialized.initial_project_snapshot).shared(),
-            // TODO: persist token usage?
-            cumulative_token_usage: TokenUsage::default(),
+            cumulative_token_usage: serialized.cumulative_token_usage,
             feedback: None,
         }
     }
@@ -648,6 +647,7 @@ impl Thread {
                     })
                     .collect(),
                 initial_project_snapshot,
+                cumulative_token_usage: this.cumulative_token_usage.clone(),
             })
         })
     }
@@ -1433,7 +1433,7 @@ impl Thread {
 
                     // Get diff asynchronously
                     let diff = repo
-                        .diff(git::repository::DiffType::HeadToWorktree, cx.clone())
+                        .diff(git::repository::DiffType::HeadToWorktree)
                         .await
                         .ok();
 
