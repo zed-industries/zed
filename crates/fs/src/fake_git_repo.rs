@@ -5,8 +5,8 @@ use futures::future::{self, BoxFuture};
 use git::{
     blame::Blame,
     repository::{
-        AskPassSession, Branch, CommitDetails, GitRepository, GitRepositoryCheckpoint, PushOptions,
-        Remote, RepoPath, ResetMode,
+        AskPassSession, Branch, CommitDetails, GitIndex, GitRepository, GitRepositoryCheckpoint,
+        PushOptions, Remote, RepoPath, ResetMode,
     },
     status::{FileStatus, GitStatus, StatusCode, TrackedStatus, UnmergedStatus},
 };
@@ -81,7 +81,15 @@ impl FakeGitRepository {
 impl GitRepository for FakeGitRepository {
     fn reload_index(&self) {}
 
-    fn load_index_text(&self, path: RepoPath) -> BoxFuture<Option<String>> {
+    fn load_index_text(
+        &self,
+        index: Option<GitIndex>,
+        path: RepoPath,
+    ) -> BoxFuture<Option<String>> {
+        if index.is_some() {
+            unimplemented!();
+        }
+
         async {
             self.with_state_async(false, move |state| {
                 state
@@ -171,7 +179,15 @@ impl GitRepository for FakeGitRepository {
         self.path()
     }
 
-    fn status(&self, path_prefixes: &[RepoPath]) -> BoxFuture<'static, Result<GitStatus>> {
+    fn status(
+        &self,
+        index: Option<GitIndex>,
+        path_prefixes: &[RepoPath],
+    ) -> BoxFuture<'static, Result<GitStatus>> {
+        if index.is_some() {
+            unimplemented!();
+        }
+
         let status = self.status_blocking(path_prefixes);
         async move { status }.boxed()
     }
@@ -414,7 +430,7 @@ impl GitRepository for FakeGitRepository {
         unimplemented!()
     }
 
-    fn checkpoint(&self) -> BoxFuture<Result<GitRepositoryCheckpoint>> {
+    fn checkpoint(&self) -> BoxFuture<'static, Result<GitRepositoryCheckpoint>> {
         unimplemented!()
     }
 
@@ -431,6 +447,22 @@ impl GitRepository for FakeGitRepository {
     }
 
     fn delete_checkpoint(&self, _checkpoint: GitRepositoryCheckpoint) -> BoxFuture<Result<()>> {
+        unimplemented!()
+    }
+
+    fn diff_checkpoints(
+        &self,
+        _base_checkpoint: GitRepositoryCheckpoint,
+        _target_checkpoint: GitRepositoryCheckpoint,
+    ) -> BoxFuture<Result<String>> {
+        unimplemented!()
+    }
+
+    fn create_index(&self) -> BoxFuture<Result<GitIndex>> {
+        unimplemented!()
+    }
+
+    fn apply_diff(&self, _index: GitIndex, _diff: String) -> BoxFuture<Result<()>> {
         unimplemented!()
     }
 }
