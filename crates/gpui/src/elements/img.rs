@@ -218,12 +218,6 @@ impl Img {
             "hdr", "exr", "pbm", "pam", "ppm", "pgm", "ff", "farbfeld", "qoi", "svg",
         ]
     }
-
-    /// Set element id.
-    pub fn id(mut self, id: impl Into<ElementId>) -> Self {
-        self.interactivity.element_id = Some(id.into());
-        self
-    }
 }
 
 impl Deref for Stateful<Img> {
