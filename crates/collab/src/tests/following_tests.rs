@@ -436,114 +436,118 @@ async fn test_basic_following(
         editor_a1.item_id()
     );
 
-    use crate::rpc::RECONNECT_TIMEOUT;
-    use gpui::TestScreenCaptureSource;
-    use workspace::{
-        dock::{test::TestPanel, DockPosition},
-        item::test::TestItem,
-        shared_screen::SharedScreen,
-    };
+    #[cfg(all(not(target_os = "macos"), not(target_os = "windows")))]
+    {
+        use crate::rpc::RECONNECT_TIMEOUT;
+        use gpui::TestScreenCaptureSource;
+        use workspace::{
+            dock::{test::TestPanel, DockPosition},
+            item::test::TestItem,
+            shared_screen::SharedScreen,
+        };
 
-    // Client B activates an external window, which causes a new screen-sharing item to be added to the pane.
-    let display = TestScreenCaptureSource::new();
-    active_call_b
-        .update(cx_b, |call, cx| call.set_location(None, cx))
-        .await
-        .unwrap();
-    cx_b.set_screen_capture_sources(vec![display]);
-    active_call_b
-        .update(cx_b, |call, cx| {
-            call.room()
+        // Client B activates an external window, which causes a new screen-sharing item to be added to the pane.
+        let display = TestScreenCaptureSource::new();
+        active_call_b
+            .update(cx_b, |call, cx| call.set_location(None, cx))
+            .await
+            .unwrap();
+        cx_b.set_screen_capture_sources(vec![display]);
+        active_call_b
+            .update(cx_b, |call, cx| {
+                call.room()
+                    .unwrap()
+                    .update(cx, |room, cx| room.share_screen(cx))
+            })
+            .await
+            .unwrap();
+        executor.run_until_parked();
+
+        let shared_screen = workspace_a.update(cx_a, |workspace, cx| {
+            workspace
+                .active_item(cx)
+                .expect("no active item")
+                .downcast::<SharedScreen>()
+                .expect("active item isn't a shared screen")
+        });
+
+        // Client B activates Zed again, which causes the previous editor to become focused again.
+        active_call_b
+            .update(cx_b, |call, cx| call.set_location(Some(&project_b), cx))
+            .await
+            .unwrap();
+        executor.run_until_parked();
+        workspace_a.update(cx_a, |workspace, cx| {
+            assert_eq!(
+                workspace.active_item(cx).unwrap().item_id(),
+                editor_a1.item_id()
+            )
+        });
+
+        // Client B activates a multibuffer that was created by following client A. Client A returns to that multibuffer.
+        workspace_b.update_in(cx_b, |workspace, window, cx| {
+            workspace.activate_item(&multibuffer_editor_b, true, true, window, cx)
+        });
+        executor.run_until_parked();
+        workspace_a.update(cx_a, |workspace, cx| {
+            assert_eq!(
+                workspace.active_item(cx).unwrap().item_id(),
+                multibuffer_editor_a.item_id()
+            )
+        });
+
+        // Client B activates a panel, and the previously-opened screen-sharing item gets activated.
+        let panel = cx_b.new(|cx| TestPanel::new(DockPosition::Left, cx));
+        workspace_b.update_in(cx_b, |workspace, window, cx| {
+            workspace.add_panel(panel, window, cx);
+            workspace.toggle_panel_focus::<TestPanel>(window, cx);
+        });
+        executor.run_until_parked();
+        assert_eq!(
+            workspace_a.update(cx_a, |workspace, cx| workspace
+                .active_item(cx)
                 .unwrap()
-                .update(cx, |room, cx| room.share_screen(cx))
-        })
-        .await
-        .unwrap();
-    executor.run_until_parked();
-    let shared_screen = workspace_a.update(cx_a, |workspace, cx| {
-        workspace
-            .active_item(cx)
-            .expect("no active item")
-            .downcast::<SharedScreen>()
-            .expect("active item isn't a shared screen")
-    });
+                .item_id()),
+            shared_screen.item_id()
+        );
 
-    // Client B activates Zed again, which causes the previous editor to become focused again.
-    active_call_b
-        .update(cx_b, |call, cx| call.set_location(Some(&project_b), cx))
-        .await
-        .unwrap();
-    executor.run_until_parked();
-    workspace_a.update(cx_a, |workspace, cx| {
+        // Toggling the focus back to the pane causes client A to return to the multibuffer.
+        workspace_b.update_in(cx_b, |workspace, window, cx| {
+            workspace.toggle_panel_focus::<TestPanel>(window, cx);
+        });
+        executor.run_until_parked();
+        workspace_a.update(cx_a, |workspace, cx| {
+            assert_eq!(
+                workspace.active_item(cx).unwrap().item_id(),
+                multibuffer_editor_a.item_id()
+            )
+        });
+
+        // Client B activates an item that doesn't implement following,
+        // so the previously-opened screen-sharing item gets activated.
+        let unfollowable_item = cx_b.new(TestItem::new);
+        workspace_b.update_in(cx_b, |workspace, window, cx| {
+            workspace.active_pane().update(cx, |pane, cx| {
+                pane.add_item(Box::new(unfollowable_item), true, true, None, window, cx)
+            })
+        });
+        executor.run_until_parked();
         assert_eq!(
-            workspace.active_item(cx).unwrap().item_id(),
-            editor_a1.item_id()
-        )
-    });
+            workspace_a.update(cx_a, |workspace, cx| workspace
+                .active_item(cx)
+                .unwrap()
+                .item_id()),
+            shared_screen.item_id()
+        );
 
-    // Client B activates a multibuffer that was created by following client A. Client A returns to that multibuffer.
-    workspace_b.update_in(cx_b, |workspace, window, cx| {
-        workspace.activate_item(&multibuffer_editor_b, true, true, window, cx)
-    });
-    executor.run_until_parked();
-    workspace_a.update(cx_a, |workspace, cx| {
+        // Following interrupts when client B disconnects.
+        client_b.disconnect(&cx_b.to_async());
+        executor.advance_clock(RECONNECT_TIMEOUT);
         assert_eq!(
-            workspace.active_item(cx).unwrap().item_id(),
-            multibuffer_editor_a.item_id()
-        )
-    });
-
-    // Client B activates a panel, and the previously-opened screen-sharing item gets activated.
-    let panel = cx_b.new(|cx| TestPanel::new(DockPosition::Left, cx));
-    workspace_b.update_in(cx_b, |workspace, window, cx| {
-        workspace.add_panel(panel, window, cx);
-        workspace.toggle_panel_focus::<TestPanel>(window, cx);
-    });
-    executor.run_until_parked();
-    assert_eq!(
-        workspace_a.update(cx_a, |workspace, cx| workspace
-            .active_item(cx)
-            .unwrap()
-            .item_id()),
-        shared_screen.item_id()
-    );
-
-    // Toggling the focus back to the pane causes client A to return to the multibuffer.
-    workspace_b.update_in(cx_b, |workspace, window, cx| {
-        workspace.toggle_panel_focus::<TestPanel>(window, cx);
-    });
-    executor.run_until_parked();
-    workspace_a.update(cx_a, |workspace, cx| {
-        assert_eq!(
-            workspace.active_item(cx).unwrap().item_id(),
-            multibuffer_editor_a.item_id()
-        )
-    });
-
-    // Client B activates an item that doesn't implement following,
-    // so the previously-opened screen-sharing item gets activated.
-    let unfollowable_item = cx_b.new(TestItem::new);
-    workspace_b.update_in(cx_b, |workspace, window, cx| {
-        workspace.active_pane().update(cx, |pane, cx| {
-            pane.add_item(Box::new(unfollowable_item), true, true, None, window, cx)
-        })
-    });
-    executor.run_until_parked();
-    assert_eq!(
-        workspace_a.update(cx_a, |workspace, cx| workspace
-            .active_item(cx)
-            .unwrap()
-            .item_id()),
-        shared_screen.item_id()
-    );
-
-    // Following interrupts when client B disconnects.
-    client_b.disconnect(&cx_b.to_async());
-    executor.advance_clock(RECONNECT_TIMEOUT);
-    assert_eq!(
-        workspace_a.update(cx_a, |workspace, _| workspace.leader_for_pane(&pane_a)),
-        None
-    );
+            workspace_a.update(cx_a, |workspace, _| workspace.leader_for_pane(&pane_a)),
+            None
+        );
+    }
 }
 
 #[gpui::test]
