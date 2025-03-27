@@ -453,18 +453,29 @@ impl DapStore {
             unreachable!("there must be a config for local sessions");
         };
 
-        let (_, new_session_task) = self.new_session(
-            DebugAdapterConfig {
-                label: config.label,
-                adapter: config.adapter,
-                request: DebugRequestDisposition::ReverseRequest(args),
-                initialize_args: config.initialize_args.clone(),
-                tcp_connection: config.tcp_connection.clone(),
-            },
-            &worktree,
-            Some(parent_session.clone()),
-            cx,
-        );
+        let debug_config = DebugAdapterConfig {
+            label: config.label,
+            adapter: config.adapter,
+            request: DebugRequestDisposition::ReverseRequest(args),
+            initialize_args: config.initialize_args.clone(),
+            tcp_connection: config.tcp_connection.clone(),
+        };
+
+        let new_session_task = if cfg!(any(test, feature = "test-support")) {
+            let caps = parent_session.read(cx).capabilities.clone();
+            self.new_fake_session(
+                debug_config,
+                &worktree,
+                Some(parent_session.clone()),
+                caps,
+                false,
+                cx,
+            )
+            .1
+        } else {
+            self.new_session(debug_config, &worktree, Some(parent_session.clone()), cx)
+                .1
+        };
 
         let request_seq = request.seq;
         cx.spawn(async move |_, cx| {

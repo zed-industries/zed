@@ -217,9 +217,25 @@ impl LocalMode {
     ) -> Task<Result<(Self, Capabilities)>> {
         use task::DebugRequestDisposition;
 
-        let DebugRequestDisposition::UserConfigured(request) = config.request.clone() else {
-            unimplemented!()
+        let request = match config.request.clone() {
+            DebugRequestDisposition::UserConfigured(request) => request,
+            DebugRequestDisposition::ReverseRequest(reverse_request_args) => {
+                match reverse_request_args.request {
+                    dap::StartDebuggingRequestArgumentsRequest::Launch => {
+                        DebugRequestType::Launch(task::LaunchConfig {
+                            program: "".to_owned(),
+                            cwd: None,
+                        })
+                    }
+                    dap::StartDebuggingRequestArgumentsRequest::Attach => {
+                        DebugRequestType::Attach(task::AttachConfig {
+                            process_id: Some(0),
+                        })
+                    }
+                }
+            }
         };
+
         let callback = async move |session: &mut LocalMode, cx: AsyncApp| {
             session
                 .client
