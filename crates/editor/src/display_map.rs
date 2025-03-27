@@ -457,6 +457,10 @@ impl DisplayMap {
         Some(DisplayRow(block_row.0))
     }
 
+    pub fn clear_semantic_highlights(&mut self) {
+        self.semantic_highlights.clear();
+    }
+
     pub fn semantic_highlight(&mut self, range: Range<Anchor>, style: HighlightStyle) {
         self.semantic_highlights.push((style, range));
     }

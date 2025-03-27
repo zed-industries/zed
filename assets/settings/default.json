@@ -390,6 +390,11 @@
   // If your search query contains any uppercase letters, the search becomes case-sensitive;
   // if it contains only lowercase letters, the search becomes case-insensitive.
   "use_smartcase_search": false,
+  // Semantic tokens related settings
+  "semantic_tokens": {
+    // Global switch to semantic tokens on and off, switched on by default.
+    "enabled": true
+  },
   // Inlay hint related settings
   "inlay_hints": {
     // Global switch to toggle hints on and off, switched off by default.

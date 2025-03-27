@@ -126,6 +126,8 @@ pub struct LanguageSettings {
     pub show_whitespaces: ShowWhitespaceSetting,
     /// Whether to start a new line with a comment when a previous line is a comment as well.
     pub extend_comment_on_newline: bool,
+    /// Semantic tokens related settings.
+    pub semantic_tokens: SemanticTokensSettings,
     /// Inlay hint related settings.
     pub inlay_hints: InlayHintSettings,
     /// Whether to automatically close brackets.
@@ -471,6 +473,9 @@ pub struct LanguageSettingsContent {
     /// Default: true
     #[serde(default)]
     pub extend_comment_on_newline: Option<bool>,
+    /// Semantic tokens related settings.
+    #[serde(default)]
+    pub semantic_tokens: Option<SemanticTokensSettings>,
     /// Inlay hint related settings.
     #[serde(default)]
     pub inlay_hints: Option<InlayHintSettings>,
@@ -937,6 +942,16 @@ pub enum IndentGuideBackgroundColoring {
     Disabled,
     /// Use a different color for each indentation level.
     IndentAware,
+}
+
+/// The settings for semantic tokens.
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+pub struct SemanticTokensSettings {
+    /// Global switch to toggle semantic tokens on and off.
+    ///
+    /// Default: true
+    #[serde(default = "default_true")]
+    pub enabled: bool,
 }
 
 /// The settings for inlay hints.
@@ -1413,6 +1428,7 @@ fn merge_settings(settings: &mut LanguageSettings, src: &LanguageSettingsContent
         &mut settings.extend_comment_on_newline,
         src.extend_comment_on_newline,
     );
+    merge(&mut settings.semantic_tokens, src.semantic_tokens);
     merge(&mut settings.inlay_hints, src.inlay_hints);
     merge(
         &mut settings.show_completions_on_input,

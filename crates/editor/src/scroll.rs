@@ -3,6 +3,7 @@ pub(crate) mod autoscroll;
 pub(crate) mod scroll_amount;
 
 use crate::editor_settings::{ScrollBeyondLastLine, ScrollbarAxes};
+use crate::SemanticTokensRefreshReason;
 use crate::{
     display_map::{DisplaySnapshot, ToDisplayPoint},
     hover_popover::hide_hover,
@@ -506,6 +507,7 @@ impl Editor {
             cx,
         );
 
+        self.refresh_semantic_tokens(SemanticTokensRefreshReason::NewLinesShown, window, cx);
         self.refresh_inlay_hints(InlayHintRefreshReason::NewLinesShown, cx);
     }
 

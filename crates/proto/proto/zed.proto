@@ -361,7 +361,8 @@ message Envelope {
         RemoveRepository remove_repository = 329; // current max
 
         SemanticTokensFullRequest semantic_tokens_full_request = 330;
-        SemanticTokensResult semantic_tokens_result = 331;
+        SemanticTokensResponse semantic_tokens_response = 331;
+        RefreshSemanticTokens refresh_semantic_tokens = 332;
     }
 
     reserved 87 to 88;
@@ -3548,6 +3549,10 @@ message SemanticToken {
   uint32 token_modifiers = 5;
 }
 
-message SemanticTokensResult {
+message SemanticTokensResponse {
   repeated SemanticToken tokens = 1;
+}
+
+message RefreshSemanticTokens {
+    uint64 project_id = 1;
 }

@@ -103,7 +103,7 @@ use itertools::Itertools;
 use language::{
     language_settings::{
         self, all_language_settings, language_settings, InlayHintSettings, RewrapBehavior,
-        WordsCompletionMode,
+        SemanticTokensSettings, WordsCompletionMode,
     },
     point_from_lsp, text_diff_with_options, AutoindentMode, BracketMatch, BracketPair, Buffer,
     Capability, CharKind, CodeLabel, CursorShape, Diagnostic, DiffOptions, EditPredictionsMode,
@@ -1048,6 +1048,29 @@ pub enum GotoDefinitionKind {
 }
 
 #[derive(Debug, Clone)]
+enum SemanticTokensRefreshReason {
+    RefreshRequested,
+    NewLinesShown,
+    Toggle(bool),
+    SettingsChange(SemanticTokensSettings),
+    BufferEdited(HashSet<Arc<Language>>),
+    ExcerptsRemoved(Vec<ExcerptId>),
+}
+
+impl SemanticTokensRefreshReason {
+    fn description(&self) -> &'static str {
+        match self {
+            Self::Toggle(_) => "toggle",
+            Self::RefreshRequested => "refresh requested",
+            Self::SettingsChange(_) => "settings change",
+            Self::NewLinesShown => "new lines shown",
+            Self::BufferEdited(_) => "buffer edited",
+            Self::ExcerptsRemoved(_) => "excerpts removed",
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
 enum InlayHintRefreshReason {
     ModifiersChanged(bool),
     Toggle(bool),
@@ -1264,6 +1287,13 @@ impl Editor {
                         project::Event::RefreshInlayHints => {
                             editor
                                 .refresh_inlay_hints(InlayHintRefreshReason::RefreshRequested, cx);
+                        }
+                        project::Event::RefreshSemanticTokens => {
+                            editor.refresh_semantic_tokens(
+                                SemanticTokensRefreshReason::RefreshRequested,
+                                window,
+                                cx,
+                            );
                         }
                         project::Event::SnippetEdit(id, snippet_edits) => {
                             if let Some(buffer) = editor.buffer.read(cx).buffer(*id) {
@@ -3814,6 +3844,89 @@ impl Editor {
         self.inlay_hint_cache.enabled
     }
 
+    fn refresh_semantic_tokens(
+        &self,
+        reason: SemanticTokensRefreshReason,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<()> {
+        let project = self.project.as_ref()?;
+        match reason {
+            SemanticTokensRefreshReason::Toggle(false) => {
+                self.display_map.update(cx, |display_map, _| {
+                    display_map.clear_semantic_highlights();
+                });
+                cx.notify();
+            }
+            SemanticTokensRefreshReason::SettingsChange(settings) if !settings.enabled => {
+                self.display_map.update(cx, |display_map, _| {
+                    display_map.clear_semantic_highlights();
+                });
+                cx.notify();
+            }
+            // All reasons implemented, so we can implement the "delta" requests in the future
+            SemanticTokensRefreshReason::NewLinesShown
+            | SemanticTokensRefreshReason::ExcerptsRemoved(_) => {
+                // If it's using full semantic tokens, this line isn't needed, if it's using
+                // range/delta features, this is a TODO
+            }
+            SemanticTokensRefreshReason::RefreshRequested
+            | SemanticTokensRefreshReason::BufferEdited(_)
+            | SemanticTokensRefreshReason::SettingsChange(_)
+            | SemanticTokensRefreshReason::Toggle(true) => {
+                for buffer in self.buffer.read(cx).all_buffers() {
+                    let semantic_tokens = project.update(cx, |project, cx| {
+                        project.semantic_tokens(buffer.clone(), cx)
+                    });
+                    let snapshot = buffer.read(cx).snapshot();
+                    let multibuffer = self.buffer.clone();
+                    let task: Task<Result<()>> = cx.spawn_in(window, async move |editor, cx| {
+                        let tokens = semantic_tokens.await?;
+                        let multibuffer = multibuffer.clone();
+                        let tokens: Vec<_> = cx.update(|_, cx| {
+                            let multibuffer = multibuffer.read(cx).snapshot(cx);
+                            tokens
+                                .into_iter()
+                                .filter_map(|token| {
+                                    let is_valid = token.range.end.offset != 0
+                                        && token.range.start.is_valid(&snapshot)
+                                        && token.range.end.is_valid(&snapshot);
+                                    if is_valid {
+                                        let range = token.range.to_point(&snapshot);
+                                        let range = range.to_anchors(&multibuffer);
+                                        Some((range, token.r#type, token.modifiers))
+                                    } else {
+                                        None
+                                    }
+                                })
+                                .collect_vec()
+                        })?;
+                        editor.update(cx, |this: &mut Self, cx| {
+                            for (range, r#type, modifiers) in tokens {
+                                let Some(mut style) = cx.theme().tokens().get(r#type.as_str())
+                                else {
+                                    continue;
+                                };
+                                for r#mod in modifiers {
+                                    let r#mod = cx.theme().modifiers().get(r#mod.as_str());
+                                    style.highlight(match r#mod {
+                                        Some(value) => value,
+                                        None => continue,
+                                    });
+                                }
+                                this.semantic_highlight(range, style, cx);
+                            }
+                        })?;
+                        Ok(())
+                    });
+                    task.detach_and_log_err(cx);
+                }
+                cx.notify();
+            }
+        }
+        Some(())
+    }
+
     fn refresh_inlay_hints(&mut self, reason: InlayHintRefreshReason, cx: &mut Context<Self>) {
         if self.semantics_provider.is_none() || self.mode != EditorMode::Full {
             return;
@@ -4004,58 +4117,6 @@ impl Editor {
             display_map.splice_inlays(to_remove, to_insert, cx)
         });
         cx.notify();
-    }
-
-    fn refresh_semantic_tokens(&self, window: &mut Window, cx: &mut Context<Self>) -> Option<()> {
-        let project = self.project.as_ref()?;
-        for buffer in self.buffer.read(cx).all_buffers() {
-            let semantic_tokens = project.update(cx, |project, cx| {
-                project.semantic_tokens(buffer.clone(), cx)
-            });
-            let snapshot = buffer.read(cx).snapshot();
-            let multibuffer = self.buffer.clone();
-            let task: Task<Result<()>> = cx.spawn_in(window, async move |editor, cx| {
-                let tokens = semantic_tokens.await?;
-                let multibuffer = multibuffer.clone();
-                let tokens: Vec<_> = cx.update(|_, cx| {
-                    let multibuffer = multibuffer.read(cx).snapshot(cx);
-                    tokens
-                        .into_iter()
-                        .filter_map(|token| {
-                            let is_valid = token.range.end.offset != 0
-                                && token.range.start.is_valid(&snapshot)
-                                && token.range.end.is_valid(&snapshot);
-                            if is_valid {
-                                let range = token.range.to_point(&snapshot);
-                                let range = range.to_anchors(&multibuffer);
-                                Some((range, token.r#type, token.modifiers))
-                            } else {
-                                None
-                            }
-                        })
-                        .collect_vec()
-                })?;
-                editor.update(cx, |this: &mut Self, cx| {
-                    for (range, r#type, modifiers) in tokens {
-                        let Some(mut style) = cx.theme().tokens().get(r#type.as_str()) else {
-                            continue;
-                        };
-                        for r#mod in modifiers {
-                            let r#mod = cx.theme().modifiers().get(r#mod.as_str());
-                            style.highlight(match r#mod {
-                                Some(value) => value,
-                                None => continue,
-                            });
-                        }
-                        this.semantic_highlight(range, style, cx);
-                    }
-                })?;
-                Ok(())
-            });
-            task.detach_and_log_err(cx);
-        }
-        cx.notify();
-        Some(())
     }
 
     fn trigger_on_type_formatting(
@@ -16301,7 +16362,6 @@ impl Editor {
                 self.active_indent_guides_state.dirty = true;
                 self.refresh_active_diagnostics(cx);
                 self.refresh_code_actions(window, cx);
-                self.refresh_semantic_tokens(window, cx);
                 if self.has_active_inline_completion() {
                     self.update_visible_inline_completion(window, cx);
                 }
@@ -16340,6 +16400,13 @@ impl Editor {
                                 .collect::<HashSet<_>>()
                         });
                         if !languages_affected.is_empty() {
+                            self.refresh_semantic_tokens(
+                                SemanticTokensRefreshReason::BufferEdited(
+                                    languages_affected.clone(),
+                                ),
+                                window,
+                                cx,
+                            );
                             self.refresh_inlay_hints(
                                 InlayHintRefreshReason::BufferEdited(languages_affected),
                                 cx,
@@ -16381,11 +16448,19 @@ impl Editor {
                     predecessor: *predecessor,
                     excerpts: excerpts.clone(),
                 });
-                self.refresh_semantic_tokens(window, cx);
+                self.refresh_semantic_tokens(
+                    SemanticTokensRefreshReason::NewLinesShown,
+                    window,
+                    cx,
+                );
                 self.refresh_inlay_hints(InlayHintRefreshReason::NewLinesShown, cx);
             }
             multi_buffer::Event::ExcerptsRemoved { ids } => {
-                self.refresh_semantic_tokens(window, cx);
+                self.refresh_semantic_tokens(
+                    SemanticTokensRefreshReason::ExcerptsRemoved(ids.clone()),
+                    window,
+                    cx,
+                );
                 self.refresh_inlay_hints(InlayHintRefreshReason::ExcerptsRemoved(ids.clone()), cx);
                 let buffer = self.buffer.read(cx);
                 self.registered_buffers
@@ -16405,7 +16480,11 @@ impl Editor {
                 })
             }
             multi_buffer::Event::ExcerptsExpanded { ids } => {
-                self.refresh_semantic_tokens(window, cx);
+                self.refresh_semantic_tokens(
+                    SemanticTokensRefreshReason::NewLinesShown,
+                    window,
+                    cx,
+                );
                 self.refresh_inlay_hints(InlayHintRefreshReason::NewLinesShown, cx);
                 cx.emit(EditorEvent::ExcerptsExpanded { ids: ids.clone() })
             }
@@ -16453,6 +16532,15 @@ impl Editor {
         self.tasks_update_task = Some(self.refresh_runnables(window, cx));
         self.update_edit_prediction_settings(cx);
         self.refresh_inline_completion(true, false, window, cx);
+        self.refresh_semantic_tokens(
+            SemanticTokensRefreshReason::SettingsChange(semantic_tokens_settings(
+                self.selections.newest_anchor().head(),
+                &self.buffer.read(cx).snapshot(cx),
+                cx,
+            )),
+            window,
+            cx,
+        );
         self.refresh_inlay_hints(
             InlayHintRefreshReason::SettingsChange(inlay_hint_settings(
                 self.selections.newest_anchor().head(),
@@ -18206,6 +18294,16 @@ impl SemanticsProvider for Entity<Project> {
             project.perform_rename(buffer.clone(), position, new_name, cx)
         }))
     }
+}
+
+fn semantic_tokens_settings(
+    location: Anchor,
+    snapshot: &MultiBufferSnapshot,
+    cx: &mut Context<Editor>,
+) -> SemanticTokensSettings {
+    let file = snapshot.file_at(location);
+    let language = snapshot.language_at(location).map(|l| l.name());
+    language_settings(language, file, cx).semantic_tokens
 }
 
 fn inlay_hint_settings(

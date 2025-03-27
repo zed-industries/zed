@@ -293,6 +293,7 @@ pub enum Event {
     HostReshared,
     Reshared,
     Rejoined,
+    RefreshSemanticTokens,
     RefreshInlayHints,
     RefreshCodeLens,
     RevealInProjectPanel(ProjectEntryId),
@@ -2655,6 +2656,7 @@ impl Project {
                     return;
                 };
             }
+            LspStoreEvent::RefreshSemanticTokens => cx.emit(Event::RefreshSemanticTokens),
             LspStoreEvent::RefreshInlayHints => cx.emit(Event::RefreshInlayHints),
             LspStoreEvent::RefreshCodeLens => cx.emit(Event::RefreshCodeLens),
             LspStoreEvent::LanguageServerPrompt(prompt) => {

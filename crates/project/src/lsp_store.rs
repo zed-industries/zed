@@ -771,6 +771,28 @@ impl LocalLspStore {
             .detach();
 
         language_server
+            .on_request::<lsp::request::SemanticTokensRefresh, _, _>({
+                let this = this.clone();
+                move |(), cx| {
+                    let this = this.clone();
+                    let mut cx = cx.clone();
+                    async move {
+                        this.update(&mut cx, |this, cx| {
+                            cx.emit(LspStoreEvent::RefreshSemanticTokens);
+                            this.downstream_client.as_ref().map(|(client, project_id)| {
+                                client.send(proto::RefreshSemanticTokens {
+                                    project_id: *project_id,
+                                })
+                            })
+                        })?
+                        .transpose()?;
+                        Ok(())
+                    }
+                }
+            })
+            .detach();
+
+        language_server
             .on_request::<lsp::request::InlayHintRefreshRequest, _, _>({
                 let this = this.clone();
                 move |(), cx| {
@@ -3189,6 +3211,7 @@ pub enum LspStoreEvent {
         new_language: Option<Arc<Language>>,
     },
     Notification(String),
+    RefreshSemanticTokens,
     RefreshInlayHints,
     RefreshCodeLens,
     DiagnosticsUpdated {
