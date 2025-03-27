@@ -1006,17 +1006,17 @@ async fn test_language_server_statuses(cx_a: &mut TestAppContext, cx_b: &mut Tes
     client_a
         .fs()
         .insert_tree(
-            "/dir",
+            path!("/dir"),
             json!({
                 "main.rs": "const ONE: usize = 1;",
             }),
         )
         .await;
-    let (project_a, _) = client_a.build_local_project("/dir", cx_a).await;
+    let (project_a, _) = client_a.build_local_project(path!("/dir"), cx_a).await;
 
     let _buffer_a = project_a
         .update(cx_a, |p, cx| {
-            p.open_local_buffer_with_lsp("/dir/main.rs", cx)
+            p.open_local_buffer_with_lsp(path!("/dir/main.rs"), cx)
         })
         .await
         .unwrap();
