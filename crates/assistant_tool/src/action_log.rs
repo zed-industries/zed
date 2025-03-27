@@ -197,7 +197,7 @@ impl ActionLog {
         }
     }
 
-    pub fn clear_reviewed_changes(&mut self) {
+    pub fn clear_reviewed_changes(&mut self, cx: &mut Context<Self>) {
         self.tracked_buffers
             .retain(|_buffer, tracked_buffer| match &mut tracked_buffer.change {
                 Change::Edited {
@@ -208,6 +208,7 @@ impl ActionLog {
                 }
                 Change::Deleted { reviewed, .. } => !*reviewed,
             });
+        cx.notify();
     }
 
     /// Notifies a diagnostics check
@@ -339,6 +340,7 @@ impl ActionLog {
                 })
             } else {
                 self.tracked_buffers.remove(&buffer);
+                cx.notify();
                 Task::ready(Ok(()))
             }
         } else {
