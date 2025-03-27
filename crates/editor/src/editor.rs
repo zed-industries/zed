@@ -4703,7 +4703,6 @@ impl Editor {
 
                         Some(Task::ready(Ok(())))
                     }),
-                    task::TaskType::Locator => None,
                     task::TaskType::Debug(debug_args) => {
                         if debug_args.locator.is_some() {
                             workspace.update(cx, |workspace, cx| {

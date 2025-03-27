@@ -102,8 +102,6 @@ pub enum TaskType {
     Script,
     /// This task starts the debugger for a language
     Debug(DebugArgs),
-    /// This type of task is used for script and debug tasks to generate env variables
-    Locator,
 }
 
 #[cfg(test)]

@@ -104,70 +104,46 @@ impl ResolvedTask {
     /// Get the configuration for the debug adapter that should be used for this task.
     pub fn resolved_debug_adapter_config(&self) -> Option<DebugAdapterConfig> {
         match self.original_task.task_type.clone() {
-            TaskType::Script | TaskType::Locator => None,
-            TaskType::Debug(debug_args) => {
-                let adapter_config = if let Some(resolved) = &self.resolved {
-                    let args = resolved
-                        .args
-                        .iter()
-                        .cloned()
-                        .map(|arg| {
-                            if arg.starts_with("$") {
-                                arg.strip_prefix("$")
-                                    .and_then(|arg| resolved.env.get(arg).map(ToOwned::to_owned))
-                                    .unwrap_or_else(|| arg)
-                            } else {
-                                arg
-                            }
-                        })
-                        .collect();
+            TaskType::Debug(debug_args) if self.resolved.is_some() => {
+                let resolved = self
+                    .resolved
+                    .as_ref()
+                    .expect("We just checked if this was some");
 
-                    DebugAdapterConfig {
-                        label: resolved.label.clone(),
-                        kind: debug_args.kind.clone(),
-                        request: debug_args.request.clone(),
-                        program: resolved.command.clone().map(|program| {
-                            if program.is_empty() {
-                                None
-                            } else {
-                                Some(program)
-                            }
-                        }),
-                        cwd: resolved.cwd.clone().take_if(|p| p.exists()),
-                        initialize_args: debug_args.initialize_args,
-                        args,
-                        supports_attach: debug_args.supports_attach,
-                        locator: debug_args.locator.clone(),
-                    }
-                } else {
-                    let cwd = self
-                        .original_task
-                        .cwd
-                        .clone()
-                        .map(PathBuf::from)
-                        .take_if(|p| p.exists());
+                let args = resolved
+                    .args
+                    .iter()
+                    .cloned()
+                    .map(|arg| {
+                        if arg.starts_with("$") {
+                            arg.strip_prefix("$")
+                                .and_then(|arg| resolved.env.get(arg).map(ToOwned::to_owned))
+                                .unwrap_or_else(|| arg)
+                        } else {
+                            arg
+                        }
+                    })
+                    .collect();
 
-                    DebugAdapterConfig {
-                        label: self.original_task.label.clone(),
-                        program: self.original_task.command.clone().map(|program| {
-                            if program.is_empty() {
-                                None
-                            } else {
-                                Some(program.to_owned())
-                            }
-                        }),
-                        kind: debug_args.kind.clone(),
-                        request: debug_args.request.clone(),
-                        cwd,
-                        args: self.original_task.args.clone(),
-                        initialize_args: debug_args.initialize_args.clone(),
-                        supports_attach: debug_args.supports_attach,
-                        locator: debug_args.locator.clone(),
-                    }
-                };
-
-                Some(adapter_config)
+                Some(DebugAdapterConfig {
+                    label: resolved.label.clone(),
+                    kind: debug_args.kind.clone(),
+                    request: debug_args.request.clone(),
+                    program: resolved.command.clone().map(|program| {
+                        if program.is_empty() {
+                            None
+                        } else {
+                            Some(program)
+                        }
+                    }),
+                    cwd: resolved.cwd.clone().take_if(|p| p.exists()),
+                    initialize_args: debug_args.initialize_args,
+                    args,
+                    supports_attach: debug_args.supports_attach,
+                    locator: debug_args.locator.clone(),
+                })
             }
+            _ => None,
         }
     }
 

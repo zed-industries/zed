@@ -24,31 +24,11 @@ use worktree::WorktreeId;
 
 use crate::worktree_store::WorktreeStore;
 
-#[derive(Debug, Default)]
-pub struct TaskLocator {
-    pub build_command: String,
-    pub build_args: Vec<String>,
-}
-
-impl TaskLocator {
-    pub fn generate_task_template(&self) -> TaskTemplate {
-        TaskTemplate {
-            label: "rust locator".to_owned(),
-            command: self.build_command.clone(),
-            args: self.build_args.clone(),
-            env: HashMap::default(),
-            task_type: task::TaskType::Locator,
-            ..Default::default()
-        }
-    }
-}
-
 /// Inventory tracks available tasks for a given project.
 #[derive(Debug, Default)]
 pub struct Inventory {
     last_scheduled_tasks: VecDeque<(TaskSourceKind, ResolvedTask)>,
     templates_from_settings: ParsedTemplates,
-    pub locators: HashMap<String, TaskLocator>,
 }
 
 #[derive(Debug, Default)]
@@ -361,7 +341,6 @@ impl Inventory {
                     },
                     template,
                 )),
-                task::TaskType::Locator => None,
             })
     }
 

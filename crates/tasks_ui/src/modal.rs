@@ -355,7 +355,6 @@ impl PickerDelegate for TasksModalDelegate {
                             }
                         }
                     }
-                    TaskType::Locator => {}
                 };
             })
             .ok();
@@ -542,7 +541,6 @@ impl PickerDelegate for TasksModalDelegate {
                             })
                         }
                     }
-                    TaskType::Locator => {}
                 };
             })
             .ok();
@@ -672,7 +670,6 @@ fn string_match_candidates<'a>(
         .filter(|(_, (_, candidate))| match candidate.task_type() {
             TaskType::Script => task_modal_type == TaskModal::ScriptModal,
             TaskType::Debug(_) => task_modal_type == TaskModal::DebugModal,
-            TaskType::Locator => false,
         })
         .map(|(index, (_, candidate))| StringMatchCandidate::new(index, candidate.display_label()))
         .collect()
