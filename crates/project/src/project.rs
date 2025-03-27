@@ -1469,7 +1469,7 @@ impl Project {
     pub fn fake_debug_session(
         &mut self,
         caps: Option<dap::Capabilities>,
-        fails: Option<bool>,
+        fails: bool,
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<Session>>> {
         let worktree = maybe!({ self.worktrees(cx).next() });

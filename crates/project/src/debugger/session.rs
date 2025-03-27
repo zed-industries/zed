@@ -211,7 +211,7 @@ impl LocalMode {
         delegate: DapAdapterDelegate,
         messages_tx: futures::channel::mpsc::UnboundedSender<Message>,
         caps: Capabilities,
-        fail: Option<bool>,
+        fail: bool,
         cx: AsyncApp,
     ) -> Task<Result<(Self, Capabilities)>> {
         use task::DebugRequestDisposition;
