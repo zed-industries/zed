@@ -1430,6 +1430,12 @@ impl Project {
         }
     }
 
+    pub fn queue_debug_session(&mut self, config: DebugAdapterConfig, cx: &mut Context<Self>) {
+        if config.locator.is_none() {
+            self.start_debug_session(config, cx).detach_and_log_err(cx);
+        }
+    }
+
     pub fn start_debug_session(
         &mut self,
         config: DebugAdapterConfig,

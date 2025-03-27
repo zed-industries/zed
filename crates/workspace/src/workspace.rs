@@ -92,7 +92,7 @@ use std::{
     sync::{atomic::AtomicUsize, Arc, LazyLock, Weak},
     time::Duration,
 };
-use task::SpawnInTerminal;
+use task::{DebugAdapterConfig, SpawnInTerminal, TaskId};
 use theme::{ActiveTheme, SystemAppearance, ThemeSettings};
 pub use toolbar::{Toolbar, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView};
 pub use ui;
@@ -863,6 +863,7 @@ pub struct Workspace {
     serialized_ssh_project: Option<SerializedSshProject>,
     _items_serializer: Task<Result<()>>,
     session_id: Option<String>,
+    debug_task_queue: HashMap<task::TaskId, DebugAdapterConfig>,
 }
 
 impl EventEmitter<Event> for Workspace {}
@@ -1163,6 +1164,7 @@ impl Workspace {
             _items_serializer,
             session_id: Some(session_id),
             serialized_ssh_project: None,
+            debug_task_queue: Default::default(),
         }
     }
 
@@ -5159,6 +5161,16 @@ impl Workspace {
         prev_window
             .update(cx, |_, window, _| window.activate_window())
             .ok();
+    }
+
+    pub fn debug_task_ready(&mut self, task_id: &TaskId, cx: &mut App) {
+        if let Some(debug_config) = self.debug_task_queue.remove(task_id) {
+            self.project.update(cx, |project, cx| {
+                project
+                    .start_debug_session(debug_config, cx)
+                    .detach_and_log_err(cx);
+            })
+        }
     }
 }
 

@@ -109,7 +109,7 @@ pub enum Event {
     SelectionsChanged,
     NewNavigationTarget(Option<MaybeNavigationTarget>),
     Open(MaybeNavigationTarget),
-    TaskLocatorReady(DebugAdapterConfig),
+    TaskLocatorReady(TaskId),
 }
 
 #[derive(Clone, Debug)]
@@ -1864,8 +1864,8 @@ impl Terminal {
             unsafe { append_text_to_term(&mut self.term.lock(), &lines_to_show) };
         }
 
-        if let Some(debug_config) = task.debug_config.take() {
-            cx.emit(Event::TaskLocatorReady(debug_config));
+        if let Some(_) = task.debug_config.take() {
+            cx.emit(Event::TaskLocatorReady(task.id.clone()));
         }
 
         match task.hide {

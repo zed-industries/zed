@@ -978,14 +978,10 @@ fn subscribe_for_terminal_events(
                 window.invalidate_character_coordinates();
                 cx.emit(SearchEvent::ActiveMatchChanged)
             }
-            Event::TaskLocatorReady(debug_config) => {
+            Event::TaskLocatorReady(task_id) => {
                 workspace
                     .update(cx, |workspace, cx| {
-                        workspace.project().update(cx, |project, cx| {
-                            project
-                                .start_debug_session(debug_config.clone(), cx)
-                                .detach_and_log_err(cx);
-                        })
+                        workspace.debug_task_ready(task_id, cx);
                     })
                     .log_err();
             }
