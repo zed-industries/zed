@@ -491,7 +491,6 @@ dependencies = [
  "prompt_store",
  "proto",
  "rand 0.8.5",
- "regex",
  "release_channel",
  "rope",
  "serde",
