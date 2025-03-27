@@ -776,7 +776,11 @@
     //    "modal_max_width": "full"
     //
     // Default: small
-    "modal_max_width": "small"
+    "modal_max_width": "small",
+    /// Determines if the auto-focus will skip the active file when it is the first found file
+    ///
+    /// Default: true
+    "focus_skip_active_file": true
   },
   // Whether or not to remove any trailing whitespace from lines of a buffer
   // before saving it.

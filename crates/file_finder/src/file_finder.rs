@@ -794,8 +794,10 @@ impl FileFinderDelegate {
                 extend_old_matches,
             );
 
+            let file_finder_settings = FileFinderSettings::get_global(cx);
+
             self.selected_index = selected_match.map_or_else(
-                || self.calculate_selected_index(),
+                || self.calculate_selected_index(file_finder_settings.focus_skip_active_file),
                 |m| {
                     self.matches
                         .position(&m, self.currently_opened_path.as_ref())
@@ -1038,7 +1040,18 @@ impl FileFinderDelegate {
     }
 
     /// Skips first history match (that is displayed topmost) if it's currently opened.
-    fn calculate_selected_index(&self) -> usize {
+    fn calculate_selected_index(&self, focus_skip_active_file: bool) -> usize {
+        if focus_skip_active_file {
+            if let Some(Match::History { path, .. }) = self.matches.get(0) {
+                if Some(path) == self.currently_opened_path.as_ref() {
+                    let elements_after_first = self.matches.len() - 1;
+                    if elements_after_first > 0 {
+                        return 1;
+                    }
+                }
+            }
+        }
+
         0
     }
 
