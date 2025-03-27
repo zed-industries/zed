@@ -5,7 +5,6 @@ use crate::{
 use anyhow::Result;
 use fs::{FakeFs, Fs, RealFs, RemoveOptions};
 use git::GITIGNORE;
-use git2::RepositoryInitOptions;
 use gpui::{AppContext as _, BorrowAppContext, Context, Task, TestAppContext};
 use parking_lot::Mutex;
 use postage::stream::Stream;
@@ -1920,110 +1919,6 @@ fn test_unrelativize() {
         work_directory.unrelativize(&"README.md".into()),
         Path::new("../../README.md").into()
     );
-}
-
-#[track_caller]
-fn git_init(path: &Path) -> git2::Repository {
-    let mut init_opts = RepositoryInitOptions::new();
-    init_opts.initial_head("main");
-    git2::Repository::init_opts(path, &init_opts).expect("Failed to initialize git repository")
-}
-
-#[track_caller]
-fn git_add<P: AsRef<Path>>(path: P, repo: &git2::Repository) {
-    let path = path.as_ref();
-    let mut index = repo.index().expect("Failed to get index");
-    index.add_path(path).expect("Failed to add file");
-    index.write().expect("Failed to write index");
-}
-
-#[track_caller]
-fn git_remove_index(path: &Path, repo: &git2::Repository) {
-    let mut index = repo.index().expect("Failed to get index");
-    index.remove_path(path).expect("Failed to add file");
-    index.write().expect("Failed to write index");
-}
-
-#[track_caller]
-fn git_commit(msg: &'static str, repo: &git2::Repository) {
-    use git2::Signature;
-
-    let signature = Signature::now("test", "test@zed.dev").unwrap();
-    let oid = repo.index().unwrap().write_tree().unwrap();
-    let tree = repo.find_tree(oid).unwrap();
-    if let Ok(head) = repo.head() {
-        let parent_obj = head.peel(git2::ObjectType::Commit).unwrap();
-
-        let parent_commit = parent_obj.as_commit().unwrap();
-
-        repo.commit(
-            Some("HEAD"),
-            &signature,
-            &signature,
-            msg,
-            &tree,
-            &[parent_commit],
-        )
-        .expect("Failed to commit with parent");
-    } else {
-        repo.commit(Some("HEAD"), &signature, &signature, msg, &tree, &[])
-            .expect("Failed to commit");
-    }
-}
-
-#[track_caller]
-fn git_cherry_pick(commit: &git2::Commit<'_>, repo: &git2::Repository) {
-    repo.cherrypick(commit, None).expect("Failed to cherrypick");
-}
-
-#[track_caller]
-fn git_stash(repo: &mut git2::Repository) {
-    use git2::Signature;
-
-    let signature = Signature::now("test", "test@zed.dev").unwrap();
-    repo.stash_save(&signature, "N/A", None)
-        .expect("Failed to stash");
-}
-
-#[track_caller]
-fn git_reset(offset: usize, repo: &git2::Repository) {
-    let head = repo.head().expect("Couldn't get repo head");
-    let object = head.peel(git2::ObjectType::Commit).unwrap();
-    let commit = object.as_commit().unwrap();
-    let new_head = commit
-        .parents()
-        .inspect(|parnet| {
-            parnet.message();
-        })
-        .nth(offset)
-        .expect("Not enough history");
-    repo.reset(new_head.as_object(), git2::ResetType::Soft, None)
-        .expect("Could not reset");
-}
-
-#[track_caller]
-fn git_branch(name: &str, repo: &git2::Repository) {
-    let head = repo
-        .head()
-        .expect("Couldn't get repo head")
-        .peel_to_commit()
-        .expect("HEAD is not a commit");
-    repo.branch(name, &head, false).expect("Failed to commit");
-}
-
-#[track_caller]
-fn git_checkout(name: &str, repo: &git2::Repository) {
-    repo.set_head(name).expect("Failed to set head");
-    repo.checkout_head(None).expect("Failed to check out head");
-}
-
-#[track_caller]
-fn git_status(repo: &git2::Repository) -> collections::HashMap<String, git2::Status> {
-    repo.statuses(None)
-        .unwrap()
-        .iter()
-        .map(|status| (status.path().unwrap().to_string(), status.status()))
-        .collect()
 }
 
 #[track_caller]

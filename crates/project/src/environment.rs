@@ -15,7 +15,6 @@ use crate::{
 };
 
 pub struct ProjectEnvironment {
-    worktree_store: Entity<WorktreeStore>,
     cli_environment: Option<HashMap<String, String>>,
     environments: HashMap<Arc<Path>, WeakShared<Task<Option<HashMap<String, String>>>>>,
     environment_error_messages: HashMap<Arc<Path>, EnvironmentErrorMessage>,
@@ -44,17 +43,11 @@ impl ProjectEnvironment {
             .detach();
 
             Self {
-                worktree_store: worktree_store.clone(),
                 cli_environment,
                 environments: Default::default(),
                 environment_error_messages: Default::default(),
             }
         })
-    }
-
-    pub(crate) fn remove_environment(&mut self, abs_path: &Path) {
-        self.environment_error_messages.remove(abs_path);
-        self.environments.remove(abs_path);
     }
 
     /// Returns the inherited CLI environment, if this project was opened from the Zed CLI.
@@ -160,25 +153,25 @@ impl EnvironmentErrorMessage {
     }
 }
 
-async fn load_worktree_shell_environment(
-    worktree_abs_path: &Path,
+async fn load_directory_shell_environment(
+    abs_path: &Path,
     load_direnv: &DirenvSettings,
 ) -> (
     Option<HashMap<String, String>>,
     Option<EnvironmentErrorMessage>,
 ) {
-    match smol::fs::metadata(worktree_abs_path).await {
+    match smol::fs::metadata(abs_path).await {
         Ok(meta) => {
             let dir = if meta.is_dir() {
-                worktree_abs_path
-            } else if let Some(parent) = worktree_abs_path.parent() {
+                abs_path
+            } else if let Some(parent) = abs_path.parent() {
                 parent
             } else {
                 return (
                     None,
                     Some(EnvironmentErrorMessage(format!(
                         "Failed to load shell environment in {}: not a directory",
-                        worktree_abs_path.display()
+                        abs_path.display()
                     ))),
                 );
             };
@@ -189,7 +182,7 @@ async fn load_worktree_shell_environment(
             None,
             Some(EnvironmentErrorMessage(format!(
                 "Failed to load shell environment in {}: {}",
-                worktree_abs_path.display(),
+                abs_path.display(),
                 err
             ))),
         ),
@@ -346,7 +339,7 @@ fn get_directory_env(
         let (mut shell_env, error_message) = cx
             .background_spawn({
                 let abs_path = abs_path.clone();
-                async move { load_shell_environment(&abs_path, &load_direnv).await }
+                async move { load_directory_shell_environment(&abs_path, &load_direnv).await }
             })
             .await;
 

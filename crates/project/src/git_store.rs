@@ -203,7 +203,7 @@ enum RepositoryState {
         backend: Arc<dyn GitRepository>,
         project_environment: WeakEntity<ProjectEnvironment>,
         // TODO remove
-        worktree_id: WorktreeId,
+        _worktree_id: WorktreeId,
     },
     Remote {
         project_id: ProjectId,
@@ -1038,27 +1038,6 @@ impl GitStore {
         }
     }
 
-    fn project_environment(&self) -> Option<Entity<ProjectEnvironment>> {
-        match &self.state {
-            GitStoreState::Local {
-                project_environment,
-                ..
-            } => Some(project_environment.clone()),
-            GitStoreState::Ssh { .. } | GitStoreState::Remote { .. } => None,
-        }
-    }
-
-    fn project_id(&self) -> Option<ProjectId> {
-        match &self.state {
-            GitStoreState::Local { .. } => None,
-            GitStoreState::Ssh { .. } => Some(ProjectId(proto::SSH_PROJECT_ID)),
-            GitStoreState::Remote {
-                upstream_project_id: project_id,
-                ..
-            } => Some(*project_id),
-        }
-    }
-
     fn on_worktree_store_event(
         &mut self,
         worktree_store: Entity<WorktreeStore>,
@@ -1123,7 +1102,7 @@ impl GitStore {
                             continue;
                         };
                         let state = RepositoryState::Local {
-                            worktree_id: worktree.id(),
+                            _worktree_id: worktree.id(),
                             backend: local_repo.repo().clone(),
                             project_environment: project_environment.downgrade(),
                         };
@@ -1137,10 +1116,9 @@ impl GitStore {
                         let (id, repo) = if let Some(existing_repo) = existing_repo {
                             let existing_repo = existing_repo.clone();
                             let id = existing_repo.update(cx, |existing_repo, _| {
-                                debug_assert_eq!(
-                                    existing_repo.work_directory_abs_path.as_ref(),
-                                    repo_entry.work_directory_abs_path.as_path(),
-                                );
+                                // TODO need how figure out how to handle work directory renames even after work directory ids are gone
+                                existing_repo.snapshot.work_directory_abs_path =
+                                    repo_entry.work_directory_abs_path.as_path().into();
                                 existing_repo.snapshot.branch = repo_entry.current_branch.clone();
                                 existing_repo.snapshot.completed_scan_id =
                                     worktree.completed_scan_id();

@@ -10,7 +10,7 @@ use gpui::{
 use language::{BinaryStatus, LanguageRegistry, LanguageServerId};
 use project::{
     EnvironmentErrorMessage, LanguageServerProgress, LspStoreEvent, Project,
-    ProjectEnvironmentEvent, WorktreeId,
+    ProjectEnvironmentEvent,
 };
 use smallvec::SmallVec;
 use std::{cmp::Reverse, fmt::Write, path::Path, sync::Arc, time::Duration};

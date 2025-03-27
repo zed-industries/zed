@@ -9824,10 +9824,7 @@ impl LocalLspAdapterDelegate {
         fs: Arc<dyn Fs>,
         cx: &mut App,
     ) -> Arc<Self> {
-        let (worktree_id, worktree_abs_path) = {
-            let worktree = worktree.read(cx);
-            (worktree.id(), worktree.abs_path())
-        };
+        let worktree_abs_path = worktree.read(cx).abs_path();
 
         let load_shell_env_task = environment.update(cx, |env, cx| {
             env.get_environment(Some(worktree_abs_path), cx)
