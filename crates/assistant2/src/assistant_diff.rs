@@ -122,10 +122,10 @@ impl AssistantDiff {
 
     fn update_excerpts(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let thread = self.thread.read(cx);
-        let unreviewed_buffers = thread.action_log().read(cx).unreviewed_buffers();
+        let changed_buffers = thread.action_log().read(cx).changed_buffers();
         let mut paths_to_delete = self.multibuffer.read(cx).paths().collect::<HashSet<_>>();
 
-        for (buffer, tracked) in unreviewed_buffers {
+        for (buffer, tracked) in changed_buffers {
             let Some(file) = buffer.read(cx).file().cloned() else {
                 continue;
             };

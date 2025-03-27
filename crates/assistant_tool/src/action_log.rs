@@ -2,8 +2,8 @@ use anyhow::{anyhow, Result};
 use buffer_diff::BufferDiff;
 use collections::{BTreeMap, HashMap, HashSet};
 use gpui::{App, AppContext, Context, Entity, Task};
-use language::{Buffer, OffsetRangeExt, ToOffset};
-use std::{future::Future, ops::Range};
+use language::{Buffer, OffsetRangeExt, Rope, ToOffset};
+use std::ops::Range;
 
 /// Tracks actions performed by tools in a thread
 #[derive(Debug)]
@@ -17,65 +17,106 @@ pub struct ActionLog {
     edited_since_project_diagnostics_check: bool,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone, Debug)]
 pub struct TrackedBuffer {
     buffer: Entity<Buffer>,
-    unreviewed_edit_ids: Vec<clock::Lamport>,
-    accepted_edit_ids: Vec<clock::Lamport>,
+    change: Change,
     version: clock::Global,
     diff: Entity<BufferDiff>,
     secondary_diff: Entity<BufferDiff>,
+    initial_status: TrackedBufferInitialStatus,
+}
+
+#[derive(Clone, Debug)]
+enum Change {
+    Edited {
+        unreviewed_edit_ids: Vec<clock::Lamport>,
+        accepted_edit_ids: Vec<clock::Lamport>,
+    },
+    Deleted {
+        reviewed: bool,
+    },
+}
+
+#[derive(Clone, Debug)]
+enum TrackedBufferInitialStatus {
+    CreatedByAssistant,
+    Existing(Rope),
 }
 
 impl TrackedBuffer {
+    pub fn has_changes(&self) -> bool {
+        match &self.change {
+            Change::Edited {
+                unreviewed_edit_ids,
+                accepted_edit_ids,
+            } => !unreviewed_edit_ids.is_empty() || !accepted_edit_ids.is_empty(),
+            Change::Deleted { .. } => true,
+        }
+    }
+
     pub fn needs_review(&self) -> bool {
-        !self.unreviewed_edit_ids.is_empty()
+        match &self.change {
+            Change::Edited {
+                unreviewed_edit_ids,
+                ..
+            } => !unreviewed_edit_ids.is_empty(),
+            Change::Deleted { reviewed } => !reviewed,
+        }
     }
 
     pub fn diff(&self) -> &Entity<BufferDiff> {
         &self.diff
     }
 
-    fn update_diff(&mut self, cx: &mut App) -> impl 'static + Future<Output = ()> {
-        let edits_to_undo = self
-            .unreviewed_edit_ids
-            .iter()
-            .chain(&self.accepted_edit_ids)
-            .map(|edit_id| (*edit_id, u32::MAX))
-            .collect::<HashMap<_, _>>();
-        let buffer_without_edits = self.buffer.update(cx, |buffer, cx| buffer.branch(cx));
-        buffer_without_edits.update(cx, |buffer, cx| {
-            buffer.undo_operations(edits_to_undo, cx);
-        });
-        let primary_diff_update = self.diff.update(cx, |diff, cx| {
-            diff.set_base_text(
-                buffer_without_edits,
-                self.buffer.read(cx).text_snapshot(),
-                cx,
-            )
-        });
+    fn update_diff(&mut self, cx: &mut App) -> Task<()> {
+        match &self.change {
+            Change::Edited {
+                unreviewed_edit_ids,
+                accepted_edit_ids,
+            } => {
+                let edits_to_undo = unreviewed_edit_ids
+                    .iter()
+                    .chain(accepted_edit_ids)
+                    .map(|edit_id| (*edit_id, u32::MAX))
+                    .collect::<HashMap<_, _>>();
+                let buffer_without_edits = self.buffer.update(cx, |buffer, cx| buffer.branch(cx));
+                buffer_without_edits
+                    .update(cx, |buffer, cx| buffer.undo_operations(edits_to_undo, cx));
+                let primary_diff_update = self.diff.update(cx, |diff, cx| {
+                    diff.set_base_text(
+                        buffer_without_edits,
+                        self.buffer.read(cx).text_snapshot(),
+                        cx,
+                    )
+                });
 
-        let unreviewed_edits_to_undo = self
-            .unreviewed_edit_ids
-            .iter()
-            .map(|edit_id| (*edit_id, u32::MAX))
-            .collect::<HashMap<_, _>>();
-        let buffer_without_unreviewed_edits =
-            self.buffer.update(cx, |buffer, cx| buffer.branch(cx));
-        buffer_without_unreviewed_edits.update(cx, |buffer, cx| {
-            buffer.undo_operations(unreviewed_edits_to_undo, cx);
-        });
-        let secondary_diff_update = self.secondary_diff.update(cx, |diff, cx| {
-            diff.set_base_text(
-                buffer_without_unreviewed_edits.clone(),
-                self.buffer.read(cx).text_snapshot(),
-                cx,
-            )
-        });
+                let unreviewed_edits_to_undo = unreviewed_edit_ids
+                    .iter()
+                    .map(|edit_id| (*edit_id, u32::MAX))
+                    .collect::<HashMap<_, _>>();
+                let buffer_without_unreviewed_edits =
+                    self.buffer.update(cx, |buffer, cx| buffer.branch(cx));
+                buffer_without_unreviewed_edits.update(cx, |buffer, cx| {
+                    buffer.undo_operations(unreviewed_edits_to_undo, cx)
+                });
+                let secondary_diff_update = self.secondary_diff.update(cx, |diff, cx| {
+                    diff.set_base_text(
+                        buffer_without_unreviewed_edits.clone(),
+                        self.buffer.read(cx).text_snapshot(),
+                        cx,
+                    )
+                });
 
-        async move {
-            _ = primary_diff_update.await;
-            _ = secondary_diff_update.await;
+                cx.background_spawn(async move {
+                    _ = primary_diff_update.await;
+                    _ = secondary_diff_update.await;
+                })
+            }
+            Change::Deleted { reviewed } => {
+                let reviewed = *reviewed;
+                cx.spawn(async move |cx| {})
+            }
         }
     }
 }
@@ -103,6 +144,7 @@ impl ActionLog {
     fn track_buffer(
         &mut self,
         buffer: Entity<Buffer>,
+        created: bool,
         cx: &mut Context<Self>,
     ) -> &mut TrackedBuffer {
         let tracked_buffer = self
@@ -118,11 +160,18 @@ impl ActionLog {
                 });
                 TrackedBuffer {
                     buffer: buffer.clone(),
-                    unreviewed_edit_ids: Vec::new(),
-                    accepted_edit_ids: Vec::new(),
+                    change: Change::Edited {
+                        unreviewed_edit_ids: Vec::new(),
+                        accepted_edit_ids: Vec::new(),
+                    },
                     version: buffer.read(cx).version(),
                     diff,
                     secondary_diff: unreviewed_diff,
+                    initial_status: if created {
+                        TrackedBufferInitialStatus::CreatedByAssistant
+                    } else {
+                        TrackedBufferInitialStatus::Existing(text_snapshot.as_rope().clone())
+                    },
                 }
             });
         tracked_buffer.version = buffer.read(cx).version();
@@ -131,7 +180,18 @@ impl ActionLog {
 
     /// Track a buffer as read, so we can notify the model about user edits.
     pub fn buffer_read(&mut self, buffer: Entity<Buffer>, cx: &mut Context<Self>) {
-        self.track_buffer(buffer, cx);
+        self.track_buffer(buffer, false, cx);
+    }
+
+    /// Track a buffer as read, so we can notify the model about user edits.
+    pub fn buffer_created(
+        &mut self,
+        buffer: Entity<Buffer>,
+        edit_id: Option<clock::Lamport>,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<()>> {
+        self.track_buffer(buffer.clone(), true, cx);
+        self.buffer_edited(buffer, edit_id.into_iter().collect(), cx)
     }
 
     /// Mark a buffer as edited, so we can refresh it in the context
@@ -144,16 +204,50 @@ impl ActionLog {
         self.edited_since_project_diagnostics_check = true;
         self.stale_buffers_in_context.insert(buffer.clone());
 
-        let tracked_buffer = self.track_buffer(buffer.clone(), cx);
-        tracked_buffer
-            .unreviewed_edit_ids
-            .extend(edit_ids.iter().copied());
+        let tracked_buffer = self.track_buffer(buffer.clone(), false, cx);
+
+        if let Change::Edited {
+            unreviewed_edit_ids,
+            ..
+        } = &mut tracked_buffer.change
+        {
+            unreviewed_edit_ids.extend(edit_ids.iter().copied());
+        } else {
+            tracked_buffer.change = Change::Edited {
+                unreviewed_edit_ids: edit_ids,
+                accepted_edit_ids: Vec::new(),
+            };
+        }
+
         let update = tracked_buffer.update_diff(cx);
         cx.spawn(async move |this, cx| {
             update.await;
             this.update(cx, |_this, cx| cx.notify())?;
             Ok(())
         })
+    }
+
+    pub fn buffer_deleted(
+        &mut self,
+        buffer: Entity<Buffer>,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<()>> {
+        let tracked_buffer = self.track_buffer(buffer.clone(), false, cx);
+        match &tracked_buffer.initial_status {
+            TrackedBufferInitialStatus::CreatedByAssistant => {
+                self.tracked_buffers.remove(&buffer);
+                Task::ready(Ok(()))
+            }
+            TrackedBufferInitialStatus::Existing(_) => {
+                tracked_buffer.change = Change::Deleted { reviewed: false };
+                let update = tracked_buffer.update_diff(cx);
+                cx.spawn(async move |this, cx| {
+                    update.await;
+                    this.update(cx, |_this, cx| cx.notify())?;
+                    Ok(())
+                })
+            }
+        }
     }
 
     /// Accepts edits in a given range within a buffer.
@@ -171,25 +265,35 @@ impl ActionLog {
         let buffer = buffer.read(cx);
         let buffer_range = buffer_range.to_offset(buffer);
 
-        let source;
-        let destination;
-        if accept {
-            source = &mut tracked_buffer.unreviewed_edit_ids;
-            destination = &mut tracked_buffer.accepted_edit_ids;
-        } else {
-            source = &mut tracked_buffer.accepted_edit_ids;
-            destination = &mut tracked_buffer.unreviewed_edit_ids;
-        }
-
-        source.retain(|edit_id| {
-            for range in buffer.edited_ranges_for_edit_ids::<usize>([edit_id]) {
-                if buffer_range.end >= range.start && buffer_range.start <= range.end {
-                    destination.push(*edit_id);
-                    return false;
-                }
+        match &mut tracked_buffer.change {
+            Change::Deleted { reviewed } => {
+                *reviewed = accept;
             }
-            true
-        });
+            Change::Edited {
+                unreviewed_edit_ids,
+                accepted_edit_ids,
+            } => {
+                let source;
+                let destination;
+                if accept {
+                    source = unreviewed_edit_ids;
+                    destination = accepted_edit_ids;
+                } else {
+                    source = accepted_edit_ids;
+                    destination = unreviewed_edit_ids;
+                }
+
+                source.retain(|edit_id| {
+                    for range in buffer.edited_ranges_for_edit_ids::<usize>([edit_id]) {
+                        if buffer_range.end >= range.start && buffer_range.start <= range.end {
+                            destination.push(*edit_id);
+                            return false;
+                        }
+                    }
+                    true
+                });
+            }
+        }
 
         let update = tracked_buffer.update_diff(cx);
         cx.spawn(async move |this, cx| {
@@ -200,12 +304,10 @@ impl ActionLog {
     }
 
     /// Returns the set of buffers that contain changes that haven't been reviewed by the user.
-    pub fn unreviewed_buffers(&self) -> BTreeMap<Entity<Buffer>, TrackedBuffer> {
+    pub fn changed_buffers(&self) -> BTreeMap<Entity<Buffer>, TrackedBuffer> {
         self.tracked_buffers
             .iter()
-            .filter(|(_, tracked)| {
-                !tracked.accepted_edit_ids.is_empty() || !tracked.unreviewed_edit_ids.is_empty()
-            })
+            .filter(|(_, tracked)| tracked.has_changes())
             .map(|(buffer, tracked)| (buffer.clone(), tracked.clone()))
             .collect()
     }
@@ -387,7 +489,7 @@ mod tests {
         cx.read(|cx| {
             action_log
                 .read(cx)
-                .unreviewed_buffers()
+                .changed_buffers()
                 .into_iter()
                 .map(|(buffer, tracked_buffer)| {
                     let snapshot = buffer.read(cx).snapshot();

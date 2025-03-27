@@ -101,7 +101,7 @@ impl Tool for CreateFileTool {
 
             action_log
                 .update(cx, |action_log, cx| {
-                    action_log.buffer_edited(buffer.clone(), edit_id.into_iter().collect(), cx)
+                    action_log.buffer_created(buffer.clone(), edit_id, cx)
                 })?
                 .await
                 .log_err();
