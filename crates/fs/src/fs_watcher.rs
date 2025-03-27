@@ -105,7 +105,14 @@ static FS_WATCHER_INSTANCE: OnceLock<anyhow::Result<GlobalWatcher, notify::Error
     OnceLock::new();
 
 fn handle_event(event: Result<notify::Event, notify::Error>) {
-    let Some(event) = event.log_err() else { return };
+    // Filter out access events, which could lead to a weird bug on Linux after upgrading notify
+    // https://github.com/zed-industries/zed/actions/runs/14085230504/job/39449448832
+    let Some(event) = event
+        .log_err()
+        .filter(|event| !matches!(event.kind, EventKind::Access(_)))
+    else {
+        return;
+    };
     global::<()>(move |watcher| {
         for f in watcher.watchers.lock().iter() {
             f(&event)

@@ -482,11 +482,17 @@ impl CodegenAlternative {
 
         self.generation = cx.spawn(async move |codegen, cx| {
             let stream = stream.await;
+            let token_usage = stream
+                .as_ref()
+                .ok()
+                .map(|stream| stream.last_token_usage.clone());
             let message_id = stream
                 .as_ref()
                 .ok()
                 .and_then(|stream| stream.message_id.clone());
             let generate = async {
+                let model_telemetry_id = model_telemetry_id.clone();
+                let model_provider_id = model_provider_id.clone();
                 let (mut diff_tx, mut diff_rx) = mpsc::channel(1);
                 let executor = cx.background_executor().clone();
                 let message_id = message_id.clone();
@@ -596,7 +602,7 @@ impl CodegenAlternative {
                                 kind: AssistantKind::Inline,
                                 phase: AssistantPhase::Response,
                                 model: model_telemetry_id,
-                                model_provider: model_provider_id.to_string(),
+                                model_provider: model_provider_id,
                                 response_latency,
                                 error_message,
                                 language_name: language_name.map(|name| name.to_proto()),
@@ -677,6 +683,16 @@ impl CodegenAlternative {
                     }
                     this.elapsed_time = Some(elapsed_time);
                     this.completion = Some(completion.lock().clone());
+                    if let Some(usage) = token_usage {
+                        let usage = usage.lock();
+                        telemetry::event!(
+                            "Inline Assistant Completion",
+                            model = model_telemetry_id,
+                            model_provider = model_provider_id,
+                            input_tokens = usage.input_tokens,
+                            output_tokens = usage.output_tokens,
+                        )
+                    }
                     cx.emit(CodegenEvent::Finished);
                     cx.notify();
                 })
@@ -1021,7 +1037,7 @@ mod tests {
         language_settings, tree_sitter_rust, Buffer, Language, LanguageConfig, LanguageMatcher,
         Point,
     };
-    use language_model::LanguageModelRegistry;
+    use language_model::{LanguageModelRegistry, TokenUsage};
     use rand::prelude::*;
     use serde::Serialize;
     use settings::SettingsStore;
@@ -1405,6 +1421,7 @@ mod tests {
                 future::ready(Ok(LanguageModelTextStream {
                     message_id: None,
                     stream: chunks_rx.map(Ok).boxed(),
+                    last_token_usage: Arc::new(Mutex::new(TokenUsage::default())),
                 })),
                 cx,
             );

@@ -43,6 +43,7 @@ use std::{
         Arc,
     },
 };
+use util::path;
 use workspace::{Workspace, WorkspaceStore};
 
 use livekit_client::test::TestServer as LivekitTestServer;
@@ -738,7 +739,7 @@ impl TestClient {
     pub async fn build_test_project(&self, cx: &mut TestAppContext) -> Entity<Project> {
         self.fs()
             .insert_tree(
-                "/a",
+                path!("/a"),
                 json!({
                     "1.txt": "one\none\none",
                     "2.js": "function two() { return 2; }",
@@ -746,7 +747,7 @@ impl TestClient {
                 }),
             )
             .await;
-        self.build_local_project("/a", cx).await.0
+        self.build_local_project(path!("/a"), cx).await.0
     }
 
     pub async fn host_workspace(

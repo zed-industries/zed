@@ -24,8 +24,8 @@ use ui::prelude::*;
 use util::ResultExt;
 use workspace::{
     dock::{DockPosition, Panel, PanelEvent},
-    pane, Continue, Disconnect, Pane, Pause, Restart, StepBack, StepInto, StepOut, StepOver, Stop,
-    ToggleIgnoreBreakpoints, Workspace,
+    pane, ClearAllBreakpoints, Continue, Disconnect, Pane, Pause, Restart, StepBack, StepInto,
+    StepOut, StepOver, Stop, ToggleIgnoreBreakpoints, Workspace,
 };
 
 pub enum DebugPanelEvent {
@@ -173,6 +173,15 @@ impl DebugPanel {
         cx.spawn(async move |cx| {
             workspace.update_in(cx, |workspace, window, cx| {
                 let debug_panel = DebugPanel::new(workspace, window, cx);
+
+                workspace.register_action(|workspace, _: &ClearAllBreakpoints, _, cx| {
+                    workspace.project().read(cx).breakpoint_store().update(
+                        cx,
+                        |breakpoint_store, cx| {
+                            breakpoint_store.clear_breakpoints(cx);
+                        },
+                    )
+                });
 
                 cx.observe(&debug_panel, |_, debug_panel, cx| {
                     let (has_active_session, supports_restart, support_step_back) = debug_panel

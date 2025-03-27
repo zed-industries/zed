@@ -6,6 +6,7 @@ use project::Project;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
+use ui::IconName;
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct DeletePathToolInput {
@@ -30,8 +31,16 @@ impl Tool for DeletePathTool {
         "delete-path".into()
     }
 
+    fn needs_confirmation(&self) -> bool {
+        true
+    }
+
     fn description(&self) -> String {
         include_str!("./delete_path_tool/description.md").into()
+    }
+
+    fn icon(&self) -> IconName {
+        IconName::FileDelete
     }
 
     fn input_schema(&self) -> serde_json::Value {

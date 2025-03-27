@@ -15,7 +15,7 @@ use client::Client;
 use command_palette_hooks::CommandPaletteFilter;
 use feature_flags::FeatureFlagAppExt;
 use fs::Fs;
-use gpui::{actions, App, Global, UpdateGlobal};
+use gpui::{actions, App, Global, ReadGlobal, UpdateGlobal};
 use language_model::{
     LanguageModelId, LanguageModelProviderId, LanguageModelRegistry, LanguageModelResponseMessage,
 };
@@ -85,6 +85,10 @@ impl Assistant {
         CommandPaletteFilter::update_global(cx, |filter, _cx| {
             filter.show_namespace(Self::NAMESPACE);
         });
+    }
+
+    pub fn enabled(cx: &App) -> bool {
+        Self::global(cx).enabled
     }
 }
 
@@ -241,18 +245,6 @@ fn register_slash_commands(prompt_builder: Option<Arc<PromptBuilder>>, cx: &mut 
         })
         .detach();
     }
-
-    cx.observe_flag::<assistant_slash_commands::AutoSlashCommandFeatureFlag, _>({
-        let slash_command_registry = slash_command_registry.clone();
-        move |is_enabled, _cx| {
-            if is_enabled {
-                // [#auto-staff-ship] TODO remove this when /auto is no longer staff-shipped
-                slash_command_registry
-                    .register_command(assistant_slash_commands::AutoCommand, true);
-            }
-        }
-    })
-    .detach();
 
     cx.observe_flag::<assistant_slash_commands::StreamingExampleSlashCommandFeatureFlag, _>({
         let slash_command_registry = slash_command_registry.clone();

@@ -4,17 +4,22 @@ pub use pulldown_cmark::TagEnd as MarkdownTagEnd;
 use pulldown_cmark::{Alignment, HeadingLevel, LinkType, MetadataBlockKind, Options, Parser};
 use std::{collections::HashSet, ops::Range};
 
-pub fn parse_markdown(text: &str) -> (Vec<(Range<usize>, MarkdownEvent)>, HashSet<SharedString>) {
-    let mut options = Options::all();
-    options.remove(pulldown_cmark::Options::ENABLE_DEFINITION_LIST);
-    options.remove(pulldown_cmark::Options::ENABLE_YAML_STYLE_METADATA_BLOCKS);
-    options.remove(pulldown_cmark::Options::ENABLE_MATH);
+const PARSE_OPTIONS: Options = Options::ENABLE_TABLES
+    .union(Options::ENABLE_FOOTNOTES)
+    .union(Options::ENABLE_STRIKETHROUGH)
+    .union(Options::ENABLE_TASKLISTS)
+    .union(Options::ENABLE_SMART_PUNCTUATION)
+    .union(Options::ENABLE_HEADING_ATTRIBUTES)
+    .union(Options::ENABLE_PLUSES_DELIMITED_METADATA_BLOCKS)
+    .union(Options::ENABLE_OLD_FOOTNOTES)
+    .union(Options::ENABLE_GFM);
 
+pub fn parse_markdown(text: &str) -> (Vec<(Range<usize>, MarkdownEvent)>, HashSet<SharedString>) {
     let mut events = Vec::new();
     let mut languages = HashSet::new();
     let mut within_link = false;
     let mut within_metadata = false;
-    for (pulldown_event, mut range) in Parser::new_ext(text, options).into_offset_iter() {
+    for (pulldown_event, mut range) in Parser::new_ext(text, PARSE_OPTIONS).into_offset_iter() {
         if within_metadata {
             if let pulldown_cmark::Event::End(pulldown_cmark::TagEnd::MetadataBlock { .. }) =
                 pulldown_event
@@ -357,5 +362,29 @@ impl From<pulldown_cmark::Tag<'_>> for MarkdownTag {
             pulldown_cmark::Tag::DefinitionListTitle => MarkdownTag::DefinitionListTitle,
             pulldown_cmark::Tag::DefinitionListDefinition => MarkdownTag::DefinitionListDefinition,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const UNWANTED_OPTIONS: Options = Options::ENABLE_YAML_STYLE_METADATA_BLOCKS
+        .union(Options::ENABLE_MATH)
+        .union(Options::ENABLE_DEFINITION_LIST);
+
+    #[test]
+    fn all_options_considered() {
+        // The purpose of this is to fail when new options are added to pulldown_cmark, so that they
+        // can be evaluated for inclusion.
+        assert_eq!(PARSE_OPTIONS.union(UNWANTED_OPTIONS), Options::all());
+    }
+
+    #[test]
+    fn wanted_and_unwanted_options_disjoint() {
+        assert_eq!(
+            PARSE_OPTIONS.intersection(UNWANTED_OPTIONS),
+            Options::empty()
+        );
     }
 }

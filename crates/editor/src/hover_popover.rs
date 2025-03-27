@@ -29,7 +29,7 @@ use workspace::{OpenOptions, OpenVisible, Workspace};
 pub const HOVER_REQUEST_DELAY_MILLIS: u64 = 200;
 
 pub const MIN_POPOVER_CHARACTER_WIDTH: f32 = 20.;
-pub const MIN_POPOVER_LINE_HEIGHT: Pixels = px(4.);
+pub const MIN_POPOVER_LINE_HEIGHT: f32 = 4.;
 pub const HOVER_POPOVER_GAP: Pixels = px(10.);
 
 /// Bindable action which uses the most recent selection head to trigger a hover
@@ -1029,7 +1029,7 @@ mod tests {
                 fn test() { «println!»(); }
             "});
         let mut requests =
-            cx.handle_request::<lsp::request::HoverRequest, _, _>(move |_, _, _| async move {
+            cx.set_request_handler::<lsp::request::HoverRequest, _, _>(move |_, _, _| async move {
                 Ok(Some(lsp::Hover {
                     contents: lsp::HoverContents::Markup(lsp::MarkupContent {
                         kind: lsp::MarkupKind::Markdown,
@@ -1109,7 +1109,9 @@ mod tests {
             "});
         let mut request = cx
             .lsp
-            .handle_request::<lsp::request::HoverRequest, _, _>(|_, _| async move { Ok(None) });
+            .set_request_handler::<lsp::request::HoverRequest, _, _>(
+                |_, _| async move { Ok(None) },
+            );
         cx.update_editor(|editor, window, cx| {
             let snapshot = editor.snapshot(window, cx);
             let anchor = snapshot
@@ -1162,7 +1164,7 @@ mod tests {
             fn test() { «println!»(); }
         "});
         let mut requests =
-            cx.handle_request::<lsp::request::HoverRequest, _, _>(move |_, _, _| async move {
+            cx.set_request_handler::<lsp::request::HoverRequest, _, _>(move |_, _, _| async move {
                 Ok(Some(lsp::Hover {
                     contents: lsp::HoverContents::Markup(lsp::MarkupContent {
                         kind: lsp::MarkupKind::Markdown,
@@ -1199,7 +1201,9 @@ mod tests {
         "});
         let mut request = cx
             .lsp
-            .handle_request::<lsp::request::HoverRequest, _, _>(|_, _| async move { Ok(None) });
+            .set_request_handler::<lsp::request::HoverRequest, _, _>(
+                |_, _| async move { Ok(None) },
+            );
         cx.update_editor(|editor, window, cx| {
             let snapshot = editor.snapshot(window, cx);
             let anchor = snapshot
@@ -1249,7 +1253,7 @@ mod tests {
         });
 
         let mut requests =
-            cx.handle_request::<lsp::request::HoverRequest, _, _>(move |_, _, _| async move {
+            cx.set_request_handler::<lsp::request::HoverRequest, _, _>(move |_, _, _| async move {
                 Ok(Some(lsp::Hover {
                     contents: lsp::HoverContents::Markup(lsp::MarkupContent {
                         kind: lsp::MarkupKind::Markdown,
@@ -1303,7 +1307,7 @@ mod tests {
         let symbol_range = cx.lsp_range(indoc! {"
             «fn» test() { println!(); }
         "});
-        cx.handle_request::<lsp::request::HoverRequest, _, _>(move |_, _, _| async move {
+        cx.set_request_handler::<lsp::request::HoverRequest, _, _>(move |_, _, _| async move {
             Ok(Some(lsp::Hover {
                 contents: lsp::HoverContents::Array(vec![
                     lsp::MarkedString::String("regular text for hover to show".to_string()),
@@ -1369,7 +1373,7 @@ mod tests {
         let markdown_string = format!("\n```rust\n{code_str}```");
 
         let closure_markdown_string = markdown_string.clone();
-        cx.handle_request::<lsp::request::HoverRequest, _, _>(move |_, _, _| {
+        cx.set_request_handler::<lsp::request::HoverRequest, _, _>(move |_, _, _| {
             let future_markdown_string = closure_markdown_string.clone();
             async move {
                 Ok(Some(lsp::Hover {
@@ -1460,7 +1464,7 @@ mod tests {
         let range = cx.lsp_range(indoc! {"
             fn «test»() { println!(); }
         "});
-        cx.handle_request::<lsp::request::HoverRequest, _, _>(move |_, _, _| async move {
+        cx.set_request_handler::<lsp::request::HoverRequest, _, _>(move |_, _, _| async move {
             Ok(Some(lsp::Hover {
                 contents: lsp::HoverContents::Markup(lsp::MarkupContent {
                     kind: lsp::MarkupKind::Markdown,
@@ -1497,13 +1501,14 @@ mod tests {
             }
         "});
 
-        cx.lsp.handle_request::<lsp::request::HoverRequest, _, _>({
-            |_, _| async move {
-                Ok(Some(lsp::Hover {
-                    contents: lsp::HoverContents::Markup(lsp::MarkupContent {
-                        kind: lsp::MarkupKind::Markdown,
-                        value: indoc!(
-                            r#"
+        cx.lsp
+            .set_request_handler::<lsp::request::HoverRequest, _, _>({
+                |_, _| async move {
+                    Ok(Some(lsp::Hover {
+                        contents: lsp::HoverContents::Markup(lsp::MarkupContent {
+                            kind: lsp::MarkupKind::Markdown,
+                            value: indoc!(
+                                r#"
                     ### function `errands_data_read`
 
                     ---
@@ -1515,13 +1520,13 @@ mod tests {
                     static char *errands_data_read()
                     ```
                     "#
-                        )
-                        .to_string(),
-                    }),
-                    range: None,
-                }))
-            }
-        });
+                            )
+                            .to_string(),
+                        }),
+                        range: None,
+                    }))
+                }
+            });
         cx.update_editor(|editor, window, cx| hover(editor, &Default::default(), window, cx));
         cx.run_until_parked();
 
@@ -1616,7 +1621,7 @@ mod tests {
         let entire_hint_label = ": TestNewType<TestStruct>";
         let closure_uri = uri.clone();
         cx.lsp
-            .handle_request::<lsp::request::InlayHintRequest, _, _>(move |params, _| {
+            .set_request_handler::<lsp::request::InlayHintRequest, _, _>(move |params, _| {
                 let task_uri = closure_uri.clone();
                 async move {
                     assert_eq!(params.text_document.uri, task_uri);
@@ -1692,7 +1697,7 @@ mod tests {
 
         let resolve_closure_uri = uri.clone();
         cx.lsp
-            .handle_request::<lsp::request::InlayHintResolveRequest, _, _>(
+            .set_request_handler::<lsp::request::InlayHintResolveRequest, _, _>(
                 move |mut hint_to_resolve, _| {
                     let mut resolved_hint_positions = BTreeSet::new();
                     let task_uri = resolve_closure_uri.clone();

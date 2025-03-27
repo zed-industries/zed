@@ -39,6 +39,7 @@ use mappings::mouse::{
 use collections::{HashMap, VecDeque};
 use futures::StreamExt;
 use pty_info::PtyProcessInfo;
+use regex::Regex;
 use serde::{Deserialize, Serialize};
 use settings::Settings;
 use smol::channel::{Receiver, Sender};
@@ -52,7 +53,7 @@ use std::{
     fmt::Display,
     ops::{Deref, Index, RangeInclusive},
     path::PathBuf,
-    sync::Arc,
+    sync::{Arc, LazyLock},
     time::Duration,
 };
 use thiserror::Error;
@@ -318,6 +319,20 @@ const URL_REGEX: &str = r#"(ipfs:|ipns:|magnet:|mailto:|gemini://|gopher://|http
 // https://learn.microsoft.com/en-us/visualstudio/msbuild/msbuild-diagnostic-format-for-tasks
 const WORD_REGEX: &str =
     r#"[\$\+\w.\[\]:/\\@\-~()]+(?:\((?:\d+|\d+,\d+)\))|[\$\+\w.\[\]:/\\@\-~()]+"#;
+const PYTHON_FILE_LINE_REGEX: &str = r#"File "(?P<file>[^"]+)", line (?P<line>\d+)"#;
+
+static PYTHON_FILE_LINE_MATCHER: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(PYTHON_FILE_LINE_REGEX).unwrap());
+
+fn python_extract_path_and_line(input: &str) -> Option<(&str, u32)> {
+    if let Some(captures) = PYTHON_FILE_LINE_MATCHER.captures(input) {
+        let path_part = captures.name("file")?.as_str();
+
+        let line_number: u32 = captures.name("line")?.as_str().parse().ok()?;
+        return Some((path_part, line_number));
+    }
+    None
+}
 
 pub struct TerminalBuilder {
     terminal: Terminal,
@@ -361,7 +376,19 @@ impl TerminalBuilder {
 
         let pty_options = {
             let alac_shell = match shell.clone() {
-                Shell::System => None,
+                Shell::System => {
+                    #[cfg(target_os = "windows")]
+                    {
+                        Some(alacritty_terminal::tty::Shell::new(
+                            util::retrieve_system_shell(),
+                            Vec::new(),
+                        ))
+                    }
+                    #[cfg(not(target_os = "windows"))]
+                    {
+                        None
+                    }
+                }
                 Shell::Program(program) => {
                     Some(alacritty_terminal::tty::Shell::new(program, Vec::new()))
                 }
@@ -473,6 +500,7 @@ impl TerminalBuilder {
             // hovered_word: false,
             url_regex: RegexSearch::new(URL_REGEX).unwrap(),
             word_regex: RegexSearch::new(WORD_REGEX).unwrap(),
+            python_file_line_regex: RegexSearch::new(PYTHON_FILE_LINE_REGEX).unwrap(),
             vi_mode_enabled: false,
             debug_terminal,
             is_ssh_terminal,
@@ -629,6 +657,7 @@ pub struct Terminal {
     selection_phase: SelectionPhase,
     url_regex: RegexSearch,
     word_regex: RegexSearch,
+    python_file_line_regex: RegexSearch,
     task: Option<TaskState>,
     vi_mode_enabled: bool,
     debug_terminal: bool,
@@ -929,6 +958,14 @@ impl Terminal {
                 } else if let Some(url_match) = regex_match_at(term, point, &mut self.url_regex) {
                     let url = term.bounds_to_string(*url_match.start(), *url_match.end());
                     Some((url, true, url_match))
+                } else if let Some(python_match) =
+                    regex_match_at(term, point, &mut self.python_file_line_regex)
+                {
+                    let matching_line =
+                        term.bounds_to_string(*python_match.start(), *python_match.end());
+                    python_extract_path_and_line(&matching_line).map(|(file_path, line_number)| {
+                        (format!("{file_path}:{line_number}"), false, python_match)
+                    })
                 } else if let Some(word_match) = regex_match_at(term, point, &mut self.word_regex) {
                     let file_path = term.bounds_to_string(*word_match.start(), *word_match.end());
 
@@ -1874,6 +1911,10 @@ impl Terminal {
             }
         }
     }
+
+    pub fn vi_mode_enabled(&self) -> bool {
+        self.vi_mode_enabled
+    }
 }
 
 // Helper function to convert a grid row to a string
@@ -2040,8 +2081,9 @@ pub fn get_color_at_index(index: usize, theme: &Theme) -> Hsla {
             rgba_color(i * step, i * step, i * step) // Map the ANSI-grayscale components to the RGB-grayscale
         }
         // For compatibility with the alacritty::Colors interface
-        256 => colors.text,
-        257 => colors.background,
+        // See: https://github.com/alacritty/alacritty/blob/master/alacritty_terminal/src/term/color.rs
+        256 => colors.terminal_foreground,
+        257 => colors.terminal_background,
         258 => theme.players().local().cursor,
         259 => colors.terminal_ansi_dim_black,
         260 => colors.terminal_ansi_dim_red,
@@ -2097,7 +2139,8 @@ mod tests {
     use rand::{distributions::Alphanumeric, rngs::ThreadRng, thread_rng, Rng};
 
     use crate::{
-        content_index_for_mouse, rgb_for_index, IndexedCell, TerminalBounds, TerminalContent,
+        content_index_for_mouse, python_extract_path_and_line, rgb_for_index, IndexedCell,
+        TerminalBounds, TerminalContent,
     };
 
     #[test]
@@ -2284,5 +2327,34 @@ mod tests {
             "Main.cs:20:5:Error desc",
             vec!["Main.cs:20:5:Error", "desc"],
         );
+    }
+
+    #[test]
+    fn test_python_file_line_regex() {
+        re_test(
+            crate::PYTHON_FILE_LINE_REGEX,
+            "hay File \"/zed/bad_py.py\", line 8 stack",
+            vec!["File \"/zed/bad_py.py\", line 8"],
+        );
+        re_test(crate::PYTHON_FILE_LINE_REGEX, "unrelated", vec![]);
+    }
+
+    #[test]
+    fn test_python_file_line() {
+        let inputs: Vec<(&str, Option<(&str, u32)>)> = vec![
+            (
+                "File \"/zed/bad_py.py\", line 8",
+                Some(("/zed/bad_py.py", 8u32)),
+            ),
+            ("File \"path/to/zed/bad_py.py\"", None),
+            ("unrelated", None),
+            ("", None),
+        ];
+        let actual = inputs
+            .iter()
+            .map(|input| python_extract_path_and_line(input.0))
+            .collect::<Vec<_>>();
+        let expected = inputs.iter().map(|(_, output)| *output).collect::<Vec<_>>();
+        assert_eq!(actual, expected);
     }
 }

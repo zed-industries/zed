@@ -4,10 +4,10 @@ use std::sync::Arc;
 
 use ::open_ai::Model as OpenAiModel;
 use anthropic::Model as AnthropicModel;
-use collections::HashMap;
 use deepseek::Model as DeepseekModel;
 use feature_flags::FeatureFlagAppExt;
 use gpui::{App, Pixels};
+use indexmap::IndexMap;
 use language_model::{CloudModel, LanguageModel};
 use lmstudio::Model as LmStudioModel;
 use ollama::Model as OllamaModel;
@@ -71,7 +71,10 @@ pub struct AssistantSettings {
     pub inline_alternatives: Vec<LanguageModelSelection>,
     pub using_outdated_settings_version: bool,
     pub enable_experimental_live_diffs: bool,
-    pub profiles: HashMap<Arc<str>, AgentProfile>,
+    pub default_profile: Arc<str>,
+    pub profiles: IndexMap<Arc<str>, AgentProfile>,
+    pub always_allow_tool_actions: bool,
+    pub notify_when_agent_waiting: bool,
 }
 
 impl AssistantSettings {
@@ -172,7 +175,10 @@ impl AssistantSettingsContent {
                     editor_model: None,
                     inline_alternatives: None,
                     enable_experimental_live_diffs: None,
+                    default_profile: None,
                     profiles: None,
+                    always_allow_tool_actions: None,
+                    notify_when_agent_waiting: None,
                 },
                 VersionedAssistantSettingsContent::V2(settings) => settings.clone(),
             },
@@ -194,7 +200,10 @@ impl AssistantSettingsContent {
                 editor_model: None,
                 inline_alternatives: None,
                 enable_experimental_live_diffs: None,
+                default_profile: None,
                 profiles: None,
+                always_allow_tool_actions: None,
+                notify_when_agent_waiting: None,
             },
         }
     }
@@ -301,6 +310,18 @@ impl AssistantSettingsContent {
             }
         }
     }
+
+    pub fn set_profile(&mut self, profile_id: Arc<str>) {
+        match self {
+            AssistantSettingsContent::Versioned(settings) => match settings {
+                VersionedAssistantSettingsContent::V2(settings) => {
+                    settings.default_profile = Some(profile_id);
+                }
+                VersionedAssistantSettingsContent::V1(_) => {}
+            },
+            AssistantSettingsContent::Legacy(_) => {}
+        }
+    }
 }
 
 #[derive(Clone, Serialize, Deserialize, JsonSchema, Debug)]
@@ -324,7 +345,10 @@ impl Default for VersionedAssistantSettingsContent {
             editor_model: None,
             inline_alternatives: None,
             enable_experimental_live_diffs: None,
+            default_profile: None,
             profiles: None,
+            always_allow_tool_actions: None,
+            notify_when_agent_waiting: None,
         })
     }
 }
@@ -362,7 +386,18 @@ pub struct AssistantSettingsContentV2 {
     /// Default: false
     enable_experimental_live_diffs: Option<bool>,
     #[schemars(skip)]
-    profiles: Option<HashMap<Arc<str>, AgentProfileContent>>,
+    default_profile: Option<Arc<str>>,
+    #[schemars(skip)]
+    pub profiles: Option<IndexMap<Arc<str>, AgentProfileContent>>,
+    /// Whenever a tool action would normally wait for your confirmation
+    /// that you allow it, always choose to allow it.
+    ///
+    /// Default: false
+    always_allow_tool_actions: Option<bool>,
+    /// Whether to show a popup notification when the agent is waiting for user input.
+    ///
+    /// Default: true
+    notify_when_agent_waiting: Option<bool>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
@@ -402,7 +437,14 @@ impl Default for LanguageModelSelection {
 #[derive(Debug, PartialEq, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct AgentProfileContent {
     pub name: Arc<str>,
-    pub tools: HashMap<Arc<str>, bool>,
+    pub tools: IndexMap<Arc<str>, bool>,
+    #[serde(default)]
+    pub context_servers: IndexMap<Arc<str>, ContextServerPresetContent>,
+}
+
+#[derive(Debug, PartialEq, Clone, Default, Serialize, Deserialize, JsonSchema)]
+pub struct ContextServerPresetContent {
+    pub tools: IndexMap<Arc<str>, bool>,
 }
 
 #[derive(Clone, Serialize, Deserialize, JsonSchema, Debug)]
@@ -500,23 +542,40 @@ impl Settings for AssistantSettings {
                 value.enable_experimental_live_diffs,
             );
             merge(
-                &mut settings.profiles,
-                value.profiles.map(|profiles| {
-                    profiles
-                        .into_iter()
-                        .map(|(id, profile)| {
-                            (
-                                id,
-                                AgentProfile {
-                                    name: profile.name.into(),
-                                    tools: profile.tools,
-                                    context_servers: HashMap::default(),
-                                },
-                            )
-                        })
-                        .collect()
-                }),
+                &mut settings.always_allow_tool_actions,
+                value.always_allow_tool_actions,
             );
+            merge(
+                &mut settings.notify_when_agent_waiting,
+                value.notify_when_agent_waiting,
+            );
+            merge(&mut settings.default_profile, value.default_profile);
+
+            if let Some(profiles) = value.profiles {
+                settings
+                    .profiles
+                    .extend(profiles.into_iter().map(|(id, profile)| {
+                        (
+                            id,
+                            AgentProfile {
+                                name: profile.name.into(),
+                                tools: profile.tools,
+                                context_servers: profile
+                                    .context_servers
+                                    .into_iter()
+                                    .map(|(context_server_id, preset)| {
+                                        (
+                                            context_server_id,
+                                            ContextServerPreset {
+                                                tools: preset.tools.clone(),
+                                            },
+                                        )
+                                    })
+                                    .collect(),
+                            },
+                        )
+                    }));
+            }
         }
 
         Ok(settings)
@@ -581,7 +640,10 @@ mod tests {
                             default_width: None,
                             default_height: None,
                             enable_experimental_live_diffs: None,
+                            default_profile: None,
                             profiles: None,
+                            always_allow_tool_actions: None,
+                            notify_when_agent_waiting: None,
                         }),
                     )
                 },

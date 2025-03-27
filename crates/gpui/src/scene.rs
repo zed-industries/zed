@@ -455,7 +455,7 @@ pub(crate) enum PrimitiveBatch<'a> {
 #[repr(C)]
 pub(crate) struct Quad {
     pub order: DrawOrder,
-    pub pad: u32, // align to 8 bytes
+    pub border_style: BorderStyle,
     pub bounds: Bounds<ScaledPixels>,
     pub content_mask: ContentMask<ScaledPixels>,
     pub background: Background,
@@ -503,6 +503,17 @@ impl From<Shadow> for Primitive {
     fn from(shadow: Shadow) -> Self {
         Primitive::Shadow(shadow)
     }
+}
+
+/// The style of a border.
+#[derive(Default, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[repr(C)]
+pub enum BorderStyle {
+    /// A solid border.
+    #[default]
+    Solid = 0,
+    /// A dashed border.
+    Dashed = 1,
 }
 
 /// A data type representing a 2 dimensional transformation that can be applied to an element.

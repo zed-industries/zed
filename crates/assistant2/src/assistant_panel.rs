@@ -14,9 +14,9 @@ use client::zed_urls;
 use editor::{Editor, MultiBuffer};
 use fs::Fs;
 use gpui::{
-    prelude::*, Action, AnyElement, App, AsyncWindowContext, Corner, Entity, EventEmitter,
-    FocusHandle, Focusable, FontWeight, KeyContext, Pixels, Subscription, Task, UpdateGlobal,
-    WeakEntity,
+    action_with_deprecated_aliases, prelude::*, Action, AnyElement, App, AsyncWindowContext,
+    Corner, Entity, EventEmitter, FocusHandle, Focusable, FontWeight, KeyContext, Pixels,
+    Subscription, Task, UpdateGlobal, WeakEntity,
 };
 use language::LanguageRegistry;
 use language_model::{LanguageModelProviderTosView, LanguageModelRegistry};
@@ -29,7 +29,7 @@ use ui::{prelude::*, ContextMenu, KeyBinding, PopoverMenu, PopoverMenuHandle, Ta
 use util::ResultExt as _;
 use workspace::dock::{DockPosition, Panel, PanelEvent};
 use workspace::Workspace;
-use zed_actions::assistant::{DeployPromptLibrary, ToggleFocus};
+use zed_actions::assistant::ToggleFocus;
 
 use crate::active_thread::ActiveThread;
 use crate::assistant_configuration::{AssistantConfiguration, AssistantConfigurationEvent};
@@ -42,6 +42,12 @@ use crate::{
     InlineAssistant, NewPromptEditor, NewThread, OpenActiveThreadAsMarkdown, OpenConfiguration,
     OpenHistory,
 };
+
+action_with_deprecated_aliases!(
+    assistant,
+    OpenPromptLibrary,
+    ["assistant::DeployPromptLibrary"]
+);
 
 pub fn init(cx: &mut App) {
     cx.observe_new(
@@ -63,6 +69,14 @@ pub fn init(cx: &mut App) {
                     if let Some(panel) = workspace.panel::<AssistantPanel>(cx) {
                         workspace.focus_panel::<AssistantPanel>(window, cx);
                         panel.update(cx, |panel, cx| panel.new_prompt_editor(window, cx));
+                    }
+                })
+                .register_action(|workspace, _: &OpenPromptLibrary, window, cx| {
+                    if let Some(panel) = workspace.panel::<AssistantPanel>(cx) {
+                        workspace.focus_panel::<AssistantPanel>(window, cx);
+                        panel.update(cx, |panel, cx| {
+                            panel.deploy_prompt_library(&OpenPromptLibrary, window, cx)
+                        });
                     }
                 })
                 .register_action(|workspace, _: &OpenConfiguration, window, cx| {
@@ -211,12 +225,12 @@ impl AssistantPanel {
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) {
-        let settings = AssistantSettings::get_global(cx);
-        if !settings.enabled {
-            return;
+        if workspace
+            .panel::<Self>(cx)
+            .is_some_and(|panel| panel.read(cx).enabled(cx))
+        {
+            workspace.toggle_panel_focus::<Self>(window, cx);
         }
-
-        workspace.toggle_panel_focus::<Self>(window, cx);
     }
 
     pub(crate) fn local_timezone(&self) -> UtcOffset {
@@ -303,7 +317,7 @@ impl AssistantPanel {
 
     fn deploy_prompt_library(
         &mut self,
-        _: &DeployPromptLibrary,
+        _: &OpenPromptLibrary,
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -623,12 +637,8 @@ impl Panel for AssistantPanel {
     }
 
     fn icon(&self, _window: &Window, cx: &App) -> Option<IconName> {
-        let settings = AssistantSettings::get_global(cx);
-        if !settings.enabled || !settings.button {
-            return None;
-        }
-
-        Some(IconName::ZedAssistant)
+        (self.enabled(cx) && AssistantSettings::get_global(cx).button)
+            .then_some(IconName::ZedAssistant)
     }
 
     fn icon_tooltip(&self, _window: &Window, _cx: &App) -> Option<&'static str> {
@@ -641,6 +651,10 @@ impl Panel for AssistantPanel {
 
     fn activation_priority(&self) -> u32 {
         3
+    }
+
+    fn enabled(&self, cx: &App) -> bool {
+        AssistantSettings::get_global(cx).enabled
     }
 }
 

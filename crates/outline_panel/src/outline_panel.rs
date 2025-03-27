@@ -1067,7 +1067,7 @@ impl OutlinePanel {
                 if change_selection {
                     active_editor.update(cx, |editor, cx| {
                         editor.change_selections(
-                            Some(Autoscroll::Strategy(AutoscrollStrategy::Center)),
+                            Some(Autoscroll::Strategy(AutoscrollStrategy::Center, None)),
                             window,
                             cx,
                             |s| s.select_ranges(Some(anchor..anchor)),
@@ -2555,6 +2555,9 @@ impl OutlinePanel {
         let auto_fold_dirs = OutlinePanelSettings::get_global(cx).auto_fold_dirs;
         let active_multi_buffer = active_editor.read(cx).buffer().clone();
         let new_entries = self.new_entries_for_fs_update.clone();
+        let repo_snapshots = self.project.update(cx, |project, cx| {
+            project.git_store().read(cx).repo_snapshots(cx)
+        });
         self.updating_fs_entries = true;
         self.fs_entries_update_task = cx.spawn_in(window, async move |outline_panel, cx| {
             if let Some(debounce) = debounce {
@@ -2679,13 +2682,15 @@ impl OutlinePanel {
                                             .unwrap_or_default(),
                                         entry,
                                     };
-                                    let mut traversal =
-                                        GitTraversal::new(worktree.traverse_from_path(
+                                    let mut traversal = GitTraversal::new(
+                                        &repo_snapshots,
+                                        worktree.traverse_from_path(
                                             true,
                                             true,
                                             true,
                                             entry.path.as_ref(),
-                                        ));
+                                        ),
+                                    );
 
                                     let mut entries_to_add = HashMap::default();
                                     worktree_excerpts
@@ -4586,7 +4591,7 @@ impl OutlinePanel {
                         .with_render_fn(
                             cx.entity().clone(),
                             move |outline_panel, params, _, _| {
-                                const LEFT_OFFSET: f32 = 14.;
+                                const LEFT_OFFSET: Pixels = px(14.);
 
                                 let indent_size = params.indent_size;
                                 let item_height = params.item_height;
@@ -4602,11 +4607,10 @@ impl OutlinePanel {
                                     .map(|(ix, layout)| {
                                         let bounds = Bounds::new(
                                             point(
-                                                px(layout.offset.x as f32) * indent_size
-                                                    + px(LEFT_OFFSET),
-                                                px(layout.offset.y as f32) * item_height,
+                                                layout.offset.x * indent_size + LEFT_OFFSET,
+                                                layout.offset.y * item_height,
                                             ),
-                                            size(px(1.), px(layout.length as f32) * item_height),
+                                            size(px(1.), layout.length * item_height),
                                         );
                                         ui::RenderedIndentGuide {
                                             bounds,
