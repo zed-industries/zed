@@ -7,7 +7,6 @@ use fs::Fs;
 use gpui::{App, AppContext as _, AsyncApp, Context, Entity, PromptLevel};
 use http_client::HttpClient;
 use language::{proto::serialize_operation, Buffer, BufferEvent, LanguageRegistry};
-use log::debug;
 use node_runtime::NodeRuntime;
 use project::{
     buffer_store::{BufferStore, BufferStoreEvent},

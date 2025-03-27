@@ -4640,6 +4640,7 @@ dependencies = [
  "client",
  "clock",
  "collections",
+ "dap",
  "env_logger 0.11.7",
  "feature_flags",
  "fs",
