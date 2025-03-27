@@ -23,18 +23,28 @@ pub struct BatchToolInput {
     /// The tool call groups to invoke sequentially. Within each group, the tools will be invoked concurrently.
     ///
     /// <example>
-    /// To batch together calls to get_weather and get_time, where those both run concurrently:
+    /// A batch combining several common operations (file reading, directory listing, and code search):
     ///
-    /// ```
+    /// ```json
     /// [
-    ///     {
-    ///       "name": "get_weather",
-    ///       "arguments": "{\"location\": \"San Francisco, CA\"}"
-    ///     },
-    ///     {
-    ///       "name": "get_time",
-    ///       "arguments": "{\"location\": \"San Francisco, CA\"}"
+    ///   {
+    ///     "name": "read-file", 
+    ///     "input": {
+    ///       "path": "src/main.rs"
     ///     }
+    ///   },
+    ///   {
+    ///     "name": "list-directory",
+    ///     "input": {
+    ///       "path": "src/lib"
+    ///     }
+    ///   },
+    ///   {
+    ///     "name": "regex-search",
+    ///     "input": {
+    ///       "regex": "fn run\\("
+    ///     }
+    ///   }
     /// ]
     /// ```
     /// </example>
