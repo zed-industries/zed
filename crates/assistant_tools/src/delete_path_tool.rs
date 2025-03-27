@@ -1,6 +1,6 @@
 use anyhow::{anyhow, Result};
 use assistant_tool::{ActionLog, Tool};
-use gpui::{App, AppContext, Entity, Task};
+use gpui::{App, Entity, Task};
 use language_model::LanguageModelRequestMessage;
 use project::Project;
 use schemars::JsonSchema;
@@ -60,28 +60,46 @@ impl Tool for DeletePathTool {
         input: serde_json::Value,
         _messages: &[LanguageModelRequestMessage],
         project: Entity<Project>,
-        _action_log: Entity<ActionLog>,
+        action_log: Entity<ActionLog>,
         cx: &mut App,
     ) -> Task<Result<String>> {
         let path_str = match serde_json::from_value::<DeletePathToolInput>(input) {
             Ok(input) => input.path,
             Err(err) => return Task::ready(Err(anyhow!(err))),
         };
-
-        match project
-            .read(cx)
-            .find_project_path(&path_str, cx)
-            .and_then(|path| project.update(cx, |project, cx| project.delete_file(path, false, cx)))
-        {
-            Some(deletion_task) => cx.background_spawn(async move {
-                match deletion_task.await {
-                    Ok(()) => Ok(format!("Deleted {path_str}")),
-                    Err(err) => Err(anyhow!("Failed to delete {path_str}: {err}")),
-                }
-            }),
-            None => Task::ready(Err(anyhow!(
+        let Some(project_path) = project.read(cx).find_project_path(&path_str, cx) else {
+            return Task::ready(Err(anyhow!(
                 "Couldn't delete {path_str} because that path isn't in this project."
-            ))),
-        }
+            )));
+        };
+
+        // todo!("handle directories")
+        let buffer = project.update(cx, |project, cx| {
+            project.open_buffer(project_path.clone(), cx)
+        });
+        cx.spawn(async move |cx| {
+            let buffer = buffer.await?;
+            action_log.update(cx, |action_log, cx| {
+                action_log.buffer_read(buffer.clone(), cx)
+            })?;
+            let delete = project.update(cx, |project, cx| {
+                project.delete_file(project_path, false, cx)
+            })?;
+            match delete {
+                Some(deletion_task) => match deletion_task.await {
+                    Ok(()) => {
+                        action_log
+                            .update(cx, |action_log, cx| action_log.buffer_deleted(buffer, cx))?
+                            .await
+                            .ok();
+                        Ok(format!("Deleted {path_str}"))
+                    }
+                    Err(err) => Err(anyhow!("Failed to delete {path_str}: {err}")),
+                },
+                None => Err(anyhow!(
+                    "Couldn't delete {path_str} because that path isn't in this project."
+                )),
+            }
+        })
     }
 }

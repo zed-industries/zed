@@ -2,11 +2,10 @@ use anyhow::{anyhow, Result};
 use buffer_diff::BufferDiff;
 use collections::{BTreeMap, HashMap, HashSet};
 use gpui::{App, AppContext, Context, Entity, Task};
-use language::{Buffer, OffsetRangeExt, Rope, ToOffset};
-use std::ops::Range;
+use language::{Buffer, OffsetRangeExt, TextBufferSnapshot, ToOffset};
+use std::{ops::Range, sync::Arc};
 
 /// Tracks actions performed by tools in a thread
-#[derive(Debug)]
 pub struct ActionLog {
     /// Buffers that user manually added to the context, and whose content has
     /// changed since the model last saw them.
@@ -17,31 +16,27 @@ pub struct ActionLog {
     edited_since_project_diagnostics_check: bool,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct TrackedBuffer {
     buffer: Entity<Buffer>,
     change: Change,
     version: clock::Global,
     diff: Entity<BufferDiff>,
     secondary_diff: Entity<BufferDiff>,
-    initial_status: TrackedBufferInitialStatus,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 enum Change {
     Edited {
         unreviewed_edit_ids: Vec<clock::Lamport>,
         accepted_edit_ids: Vec<clock::Lamport>,
+        initial_content: Option<TextBufferSnapshot>,
     },
     Deleted {
         reviewed: bool,
+        deleted_content: TextBufferSnapshot,
+        deletion_id: Option<clock::Lamport>,
     },
-}
-
-#[derive(Clone, Debug)]
-enum TrackedBufferInitialStatus {
-    CreatedByAssistant,
-    Existing(Rope),
 }
 
 impl TrackedBuffer {
@@ -50,6 +45,7 @@ impl TrackedBuffer {
             Change::Edited {
                 unreviewed_edit_ids,
                 accepted_edit_ids,
+                ..
             } => !unreviewed_edit_ids.is_empty() || !accepted_edit_ids.is_empty(),
             Change::Deleted { .. } => true,
         }
@@ -61,7 +57,7 @@ impl TrackedBuffer {
                 unreviewed_edit_ids,
                 ..
             } => !unreviewed_edit_ids.is_empty(),
-            Change::Deleted { reviewed } => !reviewed,
+            Change::Deleted { reviewed, .. } => !reviewed,
         }
     }
 
@@ -74,6 +70,7 @@ impl TrackedBuffer {
             Change::Edited {
                 unreviewed_edit_ids,
                 accepted_edit_ids,
+                ..
             } => {
                 let edits_to_undo = unreviewed_edit_ids
                     .iter()
@@ -113,9 +110,78 @@ impl TrackedBuffer {
                     _ = secondary_diff_update.await;
                 })
             }
-            Change::Deleted { reviewed } => {
+            Change::Deleted {
+                reviewed,
+                deleted_content,
+                ..
+            } => {
                 let reviewed = *reviewed;
-                cx.spawn(async move |cx| {})
+                let deleted_content = deleted_content.clone();
+
+                let primary_diff = self.diff.clone();
+                let secondary_diff = self.secondary_diff.clone();
+                let buffer_snapshot = self.buffer.read(cx).text_snapshot();
+                let language = self.buffer.read(cx).language().cloned();
+                let language_registry = self.buffer.read(cx).language_registry().clone();
+
+                cx.spawn(async move |cx| {
+                    let base_text = Arc::new(deleted_content.text());
+
+                    let primary_diff_snapshot = BufferDiff::update_diff(
+                        primary_diff.clone(),
+                        buffer_snapshot.clone(),
+                        Some(base_text.clone()),
+                        true,
+                        false,
+                        language.clone(),
+                        language_registry.clone(),
+                        cx,
+                    )
+                    .await;
+                    let secondary_diff_snapshot = BufferDiff::update_diff(
+                        secondary_diff.clone(),
+                        buffer_snapshot.clone(),
+                        if reviewed {
+                            None
+                        } else {
+                            Some(base_text.clone())
+                        },
+                        true,
+                        false,
+                        language.clone(),
+                        language_registry.clone(),
+                        cx,
+                    )
+                    .await;
+
+                    if let Ok(primary_diff_snapshot) = primary_diff_snapshot {
+                        primary_diff
+                            .update(cx, |diff, cx| {
+                                diff.set_snapshot(
+                                    &buffer_snapshot,
+                                    primary_diff_snapshot,
+                                    false,
+                                    None,
+                                    cx,
+                                )
+                            })
+                            .ok();
+                    }
+
+                    if let Ok(secondary_diff_snapshot) = secondary_diff_snapshot {
+                        secondary_diff
+                            .update(cx, |diff, cx| {
+                                diff.set_snapshot(
+                                    &buffer_snapshot,
+                                    secondary_diff_snapshot,
+                                    false,
+                                    None,
+                                    cx,
+                                )
+                            })
+                            .ok();
+                    }
+                })
             }
         }
     }
@@ -163,15 +229,15 @@ impl ActionLog {
                     change: Change::Edited {
                         unreviewed_edit_ids: Vec::new(),
                         accepted_edit_ids: Vec::new(),
+                        initial_content: if created {
+                            None
+                        } else {
+                            Some(text_snapshot.clone())
+                        },
                     },
                     version: buffer.read(cx).version(),
                     diff,
                     secondary_diff: unreviewed_diff,
-                    initial_status: if created {
-                        TrackedBufferInitialStatus::CreatedByAssistant
-                    } else {
-                        TrackedBufferInitialStatus::Existing(text_snapshot.as_rope().clone())
-                    },
                 }
             });
         tracked_buffer.version = buffer.read(cx).version();
@@ -198,7 +264,7 @@ impl ActionLog {
     pub fn buffer_edited(
         &mut self,
         buffer: Entity<Buffer>,
-        edit_ids: Vec<clock::Lamport>,
+        mut edit_ids: Vec<clock::Lamport>,
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
         self.edited_since_project_diagnostics_check = true;
@@ -206,17 +272,25 @@ impl ActionLog {
 
         let tracked_buffer = self.track_buffer(buffer.clone(), false, cx);
 
-        if let Change::Edited {
-            unreviewed_edit_ids,
-            ..
-        } = &mut tracked_buffer.change
-        {
-            unreviewed_edit_ids.extend(edit_ids.iter().copied());
-        } else {
-            tracked_buffer.change = Change::Edited {
-                unreviewed_edit_ids: edit_ids,
-                accepted_edit_ids: Vec::new(),
-            };
+        match &mut tracked_buffer.change {
+            Change::Edited {
+                unreviewed_edit_ids,
+                ..
+            } => {
+                unreviewed_edit_ids.extend(edit_ids.iter().copied());
+            }
+            Change::Deleted {
+                deleted_content,
+                deletion_id,
+                ..
+            } => {
+                edit_ids.extend(*deletion_id);
+                tracked_buffer.change = Change::Edited {
+                    unreviewed_edit_ids: edit_ids,
+                    accepted_edit_ids: Vec::new(),
+                    initial_content: Some(deleted_content.clone()),
+                };
+            }
         }
 
         let update = tracked_buffer.update_diff(cx);
@@ -233,20 +307,29 @@ impl ActionLog {
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
         let tracked_buffer = self.track_buffer(buffer.clone(), false, cx);
-        match &tracked_buffer.initial_status {
-            TrackedBufferInitialStatus::CreatedByAssistant => {
-                self.tracked_buffers.remove(&buffer);
-                Task::ready(Ok(()))
-            }
-            TrackedBufferInitialStatus::Existing(_) => {
-                tracked_buffer.change = Change::Deleted { reviewed: false };
+        if let Change::Edited {
+            initial_content, ..
+        } = &tracked_buffer.change
+        {
+            if let Some(initial_content) = initial_content {
+                let deletion_id = buffer.update(cx, |buffer, cx| buffer.set_text("", cx));
+                tracked_buffer.change = Change::Deleted {
+                    reviewed: false,
+                    deleted_content: initial_content.clone(),
+                    deletion_id,
+                };
                 let update = tracked_buffer.update_diff(cx);
                 cx.spawn(async move |this, cx| {
                     update.await;
                     this.update(cx, |_this, cx| cx.notify())?;
                     Ok(())
                 })
+            } else {
+                self.tracked_buffers.remove(&buffer);
+                Task::ready(Ok(()))
             }
+        } else {
+            Task::ready(Ok(()))
         }
     }
 
@@ -266,12 +349,13 @@ impl ActionLog {
         let buffer_range = buffer_range.to_offset(buffer);
 
         match &mut tracked_buffer.change {
-            Change::Deleted { reviewed } => {
+            Change::Deleted { reviewed, .. } => {
                 *reviewed = accept;
             }
             Change::Edited {
                 unreviewed_edit_ids,
                 accepted_edit_ids,
+                ..
             } => {
                 let source;
                 let destination;
