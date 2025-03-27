@@ -47,6 +47,8 @@ pub struct MessageEditor {
     _subscriptions: Vec<Subscription>,
 }
 
+const EDITOR_PLACEHOLDER: &str = "Ask anything, @ to mention, ↑ to select";
+
 impl MessageEditor {
     pub fn new(
         fs: Arc<dyn Fs>,
@@ -63,7 +65,7 @@ impl MessageEditor {
 
         let editor = cx.new(|cx| {
             let mut editor = Editor::auto_height(10, window, cx);
-            editor.set_placeholder_text("Ask anything, @ to mention, ↑ to select", cx);
+            editor.set_placeholder_text(EDITOR_PLACEHOLDER, cx);
             editor.set_show_indent_guides(false, cx);
             editor.set_context_menu_options(ContextMenuOptions {
                 min_entries_visible: 12,
@@ -295,8 +297,10 @@ impl Render for MessageEditor {
         let focus_handle = self.editor.focus_handle(cx);
         let inline_context_picker = self.inline_context_picker.clone();
 
-        let empty_thread = self.thread.read(cx).is_empty();
-        let is_generating = self.thread.read(cx).is_generating();
+        let thread = self.thread.read(cx);
+        let empty_thread = thread.is_empty();
+        let is_generating = thread.is_generating();
+        let is_too_long = thread.is_getting_too_long(cx);
         let is_model_selected = self.is_model_selected(cx);
         let is_editor_empty = self.is_editor_empty(cx);
         let submit_label_color = if is_editor_empty {
@@ -578,29 +582,35 @@ impl Render for MessageEditor {
                     .child(
                         v_flex()
                             .gap_5()
-                            .child({
-                                let settings = ThemeSettings::get_global(cx);
-                                let text_style = TextStyle {
-                                    color: cx.theme().colors().text,
-                                    font_family: settings.ui_font.family.clone(),
-                                    font_fallbacks: settings.ui_font.fallbacks.clone(),
-                                    font_features: settings.ui_font.features.clone(),
-                                    font_size: font_size.into(),
-                                    font_weight: settings.ui_font.weight,
-                                    line_height: line_height.into(),
-                                    ..Default::default()
-                                };
-
-                                EditorElement::new(
-                                    &self.editor,
-                                    EditorStyle {
-                                        background: editor_bg_color,
-                                        local_player: cx.theme().players().local(),
-                                        text: text_style,
-                                        syntax: cx.theme().syntax().clone(),
+                            .child(
+                                if is_too_long {
+                                    div().child(EDITOR_PLACEHOLDER).text_color(cx.theme().colors().text_disabled)
+                                        .text_size(font_size)
+                                        .into_any()
+                                } else  {
+                                    let settings = ThemeSettings::get_global(cx);
+                                    let text_style = TextStyle {
+                                        color: cx.theme().colors().text,
+                                        font_family: settings.ui_font.family.clone(),
+                                        font_fallbacks: settings.ui_font.fallbacks.clone(),
+                                        font_features: settings.ui_font.features.clone(),
+                                        font_size: font_size.into(),
+                                        font_weight: settings.ui_font.weight,
+                                        line_height: line_height.into(),
                                         ..Default::default()
-                                    },
-                                )
+                                    };
+
+                                    EditorElement::new(
+                                        &self.editor,
+                                        EditorStyle {
+                                            background: editor_bg_color,
+                                            local_player: cx.theme().players().local(),
+                                            text: text_style,
+                                            syntax: cx.theme().syntax().clone(),
+                                            ..Default::default()
+                                        },
+                                    ).into_any()
+
                             })
                             .child(
                                 PopoverMenu::new("inline-context-picker")
@@ -632,7 +642,8 @@ impl Render for MessageEditor {
                                                 .disabled(
                                                     is_editor_empty
                                                         || !is_model_selected
-                                                        || is_generating,
+                                                        || is_generating
+                                                        || is_too_long,
                                                 )
                                                 .child(
                                                     h_flex()
@@ -680,7 +691,54 @@ impl Render for MessageEditor {
                                         ),
                                     ),
                             ),
-                    ),
+                    )
             )
+            .when(is_too_long, |parent| {
+                parent.child(
+                    h_flex()
+                        .p_2()
+                        .gap_2()
+                        .flex_wrap()
+                        .justify_between()
+                        .bg(cx.theme().status().warning_background.opacity(0.1))
+                        .border_t_1()
+                        .border_color(cx.theme().colors().border)
+                        .child(
+                            h_flex()
+                                .gap_2()
+                                .items_start()
+                                .child(
+                                    h_flex()
+                                        .h(line_height)
+                                        .justify_center()
+                                        .child(
+                                            Icon::new(IconName::Warning)
+                                                .color(Color::Warning)
+                                                .size(IconSize::XSmall),
+                                        ),
+                                )
+                                .child(
+                                    v_flex()
+                                        .mr_auto()
+                                        .child(Label::new("Thread reaching the token limit soon").size(LabelSize::Small))
+                                        .child(
+                                            Label::new(
+                                                "Start a new thread from a summary to continue the conversation.",
+                                            )
+                                            .size(LabelSize::Small)
+                                            .color(Color::Muted),
+                                        ),
+                                ),
+                        )
+                        .child(
+                            Button::new("new-thread", "Start New Thread")
+                                .icon(IconName::Plus)
+                                .icon_position(IconPosition::Start)
+                                .icon_size(IconSize::Small)
+                                .style(ButtonStyle::Tinted(ui::TintColor::Accent))
+                                .label_size(LabelSize::Small),
+                        ),
+                )
+            })
     }
 }

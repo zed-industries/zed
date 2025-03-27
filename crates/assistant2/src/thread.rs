@@ -1516,6 +1516,28 @@ impl Thread {
         self.cumulative_token_usage.clone()
     }
 
+    pub fn is_getting_too_long(&self, cx: &App) -> bool {
+        let model_registry = LanguageModelRegistry::read_global(cx);
+        let Some(model) = model_registry.active_model() else {
+            return false;
+        };
+
+        let max_tokens = model.max_token_count();
+
+        let current_usage =
+            self.cumulative_token_usage.input_tokens + self.cumulative_token_usage.output_tokens;
+
+        #[cfg(debug_assertions)]
+        let warning_threshold: f32 = std::env::var("ZED_THREAD_WARNING_THRESHOLD")
+            .unwrap_or("0.9".to_string())
+            .parse()
+            .unwrap();
+        #[cfg(not(debug_assertions))]
+        let warning_threshold: f32 = 0.9;
+
+        current_usage as f32 >= (max_tokens as f32 * warning_threshold)
+    }
+
     pub fn deny_tool_use(&mut self, tool_use_id: LanguageModelToolUseId, cx: &mut Context<Self>) {
         let err = Err(anyhow::anyhow!(
             "Permission to run tool action denied by user"
