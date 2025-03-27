@@ -210,10 +210,15 @@ impl LocalMode {
         config: DebugAdapterConfig,
         delegate: DapAdapterDelegate,
         messages_tx: futures::channel::mpsc::UnboundedSender<Message>,
-        capabilities: Capabilities,
+        caps: Capabilities,
         fail: Option<bool>,
         cx: AsyncApp,
     ) -> Task<Result<(Self, Capabilities)>> {
+        use task::DebugRequestDisposition;
+
+        let DebugRequestDisposition::UserConfigured(request) = config.request.clone() else {
+            unimplemented!()
+        };
         let callback = async move |session, cx| {
             session
                 .client
@@ -238,7 +243,7 @@ impl LocalMode {
                 })
                 .await;
 
-            match config.request.clone() {
+            match request {
                 dap::DebugRequestType::Launch(_) => {
                     if fail {
                         session
