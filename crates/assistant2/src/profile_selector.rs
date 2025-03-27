@@ -1,19 +1,14 @@
-use std::sync::{Arc, LazyLock};
+use std::sync::Arc;
 
-use anyhow::Result;
 use assistant_settings::{AgentProfile, AssistantSettings};
-use editor::scroll::Autoscroll;
-use editor::Editor;
 use fs::Fs;
-use gpui::{prelude::*, AsyncWindowContext, Entity, Subscription, WeakEntity};
+use gpui::{prelude::*, Action, Entity, Subscription, WeakEntity};
 use indexmap::IndexMap;
-use regex::Regex;
 use settings::{update_settings_file, Settings as _, SettingsStore};
 use ui::{prelude::*, ContextMenu, ContextMenuEntry, PopoverMenu, Tooltip};
 use util::ResultExt as _;
-use workspace::{create_and_open_local_file, Workspace};
 
-use crate::ThreadStore;
+use crate::{ManageProfiles, ThreadStore};
 
 pub struct ProfileSelector {
     profiles: IndexMap<Arc<str>, AgentProfile>,
@@ -92,88 +87,12 @@ impl ProfileSelector {
                     .icon(IconName::Pencil)
                     .icon_color(Color::Muted)
                     .handler(move |window, cx| {
-                        if let Some(workspace) = window.root().flatten() {
-                            let workspace = workspace.downgrade();
-                            window
-                                .spawn(cx, async |cx| {
-                                    Self::open_profiles_setting_in_editor(workspace, cx).await
-                                })
-                                .detach_and_log_err(cx);
-                        }
+                        window.dispatch_action(ManageProfiles.boxed_clone(), cx);
                     }),
             );
 
             menu
         })
-    }
-
-    async fn open_profiles_setting_in_editor(
-        workspace: WeakEntity<Workspace>,
-        cx: &mut AsyncWindowContext,
-    ) -> Result<()> {
-        let settings_editor = workspace
-            .update_in(cx, |_, window, cx| {
-                create_and_open_local_file(paths::settings_file(), window, cx, || {
-                    settings::initial_user_settings_content().as_ref().into()
-                })
-            })?
-            .await?
-            .downcast::<Editor>()
-            .unwrap();
-
-        settings_editor
-            .downgrade()
-            .update_in(cx, |editor, window, cx| {
-                let text = editor.buffer().read(cx).snapshot(cx).text();
-
-                let settings = cx.global::<SettingsStore>();
-
-                let edits =
-                    settings.edits_for_update::<AssistantSettings>(
-                        &text,
-                        |settings| match settings {
-                            assistant_settings::AssistantSettingsContent::Versioned(settings) => {
-                                match settings {
-                                    assistant_settings::VersionedAssistantSettingsContent::V2(
-                                        settings,
-                                    ) => {
-                                        settings.profiles.get_or_insert_with(IndexMap::default);
-                                    }
-                                    assistant_settings::VersionedAssistantSettingsContent::V1(
-                                        _,
-                                    ) => {}
-                                }
-                            }
-                            assistant_settings::AssistantSettingsContent::Legacy(_) => {}
-                        },
-                    );
-
-                if !edits.is_empty() {
-                    editor.edit(edits.iter().cloned(), cx);
-                }
-
-                let text = editor.buffer().read(cx).snapshot(cx).text();
-
-                static PROFILES_REGEX: LazyLock<Regex> =
-                    LazyLock::new(|| Regex::new(r#"(?P<key>"profiles":)\s*\{"#).unwrap());
-                let range = PROFILES_REGEX.captures(&text).and_then(|captures| {
-                    captures
-                        .name("key")
-                        .map(|inner_match| inner_match.start()..inner_match.end())
-                });
-                if let Some(range) = range {
-                    editor.change_selections(
-                        Some(Autoscroll::newest()),
-                        window,
-                        cx,
-                        |selections| {
-                            selections.select_ranges(vec![range]);
-                        },
-                    );
-                }
-            })?;
-
-        anyhow::Ok(())
     }
 }
 

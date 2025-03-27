@@ -42,7 +42,6 @@ impl Render for ProfilePicker {
 
 #[derive(Debug)]
 pub struct ProfileEntry {
-    #[allow(dead_code)]
     pub id: Arc<str>,
     pub name: SharedString,
 }
@@ -52,10 +51,14 @@ pub struct ProfilePickerDelegate {
     profiles: Vec<ProfileEntry>,
     matches: Vec<StringMatch>,
     selected_index: usize,
+    on_confirm: Arc<dyn Fn(&Arc<str>, &mut Window, &mut App) + 'static>,
 }
 
 impl ProfilePickerDelegate {
-    pub fn new(cx: &mut Context<ProfilePicker>) -> Self {
+    pub fn new(
+        on_confirm: impl Fn(&Arc<str>, &mut Window, &mut App) + 'static,
+        cx: &mut Context<ProfilePicker>,
+    ) -> Self {
         let settings = AssistantSettings::get_global(cx);
 
         let profiles = settings
@@ -72,6 +75,7 @@ impl ProfilePickerDelegate {
             profiles,
             matches: Vec::new(),
             selected_index: 0,
+            on_confirm: Arc::new(on_confirm),
         }
     }
 }
@@ -149,7 +153,16 @@ impl PickerDelegate for ProfilePickerDelegate {
         })
     }
 
-    fn confirm(&mut self, _secondary: bool, _window: &mut Window, _cx: &mut Context<Picker<Self>>) {
+    fn confirm(&mut self, _secondary: bool, window: &mut Window, cx: &mut Context<Picker<Self>>) {
+        if self.matches.is_empty() {
+            self.dismissed(window, cx);
+            return;
+        }
+
+        let candidate_id = self.matches[self.selected_index].candidate_id;
+        let profile = &self.profiles[candidate_id];
+
+        (self.on_confirm)(&profile.id, window, cx);
     }
 
     fn dismissed(&mut self, _window: &mut Window, cx: &mut Context<Picker<Self>>) {
