@@ -3697,9 +3697,9 @@ async fn test_editing_while_guest_opens_buffer(
 
     client_a
         .fs()
-        .insert_tree("/dir", json!({ "a.txt": "a-contents" }))
+        .insert_tree(path!("/dir"), json!({ "a.txt": "a-contents" }))
         .await;
-    let (project_a, worktree_id) = client_a.build_local_project("/dir", cx_a).await;
+    let (project_a, worktree_id) = client_a.build_local_project(path!("/dir"), cx_a).await;
     let project_id = active_call_a
         .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
         .await
