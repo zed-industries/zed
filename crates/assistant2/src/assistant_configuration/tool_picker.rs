@@ -1,7 +1,8 @@
 use std::sync::Arc;
 
 use assistant_settings::{
-    AgentProfile, AssistantSettings, AssistantSettingsContent, VersionedAssistantSettingsContent,
+    AgentProfile, AgentProfileContent, AssistantSettings, AssistantSettingsContent,
+    ContextServerPresetContent, VersionedAssistantSettingsContent,
 };
 use assistant_tool::{ToolSource, ToolWorkingSet};
 use fs::Fs;
@@ -184,26 +185,43 @@ impl PickerDelegate for ToolPickerDelegate {
 
         update_settings_file::<AssistantSettings>(self.fs.clone(), cx, {
             let profile_id = self.profile_id.clone();
+            let default_profile = self.profile.clone();
             let tool = tool.clone();
             move |settings, _cx| match settings {
                 AssistantSettingsContent::Versioned(VersionedAssistantSettingsContent::V2(
                     settings,
                 )) => {
-                    if let Some(profiles) = &mut settings.profiles {
-                        if let Some(profile) = profiles.get_mut(&profile_id) {
-                            match tool.source {
-                                ToolSource::Native => {
-                                    *profile.tools.entry(tool.name).or_default() = is_enabled;
-                                }
-                                ToolSource::ContextServer { id } => {
-                                    let preset = profile
-                                        .context_servers
-                                        .entry(id.clone().into())
-                                        .or_default();
-                                    *preset.tools.entry(tool.name.clone()).or_default() =
-                                        is_enabled;
-                                }
-                            }
+                    let profiles = settings.profiles.get_or_insert_default();
+                    let profile =
+                        profiles
+                            .entry(profile_id)
+                            .or_insert_with(|| AgentProfileContent {
+                                name: default_profile.name.into(),
+                                tools: default_profile.tools,
+                                context_servers: default_profile
+                                    .context_servers
+                                    .into_iter()
+                                    .map(|(server_id, preset)| {
+                                        (
+                                            server_id,
+                                            ContextServerPresetContent {
+                                                tools: preset.tools,
+                                            },
+                                        )
+                                    })
+                                    .collect(),
+                            });
+
+                    match tool.source {
+                        ToolSource::Native => {
+                            *profile.tools.entry(tool.name).or_default() = is_enabled;
+                        }
+                        ToolSource::ContextServer { id } => {
+                            let preset = profile
+                                .context_servers
+                                .entry(id.clone().into())
+                                .or_default();
+                            *preset.tools.entry(tool.name.clone()).or_default() = is_enabled;
                         }
                     }
                 }
