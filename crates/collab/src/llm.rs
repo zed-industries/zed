@@ -279,8 +279,8 @@ async fn perform_completion(
             )
             .await
             .map_err(|err| match err {
-                anthropic::AnthropicError::ApiError(ref api_error) => match api_error.code() {
-                    Some(anthropic::ApiErrorCode::RateLimitError) => {
+                anthropic::AnthropicError::ApiError(ref api_error) => match api_error.code {
+                    anthropic::ApiErrorCode::RateLimitError => {
                         tracing::info!(
                             target: "upstream rate limit exceeded",
                             user_id = claims.user_id,
@@ -296,16 +296,10 @@ async fn perform_completion(
                             "Upstream Anthropic rate limit exceeded.".to_string(),
                         )
                     }
-                    Some(anthropic::ApiErrorCode::InvalidRequestError) => {
-                        Error::http(StatusCode::BAD_REQUEST, api_error.message.clone())
-                    }
-                    Some(anthropic::ApiErrorCode::OverloadedError) => {
-                        Error::http(StatusCode::SERVICE_UNAVAILABLE, api_error.message.clone())
-                    }
-                    Some(_) => {
-                        Error::http(StatusCode::INTERNAL_SERVER_ERROR, api_error.message.clone())
-                    }
-                    None => Error::Internal(anyhow!(err)),
+                    code => match StatusCode::from_u16(code as u16) {
+                        Ok(status_code) => Error::http(status_code, api_error.message.clone()),
+                        Err(_) => Error::Internal(anyhow!(err)),
+                    },
                 },
                 anthropic::AnthropicError::Other(err) => Error::Internal(err),
             })?;
