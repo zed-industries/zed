@@ -3581,6 +3581,7 @@ message GitInit {
 message SemanticTokensFullRequest {
     uint64 project_id = 1;
     uint64 buffer_id = 2;
+    repeated VectorClockEntry version = 3;
 }
 
 message SemanticToken {
@@ -3592,6 +3593,7 @@ message SemanticToken {
 
 message SemanticTokensResponse {
   repeated SemanticToken tokens = 1;
+  repeated VectorClockEntry version = 2;
 }
 
 message RefreshSemanticTokens {

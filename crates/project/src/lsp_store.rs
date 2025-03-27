@@ -5564,6 +5564,7 @@ impl LspStore {
             let request = proto::SemanticTokensFullRequest {
                 project_id,
                 buffer_id: buffer.remote_id().to_proto(),
+                version: serialize_version(&buffer.version()),
             };
             cx.spawn(async move |project, cx| {
                 let response = client

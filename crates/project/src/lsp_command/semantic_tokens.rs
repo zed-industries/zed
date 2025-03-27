@@ -152,15 +152,22 @@ impl LspCommand for SemanticTokensFull {
         proto::SemanticTokensFullRequest {
             project_id,
             buffer_id: buffer.remote_id().to_proto(),
+            version: serialize_version(&buffer.version()),
         }
     }
 
     async fn from_proto(
-        _: proto::SemanticTokensFullRequest,
+        message: proto::SemanticTokensFullRequest,
         _: Entity<LspStore>,
-        _: Entity<Buffer>,
-        _: AsyncApp,
+        buffer: Entity<Buffer>,
+        mut cx: AsyncApp,
     ) -> Result<Self> {
+        buffer
+            .update(&mut cx, |buffer, _| {
+                buffer.wait_for_version(deserialize_version(&message.version))
+            })?
+            .await?;
+
         Ok(Self)
     }
 
@@ -168,7 +175,7 @@ impl LspCommand for SemanticTokensFull {
         response: Self::Response,
         _: &mut LspStore,
         _: PeerId,
-        _: &clock::Global,
+        buffer_version: &clock::Global,
         _: &mut App,
     ) -> proto::SemanticTokensResponse {
         proto::SemanticTokensResponse {
@@ -176,6 +183,7 @@ impl LspCommand for SemanticTokensFull {
                 .into_iter()
                 .map(Self::serialize_semantic_token)
                 .collect_vec(),
+            version: serialize_version(buffer_version),
         }
     }
 
