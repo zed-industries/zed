@@ -192,7 +192,7 @@ impl Tool for FindReplaceFileTool {
             if let Some(diff) = result {
                 let edit_ids = buffer.update(cx, |buffer, cx| {
                     buffer.finalize_last_transaction();
-                    buffer.apply_diff(diff, cx);
+                    buffer.apply_diff(diff, false, cx);
                     let transaction = buffer.finalize_last_transaction();
                     transaction.map_or(Vec::new(), |transaction| transaction.edit_ids.clone())
                 })?;
