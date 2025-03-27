@@ -177,10 +177,11 @@ impl Tool for BatchTool {
                     "sequentially"
                 };
 
-                let Some(first_tool_name) = input.invocations.first().map(|inv| inv.name.clone())
-                else {
-                    return format!("Run 0 tools");
-                };
+                let first_tool_name = input
+                    .invocations
+                    .first()
+                    .map(|inv| inv.name.clone())
+                    .unwrap_or_default();
 
                 let all_same = input
                     .invocations
