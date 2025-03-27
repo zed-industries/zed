@@ -56,12 +56,12 @@ pub struct LaunchConfig {
 
 /// Represents the type that will determine which request to call on the debug adapter
 #[derive(Deserialize, Serialize, PartialEq, Eq, JsonSchema, Clone, Debug)]
-#[serde(rename_all = "lowercase", tag = "request")]
+#[serde(rename_all = "lowercase", untagged)]
 pub enum DebugRequestType {
-    /// Call the `attach` request on the debug adapter
-    Attach(AttachConfig),
     /// Call the `launch` request on the debug adapter
     Launch(LaunchConfig),
+    /// Call the `attach` request on the debug adapter
+    Attach(AttachConfig),
 }
 
 /// Represents a request for starting the debugger.
