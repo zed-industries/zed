@@ -42,9 +42,9 @@ impl Display for InvalidKeystrokeError {
 }
 
 /// Sentence explaining what keystroke parser expects, starting with "Expected ..."
-pub const KEYSTROKE_PARSE_EXPECTED_MESSAGE: &str = "Expected a sequence of modifiers \
+pub const KEYSTROKE_PARSE_EXPECTED_MESSAGE: &str = "Expected a sequence of lowercase modifiers \
     (`ctrl`, `alt`, `shift`, `fn`, `cmd`, `super`, or `win`) \
-    followed by a key, separated by `-`.";
+    followed by a lowercase key, separated by `-`.";
 
 impl Keystroke {
     /// When matching a key we cannot know whether the user intended to type
