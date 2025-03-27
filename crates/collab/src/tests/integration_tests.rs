@@ -4012,19 +4012,19 @@ async fn test_collaborating_with_diagnostics(
     client_a
         .fs()
         .insert_tree(
-            "/a",
+            path!("/a"),
             json!({
                 "a.rs": "let one = two",
                 "other.rs": "",
             }),
         )
         .await;
-    let (project_a, worktree_id) = client_a.build_local_project("/a", cx_a).await;
+    let (project_a, worktree_id) = client_a.build_local_project(path!("/a"), cx_a).await;
 
     // Cause the language server to start.
     let _buffer = project_a
         .update(cx_a, |project, cx| {
-            project.open_local_buffer_with_lsp("/a/other.rs", cx)
+            project.open_local_buffer_with_lsp(path!("/a/other.rs"), cx)
         })
         .await
         .unwrap();
@@ -4036,7 +4036,7 @@ async fn test_collaborating_with_diagnostics(
         .await;
     fake_language_server.notify::<lsp::notification::PublishDiagnostics>(
         &lsp::PublishDiagnosticsParams {
-            uri: lsp::Url::from_file_path("/a/a.rs").unwrap(),
+            uri: lsp::Url::from_file_path(path!("/a/a.rs")).unwrap(),
             version: None,
             diagnostics: vec![lsp::Diagnostic {
                 severity: Some(lsp::DiagnosticSeverity::WARNING),
@@ -4056,7 +4056,7 @@ async fn test_collaborating_with_diagnostics(
         .unwrap();
     fake_language_server.notify::<lsp::notification::PublishDiagnostics>(
         &lsp::PublishDiagnosticsParams {
-            uri: lsp::Url::from_file_path("/a/a.rs").unwrap(),
+            uri: lsp::Url::from_file_path(path!("/a/a.rs")).unwrap(),
             version: None,
             diagnostics: vec![lsp::Diagnostic {
                 severity: Some(lsp::DiagnosticSeverity::ERROR),
@@ -4130,7 +4130,7 @@ async fn test_collaborating_with_diagnostics(
     // Simulate a language server reporting more errors for a file.
     fake_language_server.notify::<lsp::notification::PublishDiagnostics>(
         &lsp::PublishDiagnosticsParams {
-            uri: lsp::Url::from_file_path("/a/a.rs").unwrap(),
+            uri: lsp::Url::from_file_path(path!("/a/a.rs")).unwrap(),
             version: None,
             diagnostics: vec![
                 lsp::Diagnostic {
@@ -4224,7 +4224,7 @@ async fn test_collaborating_with_diagnostics(
     // Simulate a language server reporting no errors for a file.
     fake_language_server.notify::<lsp::notification::PublishDiagnostics>(
         &lsp::PublishDiagnosticsParams {
-            uri: lsp::Url::from_file_path("/a/a.rs").unwrap(),
+            uri: lsp::Url::from_file_path(path!("/a/a.rs")).unwrap(),
             version: None,
             diagnostics: vec![],
         },
