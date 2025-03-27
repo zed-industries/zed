@@ -857,6 +857,13 @@ impl Thread {
             request.messages.push(request_message);
         }
 
+        // Set a cache breakpoint at the second-to-last message.
+        // https://docs.anthropic.com/en/docs/build-with-claude/prompt-caching
+        let breakpoint_index = request.messages.len() - 2;
+        for (index, message) in request.messages.iter_mut().enumerate() {
+            message.cache = index == breakpoint_index;
+        }
+
         if !referenced_context_ids.is_empty() {
             let mut context_message = LanguageModelRequestMessage {
                 role: Role::User,
