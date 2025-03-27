@@ -214,7 +214,7 @@ impl GitRepository for FakeGitRepository {
             })
             .collect();
 
-        self.with_state_async(false, move |state| {
+        let result = self.fs.with_git_state(&self.dot_git_path, false, |state| {
             let mut entries = Vec::new();
             let paths = state
                 .head_contents
@@ -298,7 +298,8 @@ impl GitRepository for FakeGitRepository {
             Ok(GitStatus {
                 entries: entries.into(),
             })
-        })
+        });
+        async move { result? }.boxed()
     }
 
     fn branches(&self) -> BoxFuture<Result<Vec<Branch>>> {
