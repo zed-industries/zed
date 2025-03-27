@@ -277,23 +277,18 @@ pub async fn complete(
         .await
         .context("failed to send request to Anthropic")?;
     let status = response.status();
+    let mut body = Vec::new();
+    response
+        .body_mut()
+        .read_to_end(&mut body)
+        .await
+        .context("failed to read response body")?;
+
     if status.is_success() {
-        let mut body = Vec::new();
-        response
-            .body_mut()
-            .read_to_end(&mut body)
-            .await
-            .context("failed to read response body")?;
         let response_message: Response =
             serde_json::from_slice(&body).context("failed to deserialize response body")?;
         Ok(response_message)
     } else {
-        let mut body = Vec::new();
-        response
-            .body_mut()
-            .read_to_end(&mut body)
-            .await
-            .context("failed to read response body")?;
         let body_str = str::from_utf8(&body).context("failed to parse response body as UTF-8")?;
         Err(AnthropicError::from_response(status.as_u16(), body_str))
     }
