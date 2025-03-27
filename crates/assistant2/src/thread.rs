@@ -1429,7 +1429,7 @@ impl Thread {
 
                     // Get diff asynchronously
                     let diff = repo
-                        .diff(git::repository::DiffType::HeadToWorktree, cx.clone())
+                        .diff(git::repository::DiffType::HeadToWorktree)
                         .await
                         .ok();
 

@@ -773,11 +773,11 @@ impl GitStore {
                     anyhow::Ok(Some((repo, relative_path, content)))
                 });
 
-                cx.spawn(async move |cx| {
+                cx.spawn(async move |_cx| {
                     let Some((repo, relative_path, content)) = blame_params? else {
                         return Ok(None);
                     };
-                    repo.blame(relative_path.clone(), content, cx)
+                    repo.blame(relative_path.clone(), content)
                         .await
                         .with_context(|| format!("Failed to blame {:?}", relative_path.0))
                         .map(Some)
@@ -1282,16 +1282,13 @@ impl GitStore {
                         let index_text = if current_index_text.is_some() {
                             local_repo
                                 .repo()
-                                .load_index_text(relative_path.clone(), cx.clone())
+                                .load_index_text(relative_path.clone())
                                 .await
                         } else {
                             None
                         };
                         let head_text = if current_head_text.is_some() {
-                            local_repo
-                                .repo()
-                                .load_committed_text(relative_path, cx.clone())
-                                .await
+                            local_repo.repo().load_committed_text(relative_path).await
                         } else {
                             None
                         };
@@ -2832,9 +2829,9 @@ impl Repository {
     }
 
     pub fn show(&self, commit: String) -> oneshot::Receiver<Result<CommitDetails>> {
-        self.send_job(|git_repo, cx| async move {
+        self.send_job(|git_repo, _cx| async move {
             match git_repo {
-                RepositoryState::Local(git_repository) => git_repository.show(commit, cx).await,
+                RepositoryState::Local(git_repository) => git_repository.show(commit).await,
                 RepositoryState::Remote {
                     project_id,
                     client,
@@ -2901,9 +2898,9 @@ impl Repository {
             let env = env.await;
 
             this.update(cx, |this, _| {
-                this.send_job(|git_repo, cx| async move {
+                this.send_job(|git_repo, _cx| async move {
                     match git_repo {
-                        RepositoryState::Local(repo) => repo.stage_paths(entries, env, cx).await,
+                        RepositoryState::Local(repo) => repo.stage_paths(entries, env).await,
                         RepositoryState::Remote {
                             project_id,
                             client,
@@ -2969,9 +2966,9 @@ impl Repository {
             let env = env.await;
 
             this.update(cx, |this, _| {
-                this.send_job(|git_repo, cx| async move {
+                this.send_job(|git_repo, _cx| async move {
                     match git_repo {
-                        RepositoryState::Local(repo) => repo.unstage_paths(entries, env, cx).await,
+                        RepositoryState::Local(repo) => repo.unstage_paths(entries, env).await,
                         RepositoryState::Remote {
                             project_id,
                             client,
@@ -3055,11 +3052,11 @@ impl Repository {
         cx: &mut App,
     ) -> oneshot::Receiver<Result<()>> {
         let env = self.worktree_environment(cx);
-        self.send_job(|git_repo, cx| async move {
+        self.send_job(|git_repo, _cx| async move {
             match git_repo {
                 RepositoryState::Local(repo) => {
                     let env = env.await;
-                    repo.commit(message, name_and_email, env, cx).await
+                    repo.commit(message, name_and_email, env).await
                 }
                 RepositoryState::Remote {
                     project_id,
@@ -3254,10 +3251,10 @@ impl Repository {
 
         self.send_keyed_job(
             Some(GitJobKey::WriteIndex(path.clone())),
-            |git_repo, cx| async {
+            |git_repo, _cx| async {
                 match git_repo {
                     RepositoryState::Local(repo) => {
-                        repo.set_index_text(path, content, env.await, cx).await
+                        repo.set_index_text(path, content, env.await).await
                     }
                     RepositoryState::Remote {
                         project_id,
@@ -3283,10 +3280,10 @@ impl Repository {
         &self,
         branch_name: Option<String>,
     ) -> oneshot::Receiver<Result<Vec<Remote>>> {
-        self.send_job(|repo, cx| async move {
+        self.send_job(|repo, _cx| async move {
             match repo {
                 RepositoryState::Local(git_repository) => {
-                    git_repository.get_remotes(branch_name, cx).await
+                    git_repository.get_remotes(branch_name).await
                 }
                 RepositoryState::Remote {
                     project_id,
@@ -3352,9 +3349,9 @@ impl Repository {
     }
 
     pub fn diff(&self, diff_type: DiffType, _cx: &App) -> oneshot::Receiver<Result<String>> {
-        self.send_job(|repo, cx| async move {
+        self.send_job(|repo, _cx| async move {
             match repo {
-                RepositoryState::Local(git_repository) => git_repository.diff(diff_type, cx).await,
+                RepositoryState::Local(git_repository) => git_repository.diff(diff_type).await,
                 RepositoryState::Remote {
                     project_id,
                     client,
@@ -3383,10 +3380,10 @@ impl Repository {
     }
 
     pub fn create_branch(&self, branch_name: String) -> oneshot::Receiver<Result<()>> {
-        self.send_job(|repo, cx| async move {
+        self.send_job(|repo, _cx| async move {
             match repo {
                 RepositoryState::Local(git_repository) => {
-                    git_repository.create_branch(branch_name, cx).await
+                    git_repository.create_branch(branch_name).await
                 }
                 RepositoryState::Remote {
                     project_id,
@@ -3408,10 +3405,10 @@ impl Repository {
     }
 
     pub fn change_branch(&self, branch_name: String) -> oneshot::Receiver<Result<()>> {
-        self.send_job(|repo, cx| async move {
+        self.send_job(|repo, _cx| async move {
             match repo {
                 RepositoryState::Local(git_repository) => {
-                    git_repository.change_branch(branch_name, cx).await
+                    git_repository.change_branch(branch_name).await
                 }
                 RepositoryState::Remote {
                     project_id,
@@ -3433,10 +3430,10 @@ impl Repository {
     }
 
     pub fn check_for_pushed_commits(&self) -> oneshot::Receiver<Result<Vec<SharedString>>> {
-        self.send_job(|repo, cx| async move {
+        self.send_job(|repo, _cx| async move {
             match repo {
                 RepositoryState::Local(git_repository) => {
-                    git_repository.check_for_pushed_commit(cx).await
+                    git_repository.check_for_pushed_commit().await
                 }
                 RepositoryState::Remote {
                     project_id,
@@ -3459,9 +3456,9 @@ impl Repository {
     }
 
     pub fn checkpoint(&self) -> oneshot::Receiver<Result<GitRepositoryCheckpoint>> {
-        self.send_job(|repo, cx| async move {
+        self.send_job(|repo, _cx| async move {
             match repo {
-                RepositoryState::Local(git_repository) => git_repository.checkpoint(cx).await,
+                RepositoryState::Local(git_repository) => git_repository.checkpoint().await,
                 RepositoryState::Remote { .. } => Err(anyhow!("not implemented yet")),
             }
         })
@@ -3471,10 +3468,10 @@ impl Repository {
         &self,
         checkpoint: GitRepositoryCheckpoint,
     ) -> oneshot::Receiver<Result<()>> {
-        self.send_job(move |repo, cx| async move {
+        self.send_job(move |repo, _cx| async move {
             match repo {
                 RepositoryState::Local(git_repository) => {
-                    git_repository.restore_checkpoint(checkpoint, cx).await
+                    git_repository.restore_checkpoint(checkpoint).await
                 }
                 RepositoryState::Remote { .. } => Err(anyhow!("not implemented yet")),
             }
@@ -3513,10 +3510,10 @@ impl Repository {
         left: GitRepositoryCheckpoint,
         right: GitRepositoryCheckpoint,
     ) -> oneshot::Receiver<Result<bool>> {
-        self.send_job(move |repo, cx| async move {
+        self.send_job(move |repo, _cx| async move {
             match repo {
                 RepositoryState::Local(git_repository) => {
-                    git_repository.compare_checkpoints(left, right, cx).await
+                    git_repository.compare_checkpoints(left, right).await
                 }
                 RepositoryState::Remote { .. } => Err(anyhow!("not implemented yet")),
             }
@@ -3527,10 +3524,10 @@ impl Repository {
         &self,
         checkpoint: GitRepositoryCheckpoint,
     ) -> oneshot::Receiver<Result<()>> {
-        self.send_job(move |repo, cx| async move {
+        self.send_job(move |repo, _cx| async move {
             match repo {
                 RepositoryState::Local(git_repository) => {
-                    git_repository.delete_checkpoint(checkpoint, cx).await
+                    git_repository.delete_checkpoint(checkpoint).await
                 }
                 RepositoryState::Remote { .. } => Err(anyhow!("not implemented yet")),
             }

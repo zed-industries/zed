@@ -8,6 +8,7 @@ use anyhow::{anyhow, Context as _, Result};
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
 use ashpd::desktop::trash;
 use gpui::App;
+use gpui::BackgroundExecutor;
 use gpui::Global;
 use gpui::ReadGlobal as _;
 use std::borrow::Cow;
@@ -240,9 +241,9 @@ impl From<MTime> for proto::Timestamp {
     }
 }
 
-#[derive(Default)]
 pub struct RealFs {
     git_binary_path: Option<PathBuf>,
+    executor: BackgroundExecutor,
 }
 
 pub trait FileHandle: Send + Sync + std::fmt::Debug {
@@ -294,8 +295,11 @@ impl FileHandle for std::fs::File {
 pub struct RealWatcher {}
 
 impl RealFs {
-    pub fn new(git_binary_path: Option<PathBuf>) -> Self {
-        Self { git_binary_path }
+    pub fn new(git_binary_path: Option<PathBuf>, executor: BackgroundExecutor) -> Self {
+        Self {
+            git_binary_path,
+            executor,
+        }
     }
 }
 
@@ -754,6 +758,7 @@ impl Fs for RealFs {
         Some(Arc::new(RealGitRepository::new(
             dotgit_path,
             self.git_binary_path.clone(),
+            self.executor.clone(),
         )?))
     }
 
