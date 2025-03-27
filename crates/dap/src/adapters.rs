@@ -13,6 +13,7 @@ use serde_json::Value;
 use settings::WorktreeId;
 use smol::{self, fs::File, lock::Mutex};
 use std::{
+    borrow::Borrow,
     collections::{HashMap, HashSet},
     ffi::{OsStr, OsString},
     fmt::Debug,
@@ -65,6 +66,12 @@ impl AsRef<str> for DebugAdapterName {
 impl AsRef<Path> for DebugAdapterName {
     fn as_ref(&self) -> &Path {
         Path::new(&*self.0)
+    }
+}
+
+impl Borrow<str> for DebugAdapterName {
+    fn borrow(&self) -> &str {
+        &self.0
     }
 }
 
