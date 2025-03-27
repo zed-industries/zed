@@ -1468,15 +1468,29 @@ impl Project {
     #[cfg(any(test, feature = "test-support"))]
     pub fn fake_debug_session(
         &mut self,
+        request: task::DebugRequestType,
         caps: Option<dap::Capabilities>,
         fails: bool,
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<Session>>> {
+        use dap::{Capabilities, DebugAdapterKind};
+        use task::DebugRequestDisposition;
+
         let worktree = maybe!({ self.worktrees(cx).next() });
 
         let Some(worktree) = &worktree else {
             return Task::ready(Err(anyhow!("Failed to find a worktree")));
         };
+        let config = DebugAdapterConfig {
+            label: "test config".into(),
+            kind: DebugAdapterKind::Lldb,
+            request: DebugRequestDisposition::UserConfigured(request),
+            initialize_args: None,
+        };
+        let caps = caps.unwrap_or(Capabilities {
+            supports_step_back: Some(false),
+            ..Default::default()
+        });
         self.dap_store
             .update(cx, |dap_store, cx| {
                 dap_store.new_fake_session(config, worktree, None, cx)
