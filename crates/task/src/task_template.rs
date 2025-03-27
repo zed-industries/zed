@@ -106,7 +106,7 @@ mod deserialization_tests {
     fn deserialize_task_type_debug() {
         let adapter_config = DebugTaskDefinition {
             label: "test config".into(),
-            adapter: DebugAdapterKind::Python(TCPHost::default()),
+            adapter: "Debugpy".into(),
             request: crate::DebugRequestType::Launch(LaunchConfig {
                 program: "main".to_string(),
                 cwd: None,
@@ -117,7 +117,7 @@ mod deserialization_tests {
         let json = json!({
             "label": "test config",
             "type": "debug",
-            "adapter": "python",
+            "adapter": "Debugpy",
             "program": "main",
             "supports_attach": false,
         });
