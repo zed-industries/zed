@@ -247,7 +247,6 @@ impl Vim {
         let text_layout_details = editor.text_layout_details(window);
         editor.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
             let map = &s.display_map();
-
             let mut head = s.newest_anchor().head().to_display_point(map);
             let mut tail = s.oldest_anchor().tail().to_display_point(map);
 
@@ -259,11 +258,9 @@ impl Vim {
                 SelectionGoal::HorizontalPosition(start) if preserve_goal => (start, start),
                 _ => (tail_x.0, head_x.0),
             };
-
             let mut goal = SelectionGoal::HorizontalRange { start, end };
 
             let was_reversed = tail_x > head_x;
-
             if !was_reversed && !preserve_goal {
                 head = movement::saturating_left(map, head);
             }
@@ -1212,7 +1209,6 @@ mod test {
     #[gpui::test]
     async fn test_visual_block_mode_down_right(cx: &mut gpui::TestAppContext) {
         let mut cx = NeovimBackedTestContext::new(cx).await;
-        // Normal mode
         cx.set_shared_state(indoc! {"
             The ˇquick brown
             fox jumps over
@@ -1228,7 +1224,6 @@ mod test {
     #[gpui::test]
     async fn test_visual_block_mode_up_left(cx: &mut gpui::TestAppContext) {
         let mut cx = NeovimBackedTestContext::new(cx).await;
-        // Normal mode
         cx.set_shared_state(indoc! {"
             The quick brown
             fox jumpsˇ over
