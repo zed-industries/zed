@@ -28,8 +28,8 @@ use crate::{
     Editor,
 };
 
-const MAX_CONCURRENT_LSP_REQUESTS: usize = 5;
-const INVISIBLE_RANGES_TOKENS_REQUEST_DELAY_MILLIS: u64 = 400;
+const MAX_CONCURRENT_LSP_REQUESTS: usize = 15;
+const INVISIBLE_RANGES_TOKENS_REQUEST_DELAY_MILLIS: u64 = 100;
 
 pub struct SemanticTokensCache {
     pub(crate) enabled: bool,

@@ -17420,6 +17420,7 @@ impl Editor {
         if event.blurred != self.focus_handle {
             self.last_focused_descendant = Some(event.blurred);
         }
+        self.refresh_semantic_tokens(SemanticTokensRefreshReason::RefreshRequested, cx);
         self.refresh_inlay_hints(InlayHintRefreshReason::ModifiersChanged(false), cx);
     }
 
