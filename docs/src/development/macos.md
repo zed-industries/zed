@@ -41,6 +41,7 @@ If you are developing collaborative features of Zed, you'll need to install the 
   ```sh
   brew install livekit foreman
   ```
+- Follow the steps in the [collab README](../../../crates/collab/README.md) to configure the progres database for integration tests
 
 Alternatively, if you have [Docker](https://www.docker.com/) installed you can bring up all the `collab` dependencies using Docker Compose:
 
@@ -124,6 +125,14 @@ Then clean and rebuild the project:
 cargo clean
 cargo run
 ```
+
+### Tests failling due to `Too many open files (os error 24)`
+
+Tests failing with this error seems to be a resource constraint. Installing and running tests with cargo-nextest allowed for test to run with only a few spoty timeouts.
+
+- `cargo install cargo-nexttest --locked`
+- `cargo nexttest run --workspace --no-fail-fast`
+
 
 ## Tips & Tricks
 
