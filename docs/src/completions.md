@@ -240,7 +240,7 @@ You can also add this as a language-specific setting in your `settings.json` to 
 }
 ```
 
-Alternatively, if you're using Zed's Edit Prediction, you can [use Subtle Mode](/#switching-modes).
+Alternatively, if you're using Zed's Edit Prediction, you can [use Subtle Mode](#switching-modes).
 
 ### Turning Off Completely
 
