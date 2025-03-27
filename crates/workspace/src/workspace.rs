@@ -2523,7 +2523,13 @@ impl Workspace {
             dock.set_open(!was_visible, window, cx);
 
             if dock.active_panel().is_none() {
-                dock.activate_first_activatable_panel(window, cx);
+                let Some(panel_ix) = dock
+                    .first_enabled_panel_idx(cx)
+                    .log_with_level(log::Level::Info)
+                else {
+                    return;
+                };
+                dock.activate_panel(panel_ix, window, cx);
             }
 
             if let Some(active_panel) = dock.active_panel() {

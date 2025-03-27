@@ -1,6 +1,7 @@
 use crate::persistence::model::DockData;
 use crate::{status_bar::StatusItemView, Workspace};
 use crate::{DraggedDock, Event, ModalLayer, Pane};
+use anyhow::Context as _;
 use client::proto;
 use gpui::{
     deferred, div, px, Action, AnyView, App, Axis, Context, Corner, Entity, EntityId, EventEmitter,
@@ -359,18 +360,16 @@ impl Dock {
             .position(|entry| entry.panel.remote_id() == Some(panel_id))
     }
 
-    pub fn activate_first_activatable_panel(
-        &mut self,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        if let Some(panel_ix) = self
-            .panel_entries
+    pub fn first_enabled_panel_idx(&mut self, cx: &mut Context<Self>) -> anyhow::Result<usize> {
+        self.panel_entries
             .iter()
-            .position(|entry| entry.panel.activatable(cx))
-        {
-            self.activate_panel(panel_ix, window, cx);
-        }
+            .position(|entry| entry.panel.enabled(cx))
+            .with_context(|| {
+                format!(
+                    "Could find no enabled panel for the {} dock.",
+                    self.position.label()
+                )
+            })
     }
 
     fn active_panel_entry(&self) -> Option<&PanelEntry> {
