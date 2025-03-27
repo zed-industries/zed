@@ -19,57 +19,19 @@ use livekit::webrtc::{
     video_stream::native::NativeVideoStream,
 };
 use parking_lot::Mutex;
+use std::cell::RefCell;
+use std::sync::atomic::{self, AtomicI32};
 use std::sync::Weak;
 use std::time::Duration;
 use std::{borrow::Cow, collections::VecDeque, sync::Arc, thread};
 use util::{maybe, ResultExt as _};
 
 pub(crate) struct AudioStack {
-    inner: Mutex<Weak<Mutex<AudioStackInner>>>,
     executor: BackgroundExecutor,
     apm: Arc<Mutex<apm::AudioProcessingModule>>,
     mixer: Arc<Mutex<audio_mixer::AudioMixer>>,
-    _output_task: Option<Task<()>>
-    next_ssrc: i32,
-}
-
-impl AudioStack {
-    pub(crate) fn new(executor: BackgroundExecutor) -> Self {
-        Self {
-            inner: Mutex::default(),
-            executor,
-            apm: todo!(),
-            mixer: todo!(),
-            _output_task: todo!(),
-            next_ssrc: todo!(),
-        }
-    }
-
-    pub(crate) fn play_remote_audio_track(
-        &self,
-        track: &livekit::track::RemoteAudioTrack,
-    ) -> AudioStream {
-        let inner = self.inner();
-        inner.clone().lock().play_remote_audio_track(track, inner)
-    }
-
-    pub(crate) fn capture_local_microphone_track(
-        &self,
-    ) -> Result<(crate::LocalAudioTrack, AudioStream)> {
-        let inner = self.inner();
-        inner.clone().lock().capture_local_microphone_track(inner)
-    }
-
-    fn inner(&self) -> Arc<Mutex<AudioStackInner>> {
-        let mut inner = self.inner.lock();
-        if let Some(inner) = inner.upgrade() {
-            inner
-        } else {
-            let new = Arc::new(Mutex::new(AudioStackInner::new(&self.executor)));
-            *inner = Arc::downgrade(&new);
-            new
-        }
-    }
+    _output_task: RefCell<Weak<Task<()>>>,
+    next_ssrc: AtomicI32,
 }
 
 // NOTE: We use WebRTC's mixer which only supports
@@ -79,35 +41,121 @@ impl AudioStack {
 const SAMPLE_RATE: u32 = 48000;
 const NUM_CHANNELS: u32 = 2;
 
-struct AudioStackInner {
-    _task: Task<()>,
-    executor: BackgroundExecutor,
-}
-
-impl Drop for AudioStackInner {
-    fn drop(&mut self) {
-        dbg!("drop inner!");
-    }
-}
-
-impl AudioStackInner {
-    fn new(executor: &BackgroundExecutor) -> Self {
-        dbg!("new inner!");
+impl AudioStack {
+    pub(crate) fn new(executor: BackgroundExecutor) -> Self {
         let apm = Arc::new(Mutex::new(apm::AudioProcessingModule::new(
             true, true, true, true,
         )));
         let mixer = Arc::new(Mutex::new(audio_mixer::AudioMixer::new()));
         Self {
-            apm: apm.clone(),
-            mixer: mixer.clone(),
-            executor: executor.clone(),
-            next_ssrc: 1,
-            _task: executor.spawn(async move {
+            executor,
+            apm,
+            mixer,
+            _output_task: RefCell::new(Weak::new()),
+            next_ssrc: AtomicI32::new(1),
+        }
+    }
+
+    pub(crate) fn play_remote_audio_track(
+        &self,
+        track: &livekit::track::RemoteAudioTrack,
+    ) -> AudioStream {
+        let output_task = self.start_output();
+
+        let next_ssrc = self.next_ssrc.fetch_add(1, atomic::Ordering::Relaxed);
+        let source = AudioMixerSource {
+            ssrc: next_ssrc,
+            sample_rate: SAMPLE_RATE,
+            num_channels: NUM_CHANNELS,
+            buffer: Arc::default(),
+        };
+        self.mixer.lock().add_source(source.clone());
+
+        let mut stream = NativeAudioStream::new(
+            track.rtc_track(),
+            source.sample_rate as i32,
+            source.num_channels as i32,
+        );
+
+        let receive_task = self.executor.spawn({
+            let source = source.clone();
+            async move {
+                while let Some(frame) = stream.next().await {
+                    source.receive(frame);
+                }
+            }
+        });
+
+        let mixer = self.mixer.clone();
+        let on_drop = util::defer(move || {
+            mixer.lock().remove_source(source.ssrc);
+            drop(receive_task);
+            drop(output_task);
+        });
+
+        AudioStream::Output {
+            _drop: Box::new(on_drop),
+        }
+    }
+
+    pub(crate) fn capture_local_microphone_track(
+        &self,
+    ) -> Result<(crate::LocalAudioTrack, AudioStream)> {
+        let source = NativeAudioSource::new(
+            // n.b. this struct's options are always ignored, noise cancellation is provided by apm.
+            AudioSourceOptions::default(),
+            SAMPLE_RATE,
+            NUM_CHANNELS,
+            10,
+        );
+
+        let track = track::LocalAudioTrack::create_audio_track(
+            "microphone",
+            RtcAudioSource::Native(source.clone()),
+        );
+
+        let apm = self.apm.clone();
+
+        let (frame_tx, mut frame_rx) = futures::channel::mpsc::unbounded();
+        let transmit_task = self.executor.spawn({
+            let source = source.clone();
+            async move {
+                while let Some(frame) = frame_rx.next().await {
+                    source.capture_frame(&frame).await.log_err();
+                }
+            }
+        });
+        let capture_task = self.executor.spawn(async move {
+            Self::capture_input(apm, frame_tx, SAMPLE_RATE, NUM_CHANNELS).await
+        });
+
+        let on_drop = util::defer(|| {
+            drop(transmit_task);
+            drop(capture_task);
+        });
+        return Ok((
+            super::LocalAudioTrack(track),
+            AudioStream::Output {
+                _drop: Box::new(on_drop),
+            },
+        ));
+    }
+
+    fn start_output(&self) -> Arc<Task<()>> {
+        if let Some(task) = self._output_task.borrow().upgrade() {
+            return task;
+        }
+        let task = Arc::new(self.executor.spawn({
+            let apm = self.apm.clone();
+            let mixer = self.mixer.clone();
+            async move {
                 Self::play_output(apm, mixer, SAMPLE_RATE, NUM_CHANNELS)
                     .await
                     .log_err();
-            }),
-        }
+            }
+        }));
+        *self._output_task.borrow_mut() = Arc::downgrade(&task);
+        task
     }
 
     async fn play_output(
@@ -174,51 +222,6 @@ impl AudioStackInner {
             default_change_listener.next().await;
             drop(end_on_drop_tx)
         }
-    }
-
-    fn capture_local_microphone_track(
-        &mut self,
-        entity: Arc<Mutex<Self>>,
-    ) -> Result<(crate::LocalAudioTrack, AudioStream)> {
-        let source = NativeAudioSource::new(
-            // n.b. this struct's options are always ignored, noise cancellation is provided by apm.
-            AudioSourceOptions::default(),
-            SAMPLE_RATE,
-            NUM_CHANNELS,
-            10,
-        );
-
-        let track = track::LocalAudioTrack::create_audio_track(
-            "microphone",
-            RtcAudioSource::Native(source.clone()),
-        );
-
-        let apm = self.apm.clone();
-
-        let (frame_tx, mut frame_rx) = futures::channel::mpsc::unbounded();
-        let transmit_task = self.executor.spawn({
-            let source = source.clone();
-            async move {
-                while let Some(frame) = frame_rx.next().await {
-                    source.capture_frame(&frame).await.log_err();
-                }
-            }
-        });
-        let capture_task = self.executor.spawn(async move {
-            Self::capture_input(apm, frame_tx, SAMPLE_RATE, NUM_CHANNELS).await
-        });
-
-        let on_drop = util::defer(|| {
-            drop(entity);
-            drop(transmit_task);
-            drop(capture_task);
-        });
-        return Ok((
-            super::LocalAudioTrack(track),
-            AudioStream::Output {
-                _drop: Box::new(on_drop),
-            },
-        ));
     }
 
     async fn capture_input(
@@ -303,47 +306,6 @@ impl AudioStackInner {
 
             default_change_listener.next().await;
             drop(end_on_drop_tx)
-        }
-    }
-
-    fn play_remote_audio_track(
-        &mut self,
-        track: &livekit::track::RemoteAudioTrack,
-        entity: Arc<Mutex<Self>>,
-    ) -> AudioStream {
-        let next_ssrc = util::post_inc(&mut self.next_ssrc);
-        let source = AudioMixerSource {
-            ssrc: next_ssrc,
-            sample_rate: SAMPLE_RATE,
-            num_channels: NUM_CHANNELS,
-            buffer: Arc::default(),
-        };
-        self.mixer.lock().add_source(source.clone());
-
-        let mut stream = NativeAudioStream::new(
-            track.rtc_track(),
-            source.sample_rate as i32,
-            source.num_channels as i32,
-        );
-
-        let receive_task = self.executor.spawn({
-            let source = source.clone();
-            async move {
-                while let Some(frame) = stream.next().await {
-                    source.receive(frame);
-                }
-            }
-        });
-
-        let mixer = self.mixer.clone();
-        let on_drop = util::defer(move || {
-            mixer.lock().remove_source(source.ssrc);
-            drop(receive_task);
-            drop(entity)
-        });
-
-        AudioStream::Output {
-            _drop: Box::new(on_drop),
         }
     }
 }
