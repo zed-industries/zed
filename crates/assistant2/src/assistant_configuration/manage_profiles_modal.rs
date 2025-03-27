@@ -91,7 +91,7 @@ impl ManageProfilesModal {
             profile_id,
             configure_tools: NavigableEntry::focusable(cx),
         });
-        self.focus_handle.focus(window);
+        self.focus_handle(cx).focus(window);
     }
 
     fn configure_tools(
@@ -130,13 +130,19 @@ impl ManageProfilesModal {
     ) -> impl IntoElement {
         Navigable::new(
             div()
-                .track_focus(&self.focus_handle)
+                .track_focus(&self.focus_handle(cx))
                 .size_full()
                 .child(
                     v_flex().child(
                         div()
                             .id("configure-tools")
                             .track_focus(&mode.configure_tools.focus_handle)
+                            .on_action({
+                                let profile_id = mode.profile_id.clone();
+                                cx.listener(move |this, _: &menu::Confirm, window, cx| {
+                                    this.configure_tools(profile_id.clone(), window, cx);
+                                })
+                            })
                             .child(
                                 ListItem::new("configure-tools")
                                     .toggle_state(
