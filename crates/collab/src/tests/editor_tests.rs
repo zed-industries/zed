@@ -1816,14 +1816,14 @@ async fn test_inlay_hint_refresh_is_forwarded(
     client_a
         .fs()
         .insert_tree(
-            "/a",
+            path!("/a"),
             json!({
                 "main.rs": "fn main() { a } // and some long comment to ensure inlay hints are not trimmed out",
                 "other.rs": "// Test file",
             }),
         )
         .await;
-    let (project_a, worktree_id) = client_a.build_local_project("/a", cx_a).await;
+    let (project_a, worktree_id) = client_a.build_local_project(path!("/a"), cx_a).await;
     active_call_a
         .update(cx_a, |call, cx| call.set_location(Some(&project_a), cx))
         .await
@@ -1871,7 +1871,7 @@ async fn test_inlay_hint_refresh_is_forwarded(
             async move {
                 assert_eq!(
                     params.text_document.uri,
-                    lsp::Url::from_file_path("/a/main.rs").unwrap(),
+                    lsp::Url::from_file_path(path!("/a/main.rs")).unwrap(),
                 );
                 let other_hints = task_other_hints.load(atomic::Ordering::Acquire);
                 let character = if other_hints { 0 } else { 2 };
