@@ -7,6 +7,7 @@ use language_model::LanguageModelRequestMessage;
 use project::Project;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use ui::IconName;
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct ThinkingToolInput {
@@ -22,8 +23,16 @@ impl Tool for ThinkingTool {
         "thinking".to_string()
     }
 
+    fn needs_confirmation(&self) -> bool {
+        false
+    }
+
     fn description(&self) -> String {
         include_str!("./thinking_tool/description.md").to_string()
+    }
+
+    fn icon(&self) -> IconName {
+        IconName::Brain
     }
 
     fn input_schema(&self) -> serde_json::Value {

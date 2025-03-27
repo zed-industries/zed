@@ -5,7 +5,7 @@ use anyhow::{anyhow, Result};
 use breakpoints_in_file::BreakpointsInFile;
 use collections::BTreeMap;
 use dap::client::SessionId;
-use gpui::{App, AppContext, AsyncApp, Context, Entity, EventEmitter, Task};
+use gpui::{App, AppContext, AsyncApp, Context, Entity, EventEmitter, Subscription, Task};
 use language::{proto::serialize_anchor as serialize_text_anchor, Buffer, BufferSnapshot};
 use rpc::{
     proto::{self},
@@ -31,7 +31,7 @@ mod breakpoints_in_file {
         pub(super) buffer: Entity<Buffer>,
         // TODO: This is.. less than ideal, as it's O(n) and does not return entries in order. We'll have to change TreeMap to support passing in the context for comparisons
         pub(super) breakpoints: Vec<(text::Anchor, Breakpoint)>,
-        _subscription: Arc<gpui::Subscription>,
+        _subscription: Arc<Subscription>,
     }
 
     impl BreakpointsInFile {
@@ -256,6 +256,21 @@ impl BreakpointStore {
                     breakpoint_set.breakpoints.push(breakpoint.clone());
                 }
             }
+            BreakpointEditAction::InvertState => {
+                if let Some((_, bp)) = breakpoint_set
+                    .breakpoints
+                    .iter_mut()
+                    .find(|value| breakpoint == **value)
+                {
+                    if bp.is_enabled() {
+                        bp.state = BreakpointState::Disabled;
+                    } else {
+                        bp.state = BreakpointState::Enabled;
+                    }
+                } else {
+                    log::error!("Attempted to invert a breakpoint's state that doesn't exist ");
+                }
+            }
             BreakpointEditAction::EditLogMessage(log_message) => {
                 if !log_message.is_empty() {
                     breakpoint.1.kind = BreakpointKind::Log(log_message.clone());
@@ -341,11 +356,17 @@ impl BreakpointStore {
         }
     }
 
+    pub fn clear_breakpoints(&mut self, cx: &mut Context<Self>) {
+        let breakpoint_paths = self.breakpoints.keys().cloned().collect();
+        self.breakpoints.clear();
+        cx.emit(BreakpointStoreEvent::BreakpointsCleared(breakpoint_paths));
+    }
+
     pub fn breakpoints<'a>(
         &'a self,
         buffer: &'a Entity<Buffer>,
         range: Option<Range<text::Anchor>>,
-        buffer_snapshot: BufferSnapshot,
+        buffer_snapshot: &'a BufferSnapshot,
         cx: &App,
     ) -> impl Iterator<Item = &'a (text::Anchor, Breakpoint)> + 'a {
         let abs_path = Self::abs_path_from_buffer(buffer, cx);
@@ -355,11 +376,10 @@ impl BreakpointStore {
             .flat_map(move |file_breakpoints| {
                 file_breakpoints.breakpoints.iter().filter({
                     let range = range.clone();
-                    let buffer_snapshot = buffer_snapshot.clone();
                     move |(position, _)| {
                         if let Some(range) = &range {
-                            position.cmp(&range.start, &buffer_snapshot).is_ge()
-                                && position.cmp(&range.end, &buffer_snapshot).is_le()
+                            position.cmp(&range.start, buffer_snapshot).is_ge()
+                                && position.cmp(&range.end, buffer_snapshot).is_le()
                         } else {
                             true
                         }
@@ -411,6 +431,7 @@ impl BreakpointStore {
                             position,
                             path: path.clone(),
                             kind: breakpoint.kind.clone(),
+                            state: breakpoint.state,
                         }
                     })
                     .collect()
@@ -433,6 +454,7 @@ impl BreakpointStore {
                                 position,
                                 path: path.clone(),
                                 kind: breakpoint.kind.clone(),
+                                state: breakpoint.state,
                             }
                         })
                         .collect(),
@@ -481,9 +503,13 @@ impl BreakpointStore {
 
                     for bp in bps {
                         let position = snapshot.anchor_before(PointUtf16::new(bp.position, 0));
-                        breakpoints_for_file
-                            .breakpoints
-                            .push((position, Breakpoint { kind: bp.kind }))
+                        breakpoints_for_file.breakpoints.push((
+                            position,
+                            Breakpoint {
+                                kind: bp.kind,
+                                state: bp.state,
+                            },
+                        ))
                     }
                     new_breakpoints.insert(path, breakpoints_for_file);
                 }
@@ -498,6 +524,11 @@ impl BreakpointStore {
             Task::ready(Ok(()))
         }
     }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub(crate) fn breakpoint_paths(&self) -> Vec<Arc<Path>> {
+        self.breakpoints.keys().cloned().collect()
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -509,6 +540,7 @@ pub enum BreakpointUpdatedReason {
 pub enum BreakpointStoreEvent {
     ActiveDebugLineChanged,
     BreakpointsUpdated(Arc<Path>, BreakpointUpdatedReason),
+    BreakpointsCleared(Vec<Arc<Path>>),
 }
 
 impl EventEmitter<BreakpointStoreEvent> for BreakpointStore {}
@@ -518,6 +550,7 @@ type LogMessage = Arc<str>;
 #[derive(Clone, Debug)]
 pub enum BreakpointEditAction {
     Toggle,
+    InvertState,
     EditLogMessage(LogMessage),
 }
 
@@ -557,16 +590,60 @@ impl Hash for BreakpointKind {
     }
 }
 
+#[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
+pub enum BreakpointState {
+    Enabled,
+    Disabled,
+}
+
+impl BreakpointState {
+    #[inline]
+    pub fn is_enabled(&self) -> bool {
+        matches!(self, BreakpointState::Enabled)
+    }
+
+    #[inline]
+    pub fn is_disabled(&self) -> bool {
+        matches!(self, BreakpointState::Disabled)
+    }
+
+    #[inline]
+    pub fn to_int(&self) -> i32 {
+        match self {
+            BreakpointState::Enabled => 0,
+            BreakpointState::Disabled => 1,
+        }
+    }
+}
+
 #[derive(Clone, Debug, Hash, PartialEq, Eq)]
 pub struct Breakpoint {
     pub kind: BreakpointKind,
+    pub state: BreakpointState,
 }
 
 impl Breakpoint {
+    pub fn new_standard() -> Self {
+        Self {
+            kind: BreakpointKind::Standard,
+            state: BreakpointState::Enabled,
+        }
+    }
+
+    pub fn new_log(log_message: &str) -> Self {
+        Self {
+            kind: BreakpointKind::Log(log_message.to_owned().into()),
+            state: BreakpointState::Enabled,
+        }
+    }
+
     fn to_proto(&self, _path: &Path, position: &text::Anchor) -> Option<client::proto::Breakpoint> {
         Some(client::proto::Breakpoint {
             position: Some(serialize_text_anchor(position)),
-
+            state: match self.state {
+                BreakpointState::Enabled => proto::BreakpointState::Enabled.into(),
+                BreakpointState::Disabled => proto::BreakpointState::Disabled.into(),
+            },
             kind: match self.kind {
                 BreakpointKind::Standard => proto::BreakpointKind::Standard.into(),
                 BreakpointKind::Log(_) => proto::BreakpointKind::Log.into(),
@@ -587,7 +664,21 @@ impl Breakpoint {
                 }
                 None | Some(proto::BreakpointKind::Standard) => BreakpointKind::Standard,
             },
+            state: match proto::BreakpointState::from_i32(breakpoint.state) {
+                Some(proto::BreakpointState::Disabled) => BreakpointState::Disabled,
+                None | Some(proto::BreakpointState::Enabled) => BreakpointState::Enabled,
+            },
         })
+    }
+
+    #[inline]
+    pub fn is_enabled(&self) -> bool {
+        self.state.is_enabled()
+    }
+
+    #[inline]
+    pub fn is_disabled(&self) -> bool {
+        self.state.is_disabled()
     }
 }
 
@@ -596,6 +687,7 @@ pub struct SerializedBreakpoint {
     pub position: u32,
     pub path: Arc<Path>,
     pub kind: BreakpointKind,
+    pub state: BreakpointState,
 }
 
 impl From<SerializedBreakpoint> for dap::SourceBreakpoint {

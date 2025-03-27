@@ -10,7 +10,7 @@ use node_runtime::NodeRuntime;
 use project::{
     buffer_store::{BufferStore, BufferStoreEvent},
     debugger::{breakpoint_store::BreakpointStore, dap_store::DapStore},
-    git::GitStore,
+    git_store::GitStore,
     project_settings::SettingsObserver,
     search::SearchQuery,
     task_store::TaskStore,

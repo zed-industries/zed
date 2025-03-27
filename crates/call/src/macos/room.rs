@@ -532,13 +532,15 @@ impl Room {
                             id: worktree.id().to_proto(),
                             scan_id: worktree.completed_scan_id() as u64,
                         });
-                        for repository in worktree.repositories().iter() {
-                            repositories.push(proto::RejoinRepository {
-                                id: repository.work_directory_id().to_proto(),
-                                scan_id: worktree.completed_scan_id() as u64,
-                            });
-                        }
                     }
+                    for (entry_id, repository) in project.repositories(cx) {
+                        let repository = repository.read(cx);
+                        repositories.push(proto::RejoinRepository {
+                            id: entry_id.to_proto(),
+                            scan_id: repository.completed_scan_id as u64,
+                        });
+                    }
+
                     rejoined_projects.push(proto::RejoinProject {
                         id: project_id,
                         worktrees,

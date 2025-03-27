@@ -172,7 +172,7 @@ impl DebugAdapterClient {
         log::debug!(
             "Client {} send `{}` request with sequence_id: {}",
             self.id.0,
-            R::COMMAND.to_string(),
+            R::COMMAND,
             sequence_id
         );
 

@@ -12,9 +12,9 @@ use editor::{Editor, EditorElement, EditorStyle};
 use extension_host::{ExtensionManifest, ExtensionOperation, ExtensionStore};
 use fuzzy::{match_strings, StringMatchCandidate};
 use gpui::{
-    actions, uniform_list, Action, App, ClipboardItem, Context, Entity, EventEmitter, Flatten,
-    Focusable, InteractiveElement, KeyContext, ParentElement, Render, Styled, Task, TextStyle,
-    UniformListScrollHandle, WeakEntity, Window,
+    actions, point, uniform_list, Action, App, ClipboardItem, Context, Entity, EventEmitter,
+    Flatten, Focusable, InteractiveElement, KeyContext, ParentElement, Render, Styled, Task,
+    TextStyle, UniformListScrollHandle, WeakEntity, Window,
 };
 use num_format::{Locale, ToFormattedString};
 use project::DirectoryLister;
@@ -22,7 +22,10 @@ use release_channel::ReleaseChannel;
 use settings::Settings;
 use strum::IntoEnumIterator as _;
 use theme::ThemeSettings;
-use ui::{prelude::*, CheckboxWithLabel, ContextMenu, PopoverMenu, ToggleButton, Tooltip};
+use ui::{
+    prelude::*, CheckboxWithLabel, ContextMenu, PopoverMenu, ScrollableHandle, Scrollbar,
+    ScrollbarState, ToggleButton, Tooltip,
+};
 use vim_mode_setting::VimModeSetting;
 use workspace::{
     item::{Item, ItemEvent},
@@ -257,6 +260,7 @@ pub struct ExtensionsPage {
     _subscriptions: [gpui::Subscription; 2],
     extension_fetch_task: Option<Task<()>>,
     upsells: BTreeSet<Feature>,
+    scrollbar_state: ScrollbarState,
 }
 
 impl ExtensionsPage {
@@ -297,9 +301,11 @@ impl ExtensionsPage {
             });
             cx.subscribe(&query_editor, Self::on_query_change).detach();
 
+            let scroll_handle = UniformListScrollHandle::new();
+
             let mut this = Self {
                 workspace: workspace.weak_handle(),
-                list: UniformListScrollHandle::new(),
+                list: scroll_handle.clone(),
                 is_fetching_extensions: false,
                 filter: ExtensionFilter::All,
                 dev_extension_entries: Vec::new(),
@@ -311,6 +317,7 @@ impl ExtensionsPage {
                 _subscriptions: subscriptions,
                 query_editor,
                 upsells: BTreeSet::default(),
+                scrollbar_state: ScrollbarState::new(scroll_handle),
             };
             this.fetch_extensions(None, Some(BTreeSet::from_iter(this.provides_filter)), cx);
             this
@@ -406,6 +413,7 @@ impl ExtensionsPage {
                 })
                 .map(|(ix, _)| ix),
         );
+        self.list.set_offset(point(px(0.), px(0.)));
         cx.notify();
     }
 
@@ -1336,25 +1344,46 @@ impl Render for ExtensionsPage {
                     ),
             )
             .child(self.render_feature_upsells(cx))
-            .child(v_flex().px_4().size_full().overflow_y_hidden().map(|this| {
-                let mut count = self.filtered_remote_extension_indices.len();
-                if self.filter.include_dev_extensions() {
-                    count += self.dev_extension_entries.len();
-                }
+            .child(
+                v_flex()
+                    .pl_4()
+                    .pr_6()
+                    .size_full()
+                    .overflow_y_hidden()
+                    .map(|this| {
+                        let mut count = self.filtered_remote_extension_indices.len();
+                        if self.filter.include_dev_extensions() {
+                            count += self.dev_extension_entries.len();
+                        }
 
-                if count == 0 {
-                    return this.py_4().child(self.render_empty_state(cx));
-                }
+                        if count == 0 {
+                            return this.py_4().child(self.render_empty_state(cx));
+                        }
 
-                let extensions_page = cx.entity().clone();
-                let scroll_handle = self.list.clone();
-                this.child(
-                    uniform_list(extensions_page, "entries", count, Self::render_extensions)
-                        .flex_grow()
-                        .pb_4()
-                        .track_scroll(scroll_handle),
-                )
-            }))
+                        let extensions_page = cx.entity().clone();
+                        let scroll_handle = self.list.clone();
+                        this.child(
+                            uniform_list(
+                                extensions_page,
+                                "entries",
+                                count,
+                                Self::render_extensions,
+                            )
+                            .flex_grow()
+                            .pb_4()
+                            .track_scroll(scroll_handle),
+                        )
+                        .child(
+                            div()
+                                .absolute()
+                                .right_1()
+                                .top_0()
+                                .bottom_0()
+                                .w(px(12.))
+                                .children(Scrollbar::vertical(self.scrollbar_state.clone())),
+                        )
+                    }),
+            )
     }
 }
 

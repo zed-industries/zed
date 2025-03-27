@@ -359,10 +359,14 @@ message Envelope {
 
         UpdateRepository update_repository = 328;
         RemoveRepository remove_repository = 329; // current max
+        RemoveRepository remove_repository = 329;
 
-        SemanticTokensFullRequest semantic_tokens_full_request = 330;
-        SemanticTokensResponse semantic_tokens_response = 331;
-        RefreshSemanticTokens refresh_semantic_tokens = 332;
+        GetDocumentSymbols get_document_symbols = 330;
+        GetDocumentSymbolsResponse get_document_symbols_response = 331; // current max
+
+        SemanticTokensFullRequest semantic_tokens_full_request = 332;
+        SemanticTokensResponse semantic_tokens_response = 333;
+        RefreshSemanticTokens refresh_semantic_tokens = 334;
     }
 
     reserved 87 to 88;
@@ -849,6 +853,28 @@ message Symbol {
     PointUtf16 end = 8;
     bytes signature = 9;
     uint64 language_server_id = 10;
+}
+
+message GetDocumentSymbols {
+    uint64 project_id = 1;
+    uint64 buffer_id = 2;
+    repeated VectorClockEntry version = 3;
+}
+
+message GetDocumentSymbolsResponse {
+    repeated DocumentSymbol symbols = 1;
+}
+
+message DocumentSymbol {
+    string name = 1;
+    int32 kind = 2;
+    // Cannot use generate anchors for unopened files,
+    // so we are forced to use point coords instead
+    PointUtf16 start = 3;
+    PointUtf16 end = 4;
+    PointUtf16 selection_start = 5;
+    PointUtf16 selection_end = 6;
+    repeated DocumentSymbol children = 7;
 }
 
 message OpenBufferForSymbol {
@@ -2219,7 +2245,7 @@ message OpenUncommittedDiffResponse {
 
 message SetIndexText {
     uint64 project_id = 1;
-    uint64 worktree_id = 2;
+    reserved 2;
     uint64 work_directory_id = 3;
     string path = 4;
     optional string text = 5;
@@ -2507,6 +2533,10 @@ message SlashCommandOutputSection {
     optional string metadata = 4;
 }
 
+message ThoughtProcessOutputSection {
+    AnchorRange range = 1;
+}
+
 message ContextOperation {
     oneof variant {
         InsertMessage insert_message = 1;
@@ -2516,6 +2546,7 @@ message ContextOperation {
         SlashCommandStarted slash_command_started = 6;
         SlashCommandOutputSectionAdded slash_command_output_section_added = 7;
         SlashCommandCompleted slash_command_completed = 8;
+        ThoughtProcessOutputSectionAdded thought_process_output_section_added = 9;
     }
 
     reserved 4;
@@ -2558,6 +2589,12 @@ message ContextOperation {
         LamportTimestamp timestamp = 3;
         optional string error_message = 4;
         repeated VectorClockEntry version = 5;
+    }
+
+    message ThoughtProcessOutputSectionAdded {
+        LamportTimestamp timestamp = 1;
+        ThoughtProcessOutputSection section = 2;
+        repeated VectorClockEntry version = 3;
     }
 
     message BufferOperation {
@@ -2633,9 +2670,15 @@ enum BreakpointKind {
     Log = 1;
 }
 
+enum BreakpointState {
+    Enabled = 0;
+    Disabled = 1;
+}
+
 
 message Breakpoint {
     Anchor position = 1;
+    BreakpointState state = 2;
     BreakpointKind kind = 3;
     optional string message = 4;
 }
@@ -3312,7 +3355,7 @@ message GetPanicFiles {
 
 message GitShow {
     uint64 project_id = 1;
-    uint64 worktree_id = 2;
+    reserved 2;
     uint64 work_directory_id = 3;
     string commit = 4;
 }
@@ -3327,7 +3370,7 @@ message GitCommitDetails {
 
 message GitReset {
     uint64 project_id = 1;
-    uint64 worktree_id = 2;
+    reserved 2;
     uint64 work_directory_id = 3;
     string commit = 4;
     ResetMode mode = 5;
@@ -3339,7 +3382,7 @@ message GitReset {
 
 message GitCheckoutFiles {
     uint64 project_id = 1;
-    uint64 worktree_id = 2;
+    reserved 2;
     uint64 work_directory_id = 3;
     string commit = 4;
     repeated string paths = 5;
@@ -3394,21 +3437,21 @@ message RegisterBufferWithLanguageServers{
 
 message Stage {
     uint64 project_id = 1;
-    uint64 worktree_id = 2;
+    reserved 2;
     uint64 work_directory_id = 3;
     repeated string paths = 4;
 }
 
 message Unstage {
     uint64 project_id = 1;
-    uint64 worktree_id = 2;
+    reserved 2;
     uint64 work_directory_id = 3;
     repeated string paths = 4;
 }
 
 message Commit {
     uint64 project_id = 1;
-    uint64 worktree_id = 2;
+    reserved 2;
     uint64 work_directory_id = 3;
     optional string name = 4;
     optional string email = 5;
@@ -3417,13 +3460,13 @@ message Commit {
 
 message OpenCommitMessageBuffer {
     uint64 project_id = 1;
-    uint64 worktree_id = 2;
+    reserved 2;
     uint64 work_directory_id = 3;
 }
 
 message Push {
     uint64 project_id = 1;
-    uint64 worktree_id = 2;
+    reserved 2;
     uint64 work_directory_id = 3;
     string remote_name = 4;
     string branch_name = 5;
@@ -3438,14 +3481,14 @@ message Push {
 
 message Fetch {
     uint64 project_id = 1;
-    uint64 worktree_id = 2;
+    reserved 2;
     uint64 work_directory_id = 3;
     uint64 askpass_id = 4;
 }
 
 message GetRemotes {
     uint64 project_id = 1;
-    uint64 worktree_id = 2;
+    reserved 2;
     uint64 work_directory_id = 3;
     optional string branch_name = 4;
 }
@@ -3460,7 +3503,7 @@ message GetRemotesResponse {
 
 message Pull {
     uint64 project_id = 1;
-    uint64 worktree_id = 2;
+    reserved 2;
     uint64 work_directory_id = 3;
     string remote_name = 4;
     string branch_name = 5;
@@ -3474,7 +3517,7 @@ message RemoteMessageResponse {
 
 message AskPassRequest {
     uint64 project_id = 1;
-    uint64 worktree_id = 2;
+    reserved 2;
     uint64 work_directory_id = 3;
     uint64 askpass_id = 4;
     string prompt = 5;
@@ -3486,27 +3529,27 @@ message AskPassResponse {
 
 message GitGetBranches {
     uint64 project_id = 1;
-    uint64 worktree_id = 2;
+    reserved 2;
     uint64 work_directory_id = 3;
 }
 
 message GitCreateBranch {
     uint64 project_id = 1;
-    uint64 worktree_id = 2;
+    reserved 2;
     uint64 work_directory_id = 3;
     string branch_name = 4;
 }
 
 message GitChangeBranch {
     uint64 project_id = 1;
-    uint64 worktree_id = 2;
+    reserved 2;
     uint64 work_directory_id = 3;
     string branch_name = 4;
 }
 
 message CheckForPushedCommits {
     uint64 project_id = 1;
-    uint64 worktree_id = 2;
+    reserved 2;
     uint64 work_directory_id = 3;
 }
 
@@ -3516,7 +3559,7 @@ message CheckForPushedCommitsResponse {
 
 message GitDiff {
     uint64 project_id = 1;
-    uint64 worktree_id = 2;
+    reserved 2;
     uint64 work_directory_id = 3;
     DiffType diff_type = 4;
 

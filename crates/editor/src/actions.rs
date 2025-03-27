@@ -414,6 +414,8 @@ actions!(
         Tab,
         Backtab,
         ToggleBreakpoint,
+        DisableBreakpoint,
+        EnableBreakpoint,
         EditLogBreakpoint,
         ToggleAutoSignatureHelp,
         ToggleGitBlameInline,

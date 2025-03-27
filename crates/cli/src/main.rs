@@ -27,6 +27,7 @@ trait InstalledApp {
     fn zed_version_string(&self) -> String;
     fn launch(&self, ipc_url: String) -> anyhow::Result<()>;
     fn run_foreground(&self, ipc_url: String) -> io::Result<ExitStatus>;
+    fn path(&self) -> PathBuf;
 }
 
 #[derive(Parser, Debug)]
@@ -73,6 +74,10 @@ struct Args {
     /// Run zed in dev-server mode
     #[arg(long)]
     dev_server_token: Option<String>,
+    /// Not supported in Zed CLI, only supported on Zed binary
+    /// Will attempt to give the correct command to run
+    #[arg(long)]
+    system_specs: bool,
     /// Uninstall Zed from user system
     #[cfg(all(
         any(target_os = "linux", target_os = "macos"),
@@ -138,6 +143,16 @@ fn main() -> Result<()> {
     if args.version {
         println!("{}", app.zed_version_string());
         return Ok(());
+    }
+
+    if args.system_specs {
+        let path = app.path();
+        let msg = [
+            "The `--system-specs` argument is not supported in the Zed CLI, only on Zed binary.",
+            "To retrieve the system specs on the command line, run the following command:",
+            &format!("{} --system-specs", path.display()),
+        ];
+        return Err(anyhow::anyhow!(msg.join("\n")));
     }
 
     #[cfg(all(
@@ -437,6 +452,10 @@ mod linux {
                 .arg(ipc_url)
                 .status()
         }
+
+        fn path(&self) -> PathBuf {
+            self.0.clone()
+        }
     }
 
     impl App {
@@ -674,6 +693,10 @@ mod windows {
                 .spawn()?
                 .wait()
         }
+
+        fn path(&self) -> PathBuf {
+            self.0.clone()
+        }
     }
 
     impl Detect {
@@ -875,6 +898,13 @@ mod mac_os {
             };
 
             std::process::Command::new(path).arg(ipc_url).status()
+        }
+
+        fn path(&self) -> PathBuf {
+            match self {
+                Bundle::App { app_bundle, .. } => app_bundle.join("Contents/MacOS/zed").clone(),
+                Bundle::LocalPath { executable, .. } => executable.clone(),
+            }
         }
     }
 

@@ -195,7 +195,7 @@
       "ctrl-shift-g": "search::SelectPreviousMatch",
       "ctrl-alt-/": "assistant::ToggleModelSelector",
       "ctrl-k h": "assistant::DeployHistory",
-      "ctrl-k l": "assistant::DeployPromptLibrary",
+      "ctrl-k l": "assistant::OpenPromptLibrary",
       "new": "assistant::NewChat",
       "ctrl-t": "assistant::NewChat",
       "ctrl-n": "assistant::NewChat"
@@ -754,9 +754,11 @@
       "escape": "git_panel::ToggleFocus",
       "ctrl-enter": "git::Commit",
       "alt-enter": "menu::SecondaryConfirm",
-      "delete": "git::RestoreFile",
-      "shift-delete": "git::RestoreFile",
-      "backspace": "git::RestoreFile"
+      "delete": ["git::RestoreFile", { "skip_prompt": false }],
+      "backspace": ["git::RestoreFile", { "skip_prompt": false }],
+      "shift-delete": ["git::RestoreFile", { "skip_prompt": false }],
+      "ctrl-backspace": ["git::RestoreFile", { "skip_prompt": false }],
+      "ctrl-delete": ["git::RestoreFile", { "skip_prompt": false }]
     }
   },
   {

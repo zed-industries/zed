@@ -23,7 +23,7 @@ use gpui::{
 use language::{Anchor, Buffer, Capability, OffsetRangeExt};
 use multi_buffer::{MultiBuffer, PathKey};
 use project::{
-    git::{GitEvent, GitStore},
+    git_store::{GitEvent, GitStore},
     Project, ProjectPath,
 };
 use std::any::{Any, TypeId};
@@ -339,11 +339,12 @@ impl ProjectDiff {
 
         let mut result = vec![];
         repo.update(cx, |repo, cx| {
-            for entry in repo.status() {
+            for entry in repo.cached_status() {
                 if !entry.status.has_changes() {
                     continue;
                 }
-                let Some(project_path) = repo.repo_path_to_project_path(&entry.repo_path) else {
+                let Some(project_path) = repo.repo_path_to_project_path(&entry.repo_path, cx)
+                else {
                     continue;
                 };
                 let namespace = if repo.has_conflict(&entry.repo_path) {

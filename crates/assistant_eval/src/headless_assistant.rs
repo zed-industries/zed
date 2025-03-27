@@ -89,7 +89,7 @@ impl HeadlessAssistant {
             ThreadEvent::DoneStreaming => {
                 let thread = thread.read(cx);
                 if let Some(message) = thread.messages().last() {
-                    println!("Message: {}", message.text,);
+                    println!("Message: {}", message.to_string());
                 }
                 if thread.all_tools_finished() {
                     self.done_tx.send_blocking(Ok(())).unwrap()
@@ -149,7 +149,10 @@ pub fn init(cx: &mut App) -> Arc<HeadlessAppState> {
     cx.set_http_client(client.http_client().clone());
 
     let git_binary_path = None;
-    let fs = Arc::new(RealFs::new(git_binary_path));
+    let fs = Arc::new(RealFs::new(
+        git_binary_path,
+        cx.background_executor().clone(),
+    ));
 
     let languages = Arc::new(LanguageRegistry::new(cx.background_executor().clone()));
 

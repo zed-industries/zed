@@ -1265,6 +1265,139 @@ async fn test_send_breakpoints_when_editor_has_been_saved(
 }
 
 #[gpui::test]
+async fn test_unsetting_breakpoints_on_clear_breakpoint_action(
+    executor: BackgroundExecutor,
+    cx: &mut TestAppContext,
+) {
+    init_test(cx);
+
+    let fs = FakeFs::new(executor.clone());
+
+    fs.insert_tree(
+        path!("/project"),
+        json!({
+            "main.rs": "First line\nSecond line\nThird line\nFourth line",
+            "second.rs": "First line\nSecond line\nThird line\nFourth line",
+            "no_breakpoints.rs": "Used to ensure that we don't unset breakpoint in files with no breakpoints"
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
+    let workspace = init_test_workspace(&project, cx).await;
+    let cx = &mut VisualTestContext::from_window(*workspace, cx);
+    let project_path = Path::new(path!("/project"));
+    let worktree = project
+        .update(cx, |project, cx| project.find_worktree(project_path, cx))
+        .expect("This worktree should exist in project")
+        .0;
+
+    let worktree_id = workspace
+        .update(cx, |_, _, cx| worktree.read(cx).id())
+        .unwrap();
+
+    let first = project
+        .update(cx, |project, cx| {
+            project.open_buffer((worktree_id, "main.rs"), cx)
+        })
+        .await
+        .unwrap();
+
+    let second = project
+        .update(cx, |project, cx| {
+            project.open_buffer((worktree_id, "second.rs"), cx)
+        })
+        .await
+        .unwrap();
+
+    let (first_editor, cx) = cx.add_window_view(|window, cx| {
+        Editor::new(
+            EditorMode::Full,
+            MultiBuffer::build_from_buffer(first, cx),
+            Some(project.clone()),
+            window,
+            cx,
+        )
+    });
+
+    let (second_editor, cx) = cx.add_window_view(|window, cx| {
+        Editor::new(
+            EditorMode::Full,
+            MultiBuffer::build_from_buffer(second, cx),
+            Some(project.clone()),
+            window,
+            cx,
+        )
+    });
+
+    first_editor.update_in(cx, |editor, window, cx| {
+        editor.move_down(&actions::MoveDown, window, cx);
+        editor.toggle_breakpoint(&actions::ToggleBreakpoint, window, cx);
+        editor.move_down(&actions::MoveDown, window, cx);
+        editor.move_down(&actions::MoveDown, window, cx);
+        editor.toggle_breakpoint(&actions::ToggleBreakpoint, window, cx);
+    });
+
+    second_editor.update_in(cx, |editor, window, cx| {
+        editor.toggle_breakpoint(&actions::ToggleBreakpoint, window, cx);
+        editor.move_down(&actions::MoveDown, window, cx);
+        editor.move_down(&actions::MoveDown, window, cx);
+        editor.move_down(&actions::MoveDown, window, cx);
+        editor.toggle_breakpoint(&actions::ToggleBreakpoint, window, cx);
+    });
+
+    let task = project.update(cx, |project, cx| {
+        project.start_debug_session(dap::test_config(DebugRequestType::Launch, None, None), cx)
+    });
+
+    let session = task.await.unwrap();
+    let client = session.update(cx, |session, _| session.adapter_client().unwrap());
+
+    let called_set_breakpoints = Arc::new(AtomicBool::new(false));
+
+    client
+        .on_request::<SetBreakpoints, _>({
+            let called_set_breakpoints = called_set_breakpoints.clone();
+            move |_, args| {
+                assert!(
+                    args.breakpoints.is_none_or(|bps| bps.is_empty()),
+                    "Send empty breakpoint sets to clear them from DAP servers"
+                );
+
+                match args
+                    .source
+                    .path
+                    .expect("We should always send a breakpoint's path")
+                    .as_str()
+                {
+                    "/project/main.rs" | "/project/second.rs" => {}
+                    _ => {
+                        panic!("Unset breakpoints for path that doesn't have any")
+                    }
+                }
+
+                called_set_breakpoints.store(true, Ordering::SeqCst);
+
+                Ok(dap::SetBreakpointsResponse {
+                    breakpoints: Vec::default(),
+                })
+            }
+        })
+        .await;
+
+    cx.dispatch_action(workspace::ClearAllBreakpoints);
+    cx.run_until_parked();
+
+    let shutdown_session = project.update(cx, |project, cx| {
+        project.dap_store().update(cx, |dap_store, cx| {
+            dap_store.shutdown_session(session.read(cx).session_id(), cx)
+        })
+    });
+
+    shutdown_session.await.unwrap();
+}
+
+#[gpui::test]
 async fn test_debug_session_is_shutdown_when_attach_and_launch_request_fails(
     executor: BackgroundExecutor,
     cx: &mut TestAppContext,
