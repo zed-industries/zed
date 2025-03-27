@@ -586,7 +586,12 @@ pub fn into_anthropic(
         model,
         messages: new_messages,
         max_tokens: max_output_tokens,
-        system: Some(system_message),
+        system: vec![anthropic::RequestContent::Text {
+            text: system_message,
+            cache_control: Some(anthropic::CacheControl {
+                cache_type: anthropic::CacheControlType::Ephemeral,
+            }),
+        }],
         thinking: if let AnthropicModelMode::Thinking { budget_tokens } = mode {
             Some(anthropic::Thinking::Enabled { budget_tokens })
         } else {

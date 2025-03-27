@@ -248,12 +248,13 @@ impl Model {
     }
 }
 
-pub async fn complete(
+async fn make_request(
     client: &dyn HttpClient,
     api_url: &str,
     api_key: &str,
     request: Request,
-) -> Result<Response, AnthropicError> {
+    stream: bool,
+) -> Result<http_client::Response<AsyncBody>, anyhow::Error> {
     let uri = format!("{api_url}/v1/messages");
     let beta_headers = Model::from_id(&request.model)
         .map(|model| model.beta_headers())
@@ -266,41 +267,24 @@ pub async fn complete(
         .header("X-Api-Key", api_key)
         .header("Content-Type", "application/json");
 
-    let serialized_request =
-        serde_json::to_string(&request).context("failed to serialize request")?;
+    let serialized_body = if stream {
+        serde_json::to_string(&StreamingRequest {
+            base: request,
+            stream: true,
+        })
+    } else {
+        serde_json::to_string(&request)
+    }
+    .context("failed to serialize request")?;
+
     let request = request_builder
-        .body(AsyncBody::from(serialized_request))
+        .body(AsyncBody::from(serialized_body))
         .context("failed to construct request body")?;
 
-    let mut response = client
+    client
         .send(request)
         .await
-        .context("failed to send request to Anthropic")?;
-    if response.status().is_success() {
-        let mut body = Vec::new();
-        response
-            .body_mut()
-            .read_to_end(&mut body)
-            .await
-            .context("failed to read response body")?;
-        let response_message: Response =
-            serde_json::from_slice(&body).context("failed to deserialize response body")?;
-        Ok(response_message)
-    } else {
-        let mut body = Vec::new();
-        response
-            .body_mut()
-            .read_to_end(&mut body)
-            .await
-            .context("failed to read response body")?;
-        let body_str =
-            std::str::from_utf8(&body).context("failed to parse response body as UTF-8")?;
-        Err(AnthropicError::Other(anyhow!(
-            "Failed to connect to API: {} {}",
-            response.status(),
-            body_str
-        )))
-    }
+        .context("failed to send request to Anthropic")
 }
 
 pub async fn stream_completion(
@@ -368,31 +352,8 @@ pub async fn stream_completion_with_rate_limit_info(
     ),
     AnthropicError,
 > {
-    let request = StreamingRequest {
-        base: request,
-        stream: true,
-    };
-    let uri = format!("{api_url}/v1/messages");
-    let beta_headers = Model::from_id(&request.base.model)
-        .map(|model| model.beta_headers())
-        .unwrap_or_else(|_err| Model::DEFAULT_BETA_HEADERS.join(","));
-    let request_builder = HttpRequest::builder()
-        .method(Method::POST)
-        .uri(uri)
-        .header("Anthropic-Version", "2023-06-01")
-        .header("Anthropic-Beta", beta_headers)
-        .header("X-Api-Key", api_key)
-        .header("Content-Type", "application/json");
-    let serialized_request =
-        serde_json::to_string(&request).context("failed to serialize request")?;
-    let request = request_builder
-        .body(AsyncBody::from(serialized_request))
-        .context("failed to construct request body")?;
+    let mut response = make_request(client, api_url, api_key, request, true).await?;
 
-    let mut response = client
-        .send(request)
-        .await
-        .context("failed to send request to Anthropic")?;
     if response.status().is_success() {
         let rate_limits = RateLimitInfo::from_headers(response.headers());
         let reader = BufReader::new(response.into_body());
@@ -596,8 +557,8 @@ pub struct Request {
     pub thinking: Option<Thinking>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tool_choice: Option<ToolChoice>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub system: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub system: Vec<RequestContent>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub metadata: Option<Metadata>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
