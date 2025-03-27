@@ -9,7 +9,7 @@ use sha2::{Digest, Sha256};
 use util::{truncate_and_remove_front, ResultExt};
 
 use crate::{
-    debug_format::DebugAdapterConfig, ResolvedTask, RevealTarget, Shell, SpawnInTerminal,
+    DebugRequestType, DebugTaskDefinition, ResolvedTask, RevealTarget, Shell, SpawnInTerminal,
     TaskContext, TaskId, VariableName, ZED_VARIABLE_NAME_PREFIX,
 };
 
@@ -78,18 +78,18 @@ pub struct TaskTemplate {
 /// Represents the type of task that is being ran
 #[derive(Default, Deserialize, Serialize, Eq, PartialEq, JsonSchema, Clone, Debug)]
 #[serde(rename_all = "snake_case", tag = "type")]
-#[expect(clippy::large_enum_variant)]
+#[allow(clippy::large_enum_variant)]
 pub enum TaskType {
     /// Act like a typically task that runs commands
     #[default]
     Script,
     /// This task starts the debugger for a language
-    Debug(DebugAdapterConfig),
+    Debug(DebugTaskDefinition),
 }
 
 #[cfg(test)]
 mod deserialization_tests {
-    use crate::{DebugAdapterKind, TCPHost};
+    use crate::LaunchConfig;
 
     use super::*;
     use serde_json::json;
@@ -105,19 +105,20 @@ mod deserialization_tests {
 
     #[test]
     fn deserialize_task_type_debug() {
-        let adapter_config = DebugAdapterConfig {
+        let adapter_config = DebugTaskDefinition {
             label: "test config".into(),
-            kind: DebugAdapterKind::Python(TCPHost::default()),
-            request: crate::DebugRequestType::Launch,
-            program: Some("main".to_string()),
-            supports_attach: false,
-            cwd: None,
+            adapter: "Debugpy".into(),
+            request: crate::DebugRequestType::Launch(LaunchConfig {
+                program: "main".to_string(),
+                cwd: None,
+            }),
             initialize_args: None,
+            tcp_connection: None,
         };
         let json = json!({
             "label": "test config",
             "type": "debug",
-            "adapter": "python",
+            "adapter": "Debugpy",
             "program": "main",
             "supports_attach": false,
         });
@@ -272,9 +273,9 @@ impl TaskTemplate {
         let program = match &self.task_type {
             TaskType::Script => None,
             TaskType::Debug(adapter_config) => {
-                if let Some(program) = &adapter_config.program {
+                if let DebugRequestType::Launch(ref launch) = &adapter_config.request {
                     Some(substitute_all_template_variables_in_str(
-                        program,
+                        &launch.program,
                         &task_variables,
                         &variable_names,
                         &mut substituted_variables,

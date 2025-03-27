@@ -4,6 +4,7 @@ use clap::Parser;
 use client::{Client, UserStore};
 use clock::RealSystemClock;
 use collections::BTreeMap;
+use dap::DapRegistry;
 use feature_flags::FeatureFlagAppExt as _;
 use gpui::{AppContext as _, AsyncApp, BackgroundExecutor, Entity};
 use http_client::{HttpClient, Method};
@@ -302,6 +303,7 @@ async fn run_evaluation(
     ));
 
     let language_registry = Arc::new(LanguageRegistry::new(executor.clone()));
+    let debug_adapters = Arc::new(DapRegistry::default());
     cx.update(|cx| languages::init(language_registry.clone(), node_runtime.clone(), cx))
         .unwrap();
 
@@ -346,6 +348,7 @@ async fn run_evaluation(
                     node_runtime.clone(),
                     user_store.clone(),
                     language_registry.clone(),
+                    debug_adapters.clone(),
                     fs.clone(),
                     None,
                     cx,
