@@ -4703,11 +4703,6 @@ impl Workspace {
             None
         };
 
-        let workspace = self
-            .weak_handle()
-            .upgrade()
-            .expect("updrading a weak reference in &self context");
-
         if let Some(location) = location {
             let breakpoints = self.project.update(cx, |project, cx| {
                 project.breakpoint_store().read(cx).all_breakpoints(cx)
@@ -4728,7 +4723,7 @@ impl Workspace {
                 breakpoints,
                 window_id: Some(window.window_handle().window_id().as_u64()),
             };
-            let panes = workspace.read(cx).panes.clone();
+            let panes = self.panes.clone();
             return window.spawn(cx, async move |cx| {
                 for (pane, pane_id) in persistence::DB
                     .save_workspace(serialized_workspace)

@@ -910,7 +910,7 @@ impl WorkspaceDb {
                 }
 
                 // Save center pane group
-                let new_pane_ids = Self::save_pane_group(conn, workspace.id, &workspace.center_group, 0, None)
+                let new_pane_ids = Self::save_pane_group(conn, workspace.id, &workspace.center_group, None)
                         .context("save pane group in save workspace")?;
                 Ok(new_pane_ids)
             })
@@ -1234,7 +1234,6 @@ impl WorkspaceDb {
         conn: &Connection,
         workspace_id: WorkspaceId,
         pane_group: &SerializedPaneGroup,
-        position: usize,
         parent: Option<(GroupId, usize)>,
     ) -> Result<HashMap<usize, PaneId>> {
         match pane_group {
@@ -1274,7 +1273,6 @@ impl WorkspaceDb {
                         conn,
                         workspace_id,
                         group,
-                        position,
                         Some((group_id, position)),
                     )?;
                     pane_ids.extend(new_pane_ids);
@@ -1284,6 +1282,7 @@ impl WorkspaceDb {
             }
             SerializedPaneGroup::Pane(pane) => {
                 let pane_id = Self::save_pane(conn, workspace_id, pane, parent)?;
+                let position = parent.map(|(_, position)| position).unwrap_or(0);
                 Ok(HashMap::from_iter(vec![(position, pane_id)]))
             }
         }
