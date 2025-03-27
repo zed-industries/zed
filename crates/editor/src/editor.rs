@@ -4019,17 +4019,27 @@ impl Editor {
                 let multibuffer = multibuffer.clone();
                 let tokens: Vec<_> = cx.update(|_, cx| {
                     let multibuffer = multibuffer.read(cx).snapshot(cx);
-                    let iter = tokens.into_iter().filter_map(|token| {
-                        let range = token.range.to_point(&snapshot);
-                        let range = range.to_anchors(&multibuffer);
-                        Some((range, token.r#type, token.modifiers))
-                    });
-                    iter.collect_vec()
+                    tokens
+                        .into_iter()
+                        .filter_map(|token| {
+                            let is_valid = token.range.end.offset != 0
+                                && token.range.start.is_valid(&snapshot)
+                                && token.range.end.is_valid(&snapshot);
+                            if is_valid {
+                                let range = token.range.to_point(&snapshot);
+                                let range = range.to_anchors(&multibuffer);
+                                Some((range, token.r#type, token.modifiers))
+                            } else {
+                                None
+                            }
+                        })
+                        .collect_vec()
                 })?;
                 editor.update(cx, |this: &mut Self, cx| {
-                    let iter = tokens.into_iter();
-                    let iter = iter.filter_map(|(range, r#type, modifiers)| {
-                        let mut style = cx.theme().tokens().get(r#type.as_str())?;
+                    for (range, r#type, modifiers) in tokens {
+                        let Some(mut style) = cx.theme().tokens().get(r#type.as_str()) else {
+                            continue;
+                        };
                         for r#mod in modifiers {
                             let r#mod = cx.theme().modifiers().get(r#mod.as_str());
                             style.highlight(match r#mod {
@@ -4038,9 +4048,7 @@ impl Editor {
                             });
                         }
                         this.semantic_highlight(range, style, cx);
-                        Some(())
-                    });
-                    iter.collect_vec();
+                    }
                 })?;
                 Ok(())
             });

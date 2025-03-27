@@ -44,6 +44,7 @@ pub(crate) const DEFAULT_SEMANTIC_MODIFIERS: &[(&str, Highlight)] = &[
     ("async", Highlight::TreeSitter("emphasis")),
     ("mutable", Highlight::TreeSitter("emphasis")),
     ("unsafe", Highlight::TreeSitter("emphasis")),
+    ("associated", Highlight::TreeSitter("property")),
     ("attribute", Highlight::TreeSitter("property")),
     ("documentation", Highlight::TreeSitter("comment.doc")),
     ("constant", Highlight::TreeSitter("constant")),
