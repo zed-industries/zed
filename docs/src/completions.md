@@ -222,7 +222,7 @@ If you would like to use the default keybinding, you can free it up by either mo
 
 ## Disabling Automatic Edit Prediction
 
-There are different levels in which you can disable edit predictions to be displayed, including not having it at all turned on.
+There are different levels in which you can disable edit predictions to be displayed, including not having it turned on at all.
 
 Alternatively, if you have Zed set as your provider, consider [using Subtle Mode](#switching-modes).
 
