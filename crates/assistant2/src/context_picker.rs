@@ -259,6 +259,7 @@ impl ContextPicker {
                             &path_prefix,
                             false,
                             context_store.clone(),
+                            None,
                             cx,
                         )
                         .into_any()
@@ -400,6 +401,7 @@ impl ContextPicker {
                         RecentEntry::Thread(ThreadContextEntry {
                             id: thread.id,
                             summary: thread.summary,
+                            highlight_positions: None,
                         })
                     }),
             )
@@ -517,6 +519,7 @@ fn recent_context_picker_entries(
                     RecentEntry::Thread(ThreadContextEntry {
                         id: thread.id,
                         summary: thread.summary,
+                        highlight_positions: None,
                     })
                 }),
         );

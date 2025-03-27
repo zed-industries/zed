@@ -15,10 +15,17 @@ impl HighlightedLabel {
     /// Constructs a label with the given characters highlighted.
     /// Characters are identified by UTF-8 byte position.
     pub fn new(label: impl Into<SharedString>, highlight_indices: Vec<usize>) -> Self {
+        let label_str = label.into();
+        // Filter out indices that are out of bounds
+        let valid_indices = highlight_indices
+            .into_iter()
+            .filter(|&idx| idx < label_str.len())
+            .collect();
+            
         Self {
             base: LabelLike::new(),
-            label: label.into(),
-            highlight_indices,
+            label: label_str,
+            highlight_indices: valid_indices,
         }
     }
 }

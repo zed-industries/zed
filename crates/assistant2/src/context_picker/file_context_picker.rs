@@ -9,7 +9,7 @@ use gpui::{
 };
 use picker::{Picker, PickerDelegate};
 use project::{PathMatchCandidateSet, ProjectPath, WorktreeId};
-use ui::{prelude::*, ListItem, Tooltip};
+use ui::{prelude::*, HighlightedLabel, ListItem, Tooltip};
 use util::ResultExt as _;
 use workspace::{notifications::NotifyResultExt, Workspace};
 
@@ -193,6 +193,7 @@ impl PickerDelegate for FileContextPickerDelegate {
                     &path_match.path_prefix,
                     path_match.is_dir,
                     self.context_store.clone(),
+                    Some(&path_match.positions),
                     cx,
                 )),
         )
@@ -279,6 +280,7 @@ pub fn render_file_context_entry(
     path_prefix: &Arc<str>,
     is_directory: bool,
     context_store: WeakEntity<ContextStore>,
+    highlight_positions: Option<&[usize]>,
     cx: &App,
 ) -> Stateful<Div> {
     let (file_name, directory) = if path == Path::new("") {
@@ -325,6 +327,11 @@ pub fn render_file_context_entry(
     .map(Icon::from_path)
     .unwrap_or_else(|| Icon::new(IconName::File));
 
+    let label = match highlight_positions {
+        Some(positions) => HighlightedLabel::new(file_name, positions.to_vec()).into_any_element(),
+        None => Label::new(file_name).into_any_element(),
+    };
+
     h_flex()
         .id(id)
         .gap_1p5()
@@ -333,7 +340,7 @@ pub fn render_file_context_entry(
         .child(
             h_flex()
                 .gap_1()
-                .child(Label::new(file_name))
+                .child(label)
                 .children(directory.map(|directory| {
                     Label::new(directory)
                         .size(LabelSize::Small)

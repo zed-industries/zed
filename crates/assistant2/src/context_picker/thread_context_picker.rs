@@ -3,7 +3,7 @@ use std::sync::Arc;
 use fuzzy::StringMatchCandidate;
 use gpui::{App, DismissEvent, Entity, FocusHandle, Focusable, Task, WeakEntity};
 use picker::{Picker, PickerDelegate};
-use ui::{prelude::*, ListItem};
+use ui::{prelude::*, HighlightedLabel, ListItem};
 
 use crate::context_picker::{ConfirmBehavior, ContextPicker};
 use crate::context_store::{self, ContextStore};
@@ -51,6 +51,7 @@ impl Render for ThreadContextPicker {
 pub struct ThreadContextEntry {
     pub id: ThreadId,
     pub summary: SharedString,
+    pub highlight_positions: Option<Vec<usize>>,
 }
 
 pub struct ThreadContextPickerDelegate {
@@ -173,8 +174,18 @@ impl PickerDelegate for ThreadContextPickerDelegate {
     ) -> Option<Self::ListItem> {
         let thread = &self.matches[ix];
 
+        let highlights = thread
+            .highlight_positions
+            .as_ref()
+            .map(|vec| vec.as_slice());
+
         Some(ListItem::new(ix).inset(true).toggle_state(selected).child(
-            render_thread_context_entry(thread, self.context_store.clone(), cx),
+            render_thread_context_entry_with_highlights(
+                thread,
+                self.context_store.clone(),
+                highlights.as_deref(),
+                cx,
+            ),
         ))
     }
 }
@@ -182,11 +193,30 @@ impl PickerDelegate for ThreadContextPickerDelegate {
 pub fn render_thread_context_entry(
     thread: &ThreadContextEntry,
     context_store: WeakEntity<ContextStore>,
-    cx: &mut App,
+    cx: &App,
+) -> Div {
+    render_thread_context_entry_with_highlights(thread, context_store, None, cx)
+}
+
+pub fn render_thread_context_entry_with_highlights(
+    thread: &ThreadContextEntry,
+    context_store: WeakEntity<ContextStore>,
+    highlight_positions: Option<&[usize]>,
+    cx: &App,
 ) -> Div {
     let added = context_store.upgrade().map_or(false, |ctx_store| {
         ctx_store.read(cx).includes_thread(&thread.id).is_some()
     });
+
+    // Choose between regular label or highlighted label based on position data
+    let summary_element = match highlight_positions {
+        Some(positions) => HighlightedLabel::new(thread.summary.clone(), positions.to_vec())
+            .truncate()
+            .into_any_element(),
+        None => Label::new(thread.summary.clone())
+            .truncate()
+            .into_any_element(),
+    };
 
     h_flex()
         .gap_1p5()
@@ -201,7 +231,7 @@ pub fn render_thread_context_entry(
                         .size(IconSize::XSmall)
                         .color(Color::Muted),
                 )
-                .child(Label::new(thread.summary.clone()).truncate()),
+                .child(summary_element),
         )
         .when(added, |el| {
             el.child(
@@ -222,40 +252,60 @@ pub(crate) fn search_threads(
     thread_store: Entity<ThreadStore>,
     cx: &mut App,
 ) -> Task<Vec<ThreadContextEntry>> {
-    let threads = thread_store.update(cx, |this, _cx| {
-        this.threads()
-            .into_iter()
-            .map(|thread| ThreadContextEntry {
-                id: thread.id,
-                summary: thread.summary,
-            })
-            .collect::<Vec<_>>()
-    });
+    // Get threads from the thread store
+    let threads = thread_store
+        .read(cx)
+        .threads()
+        .into_iter()
+        .map(|thread| ThreadContextEntry {
+            id: thread.id,
+            summary: thread.summary,
+            highlight_positions: None, // Initialize with no highlights
+        })
+        .collect::<Vec<_>>();
+
+    // Return early for empty queries or if there are no threads
+    if threads.is_empty() || query.is_empty() {
+        return Task::ready(threads);
+    }
+
+    // Create candidates list for fuzzy matching
+    let candidates: Vec<_> = threads
+        .iter()
+        .enumerate()
+        .map(|(id, thread)| StringMatchCandidate::new(id, &thread.summary))
+        .collect();
 
     let executor = cx.background_executor().clone();
-    cx.background_spawn(async move {
-        if query.is_empty() {
-            threads
-        } else {
-            let candidates = threads
-                .iter()
-                .enumerate()
-                .map(|(id, thread)| StringMatchCandidate::new(id, &thread.summary))
-                .collect::<Vec<_>>();
-            let matches = fuzzy::match_strings(
-                &candidates,
-                &query,
-                false,
-                100,
-                &Default::default(),
-                executor,
-            )
-            .await;
+    let threads_clone = threads.clone();
 
-            matches
-                .into_iter()
-                .map(|mat| threads[mat.candidate_id].clone())
-                .collect()
-        }
+    // Use background executor for the matching
+    cx.background_executor().spawn(async move {
+        // Perform fuzzy matching in background
+        let matches = fuzzy::match_strings(
+            &candidates,
+            &query,
+            false,
+            100,
+            &Default::default(),
+            executor,
+        )
+        .await;
+
+        // Create result entries with highlight positions included
+        let result = matches
+            .into_iter()
+            .filter_map(|mat| {
+                let thread = threads_clone.get(mat.candidate_id)?;
+                // Create a new entry with the highlight positions
+                Some(ThreadContextEntry {
+                    id: thread.id.clone(),
+                    summary: thread.summary.clone(),
+                    highlight_positions: Some(mat.positions),
+                })
+            })
+            .collect::<Vec<ThreadContextEntry>>();
+
+        result
     })
 }
