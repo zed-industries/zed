@@ -435,7 +435,7 @@ fn main() {
         AppState::set_global(Arc::downgrade(&app_state), cx);
 
         auto_update::init(client.http_client(), cx);
-        debug_adapters::
+        dap_adapters::init(app_state.debug_adapters.clone());
         auto_update_ui::init(cx);
         reliability::init(
             client.http_client(),

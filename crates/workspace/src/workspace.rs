@@ -690,6 +690,7 @@ impl AppState {
 
         let fs = fs::FakeFs::new(cx.background_executor().clone());
         let languages = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
+        let debug_adapters = Arc::new(DapRegistry::fake());
         let clock = Arc::new(clock::FakeSystemClock::new());
         let http_client = http_client::FakeHttpClient::with_404_response();
         let client = Client::new(clock, http_client.clone(), cx);
@@ -705,6 +706,7 @@ impl AppState {
             client,
             fs,
             languages,
+            debug_adapters,
             user_store,
             workspace_store,
             node_runtime: NodeRuntime::unavailable(),

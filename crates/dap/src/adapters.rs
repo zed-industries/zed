@@ -19,8 +19,8 @@ use std::{
     fmt::Debug,
     net::Ipv4Addr,
     ops::Deref,
-    path::{Path, PathBuf},
-    sync::Arc,
+    path::PathBuf,
+    sync::{Arc, LazyLock},
 };
 use task::{DebugAdapterConfig, DebugTaskDefinition};
 use util::ResultExt;
@@ -47,7 +47,7 @@ pub trait DapDelegate {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Deserialize, Serialize)]
-pub struct DebugAdapterName(pub Arc<str>);
+pub struct DebugAdapterName(pub SharedString);
 
 impl Deref for DebugAdapterName {
     type Target = str;
@@ -60,12 +60,6 @@ impl Deref for DebugAdapterName {
 impl AsRef<str> for DebugAdapterName {
     fn as_ref(&self) -> &str {
         &self.0
-    }
-}
-
-impl AsRef<Path> for DebugAdapterName {
-    fn as_ref(&self) -> &Path {
-        Path::new(&*self.0)
     }
 }
 
@@ -130,7 +124,7 @@ pub async fn download_adapter_from_github(
     file_type: DownloadedFileType,
     delegate: &dyn DapDelegate,
 ) -> Result<PathBuf> {
-    let adapter_path = paths::debug_adapters_dir().join(&adapter_name);
+    let adapter_path = paths::debug_adapters_dir().join(&adapter_name.as_ref());
     let version_path = adapter_path.join(format!("{}_{}", adapter_name, github_version.tag_name));
     let fs = delegate.fs();
 
@@ -296,8 +290,14 @@ pub trait DebugAdapter: 'static + Send + Sync {
 
     /// Should return base configuration to make the debug adapter work
     fn request_args(&self, config: &DebugTaskDefinition) -> Value;
+
+    fn attach_processes_filter(&self) -> regex::Regex {
+        EMPTY_REGEX.clone()
+    }
 }
 
+static EMPTY_REGEX: LazyLock<regex::Regex> =
+    LazyLock::new(|| regex::Regex::new("").expect("Regex compilation to succeed"));
 #[cfg(any(test, feature = "test-support"))]
 pub struct FakeAdapter {}
 

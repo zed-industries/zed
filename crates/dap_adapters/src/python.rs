@@ -9,7 +9,8 @@ use task::DebugTaskDefinition;
 pub(crate) struct PythonDebugAdapter {}
 
 impl PythonDebugAdapter {
-    const ADAPTER_NAME: &'static str = "debugpy";
+    const ADAPTER_NAME: &'static str = "Debugpy";
+    const ADAPTER_PACKAGE_NAME: &'static str = "debugpy";
     const ADAPTER_PATH: &'static str = "src/debugpy/adapter";
     const LANGUAGE_NAME: &'static str = "Python";
 }
@@ -25,7 +26,7 @@ impl DebugAdapter for PythonDebugAdapter {
         delegate: &dyn DapDelegate,
     ) -> Result<AdapterVersion> {
         let github_repo = GithubRepo {
-            repo_name: Self::ADAPTER_NAME.into(),
+            repo_name: Self::ADAPTER_PACKAGE_NAME.into(),
             repo_owner: "microsoft".into(),
         };
 
@@ -83,7 +84,7 @@ impl DebugAdapter for PythonDebugAdapter {
         let debugpy_dir = if let Some(user_installed_path) = user_installed_path {
             user_installed_path
         } else {
-            let adapter_path = paths::debug_adapters_dir().join(self.name());
+            let adapter_path = paths::debug_adapters_dir().join(self.name().as_ref());
             let file_name_prefix = format!("{}_", self.name());
 
             util::fs::find_file_name_in_dir(adapter_path.as_path(), |file_name| {

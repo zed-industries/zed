@@ -8,7 +8,7 @@ use crate::*;
 pub(crate) struct GoDebugAdapter;
 
 impl GoDebugAdapter {
-    const ADAPTER_NAME: &'static str = "delve";
+    const ADAPTER_NAME: &'static str = "Delve";
 }
 
 #[async_trait(?Send)]

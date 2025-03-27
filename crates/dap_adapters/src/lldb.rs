@@ -1,9 +1,8 @@
-use std::{collections::HashMap, ffi::OsStr, path::PathBuf};
+use std::{ffi::OsStr, path::PathBuf};
 
 use anyhow::Result;
 use async_trait::async_trait;
 use gpui::AsyncApp;
-use sysinfo::{Pid, Process};
 use task::{DebugAdapterConfig, DebugRequestType, DebugTaskDefinition};
 
 use crate::*;
@@ -12,11 +11,7 @@ use crate::*;
 pub(crate) struct LldbDebugAdapter;
 
 impl LldbDebugAdapter {
-    const ADAPTER_NAME: &'static str = "lldb";
-
-    pub fn attach_processes(processes: &HashMap<Pid, Process>) -> Vec<(&Pid, &Process)> {
-        processes.iter().collect::<Vec<_>>()
-    }
+    const ADAPTER_NAME: &'static str = "LLDB";
 }
 
 #[async_trait(?Send)]

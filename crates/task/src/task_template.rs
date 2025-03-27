@@ -106,12 +106,13 @@ mod deserialization_tests {
     fn deserialize_task_type_debug() {
         let adapter_config = DebugTaskDefinition {
             label: "test config".into(),
-            kind: DebugAdapterKind::Python(TCPHost::default()),
+            adapter: DebugAdapterKind::Python(TCPHost::default()),
             request: crate::DebugRequestType::Launch(LaunchConfig {
                 program: "main".to_string(),
                 cwd: None,
             }),
             initialize_args: None,
+            tcp_connection: None,
         };
         let json = json!({
             "label": "test config",

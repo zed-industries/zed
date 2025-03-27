@@ -56,7 +56,7 @@ pub struct LaunchConfig {
 
 /// Represents the type that will determine which request to call on the debug adapter
 #[derive(Deserialize, Serialize, PartialEq, Eq, JsonSchema, Clone, Debug)]
-#[serde(rename_all = "lowercase")]
+#[serde(rename_all = "lowercase", tag = "request")]
 pub enum DebugRequestType {
     /// Call the `attach` request on the debug adapter
     Attach(AttachConfig),
@@ -91,7 +91,7 @@ pub struct DebugAdapterConfig {
     /// Name of the debug task
     pub label: String,
     /// The type of adapter you want to use
-    pub kind: String,
+    pub adapter: String,
     /// The type of request that should be called on the debug adapter
     pub request: DebugRequestDisposition,
     /// Additional initialization arguments to be sent on DAP initialization
@@ -108,7 +108,7 @@ impl From<DebugTaskDefinition> for DebugAdapterConfig {
     fn from(def: DebugTaskDefinition) -> Self {
         Self {
             label: def.label,
-            kind: def.kind,
+            adapter: def.adapter,
             request: DebugRequestDisposition::UserConfigured(def.request),
             initialize_args: def.initialize_args,
             tcp_connection: def.tcp_connection,
@@ -126,7 +126,7 @@ impl TryFrom<DebugAdapterConfig> for DebugTaskDefinition {
 
         Ok(Self {
             label: def.label,
-            kind: def.kind,
+            adapter: def.adapter,
             request,
             initialize_args: def.initialize_args,
             tcp_connection: def.tcp_connection,
@@ -175,7 +175,7 @@ pub enum DebugConnectionType {
 #[serde(rename_all = "snake_case")]
 pub struct DebugTaskDefinition {
     /// The adapter to run
-    pub kind: String,
+    pub adapter: String,
     /// The type of request that should be called on the debug adapter
     #[serde(flatten)]
     pub request: DebugRequestType,

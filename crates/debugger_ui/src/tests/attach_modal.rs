@@ -84,7 +84,7 @@ async fn test_show_attach_modal_and_select_process(
                 AttachModal::new(
                     project.clone(),
                     DebugTaskDefinition {
-                        kind: DebugAdapterKind::Lldb,
+                        adapter: DebugAdapterKind::Lldb,
                         request: dap::DebugRequestType::Attach(AttachConfig::default()),
                         label: "attach example".into(),
                         initialize_args: None,

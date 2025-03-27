@@ -1488,7 +1488,7 @@ impl Project {
         };
         let config = DebugAdapterConfig {
             label: "test config".into(),
-            kind: DebugAdapterKind::Lldb,
+            adapter: DebugAdapterKind::Lldb,
             request: DebugRequestDisposition::UserConfigured(request),
             initialize_args: None,
             tcp_connection: None,
@@ -1611,6 +1611,10 @@ impl Project {
 
     pub fn languages(&self) -> &Arc<LanguageRegistry> {
         &self.languages
+    }
+
+    pub fn debug_adapters(&self) -> &Arc<DapRegistry> {
+        &self.debug_adapters
     }
 
     pub fn client(&self) -> Arc<Client> {

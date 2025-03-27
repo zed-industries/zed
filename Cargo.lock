@@ -3874,6 +3874,7 @@ dependencies = [
  "node_runtime",
  "parking_lot",
  "paths",
+ "regex",
  "schemars",
  "serde",
  "serde_json",
@@ -3907,7 +3908,6 @@ dependencies = [
  "regex",
  "serde",
  "serde_json",
- "sysinfo",
  "task",
  "util",
 ]

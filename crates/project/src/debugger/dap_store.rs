@@ -456,7 +456,7 @@ impl DapStore {
         let (_, new_session_task) = self.new_session(
             DebugAdapterConfig {
                 label: config.label,
-                kind: config.kind,
+                adapter: config.adapter,
                 request: DebugRequestDisposition::ReverseRequest(args),
                 initialize_args: config.initialize_args.clone(),
                 tcp_connection: config.tcp_connection.clone(),

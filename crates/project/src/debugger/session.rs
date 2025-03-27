@@ -484,8 +484,8 @@ impl LocalMode {
         cx: &mut AsyncApp,
     ) -> Result<(Arc<dyn DebugAdapter>, DebugAdapterBinary)> {
         let adapter = registry
-            .adapter(&config.kind)
-            .ok_or_else(|| anyhow!("Debug adapter with name `{}` was not found", config.kind))?;
+            .adapter(&config.adapter)
+            .ok_or_else(|| anyhow!("Debug adapter with name `{}` was not found", config.adapter))?;
 
         let binary = cx.update(|cx| {
             ProjectSettings::get_global(cx)

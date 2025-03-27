@@ -11,7 +11,7 @@ use crate::*;
 pub(crate) struct GdbDebugAdapter;
 
 impl GdbDebugAdapter {
-    const ADAPTER_NAME: &'static str = "gdb";
+    const ADAPTER_NAME: &'static str = "GDB";
 }
 
 #[async_trait(?Send)]

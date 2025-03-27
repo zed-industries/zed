@@ -11,7 +11,8 @@ use crate::*;
 pub(crate) struct PhpDebugAdapter;
 
 impl PhpDebugAdapter {
-    const ADAPTER_NAME: &'static str = "vscode-php-debug";
+    const ADAPTER_NAME: &'static str = "PHP";
+    const ADAPTER_PACKAGE_NAME: &'static str = "vscode-php-debug";
     const ADAPTER_PATH: &'static str = "extension/out/phpDebug.js";
 }
 
@@ -26,7 +27,7 @@ impl DebugAdapter for PhpDebugAdapter {
         delegate: &dyn DapDelegate,
     ) -> Result<AdapterVersion> {
         let release = latest_github_release(
-            &format!("{}/{}", "xdebug", Self::ADAPTER_NAME),
+            &format!("{}/{}", "xdebug", Self::ADAPTER_PACKAGE_NAME),
             true,
             false,
             delegate.http_client(),
@@ -68,7 +69,7 @@ impl DebugAdapter for PhpDebugAdapter {
         let adapter_path = if let Some(user_installed_path) = user_installed_path {
             user_installed_path
         } else {
-            let adapter_path = paths::debug_adapters_dir().join(self.name());
+            let adapter_path = paths::debug_adapters_dir().join(self.name().as_ref());
 
             let file_name_prefix = format!("{}_", self.name());
 

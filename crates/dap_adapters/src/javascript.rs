@@ -1,27 +1,28 @@
 use adapters::latest_github_release;
 use gpui::AsyncApp;
 use regex::Regex;
-use std::{collections::HashMap, path::PathBuf};
-use sysinfo::{Pid, Process};
+use std::path::PathBuf;
 use task::{DebugRequestType, DebugTaskDefinition};
 
 use crate::*;
 
-#[derive(Default, Debug)]
-pub(crate) struct JsDebugAdapter;
+#[derive(Debug)]
+pub(crate) struct JsDebugAdapter {
+    attach_processes: Regex,
+}
 
-impl JsDebugAdapter {
-    const ADAPTER_NAME: &'static str = "vscode-js-debug";
-    const ADAPTER_PATH: &'static str = "js-debug/src/dapDebugServer.js";
-
-    pub fn attach_processes(processes: &HashMap<Pid, Process>) -> Vec<(&Pid, &Process)> {
-        let regex = Regex::new(r"(?i)^(?:node|bun|iojs)(?:$|\b)").unwrap();
-
-        processes
-            .iter()
-            .filter(|(_, process)| regex.is_match(&process.name().to_string_lossy()))
-            .collect::<Vec<_>>()
+impl Default for JsDebugAdapter {
+    fn default() -> Self {
+        Self {
+            attach_processes: Regex::new(r"(?i)^(?:node|bun|iojs)(?:$|\b)")
+                .expect("Regex compilation to succeed"),
+        }
     }
+}
+impl JsDebugAdapter {
+    const ADAPTER_NAME: &'static str = "JavaScript";
+    const ADAPTER_NPM_NAME: &'static str = "vscode-js-debug";
+    const ADAPTER_PATH: &'static str = "js-debug/src/dapDebugServer.js";
 }
 
 #[async_trait(?Send)]
@@ -35,7 +36,7 @@ impl DebugAdapter for JsDebugAdapter {
         delegate: &dyn DapDelegate,
     ) -> Result<AdapterVersion> {
         let release = latest_github_release(
-            &format!("{}/{}", "microsoft", Self::ADAPTER_NAME),
+            &format!("{}/{}", "microsoft", Self::ADAPTER_NPM_NAME),
             true,
             false,
             delegate.http_client(),
@@ -66,7 +67,7 @@ impl DebugAdapter for JsDebugAdapter {
         let adapter_path = if let Some(user_installed_path) = user_installed_path {
             user_installed_path
         } else {
-            let adapter_path = paths::debug_adapters_dir().join(self.name());
+            let adapter_path = paths::debug_adapters_dir().join(self.name().as_ref());
 
             let file_name_prefix = format!("{}_", self.name());
 
@@ -151,5 +152,9 @@ impl DebugAdapter for JsDebugAdapter {
             }
         }
         args
+    }
+
+    fn attach_processes_filter(&self) -> Regex {
+        self.attach_processes.clone()
     }
 }

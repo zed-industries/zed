@@ -3,7 +3,6 @@ use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::Subscription;
 use gpui::{DismissEvent, Entity, EventEmitter, Focusable, Render};
 use picker::{Picker, PickerDelegate};
-use project::debugger::attach_processes;
 
 use std::sync::Arc;
 use sysinfo::System;
@@ -116,26 +115,40 @@ impl PickerDelegate for AttachModalDelegate {
     ) -> gpui::Task<()> {
         cx.spawn(async move |this, cx| {
             let Some(processes) = this
-                .update(cx, |this, _| {
+                .update(cx, |this, cx| {
                     if let Some(processes) = this.delegate.candidates.clone() {
                         processes
                     } else {
                         let system = System::new_all();
 
-                        let processes =
-                            attach_processes(&this.delegate.debug_config.kind, &system.processes());
-                        let candidates = processes
-                            .into_iter()
-                            .map(|(pid, process)| Candidate {
-                                pid: pid.as_u32(),
-                                name: process.name().to_string_lossy().into_owned(),
-                                command: process
-                                    .cmd()
-                                    .iter()
-                                    .map(|s| s.to_string_lossy().to_string())
-                                    .collect::<Vec<_>>(),
+                        let Some(adapter) = this
+                            .delegate
+                            .project
+                            .read(cx)
+                            .debug_adapters()
+                            .adapter(&this.delegate.debug_config.adapter)
+                        else {
+                            return vec![];
+                        };
+                        let filter = adapter.attach_processes_filter();
+
+                        let candidates = system
+                            .processes()
+                            .iter()
+                            .filter_map(|(pid, process)| {
+                                filter.is_match(&process.name().to_string_lossy()).then(|| {
+                                    Candidate {
+                                        pid: pid.as_u32(),
+                                        name: process.name().to_string_lossy().into_owned(),
+                                        command: process
+                                            .cmd()
+                                            .iter()
+                                            .map(|s| s.to_string_lossy().to_string())
+                                            .collect::<Vec<_>>(),
+                                    }
+                                })
                             })
-                            .collect::<Vec<Candidate>>();
+                            .collect::<Vec<_>>();
 
                         let _ = this.delegate.candidates.insert(candidates.clone());
 

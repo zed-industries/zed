@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use dap::{DebugAdapterKind, DebugRequestType};
+use dap::DebugRequestType;
 use editor::{Editor, EditorElement, EditorStyle};
 use gpui::{App, AppContext, Entity, EventEmitter, FocusHandle, Focusable, TextStyle, WeakEntity};
 use settings::Settings as _;
@@ -59,14 +59,9 @@ impl InertState {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let selected_debugger = debug_config.as_ref().and_then(|config| match config.kind {
-            DebugAdapterKind::Lldb => Some("LLDB".into()),
-            DebugAdapterKind::Go => Some("Delve".into()),
-            DebugAdapterKind::Php => Some("PHP".into()),
-            DebugAdapterKind::Javascript => Some("JavaScript".into()),
-            DebugAdapterKind::Python => Some("Debugpy".into()),
-            _ => None,
-        });
+        let selected_debugger = debug_config
+            .as_ref()
+            .map(|config| SharedString::from(config.adapter.clone()));
 
         let spawn_mode = debug_config
             .as_ref()
@@ -143,16 +138,20 @@ impl Render for InertState {
                 if this.spawn_mode == SpawnMode::Launch {
                     let program = this.program_editor.read(cx).text(cx);
                     let cwd = PathBuf::from(this.cwd_editor.read(cx).text(cx));
-                    let kind =
-                        kind_for_label(this.selected_debugger.as_deref().unwrap_or_else(|| {
+                    let kind = this
+                        .selected_debugger
+                        .as_deref()
+                        .unwrap_or_else(|| {
                             unimplemented!(
                                 "Automatic selection of a debugger based on users project"
                             )
-                        }));
+                        })
+                        .to_string();
+
                     cx.emit(InertEvent::Spawned {
                         config: DebugTaskDefinition {
                             label: "hard coded".into(),
-                            kind,
+                            adapter: kind,
                             request: DebugRequestType::Launch(LaunchConfig {
                                 program,
                                 cwd: Some(cwd),
@@ -166,6 +165,15 @@ impl Render for InertState {
                 }
             }))
             .disabled(disable_buttons);
+        let available_adapters = self
+            .workspace
+            .update(cx, |this, cx| {
+                this.project()
+                    .read(cx)
+                    .debug_adapters()
+                    .enumerate_adapters()
+            })
+            .unwrap_or_default();
         v_flex()
             .track_focus(&self.focus_handle)
             .size_full()
@@ -186,28 +194,27 @@ impl Render for InertState {
                                         .as_ref()
                                         .unwrap_or_else(|| &SELECT_DEBUGGER_LABEL)
                                         .clone(),
-                                    ContextMenu::build(window, cx, move |this, _, _| {
-                                        let setter_for_name = |name: &'static str| {
+                                    ContextMenu::build(window, cx, move |mut this, _, _| {
+                                        let setter_for_name = |name: SharedString| {
                                             let weak = weak.clone();
                                             move |_: &mut Window, cx: &mut App| {
-                                                let name = name;
-                                                (&weak)
-                                                    .update(cx, move |this, _| {
-                                                        this.selected_debugger = Some(name.into());
-                                                    })
-                                                    .ok();
+                                                let name = name.clone();
+                                                weak.update(cx, move |this, cx| {
+                                                    this.selected_debugger = Some(name.clone());
+                                                    cx.notify();
+                                                })
+                                                .ok();
                                             }
                                         };
-                                        this.entry("GDB", None, setter_for_name("GDB"))
-                                            .entry("Delve", None, setter_for_name("Delve"))
-                                            .entry("LLDB", None, setter_for_name("LLDB"))
-                                            .entry("PHP", None, setter_for_name("PHP"))
-                                            .entry(
-                                                "JavaScript",
+
+                                        for adapter in available_adapters {
+                                            this = this.entry(
+                                                adapter.0.clone(),
                                                 None,
-                                                setter_for_name("JavaScript"),
-                                            )
-                                            .entry("Debugpy", None, setter_for_name("Debugpy"))
+                                                setter_for_name(adapter.0.clone()),
+                                            );
+                                        }
+                                        this
                                     }),
                                 )),
                             ),
@@ -272,18 +279,6 @@ impl Render for InertState {
     }
 }
 
-fn kind_for_label(label: &str) -> DebugAdapterKind {
-    match label {
-        "LLDB" => DebugAdapterKind::Lldb,
-        "Debugpy" => DebugAdapterKind::Python,
-        "JavaScript" => DebugAdapterKind::Javascript,
-        "PHP" => DebugAdapterKind::Php,
-        "Delve" => DebugAdapterKind::Go,
-        _ => {
-            unimplemented!()
-        } // Maybe we should set a toast notification here
-    }
-}
 impl InertState {
     fn render_editor(editor: &Entity<Editor>, cx: &Context<Self>) -> impl IntoElement {
         let settings = ThemeSettings::get_global(cx);
@@ -309,13 +304,17 @@ impl InertState {
     }
 
     fn attach(&self, window: &mut Window, cx: &mut Context<Self>) {
-        let kind = kind_for_label(self.selected_debugger.as_deref().unwrap_or_else(|| {
-            unimplemented!("Automatic selection of a debugger based on users project")
-        }));
+        let kind = self
+            .selected_debugger
+            .as_deref()
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| {
+                unimplemented!("Automatic selection of a debugger based on users project")
+            });
 
         let config = DebugTaskDefinition {
             label: "hard coded attach".into(),
-            kind,
+            adapter: kind,
             request: DebugRequestType::Attach(task::AttachConfig { process_id: None }),
             initialize_args: None,
             tcp_connection: None,

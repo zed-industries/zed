@@ -253,6 +253,7 @@ async fn test_ssh_collaboration_git_branches(
                 http_client: remote_http_client,
                 node_runtime: node,
                 languages,
+                debug_adapters: Arc::new(DapRegistry::fake()),
                 extension_host_proxy: Arc::new(ExtensionHostProxy::new()),
             },
             cx,

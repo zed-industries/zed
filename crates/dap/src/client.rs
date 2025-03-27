@@ -71,7 +71,6 @@ impl DebugAdapterClient {
         let client_id = this.id;
 
         // start handling events/reverse requests
-
         cx.background_spawn(Self::handle_receive_messages(
             client_id,
             server_rx,
