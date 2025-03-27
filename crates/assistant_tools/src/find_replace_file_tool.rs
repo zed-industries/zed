@@ -5,8 +5,9 @@ use language_model::LanguageModelRequestMessage;
 use project::Project;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use std::{collections::HashSet, path::PathBuf, sync::Arc};
+use std::{path::PathBuf, sync::Arc};
 use ui::IconName;
+use util::ResultExt;
 
 use crate::replace::replace_exact;
 
@@ -189,19 +190,20 @@ impl Tool for FindReplaceFileTool {
                 .await;
 
             if let Some(diff) = result {
-                buffer.update(cx, |buffer, cx| {
-                    let _ = buffer.apply_diff(diff, cx);
+                let edit_ids = buffer.update(cx, |buffer, cx| {
+                    buffer.finalize_last_transaction();
+                    buffer.apply_diff(diff, cx);
+                    let transaction = buffer.finalize_last_transaction();
+                    transaction.map_or(Vec::new(), |transaction| transaction.edit_ids.clone())
                 })?;
-
-                project.update(cx, |project, cx| {
-                    project.save_buffer(buffer.clone(), cx)
-                })?.await?;
 
                 action_log.update(cx, |log, cx| {
-                    let mut buffers = HashSet::default();
-                    buffers.insert(buffer);
-                    log.buffer_edited(buffers, cx);
-                })?;
+                    log.buffer_edited(buffer.clone(), edit_ids, cx)
+                })?.await.log_err();
+
+                project.update(cx, |project, cx| {
+                    project.save_buffer(buffer, cx)
+                })?.await?;
 
                 Ok(format!("Edited {}", input.path.display()))
             } else {
