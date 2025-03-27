@@ -10,7 +10,7 @@ use git::{
     },
     status::{FileStatus, GitStatus, StatusCode, TrackedStatus, UnmergedStatus},
 };
-use gpui::BackgroundExecutor;
+use gpui::{AsyncApp, BackgroundExecutor};
 use ignore::gitignore::GitignoreBuilder;
 use rope::Rope;
 use smol::future::FutureExt as _;
@@ -180,7 +180,11 @@ impl GitRepository for FakeGitRepository {
         index: Option<GitIndex>,
         path_prefixes: &[RepoPath],
     ) -> BoxFuture<'static, Result<GitStatus>> {
-        let path_prefixes = path_prefixes.to_vec();
+        let status = self.status_blocking(path_prefixes);
+        async move { status }.boxed()
+    }
+
+    fn status_blocking(&self, path_prefixes: &[RepoPath]) -> Result<GitStatus> {
         let workdir_path = self.dot_git_path.parent().unwrap();
 
         // Load gitignores
@@ -222,7 +226,7 @@ impl GitRepository for FakeGitRepository {
             })
             .collect();
 
-        self.with_state_async(false, move |state| {
+        self.fs.with_git_state(&self.dot_git_path, false, |state| {
             let mut entries = Vec::new();
             let paths = state
                 .head_contents
@@ -306,7 +310,7 @@ impl GitRepository for FakeGitRepository {
             Ok(GitStatus {
                 entries: entries.into(),
             })
-        })
+        })?
     }
 
     fn branches(&self) -> BoxFuture<Result<Vec<Branch>>> {
@@ -381,6 +385,7 @@ impl GitRepository for FakeGitRepository {
         _options: Option<PushOptions>,
         _askpass: AskPassSession,
         _env: HashMap<String, String>,
+        _cx: AsyncApp,
     ) -> BoxFuture<Result<git::repository::RemoteCommandOutput>> {
         unimplemented!()
     }
@@ -391,6 +396,7 @@ impl GitRepository for FakeGitRepository {
         _remote: String,
         _askpass: AskPassSession,
         _env: HashMap<String, String>,
+        _cx: AsyncApp,
     ) -> BoxFuture<Result<git::repository::RemoteCommandOutput>> {
         unimplemented!()
     }
@@ -399,6 +405,7 @@ impl GitRepository for FakeGitRepository {
         &self,
         _askpass: AskPassSession,
         _env: HashMap<String, String>,
+        _cx: AsyncApp,
     ) -> BoxFuture<Result<git::repository::RemoteCommandOutput>> {
         unimplemented!()
     }

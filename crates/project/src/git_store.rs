@@ -3279,12 +3279,12 @@ impl Repository {
         let askpass_id = util::post_inc(&mut self.latest_askpass_id);
         let env = self.worktree_environment(cx);
 
-        self.send_job(move |git_repo, _cx| async move {
+        self.send_job(move |git_repo, cx| async move {
             match git_repo {
                 RepositoryState::Local(git_repository) => {
                     let askpass = AskPassSession::new(&executor, askpass).await?;
                     let env = env.await;
-                    git_repository.fetch(askpass, env).await
+                    git_repository.fetch(askpass, env, cx).await
                 }
                 RepositoryState::Remote {
                     project_id,
@@ -3328,7 +3328,7 @@ impl Repository {
         let askpass_id = util::post_inc(&mut self.latest_askpass_id);
         let env = self.worktree_environment(cx);
 
-        self.send_job(move |git_repo, _cx| async move {
+        self.send_job(move |git_repo, cx| async move {
             match git_repo {
                 RepositoryState::Local(git_repository) => {
                     let env = env.await;
@@ -3340,6 +3340,7 @@ impl Repository {
                             options,
                             askpass,
                             env,
+                            cx,
                         )
                         .await
                 }
@@ -3389,13 +3390,13 @@ impl Repository {
         let askpass_id = util::post_inc(&mut self.latest_askpass_id);
         let env = self.worktree_environment(cx);
 
-        self.send_job(move |git_repo, _cx| async move {
+        self.send_job(move |git_repo, cx| async move {
             match git_repo {
                 RepositoryState::Local(git_repository) => {
                     let askpass = AskPassSession::new(&executor, askpass).await?;
                     let env = env.await;
                     git_repository
-                        .pull(branch.to_string(), remote.to_string(), askpass, env)
+                        .pull(branch.to_string(), remote.to_string(), askpass, env, cx)
                         .await
                 }
                 RepositoryState::Remote {

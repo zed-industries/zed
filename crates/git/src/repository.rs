@@ -5,7 +5,7 @@ use collections::HashMap;
 use futures::future::BoxFuture;
 use futures::{select_biased, AsyncWriteExt, FutureExt as _};
 use git2::BranchType;
-use gpui::{BackgroundExecutor, SharedString};
+use gpui::{AsyncApp, BackgroundExecutor, SharedString};
 use parking_lot::Mutex;
 use rope::Rope;
 use schemars::JsonSchema;
@@ -23,7 +23,7 @@ use std::{
 use std::{future, mem};
 use sum_tree::MapSeekTarget;
 use thiserror::Error;
-use util::command::new_smol_command;
+use util::command::{new_smol_command, new_std_command};
 use util::ResultExt;
 use uuid::Uuid;
 
@@ -189,6 +189,7 @@ pub trait GitRepository: Send + Sync {
         index: Option<GitIndex>,
         path_prefixes: &[RepoPath],
     ) -> BoxFuture<'static, Result<GitStatus>>;
+    fn status_blocking(&self, path_prefixes: &[RepoPath]) -> Result<GitStatus>;
 
     fn branches(&self) -> BoxFuture<Result<Vec<Branch>>>;
 
@@ -256,6 +257,9 @@ pub trait GitRepository: Send + Sync {
         options: Option<PushOptions>,
         askpass: AskPassSession,
         env: HashMap<String, String>,
+        // This method takes an AsyncApp to ensure it's invoked on the main thread,
+        // otherwise git-credentials-manager won't work.
+        cx: AsyncApp,
     ) -> BoxFuture<Result<RemoteCommandOutput>>;
 
     fn pull(
@@ -264,12 +268,18 @@ pub trait GitRepository: Send + Sync {
         upstream_name: String,
         askpass: AskPassSession,
         env: HashMap<String, String>,
+        // This method takes an AsyncApp to ensure it's invoked on the main thread,
+        // otherwise git-credentials-manager won't work.
+        cx: AsyncApp,
     ) -> BoxFuture<Result<RemoteCommandOutput>>;
 
     fn fetch(
         &self,
         askpass: AskPassSession,
         env: HashMap<String, String>,
+        // This method takes an AsyncApp to ensure it's invoked on the main thread,
+        // otherwise git-credentials-manager won't work.
+        cx: AsyncApp,
     ) -> BoxFuture<Result<RemoteCommandOutput>>;
 
     fn get_remotes(&self, branch_name: Option<String>) -> BoxFuture<Result<Vec<Remote>>>;
@@ -700,6 +710,20 @@ impl GitRepository for RealGitRepository {
             .boxed()
     }
 
+    fn status_blocking(&self, path_prefixes: &[RepoPath]) -> Result<GitStatus> {
+        let output = new_std_command(&self.git_binary_path)
+            .current_dir(self.working_directory()?)
+            .args(git_status_args(path_prefixes))
+            .output()?;
+        if output.status.success() {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            stdout.parse()
+        } else {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            Err(anyhow!("git status failed: {}", stderr))
+        }
+    }
+
     fn branches(&self) -> BoxFuture<Result<Vec<Branch>>> {
         let working_directory = self.working_directory();
         let git_binary_path = self.git_binary_path.clone();
@@ -942,6 +966,7 @@ impl GitRepository for RealGitRepository {
         options: Option<PushOptions>,
         ask_pass: AskPassSession,
         env: HashMap<String, String>,
+        _cx: AsyncApp,
     ) -> BoxFuture<Result<RemoteCommandOutput>> {
         let working_directory = self.working_directory();
         async move {
@@ -978,6 +1003,7 @@ impl GitRepository for RealGitRepository {
         remote_name: String,
         ask_pass: AskPassSession,
         env: HashMap<String, String>,
+        _cx: AsyncApp,
     ) -> BoxFuture<Result<RemoteCommandOutput>> {
         let working_directory = self.working_directory();
         async {
@@ -1004,6 +1030,7 @@ impl GitRepository for RealGitRepository {
         &self,
         ask_pass: AskPassSession,
         env: HashMap<String, String>,
+        _cx: AsyncApp,
     ) -> BoxFuture<Result<RemoteCommandOutput>> {
         let working_directory = self.working_directory();
         async {
@@ -1325,6 +1352,25 @@ impl GitRepository for RealGitRepository {
             })
             .boxed()
     }
+}
+
+fn git_status_args(path_prefixes: &[RepoPath]) -> Vec<OsString> {
+    let mut args = vec![
+        OsString::from("--no-optional-locks"),
+        OsString::from("status"),
+        OsString::from("--porcelain=v1"),
+        OsString::from("--untracked-files=all"),
+        OsString::from("--no-renames"),
+        OsString::from("-z"),
+    ];
+    args.extend(path_prefixes.iter().map(|path_prefix| {
+        if path_prefix.0.as_ref() == Path::new("") {
+            Path::new(".").into()
+        } else {
+            path_prefix.as_os_str().into()
+        }
+    }));
+    args
 }
 
 struct GitBinary {
