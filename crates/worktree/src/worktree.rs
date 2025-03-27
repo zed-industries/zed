@@ -5021,7 +5021,7 @@ impl BackgroundScanner {
         }
 
         for (_work_directory, mut paths) in paths_by_git_repo {
-            if let Ok(status) = self.executor.block(paths.repo.status(&paths.repo_paths)) {
+            if let Ok(status) = paths.repo.status_blocking(&paths.repo_paths) {
                 let mut changed_path_statuses = Vec::new();
                 let statuses = paths.entry.statuses_by_path.clone();
                 let mut cursor = statuses.cursor::<PathProgress>(&());
@@ -5525,8 +5525,7 @@ async fn do_git_status_update(
     log::trace!("updating git statuses for repo {repository_name}");
     let Some(statuses) = local_repository
         .repo()
-        .status(&[git::WORK_DIRECTORY_REPO_PATH.clone()])
-        .await
+        .status_blocking(&[git::WORK_DIRECTORY_REPO_PATH.clone()])
         .log_err()
     else {
         return;

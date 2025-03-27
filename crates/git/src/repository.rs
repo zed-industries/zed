@@ -23,7 +23,7 @@ use std::{
 };
 use sum_tree::MapSeekTarget;
 use thiserror::Error;
-use util::command::new_smol_command;
+use util::command::{new_smol_command, new_std_command};
 use util::ResultExt;
 use uuid::Uuid;
 
@@ -184,6 +184,7 @@ pub trait GitRepository: Send + Sync {
     fn merge_head_shas(&self) -> Vec<String>;
 
     fn status(&self, path_prefixes: &[RepoPath]) -> BoxFuture<'static, Result<GitStatus>>;
+    fn status_blocking(&self, path_prefixes: &[RepoPath]) -> Result<GitStatus>;
 
     fn branches(&self) -> BoxFuture<Result<Vec<Branch>>>;
 
@@ -610,21 +611,7 @@ impl GitRepository for RealGitRepository {
         let working_directory = self.working_directory();
         let git_binary_path = self.git_binary_path.clone();
         let executor = self.executor.clone();
-        let mut args = vec![
-            OsString::from("--no-optional-locks"),
-            OsString::from("status"),
-            OsString::from("--porcelain=v1"),
-            OsString::from("--untracked-files=all"),
-            OsString::from("--no-renames"),
-            OsString::from("-z"),
-        ];
-        args.extend(path_prefixes.iter().map(|path_prefix| {
-            if path_prefix.0.as_ref() == Path::new("") {
-                Path::new(".").into()
-            } else {
-                path_prefix.as_os_str().into()
-            }
-        }));
+        let args = git_status_args(path_prefixes);
         self.executor
             .spawn(async move {
                 let working_directory = working_directory?;
@@ -632,6 +619,20 @@ impl GitRepository for RealGitRepository {
                 git.run(&args).await?.parse()
             })
             .boxed()
+    }
+
+    fn status_blocking(&self, path_prefixes: &[RepoPath]) -> Result<GitStatus> {
+        let output = new_std_command(&self.git_binary_path)
+            .current_dir(self.working_directory()?)
+            .args(git_status_args(path_prefixes))
+            .output()?;
+        if output.status.success() {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            stdout.parse()
+        } else {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            Err(anyhow!("git status failed: {}", stderr))
+        }
     }
 
     fn branches(&self) -> BoxFuture<Result<Vec<Branch>>> {
@@ -1202,6 +1203,25 @@ impl GitRepository for RealGitRepository {
             })
             .boxed()
     }
+}
+
+fn git_status_args(path_prefixes: &[RepoPath]) -> Vec<OsString> {
+    let mut args = vec![
+        OsString::from("--no-optional-locks"),
+        OsString::from("status"),
+        OsString::from("--porcelain=v1"),
+        OsString::from("--untracked-files=all"),
+        OsString::from("--no-renames"),
+        OsString::from("-z"),
+    ];
+    args.extend(path_prefixes.iter().map(|path_prefix| {
+        if path_prefix.0.as_ref() == Path::new("") {
+            Path::new(".").into()
+        } else {
+            path_prefix.as_os_str().into()
+        }
+    }));
+    args
 }
 
 struct GitBinary {
