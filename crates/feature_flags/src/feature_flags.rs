@@ -64,17 +64,6 @@ impl FeatureFlag for PredictEditsRateCompletionsFeatureFlag {
     const NAME: &'static str = "predict-edits-rate-completions";
 }
 
-/// A feature flag that controls whether "non eager mode" (holding `alt` to preview) is publicized.
-pub struct PredictEditsNonEagerModeFeatureFlag;
-impl FeatureFlag for PredictEditsNonEagerModeFeatureFlag {
-    const NAME: &'static str = "predict-edits-non-eager-mode";
-
-    fn enabled_for_staff() -> bool {
-        // Don't show to staff so it doesn't leak into media for the launch.
-        false
-    }
-}
-
 pub struct Remoting {}
 impl FeatureFlag for Remoting {
     const NAME: &'static str = "remoting";
