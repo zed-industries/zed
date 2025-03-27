@@ -1253,12 +1253,12 @@ impl FakeFs {
         .boxed()
     }
 
-    pub fn with_git_state<T, F>(&self, dot_git: &Path, emit_git_event: bool, f: F) -> T
+    pub fn with_git_state<T, F>(&self, dot_git: &Path, emit_git_event: bool, f: F) -> Result<T>
     where
         F: FnOnce(&mut FakeGitRepositoryState) -> T,
     {
         let mut state = self.state.lock();
-        let entry = state.read_path(dot_git).unwrap();
+        let entry = state.read_path(dot_git).context("open .git")?;
         let mut entry = entry.lock();
 
         if let FakeFsEntry::Dir { git_repo_state, .. } = &mut *entry {
@@ -1276,9 +1276,9 @@ impl FakeFs {
                 state.emit_event([(dot_git, None)]);
             }
 
-            result
+            Ok(result)
         } else {
-            panic!("not a directory");
+            Err(anyhow!("not a directory"))
         }
     }
 
@@ -1288,6 +1288,7 @@ impl FakeFs {
             state.branches.extend(branch.clone());
             state.current_branch_name = branch
         })
+        .unwrap();
     }
 
     pub fn insert_branches(&self, dot_git: &Path, branches: &[&str]) {
@@ -1301,6 +1302,7 @@ impl FakeFs {
                 .branches
                 .extend(branches.iter().map(ToString::to_string));
         })
+        .unwrap();
     }
 
     pub fn set_unmerged_paths_for_repo(
@@ -1315,7 +1317,8 @@ impl FakeFs {
                     .iter()
                     .map(|(path, content)| (path.clone(), *content)),
             );
-        });
+        })
+        .unwrap();
     }
 
     pub fn set_index_for_repo(&self, dot_git: &Path, index_state: &[(RepoPath, String)]) {
@@ -1326,7 +1329,8 @@ impl FakeFs {
                     .iter()
                     .map(|(path, content)| (path.clone(), content.clone())),
             );
-        });
+        })
+        .unwrap();
     }
 
     pub fn set_head_for_repo(&self, dot_git: &Path, head_state: &[(RepoPath, String)]) {
@@ -1337,7 +1341,8 @@ impl FakeFs {
                     .iter()
                     .map(|(path, content)| (path.clone(), content.clone())),
             );
-        });
+        })
+        .unwrap();
     }
 
     pub fn set_git_content_for_repo(
@@ -1361,7 +1366,8 @@ impl FakeFs {
                     )
                 },
             ));
-        });
+        })
+        .unwrap();
     }
 
     pub fn set_head_and_index_for_repo(
@@ -1376,14 +1382,16 @@ impl FakeFs {
             state
                 .index_contents
                 .extend(contents_by_path.iter().cloned());
-        });
+        })
+        .unwrap();
     }
 
     pub fn set_blame_for_repo(&self, dot_git: &Path, blames: Vec<(RepoPath, git::blame::Blame)>) {
         self.with_git_state(dot_git, true, |state| {
             state.blames.clear();
             state.blames.extend(blames);
-        });
+        })
+        .unwrap();
     }
 
     /// Put the given git repository into a state with the given status,
@@ -1465,13 +1473,14 @@ impl FakeFs {
                     state.head_contents.insert(repo_path.clone(), content);
                 }
             }
-        });
+        }).unwrap();
     }
 
     pub fn set_error_message_for_index_write(&self, dot_git: &Path, message: Option<String>) {
         self.with_git_state(dot_git, true, |state| {
             state.simulated_index_write_error_message = message;
-        });
+        })
+        .unwrap();
     }
 
     pub fn paths(&self, include_dot_git: bool) -> Vec<PathBuf> {

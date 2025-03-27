@@ -544,6 +544,10 @@ impl CompletionProvider for ContextPickerCompletionProvider {
     fn sort_completions(&self) -> bool {
         false
     }
+
+    fn filter_completions(&self) -> bool {
+        false
+    }
 }
 
 fn confirm_completion_callback(

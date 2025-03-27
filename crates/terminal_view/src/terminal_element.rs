@@ -886,9 +886,9 @@ impl Element for TerminalElement {
                 && bounds.contains(&window.mouse_position())
                 && self.terminal_view.read(cx).hover_target_tooltip.is_some()
             {
-                window.set_cursor_style(gpui::CursorStyle::PointingHand, &layout.hitbox);
+                window.set_cursor_style(gpui::CursorStyle::PointingHand, Some(&layout.hitbox));
             } else {
-                window.set_cursor_style(gpui::CursorStyle::IBeam, &layout.hitbox);
+                window.set_cursor_style(gpui::CursorStyle::IBeam, Some(&layout.hitbox));
             }
 
             let cursor = layout.cursor.take();

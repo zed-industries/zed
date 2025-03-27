@@ -438,7 +438,7 @@ impl std::ops::Sub for GitSummary {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct GitStatus {
     pub entries: Arc<[(RepoPath, FileStatus)]>,
 }

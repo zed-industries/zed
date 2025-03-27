@@ -1617,7 +1617,7 @@ impl Interactivity {
 
                                         if !cx.has_active_drag() {
                                             if let Some(mouse_cursor) = style.mouse_cursor {
-                                                window.set_cursor_style(mouse_cursor, hitbox);
+                                                window.set_cursor_style(mouse_cursor, Some(hitbox));
                                             }
                                         }
 

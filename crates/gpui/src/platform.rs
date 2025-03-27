@@ -1233,6 +1233,9 @@ pub enum CursorStyle {
     /// A cursor indicating that the operation will result in a context menu
     /// corresponds to the CSS cursor value `context-menu`
     ContextualMenu,
+
+    /// Hide the cursor
+    None,
 }
 
 impl Default for CursorStyle {

@@ -66,8 +66,8 @@ impl Tool for ReadFileTool {
     fn ui_text(&self, input: &serde_json::Value) -> String {
         match serde_json::from_value::<ReadFileToolInput>(input.clone()) {
             Ok(input) => {
-                let path = MarkdownString::escape(&input.path.display().to_string());
-                format!("Read file `{path}`")
+                let path = MarkdownString::inline_code(&input.path.display().to_string());
+                format!("Read file {path}")
             }
             Err(_) => "Read file".to_string(),
         }
