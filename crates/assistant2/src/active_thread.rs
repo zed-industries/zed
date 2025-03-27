@@ -301,6 +301,18 @@ impl ActiveThread {
         self.last_error.take();
     }
 
+    // Helper to determine if the user has scrolled away from the bottom
+    fn is_scroll_at_bottom(&self, scroll_pos: &ListOffset) -> bool {
+        // If we're already at the last item or within one item of it
+        let item_count = self.list_state.item_count();
+        if item_count <= 1 {
+            return true;
+        }
+
+        // Check if we're at the bottom or only one item away
+        scroll_pos.item_ix >= item_count - 2
+    }
+
     fn push_message(
         &mut self,
         id: &MessageId,
@@ -315,10 +327,15 @@ impl ActiveThread {
         let rendered_message =
             RenderedMessage::from_segments(segments, self.language_registry.clone(), window, cx);
         self.rendered_messages_by_id.insert(*id, rendered_message);
-        self.list_state.scroll_to(ListOffset {
-            item_ix: old_len,
-            offset_in_item: Pixels(0.0),
-        });
+
+        // Only scroll to the bottom if we're already at the bottom
+        let current_scroll = self.list_state.logical_scroll_top();
+        if self.is_scroll_at_bottom(&current_scroll) {
+            self.list_state.scroll_to(ListOffset {
+                item_ix: old_len,
+                offset_in_item: Pixels(0.0),
+            });
+        }
     }
 
     fn edited_message(
