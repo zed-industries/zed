@@ -88,7 +88,7 @@ pub enum TaskType {
 
 #[cfg(test)]
 mod deserialization_tests {
-    use crate::{DebugAdapterKind, LaunchConfig, TCPHost};
+    use crate::{LaunchConfig, TCPHost};
 
     use super::*;
     use serde_json::json;
