@@ -36,6 +36,7 @@ use std::{
     },
 };
 use text::Point;
+use util::path;
 use workspace::{CloseIntent, Workspace};
 
 #[gpui::test(iterations = 10)]
@@ -562,14 +563,14 @@ async fn test_collaborating_with_code_actions(
     client_a
         .fs()
         .insert_tree(
-            "/a",
+            path!("/a"),
             json!({
                 "main.rs": "mod other;\nfn main() { let foo = other::foo(); }",
                 "other.rs": "pub fn foo() -> usize { 4 }",
             }),
         )
         .await;
-    let (project_a, worktree_id) = client_a.build_local_project("/a", cx_a).await;
+    let (project_a, worktree_id) = client_a.build_local_project(path!("/a"), cx_a).await;
     let project_id = active_call_a
         .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
         .await
@@ -592,7 +593,7 @@ async fn test_collaborating_with_code_actions(
         .set_request_handler::<lsp::request::CodeActionRequest, _, _>(|params, _| async move {
             assert_eq!(
                 params.text_document.uri,
-                lsp::Url::from_file_path("/a/main.rs").unwrap(),
+                lsp::Url::from_file_path(path!("/a/main.rs")).unwrap(),
             );
             assert_eq!(params.range.start, lsp::Position::new(0, 0));
             assert_eq!(params.range.end, lsp::Position::new(0, 0));
@@ -614,7 +615,7 @@ async fn test_collaborating_with_code_actions(
         .set_request_handler::<lsp::request::CodeActionRequest, _, _>(|params, _| async move {
             assert_eq!(
                 params.text_document.uri,
-                lsp::Url::from_file_path("/a/main.rs").unwrap(),
+                lsp::Url::from_file_path(path!("/a/main.rs")).unwrap(),
             );
             assert_eq!(params.range.start, lsp::Position::new(1, 31));
             assert_eq!(params.range.end, lsp::Position::new(1, 31));
@@ -626,7 +627,7 @@ async fn test_collaborating_with_code_actions(
                         changes: Some(
                             [
                                 (
-                                    lsp::Url::from_file_path("/a/main.rs").unwrap(),
+                                    lsp::Url::from_file_path(path!("/a/main.rs")).unwrap(),
                                     vec![lsp::TextEdit::new(
                                         lsp::Range::new(
                                             lsp::Position::new(1, 22),
@@ -636,7 +637,7 @@ async fn test_collaborating_with_code_actions(
                                     )],
                                 ),
                                 (
-                                    lsp::Url::from_file_path("/a/other.rs").unwrap(),
+                                    lsp::Url::from_file_path(path!("/a/other.rs")).unwrap(),
                                     vec![lsp::TextEdit::new(
                                         lsp::Range::new(
                                             lsp::Position::new(0, 0),
@@ -697,7 +698,7 @@ async fn test_collaborating_with_code_actions(
                     changes: Some(
                         [
                             (
-                                lsp::Url::from_file_path("/a/main.rs").unwrap(),
+                                lsp::Url::from_file_path(path!("/a/main.rs")).unwrap(),
                                 vec![lsp::TextEdit::new(
                                     lsp::Range::new(
                                         lsp::Position::new(1, 22),
@@ -707,7 +708,7 @@ async fn test_collaborating_with_code_actions(
                                 )],
                             ),
                             (
-                                lsp::Url::from_file_path("/a/other.rs").unwrap(),
+                                lsp::Url::from_file_path(path!("/a/other.rs")).unwrap(),
                                 vec![lsp::TextEdit::new(
                                     lsp::Range::new(
                                         lsp::Position::new(0, 0),
