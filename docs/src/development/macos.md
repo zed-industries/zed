@@ -41,6 +41,7 @@ If you are developing collaborative features of Zed, you'll need to install the 
   ```sh
   brew install livekit foreman
   ```
+
 - Follow the steps in the [collab README](https://github.com/zed-industries/zed/blob/main/crates/collab/README.md) to configure the Postgres database for integration tests
 
 Alternatively, if you have [Docker](https://www.docker.com/) installed you can bring up all the `collab` dependencies using Docker Compose:
