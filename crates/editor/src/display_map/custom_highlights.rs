@@ -14,6 +14,19 @@ use sum_tree::TreeMap;
 
 use super::SemanticHighlights;
 
+#[derive(Debug, Clone)]
+pub struct Token {
+    pub(crate) id: usize,
+    pub range: Range<multi_buffer::Anchor>,
+    pub style: HighlightStyle,
+}
+
+impl Token {
+    pub fn new(id: usize, range: Range<multi_buffer::Anchor>, style: HighlightStyle) -> Self {
+        Self { id, range, style }
+    }
+}
+
 pub struct CustomHighlightsChunks<'a> {
     buffer_chunks: MultiBufferChunks<'a>,
     buffer_chunk: Option<Chunk<'a>>,
@@ -84,21 +97,21 @@ fn create_highlight_endpoints(
     let mut highlight_endpoints = Vec::new();
     if let Some(semantic_highlights) = semantic_highlights {
         let end = buffer.anchor_after(range.end);
-        for (style, range) in semantic_highlights.iter() {
-            if range.start.cmp(&end, &buffer).is_ge() {
+        for token in semantic_highlights.iter() {
+            if token.range.start.cmp(&end, &buffer).is_ge() {
                 break;
             }
             highlight_endpoints.push(HighlightEndpoint {
-                offset: range.start.to_offset(&buffer),
+                offset: token.range.start.to_offset(&buffer),
                 is_start: true,
                 tag: TypeId::of::<SemanticHighlightActiveToken>(),
-                style: *style,
+                style: token.style,
             });
             highlight_endpoints.push(HighlightEndpoint {
-                offset: range.end.to_offset(&buffer),
+                offset: token.range.end.to_offset(&buffer),
                 is_start: false,
                 tag: TypeId::of::<SemanticHighlightActiveToken>(),
-                style: *style,
+                style: token.style,
             });
         }
         highlight_endpoints.sort();

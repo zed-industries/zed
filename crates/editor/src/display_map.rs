@@ -37,6 +37,7 @@ pub use block_map::{
 use block_map::{BlockRow, BlockSnapshot};
 use collections::{HashMap, HashSet};
 pub use crease_map::*;
+pub use custom_highlights::Token;
 pub use fold_map::{Fold, FoldId, FoldPlaceholder, FoldPoint};
 use fold_map::{FoldMap, FoldSnapshot};
 use gpui::{App, Context, Entity, Font, HighlightStyle, LineLayout, Pixels, UnderlineStyle};
@@ -80,7 +81,7 @@ pub trait ToDisplayPoint {
     fn to_display_point(&self, map: &DisplaySnapshot) -> DisplayPoint;
 }
 
-type SemanticHighlights = Vec<(HighlightStyle, Range<Anchor>)>;
+type SemanticHighlights = Vec<Token>;
 type TextHighlights = TreeMap<TypeId, Arc<(HighlightStyle, Vec<Range<Anchor>>)>>;
 type InlayHighlights = TreeMap<TypeId, TreeMap<InlayId, (HighlightStyle, InlayHighlight)>>;
 
@@ -457,14 +458,6 @@ impl DisplayMap {
         Some(DisplayRow(block_row.0))
     }
 
-    pub fn clear_semantic_highlights(&mut self) {
-        self.semantic_highlights.clear();
-    }
-
-    pub fn semantic_highlight(&mut self, range: Range<Anchor>, style: HighlightStyle) {
-        self.semantic_highlights.push((style, range));
-    }
-
     pub fn highlight_text(
         &mut self,
         type_id: TypeId,
@@ -514,8 +507,27 @@ impl DisplayMap {
             .update(cx, |map, cx| map.set_wrap_width(width, cx))
     }
 
+    pub(crate) fn current_tokens(&self) -> impl Iterator<Item = &Token> {
+        self.semantic_highlights.iter()
+    }
+
     pub(crate) fn current_inlays(&self) -> impl Iterator<Item = &Inlay> {
         self.inlay_map.current_inlays()
+    }
+
+    pub(crate) fn splice_tokens(
+        &mut self,
+        to_remove: &[usize],
+        to_insert: Vec<Token>,
+        cx: &mut Context<Self>,
+    ) {
+        if to_remove.is_empty() && to_insert.is_empty() {
+            return;
+        }
+        self.semantic_highlights
+            .retain(|token| !to_remove.contains(&token.id));
+        self.semantic_highlights.extend(to_insert);
+        cx.notify();
     }
 
     pub(crate) fn splice_inlays(

@@ -38,8 +38,9 @@ mod proposed_changes_editor;
 mod rust_analyzer_ext;
 pub mod scroll;
 mod selections_collection;
-mod semantic_tokens;
+mod semantic_token_cache;
 pub mod tasks;
+pub(crate) mod tasks_for_ranges;
 
 #[cfg(test)]
 mod editor_tests;
@@ -97,7 +98,7 @@ use highlight_matching_bracket::refresh_matching_bracket_highlights;
 use hover_links::{find_file, HoverLink, HoveredLinkState, InlayHighlight};
 use hover_popover::{hide_hover, HoverState};
 use indent_guides::ActiveIndentGuidesState;
-use inlay_hint_cache::{InlayHintCache, InlaySplice, InvalidationStrategy};
+use inlay_hint_cache::{InlayHintCache, InlaySplice};
 pub use inline_completion::Direction;
 use inline_completion::{EditPredictionProvider, InlineCompletionProviderHandle};
 pub use items::MAX_TAB_TITLE_LEN;
@@ -126,10 +127,11 @@ use project::{
 pub use proposed_changes_editor::{
     ProposedChangeLocation, ProposedChangesEditor, ProposedChangesEditorToolbar,
 };
-use semantic_tokens::fetch_and_update_semantic_tokens;
+use semantic_token_cache::{SemanticTokensCache, TokenSplice};
 use smallvec::smallvec;
 use std::{cell::OnceCell, iter::Peekable};
 use task::{ResolvedTask, TaskTemplate, TaskVariables};
+use tasks_for_ranges::InvalidationStrategy;
 
 pub use lsp::CompletionContext;
 use lsp::{
@@ -735,9 +737,10 @@ pub struct Editor {
     edit_prediction_preview: EditPredictionPreview,
     edit_prediction_indent_conflict: bool,
     edit_prediction_requires_modifier_in_indent_conflict: bool,
+    semantic_tokens_cache: SemanticTokensCache,
     inlay_hint_cache: InlayHintCache,
-    semantic_tokens_enabled: bool,
     next_inlay_id: usize,
+    next_semantic_id: usize,
     _subscriptions: Vec<Subscription>,
     pixel_position_of_newest_cursor: Option<gpui::Point<Pixels>>,
     gutter_dimensions: GutterDimensions,
@@ -1501,6 +1504,7 @@ impl Editor {
             find_all_references_task_sources: Vec::new(),
             next_completion_id: 0,
             next_inlay_id: 0,
+            next_semantic_id: 0,
             code_action_providers,
             available_code_actions: Default::default(),
             code_actions_task: Default::default(),
@@ -1536,7 +1540,7 @@ impl Editor {
             },
             inline_diagnostics_enabled: mode == EditorMode::Full,
             inlay_hint_cache: InlayHintCache::new(inlay_hint_settings),
-            semantic_tokens_enabled: semantic_tokens_settings.enabled,
+            semantic_tokens_cache: SemanticTokensCache::new(semantic_tokens_settings),
 
             gutter_hovered: false,
             pixel_position_of_newest_cursor: None,
@@ -3958,7 +3962,7 @@ impl Editor {
     }
 
     pub fn semantic_tokens_enabled(&self) -> bool {
-        self.semantic_tokens_enabled
+        self.semantic_tokens_cache.enabled
     }
 
     pub fn inlay_hints_enabled(&self) -> bool {
@@ -3969,65 +3973,86 @@ impl Editor {
         &mut self,
         reason: SemanticTokensRefreshReason,
         cx: &mut Context<Self>,
-    ) -> Option<()> {
+    ) {
         if self.semantics_provider.is_none() {
-            return None;
+            return;
         }
-        log::debug!(
-            "Fetching semantic tokens for editor: {}",
-            reason.description()
+
+        let reason_description = reason.description();
+        let ignore_debounce = matches!(
+            reason,
+            SemanticTokensRefreshReason::SettingsChange(_)
+                | SemanticTokensRefreshReason::Toggle(_)
+                | SemanticTokensRefreshReason::ExcerptsRemoved(_)
         );
-        if let SemanticTokensRefreshReason::Toggle(ref value) = reason {
-            self.semantic_tokens_enabled = *value;
-            cx.notify();
-        } else if let SemanticTokensRefreshReason::SettingsChange(ref settings) = reason {
-            if !settings.enabled && !self.semantic_tokens_enabled() {
-                return None;
+        let (invalidate_cache, required_languages) = match reason {
+            SemanticTokensRefreshReason::Toggle(enabled) => {
+                if self.semantic_tokens_cache.toggle(enabled) {
+                    if enabled {
+                        (InvalidationStrategy::RefreshRequested, None)
+                    } else {
+                        self.splice_tokens(
+                            &self
+                                .visible_semantic_tokens(cx)
+                                .iter()
+                                .map(|inlay| inlay.id)
+                                .collect_vec(),
+                            Vec::new(),
+                            cx,
+                        );
+                        return;
+                    }
+                } else {
+                    return;
+                }
             }
+            SemanticTokensRefreshReason::SettingsChange(new_settings) => {
+                match self
+                    .semantic_tokens_cache
+                    .update_settings(new_settings, self.visible_semantic_tokens(cx))
+                {
+                    ControlFlow::Break(Some(TokenSplice {
+                        to_remove,
+                        to_insert,
+                    })) => {
+                        self.splice_tokens(&to_remove, to_insert, cx);
+                        return;
+                    }
+                    ControlFlow::Break(None) => return,
+                    ControlFlow::Continue(()) => (InvalidationStrategy::RefreshRequested, None),
+                }
+            }
+            SemanticTokensRefreshReason::ExcerptsRemoved(excerpts_removed) => {
+                if let Some(TokenSplice {
+                    to_remove,
+                    to_insert,
+                }) = self.semantic_tokens_cache.remove_excerpts(excerpts_removed)
+                {
+                    self.splice_tokens(&to_remove, to_insert, cx);
+                }
+                return;
+            }
+            SemanticTokensRefreshReason::NewLinesShown => (InvalidationStrategy::None, None),
+            SemanticTokensRefreshReason::BufferEdited(buffer_languages) => {
+                (InvalidationStrategy::BufferEdited, Some(buffer_languages))
+            }
+            SemanticTokensRefreshReason::RefreshRequested => {
+                (InvalidationStrategy::RefreshRequested, None)
+            }
+        };
+
+        if let Some(TokenSplice {
+            to_remove,
+            to_insert,
+        }) = self.semantic_tokens_cache.spawn_token_refresh(
+            reason_description,
+            self.excerpts_for_query(required_languages.as_ref(), cx),
+            invalidate_cache,
+            ignore_debounce,
+            cx,
+        ) {
+            self.splice_tokens(&to_remove, to_insert, cx);
         }
-        if !self.semantic_tokens_enabled() {
-            return None;
-        }
-        match reason {
-            // All reasons implemented, so we can implement the "delta" requests in the future
-            SemanticTokensRefreshReason::NewLinesShown => {
-                // If it's using full semantic tokens, this line isn't needed, if it's using
-                // range/delta features, this is a TODO
-                let multibuffer = self.buffer.clone();
-                for buffer in self.buffer.read(cx).all_buffers() {
-                    fetch_and_update_semantic_tokens(self, multibuffer.clone(), buffer, cx)?;
-                }
-            }
-            SemanticTokensRefreshReason::BufferEdited(languages) => {
-                // If it's using full semantic tokens, this line isn't needed, if it's using
-                // range/delta features, this is a TODO
-                let _ = languages;
-                let multibuffer = self.buffer.clone();
-                for buffer in self.buffer.read(cx).all_buffers() {
-                    fetch_and_update_semantic_tokens(self, multibuffer.clone(), buffer, cx)?;
-                }
-            }
-            SemanticTokensRefreshReason::ExcerptsRemoved(excerpts) => {
-                // If it's using full semantic tokens, this line isn't needed, if it's using
-                // range/delta features, this is a TODO
-                let _ = excerpts;
-                let multibuffer = self.buffer.clone();
-                for buffer in self.buffer.read(cx).all_buffers() {
-                    fetch_and_update_semantic_tokens(self, multibuffer.clone(), buffer, cx)?;
-                }
-            }
-            SemanticTokensRefreshReason::RefreshRequested
-            | SemanticTokensRefreshReason::SettingsChange(_)
-            | SemanticTokensRefreshReason::Toggle(true) => {
-                let multibuffer = self.buffer.clone();
-                for buffer in self.buffer.read(cx).all_buffers() {
-                    fetch_and_update_semantic_tokens(self, multibuffer.clone(), buffer, cx)?;
-                }
-            }
-            _ => {}
-        }
-        cx.notify();
-        Some(())
     }
 
     fn refresh_inlay_hints(&mut self, reason: InlayHintRefreshReason, cx: &mut Context<Self>) {
@@ -4127,13 +4152,21 @@ impl Editor {
             to_insert,
         }) = self.inlay_hint_cache.spawn_hint_refresh(
             reason_description,
-            self.excerpts_for_inlay_hints_query(required_languages.as_ref(), cx),
+            self.excerpts_for_query(required_languages.as_ref(), cx),
             invalidate_cache,
             ignore_debounce,
             cx,
         ) {
             self.splice_inlays(&to_remove, to_insert, cx);
         }
+    }
+
+    fn visible_semantic_tokens(&self, cx: &Context<Editor>) -> Vec<Token> {
+        self.display_map
+            .read(cx)
+            .current_tokens()
+            .cloned()
+            .collect()
     }
 
     fn visible_inlay_hints(&self, cx: &Context<Editor>) -> Vec<Inlay> {
@@ -4145,7 +4178,7 @@ impl Editor {
             .collect()
     }
 
-    pub fn excerpts_for_inlay_hints_query(
+    pub fn excerpts_for_query(
         &self,
         restrict_to_languages: Option<&HashSet<Arc<Language>>>,
         cx: &mut Context<Editor>,
@@ -4208,6 +4241,18 @@ impl Editor {
             visible_rows: self.visible_line_count(),
             vertical_scroll_margin: self.scroll_manager.vertical_scroll_margin,
         }
+    }
+
+    pub fn splice_tokens(
+        &self,
+        to_remove: &[usize],
+        to_insert: Vec<Token>,
+        cx: &mut Context<Self>,
+    ) {
+        self.display_map.update(cx, |display_map, cx| {
+            display_map.splice_tokens(to_remove, to_insert, cx)
+        });
+        cx.notify();
     }
 
     pub fn splice_inlays(
@@ -16546,24 +16591,6 @@ impl Editor {
                     ..range.end.to_display_point(display_snapshot)
             })
             .collect()
-    }
-
-    pub fn clear_semantic_highlights(&mut self, cx: &mut Context<Self>) {
-        self.display_map.update(cx, |display_map, _| {
-            display_map.clear_semantic_highlights();
-        });
-        cx.notify();
-    }
-
-    pub fn semantic_highlight(
-        &mut self,
-        range: Range<Anchor>,
-        style: HighlightStyle,
-        cx: &mut Context<Self>,
-    ) {
-        self.display_map
-            .update(cx, |map, _| map.semantic_highlight(range, style));
-        cx.notify();
     }
 
     pub fn highlight_text<T: 'static>(

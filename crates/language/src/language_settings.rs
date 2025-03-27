@@ -952,6 +952,20 @@ pub struct SemanticTokensSettings {
     /// Default: true
     #[serde(default = "default_true")]
     pub enabled: bool,
+    /// Whether or not to debounce semantic tokens updates after buffer edits.
+    ///
+    /// Set to 0 to disable debouncing.
+    ///
+    /// Default: 700
+    #[serde(default = "edit_debounce_ms")]
+    pub edit_debounce_ms: u64,
+    /// Whether or not to debounce semantic tokens updates after buffer scrolls.
+    ///
+    /// Set to 0 to disable debouncing.
+    ///
+    /// Default: 50
+    #[serde(default = "scroll_debounce_ms")]
+    pub scroll_debounce_ms: u64,
 }
 
 /// The settings for inlay hints.
