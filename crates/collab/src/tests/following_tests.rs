@@ -1438,7 +1438,7 @@ async fn test_following_across_workspaces(cx_a: &mut TestAppContext, cx_b: &mut 
     client_a
         .fs()
         .insert_tree(
-            "/a",
+            path!("/a"),
             json!({
                 "w.rs": "",
                 "x.rs": "",
@@ -1449,7 +1449,7 @@ async fn test_following_across_workspaces(cx_a: &mut TestAppContext, cx_b: &mut 
     client_b
         .fs()
         .insert_tree(
-            "/b",
+            path!("/b"),
             json!({
                 "y.rs": "",
                 "z.rs": "",
@@ -1463,8 +1463,8 @@ async fn test_following_across_workspaces(cx_a: &mut TestAppContext, cx_b: &mut 
     let active_call_a = cx_a.read(ActiveCall::global);
     let active_call_b = cx_b.read(ActiveCall::global);
 
-    let (project_a, worktree_id_a) = client_a.build_local_project("/a", cx_a).await;
-    let (project_b, worktree_id_b) = client_b.build_local_project("/b", cx_b).await;
+    let (project_a, worktree_id_a) = client_a.build_local_project(path!("/a"), cx_a).await;
+    let (project_b, worktree_id_b) = client_b.build_local_project(path!("/b"), cx_b).await;
 
     let (workspace_a, cx_a) = client_a.build_workspace(&project_a, cx_a);
     let (workspace_b, cx_b) = client_b.build_workspace(&project_b, cx_b);
