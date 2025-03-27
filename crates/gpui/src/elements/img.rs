@@ -286,13 +286,13 @@ impl Element for Img {
 
                     match self.source.use_data(window, cx) {
                         Some(Ok(data)) => {
-                            if let Some(cache_id) = self.source.cache_id() {
+                            if let Some(asset_id) = self.source.asset_id() {
                                 // Log asset_id and source to frame, to help window draw to
                                 // remove unused assets cache in frame.
                                 window
                                     .next_frame
                                     .asset_sources
-                                    .insert(cache_id, (self.source.clone(), data.clone()));
+                                    .insert(asset_id, data.clone());
                             }
 
                             if let Some(state) = &mut state {
@@ -502,7 +502,7 @@ impl ImageSource {
         }
     }
 
-    pub(crate) fn cache_id(&self) -> Option<(TypeId, u64)> {
+    pub(crate) fn asset_id(&self) -> Option<(TypeId, u64)> {
         match self {
             ImageSource::Resource(resource) => {
                 Some((TypeId::of::<ImgResourceLoader>(), hash(resource)))
@@ -512,15 +512,6 @@ impl ImageSource {
             ImageSource::Image(data) => {
                 Some((TypeId::of::<AssetLogger<ImageDecoder>>(), hash(data)))
             }
-        }
-    }
-
-    pub(crate) fn remove_cache(&self, cx: &mut App) {
-        match self {
-            ImageSource::Resource(resource) => cx.remove_asset::<ImgResourceLoader>(&resource),
-            ImageSource::Custom(_) => {}
-            ImageSource::Render(_) => {}
-            ImageSource::Image(data) => cx.remove_asset::<AssetLogger<ImageDecoder>>(data),
         }
     }
 }

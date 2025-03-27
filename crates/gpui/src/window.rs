@@ -4,16 +4,16 @@ use crate::{
     BorderStyle, Bounds, BoxShadow, Context, Corners, CursorStyle, Decorations, DevicePixels,
     DispatchActionListener, DispatchNodeId, DispatchTree, DisplayId, Edges, Effect, Entity,
     EntityId, EventEmitter, FileDropEvent, FontId, Global, GlobalElementId, GlyphId, GpuSpecs,
-    Hsla, ImageSource, InputHandler, IsZero, KeyBinding, KeyContext, KeyDownEvent, KeyEvent,
-    Keystroke, KeystrokeEvent, LayoutId, LineLayoutIndex, Modifiers, ModifiersChangedEvent,
-    MonochromeSprite, MouseButton, MouseEvent, MouseMoveEvent, MouseUpEvent, Path, Pixels,
-    PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow, Point,
-    PolychromeSprite, PromptLevel, Quad, Render, RenderGlyphParams, RenderImage, RenderImageParams,
-    RenderSvgParams, Replay, ResizeEdge, ScaledPixels, Scene, Shadow, SharedString, Size,
-    StrikethroughStyle, Style, SubscriberSet, Subscription, TaffyLayoutEngine, Task, TextStyle,
-    TextStyleRefinement, TransformationMatrix, Underline, UnderlineStyle, WindowAppearance,
-    WindowBackgroundAppearance, WindowBounds, WindowControls, WindowDecorations, WindowOptions,
-    WindowParams, WindowTextSystem, SMOOTH_SVG_SCALE_FACTOR, SUBPIXEL_VARIANTS,
+    Hsla, InputHandler, IsZero, KeyBinding, KeyContext, KeyDownEvent, KeyEvent, Keystroke,
+    KeystrokeEvent, LayoutId, LineLayoutIndex, Modifiers, ModifiersChangedEvent, MonochromeSprite,
+    MouseButton, MouseEvent, MouseMoveEvent, MouseUpEvent, Path, Pixels, PlatformAtlas,
+    PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow, Point, PolychromeSprite,
+    PromptLevel, Quad, Render, RenderGlyphParams, RenderImage, RenderImageParams, RenderSvgParams,
+    Replay, ResizeEdge, ScaledPixels, Scene, Shadow, SharedString, Size, StrikethroughStyle, Style,
+    SubscriberSet, Subscription, TaffyLayoutEngine, Task, TextStyle, TextStyleRefinement,
+    TransformationMatrix, Underline, UnderlineStyle, WindowAppearance, WindowBackgroundAppearance,
+    WindowBounds, WindowControls, WindowDecorations, WindowOptions, WindowParams, WindowTextSystem,
+    SMOOTH_SVG_SCALE_FACTOR, SUBPIXEL_VARIANTS,
 };
 use anyhow::{anyhow, Context as _, Result};
 use collections::{FxHashMap, FxHashSet};
@@ -500,7 +500,7 @@ pub(crate) struct Frame {
     pub(crate) input_handlers: Vec<Option<PlatformInputHandler>>,
     pub(crate) tooltip_requests: Vec<Option<TooltipRequest>>,
     pub(crate) cursor_styles: Vec<CursorStyleRequest>,
-    pub(crate) asset_sources: FxHashMap<(TypeId, u64), (Rc<ImageSource>, Arc<RenderImage>)>,
+    pub(crate) asset_sources: FxHashMap<(TypeId, u64), Arc<RenderImage>>,
     #[cfg(any(test, feature = "test-support"))]
     pub(crate) debug_bounds: FxHashMap<String, Bounds<Pixels>>,
 }
@@ -1601,10 +1601,10 @@ impl Window {
         let rendered_sources = mem::take(&mut self.rendered_frame.asset_sources);
         let current_sources = self.next_frame.asset_sources.clone();
 
-        for (id, (source, data)) in rendered_sources {
+        for (id, data) in rendered_sources {
             if !current_sources.contains_key(&id) {
+                cx.loading_assets.remove(&id);
                 _ = self.drop_image(data);
-                source.remove_cache(cx);
             }
         }
     }
