@@ -1,12 +1,13 @@
 use anyhow::{anyhow, Context as _, Result};
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait as _};
-use cpal::{StreamConfig, SupportedStreamConfig};
+use cpal::StreamConfig;
+use futures::channel::mpsc::UnboundedSender;
 use futures::{Stream, StreamExt as _};
 use gpui::{
     BackgroundExecutor, ScreenCaptureFrame, ScreenCaptureSource, ScreenCaptureStream, Task,
 };
-use libwebrtc::native::apm;
+use libwebrtc::native::{apm, audio_mixer, audio_resampler};
 use livekit::track;
 
 use livekit::webrtc::{
@@ -18,25 +19,340 @@ use livekit::webrtc::{
     video_stream::native::NativeVideoStream,
 };
 use parking_lot::Mutex;
-use std::slice;
-use std::sync::atomic::AtomicU8;
+use std::sync::Weak;
 use std::time::Duration;
 use std::{borrow::Cow, collections::VecDeque, sync::Arc, thread};
 use util::{maybe, ResultExt as _};
-use webrtc_sys::audio_mixer::ffi::AudioFrameInfo;
 
-use crate::RemoteAudioTrack;
+pub(crate) struct AudioStack {
+    inner: Mutex<Weak<Mutex<AudioStackInner>>>,
+    executor: BackgroundExecutor,
+    apm: Arc<Mutex<apm::AudioProcessingModule>>,
+    mixer: Arc<Mutex<audio_mixer::AudioMixer>>,
+    _output_task: Option<Task<()>>
+    next_ssrc: i32,
+}
+
+impl AudioStack {
+    pub(crate) fn new(executor: BackgroundExecutor) -> Self {
+        Self {
+            inner: Mutex::default(),
+            executor,
+            apm: todo!(),
+            mixer: todo!(),
+            _output_task: todo!(),
+            next_ssrc: todo!(),
+        }
+    }
+
+    pub(crate) fn play_remote_audio_track(
+        &self,
+        track: &livekit::track::RemoteAudioTrack,
+    ) -> AudioStream {
+        let inner = self.inner();
+        inner.clone().lock().play_remote_audio_track(track, inner)
+    }
+
+    pub(crate) fn capture_local_microphone_track(
+        &self,
+    ) -> Result<(crate::LocalAudioTrack, AudioStream)> {
+        let inner = self.inner();
+        inner.clone().lock().capture_local_microphone_track(inner)
+    }
+
+    fn inner(&self) -> Arc<Mutex<AudioStackInner>> {
+        let mut inner = self.inner.lock();
+        if let Some(inner) = inner.upgrade() {
+            inner
+        } else {
+            let new = Arc::new(Mutex::new(AudioStackInner::new(&self.executor)));
+            *inner = Arc::downgrade(&new);
+            new
+        }
+    }
+}
+
+// NOTE: We use WebRTC's mixer which only supports
+// 16kHz, 32kHz and 48kHz. As 48 is the most common "next step up"
+// for audio output devices like speakers/bluetooth, we just hard-code
+// this; and downsample when we need to.
+const SAMPLE_RATE: u32 = 48000;
+const NUM_CHANNELS: u32 = 2;
+
+struct AudioStackInner {
+    _task: Task<()>,
+    executor: BackgroundExecutor,
+}
+
+impl Drop for AudioStackInner {
+    fn drop(&mut self) {
+        dbg!("drop inner!");
+    }
+}
+
+impl AudioStackInner {
+    fn new(executor: &BackgroundExecutor) -> Self {
+        dbg!("new inner!");
+        let apm = Arc::new(Mutex::new(apm::AudioProcessingModule::new(
+            true, true, true, true,
+        )));
+        let mixer = Arc::new(Mutex::new(audio_mixer::AudioMixer::new()));
+        Self {
+            apm: apm.clone(),
+            mixer: mixer.clone(),
+            executor: executor.clone(),
+            next_ssrc: 1,
+            _task: executor.spawn(async move {
+                Self::play_output(apm, mixer, SAMPLE_RATE, NUM_CHANNELS)
+                    .await
+                    .log_err();
+            }),
+        }
+    }
+
+    async fn play_output(
+        apm: Arc<Mutex<apm::AudioProcessingModule>>,
+        mixer: Arc<Mutex<audio_mixer::AudioMixer>>,
+        sample_rate: u32,
+        num_channels: u32,
+    ) -> Result<()> {
+        let mut default_change_listener = DeviceChangeListener::new(false)?;
+
+        loop {
+            let (output_device, output_config) = default_device(false)?;
+            let (end_on_drop_tx, end_on_drop_rx) = std::sync::mpsc::channel::<()>();
+            let mixer = mixer.clone();
+            let apm = apm.clone();
+            let mut resampler = audio_resampler::AudioResampler::default();
+            thread::spawn(move || {
+                let output_stream = output_device.build_output_stream(
+                    &StreamConfig {
+                        channels: output_config.channels(),
+                        sample_rate: output_config.sample_rate(),
+                        // NOTE: all operations in WebRTC happen on 10ms chunk lengths.
+                        // We could set this to a multiple of 10ms..
+                        buffer_size: cpal::BufferSize::Fixed(
+                            output_config.sample_rate().0 as u32 / 100,
+                        ),
+                    },
+                    {
+                        move |data, _info| {
+                            let mut mixer = mixer.lock();
+                            let mixed = mixer.mix(output_config.channels() as usize);
+                            let sampled = resampler.remix_and_resample(
+                                mixed,
+                                sample_rate / 100,
+                                num_channels,
+                                sample_rate,
+                                output_config.channels() as u32,
+                                output_config.sample_rate().0,
+                            );
+                            drop(mixer);
+                            data.copy_from_slice(&sampled);
+                            apm.lock()
+                                .process_reverse_stream(
+                                    data,
+                                    output_config.sample_rate().0 as i32,
+                                    output_config.channels() as i32,
+                                )
+                                .ok();
+                        }
+                    },
+                    |error| log::error!("error playing audio track: {:?}", error),
+                    Some(Duration::from_millis(10)),
+                );
+
+                let Some(output_stream) = output_stream.log_err() else {
+                    return;
+                };
+
+                output_stream.play().log_err();
+                // Block forever to keep the output stream alive
+                end_on_drop_rx.recv().ok();
+            });
+
+            default_change_listener.next().await;
+            drop(end_on_drop_tx)
+        }
+    }
+
+    fn capture_local_microphone_track(
+        &mut self,
+        entity: Arc<Mutex<Self>>,
+    ) -> Result<(crate::LocalAudioTrack, AudioStream)> {
+        let source = NativeAudioSource::new(
+            // n.b. this struct's options are always ignored, noise cancellation is provided by apm.
+            AudioSourceOptions::default(),
+            SAMPLE_RATE,
+            NUM_CHANNELS,
+            10,
+        );
+
+        let track = track::LocalAudioTrack::create_audio_track(
+            "microphone",
+            RtcAudioSource::Native(source.clone()),
+        );
+
+        let apm = self.apm.clone();
+
+        let (frame_tx, mut frame_rx) = futures::channel::mpsc::unbounded();
+        let transmit_task = self.executor.spawn({
+            let source = source.clone();
+            async move {
+                while let Some(frame) = frame_rx.next().await {
+                    source.capture_frame(&frame).await.log_err();
+                }
+            }
+        });
+        let capture_task = self.executor.spawn(async move {
+            Self::capture_input(apm, frame_tx, SAMPLE_RATE, NUM_CHANNELS).await
+        });
+
+        let on_drop = util::defer(|| {
+            drop(entity);
+            drop(transmit_task);
+            drop(capture_task);
+        });
+        return Ok((
+            super::LocalAudioTrack(track),
+            AudioStream::Output {
+                _drop: Box::new(on_drop),
+            },
+        ));
+    }
+
+    async fn capture_input(
+        apm: Arc<Mutex<apm::AudioProcessingModule>>,
+        frame_tx: UnboundedSender<AudioFrame<'static>>,
+        sample_rate: u32,
+        num_channels: u32,
+    ) -> Result<()> {
+        let mut default_change_listener = DeviceChangeListener::new(true)?;
+        loop {
+            let (device, config) = default_device(true)?;
+            let (end_on_drop_tx, end_on_drop_rx) = std::sync::mpsc::channel::<()>();
+            let apm = apm.clone();
+            let frame_tx = frame_tx.clone();
+            let mut resampler = audio_resampler::AudioResampler::default();
+
+            thread::spawn(move || {
+                maybe!({
+                    if let Some(name) = device.name().ok() {
+                        log::info!("Using microphone: {}", name)
+                    } else {
+                        log::info!("Using microphone: <unknown>");
+                    }
+
+                    let ten_ms_buffer_size =
+                        (config.channels() as u32 * config.sample_rate().0 / 100) as usize;
+                    let mut buf: Vec<i16> = Vec::with_capacity(ten_ms_buffer_size);
+
+                    let stream = device
+                        .build_input_stream_raw(
+                            &config.config(),
+                            cpal::SampleFormat::I16,
+                            move |data, _: &_| {
+                                let mut data = data.as_slice::<i16>().unwrap();
+                                while data.len() > 0 {
+                                    let remainder = (buf.capacity() - buf.len()).min(data.len());
+                                    buf.extend_from_slice(&data[..remainder]);
+                                    data = &data[remainder..];
+
+                                    if buf.capacity() == buf.len() {
+                                        let mut sampled = resampler
+                                            .remix_and_resample(
+                                                buf.as_slice(),
+                                                config.sample_rate().0 as u32 / 100,
+                                                config.channels() as u32,
+                                                config.sample_rate().0 as u32,
+                                                num_channels,
+                                                sample_rate,
+                                            )
+                                            .to_owned();
+                                        apm.lock()
+                                            .process_stream(
+                                                &mut sampled,
+                                                sample_rate as i32,
+                                                num_channels as i32,
+                                            )
+                                            .log_err();
+                                        buf.clear();
+                                        frame_tx
+                                            .unbounded_send(AudioFrame {
+                                                data: Cow::Owned(sampled),
+                                                sample_rate,
+                                                num_channels,
+                                                samples_per_channel: sample_rate / 100,
+                                            })
+                                            .ok();
+                                    }
+                                }
+                            },
+                            |err| log::error!("error capturing audio track: {:?}", err),
+                            Some(Duration::from_millis(10)),
+                        )
+                        .context("failed to build input stream")?;
+
+                    stream.play()?;
+                    // Keep the thread alive and holding onto the `stream`
+                    end_on_drop_rx.recv().ok();
+                    anyhow::Ok(Some(()))
+                })
+                .log_err();
+            });
+
+            default_change_listener.next().await;
+            drop(end_on_drop_tx)
+        }
+    }
+
+    fn play_remote_audio_track(
+        &mut self,
+        track: &livekit::track::RemoteAudioTrack,
+        entity: Arc<Mutex<Self>>,
+    ) -> AudioStream {
+        let next_ssrc = util::post_inc(&mut self.next_ssrc);
+        let source = AudioMixerSource {
+            ssrc: next_ssrc,
+            sample_rate: SAMPLE_RATE,
+            num_channels: NUM_CHANNELS,
+            buffer: Arc::default(),
+        };
+        self.mixer.lock().add_source(source.clone());
+
+        let mut stream = NativeAudioStream::new(
+            track.rtc_track(),
+            source.sample_rate as i32,
+            source.num_channels as i32,
+        );
+
+        let receive_task = self.executor.spawn({
+            let source = source.clone();
+            async move {
+                while let Some(frame) = stream.next().await {
+                    source.receive(frame);
+                }
+            }
+        });
+
+        let mixer = self.mixer.clone();
+        let on_drop = util::defer(move || {
+            mixer.lock().remove_source(source.ssrc);
+            drop(receive_task);
+            drop(entity)
+        });
+
+        AudioStream::Output {
+            _drop: Box::new(on_drop),
+        }
+    }
+}
 
 use super::LocalVideoTrack;
 
 pub enum AudioStream {
-    Input {
-        _thread_handle: std::sync::mpsc::Sender<()>,
-        _transmit_task: Task<()>,
-    },
-    Output {
-        _task: Task<()>,
-    },
+    Input { _task: Task<()> },
+    Output { _drop: Box<dyn std::any::Any> },
 }
 
 pub(crate) async fn capture_local_video_track(
@@ -76,200 +392,7 @@ pub(crate) async fn capture_local_video_track(
     ))
 }
 
-fn start_capture(
-    apm: Arc<Mutex<apm::AudioProcessingModule>>,
-    device: cpal::Device,
-    config: SupportedStreamConfig,
-    source: NativeAudioSource,
-    background_executor: &BackgroundExecutor,
-) -> (Task<()>, std::sync::mpsc::Sender<()>) {
-    let (frame_tx, mut frame_rx) = futures::channel::mpsc::unbounded();
-    let (thread_handle, thread_kill_rx) = std::sync::mpsc::channel::<()>();
-    thread::spawn(move || {
-        maybe!({
-            if let Some(name) = device.name().ok() {
-                log::info!("Using microphone: {}", name)
-            } else {
-                log::info!("Using microphone: <unknown>");
-            }
-
-            let sample_rate = config.sample_rate().0;
-            let channels = config.channels() as u32;
-
-            let ten_ms_buffer_size = (channels * sample_rate / 100) as usize;
-            let mut buf: Vec<i16> = Vec::with_capacity(ten_ms_buffer_size);
-
-            let stream = device
-                .build_input_stream_raw(
-                    &config.config(),
-                    cpal::SampleFormat::I16,
-                    move |data, _: &_| {
-                        let mut data = data.as_slice::<i16>().unwrap();
-                        while data.len() > 0 {
-                            let remainder = (buf.capacity() - buf.len()).min(data.len());
-                            buf.extend_from_slice(&data[..remainder]);
-                            data = &data[remainder..];
-
-                            if buf.capacity() == buf.len() {
-                                frame_tx
-                                    .unbounded_send(AudioFrame {
-                                        data: Cow::Owned(std::mem::replace(
-                                            &mut buf,
-                                            Vec::with_capacity(ten_ms_buffer_size),
-                                        )),
-                                        sample_rate,
-                                        num_channels: channels,
-                                        samples_per_channel: buf.len() as u32 / channels,
-                                    })
-                                    .ok();
-                            }
-                        }
-                    },
-                    |err| log::error!("error capturing audio track: {:?}", err),
-                    Some(Duration::from_millis(10)),
-                )
-                .context("failed to build input stream")?;
-
-            stream.play()?;
-            // Keep the thread alive and holding onto the `stream`
-            thread_kill_rx.recv().ok();
-            anyhow::Ok(Some(()))
-        })
-        .log_err();
-    });
-
-    let background_executor = background_executor.clone();
-    let transmit_task = background_executor.spawn({
-        let source = source.clone();
-        async move {
-            while let Some(mut frame) = frame_rx.next().await {
-                apm.lock()
-                    .process_stream(
-                        frame.data.to_mut(),
-                        frame.sample_rate as i32,
-                        frame.num_channels as i32,
-                    )
-                    .log_err();
-                source.capture_frame(&frame).await.log_err();
-            }
-        }
-    });
-
-    return (transmit_task, thread_handle);
-}
-
-pub(crate) fn capture_local_audio_track(
-    apm: Arc<Mutex<apm::AudioProcessingModule>>,
-    background_executor: &BackgroundExecutor,
-) -> Result<(crate::LocalAudioTrack, AudioStream)> {
-    let sample_rate;
-    let channels;
-
-    let (device, config) = default_device(true)?;
-    sample_rate = config.sample_rate().0;
-    channels = config.channels() as u32;
-    let source = NativeAudioSource::new(
-        // n.b. this struct's options are always ignored, noise cancellation is provided by apm.
-        AudioSourceOptions::default(),
-        sample_rate,
-        channels,
-        10,
-    );
-    let track = track::LocalAudioTrack::create_audio_track(
-        "microphone",
-        RtcAudioSource::Native(source.clone()),
-    );
-    let mut default_change_listener = DeviceChangeListener::new(false)?;
-
-    let task = background_executor.spawn({
-        let background_executor = background_executor.clone();
-        async move {
-            let (mut transmit_task, mut thread_handle) = start_capture(
-                apm.clone(),
-                device,
-                config,
-                source.clone(),
-                &background_executor,
-            );
-
-            while let Some(_) = default_change_listener.next().await {
-                let Some((device, config)) = default_device(true).log_err() else {
-                    continue;
-                };
-
-                if let Ok(name) = device.name() {
-                    log::info!("Using speaker: {}", name)
-                } else {
-                    log::info!("Using speaker: <unknown>")
-                }
-
-                (transmit_task, thread_handle) = start_capture(
-                    apm.clone(),
-                    device,
-                    config,
-                    source.clone(),
-                    &background_executor,
-                );
-            }
-
-            drop((transmit_task, thread_handle))
-        }
-    });
-
-    Ok((
-        super::LocalAudioTrack(track),
-        AudioStream::Output { _task: task },
-    ))
-}
-
-pub fn play_remote_audio_track(
-    apm: Arc<Mutex<apm::AudioProcessingModule>>,
-    track: &RemoteAudioTrack,
-    background_executor: &BackgroundExecutor,
-) -> Result<AudioStream> {
-    let track = track.clone();
-    // We track device changes in our output because Livekit has a resampler built in,
-    // and it's easy to create a new native audio stream when the device changes.
-    let mut default_change_listener = DeviceChangeListener::new(false)?;
-    let (output_device, output_config) = default_device(false)?;
-
-    let task = background_executor.spawn({
-        let background_executor = background_executor.clone();
-        async move {
-            let (mut _receive_task, mut _thread) = start_output_stream(
-                apm.clone(),
-                output_config,
-                output_device,
-                &track.0,
-                &background_executor,
-            );
-
-            while let Some(_) = default_change_listener.next().await {
-                let Some((output_device, output_config)) = get_default_output().log_err() else {
-                    continue;
-                };
-
-                if let Ok(name) = output_device.name() {
-                    log::info!("Using speaker: {}", name)
-                } else {
-                    log::info!("Using speaker: <unknown>")
-                }
-
-                (_receive_task, _thread) = start_output_stream(
-                    apm.clone(),
-                    output_config,
-                    output_device,
-                    &track.0,
-                    &background_executor,
-                );
-            }
-        }
-    });
-
-    Ok(AudioStream::Output { _task: task })
-}
-
-fn default_device(input: bool) -> anyhow::Result<(cpal::Device, cpal::SupportedStreamConfig)> {
+fn default_device(input: bool) -> Result<(cpal::Device, cpal::SupportedStreamConfig)> {
     let device;
     let config;
     if input {
@@ -290,15 +413,6 @@ fn default_device(input: bool) -> anyhow::Result<(cpal::Device, cpal::SupportedS
     Ok((device, config))
 }
 
-fn get_default_output() -> anyhow::Result<(cpal::Device, cpal::SupportedStreamConfig)> {
-    let host = cpal::default_host();
-    let output_device = host
-        .default_output_device()
-        .context("failed to read default output device")?;
-    let output_config = output_device.default_output_config()?;
-    Ok((output_device, output_config))
-}
-
 #[derive(Clone)]
 struct AudioMixerSource {
     ssrc: i32,
@@ -317,7 +431,6 @@ impl AudioMixerSource {
         let mut buffer = self.buffer.lock();
         buffer.push_back(frame.data.to_vec());
         while buffer.len() > 10 {
-            dbg!("bye...");
             buffer.pop_front();
         }
     }
@@ -342,91 +455,6 @@ impl libwebrtc::native::audio_mixer::AudioMixerSource for AudioMixerSource {
             samples_per_channel: self.sample_rate / 100,
         })
     }
-}
-
-fn start_output_stream(
-    apm: Arc<Mutex<apm::AudioProcessingModule>>,
-    output_config: cpal::SupportedStreamConfig,
-    output_device: cpal::Device,
-    track: &track::RemoteAudioTrack,
-    background_executor: &BackgroundExecutor,
-) -> (Task<()>, std::sync::mpsc::Sender<()>) {
-    // NOTE: the audio mixer can only do 16k, 32k, 48k
-    // (and irritatingly, macOS seems to default to 44.1k)
-    let sample_rate = 48000;
-
-    let mut mixer = libwebrtc::native::audio_mixer::AudioMixer::new();
-    let source = AudioMixerSource {
-        ssrc: 1,
-        sample_rate,
-        num_channels: output_config.channels() as u32,
-        buffer: Arc::default(),
-    };
-
-    let mut stream = NativeAudioStream::new(
-        track.rtc_track(),
-        sample_rate as i32,
-        output_config.channels() as i32,
-    );
-
-    let receive_task = background_executor.spawn({
-        let source = source.clone();
-        async move {
-            while let Some(frame) = stream.next().await {
-                source.receive(frame);
-            }
-        }
-    });
-    mixer.add_source(source);
-    let mut resampler = libwebrtc::native::audio_resampler::AudioResampler::default();
-
-    // The _output_stream needs to be on it's own thread because it's !Send
-    // and we experienced a deadlock when it's created on the main thread.
-    let (thread, end_on_drop_rx) = std::sync::mpsc::channel::<()>();
-    thread::spawn(move || {
-        let output_stream = output_device.build_output_stream(
-            &StreamConfig {
-                channels: output_config.channels(),
-                sample_rate: output_config.sample_rate(),
-                // NOTE: all operations in WebRTC happen on 10ms chunk lengths.
-                // We could set this to a multiple of 10ms..
-                buffer_size: cpal::BufferSize::Fixed(output_config.sample_rate().0 as u32 / 100),
-            },
-            {
-                move |data, _info| {
-                    let mixed = mixer.mix(output_config.channels() as usize);
-                    let sampled = resampler.remix_and_resample(
-                        mixed,
-                        sample_rate as u32 / 100,
-                        output_config.channels() as u32,
-                        sample_rate as u32,
-                        output_config.channels() as u32,
-                        output_config.sample_rate().0,
-                    );
-                    data.copy_from_slice(&sampled);
-                    apm.lock()
-                        .process_reverse_stream(
-                            data,
-                            output_config.sample_rate().0 as i32,
-                            output_config.channels() as i32,
-                        )
-                        .ok();
-                }
-            },
-            |error| log::error!("error playing audio track: {:?}", error),
-            Some(Duration::from_millis(10)),
-        );
-
-        let Some(output_stream) = output_stream.log_err() else {
-            return;
-        };
-
-        output_stream.play().log_err();
-        // Block forever to keep the output stream alive
-        end_on_drop_rx.recv().ok();
-    });
-
-    (receive_task, thread)
 }
 
 pub fn play_remote_video_track(
@@ -756,168 +784,3 @@ mod noop_change_listener {
 
 #[cfg(not(target_os = "macos"))]
 type DeviceChangeListener = noop_change_listener::NoopOutputDeviceChangelistener;
-
-pub(crate) async fn capture_local_wav_track(
-    apm: Arc<Mutex<apm::AudioProcessingModule>>,
-    background_executor: &BackgroundExecutor,
-) -> Result<(crate::LocalAudioTrack, AudioStream)> {
-    let file = tokio::fs::File::open("change-sophie.wav").await?;
-    let mut reader = WavReader::new(BufReader::new(file));
-    let header = reader.read_header().await?;
-
-    let source = NativeAudioSource::new(
-        AudioSourceOptions::default(),
-        header.sample_rate,
-        header.num_channels as u32,
-        1000,
-    );
-    let track = LocalAudioTrack::create_audio_track("file", RtcAudioSource::Native(source.clone()));
-    // Play the wav file and disconnect
-    tokio::spawn({
-        async move {
-            thread::sleep(Duration::from_millis(1000));
-            const FRAME_DURATION: Duration = Duration::from_millis(1000); // Write 1s of audio at a time
-
-            let max_samples = header.data_size as usize / size_of::<i16>();
-            let ms = FRAME_DURATION.as_millis() as u32;
-            let num_samples = (header.sample_rate / 1000 * ms) as usize;
-
-            log::info!("sample_rate: {}", header.sample_rate);
-            log::info!("num_channels: {}", header.num_channels);
-            log::info!("max samples: {}", max_samples);
-            log::info!("chunk size: {}ms - {} samples", ms, num_samples);
-
-            let mut written_samples = 0;
-            while written_samples < max_samples {
-                let available_samples = max_samples - written_samples;
-                let frame_size = num_samples.min(available_samples);
-
-                let mut audio_frame = AudioFrame {
-                    data: vec![0i16; frame_size].into(),
-                    num_channels: header.num_channels as u32,
-                    sample_rate: header.sample_rate,
-                    samples_per_channel: (frame_size / header.num_channels as usize) as u32,
-                };
-
-                for i in 0..frame_size {
-                    let sample = reader.read_i16().await.unwrap();
-                    audio_frame.data.to_mut()[i] = sample;
-                }
-
-                source.capture_frame(&audio_frame).await.unwrap();
-                written_samples += frame_size;
-            }
-        }
-    });
-
-    Ok((
-        super::LocalAudioTrack(track),
-        AudioStream::Output {
-            _task: Task::ready(()),
-        },
-    ))
-}
-
-use livekit::track::LocalAudioTrack;
-use std::{io::SeekFrom, mem::size_of};
-use tokio::io::{AsyncRead, AsyncReadExt, AsyncSeek, AsyncSeekExt, BufReader};
-
-pub struct WavReader<R: AsyncRead + AsyncSeek + Unpin> {
-    reader: R,
-}
-
-#[allow(dead_code)]
-#[derive(Debug)]
-pub struct WavHeader {
-    file_size: u32,
-    data_size: u32,
-    format: String,
-    format_length: u32,
-    format_type: u16,
-    num_channels: u16,
-    sample_rate: u32,
-    byte_rate: u32,
-    block_align: u16,
-    bits_per_sample: u16,
-}
-
-impl<R: AsyncRead + AsyncSeek + Unpin> WavReader<R> {
-    pub fn new(reader: R) -> Self {
-        Self { reader }
-    }
-
-    pub async fn read_header(&mut self) -> Result<WavHeader> {
-        let mut header = [0u8; 4];
-        let mut format = [0u8; 4];
-        let mut chunk_marker = [0u8; 4];
-        let mut data_chunk = [0u8; 4];
-
-        self.reader.read_exact(&mut header).await?;
-
-        if &header != b"RIFF" {
-            anyhow::bail!("Invalid RIFF header");
-        }
-
-        let file_size = self.reader.read_u32_le().await?;
-        self.reader.read_exact(&mut format).await?;
-
-        if &format != b"WAVE" {
-            anyhow::bail!("Invalid WAVE header");
-        }
-
-        self.reader.read_exact(&mut chunk_marker).await?;
-
-        if &chunk_marker != b"fmt " {
-            anyhow::bail!("Invalid fmt chunk");
-        }
-
-        let format_length = self.reader.read_u32_le().await?;
-        let format_type = self.reader.read_u16_le().await?;
-        let num_channels = self.reader.read_u16_le().await?;
-        let sample_rate = self.reader.read_u32_le().await?;
-        let byte_rate = self.reader.read_u32_le().await?;
-        let block_align = self.reader.read_u16_le().await?;
-        let bits_per_sample = self.reader.read_u16_le().await?;
-
-        if bits_per_sample != 16 {
-            anyhow::bail!("only 16-bit samples supported");
-        }
-
-        let mut data_size;
-        loop {
-            self.reader.read_exact(&mut data_chunk).await?;
-            data_size = self.reader.read_u32_le().await?;
-
-            if &data_chunk == b"data" {
-                break;
-            } else {
-                // skip non data chunks
-                self.reader
-                    .seek(SeekFrom::Current(data_size.into()))
-                    .await?;
-            }
-        }
-
-        if &data_chunk != b"data" {
-            anyhow::bail!("Invalid data chunk");
-        }
-
-        Ok(WavHeader {
-            file_size,
-            data_size,
-            format: String::from_utf8_lossy(&format).to_string(),
-            format_length,
-            format_type,
-            num_channels,
-            sample_rate,
-            byte_rate,
-            block_align,
-            bits_per_sample,
-        })
-    }
-
-    pub async fn read_i16(&mut self) -> Result<i16> {
-        let i = self.reader.read_i16_le().await?;
-        Ok(i)
-    }
-}

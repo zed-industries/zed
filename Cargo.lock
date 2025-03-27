@@ -1992,7 +1992,7 @@ dependencies = [
  "ash-window",
  "bitflags 2.8.0",
  "bytemuck",
- "codespan-reporting",
+ "codespan-reporting 0.11.1",
  "glow",
  "gpu-alloc",
  "gpu-alloc-ash",
@@ -2278,12 +2278,11 @@ dependencies = [
 
 [[package]]
 name = "bzip2-sys"
-version = "0.1.11+1.0.8"
+version = "0.1.13+1.0.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "736a955f3fa7875102d57c82b8cac37ec45224a07fd32d58f9f7a186b6cd4cdc"
+checksum = "225bff33b2141874fe80d71e07d6eec4f85c5c216453dd96388240f96e1acc14"
 dependencies = [
  "cc",
- "libc",
  "pkg-config",
 ]
 
@@ -2877,6 +2876,17 @@ version = "0.11.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3538270d33cc669650c4b093848450d380def10c331d38c768e34cac80576e6e"
 dependencies = [
+ "termcolor",
+ "unicode-width",
+]
+
+[[package]]
+name = "codespan-reporting"
+version = "0.12.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fe6d2e5af09e8c8ad56c969f2157a3d4238cebc7c55f0a517728c38f7b200f81"
+dependencies = [
+ "serde",
  "termcolor",
  "unicode-width",
 ]
@@ -3828,9 +3838,9 @@ checksum = "96a6ac251f4a2aca6b3f91340350eab87ae57c3f127ffeb585e92bd336717991"
 
 [[package]]
 name = "cxx"
-version = "1.0.134"
+version = "1.0.151"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a5a32d755fe20281b46118ee4b507233311fb7a48a0cfd42f554b93640521a2f"
+checksum = "fdb3e596b379180315d2f934231e233a2fc745041f88231807774093d8de45f2"
 dependencies = [
  "cc",
  "cxxbridge-cmd",
@@ -3842,12 +3852,12 @@ dependencies = [
 
 [[package]]
 name = "cxx-build"
-version = "1.0.134"
+version = "1.0.151"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "11645536ada5d1c8804312cbffc9ab950f2216154de431de930da47ca6955199"
+checksum = "3743fae7f47620cd34ec23bab819db9ee52da93166a058f87ab0ad99d777dc9b"
 dependencies = [
  "cc",
- "codespan-reporting",
+ "codespan-reporting 0.12.0",
  "proc-macro2",
  "quote",
  "scratch",
@@ -3856,12 +3866,12 @@ dependencies = [
 
 [[package]]
 name = "cxxbridge-cmd"
-version = "1.0.134"
+version = "1.0.151"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ebcc9c78e3c7289665aab921a2b394eaffe8bdb369aa18d81ffc0f534fd49385"
+checksum = "aaea0273c049b126a3918df88a1670c9c0168e0738df9370a988ff69070d4fff"
 dependencies = [
  "clap",
- "codespan-reporting",
+ "codespan-reporting 0.12.0",
  "proc-macro2",
  "quote",
  "syn 2.0.100",
@@ -3869,15 +3879,15 @@ dependencies = [
 
 [[package]]
 name = "cxxbridge-flags"
-version = "1.0.134"
+version = "1.0.151"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3a22a87bd9e78d7204d793261470a4c9d585154fddd251828d8aefbb5f74c3bf"
+checksum = "020a9a3d6b792aab7f30f6e323893ad7f45052e572cde5d014c47fe67c89495f"
 
 [[package]]
 name = "cxxbridge-macro"
-version = "1.0.134"
+version = "1.0.151"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1dfdb020ff8787c5daf6e0dca743005cc8782868faeadfbabb8824ede5cb1c72"
+checksum = "ee54cd01f94db0328c4c73036d38bd8c3bb88927e953d05ffefe743edbf4eb68"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -7669,6 +7679,7 @@ dependencies = [
 [[package]]
 name = "libwebrtc"
 version = "0.3.10"
+source = "git+https://github.com/zed-industries/livekit-rust-sdks?rev=102ebbb1ccfbdbcb7332d86dc30b1b1c8c01e4f8#102ebbb1ccfbdbcb7332d86dc30b1b1c8c01e4f8"
 dependencies = [
  "cxx",
  "jni",
@@ -7702,9 +7713,9 @@ dependencies = [
 
 [[package]]
 name = "link-cplusplus"
-version = "1.0.9"
+version = "1.0.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9d240c6f7e1ba3a28b0249f774e6a9dd0175054b52dfbb61b16eb8505c3785c9"
+checksum = "4a6f6da007f968f9def0d65a05b187e2960183de70c160204ecfccf0ee330212"
 dependencies = [
  "cc",
 ]
@@ -7752,7 +7763,8 @@ checksum = "4ee93343901ab17bd981295f2cf0026d4ad018c7c31ba84549a4ddbb47a45104"
 
 [[package]]
 name = "livekit"
-version = "0.7.7"
+version = "0.7.8"
+source = "git+https://github.com/zed-industries/livekit-rust-sdks?rev=102ebbb1ccfbdbcb7332d86dc30b1b1c8c01e4f8#102ebbb1ccfbdbcb7332d86dc30b1b1c8c01e4f8"
 dependencies = [
  "chrono",
  "futures-util",
@@ -7775,6 +7787,7 @@ dependencies = [
 [[package]]
 name = "livekit-api"
 version = "0.4.2"
+source = "git+https://github.com/zed-industries/livekit-rust-sdks?rev=102ebbb1ccfbdbcb7332d86dc30b1b1c8c01e4f8#102ebbb1ccfbdbcb7332d86dc30b1b1c8c01e4f8"
 dependencies = [
  "base64 0.21.7",
  "futures-util",
@@ -7801,6 +7814,7 @@ dependencies = [
 [[package]]
 name = "livekit-protocol"
 version = "0.3.9"
+source = "git+https://github.com/zed-industries/livekit-rust-sdks?rev=102ebbb1ccfbdbcb7332d86dc30b1b1c8c01e4f8#102ebbb1ccfbdbcb7332d86dc30b1b1c8c01e4f8"
 dependencies = [
  "futures-util",
  "livekit-runtime",
@@ -7817,6 +7831,7 @@ dependencies = [
 [[package]]
 name = "livekit-runtime"
 version = "0.4.0"
+source = "git+https://github.com/zed-industries/livekit-rust-sdks?rev=102ebbb1ccfbdbcb7332d86dc30b1b1c8c01e4f8#102ebbb1ccfbdbcb7332d86dc30b1b1c8c01e4f8"
 dependencies = [
  "tokio",
  "tokio-stream",
@@ -7866,10 +7881,8 @@ dependencies = [
  "sha2",
  "simplelog",
  "smallvec",
- "tokio",
  "tokio-tungstenite 0.26.2",
  "util",
- "webrtc-sys",
 ]
 
 [[package]]
@@ -8479,12 +8492,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e5ce46fe64a9d73be07dcbe690a38ce1b293be448fd8ce1e6c1b8062c9f72c6a"
 
 [[package]]
-name = "multimap"
-version = "0.10.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "defc4c55412d89136f966bbb339008b474350e5e6e78d2714439c386b3137a03"
-
-[[package]]
 name = "naga"
 version = "23.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -8494,7 +8501,7 @@ dependencies = [
  "bit-set 0.8.0",
  "bitflags 2.8.0",
  "cfg_aliases 0.1.1",
- "codespan-reporting",
+ "codespan-reporting 0.11.1",
  "hexf-parse",
  "indexmap",
  "log",
@@ -10797,7 +10804,7 @@ dependencies = [
  "itertools 0.10.5",
  "lazy_static",
  "log",
- "multimap 0.8.3",
+ "multimap",
  "petgraph",
  "prost 0.9.0",
  "prost-types 0.9.0",
@@ -10813,10 +10820,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "22505a5c94da8e3b7c2996394d1c933236c4d743e81a410bcca4e6989fc066a4"
 dependencies = [
  "bytes 1.10.1",
- "heck 0.5.0",
- "itertools 0.12.1",
+ "heck 0.4.1",
+ "itertools 0.10.5",
  "log",
- "multimap 0.10.0",
+ "multimap",
  "once_cell",
  "petgraph",
  "prettyplease",
@@ -10847,7 +10854,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "81bddcdb20abf9501610992b6759a4c888aef7d1a7247ef75e2404275ac24af1"
 dependencies = [
  "anyhow",
- "itertools 0.12.1",
+ "itertools 0.10.5",
  "proc-macro2",
  "quote",
  "syn 2.0.100",
@@ -12234,9 +12241,9 @@ checksum = "94143f37725109f92c262ed2cf5e59bce7498c01bcc1502d7b9afe439a4e9f49"
 
 [[package]]
 name = "scratch"
-version = "1.0.7"
+version = "1.0.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a3cf7c11c38cb994f3d40e8a8cde3bbd1f72a435e4c49e85d6553d8312306152"
+checksum = "9f6280af86e5f559536da57a45ebc84948833b3bee313a7dd25232e09c878a52"
 
 [[package]]
 name = "scripting_tool"
@@ -16163,6 +16170,7 @@ dependencies = [
 [[package]]
 name = "webrtc-sys"
 version = "0.3.7"
+source = "git+https://github.com/zed-industries/livekit-rust-sdks?rev=102ebbb1ccfbdbcb7332d86dc30b1b1c8c01e4f8#102ebbb1ccfbdbcb7332d86dc30b1b1c8c01e4f8"
 dependencies = [
  "cc",
  "cxx",
@@ -16175,6 +16183,7 @@ dependencies = [
 [[package]]
 name = "webrtc-sys-build"
 version = "0.3.6"
+source = "git+https://github.com/zed-industries/livekit-rust-sdks?rev=102ebbb1ccfbdbcb7332d86dc30b1b1c8c01e4f8#102ebbb1ccfbdbcb7332d86dc30b1b1c8c01e4f8"
 dependencies = [
  "fs2",
  "regex",
