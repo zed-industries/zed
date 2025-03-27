@@ -1588,14 +1588,14 @@ impl GitStore {
         envelope: TypedEnvelope<proto::Fetch>,
         mut cx: AsyncApp,
     ) -> Result<proto::RemoteMessageResponse> {
-        let work_directory_id = ProjectEntryId::from_proto(envelope.payload.work_directory_id);
-        let repository_handle = Self::repository_for_request(&this, work_directory_id, &mut cx)?;
+        let repository_id = RepositoryId::from_proto(envelope.payload.repository_id);
+        let repository_handle = Self::repository_for_request(&this, repository_id, &mut cx)?;
         let askpass_id = envelope.payload.askpass_id;
 
         let askpass = make_remote_delegate(
             this,
             envelope.payload.project_id,
-            work_directory_id,
+            repository_id,
             askpass_id,
             &mut cx,
         );
@@ -1617,14 +1617,14 @@ impl GitStore {
         envelope: TypedEnvelope<proto::Push>,
         mut cx: AsyncApp,
     ) -> Result<proto::RemoteMessageResponse> {
-        let work_directory_id = ProjectEntryId::from_proto(envelope.payload.work_directory_id);
-        let repository_handle = Self::repository_for_request(&this, work_directory_id, &mut cx)?;
+        let repository_id = RepositoryId::from_proto(envelope.payload.repository_id);
+        let repository_handle = Self::repository_for_request(&this, repository_id, &mut cx)?;
 
         let askpass_id = envelope.payload.askpass_id;
         let askpass = make_remote_delegate(
             this,
             envelope.payload.project_id,
-            work_directory_id,
+            repository_id,
             askpass_id,
             &mut cx,
         );
@@ -1657,13 +1657,13 @@ impl GitStore {
         envelope: TypedEnvelope<proto::Pull>,
         mut cx: AsyncApp,
     ) -> Result<proto::RemoteMessageResponse> {
-        let work_directory_id = ProjectEntryId::from_proto(envelope.payload.work_directory_id);
-        let repository_handle = Self::repository_for_request(&this, work_directory_id, &mut cx)?;
+        let repository_id = RepositoryId::from_proto(envelope.payload.repository_id);
+        let repository_handle = Self::repository_for_request(&this, repository_id, &mut cx)?;
         let askpass_id = envelope.payload.askpass_id;
         let askpass = make_remote_delegate(
             this,
             envelope.payload.project_id,
-            work_directory_id,
+            repository_id,
             askpass_id,
             &mut cx,
         );
@@ -1688,8 +1688,8 @@ impl GitStore {
         envelope: TypedEnvelope<proto::Stage>,
         mut cx: AsyncApp,
     ) -> Result<proto::Ack> {
-        let work_directory_id = ProjectEntryId::from_proto(envelope.payload.work_directory_id);
-        let repository_handle = Self::repository_for_request(&this, work_directory_id, &mut cx)?;
+        let repository_id = RepositoryId::from_proto(envelope.payload.repository_id);
+        let repository_handle = Self::repository_for_request(&this, repository_id, &mut cx)?;
 
         let entries = envelope
             .payload
@@ -1712,8 +1712,8 @@ impl GitStore {
         envelope: TypedEnvelope<proto::Unstage>,
         mut cx: AsyncApp,
     ) -> Result<proto::Ack> {
-        let work_directory_id = ProjectEntryId::from_proto(envelope.payload.work_directory_id);
-        let repository_handle = Self::repository_for_request(&this, work_directory_id, &mut cx)?;
+        let repository_id = RepositoryId::from_proto(envelope.payload.repository_id);
+        let repository_handle = Self::repository_for_request(&this, repository_id, &mut cx)?;
 
         let entries = envelope
             .payload
@@ -1737,8 +1737,8 @@ impl GitStore {
         envelope: TypedEnvelope<proto::SetIndexText>,
         mut cx: AsyncApp,
     ) -> Result<proto::Ack> {
-        let work_directory_id = ProjectEntryId::from_proto(envelope.payload.work_directory_id);
-        let repository_handle = Self::repository_for_request(&this, work_directory_id, &mut cx)?;
+        let repository_id = RepositoryId::from_proto(envelope.payload.repository_id);
+        let repository_handle = Self::repository_for_request(&this, repository_id, &mut cx)?;
 
         repository_handle
             .update(&mut cx, |repository_handle, cx| {
@@ -1757,8 +1757,8 @@ impl GitStore {
         envelope: TypedEnvelope<proto::Commit>,
         mut cx: AsyncApp,
     ) -> Result<proto::Ack> {
-        let work_directory_id = ProjectEntryId::from_proto(envelope.payload.work_directory_id);
-        let repository_handle = Self::repository_for_request(&this, work_directory_id, &mut cx)?;
+        let repository_id = RepositoryId::from_proto(envelope.payload.repository_id);
+        let repository_handle = Self::repository_for_request(&this, repository_id, &mut cx)?;
 
         let message = SharedString::from(envelope.payload.message);
         let name = envelope.payload.name.map(SharedString::from);
@@ -1777,8 +1777,8 @@ impl GitStore {
         envelope: TypedEnvelope<proto::GetRemotes>,
         mut cx: AsyncApp,
     ) -> Result<proto::GetRemotesResponse> {
-        let work_directory_id = ProjectEntryId::from_proto(envelope.payload.work_directory_id);
-        let repository_handle = Self::repository_for_request(&this, work_directory_id, &mut cx)?;
+        let repository_id = RepositoryId::from_proto(envelope.payload.repository_id);
+        let repository_handle = Self::repository_for_request(&this, repository_id, &mut cx)?;
 
         let branch_name = envelope.payload.branch_name;
 
@@ -1803,8 +1803,8 @@ impl GitStore {
         envelope: TypedEnvelope<proto::GitGetBranches>,
         mut cx: AsyncApp,
     ) -> Result<proto::GitBranchesResponse> {
-        let work_directory_id = ProjectEntryId::from_proto(envelope.payload.work_directory_id);
-        let repository_handle = Self::repository_for_request(&this, work_directory_id, &mut cx)?;
+        let repository_id = RepositoryId::from_proto(envelope.payload.repository_id);
+        let repository_handle = Self::repository_for_request(&this, repository_id, &mut cx)?;
 
         let branches = repository_handle
             .update(&mut cx, |repository_handle, _| repository_handle.branches())?
@@ -1822,8 +1822,8 @@ impl GitStore {
         envelope: TypedEnvelope<proto::GitCreateBranch>,
         mut cx: AsyncApp,
     ) -> Result<proto::Ack> {
-        let work_directory_id = ProjectEntryId::from_proto(envelope.payload.work_directory_id);
-        let repository_handle = Self::repository_for_request(&this, work_directory_id, &mut cx)?;
+        let repository_id = RepositoryId::from_proto(envelope.payload.repository_id);
+        let repository_handle = Self::repository_for_request(&this, repository_id, &mut cx)?;
         let branch_name = envelope.payload.branch_name;
 
         repository_handle
@@ -1840,8 +1840,8 @@ impl GitStore {
         envelope: TypedEnvelope<proto::GitChangeBranch>,
         mut cx: AsyncApp,
     ) -> Result<proto::Ack> {
-        let work_directory_id = ProjectEntryId::from_proto(envelope.payload.work_directory_id);
-        let repository_handle = Self::repository_for_request(&this, work_directory_id, &mut cx)?;
+        let repository_id = RepositoryId::from_proto(envelope.payload.repository_id);
+        let repository_handle = Self::repository_for_request(&this, repository_id, &mut cx)?;
         let branch_name = envelope.payload.branch_name;
 
         repository_handle
@@ -1858,8 +1858,8 @@ impl GitStore {
         envelope: TypedEnvelope<proto::GitShow>,
         mut cx: AsyncApp,
     ) -> Result<proto::GitCommitDetails> {
-        let work_directory_id = ProjectEntryId::from_proto(envelope.payload.work_directory_id);
-        let repository_handle = Self::repository_for_request(&this, work_directory_id, &mut cx)?;
+        let repository_id = RepositoryId::from_proto(envelope.payload.repository_id);
+        let repository_handle = Self::repository_for_request(&this, repository_id, &mut cx)?;
 
         let commit = repository_handle
             .update(&mut cx, |repository_handle, _| {
@@ -1880,8 +1880,8 @@ impl GitStore {
         envelope: TypedEnvelope<proto::GitReset>,
         mut cx: AsyncApp,
     ) -> Result<proto::Ack> {
-        let work_directory_id = ProjectEntryId::from_proto(envelope.payload.work_directory_id);
-        let repository_handle = Self::repository_for_request(&this, work_directory_id, &mut cx)?;
+        let repository_id = RepositoryId::from_proto(envelope.payload.repository_id);
+        let repository_handle = Self::repository_for_request(&this, repository_id, &mut cx)?;
 
         let mode = match envelope.payload.mode() {
             git_reset::ResetMode::Soft => ResetMode::Soft,
@@ -1901,8 +1901,8 @@ impl GitStore {
         envelope: TypedEnvelope<proto::GitCheckoutFiles>,
         mut cx: AsyncApp,
     ) -> Result<proto::Ack> {
-        let work_directory_id = ProjectEntryId::from_proto(envelope.payload.work_directory_id);
-        let repository_handle = Self::repository_for_request(&this, work_directory_id, &mut cx)?;
+        let repository_id = RepositoryId::from_proto(envelope.payload.repository_id);
+        let repository_handle = Self::repository_for_request(&this, repository_id, &mut cx)?;
         let paths = envelope
             .payload
             .paths
@@ -1923,8 +1923,8 @@ impl GitStore {
         envelope: TypedEnvelope<proto::OpenCommitMessageBuffer>,
         mut cx: AsyncApp,
     ) -> Result<proto::OpenBufferResponse> {
-        let work_directory_id = ProjectEntryId::from_proto(envelope.payload.work_directory_id);
-        let repository = Self::repository_for_request(&this, work_directory_id, &mut cx)?;
+        let repository_id = RepositoryId::from_proto(envelope.payload.repository_id);
+        let repository = Self::repository_for_request(&this, repository_id, &mut cx)?;
         let buffer = repository
             .update(&mut cx, |repository, cx| {
                 repository.open_commit_buffer(None, this.read(cx).buffer_store.clone(), cx)
@@ -1954,8 +1954,8 @@ impl GitStore {
         envelope: TypedEnvelope<proto::AskPassRequest>,
         mut cx: AsyncApp,
     ) -> Result<proto::AskPassResponse> {
-        let work_directory_id = ProjectEntryId::from_proto(envelope.payload.work_directory_id);
-        let repository = Self::repository_for_request(&this, work_directory_id, &mut cx)?;
+        let repository_id = RepositoryId::from_proto(envelope.payload.repository_id);
+        let repository = Self::repository_for_request(&this, repository_id, &mut cx)?;
 
         let delegates = cx.update(|cx| repository.read(cx).askpass_delegates.clone())?;
         let Some(mut askpass) = delegates.lock().remove(&envelope.payload.askpass_id) else {
@@ -1977,8 +1977,8 @@ impl GitStore {
         envelope: TypedEnvelope<proto::CheckForPushedCommits>,
         mut cx: AsyncApp,
     ) -> Result<proto::CheckForPushedCommitsResponse> {
-        let work_directory_id = ProjectEntryId::from_proto(envelope.payload.work_directory_id);
-        let repository_handle = Self::repository_for_request(&this, work_directory_id, &mut cx)?;
+        let repository_id = RepositoryId::from_proto(envelope.payload.repository_id);
+        let repository_handle = Self::repository_for_request(&this, repository_id, &mut cx)?;
 
         let branches = repository_handle
             .update(&mut cx, |repository_handle, _| {
@@ -1998,8 +1998,8 @@ impl GitStore {
         envelope: TypedEnvelope<proto::GitDiff>,
         mut cx: AsyncApp,
     ) -> Result<proto::GitDiffResponse> {
-        let work_directory_id = ProjectEntryId::from_proto(envelope.payload.work_directory_id);
-        let repository_handle = Self::repository_for_request(&this, work_directory_id, &mut cx)?;
+        let repository_id = RepositoryId::from_proto(envelope.payload.repository_id);
+        let repository_handle = Self::repository_for_request(&this, repository_id, &mut cx)?;
         let diff_type = match envelope.payload.diff_type() {
             proto::git_diff::DiffType::HeadToIndex => DiffType::HeadToIndex,
             proto::git_diff::DiffType::HeadToWorktree => DiffType::HeadToWorktree,
@@ -2176,12 +2176,9 @@ impl GitStore {
         id: RepositoryId,
         cx: &mut AsyncApp,
     ) -> Result<Entity<Repository>> {
-        this.update(cx, |this, cx| {
+        this.update(cx, |this, _| {
             this.repositories
-                .values()
-                .find(|repository_handle| {
-                    repository_handle.read(cx).work_directory_id == work_directory_id
-                })
+                .get(&id)
                 .context("missing repository handle")
                 .cloned()
         })?
@@ -2399,7 +2396,7 @@ impl BufferDiffState {
 fn make_remote_delegate(
     this: Entity<GitStore>,
     project_id: u64,
-    work_directory_id: ProjectEntryId,
+    repository_id: RepositoryId,
     askpass_id: u64,
     cx: &mut AsyncApp,
 ) -> AskPassDelegate {
@@ -2410,7 +2407,7 @@ fn make_remote_delegate(
             };
             let response = client.request(proto::AskPassRequest {
                 project_id,
-                work_directory_id: work_directory_id.to_proto(),
+                repository_id: repository_id.to_proto(),
                 askpass_id,
                 prompt,
             });
@@ -2760,7 +2757,7 @@ impl Repository {
             cx.spawn(async move |repository, cx| {
                 let request = client.request(proto::OpenCommitMessageBuffer {
                     project_id: project_id.0,
-                    work_directory_id: id.to_proto(),
+                    repository_id: id.to_proto(),
                 });
                 let response = request.await.context("requesting to open commit buffer")?;
                 let buffer_id = BufferId::new(response.buffer_id)?;
@@ -2830,7 +2827,7 @@ impl Repository {
                     client
                         .request(proto::GitCheckoutFiles {
                             project_id: project_id.0,
-                            work_directory_id: id.to_proto(),
+                            repository_id: id.to_proto(),
                             commit,
                             paths: paths
                                 .into_iter()
@@ -2864,7 +2861,7 @@ impl Repository {
                     client
                         .request(proto::GitReset {
                             project_id: project_id.0,
-                            work_directory_id: id.to_proto(),
+                            repository_id: id.to_proto(),
                             commit,
                             mode: match reset_mode {
                                 ResetMode::Soft => git_reset::ResetMode::Soft.into(),
@@ -2888,7 +2885,7 @@ impl Repository {
                     let resp = client
                         .request(proto::GitShow {
                             project_id: project_id.0,
-                            work_directory_id: id.to_proto(),
+                            repository_id: id.to_proto(),
                             commit,
                         })
                         .await?;
@@ -2956,7 +2953,7 @@ impl Repository {
                             client
                                 .request(proto::Stage {
                                     project_id: project_id.0,
-                                    work_directory_id: id.to_proto(),
+                                    repository_id: id.to_proto(),
                                     paths: entries
                                         .into_iter()
                                         .map(|repo_path| repo_path.as_ref().to_proto())
@@ -3023,7 +3020,7 @@ impl Repository {
                             client
                                 .request(proto::Unstage {
                                     project_id: project_id.0,
-                                    work_directory_id: id.to_proto(),
+                                    repository_id: id.to_proto(),
                                     paths: entries
                                         .into_iter()
                                         .map(|repo_path| repo_path.as_ref().to_proto())
@@ -3096,7 +3093,7 @@ impl Repository {
                     client
                         .request(proto::Commit {
                             project_id: project_id.0,
-                            work_directory_id: id.to_proto(),
+                            repository_id: id.to_proto(),
                             message: String::from(message),
                             name: name.map(String::from),
                             email: email.map(String::from),
@@ -3138,7 +3135,7 @@ impl Repository {
                     let response = client
                         .request(proto::Fetch {
                             project_id: project_id.0,
-                            work_directory_id: id.to_proto(),
+                            repository_id: id.to_proto(),
                             askpass_id,
                         })
                         .await
@@ -3192,7 +3189,7 @@ impl Repository {
                     let response = client
                         .request(proto::Push {
                             project_id: project_id.0,
-                            work_directory_id: id.to_proto(),
+                            repository_id: id.to_proto(),
                             askpass_id,
                             branch_name: branch.to_string(),
                             remote_name: remote.to_string(),
@@ -3244,7 +3241,7 @@ impl Repository {
                     let response = client
                         .request(proto::Pull {
                             project_id: project_id.0,
-                            work_directory_id: id.to_proto(),
+                            repository_id: id.to_proto(),
                             askpass_id,
                             branch_name: branch.to_string(),
                             remote_name: remote.to_string(),
@@ -3281,7 +3278,7 @@ impl Repository {
                         client
                             .request(proto::SetIndexText {
                                 project_id: project_id.0,
-                                work_directory_id: id.to_proto(),
+                                repository_id: id.to_proto(),
                                 path: path.as_ref().to_proto(),
                                 text: content,
                             })
@@ -3307,7 +3304,7 @@ impl Repository {
                     let response = client
                         .request(proto::GetRemotes {
                             project_id: project_id.0,
-                            work_directory_id: id.to_proto(),
+                            repository_id: id.to_proto(),
                             branch_name,
                         })
                         .await?;
@@ -3339,7 +3336,7 @@ impl Repository {
                     let response = client
                         .request(proto::GitGetBranches {
                             project_id: project_id.0,
-                            work_directory_id: id.to_proto(),
+                            repository_id: id.to_proto(),
                         })
                         .await?;
 
@@ -3364,7 +3361,7 @@ impl Repository {
                     let response = client
                         .request(proto::GitDiff {
                             project_id: project_id.0,
-                            work_directory_id: id.to_proto(),
+                            repository_id: id.to_proto(),
                             diff_type: match diff_type {
                                 DiffType::HeadToIndex => {
                                     proto::git_diff::DiffType::HeadToIndex.into()
@@ -3393,7 +3390,7 @@ impl Repository {
                     client
                         .request(proto::GitCreateBranch {
                             project_id: project_id.0,
-                            work_directory_id: id.to_proto(),
+                            repository_id: id.to_proto(),
                             branch_name,
                         })
                         .await?;
