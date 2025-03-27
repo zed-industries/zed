@@ -240,15 +240,13 @@ pub fn to_esc_str(keystroke: &Keystroke, mode: &TermMode, alt_is_meta: bool) -> 
         }
     }
 
-    let alt_meta_binding =
-        if alt_is_meta && modifiers == AlacModifiers::Alt && keystroke.key.is_ascii() {
-            Some(format!("\x1b{}", keystroke.key))
-        } else {
-            None
-        };
-
-    if alt_meta_binding.is_some() {
-        return alt_meta_binding;
+    if alt_is_meta {
+        let is_alt_lowercase_ascii = modifiers == AlacModifiers::Alt && keystroke.key.is_ascii();
+        let is_alt_uppercase_ascii =
+            keystroke.modifiers.alt && keystroke.modifiers.shift && keystroke.key.is_ascii();
+        if is_alt_lowercase_ascii || is_alt_uppercase_ascii {
+            return Some(format!("\x1b{}", keystroke.key));
+        }
     }
 
     None
@@ -410,12 +408,9 @@ mod test {
     fn alt_is_meta() {
         let ascii_printable = ' '..='~';
         for character in ascii_printable {
-            if character.is_ascii_uppercase() {
-                continue;
-            }
             assert_eq!(
                 to_esc_str(
-                    &Keystroke::parse(&format!("alt-{}", character)).unwrap(),
+                    &Keystroke::parse_case_insensitive(&format!("alt-{}", character)).unwrap(),
                     &TermMode::NONE,
                     true
                 )
