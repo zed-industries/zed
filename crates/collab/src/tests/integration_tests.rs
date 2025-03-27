@@ -5463,7 +5463,7 @@ async fn test_project_symbols(
     client_a
         .fs()
         .insert_tree(
-            "/code",
+            path!("/code"),
             json!({
                 "crate-1": {
                     "one.rs": "const ONE: usize = 1;",
@@ -5477,7 +5477,9 @@ async fn test_project_symbols(
             }),
         )
         .await;
-    let (project_a, worktree_id) = client_a.build_local_project("/code/crate-1", cx_a).await;
+    let (project_a, worktree_id) = client_a
+        .build_local_project(path!("/code/crate-1"), cx_a)
+        .await;
     let project_id = active_call_a
         .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
         .await
@@ -5500,7 +5502,7 @@ async fn test_project_symbols(
                 lsp::SymbolInformation {
                     name: "TWO".into(),
                     location: lsp::Location {
-                        uri: lsp::Url::from_file_path("/code/crate-2/two.rs").unwrap(),
+                        uri: lsp::Url::from_file_path(path!("/code/crate-2/two.rs")).unwrap(),
                         range: lsp::Range::new(lsp::Position::new(0, 6), lsp::Position::new(0, 9)),
                     },
                     kind: lsp::SymbolKind::CONSTANT,
@@ -5531,13 +5533,13 @@ async fn test_project_symbols(
     buffer_b_2.read_with(cx_b, |buffer, cx| {
         assert_eq!(
             buffer.file().unwrap().full_path(cx),
-            Path::new("/code/crate-2/two.rs")
+            Path::new(path!("/code/crate-2/two.rs"))
         );
     });
 
     // Attempt to craft a symbol and violate host's privacy by opening an arbitrary file.
     let mut fake_symbol = symbols[0].clone();
-    fake_symbol.path.path = Path::new("/code/secrets").into();
+    fake_symbol.path.path = Path::new(path!("/code/secrets")).into();
     let error = project_b
         .update(cx_b, |project, cx| {
             project.open_buffer_for_symbol(&fake_symbol, cx)
