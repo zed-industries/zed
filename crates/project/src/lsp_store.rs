@@ -5386,24 +5386,23 @@ impl LspStore {
         if let Some((client, project_id)) = self.upstream_client() {
             todo!("rpc not implemented yet")
         } else {
-            let Some(server_ids) = buffer_handle.update(cx, |buffer, cx| {
-                self.as_local().map(|local| {
-                    local
-                        .language_servers_for_buffer(buffer, cx)
-                        .filter_map(|(_, server)| {
-                            if SemanticTokensFull
-                                .check_capabilities(server.adapter_server_capabilities())
-                            {
-                                Some(server.server_id())
-                            } else {
-                                None
-                            }
-                        })
-                        .collect_vec()
-                })
-            }) else {
+            let Some(local) = self.as_local() else {
                 return Task::ready(Ok(vec![]));
             };
+            let server_ids = buffer_handle.update(cx, |buffer, cx| {
+                local
+                    .language_servers_for_buffer(buffer, cx)
+                    .filter_map(|(_, server)| {
+                        if SemanticTokensFull
+                            .check_capabilities(server.adapter_server_capabilities())
+                        {
+                            Some(server.server_id())
+                        } else {
+                            None
+                        }
+                    })
+                    .collect_vec()
+            });
             let requests = server_ids
                 .into_iter()
                 .map(|id| {
@@ -5411,7 +5410,6 @@ impl LspStore {
                     self.request_lsp(buffer_handle.clone(), lsp, SemanticTokensFull, cx)
                 })
                 .collect_vec();
-
             cx.spawn(async move |_, _| {
                 let mut output = vec![];
                 for request in requests {
@@ -7461,6 +7459,7 @@ impl LspStore {
         if let Some(status) = self.language_server_statuses.get_mut(&language_server_id) {
             if let Some(work) = status.pending_work.remove(&token) {
                 if !work.is_disk_based_diagnostics_progress {
+                    cx.emit(LspStoreEvent::RefreshSemanticTokens);
                     cx.emit(LspStoreEvent::RefreshInlayHints);
                 }
             }
