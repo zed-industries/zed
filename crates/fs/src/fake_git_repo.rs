@@ -172,19 +172,137 @@ impl GitRepository for FakeGitRepository {
     }
 
     fn status(&self, path_prefixes: &[RepoPath]) -> BoxFuture<'static, Result<GitStatus>> {
-        let path_prefixes = path_prefixes.to_vec();
-        let workdir_path = self.dot_git_path.parent().unwrap().to_path_buf();
-        let fs = self.fs.clone();
-        self.with_state_async(false, move |state| {
-            git_status(path_prefixes, workdir_path, fs, state)
-        })
+        let status = self.status_blocking(path_prefixes);
+        async move { status }.boxed()
     }
 
     fn status_blocking(&self, path_prefixes: &[RepoPath]) -> Result<GitStatus> {
-        let path_prefixes = path_prefixes.to_vec();
-        let workdir_path = self.dot_git_path.parent().unwrap().to_path_buf();
-        let fs = self.fs.clone();
-        self.with_state(|state| git_status(path_prefixes, workdir_path, fs, state))
+        let workdir_path = self.dot_git_path.parent().unwrap();
+
+        // Load gitignores
+        let ignores = workdir_path
+            .ancestors()
+            .filter_map(|dir| {
+                let ignore_path = dir.join(".gitignore");
+                let content = self.fs.read_file_sync(ignore_path).ok()?;
+                let content = String::from_utf8(content).ok()?;
+                let mut builder = GitignoreBuilder::new(dir);
+                for line in content.lines() {
+                    builder.add_line(Some(dir.into()), line).ok()?;
+                }
+                builder.build().ok()
+            })
+            .collect::<Vec<_>>();
+
+        // Load working copy files.
+        let git_files: HashMap<RepoPath, (String, bool)> = self
+            .fs
+            .files()
+            .iter()
+            .filter_map(|path| {
+                let repo_path = path.strip_prefix(workdir_path).ok()?;
+                let mut is_ignored = false;
+                for ignore in &ignores {
+                    match ignore.matched_path_or_any_parents(path, false) {
+                        ignore::Match::None => {}
+                        ignore::Match::Ignore(_) => is_ignored = true,
+                        ignore::Match::Whitelist(_) => break,
+                    }
+                }
+                let content = self
+                    .fs
+                    .read_file_sync(path)
+                    .ok()
+                    .map(|content| String::from_utf8(content).unwrap())?;
+                Some((repo_path.into(), (content, is_ignored)))
+            })
+            .collect();
+
+        self.fs.with_git_state(&self.dot_git_path, false, |state| {
+            let mut entries = Vec::new();
+            let paths = state
+                .head_contents
+                .keys()
+                .chain(state.index_contents.keys())
+                .chain(git_files.keys())
+                .collect::<HashSet<_>>();
+            for path in paths {
+                if !path_prefixes.iter().any(|prefix| path.starts_with(prefix)) {
+                    continue;
+                }
+
+                let head = state.head_contents.get(path);
+                let index = state.index_contents.get(path);
+                let unmerged = state.unmerged_paths.get(path);
+                let fs = git_files.get(path);
+                let status = match (unmerged, head, index, fs) {
+                    (Some(unmerged), _, _, _) => FileStatus::Unmerged(*unmerged),
+                    (_, Some(head), Some(index), Some((fs, _))) => {
+                        FileStatus::Tracked(TrackedStatus {
+                            index_status: if head == index {
+                                StatusCode::Unmodified
+                            } else {
+                                StatusCode::Modified
+                            },
+                            worktree_status: if fs == index {
+                                StatusCode::Unmodified
+                            } else {
+                                StatusCode::Modified
+                            },
+                        })
+                    }
+                    (_, Some(head), Some(index), None) => FileStatus::Tracked(TrackedStatus {
+                        index_status: if head == index {
+                            StatusCode::Unmodified
+                        } else {
+                            StatusCode::Modified
+                        },
+                        worktree_status: StatusCode::Deleted,
+                    }),
+                    (_, Some(_), None, Some(_)) => FileStatus::Tracked(TrackedStatus {
+                        index_status: StatusCode::Deleted,
+                        worktree_status: StatusCode::Added,
+                    }),
+                    (_, Some(_), None, None) => FileStatus::Tracked(TrackedStatus {
+                        index_status: StatusCode::Deleted,
+                        worktree_status: StatusCode::Deleted,
+                    }),
+                    (_, None, Some(index), Some((fs, _))) => FileStatus::Tracked(TrackedStatus {
+                        index_status: StatusCode::Added,
+                        worktree_status: if fs == index {
+                            StatusCode::Unmodified
+                        } else {
+                            StatusCode::Modified
+                        },
+                    }),
+                    (_, None, Some(_), None) => FileStatus::Tracked(TrackedStatus {
+                        index_status: StatusCode::Added,
+                        worktree_status: StatusCode::Deleted,
+                    }),
+                    (_, None, None, Some((_, is_ignored))) => {
+                        if *is_ignored {
+                            continue;
+                        }
+                        FileStatus::Untracked
+                    }
+                    (_, None, None, None) => {
+                        unreachable!();
+                    }
+                };
+                if status
+                    != FileStatus::Tracked(TrackedStatus {
+                        index_status: StatusCode::Unmodified,
+                        worktree_status: StatusCode::Unmodified,
+                    })
+                {
+                    entries.push((path.clone(), status));
+                }
+            }
+            entries.sort_by(|a, b| a.0.cmp(&b.0));
+            Ok(GitStatus {
+                entries: entries.into(),
+            })
+        })?
     }
 
     fn branches(&self) -> BoxFuture<Result<Vec<Branch>>> {
@@ -315,130 +433,4 @@ impl GitRepository for FakeGitRepository {
     fn delete_checkpoint(&self, _checkpoint: GitRepositoryCheckpoint) -> BoxFuture<Result<()>> {
         unimplemented!()
     }
-}
-
-fn git_status(
-    path_prefixes: Vec<RepoPath>,
-    workdir_path: PathBuf,
-    fs: Arc<FakeFs>,
-    state: &mut FakeGitRepositoryState,
-) -> std::result::Result<GitStatus, anyhow::Error> {
-    // Load gitignores
-    let ignores = workdir_path
-        .ancestors()
-        .filter_map(|dir| {
-            let ignore_path = dir.join(".gitignore");
-            let content = fs.read_file_sync(ignore_path).ok()?;
-            let content = String::from_utf8(content).ok()?;
-            let mut builder = GitignoreBuilder::new(dir);
-            for line in content.lines() {
-                builder.add_line(Some(dir.into()), line).ok()?;
-            }
-            builder.build().ok()
-        })
-        .collect::<Vec<_>>();
-
-    // Load working copy files.
-    let git_files: HashMap<RepoPath, (String, bool)> = fs
-        .files()
-        .iter()
-        .filter_map(|path| {
-            let repo_path = path.strip_prefix(&workdir_path).ok()?;
-            let mut is_ignored = false;
-            for ignore in &ignores {
-                match ignore.matched_path_or_any_parents(path, false) {
-                    ignore::Match::None => {}
-                    ignore::Match::Ignore(_) => is_ignored = true,
-                    ignore::Match::Whitelist(_) => break,
-                }
-            }
-            let content = fs
-                .read_file_sync(path)
-                .ok()
-                .map(|content| String::from_utf8(content).unwrap())?;
-            Some((repo_path.into(), (content, is_ignored)))
-        })
-        .collect();
-
-    let mut entries = Vec::new();
-    let paths = state
-        .head_contents
-        .keys()
-        .chain(state.index_contents.keys())
-        .chain(git_files.keys())
-        .collect::<HashSet<_>>();
-    for path in paths {
-        if !path_prefixes.iter().any(|prefix| path.starts_with(prefix)) {
-            continue;
-        }
-
-        let head = state.head_contents.get(path);
-        let index = state.index_contents.get(path);
-        let unmerged = state.unmerged_paths.get(path);
-        let fs = git_files.get(path);
-        let status = match (unmerged, head, index, fs) {
-            (Some(unmerged), _, _, _) => FileStatus::Unmerged(*unmerged),
-            (_, Some(head), Some(index), Some((fs, _))) => FileStatus::Tracked(TrackedStatus {
-                index_status: if head == index {
-                    StatusCode::Unmodified
-                } else {
-                    StatusCode::Modified
-                },
-                worktree_status: if fs == index {
-                    StatusCode::Unmodified
-                } else {
-                    StatusCode::Modified
-                },
-            }),
-            (_, Some(head), Some(index), None) => FileStatus::Tracked(TrackedStatus {
-                index_status: if head == index {
-                    StatusCode::Unmodified
-                } else {
-                    StatusCode::Modified
-                },
-                worktree_status: StatusCode::Deleted,
-            }),
-            (_, Some(_), None, Some(_)) => FileStatus::Tracked(TrackedStatus {
-                index_status: StatusCode::Deleted,
-                worktree_status: StatusCode::Added,
-            }),
-            (_, Some(_), None, None) => FileStatus::Tracked(TrackedStatus {
-                index_status: StatusCode::Deleted,
-                worktree_status: StatusCode::Deleted,
-            }),
-            (_, None, Some(index), Some((fs, _))) => FileStatus::Tracked(TrackedStatus {
-                index_status: StatusCode::Added,
-                worktree_status: if fs == index {
-                    StatusCode::Unmodified
-                } else {
-                    StatusCode::Modified
-                },
-            }),
-            (_, None, Some(_), None) => FileStatus::Tracked(TrackedStatus {
-                index_status: StatusCode::Added,
-                worktree_status: StatusCode::Deleted,
-            }),
-            (_, None, None, Some((_, is_ignored))) => {
-                if *is_ignored {
-                    continue;
-                }
-                FileStatus::Untracked
-            }
-            (_, None, None, None) => {
-                unreachable!();
-            }
-        };
-        if status
-            != FileStatus::Tracked(TrackedStatus {
-                index_status: StatusCode::Unmodified,
-                worktree_status: StatusCode::Unmodified,
-            })
-        {
-            entries.push((path.clone(), status));
-        }
-    }
-    entries.sort_by(|a, b| a.0.cmp(&b.0));
-    Ok(GitStatus {
-        entries: entries.into(),
-    })
 }
