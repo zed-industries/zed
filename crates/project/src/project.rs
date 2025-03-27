@@ -1476,7 +1476,7 @@ impl Project {
         fails: bool,
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<Session>>> {
-        use dap::{Capabilities, DebugAdapterKind};
+        use dap::Capabilities;
         use task::DebugRequestDisposition;
 
         let worktree = maybe!({ self.worktrees(cx).next() });
@@ -1556,7 +1556,7 @@ impl Project {
         use clock::FakeSystemClock;
 
         let languages = LanguageRegistry::test(cx.executor());
-        let debug_adapters = DapRegistry::test();
+        let debug_adapters = DapRegistry::fake();
         let clock = Arc::new(FakeSystemClock::new());
         let http_client = http_client::FakeHttpClient::with_404_response();
         let client = cx.update(|cx| client::Client::new(clock, http_client.clone(), cx));

@@ -26,12 +26,12 @@ use serde_json::{json, Value};
 use task::{DebugAdapterConfig, TCPHost};
 
 pub fn init(registry: Arc<DapRegistry>) {
-    registry.add_adapter(Arc::from(PythonDebugAdapter::default()));
-    registry.add_adapter(Arc::from(PhpDebugAdapter::default()));
+    registry.add_adapter(Arc::from(PythonDebugAdapter));
+    registry.add_adapter(Arc::from(PhpDebugAdapter));
     registry.add_adapter(Arc::from(JsDebugAdapter::default()));
-    registry.add_adapter(Arc::from(LldbDebugAdapter::default()));
-    registry.add_adapter(Arc::from(GoDebugAdapter::default()));
-    registry.add_adapter(Arc::from(GdbDebugAdapter::default()));
+    registry.add_adapter(Arc::from(LldbDebugAdapter));
+    registry.add_adapter(Arc::from(GoDebugAdapter));
+    registry.add_adapter(Arc::from(GdbDebugAdapter));
 }
 
 pub(crate) async fn configure_tcp_connection(

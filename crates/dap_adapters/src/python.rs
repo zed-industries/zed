@@ -6,7 +6,7 @@ use std::{ffi::OsStr, path::PathBuf};
 use task::DebugTaskDefinition;
 
 #[derive(Default)]
-pub(crate) struct PythonDebugAdapter {}
+pub(crate) struct PythonDebugAdapter;
 
 impl PythonDebugAdapter {
     const ADAPTER_NAME: &'static str = "Debugpy";
