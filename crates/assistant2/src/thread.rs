@@ -517,6 +517,8 @@ impl Thread {
         git_checkpoint: Option<GitStoreCheckpoint>,
         cx: &mut Context<Self>,
     ) -> MessageId {
+        self.action_log
+            .update(cx, |action_log, _| action_log.clear_reviewed_changes());
         let message_id =
             self.insert_message(Role::User, vec![MessageSegment::Text(text.into())], cx);
         let context_ids = context.iter().map(|context| context.id).collect::<Vec<_>>();

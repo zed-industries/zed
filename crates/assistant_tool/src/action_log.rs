@@ -197,6 +197,19 @@ impl ActionLog {
         }
     }
 
+    pub fn clear_reviewed_changes(&mut self) {
+        self.tracked_buffers
+            .retain(|_buffer, tracked_buffer| match &mut tracked_buffer.change {
+                Change::Edited {
+                    accepted_edit_ids, ..
+                } => {
+                    accepted_edit_ids.clear();
+                    true
+                }
+                Change::Deleted { reviewed, .. } => !*reviewed,
+            });
+    }
+
     /// Notifies a diagnostics check
     pub fn checked_project_diagnostics(&mut self) {
         self.edited_since_project_diagnostics_check = false;
