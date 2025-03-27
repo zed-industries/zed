@@ -1,8 +1,8 @@
 use crate::tests::TestServer;
 use call::ActiveCall;
-use collections::HashSet;
+use collections::{HashMap, HashSet};
 use extension::ExtensionHostProxy;
-use fs::{FakeFs, Fs as _};
+use fs::{FakeFs, Fs as _, RemoveOptions};
 use futures::StreamExt as _;
 use gpui::{
     AppContext as _, BackgroundExecutor, SemanticVersion, TestAppContext, UpdateGlobal as _,
@@ -26,6 +26,7 @@ use remote_server::{HeadlessAppState, HeadlessProject};
 use serde_json::json;
 use settings::SettingsStore;
 use std::{path::Path, sync::Arc};
+use util::{path, separator};
 
 #[gpui::test(iterations = 10)]
 async fn test_sharing_an_ssh_remote_project(
@@ -52,7 +53,7 @@ async fn test_sharing_an_ssh_remote_project(
     let remote_fs = FakeFs::new(server_cx.executor());
     remote_fs
         .insert_tree(
-            "/code",
+            path!("/code"),
             json!({
                 "project1": {
                     ".zed": {
@@ -92,7 +93,7 @@ async fn test_sharing_an_ssh_remote_project(
 
     let client_ssh = SshRemoteClient::fake_client(opts, cx_a).await;
     let (project_a, worktree_id) = client_a
-        .build_ssh_project("/code/project1", client_ssh, cx_a)
+        .build_ssh_project(path!("/code/project1"), client_ssh, cx_a)
         .await;
 
     // While the SSH worktree is being scanned, user A shares the remote project.
@@ -178,7 +179,7 @@ async fn test_sharing_an_ssh_remote_project(
         .unwrap();
     assert_eq!(
         remote_fs
-            .load("/code/project1/src/renamed.rs".as_ref())
+            .load(path!("/code/project1/src/renamed.rs").as_ref())
             .await
             .unwrap(),
         "fn one() -> usize { 100 }"
@@ -193,7 +194,7 @@ async fn test_sharing_an_ssh_remote_project(
                 .path()
                 .to_string_lossy()
                 .to_string(),
-            "src/renamed.rs".to_string()
+            separator!("src/renamed.rs").to_string()
         );
     });
 }
@@ -258,7 +259,7 @@ async fn test_ssh_collaboration_git_branches(
     });
 
     let client_ssh = SshRemoteClient::fake_client(opts, cx_a).await;
-    let (project_a, worktree_id) = client_a
+    let (project_a, _) = client_a
         .build_ssh_project("/project", client_ssh, cx_a)
         .await;
 
@@ -277,7 +278,6 @@ async fn test_ssh_collaboration_git_branches(
     executor.run_until_parked();
 
     let repo_b = cx_b.update(|cx| project_b.read(cx).active_repository(cx).unwrap());
-    let root_path = ProjectPath::root_path(worktree_id);
 
     let branches_b = cx_b
         .update(|cx| repo_b.read(cx).branches())
@@ -303,13 +303,17 @@ async fn test_ssh_collaboration_git_branches(
 
     let server_branch = server_cx.update(|cx| {
         headless_project.update(cx, |headless_project, cx| {
-            headless_project
-                .worktree_store
-                .update(cx, |worktree_store, cx| {
-                    worktree_store
-                        .current_branch(root_path.clone(), cx)
-                        .unwrap()
-                })
+            headless_project.git_store.update(cx, |git_store, cx| {
+                git_store
+                    .repositories()
+                    .values()
+                    .next()
+                    .unwrap()
+                    .read(cx)
+                    .current_branch()
+                    .unwrap()
+                    .clone()
+            })
         })
     });
 
@@ -338,15 +342,41 @@ async fn test_ssh_collaboration_git_branches(
 
     let server_branch = server_cx.update(|cx| {
         headless_project.update(cx, |headless_project, cx| {
-            headless_project
-                .worktree_store
-                .update(cx, |worktree_store, cx| {
-                    worktree_store.current_branch(root_path, cx).unwrap()
-                })
+            headless_project.git_store.update(cx, |git_store, cx| {
+                git_store
+                    .repositories()
+                    .values()
+                    .next()
+                    .unwrap()
+                    .read(cx)
+                    .current_branch()
+                    .unwrap()
+                    .clone()
+            })
         })
     });
 
     assert_eq!(server_branch.name, "totally-new-branch");
+
+    // Remove the git repository and check that all participants get the update.
+    remote_fs
+        .remove_dir("/project/.git".as_ref(), RemoveOptions::default())
+        .await
+        .unwrap();
+    executor.run_until_parked();
+
+    project_a.update(cx_a, |project, cx| {
+        pretty_assertions::assert_eq!(
+            project.git_store().read(cx).repo_snapshots(cx),
+            HashMap::default()
+        );
+    });
+    project_b.update(cx_b, |project, cx| {
+        pretty_assertions::assert_eq!(
+            project.git_store().read(cx).repo_snapshots(cx),
+            HashMap::default()
+        );
+    });
 }
 
 #[gpui::test]
@@ -379,7 +409,10 @@ async fn test_ssh_collaboration_formatting_with_prettier(
     let buffer_text = "let one = \"two\"";
     let prettier_format_suffix = project::TEST_PRETTIER_FORMAT_SUFFIX;
     remote_fs
-        .insert_tree("/project", serde_json::json!({ "a.ts": buffer_text }))
+        .insert_tree(
+            path!("/project"),
+            serde_json::json!({ "a.ts": buffer_text }),
+        )
         .await;
 
     let test_plugin = "test_plugin";
@@ -426,7 +459,7 @@ async fn test_ssh_collaboration_formatting_with_prettier(
 
     let client_ssh = SshRemoteClient::fake_client(opts, cx_a).await;
     let (project_a, worktree_id) = client_a
-        .build_ssh_project("/project", client_ssh, cx_a)
+        .build_ssh_project(path!("/project"), client_ssh, cx_a)
         .await;
 
     // While the SSH worktree is being scanned, user A shares the remote project.
@@ -473,7 +506,7 @@ async fn test_ssh_collaboration_formatting_with_prettier(
         });
     });
     let fake_language_server = fake_language_servers.next().await.unwrap();
-    fake_language_server.handle_request::<lsp::request::Formatting, _, _>(|_, _| async move {
+    fake_language_server.set_request_handler::<lsp::request::Formatting, _, _>(|_, _| async move {
         panic!(
             "Unexpected: prettier should be preferred since it's enabled and language supports it"
         )

@@ -120,7 +120,7 @@ impl Eval {
                     .count();
                 Ok(EvalOutput {
                     diff,
-                    last_message: last_message.text.clone(),
+                    last_message: last_message.to_string(),
                     elapsed_time,
                     assistant_response_count,
                     tool_use_counts: assistant.tool_use_counts.clone(),

@@ -27,7 +27,7 @@ use std::{
     rc::Rc,
     sync::Arc,
 };
-use util::ResultExt;
+use util::{path, ResultExt};
 
 #[gpui::test(
     iterations = 100,
@@ -280,7 +280,7 @@ impl RandomizedTest for ProjectCollaborationTest {
                             let mut paths = client.fs().paths(false);
                             paths.remove(0);
                             let new_root_path = if paths.is_empty() || rng.gen() {
-                                Path::new("/").join(plan.next_root_dir_name())
+                                Path::new(path!("/")).join(plan.next_root_dir_name())
                             } else {
                                 paths.choose(rng).unwrap().clone()
                             };
@@ -547,7 +547,7 @@ impl RandomizedTest for ProjectCollaborationTest {
                     first_root_name
                 );
 
-                let root_path = Path::new("/").join(&first_root_name);
+                let root_path = Path::new(path!("/")).join(&first_root_name);
                 client.fs().create_dir(&root_path).await.unwrap();
                 client
                     .fs()
@@ -1043,7 +1043,7 @@ impl RandomizedTest for ProjectCollaborationTest {
                 initializer: Some(Box::new({
                     let fs = client.app_state.fs.clone();
                     move |fake_server: &mut FakeLanguageServer| {
-                        fake_server.handle_request::<lsp::request::Completion, _, _>(
+                        fake_server.set_request_handler::<lsp::request::Completion, _, _>(
                             |_, _| async move {
                                 Ok(Some(lsp::CompletionResponse::Array(vec![
                                     lsp::CompletionItem {
@@ -1062,7 +1062,7 @@ impl RandomizedTest for ProjectCollaborationTest {
                             },
                         );
 
-                        fake_server.handle_request::<lsp::request::CodeActionRequest, _, _>(
+                        fake_server.set_request_handler::<lsp::request::CodeActionRequest, _, _>(
                             |_, _| async move {
                                 Ok(Some(vec![lsp::CodeActionOrCommand::CodeAction(
                                     lsp::CodeAction {
@@ -1073,16 +1073,17 @@ impl RandomizedTest for ProjectCollaborationTest {
                             },
                         );
 
-                        fake_server.handle_request::<lsp::request::PrepareRenameRequest, _, _>(
-                            |params, _| async move {
-                                Ok(Some(lsp::PrepareRenameResponse::Range(lsp::Range::new(
-                                    params.position,
-                                    params.position,
-                                ))))
-                            },
-                        );
+                        fake_server
+                            .set_request_handler::<lsp::request::PrepareRenameRequest, _, _>(
+                                |params, _| async move {
+                                    Ok(Some(lsp::PrepareRenameResponse::Range(lsp::Range::new(
+                                        params.position,
+                                        params.position,
+                                    ))))
+                                },
+                            );
 
-                        fake_server.handle_request::<lsp::request::GotoDefinition, _, _>({
+                        fake_server.set_request_handler::<lsp::request::GotoDefinition, _, _>({
                             let fs = fs.clone();
                             move |_, cx| {
                                 let background = cx.background_executor();
@@ -1107,32 +1108,34 @@ impl RandomizedTest for ProjectCollaborationTest {
                             }
                         });
 
-                        fake_server.handle_request::<lsp::request::DocumentHighlightRequest, _, _>(
-                            move |_, cx| {
-                                let mut highlights = Vec::new();
-                                let background = cx.background_executor();
-                                let mut rng = background.rng();
+                        fake_server
+                            .set_request_handler::<lsp::request::DocumentHighlightRequest, _, _>(
+                                move |_, cx| {
+                                    let mut highlights = Vec::new();
+                                    let background = cx.background_executor();
+                                    let mut rng = background.rng();
 
-                                let highlight_count = rng.gen_range(1..=5);
-                                for _ in 0..highlight_count {
-                                    let start_row = rng.gen_range(0..100);
-                                    let start_column = rng.gen_range(0..100);
-                                    let end_row = rng.gen_range(0..100);
-                                    let end_column = rng.gen_range(0..100);
-                                    let start = PointUtf16::new(start_row, start_column);
-                                    let end = PointUtf16::new(end_row, end_column);
-                                    let range = if start > end { end..start } else { start..end };
-                                    highlights.push(lsp::DocumentHighlight {
-                                        range: range_to_lsp(range.clone()).unwrap(),
-                                        kind: Some(lsp::DocumentHighlightKind::READ),
+                                    let highlight_count = rng.gen_range(1..=5);
+                                    for _ in 0..highlight_count {
+                                        let start_row = rng.gen_range(0..100);
+                                        let start_column = rng.gen_range(0..100);
+                                        let end_row = rng.gen_range(0..100);
+                                        let end_column = rng.gen_range(0..100);
+                                        let start = PointUtf16::new(start_row, start_column);
+                                        let end = PointUtf16::new(end_row, end_column);
+                                        let range =
+                                            if start > end { end..start } else { start..end };
+                                        highlights.push(lsp::DocumentHighlight {
+                                            range: range_to_lsp(range.clone()).unwrap(),
+                                            kind: Some(lsp::DocumentHighlightKind::READ),
+                                        });
+                                    }
+                                    highlights.sort_unstable_by_key(|highlight| {
+                                        (highlight.range.start, highlight.range.end)
                                     });
-                                }
-                                highlights.sort_unstable_by_key(|highlight| {
-                                    (highlight.range.start, highlight.range.end)
-                                });
-                                async move { Ok(Some(highlights)) }
-                            },
-                        );
+                                    async move { Ok(Some(highlights)) }
+                                },
+                            );
                     }
                 })),
                 ..Default::default()

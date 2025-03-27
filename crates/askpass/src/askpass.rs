@@ -188,7 +188,7 @@ impl AskPassSession {
     }
 
     pub async fn run(&mut self) -> AskPassResult {
-        futures::FutureExt::fuse(smol::Timer::after(Duration::from_secs(10))).await;
+        futures::FutureExt::fuse(smol::Timer::after(Duration::from_secs(20))).await;
         AskPassResult::Timedout
     }
 }

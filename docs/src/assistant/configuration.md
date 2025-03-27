@@ -68,6 +68,21 @@ You can add custom models to the Anthropic provider by adding the following to y
 
 Custom models will be listed in the model dropdown in the assistant panel.
 
+You can configure a model to use [extended thinking](https://docs.anthropic.com/en/docs/about-claude/models/extended-thinking-models) (if it supports it),
+by changing the mode in of your models configuration to `thinking`, for example:
+
+```json
+{
+  "name": "claude-3-7-sonnet-latest",
+  "display_name": "claude-3-7-sonnet-thinking",
+  "max_tokens": 200000,
+  "mode": {
+    "type": "thinking",
+    "budget_tokens": 4_096
+  }
+}
+```
+
 ### GitHub Copilot Chat {#github-copilot-chat}
 
 You can use GitHub Copilot chat with the Zed assistant by choosing it via the model dropdown in the assistant panel.

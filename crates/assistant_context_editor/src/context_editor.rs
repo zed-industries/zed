@@ -13,7 +13,7 @@ use editor::{
         BlockContext, BlockId, BlockPlacement, BlockProperties, BlockStyle, Crease, CreaseMetadata,
         CustomBlockId, FoldId, RenderBlock, ToDisplayPoint,
     },
-    scroll::{Autoscroll, AutoscrollStrategy},
+    scroll::Autoscroll,
     Anchor, Editor, EditorEvent, MenuInlineCompletionsPolicy, ProposedChangeLocation,
     ProposedChangesEditor, RowExt, ToOffset as _, ToPoint,
 };
@@ -64,7 +64,10 @@ use workspace::{
     Workspace,
 };
 
-use crate::{slash_command::SlashCommandCompletionProvider, slash_command_picker};
+use crate::{
+    slash_command::SlashCommandCompletionProvider, slash_command_picker,
+    ThoughtProcessOutputSection,
+};
 use crate::{
     AssistantContext, AssistantPatch, AssistantPatchStatus, CacheStatus, Content, ContextEvent,
     ContextId, InvokedSlashCommandId, InvokedSlashCommandStatus, Message, MessageId,
@@ -118,6 +121,11 @@ enum AssistError {
     PaymentRequired,
     MaxMonthlySpendReached,
     Message(SharedString),
+}
+
+pub enum ThoughtProcessStatus {
+    Pending,
+    Completed,
 }
 
 pub trait AssistantPanelDelegate {
@@ -178,6 +186,7 @@ pub struct ContextEditor {
     project: Entity<Project>,
     lsp_adapter_delegate: Option<Arc<dyn LspAdapterDelegate>>,
     editor: Entity<Editor>,
+    pending_thought_process: Option<(CreaseId, language::Anchor)>,
     blocks: HashMap<MessageId, (MessageHeader, CustomBlockId)>,
     image_blocks: HashSet<CustomBlockId>,
     scroll_position: Option<ScrollPosition>,
@@ -253,7 +262,8 @@ impl ContextEditor {
             cx.observe_global_in::<SettingsStore>(window, Self::settings_changed),
         ];
 
-        let sections = context.read(cx).slash_command_output_sections().to_vec();
+        let slash_command_sections = context.read(cx).slash_command_output_sections().to_vec();
+        let thought_process_sections = context.read(cx).thought_process_output_sections().to_vec();
         let patch_ranges = context.read(cx).patch_ranges().collect::<Vec<_>>();
         let slash_commands = context.read(cx).slash_commands().clone();
         let mut this = Self {
@@ -265,6 +275,7 @@ impl ContextEditor {
             image_blocks: Default::default(),
             scroll_position: None,
             remote_id: None,
+            pending_thought_process: None,
             fs: fs.clone(),
             workspace,
             project,
@@ -294,7 +305,14 @@ impl ContextEditor {
         };
         this.update_message_headers(cx);
         this.update_image_blocks(cx);
-        this.insert_slash_command_output_sections(sections, false, window, cx);
+        this.insert_slash_command_output_sections(slash_command_sections, false, window, cx);
+        this.insert_thought_process_output_sections(
+            thought_process_sections
+                .into_iter()
+                .map(|section| (section, ThoughtProcessStatus::Completed)),
+            window,
+            cx,
+        );
         this.patches_updated(&Vec::new(), &patch_ranges, window, cx);
         this
     }
@@ -396,12 +414,9 @@ impl ContextEditor {
                 cursor..cursor
             };
             self.editor.update(cx, |editor, cx| {
-                editor.change_selections(
-                    Some(Autoscroll::Strategy(AutoscrollStrategy::Fit)),
-                    window,
-                    cx,
-                    |selections| selections.select_ranges([new_selection]),
-                );
+                editor.change_selections(Some(Autoscroll::fit()), window, cx, |selections| {
+                    selections.select_ranges([new_selection])
+                });
             });
             // Avoid scrolling to the new cursor position so the assistant's output is stable.
             cx.defer_in(window, |this, _, _| this.scroll_position = None);
@@ -598,6 +613,47 @@ impl ContextEditor {
                 self.context.update(cx, |context, cx| {
                     context.save(Some(Duration::from_millis(500)), self.fs.clone(), cx);
                 });
+            }
+            ContextEvent::StartedThoughtProcess(range) => {
+                let creases = self.insert_thought_process_output_sections(
+                    [(
+                        ThoughtProcessOutputSection {
+                            range: range.clone(),
+                        },
+                        ThoughtProcessStatus::Pending,
+                    )],
+                    window,
+                    cx,
+                );
+                self.pending_thought_process = Some((creases[0], range.start));
+            }
+            ContextEvent::EndedThoughtProcess(end) => {
+                if let Some((crease_id, start)) = self.pending_thought_process.take() {
+                    self.editor.update(cx, |editor, cx| {
+                        let multi_buffer_snapshot = editor.buffer().read(cx).snapshot(cx);
+                        let (excerpt_id, _, _) = multi_buffer_snapshot.as_singleton().unwrap();
+                        let start_anchor = multi_buffer_snapshot
+                            .anchor_in_excerpt(*excerpt_id, start)
+                            .unwrap();
+
+                        editor.display_map.update(cx, |display_map, cx| {
+                            display_map.unfold_intersecting(
+                                vec![start_anchor..start_anchor],
+                                true,
+                                cx,
+                            );
+                        });
+                        editor.remove_creases(vec![crease_id], cx);
+                    });
+                    self.insert_thought_process_output_sections(
+                        [(
+                            ThoughtProcessOutputSection { range: start..*end },
+                            ThoughtProcessStatus::Completed,
+                        )],
+                        window,
+                        cx,
+                    );
+                }
             }
             ContextEvent::StreamedCompletion => {
                 self.editor.update(cx, |editor, cx| {
@@ -944,6 +1000,62 @@ impl ContextEditor {
         }
 
         self.update_active_patch(window, cx);
+    }
+
+    fn insert_thought_process_output_sections(
+        &mut self,
+        sections: impl IntoIterator<
+            Item = (
+                ThoughtProcessOutputSection<language::Anchor>,
+                ThoughtProcessStatus,
+            ),
+        >,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Vec<CreaseId> {
+        self.editor.update(cx, |editor, cx| {
+            let buffer = editor.buffer().read(cx).snapshot(cx);
+            let excerpt_id = *buffer.as_singleton().unwrap().0;
+            let mut buffer_rows_to_fold = BTreeSet::new();
+            let mut creases = Vec::new();
+            for (section, status) in sections {
+                let start = buffer
+                    .anchor_in_excerpt(excerpt_id, section.range.start)
+                    .unwrap();
+                let end = buffer
+                    .anchor_in_excerpt(excerpt_id, section.range.end)
+                    .unwrap();
+                let buffer_row = MultiBufferRow(start.to_point(&buffer).row);
+                buffer_rows_to_fold.insert(buffer_row);
+                creases.push(
+                    Crease::inline(
+                        start..end,
+                        FoldPlaceholder {
+                            render: render_thought_process_fold_icon_button(
+                                cx.entity().downgrade(),
+                                status,
+                            ),
+                            merge_adjacent: false,
+                            ..Default::default()
+                        },
+                        render_slash_command_output_toggle,
+                        |_, _, _, _| Empty.into_any_element(),
+                    )
+                    .with_metadata(CreaseMetadata {
+                        icon: IconName::Ai,
+                        label: "Thinking Process".into(),
+                    }),
+                );
+            }
+
+            let creases = editor.insert_creases(creases, cx);
+
+            for buffer_row in buffer_rows_to_fold.into_iter().rev() {
+                editor.fold_at(&FoldAt { buffer_row }, window, cx);
+            }
+
+            creases
+        })
     }
 
     fn insert_slash_command_output_sections(
@@ -2650,6 +2762,52 @@ fn find_surrounding_code_block(snapshot: &BufferSnapshot, offset: usize) -> Opti
     }
 
     None
+}
+
+fn render_thought_process_fold_icon_button(
+    editor: WeakEntity<Editor>,
+    status: ThoughtProcessStatus,
+) -> Arc<dyn Send + Sync + Fn(FoldId, Range<Anchor>, &mut App) -> AnyElement> {
+    Arc::new(move |fold_id, fold_range, _cx| {
+        let editor = editor.clone();
+
+        let button = ButtonLike::new(fold_id).layer(ElevationIndex::ElevatedSurface);
+        let button = match status {
+            ThoughtProcessStatus::Pending => button
+                .child(
+                    Icon::new(IconName::Brain)
+                        .size(IconSize::Small)
+                        .color(Color::Muted),
+                )
+                .child(
+                    Label::new("Thinking…").color(Color::Muted).with_animation(
+                        "pulsating-label",
+                        Animation::new(Duration::from_secs(2))
+                            .repeat()
+                            .with_easing(pulsating_between(0.4, 0.8)),
+                        |label, delta| label.alpha(delta),
+                    ),
+                ),
+            ThoughtProcessStatus::Completed => button
+                .style(ButtonStyle::Filled)
+                .child(Icon::new(IconName::Brain).size(IconSize::Small))
+                .child(Label::new("Thought Process").single_line()),
+        };
+
+        button
+            .on_click(move |_, window, cx| {
+                editor
+                    .update(cx, |editor, cx| {
+                        let buffer_start = fold_range
+                            .start
+                            .to_point(&editor.buffer().read(cx).read(cx));
+                        let buffer_row = MultiBufferRow(buffer_start.row);
+                        editor.unfold_at(&UnfoldAt { buffer_row }, window, cx);
+                    })
+                    .ok();
+            })
+            .into_any_element()
+    })
 }
 
 fn render_fold_icon_button(

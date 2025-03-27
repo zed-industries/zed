@@ -8,7 +8,7 @@ use gpui::{
     SharedString, Styled, Subscription, Task, Window,
 };
 use picker::{Picker, PickerDelegate, PickerEditorPosition};
-use project::git::Repository;
+use project::git_store::Repository;
 use std::sync::Arc;
 use time::OffsetDateTime;
 use time_format::format_local_timestamp;

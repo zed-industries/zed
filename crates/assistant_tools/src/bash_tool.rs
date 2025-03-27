@@ -6,7 +6,9 @@ use project::Project;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
+use ui::IconName;
 use util::command::new_smol_command;
+use util::markdown::MarkdownString;
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct BashToolInput {
@@ -23,8 +25,16 @@ impl Tool for BashTool {
         "bash".to_string()
     }
 
+    fn needs_confirmation(&self) -> bool {
+        true
+    }
+
     fn description(&self) -> String {
         include_str!("./bash_tool/description.md").to_string()
+    }
+
+    fn icon(&self) -> IconName {
+        IconName::Terminal
     }
 
     fn input_schema(&self) -> serde_json::Value {
@@ -34,7 +44,13 @@ impl Tool for BashTool {
 
     fn ui_text(&self, input: &serde_json::Value) -> String {
         match serde_json::from_value::<BashToolInput>(input.clone()) {
-            Ok(input) => format!("`$ {}`", input.command),
+            Ok(input) => {
+                if input.command.contains('\n') {
+                    MarkdownString::code_block("bash", &input.command).0
+                } else {
+                    MarkdownString::inline_code(&input.command).0
+                }
+            }
             Err(_) => "Run bash command".to_string(),
         }
     }

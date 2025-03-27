@@ -6,7 +6,8 @@ use buffer_diff::{
 };
 use fs::FakeFs;
 use futures::{future, StreamExt};
-use gpui::{App, SemanticVersion, UpdateGlobal};
+use git::repository::RepoPath;
+use gpui::{App, BackgroundExecutor, SemanticVersion, UpdateGlobal};
 use http_client::Url;
 use language::{
     language_settings::{language_settings, AllLanguageSettings, LanguageSettingsContent},
@@ -24,9 +25,7 @@ use pretty_assertions::{assert_eq, assert_matches};
 use serde_json::json;
 #[cfg(not(windows))]
 use std::os;
-use std::{str::FromStr, sync::OnceLock};
-
-use std::{mem, num::NonZeroU32, ops::Range, task::Poll};
+use std::{mem, num::NonZeroU32, ops::Range, str::FromStr, sync::OnceLock, task::Poll};
 use task::{ResolvedTask, TaskContext};
 use unindent::Unindent as _;
 use util::{
@@ -36,6 +35,7 @@ use util::{
     test::{marked_text_offsets, TempTree},
     uri, TryFutureExt as _,
 };
+use worktree::WorktreeModelHandle as _;
 
 #[gpui::test]
 async fn test_block_via_channel(cx: &mut gpui::TestAppContext) {
@@ -99,7 +99,12 @@ async fn test_symlinks(cx: &mut gpui::TestAppContext) {
     )
     .unwrap();
 
-    let project = Project::test(Arc::new(RealFs::default()), [root_link_path.as_ref()], cx).await;
+    let project = Project::test(
+        Arc::new(RealFs::new(None, cx.executor())),
+        [root_link_path.as_ref()],
+        cx,
+    )
+    .await;
 
     project.update(cx, |project, cx| {
         let tree = project.worktrees(cx).next().unwrap().read(cx);
@@ -832,9 +837,9 @@ async fn test_managing_language_servers(cx: &mut gpui::TestAppContext) {
     });
 
     let mut rust_shutdown_requests = fake_rust_server
-        .handle_request::<lsp::request::Shutdown, _, _>(|_, _| future::ready(Ok(())));
+        .set_request_handler::<lsp::request::Shutdown, _, _>(|_, _| future::ready(Ok(())));
     let mut json_shutdown_requests = fake_json_server
-        .handle_request::<lsp::request::Shutdown, _, _>(|_, _| future::ready(Ok(())));
+        .set_request_handler::<lsp::request::Shutdown, _, _>(|_, _| future::ready(Ok(())));
     futures::join!(rust_shutdown_requests.next(), json_shutdown_requests.next());
 
     let mut fake_rust_server = fake_rust_servers.next().await.unwrap();
@@ -2701,7 +2706,7 @@ async fn test_definition(cx: &mut gpui::TestAppContext) {
         .unwrap();
 
     let fake_server = fake_servers.next().await.unwrap();
-    fake_server.handle_request::<lsp::request::GotoDefinition, _, _>(|params, _| async move {
+    fake_server.set_request_handler::<lsp::request::GotoDefinition, _, _>(|params, _| async move {
         let params = params.text_document_position_params;
         assert_eq!(
             params.text_document.uri.to_file_path().unwrap(),
@@ -2818,7 +2823,7 @@ async fn test_completions_without_edit_ranges(cx: &mut gpui::TestAppContext) {
     });
 
     fake_server
-        .handle_request::<lsp::request::Completion, _, _>(|_, _| async move {
+        .set_request_handler::<lsp::request::Completion, _, _>(|_, _| async move {
             Ok(Some(lsp::CompletionResponse::Array(vec![
                 lsp::CompletionItem {
                     label: "fullyQualifiedName?".into(),
@@ -2845,7 +2850,7 @@ async fn test_completions_without_edit_ranges(cx: &mut gpui::TestAppContext) {
     });
 
     fake_server
-        .handle_request::<lsp::request::Completion, _, _>(|_, _| async move {
+        .set_request_handler::<lsp::request::Completion, _, _>(|_, _| async move {
             Ok(Some(lsp::CompletionResponse::Array(vec![
                 lsp::CompletionItem {
                     label: "component".into(),
@@ -2912,7 +2917,7 @@ async fn test_completions_with_carriage_returns(cx: &mut gpui::TestAppContext) {
     });
 
     fake_server
-        .handle_request::<lsp::request::Completion, _, _>(|_, _| async move {
+        .set_request_handler::<lsp::request::Completion, _, _>(|_, _| async move {
             Ok(Some(lsp::CompletionResponse::Array(vec![
                 lsp::CompletionItem {
                     label: "fullyQualifiedName?".into(),
@@ -2979,7 +2984,7 @@ async fn test_apply_code_actions_with_commands(cx: &mut gpui::TestAppContext) {
         project.code_actions(&buffer, 0..0, None, cx)
     });
     fake_server
-        .handle_request::<lsp::request::CodeActionRequest, _, _>(|_, _| async move {
+        .set_request_handler::<lsp::request::CodeActionRequest, _, _>(|_, _| async move {
             Ok(Some(vec![
                 lsp::CodeActionOrCommand::CodeAction(lsp::CodeAction {
                     title: "The code action".into(),
@@ -3004,7 +3009,7 @@ async fn test_apply_code_actions_with_commands(cx: &mut gpui::TestAppContext) {
 
     // Resolving the code action does not populate its edits. In absence of
     // edits, we must execute the given command.
-    fake_server.handle_request::<lsp::request::CodeActionResolveRequest, _, _>(
+    fake_server.set_request_handler::<lsp::request::CodeActionResolveRequest, _, _>(
         |mut action, _| async move {
             if action.data.is_some() {
                 action.command = Some(lsp::Command {
@@ -3020,7 +3025,7 @@ async fn test_apply_code_actions_with_commands(cx: &mut gpui::TestAppContext) {
     // While executing the command, the language server sends the editor
     // a `workspaceEdit` request.
     fake_server
-        .handle_request::<lsp::request::ExecuteCommand, _, _>({
+        .set_request_handler::<lsp::request::ExecuteCommand, _, _>({
             let fake = fake_server.clone();
             move |params, _| {
                 assert_eq!(params.command, "_the/command");
@@ -3332,7 +3337,7 @@ async fn test_rescan_and_remote_updates(cx: &mut gpui::TestAppContext) {
         }
     }));
 
-    let project = Project::test(Arc::new(RealFs::default()), [dir.path()], cx).await;
+    let project = Project::test(Arc::new(RealFs::new(None, cx.executor())), [dir.path()], cx).await;
 
     let buffer_for_path = |path: &'static str, cx: &mut gpui::TestAppContext| {
         let buffer = project.update(cx, |p, cx| p.open_local_buffer(dir.path().join(path), cx));
@@ -4212,7 +4217,7 @@ async fn test_lsp_rename_notifications(cx: &mut gpui::TestAppContext) {
     };
     let resolved_workspace_edit = Arc::new(OnceLock::new());
     fake_server
-        .handle_request::<WillRenameFiles, _, _>({
+        .set_request_handler::<WillRenameFiles, _, _>({
             let resolved_workspace_edit = resolved_workspace_edit.clone();
             let expected_edit = expected_edit.clone();
             move |params, _| {
@@ -4289,7 +4294,7 @@ async fn test_rename(cx: &mut gpui::TestAppContext) {
         project.prepare_rename(buffer.clone(), 7, cx)
     });
     fake_server
-        .handle_request::<lsp::request::PrepareRenameRequest, _, _>(|params, _| async move {
+        .set_request_handler::<lsp::request::PrepareRenameRequest, _, _>(|params, _| async move {
             assert_eq!(
                 params.text_document.uri.as_str(),
                 uri!("file:///dir/one.rs")
@@ -4314,7 +4319,7 @@ async fn test_rename(cx: &mut gpui::TestAppContext) {
         project.perform_rename(buffer.clone(), 7, "THREE".to_string(), cx)
     });
     fake_server
-        .handle_request::<lsp::request::Rename, _, _>(|params, _| async move {
+        .set_request_handler::<lsp::request::Rename, _, _>(|params, _| async move {
             assert_eq!(
                 params.text_document_position.text_document.uri.as_str(),
                 uri!("file:///dir/one.rs")
@@ -5175,35 +5180,36 @@ async fn test_multiple_language_server_hovers(cx: &mut gpui::TestAppContext) {
             "TailwindServer" | "TypeScriptServer" => {
                 servers_with_hover_requests.insert(
                     new_server_name.clone(),
-                    new_server.handle_request::<lsp::request::HoverRequest, _, _>(move |_, _| {
-                        let name = new_server_name.clone();
-                        async move {
-                            Ok(Some(lsp::Hover {
-                                contents: lsp::HoverContents::Scalar(lsp::MarkedString::String(
-                                    format!("{name} hover"),
-                                )),
-                                range: None,
-                            }))
-                        }
-                    }),
+                    new_server.set_request_handler::<lsp::request::HoverRequest, _, _>(
+                        move |_, _| {
+                            let name = new_server_name.clone();
+                            async move {
+                                Ok(Some(lsp::Hover {
+                                    contents: lsp::HoverContents::Scalar(
+                                        lsp::MarkedString::String(format!("{name} hover")),
+                                    ),
+                                    range: None,
+                                }))
+                            }
+                        },
+                    ),
                 );
             }
             "ESLintServer" => {
                 servers_with_hover_requests.insert(
                     new_server_name,
-                    new_server.handle_request::<lsp::request::HoverRequest, _, _>(
+                    new_server.set_request_handler::<lsp::request::HoverRequest, _, _>(
                         |_, _| async move { Ok(None) },
                     ),
                 );
             }
             "NoHoverCapabilitiesServer" => {
-                let _never_handled = new_server.handle_request::<lsp::request::HoverRequest, _, _>(
-                    |_, _| async move {
+                let _never_handled = new_server
+                    .set_request_handler::<lsp::request::HoverRequest, _, _>(|_, _| async move {
                         panic!(
                             "Should not call for hovers server with no corresponding capabilities"
                         )
-                    },
-                );
+                    });
             }
             unexpected => panic!("Unexpected server name: {unexpected}"),
         }
@@ -5274,8 +5280,8 @@ async fn test_hovers_with_empty_parts(cx: &mut gpui::TestAppContext) {
         .await
         .expect("failed to get the language server");
 
-    let mut request_handled =
-        fake_server.handle_request::<lsp::request::HoverRequest, _, _>(move |_, _| async move {
+    let mut request_handled = fake_server.set_request_handler::<lsp::request::HoverRequest, _, _>(
+        move |_, _| async move {
             Ok(Some(lsp::Hover {
                 contents: lsp::HoverContents::Array(vec![
                     lsp::MarkedString::String("".to_string()),
@@ -5284,7 +5290,8 @@ async fn test_hovers_with_empty_parts(cx: &mut gpui::TestAppContext) {
                 ]),
                 range: None,
             }))
-        });
+        },
+    );
 
     let hover_task = project.update(cx, |project, cx| {
         project.hover(&buffer, Point::new(0, 0), cx)
@@ -5346,8 +5353,8 @@ async fn test_code_actions_only_kinds(cx: &mut gpui::TestAppContext) {
         .await
         .expect("failed to get the language server");
 
-    let mut request_handled = fake_server.handle_request::<lsp::request::CodeActionRequest, _, _>(
-        move |_, _| async move {
+    let mut request_handled = fake_server
+        .set_request_handler::<lsp::request::CodeActionRequest, _, _>(move |_, _| async move {
             Ok(Some(vec![
                 lsp::CodeActionOrCommand::CodeAction(lsp::CodeAction {
                     title: "organize imports".to_string(),
@@ -5360,8 +5367,7 @@ async fn test_code_actions_only_kinds(cx: &mut gpui::TestAppContext) {
                     ..lsp::CodeAction::default()
                 }),
             ]))
-        },
-    );
+        });
 
     let code_actions_task = project.update(cx, |project, cx| {
         project.code_actions(
@@ -5482,7 +5488,7 @@ async fn test_multiple_language_server_actions(cx: &mut gpui::TestAppContext) {
             "TailwindServer" | "TypeScriptServer" => {
                 servers_with_actions_requests.insert(
                     new_server_name.clone(),
-                    new_server.handle_request::<lsp::request::CodeActionRequest, _, _>(
+                    new_server.set_request_handler::<lsp::request::CodeActionRequest, _, _>(
                         move |_, _| {
                             let name = new_server_name.clone();
                             async move {
@@ -5500,14 +5506,14 @@ async fn test_multiple_language_server_actions(cx: &mut gpui::TestAppContext) {
             "ESLintServer" => {
                 servers_with_actions_requests.insert(
                     new_server_name,
-                    new_server.handle_request::<lsp::request::CodeActionRequest, _, _>(
+                    new_server.set_request_handler::<lsp::request::CodeActionRequest, _, _>(
                         |_, _| async move { Ok(None) },
                     ),
                 );
             }
             "NoActionsCapabilitiesServer" => {
                 let _never_handled = new_server
-                    .handle_request::<lsp::request::CodeActionRequest, _, _>(|_, _| async move {
+                    .set_request_handler::<lsp::request::CodeActionRequest, _, _>(|_, _| async move {
                         panic!(
                             "Should not call for code actions server with no corresponding capabilities"
                         )
@@ -6358,7 +6364,7 @@ async fn test_staging_hunks(cx: &mut gpui::TestAppContext) {
     });
 }
 
-#[gpui::test(iterations = 10, seeds(340, 472))]
+#[gpui::test(seeds(340, 472))]
 async fn test_staging_hunks_with_delayed_fs_event(cx: &mut gpui::TestAppContext) {
     use DiffHunkSecondaryStatus::*;
     init_test(cx);
@@ -6766,6 +6772,158 @@ async fn test_single_file_diffs(cx: &mut gpui::TestAppContext) {
                     secondary: DiffHunkSecondaryStatus::HasSecondaryHunk,
                 },
             )],
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_repository_and_path_for_project_path(
+    background_executor: BackgroundExecutor,
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx);
+    let fs = FakeFs::new(background_executor);
+    fs.insert_tree(
+        path!("/root"),
+        json!({
+            "c.txt": "",
+            "dir1": {
+                ".git": {},
+                "deps": {
+                    "dep1": {
+                        ".git": {},
+                        "src": {
+                            "a.txt": ""
+                        }
+                    }
+                },
+                "src": {
+                    "b.txt": ""
+                }
+            },
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+    let tree = project.read_with(cx, |project, cx| project.worktrees(cx).next().unwrap());
+    let tree_id = tree.read_with(cx, |tree, _| tree.id());
+    tree.read_with(cx, |tree, _| tree.as_local().unwrap().scan_complete())
+        .await;
+    tree.flush_fs_events(cx).await;
+
+    project.read_with(cx, |project, cx| {
+        let git_store = project.git_store().read(cx);
+        let pairs = [
+            ("c.txt", None),
+            ("dir1/src/b.txt", Some((path!("/root/dir1"), "src/b.txt"))),
+            (
+                "dir1/deps/dep1/src/a.txt",
+                Some((path!("/root/dir1/deps/dep1"), "src/a.txt")),
+            ),
+        ];
+        let expected = pairs
+            .iter()
+            .map(|(path, result)| {
+                (
+                    path,
+                    result.map(|(repo, repo_path)| {
+                        (Path::new(repo).to_owned(), RepoPath::from(repo_path))
+                    }),
+                )
+            })
+            .collect::<Vec<_>>();
+        let actual = pairs
+            .iter()
+            .map(|(path, _)| {
+                let project_path = (tree_id, Path::new(path)).into();
+                let result = maybe!({
+                    let (repo, repo_path) =
+                        git_store.repository_and_path_for_project_path(&project_path, cx)?;
+                    Some((
+                        repo.read(cx)
+                            .repository_entry
+                            .work_directory_abs_path
+                            .clone(),
+                        repo_path,
+                    ))
+                });
+                (path, result)
+            })
+            .collect::<Vec<_>>();
+        pretty_assertions::assert_eq!(expected, actual);
+    });
+
+    fs.remove_dir(path!("/root/dir1/.git").as_ref(), RemoveOptions::default())
+        .await
+        .unwrap();
+    tree.flush_fs_events(cx).await;
+
+    project.read_with(cx, |project, cx| {
+        let git_store = project.git_store().read(cx);
+        assert_eq!(
+            git_store.repository_and_path_for_project_path(
+                &(tree_id, Path::new("dir1/src/b.txt")).into(),
+                cx
+            ),
+            None
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_home_dir_as_git_repository(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree(
+        path!("/root"),
+        json!({
+            "home": {
+                ".git": {},
+                "project": {
+                    "a.txt": "A"
+                },
+            },
+        }),
+    )
+    .await;
+    fs.set_home_dir(Path::new(path!("/root/home")).to_owned());
+
+    let project = Project::test(fs.clone(), [path!("/root/home/project").as_ref()], cx).await;
+    let tree = project.read_with(cx, |project, cx| project.worktrees(cx).next().unwrap());
+    let tree_id = tree.read_with(cx, |tree, _| tree.id());
+    tree.read_with(cx, |tree, _| tree.as_local().unwrap().scan_complete())
+        .await;
+    tree.flush_fs_events(cx).await;
+
+    project.read_with(cx, |project, cx| {
+        let containing = project
+            .git_store()
+            .read(cx)
+            .repository_and_path_for_project_path(&(tree_id, "a.txt").into(), cx);
+        assert!(containing.is_none());
+    });
+
+    let project = Project::test(fs.clone(), [path!("/root/home").as_ref()], cx).await;
+    let tree = project.read_with(cx, |project, cx| project.worktrees(cx).next().unwrap());
+    let tree_id = tree.read_with(cx, |tree, _| tree.id());
+    tree.read_with(cx, |tree, _| tree.as_local().unwrap().scan_complete())
+        .await;
+    tree.flush_fs_events(cx).await;
+
+    project.read_with(cx, |project, cx| {
+        let containing = project
+            .git_store()
+            .read(cx)
+            .repository_and_path_for_project_path(&(tree_id, "project/a.txt").into(), cx);
+        assert_eq!(
+            containing
+                .unwrap()
+                .0
+                .read(cx)
+                .repository_entry
+                .work_directory_abs_path,
+            Path::new(path!("/root/home"))
         );
     });
 }
