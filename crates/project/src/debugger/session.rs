@@ -11,7 +11,7 @@ use super::dap_command::{
 };
 use super::dap_store::DapAdapterDelegate;
 use anyhow::{anyhow, Result};
-use collections::{HashMap, IndexMap, IndexSet};
+use collections::{HashMap, HashSet, IndexMap, IndexSet};
 use dap::adapters::{DebugAdapter, DebugAdapterBinary};
 use dap::messages::Response;
 use dap::OutputEventCategory;
@@ -237,6 +237,19 @@ impl LocalMode {
                     .on_request::<dap::requests::Initialize, _>(move |_, _| Ok(caps.clone()))
                     .await;
 
+                let paths = cx.update(|cx| session.breakpoint_store.read(cx).breakpoint_paths()).expect("Breakpoint store should exist in all tests that start debuggers");
+
+                session.client.on_request::<dap::requests::SetBreakpoints, _>(move |_, args| {
+                    let p = Arc::from(Path::new(&args.source.path.unwrap()));
+                    if !paths.contains(&p) {
+                        panic!("Sent breakpoints for path without any")
+                    }
+
+                    Ok(dap::SetBreakpointsResponse {
+                        breakpoints: Vec::default(),
+                    })
+                }).await;
+
                 match config.request.clone() {
                     dap::DebugRequestType::Launch if fail => {
                         session
@@ -307,6 +320,34 @@ impl LocalMode {
         })
     }
 
+    fn unset_breakpoints_from_paths(&self, paths: &Vec<Arc<Path>>, cx: &mut App) -> Task<()> {
+        let tasks: Vec<_> = paths
+            .into_iter()
+            .map(|path| {
+                self.request(
+                    dap_command::SetBreakpoints {
+                        source: client_source(path),
+                        source_modified: None,
+                        breakpoints: vec![],
+                    },
+                    cx.background_executor().clone(),
+                )
+            })
+            .collect();
+
+        cx.background_spawn(async move {
+            futures::future::join_all(tasks)
+                .await
+                .iter()
+                .for_each(|res| match res {
+                    Ok(_) => {}
+                    Err(err) => {
+                        log::warn!("Set breakpoints request failed: {}", err);
+                    }
+                });
+        })
+    }
+
     fn send_breakpoints_from_path(
         &self,
         abs_path: Arc<Path>,
@@ -317,6 +358,7 @@ impl LocalMode {
             .breakpoint_store
             .read_with(cx, |store, cx| store.breakpoints_from_path(&abs_path, cx))
             .into_iter()
+            .filter(|bp| bp.state.is_enabled())
             .map(Into::into)
             .collect();
 
@@ -347,7 +389,11 @@ impl LocalMode {
             let breakpoints = if ignore_breakpoints {
                 vec![]
             } else {
-                breakpoints.into_iter().map(Into::into).collect()
+                breakpoints
+                    .into_iter()
+                    .filter(|bp| bp.state.is_enabled())
+                    .map(Into::into)
+                    .collect()
             };
 
             breakpoint_tasks.push(self.request(
@@ -522,6 +568,11 @@ impl ThreadStates {
         self.known_thread_states.clear();
     }
 
+    fn exit_all_threads(&mut self) {
+        self.global_state = Some(ThreadStatus::Exited);
+        self.known_thread_states.clear();
+    }
+
     fn continue_all_threads(&mut self) {
         self.global_state = Some(ThreadStatus::Running);
         self.known_thread_states.clear();
@@ -577,6 +628,7 @@ pub struct Session {
     mode: Mode,
     pub(super) capabilities: Capabilities,
     id: SessionId,
+    child_session_ids: HashSet<SessionId>,
     parent_id: Option<SessionId>,
     ignore_breakpoints: bool,
     modules: Vec<dap::Module>,
@@ -746,6 +798,14 @@ impl Session {
                                 .detach();
                         };
                     }
+                    BreakpointStoreEvent::BreakpointsCleared(paths) => {
+                        if let Some(local) = (!this.ignore_breakpoints)
+                            .then(|| this.as_local_mut())
+                            .flatten()
+                        {
+                            local.unset_breakpoints_from_paths(paths, cx).detach();
+                        }
+                    }
                     BreakpointStoreEvent::ActiveDebugLineChanged => {}
                 })
                 .detach();
@@ -753,6 +813,7 @@ impl Session {
                 Self {
                     mode: Mode::Local(mode),
                     id: session_id,
+                    child_session_ids: HashSet::default(),
                     parent_id: parent_session.map(|session| session.read(cx).id),
                     variables: Default::default(),
                     capabilities,
@@ -785,13 +846,13 @@ impl Session {
                 _upstream_project_id: upstream_project_id,
             }),
             id: session_id,
+            child_session_ids: HashSet::default(),
             parent_id: None,
             capabilities: Capabilities::default(),
             ignore_breakpoints,
             variables: Default::default(),
             stack_frames: Default::default(),
             thread_states: ThreadStates::default(),
-
             output_token: OutputToken(0),
             output: circular_buffer::CircularBuffer::boxed(),
             requests: HashMap::default(),
@@ -806,6 +867,18 @@ impl Session {
 
     pub fn session_id(&self) -> SessionId {
         self.id
+    }
+
+    pub fn child_session_ids(&self) -> HashSet<SessionId> {
+        self.child_session_ids.clone()
+    }
+
+    pub fn add_child_session_id(&mut self, session_id: SessionId) {
+        self.child_session_ids.insert(session_id);
+    }
+
+    pub fn remove_child_session_id(&mut self, session_id: SessionId) {
+        self.child_session_ids.remove(&session_id);
     }
 
     pub fn parent_id(&self) -> Option<SessionId> {
@@ -1051,6 +1124,7 @@ impl Session {
 
         if !self.thread_states.any_stopped_thread()
             && request.type_id() != TypeId::of::<ThreadsCommand>()
+            || self.is_session_terminated
         {
             return;
         }
@@ -1331,6 +1405,10 @@ impl Session {
     }
 
     pub fn shutdown(&mut self, cx: &mut Context<Self>) -> Task<()> {
+        self.is_session_terminated = true;
+        self.thread_states.exit_all_threads();
+        cx.notify();
+
         let task = if self
             .capabilities
             .supports_terminate_request

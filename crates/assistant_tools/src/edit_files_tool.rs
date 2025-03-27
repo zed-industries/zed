@@ -1,33 +1,30 @@
 mod edit_action;
 pub mod log;
-mod replace;
 
+use crate::replace::{replace_exact, replace_with_flexible_indent};
 use anyhow::{anyhow, Context, Result};
 use assistant_tool::{ActionLog, Tool};
 use collections::HashSet;
 use edit_action::{EditAction, EditActionParser};
-use futures::StreamExt;
-use gpui::{App, AsyncApp, Entity, Task};
+use futures::{channel::mpsc, SinkExt, StreamExt};
+use gpui::{App, AppContext, AsyncApp, Entity, Task};
 use language_model::{
     LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage, MessageContent, Role,
 };
 use log::{EditToolLog, EditToolRequestId};
 use project::Project;
-use replace::{replace_exact, replace_with_flexible_indent};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::fmt::Write;
 use std::sync::Arc;
+use ui::IconName;
 use util::ResultExt;
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct EditFilesToolInput {
     /// High-level edit instructions. These will be interpreted by a smaller
     /// model, so explain the changes you want that model to make and which
-    /// file paths need changing.
-    ///
-    /// The description should be concise and clear. We will show this
-    /// description to the user as well.
+    /// file paths need changing. The description should be concise and clear.
     ///
     /// WARNING: When specifying which file paths need changing, you MUST
     /// start each path with one of the project's root directories.
@@ -58,6 +55,21 @@ pub struct EditFilesToolInput {
     /// Notice how we never specify code snippets in the instructions!
     /// </example>
     pub edit_instructions: String,
+
+    /// A user-friendly description of what changes are being made.
+    /// This will be shown to the user in the UI to describe the edit operation. The screen real estate for this UI will be extremely
+    /// constrained, so make the description extremely terse.
+    ///
+    /// <example>
+    /// For fixing a broken authentication system:
+    /// "Fix auth bug in login flow"
+    /// </example>
+    ///
+    /// <example>
+    /// For adding unit tests to a module:
+    /// "Add tests for user profile logic"
+    /// </example>
+    pub display_description: String,
 }
 
 pub struct EditFilesTool;
@@ -67,13 +79,28 @@ impl Tool for EditFilesTool {
         "edit-files".into()
     }
 
+    fn needs_confirmation(&self) -> bool {
+        true
+    }
+
     fn description(&self) -> String {
         include_str!("./edit_files_tool/description.md").into()
+    }
+
+    fn icon(&self) -> IconName {
+        IconName::Pencil
     }
 
     fn input_schema(&self) -> serde_json::Value {
         let schema = schemars::schema_for!(EditFilesToolInput);
         serde_json::to_value(&schema).unwrap()
+    }
+
+    fn ui_text(&self, input: &serde_json::Value) -> String {
+        match serde_json::from_value::<EditFilesToolInput>(input.clone()) {
+            Ok(input) => input.display_description,
+            Err(_) => "Edit files".to_string(),
+        }
     }
 
     fn run(
@@ -126,24 +153,45 @@ impl Tool for EditFilesTool {
 
 struct EditToolRequest {
     parser: EditActionParser,
-    output: String,
-    changed_buffers: HashSet<Entity<language::Buffer>>,
-    bad_searches: Vec<BadSearch>,
+    editor_response: EditorResponse,
     project: Entity<Project>,
     action_log: Entity<ActionLog>,
     tool_log: Option<(Entity<EditToolLog>, EditToolRequestId)>,
 }
 
-#[derive(Debug)]
-enum DiffResult {
-    BadSearch(BadSearch),
-    Diff(language::Diff),
+enum EditorResponse {
+    /// The editor model hasn't produced any actions yet.
+    /// If we don't have any by the end, we'll return its message to the architect model.
+    Message(String),
+    /// The editor model produced at least one action.
+    Actions {
+        applied: Vec<AppliedAction>,
+        search_errors: Vec<SearchError>,
+    },
+}
+
+struct AppliedAction {
+    source: String,
+    buffer: Entity<language::Buffer>,
 }
 
 #[derive(Debug)]
-struct BadSearch {
-    file_path: String,
-    search: String,
+enum DiffResult {
+    Diff(language::Diff),
+    SearchError(SearchError),
+}
+
+#[derive(Debug)]
+enum SearchError {
+    NoMatch {
+        file_path: String,
+        search: String,
+    },
+    EmptyBuffer {
+        file_path: String,
+        search: String,
+        exists: bool,
+    },
 }
 
 impl EditToolRequest {
@@ -195,23 +243,35 @@ impl EditToolRequest {
                 temperature: Some(0.0),
             };
 
+            let (mut tx, mut rx) = mpsc::channel::<String>(32);
             let stream = model.stream_completion_text(llm_request, &cx);
-            let mut chunks = stream.await?;
+            let reader_task = cx.background_spawn(async move {
+                let mut chunks = stream.await?;
+
+                while let Some(chunk) = chunks.stream.next().await {
+                    if let Some(chunk) = chunk.log_err() {
+                        // we don't process here because the API fails
+                        // if we take too long between reads
+                        tx.send(chunk).await?
+                    }
+                }
+                tx.close().await?;
+                anyhow::Ok(())
+            });
 
             let mut request = Self {
                 parser: EditActionParser::new(),
-                // we start with the success header so we don't need to shift the output in the common case
-                output: Self::SUCCESS_OUTPUT_HEADER.to_string(),
-                changed_buffers: HashSet::default(),
-                bad_searches: Vec::new(),
+                editor_response: EditorResponse::Message(String::with_capacity(256)),
                 action_log,
                 project,
                 tool_log,
             };
 
-            while let Some(chunk) = chunks.stream.next().await {
-                request.process_response_chunk(&chunk?, cx).await?;
+            while let Some(chunk) = rx.next().await {
+                request.process_response_chunk(&chunk, cx).await?;
             }
+
+            reader_task.await?;
 
             request.finalize(cx).await
         })
@@ -219,6 +279,12 @@ impl EditToolRequest {
 
     async fn process_response_chunk(&mut self, chunk: &str, cx: &mut AsyncApp) -> Result<()> {
         let new_actions = self.parser.parse_chunk(chunk);
+
+        if let EditorResponse::Message(ref mut message) = self.editor_response {
+            if new_actions.is_empty() {
+                message.push_str(chunk);
+            }
+        }
 
         if let Some((ref log, req_id)) = self.tool_log {
             log.update(cx, |log, cx| {
@@ -270,18 +336,45 @@ impl EditToolRequest {
         }?;
 
         match result {
-            DiffResult::BadSearch(invalid_replace) => {
-                self.bad_searches.push(invalid_replace);
+            DiffResult::SearchError(error) => {
+                self.push_search_error(error);
             }
             DiffResult::Diff(diff) => {
                 let _clock = buffer.update(cx, |buffer, cx| buffer.apply_diff(diff, cx))?;
 
-                write!(&mut self.output, "\n\n{}", source)?;
-                self.changed_buffers.insert(buffer);
+                self.push_applied_action(AppliedAction { source, buffer });
             }
         }
 
-        Ok(())
+        anyhow::Ok(())
+    }
+
+    fn push_search_error(&mut self, error: SearchError) {
+        match &mut self.editor_response {
+            EditorResponse::Message(_) => {
+                self.editor_response = EditorResponse::Actions {
+                    applied: Vec::new(),
+                    search_errors: vec![error],
+                };
+            }
+            EditorResponse::Actions { search_errors, .. } => {
+                search_errors.push(error);
+            }
+        }
+    }
+
+    fn push_applied_action(&mut self, action: AppliedAction) {
+        match &mut self.editor_response {
+            EditorResponse::Message(_) => {
+                self.editor_response = EditorResponse::Actions {
+                    applied: vec![action],
+                    search_errors: Vec::new(),
+                };
+            }
+            EditorResponse::Actions { applied, .. } => {
+                applied.push(action);
+            }
+        }
     }
 
     async fn replace_diff(
@@ -290,119 +383,171 @@ impl EditToolRequest {
         file_path: std::path::PathBuf,
         snapshot: language::BufferSnapshot,
     ) -> Result<DiffResult> {
-        let result =
+        if snapshot.is_empty() {
+            let exists = snapshot
+                .file()
+                .map_or(false, |file| file.disk_state().exists());
+
+            let error = SearchError::EmptyBuffer {
+                file_path: file_path.display().to_string(),
+                exists,
+                search: old,
+            };
+
+            return Ok(DiffResult::SearchError(error));
+        }
+
+        let replace_result =
             // Try to match exactly
             replace_exact(&old, &new, &snapshot)
             .await
             // If that fails, try being flexible about indentation
             .or_else(|| replace_with_flexible_indent(&old, &new, &snapshot));
 
-        let Some(diff) = result else {
-            return anyhow::Ok(DiffResult::BadSearch(BadSearch {
+        let Some(diff) = replace_result else {
+            let error = SearchError::NoMatch {
                 search: old,
                 file_path: file_path.display().to_string(),
-            }));
+            };
+
+            return Ok(DiffResult::SearchError(error));
         };
 
-        anyhow::Ok(DiffResult::Diff(diff))
+        Ok(DiffResult::Diff(diff))
     }
 
-    const SUCCESS_OUTPUT_HEADER: &str = "Successfully applied. Here's a list of changes:";
-    const ERROR_OUTPUT_HEADER_NO_EDITS: &str = "I couldn't apply any edits!";
-    const ERROR_OUTPUT_HEADER_WITH_EDITS: &str =
-        "Errors occurred. First, here's a list of the edits we managed to apply:";
-
     async fn finalize(self, cx: &mut AsyncApp) -> Result<String> {
-        let changed_buffer_count = self.changed_buffers.len();
+        match self.editor_response {
+            EditorResponse::Message(message) => Err(anyhow!(
+                "No edits were applied! You might need to provide more context.\n\n{}",
+                message
+            )),
+            EditorResponse::Actions {
+                applied,
+                search_errors,
+            } => {
+                let mut output = String::with_capacity(1024);
 
-        // Save each buffer once at the end
-        for buffer in &self.changed_buffers {
-            self.project
-                .update(cx, |project, cx| project.save_buffer(buffer.clone(), cx))?
-                .await?;
-        }
+                let parse_errors = self.parser.errors();
+                let has_errors = !search_errors.is_empty() || !parse_errors.is_empty();
 
-        self.action_log
-            .update(cx, |log, cx| log.buffer_edited(self.changed_buffers, cx))
-            .log_err();
+                if has_errors {
+                    let error_count = search_errors.len() + parse_errors.len();
 
-        let errors = self.parser.errors();
+                    if applied.is_empty() {
+                        writeln!(
+                            &mut output,
+                            "{} errors occurred! No edits were applied.",
+                            error_count,
+                        )?;
+                    } else {
+                        writeln!(
+                            &mut output,
+                            "{} errors occurred, but {} edits were correctly applied.",
+                            error_count,
+                            applied.len(),
+                        )?;
 
-        if errors.is_empty() && self.bad_searches.is_empty() {
-            if changed_buffer_count == 0 {
-                return Err(anyhow!(
-                    "The instructions didn't lead to any changes. You might need to consult the file contents first."
-                ));
-            }
-
-            Ok(self.output)
-        } else {
-            let mut output = self.output;
-
-            if output.is_empty() {
-                output.replace_range(
-                    0..Self::SUCCESS_OUTPUT_HEADER.len(),
-                    Self::ERROR_OUTPUT_HEADER_NO_EDITS,
-                );
-            } else {
-                output.replace_range(
-                    0..Self::SUCCESS_OUTPUT_HEADER.len(),
-                    Self::ERROR_OUTPUT_HEADER_WITH_EDITS,
-                );
-            }
-
-            if !self.bad_searches.is_empty() {
-                writeln!(
-                    &mut output,
-                    "\n\n# {} SEARCH/REPLACE block(s) failed to match:\n",
-                    self.bad_searches.len()
-                )?;
-
-                for replace in self.bad_searches {
-                    writeln!(
+                        writeln!(
+                            &mut output,
+                            "# {} SEARCH/REPLACE block(s) applied:\n\nDo not re-send these since they are already applied!\n",
+                            applied.len()
+                        )?;
+                    }
+                } else {
+                    write!(
                         &mut output,
-                        "## No exact match in: {}\n```\n{}\n```\n",
-                        replace.file_path, replace.search,
+                        "Successfully applied! Here's a list of applied edits:"
                     )?;
                 }
 
-                write!(&mut output,
-                    "The SEARCH section must exactly match an existing block of lines including all white \
-                    space, comments, indentation, docstrings, etc."
-                )?;
-            }
+                let mut changed_buffers = HashSet::default();
 
-            if !errors.is_empty() {
-                writeln!(
-                    &mut output,
-                    "\n\n# {} SEARCH/REPLACE blocks failed to parse:",
-                    errors.len()
-                )?;
-
-                for error in errors {
-                    writeln!(&mut output, "- {}", error)?;
+                for action in applied {
+                    changed_buffers.insert(action.buffer);
+                    write!(&mut output, "\n\n{}", action.source)?;
                 }
-            }
 
-            if changed_buffer_count > 0 {
-                writeln!(
-                    &mut output,
-                    "\n\nThe other SEARCH/REPLACE blocks were applied successfully. Do not re-send them!",
-                )?;
-            }
+                for buffer in &changed_buffers {
+                    self.project
+                        .update(cx, |project, cx| project.save_buffer(buffer.clone(), cx))?
+                        .await?;
+                }
 
-            writeln!(
-                &mut output,
-                "{}You can fix errors by running the tool again. You can include instructions, \
-                but errors are part of the conversation so you don't need to repeat them.",
-                if changed_buffer_count == 0 {
-                    "\n\n"
+                self.action_log
+                    .update(cx, |log, cx| log.buffer_edited(changed_buffers.clone(), cx))
+                    .log_err();
+
+                if !search_errors.is_empty() {
+                    writeln!(
+                        &mut output,
+                        "\n\n## {} SEARCH/REPLACE block(s) failed to match:\n",
+                        search_errors.len()
+                    )?;
+
+                    for error in search_errors {
+                        match error {
+                            SearchError::NoMatch { file_path, search } => {
+                                writeln!(
+                                    &mut output,
+                                    "### No exact match in: `{}`\n```\n{}\n```\n",
+                                    file_path, search,
+                                )?;
+                            }
+                            SearchError::EmptyBuffer {
+                                file_path,
+                                exists: true,
+                                search,
+                            } => {
+                                writeln!(
+                                    &mut output,
+                                    "### No match because `{}` is empty:\n```\n{}\n```\n",
+                                    file_path, search,
+                                )?;
+                            }
+                            SearchError::EmptyBuffer {
+                                file_path,
+                                exists: false,
+                                search,
+                            } => {
+                                writeln!(
+                                    &mut output,
+                                    "### No match because `{}` does not exist:\n```\n{}\n```\n",
+                                    file_path, search,
+                                )?;
+                            }
+                        }
+                    }
+
+                    write!(&mut output,
+                        "The SEARCH section must exactly match an existing block of lines including all white \
+                        space, comments, indentation, docstrings, etc."
+                    )?;
+                }
+
+                if !parse_errors.is_empty() {
+                    writeln!(
+                        &mut output,
+                        "\n\n## {} SEARCH/REPLACE blocks failed to parse:",
+                        parse_errors.len()
+                    )?;
+
+                    for error in parse_errors {
+                        writeln!(&mut output, "- {}", error)?;
+                    }
+                }
+
+                if has_errors {
+                    writeln!(&mut output,
+                        "\n\nYou can fix errors by running the tool again. You can include instructions, \
+                        but errors are part of the conversation so you don't need to repeat them.",
+                    )?;
+
+                    Err(anyhow!(output))
                 } else {
-                    ""
+                    Ok(output)
                 }
-            )?;
-
-            Err(anyhow!(output))
+            }
         }
     }
 }

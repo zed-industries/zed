@@ -421,13 +421,15 @@ impl Element for Img {
             window,
             cx,
             |style, window, cx| {
-                let corner_radii = style.corner_radii.to_pixels(bounds.size, window.rem_size());
-
                 if let Some(Ok(data)) = source.use_data(window, cx) {
                     let new_bounds = self
                         .style
                         .object_fit
                         .get_bounds(bounds, data.size(layout_state.frame_index));
+                    let corner_radii = style
+                        .corner_radii
+                        .to_pixels(window.rem_size())
+                        .clamp_radii_for_quad_size(new_bounds.size);
                     window
                         .paint_image(
                             new_bounds,

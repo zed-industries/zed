@@ -8,12 +8,12 @@ use std::{
     sync::Arc,
 };
 
-use anyhow::{Context as _, Result};
+use anyhow::Result;
 use collections::{HashMap, HashSet, VecDeque};
 use gpui::{App, AppContext as _, Entity, SharedString, Task};
 use itertools::Itertools;
 use language::{ContextProvider, File, Language, LanguageToolchainStore, Location};
-use settings::{parse_json_with_comments, SettingsLocation, TaskKind};
+use settings::{parse_json_with_comments, InvalidSettingsError, TaskKind};
 use task::{
     DebugTaskDefinition, ResolvedTask, TaskContext, TaskId, TaskTemplate, TaskTemplates,
     TaskVariables, VariableName,
@@ -22,7 +22,7 @@ use text::{Point, ToPoint};
 use util::{paths::PathExt as _, post_inc, NumericPrefixWithSuffix, ResultExt as _};
 use worktree::WorktreeId;
 
-use crate::worktree_store::WorktreeStore;
+use crate::{task_store::TaskSettingsLocation, worktree_store::WorktreeStore};
 
 /// Inventory tracks available tasks for a given project.
 #[derive(Debug, Default)]
@@ -33,7 +33,7 @@ pub struct Inventory {
 
 #[derive(Debug, Default)]
 struct ParsedTemplates {
-    global: Vec<TaskTemplate>,
+    global: HashMap<PathBuf, Vec<TaskTemplate>>,
     worktree: HashMap<WorktreeId, HashMap<(Arc<Path>, TaskKind), Vec<TaskTemplate>>>,
 }
 
@@ -324,23 +324,20 @@ impl Inventory {
     ) -> impl '_ + Iterator<Item = (TaskSourceKind, TaskTemplate)> {
         self.templates_from_settings
             .global
-            .clone()
-            .into_iter()
-            .filter_map(|template| match template.task_type {
-                task::TaskType::Script => Some((
-                    TaskSourceKind::AbsPath {
-                        id_base: Cow::Borrowed("global tasks.json"),
-                        abs_path: paths::tasks_file().clone(),
-                    },
-                    template,
-                )),
-                task::TaskType::Debug(_) => Some((
-                    TaskSourceKind::AbsPath {
-                        id_base: Cow::Borrowed("global debug.json"),
-                        abs_path: paths::debug_tasks_file().clone(),
-                    },
-                    template,
-                )),
+            .iter()
+            .flat_map(|(file_path, templates)| {
+                templates.into_iter().map(|template| {
+                    (
+                        TaskSourceKind::AbsPath {
+                            id_base: match template.task_type {
+                                task::TaskType::Script => Cow::Borrowed("global tasks.json"),
+                                task::TaskType::Debug(_) => Cow::Borrowed("global debug.json"),
+                            },
+                            abs_path: file_path.clone(),
+                        },
+                        template.clone(),
+                    )
+                })
             })
     }
 
@@ -378,17 +375,29 @@ impl Inventory {
     /// Global tasks are updated for no worktree provided, otherwise the worktree metadata for a given path will be updated.
     pub(crate) fn update_file_based_tasks(
         &mut self,
-        location: Option<SettingsLocation<'_>>,
+        location: TaskSettingsLocation<'_>,
         raw_tasks_json: Option<&str>,
         task_kind: TaskKind,
-    ) -> anyhow::Result<()> {
-        let raw_tasks =
-            parse_json_with_comments::<Vec<serde_json::Value>>(raw_tasks_json.unwrap_or("[]"))
-                .context("parsing tasks file content as a JSON array")?;
+    ) -> Result<(), InvalidSettingsError> {
+        let raw_tasks = match parse_json_with_comments::<Vec<serde_json::Value>>(
+            raw_tasks_json.unwrap_or("[]"),
+        ) {
+            Ok(tasks) => tasks,
+            Err(e) => {
+                return Err(InvalidSettingsError::Tasks {
+                    path: match location {
+                        TaskSettingsLocation::Global(path) => path.to_owned(),
+                        TaskSettingsLocation::Worktree(settings_location) => {
+                            task_kind.config_in_dir(settings_location.path)
+                        }
+                    },
+                    message: format!("Failed to parse tasks file content as a JSON array: {e}"),
+                })
+            }
+        };
         let new_templates = raw_tasks
             .into_iter()
             .filter_map(|raw_template| match &task_kind {
-                TaskKind::Locator => None,
                 TaskKind::Script => serde_json::from_value::<TaskTemplate>(raw_template).log_err(),
                 TaskKind::Debug => serde_json::from_value::<DebugTaskDefinition>(raw_template)
                     .log_err()
@@ -397,7 +406,13 @@ impl Inventory {
 
         let parsed_templates = &mut self.templates_from_settings;
         match location {
-            Some(location) => {
+            TaskSettingsLocation::Global(path) => {
+                parsed_templates
+                    .global
+                    .entry(path.to_owned())
+                    .insert_entry(new_templates.collect());
+            }
+            TaskSettingsLocation::Worktree(location) => {
                 let new_templates = new_templates.collect::<Vec<_>>();
                 if new_templates.is_empty() {
                     if let Some(worktree_tasks) =
@@ -413,8 +428,8 @@ impl Inventory {
                         .insert((Arc::from(location.path), task_kind), new_templates);
                 }
             }
-            None => parsed_templates.global = new_templates.collect(),
         }
+
         Ok(())
     }
 }
@@ -653,8 +668,10 @@ impl ContextProvider for ContextProviderWithTasks {
 #[cfg(test)]
 mod tests {
     use gpui::TestAppContext;
+    use paths::tasks_file;
     use pretty_assertions::assert_eq;
     use serde_json::json;
+    use settings::SettingsLocation;
 
     use crate::task_store::TaskStore;
 
@@ -686,7 +703,7 @@ mod tests {
         inventory.update(cx, |inventory, _| {
             inventory
                 .update_file_based_tasks(
-                    None,
+                    TaskSettingsLocation::Global(tasks_file()),
                     Some(&mock_tasks_from_names(
                         expected_initial_state.iter().map(|name| name.as_str()),
                     )),
@@ -740,7 +757,7 @@ mod tests {
         inventory.update(cx, |inventory, _| {
             inventory
                 .update_file_based_tasks(
-                    None,
+                    TaskSettingsLocation::Global(tasks_file()),
                     Some(&mock_tasks_from_names(
                         ["10_hello", "11_hello"]
                             .into_iter()
@@ -865,7 +882,7 @@ mod tests {
         inventory.update(cx, |inventory, _| {
             inventory
                 .update_file_based_tasks(
-                    None,
+                    TaskSettingsLocation::Global(tasks_file()),
                     Some(&mock_tasks_from_names(
                         worktree_independent_tasks
                             .iter()
@@ -876,7 +893,7 @@ mod tests {
                 .unwrap();
             inventory
                 .update_file_based_tasks(
-                    Some(SettingsLocation {
+                    TaskSettingsLocation::Worktree(SettingsLocation {
                         worktree_id: worktree_1,
                         path: Path::new(".zed"),
                     }),
@@ -888,7 +905,7 @@ mod tests {
                 .unwrap();
             inventory
                 .update_file_based_tasks(
-                    Some(SettingsLocation {
+                    TaskSettingsLocation::Worktree(SettingsLocation {
                         worktree_id: worktree_2,
                         path: Path::new(".zed"),
                     }),

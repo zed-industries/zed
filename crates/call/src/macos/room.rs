@@ -524,18 +524,27 @@ impl Room {
                 let project = handle.read(cx);
                 if let Some(project_id) = project.remote_id() {
                     projects.insert(project_id, handle.clone());
+                    let mut worktrees = Vec::new();
+                    let mut repositories = Vec::new();
+                    for worktree in project.worktrees(cx) {
+                        let worktree = worktree.read(cx);
+                        worktrees.push(proto::RejoinWorktree {
+                            id: worktree.id().to_proto(),
+                            scan_id: worktree.completed_scan_id() as u64,
+                        });
+                    }
+                    for (entry_id, repository) in project.repositories(cx) {
+                        let repository = repository.read(cx);
+                        repositories.push(proto::RejoinRepository {
+                            id: entry_id.to_proto(),
+                            scan_id: repository.completed_scan_id as u64,
+                        });
+                    }
+
                     rejoined_projects.push(proto::RejoinProject {
                         id: project_id,
-                        worktrees: project
-                            .worktrees(cx)
-                            .map(|worktree| {
-                                let worktree = worktree.read(cx);
-                                proto::RejoinWorktree {
-                                    id: worktree.id().to_proto(),
-                                    scan_id: worktree.completed_scan_id() as u64,
-                                }
-                            })
-                            .collect(),
+                        worktrees,
+                        repositories,
                     });
                 }
                 return true;

@@ -46,6 +46,12 @@ impl List {
 #[derive(Clone)]
 pub struct ListState(Rc<RefCell<StateInner>>);
 
+impl std::fmt::Debug for ListState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("ListState")
+    }
+}
+
 struct StateInner {
     last_layout_bounds: Option<Bounds<Pixels>>,
     last_padding: Option<Edges<Pixels>>,
@@ -57,6 +63,7 @@ struct StateInner {
     reset: bool,
     #[allow(clippy::type_complexity)]
     scroll_handler: Option<Box<dyn FnMut(&ListScrollEvent, &mut Window, &mut App)>>,
+    scrollbar_drag_start_height: Option<Pixels>,
 }
 
 /// Whether the list is scrolling from top to bottom or bottom to top.
@@ -198,6 +205,7 @@ impl ListState {
             overdraw,
             scroll_handler: None,
             reset: false,
+            scrollbar_drag_start_height: None,
         })));
         this.splice(0..0, item_count);
         this
@@ -211,6 +219,7 @@ impl ListState {
             let state = &mut *self.0.borrow_mut();
             state.reset = true;
             state.logical_scroll_top = None;
+            state.scrollbar_drag_start_height = None;
             state.items.summary().count
         };
 
@@ -354,6 +363,62 @@ impl ListState {
             }
         }
         None
+    }
+
+    /// Call this method when the user starts dragging the scrollbar.
+    ///
+    /// This will prevent the height reported to the scrollbar from changing during the drag
+    /// as items in the overdraw get measured, and help offset scroll position changes accordingly.
+    pub fn scrollbar_drag_started(&self) {
+        let mut state = self.0.borrow_mut();
+        state.scrollbar_drag_start_height = Some(state.items.summary().height);
+    }
+
+    /// Called when the user stops dragging the scrollbar.
+    ///
+    /// See `scrollbar_drag_started`.
+    pub fn scrollbar_drag_ended(&self) {
+        self.0.borrow_mut().scrollbar_drag_start_height.take();
+    }
+
+    /// Set the offset from the scrollbar
+    pub fn set_offset_from_scrollbar(&self, point: Point<Pixels>) {
+        self.0.borrow_mut().set_offset_from_scrollbar(point);
+    }
+
+    /// Returns the size of items we have measured.
+    /// This value remains constant while dragging to prevent the scrollbar from moving away unexpectedly.
+    pub fn content_size_for_scrollbar(&self) -> Size<Pixels> {
+        let state = self.0.borrow();
+        let bounds = state.last_layout_bounds.unwrap_or_default();
+
+        let height = state
+            .scrollbar_drag_start_height
+            .unwrap_or_else(|| state.items.summary().height);
+
+        Size::new(bounds.size.width, height)
+    }
+
+    /// Returns the current scroll offset adjusted for the scrollbar
+    pub fn scroll_px_offset_for_scrollbar(&self) -> Point<Pixels> {
+        let state = &self.0.borrow();
+        let logical_scroll_top = state.logical_scroll_top();
+
+        let mut cursor = state.items.cursor::<ListItemSummary>(&());
+        let summary: ListItemSummary =
+            cursor.summary(&Count(logical_scroll_top.item_ix), Bias::Right, &());
+        let content_height = state.items.summary().height;
+        let drag_offset =
+            // if dragging the scrollbar, we want to offset the point if the height changed
+            content_height - state.scrollbar_drag_start_height.unwrap_or(content_height);
+        let offset = summary.height + logical_scroll_top.offset_in_item - drag_offset;
+
+        Point::new(px(0.), -offset)
+    }
+
+    /// Return the bounds of the viewport in pixels.
+    pub fn viewport_bounds(&self) -> Bounds<Pixels> {
+        self.0.borrow().last_layout_bounds.unwrap_or_default()
     }
 }
 
@@ -694,6 +759,37 @@ impl StateInner {
 
             Ok(layout_response)
         })
+    }
+
+    // Scrollbar support
+
+    fn set_offset_from_scrollbar(&mut self, point: Point<Pixels>) {
+        let Some(bounds) = self.last_layout_bounds else {
+            return;
+        };
+        let height = bounds.size.height;
+
+        let padding = self.last_padding.unwrap_or_default();
+        let content_height = self.items.summary().height;
+        let scroll_max = (content_height + padding.top + padding.bottom - height).max(px(0.));
+        let drag_offset =
+            // if dragging the scrollbar, we want to offset the point if the height changed
+            content_height - self.scrollbar_drag_start_height.unwrap_or(content_height);
+        let new_scroll_top = (point.y - drag_offset).abs().max(px(0.)).min(scroll_max);
+
+        if self.alignment == ListAlignment::Bottom && new_scroll_top == scroll_max {
+            self.logical_scroll_top = None;
+        } else {
+            let mut cursor = self.items.cursor::<ListItemSummary>(&());
+            cursor.seek(&Height(new_scroll_top), Bias::Right, &());
+
+            let item_ix = cursor.start().count;
+            let offset_in_item = new_scroll_top - cursor.start().height;
+            self.logical_scroll_top = Some(ListOffset {
+                item_ix,
+                offset_in_item,
+            });
+        }
     }
 }
 

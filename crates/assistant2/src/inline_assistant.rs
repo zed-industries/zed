@@ -324,7 +324,7 @@ impl InlineAssistant {
     ) {
         let (snapshot, initial_selections) = editor.update(cx, |editor, cx| {
             (
-                editor.buffer().read(cx).snapshot(cx),
+                editor.snapshot(window, cx),
                 editor.selections.all::<Point>(cx),
             )
         });
@@ -338,7 +338,37 @@ impl InlineAssistant {
                 if selection.end.column == 0 {
                     selection.end.row -= 1;
                 }
-                selection.end.column = snapshot.line_len(MultiBufferRow(selection.end.row));
+                selection.end.column = snapshot
+                    .buffer_snapshot
+                    .line_len(MultiBufferRow(selection.end.row));
+            } else if let Some(fold) =
+                snapshot.crease_for_buffer_row(MultiBufferRow(selection.end.row))
+            {
+                selection.start = fold.range().start;
+                selection.end = fold.range().end;
+                if MultiBufferRow(selection.end.row) < snapshot.buffer_snapshot.max_row() {
+                    let chars = snapshot
+                        .buffer_snapshot
+                        .chars_at(Point::new(selection.end.row + 1, 0));
+
+                    for c in chars {
+                        if c == '\n' {
+                            break;
+                        }
+                        if c.is_whitespace() {
+                            continue;
+                        }
+                        if snapshot
+                            .language_at(selection.end)
+                            .is_some_and(|language| language.config().brackets.is_closing_brace(c))
+                        {
+                            selection.end.row += 1;
+                            selection.end.column = snapshot
+                                .buffer_snapshot
+                                .line_len(MultiBufferRow(selection.end.row));
+                        }
+                    }
+                }
             }
 
             if let Some(prev_selection) = selections.last_mut() {
@@ -354,6 +384,7 @@ impl InlineAssistant {
             }
             selections.push(selection);
         }
+        let snapshot = &snapshot.buffer_snapshot;
         let newest_selection = newest_selection.unwrap();
 
         let mut codegen_ranges = Vec::new();

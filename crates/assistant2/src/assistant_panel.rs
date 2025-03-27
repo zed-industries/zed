@@ -14,9 +14,9 @@ use client::zed_urls;
 use editor::{Editor, MultiBuffer};
 use fs::Fs;
 use gpui::{
-    prelude::*, Action, AnyElement, App, AsyncWindowContext, Corner, Entity, EventEmitter,
-    FocusHandle, Focusable, FontWeight, KeyContext, Pixels, Subscription, Task, UpdateGlobal,
-    WeakEntity,
+    action_with_deprecated_aliases, prelude::*, Action, AnyElement, App, AsyncWindowContext,
+    Corner, Entity, EventEmitter, FocusHandle, Focusable, FontWeight, KeyContext, Pixels,
+    Subscription, Task, UpdateGlobal, WeakEntity,
 };
 use language::LanguageRegistry;
 use language_model::{LanguageModelProviderTosView, LanguageModelRegistry};
@@ -29,7 +29,7 @@ use ui::{prelude::*, ContextMenu, KeyBinding, PopoverMenu, PopoverMenuHandle, Ta
 use util::ResultExt as _;
 use workspace::dock::{DockPosition, Panel, PanelEvent};
 use workspace::Workspace;
-use zed_actions::assistant::{DeployPromptLibrary, ToggleFocus};
+use zed_actions::assistant::ToggleFocus;
 
 use crate::active_thread::ActiveThread;
 use crate::assistant_configuration::{AssistantConfiguration, AssistantConfigurationEvent};
@@ -42,6 +42,12 @@ use crate::{
     InlineAssistant, NewPromptEditor, NewThread, OpenActiveThreadAsMarkdown, OpenConfiguration,
     OpenHistory,
 };
+
+action_with_deprecated_aliases!(
+    assistant,
+    OpenPromptLibrary,
+    ["assistant::DeployPromptLibrary"]
+);
 
 pub fn init(cx: &mut App) {
     cx.observe_new(
@@ -63,6 +69,14 @@ pub fn init(cx: &mut App) {
                     if let Some(panel) = workspace.panel::<AssistantPanel>(cx) {
                         workspace.focus_panel::<AssistantPanel>(window, cx);
                         panel.update(cx, |panel, cx| panel.new_prompt_editor(window, cx));
+                    }
+                })
+                .register_action(|workspace, _: &OpenPromptLibrary, window, cx| {
+                    if let Some(panel) = workspace.panel::<AssistantPanel>(cx) {
+                        workspace.focus_panel::<AssistantPanel>(window, cx);
+                        panel.update(cx, |panel, cx| {
+                            panel.deploy_prompt_library(&OpenPromptLibrary, window, cx)
+                        });
                     }
                 })
                 .register_action(|workspace, _: &OpenConfiguration, window, cx| {
@@ -174,6 +188,7 @@ impl AssistantPanel {
                 thread_store.clone(),
                 language_registry.clone(),
                 message_editor_context_store.clone(),
+                workspace.clone(),
                 window,
                 cx,
             )
@@ -252,6 +267,7 @@ impl AssistantPanel {
                 self.thread_store.clone(),
                 self.language_registry.clone(),
                 message_editor_context_store.clone(),
+                self.workspace.clone(),
                 window,
                 cx,
             )
@@ -301,7 +317,7 @@ impl AssistantPanel {
 
     fn deploy_prompt_library(
         &mut self,
-        _: &DeployPromptLibrary,
+        _: &OpenPromptLibrary,
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -389,6 +405,7 @@ impl AssistantPanel {
                         this.thread_store.clone(),
                         this.language_registry.clone(),
                         message_editor_context_store.clone(),
+                        this.workspace.clone(),
                         window,
                         cx,
                     )
@@ -455,7 +472,7 @@ impl AssistantPanel {
 
             workspace.update_in(cx, |workspace, window, cx| {
                 let thread = thread.read(cx);
-                let markdown = thread.to_markdown()?;
+                let markdown = thread.to_markdown(cx)?;
                 let thread_summary = thread
                     .summary()
                     .map(|summary| summary.to_string())
@@ -922,8 +939,8 @@ impl AssistantPanel {
                     ThreadError::MaxMonthlySpendReached => {
                         self.render_max_monthly_spend_reached_error(cx)
                     }
-                    ThreadError::Message(error_message) => {
-                        self.render_error_message(&error_message, cx)
+                    ThreadError::Message { header, message } => {
+                        self.render_error_message(header, message, cx)
                     }
                 })
                 .into_any(),
@@ -1026,7 +1043,8 @@ impl AssistantPanel {
 
     fn render_error_message(
         &self,
-        error_message: &SharedString,
+        header: SharedString,
+        message: SharedString,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         v_flex()
@@ -1036,17 +1054,14 @@ impl AssistantPanel {
                     .gap_1p5()
                     .items_center()
                     .child(Icon::new(IconName::XCircle).color(Color::Error))
-                    .child(
-                        Label::new("Error interacting with language model")
-                            .weight(FontWeight::MEDIUM),
-                    ),
+                    .child(Label::new(header).weight(FontWeight::MEDIUM)),
             )
             .child(
                 div()
                     .id("error-message")
                     .max_h_32()
                     .overflow_y_scroll()
-                    .child(Label::new(error_message.clone())),
+                    .child(Label::new(message)),
             )
             .child(
                 h_flex()

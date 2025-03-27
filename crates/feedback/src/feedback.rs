@@ -5,25 +5,22 @@ use workspace::Workspace;
 
 pub mod feedback_modal;
 
-mod system_specs;
+pub mod system_specs;
 
 actions!(
     zed,
     [
         CopySystemSpecsIntoClipboard,
+        EmailZed,
         FileBugReport,
+        OpenZedRepo,
         RequestFeature,
-        OpenZedRepo
     ]
 );
 
-const fn zed_repo_url() -> &'static str {
-    "https://github.com/zed-industries/zed"
-}
+const ZED_REPO_URL: &str = "https://github.com/zed-industries/zed";
 
-fn request_feature_url() -> String {
-    "https://github.com/zed-industries/zed/discussions/new/choose".to_string()
-}
+const REQUEST_FEATURE_URL: &str = "https://github.com/zed-industries/zed/discussions/new/choose";
 
 fn file_bug_report_url(specs: &SystemSpecs) -> String {
     format!(
@@ -36,6 +33,18 @@ fn file_bug_report_url(specs: &SystemSpecs) -> String {
         ),
         urlencoding::encode(&specs.to_string())
     )
+}
+
+fn email_zed_url(specs: &SystemSpecs) -> String {
+    format!(
+        concat!("mailto:hi@zed.dev", "?", "body={}"),
+        email_body(specs)
+    )
+}
+
+fn email_body(specs: &SystemSpecs) -> String {
+    let body = format!("\n\nSystem Information:\n\n{}", specs);
+    urlencoding::encode(&body).to_string()
 }
 
 pub fn init(cx: &mut App) {
@@ -66,14 +75,8 @@ pub fn init(cx: &mut App) {
                 })
                 .detach();
             })
-            .register_action(|_, _: &RequestFeature, window, cx| {
-                cx.spawn_in(window, async move |_, cx| {
-                    cx.update(|_, cx| {
-                        cx.open_url(&request_feature_url());
-                    })
-                    .log_err();
-                })
-                .detach();
+            .register_action(|_, _: &RequestFeature, _, cx| {
+                cx.open_url(REQUEST_FEATURE_URL);
             })
             .register_action(move |_, _: &FileBugReport, window, cx| {
                 let specs = SystemSpecs::new(window, cx);
@@ -86,8 +89,19 @@ pub fn init(cx: &mut App) {
                 })
                 .detach();
             })
+            .register_action(move |_, _: &EmailZed, window, cx| {
+                let specs = SystemSpecs::new(window, cx);
+                cx.spawn_in(window, async move |_, cx| {
+                    let specs = specs.await;
+                    cx.update(|_, cx| {
+                        cx.open_url(&email_zed_url(&specs));
+                    })
+                    .log_err();
+                })
+                .detach();
+            })
             .register_action(move |_, _: &OpenZedRepo, _, cx| {
-                cx.open_url(zed_repo_url());
+                cx.open_url(ZED_REPO_URL);
             });
     })
     .detach();

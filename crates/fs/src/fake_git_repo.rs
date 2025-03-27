@@ -5,8 +5,8 @@ use futures::future::{self, BoxFuture};
 use git::{
     blame::Blame,
     repository::{
-        AskPassSession, Branch, CommitDetails, GitRepository, PushOptions, Remote, RepoPath,
-        ResetMode,
+        AskPassSession, Branch, CommitDetails, GitRepository, GitRepositoryCheckpoint, PushOptions,
+        Remote, RepoPath, ResetMode,
     },
     status::{FileStatus, GitStatus, StatusCode, TrackedStatus, UnmergedStatus},
 };
@@ -57,12 +57,14 @@ impl FakeGitRepository {
     where
         F: FnOnce(&mut FakeGitRepositoryState) -> T,
     {
-        self.fs.with_git_state(&self.dot_git_path, false, f)
+        self.fs
+            .with_git_state(&self.dot_git_path, false, f)
+            .unwrap()
     }
 
-    fn with_state_async<F, T>(&self, write: bool, f: F) -> BoxFuture<T>
+    fn with_state_async<F, T>(&self, write: bool, f: F) -> BoxFuture<Result<T>>
     where
-        F: 'static + Send + FnOnce(&mut FakeGitRepositoryState) -> T,
+        F: 'static + Send + FnOnce(&mut FakeGitRepositoryState) -> Result<T>,
         T: Send,
     {
         let fs = self.fs.clone();
@@ -70,7 +72,7 @@ impl FakeGitRepository {
         let dot_git_path = self.dot_git_path.clone();
         async move {
             executor.simulate_random_delay().await;
-            fs.with_git_state(&dot_git_path, write, f)
+            fs.with_git_state(&dot_git_path, write, f)?
         }
         .boxed()
     }
@@ -80,15 +82,33 @@ impl GitRepository for FakeGitRepository {
     fn reload_index(&self) {}
 
     fn load_index_text(&self, path: RepoPath, _cx: AsyncApp) -> BoxFuture<Option<String>> {
-        self.with_state_async(false, move |state| {
-            state.index_contents.get(path.as_ref()).cloned()
-        })
+        async {
+            self.with_state_async(false, move |state| {
+                state
+                    .index_contents
+                    .get(path.as_ref())
+                    .ok_or_else(|| anyhow!("not present in index"))
+                    .cloned()
+            })
+            .await
+            .ok()
+        }
+        .boxed()
     }
 
     fn load_committed_text(&self, path: RepoPath, _cx: AsyncApp) -> BoxFuture<Option<String>> {
-        self.with_state_async(false, move |state| {
-            state.head_contents.get(path.as_ref()).cloned()
-        })
+        async {
+            self.with_state_async(false, move |state| {
+                state
+                    .head_contents
+                    .get(path.as_ref())
+                    .ok_or_else(|| anyhow!("not present in HEAD"))
+                    .cloned()
+            })
+            .await
+            .ok()
+        }
+        .boxed()
     }
 
     fn set_index_text(
@@ -194,7 +214,7 @@ impl GitRepository for FakeGitRepository {
             })
             .collect();
 
-        self.with_state(|state| {
+        self.fs.with_git_state(&self.dot_git_path, false, |state| {
             let mut entries = Vec::new();
             let paths = state
                 .head_contents
@@ -278,7 +298,7 @@ impl GitRepository for FakeGitRepository {
             Ok(GitStatus {
                 entries: entries.into(),
             })
-        })
+        })?
     }
 
     fn branches(&self) -> BoxFuture<Result<Vec<Branch>>> {
@@ -406,6 +426,35 @@ impl GitRepository for FakeGitRepository {
         _diff: git::repository::DiffType,
         _cx: gpui::AsyncApp,
     ) -> BoxFuture<Result<String>> {
+        unimplemented!()
+    }
+
+    fn checkpoint(&self, _cx: AsyncApp) -> BoxFuture<Result<GitRepositoryCheckpoint>> {
+        unimplemented!()
+    }
+
+    fn restore_checkpoint(
+        &self,
+        _checkpoint: GitRepositoryCheckpoint,
+        _cx: AsyncApp,
+    ) -> BoxFuture<Result<()>> {
+        unimplemented!()
+    }
+
+    fn compare_checkpoints(
+        &self,
+        _left: GitRepositoryCheckpoint,
+        _right: GitRepositoryCheckpoint,
+        _cx: AsyncApp,
+    ) -> BoxFuture<Result<bool>> {
+        unimplemented!()
+    }
+
+    fn delete_checkpoint(
+        &self,
+        _checkpoint: GitRepositoryCheckpoint,
+        _cx: AsyncApp,
+    ) -> BoxFuture<Result<()>> {
         unimplemented!()
     }
 }

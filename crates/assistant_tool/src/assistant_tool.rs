@@ -1,12 +1,13 @@
 mod tool_registry;
 mod tool_working_set;
 
+use std::fmt::{self, Debug, Formatter};
 use std::sync::Arc;
 
 use anyhow::Result;
 use collections::{HashMap, HashSet};
-use gpui::Context;
-use gpui::{App, Entity, SharedString, Task};
+use gpui::{App, Context, Entity, SharedString, Task};
+use icons::IconName;
 use language::Buffer;
 use language_model::LanguageModelRequestMessage;
 use project::Project;
@@ -34,15 +35,25 @@ pub trait Tool: 'static + Send + Sync {
     /// Returns the description of the tool.
     fn description(&self) -> String;
 
+    /// Returns the icon for the tool.
+    fn icon(&self) -> IconName;
+
     /// Returns the source of the tool.
     fn source(&self) -> ToolSource {
         ToolSource::Native
     }
 
+    /// Returns true iff the tool needs the users's confirmation
+    /// before having permission to run.
+    fn needs_confirmation(&self) -> bool;
+
     /// Returns the JSON schema that describes the tool's input.
     fn input_schema(&self) -> serde_json::Value {
         serde_json::Value::Object(serde_json::Map::default())
     }
+
+    /// Returns markdown to be displayed in the UI for this tool.
+    fn ui_text(&self, input: &serde_json::Value) -> String;
 
     /// Runs the tool with the provided input.
     fn run(
@@ -55,6 +66,12 @@ pub trait Tool: 'static + Send + Sync {
     ) -> Task<Result<String>>;
 }
 
+impl Debug for dyn Tool {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Tool").field("name", &self.name()).finish()
+    }
+}
+
 /// Tracks actions performed by tools in a thread
 #[derive(Debug)]
 pub struct ActionLog {
@@ -63,6 +80,8 @@ pub struct ActionLog {
     stale_buffers_in_context: HashSet<Entity<Buffer>>,
     /// Buffers that we want to notify the model about when they change.
     tracked_buffers: HashMap<Entity<Buffer>, TrackedBuffer>,
+    /// Has the model edited a file since it last checked diagnostics?
+    edited_since_project_diagnostics_check: bool,
 }
 
 #[derive(Debug, Default)]
@@ -76,6 +95,7 @@ impl ActionLog {
         Self {
             stale_buffers_in_context: HashSet::default(),
             tracked_buffers: HashMap::default(),
+            edited_since_project_diagnostics_check: false,
         }
     }
 
@@ -93,6 +113,12 @@ impl ActionLog {
         }
 
         self.stale_buffers_in_context.extend(buffers);
+        self.edited_since_project_diagnostics_check = true;
+    }
+
+    /// Notifies a diagnostics check
+    pub fn checked_project_diagnostics(&mut self) {
+        self.edited_since_project_diagnostics_check = false;
     }
 
     /// Iterate over buffers changed since last read or edited by the model
@@ -101,6 +127,11 @@ impl ActionLog {
             .iter()
             .filter(|(buffer, tracked)| tracked.version != buffer.read(cx).version)
             .map(|(buffer, _)| buffer)
+    }
+
+    /// Returns true if any files have been edited since the last project diagnostics check
+    pub fn has_edited_files_since_project_diagnostics_check(&self) -> bool {
+        self.edited_since_project_diagnostics_check
     }
 
     /// Takes and returns the set of buffers pending refresh, clearing internal state.

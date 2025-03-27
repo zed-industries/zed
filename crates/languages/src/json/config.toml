@@ -12,4 +12,4 @@ tab_size = 2
 prettier_parser_name = "json"
 
 [overrides.string]
-word_characters = [":"]
+completion_query_characters = [":", " "]

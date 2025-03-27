@@ -6,6 +6,7 @@ use project::Project;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::{path::PathBuf, sync::Arc};
+use ui::IconName;
 use util::paths::PathMatcher;
 use worktree::Snapshot;
 
@@ -39,13 +40,28 @@ impl Tool for PathSearchTool {
         "path-search".into()
     }
 
+    fn needs_confirmation(&self) -> bool {
+        false
+    }
+
     fn description(&self) -> String {
         include_str!("./path_search_tool/description.md").into()
+    }
+
+    fn icon(&self) -> IconName {
+        IconName::SearchCode
     }
 
     fn input_schema(&self) -> serde_json::Value {
         let schema = schemars::schema_for!(PathSearchToolInput);
         serde_json::to_value(&schema).unwrap()
+    }
+
+    fn ui_text(&self, input: &serde_json::Value) -> String {
+        match serde_json::from_value::<PathSearchToolInput>(input.clone()) {
+            Ok(input) => format!("Find paths matching “`{}`”", input.glob),
+            Err(_) => "Search paths".to_string(),
+        }
     }
 
     fn run(
@@ -60,9 +76,13 @@ impl Tool for PathSearchTool {
             Ok(input) => (input.offset.unwrap_or(0), input.glob),
             Err(err) => return Task::ready(Err(anyhow!(err))),
         };
-        let path_matcher = match PathMatcher::new(&[glob.clone()]) {
+
+        let path_matcher = match PathMatcher::new([
+            // Sometimes models try to search for "". In this case, return all paths in the project.
+            if glob.is_empty() { "*" } else { &glob },
+        ]) {
             Ok(matcher) => matcher,
-            Err(err) => return Task::ready(Err(anyhow!("Invalid glob: {}", err))),
+            Err(err) => return Task::ready(Err(anyhow!("Invalid glob: {err}"))),
         };
         let snapshots: Vec<Snapshot> = project
             .read(cx)

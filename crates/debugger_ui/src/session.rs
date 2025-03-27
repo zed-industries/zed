@@ -6,6 +6,7 @@ mod starting;
 use std::time::Duration;
 
 use dap::client::SessionId;
+use dap::DebugAdapterConfig;
 use failed::FailedState;
 use gpui::{
     percentage, Animation, AnimationExt, AnyElement, App, Entity, EventEmitter, FocusHandle,
@@ -18,11 +19,14 @@ use project::Project;
 use rpc::proto::{self, PeerId};
 use running::RunningState;
 use starting::{StartingEvent, StartingState};
-use ui::prelude::*;
+use ui::{prelude::*, Indicator};
+use util::ResultExt;
 use workspace::{
     item::{self, Item},
     FollowableItem, ViewId, Workspace,
 };
+
+use crate::debugger_panel::DebugPanel;
 
 pub(crate) enum DebugSessionState {
     Inert(Entity<InertState>),
@@ -44,6 +48,7 @@ pub struct DebugSession {
     remote_id: Option<workspace::ViewId>,
     mode: DebugSessionState,
     dap_store: WeakEntity<DapStore>,
+    debug_panel: WeakEntity<DebugPanel>,
     worktree_store: WeakEntity<WorktreeStore>,
     workspace: WeakEntity<Workspace>,
     _subscriptions: [Subscription; 1],
@@ -67,6 +72,8 @@ impl DebugSession {
     pub(super) fn inert(
         project: Entity<Project>,
         workspace: WeakEntity<Workspace>,
+        debug_panel: WeakEntity<DebugPanel>,
+        config: Option<DebugAdapterConfig>,
         window: &mut Window,
         cx: &mut App,
     ) -> Entity<Self> {
@@ -77,7 +84,8 @@ impl DebugSession {
             .and_then(|tree| tree.read(cx).abs_path().to_str().map(|str| str.to_string()))
             .unwrap_or_default();
 
-        let inert = cx.new(|cx| InertState::new(workspace.clone(), &default_cwd, window, cx));
+        let inert =
+            cx.new(|cx| InertState::new(workspace.clone(), &default_cwd, config, window, cx));
 
         let project = project.read(cx);
         let dap_store = project.dap_store().downgrade();
@@ -89,6 +97,7 @@ impl DebugSession {
                 mode: DebugSessionState::Inert(inert),
                 dap_store,
                 worktree_store,
+                debug_panel,
                 workspace,
                 _subscriptions,
             }
@@ -99,6 +108,7 @@ impl DebugSession {
         project: Entity<Project>,
         workspace: WeakEntity<Workspace>,
         session: Entity<Session>,
+        debug_panel: WeakEntity<DebugPanel>,
         window: &mut Window,
         cx: &mut App,
     ) -> Entity<Self> {
@@ -111,6 +121,7 @@ impl DebugSession {
             remote_id: None,
             mode: DebugSessionState::Running(mode),
             dap_store: project.read(cx).dap_store().downgrade(),
+            debug_panel,
             worktree_store: project.read(cx).worktree_store().downgrade(),
             workspace,
         })
@@ -148,6 +159,11 @@ impl DebugSession {
         let dap_store = self.dap_store.clone();
         let InertEvent::Spawned { config } = event;
         let config = config.clone();
+
+        self.debug_panel
+            .update(cx, |this, _| this.last_inert_config = Some(config.clone()))
+            .log_err();
+
         let worktree = self
             .worktree_store
             .update(cx, |this, _| this.worktrees().next())
@@ -198,23 +214,48 @@ impl Focusable for DebugSession {
 impl Item for DebugSession {
     type Event = DebugPanelItemEvent;
     fn tab_content(&self, _: item::TabContentParams, _: &Window, cx: &App) -> AnyElement {
-        let (label, color) = match &self.mode {
-            DebugSessionState::Inert(_) => ("New Session", Color::Default),
-            DebugSessionState::Starting(_) => ("Starting", Color::Default),
-            DebugSessionState::Failed(_) => ("Failed", Color::Error),
-            DebugSessionState::Running(state) => (
-                state
-                    .read_with(cx, |state, cx| state.thread_status(cx))
-                    .map(|status| status.label())
-                    .unwrap_or("Running"),
-                Color::Default,
+        let (icon, label, color) = match &self.mode {
+            DebugSessionState::Inert(_) => (None, "New Session", Color::Default),
+            DebugSessionState::Starting(_) => (None, "Starting", Color::Default),
+            DebugSessionState::Failed(_) => (
+                Some(Indicator::dot().color(Color::Error)),
+                "Failed",
+                Color::Error,
             ),
+            DebugSessionState::Running(state) => {
+                if state.read(cx).session().read(cx).is_terminated() {
+                    (
+                        Some(Indicator::dot().color(Color::Error)),
+                        "Terminated",
+                        Color::Error,
+                    )
+                } else {
+                    match state.read(cx).thread_status(cx).unwrap_or_default() {
+                        project::debugger::session::ThreadStatus::Stopped => (
+                            Some(Indicator::dot().color(Color::Conflict)),
+                            state
+                                .read_with(cx, |state, cx| state.thread_status(cx))
+                                .map(|status| status.label())
+                                .unwrap_or("Stopped"),
+                            Color::Conflict,
+                        ),
+                        _ => (
+                            Some(Indicator::dot().color(Color::Success)),
+                            state
+                                .read_with(cx, |state, cx| state.thread_status(cx))
+                                .map(|status| status.label())
+                                .unwrap_or("Running"),
+                            Color::Success,
+                        ),
+                    }
+                }
+            }
         };
 
         let is_starting = matches!(self.mode, DebugSessionState::Starting(_));
 
         h_flex()
-            .gap_1()
+            .gap_2()
             .children(is_starting.then(|| {
                 Icon::new(IconName::ArrowCircle).with_animation(
                     "starting-debug-session",
@@ -222,6 +263,8 @@ impl Item for DebugSession {
                     |this, delta| this.transform(Transformation::rotate(percentage(delta))),
                 )
             }))
+            .when_some(icon, |this, indicator| this.child(indicator))
+            .justify_between()
             .child(Label::new(label).color(color))
             .into_any_element()
     }

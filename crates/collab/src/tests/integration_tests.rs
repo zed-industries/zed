@@ -26,7 +26,7 @@ use language::{
     tree_sitter_rust, tree_sitter_typescript, Diagnostic, DiagnosticEntry, FakeLspAdapter,
     Language, LanguageConfig, LanguageMatcher, LineEnding, OffsetRangeExt, Point, Rope,
 };
-use lsp::LanguageServerId;
+use lsp::{LanguageServerId, OneOf};
 use parking_lot::Mutex;
 use pretty_assertions::assert_eq;
 use project::{
@@ -2847,7 +2847,7 @@ async fn test_git_diff_base_change(
     });
 }
 
-#[gpui::test]
+#[gpui::test(iterations = 10)]
 async fn test_git_branch_name(
     executor: BackgroundExecutor,
     cx_a: &mut TestAppContext,
@@ -2892,14 +2892,17 @@ async fn test_git_branch_name(
     #[track_caller]
     fn assert_branch(branch_name: Option<impl Into<String>>, project: &Project, cx: &App) {
         let branch_name = branch_name.map(Into::into);
-        let worktrees = project.visible_worktrees(cx).collect::<Vec<_>>();
-        assert_eq!(worktrees.len(), 1);
-        let worktree = worktrees[0].clone();
-        let root_entry = worktree.read(cx).snapshot().root_git_entry().unwrap();
+        let repositories = project.repositories(cx).values().collect::<Vec<_>>();
+        assert_eq!(repositories.len(), 1);
+        let repository = repositories[0].clone();
         assert_eq!(
-            root_entry.branch().map(|branch| branch.name.to_string()),
+            repository
+                .read(cx)
+                .repository_entry
+                .branch()
+                .map(|branch| branch.name.to_string()),
             branch_name
-        );
+        )
     }
 
     // Smoke test branch reading
@@ -3021,11 +3024,20 @@ async fn test_git_status_sync(
         cx: &App,
     ) {
         let file = file.as_ref();
-        let worktrees = project.visible_worktrees(cx).collect::<Vec<_>>();
-        assert_eq!(worktrees.len(), 1);
-        let worktree = worktrees[0].clone();
-        let snapshot = worktree.read(cx).snapshot();
-        assert_eq!(snapshot.status_for_file(file), status);
+        let repos = project
+            .repositories(cx)
+            .values()
+            .cloned()
+            .collect::<Vec<_>>();
+        assert_eq!(repos.len(), 1);
+        let repo = repos.into_iter().next().unwrap();
+        assert_eq!(
+            repo.read(cx)
+                .repository_entry
+                .status_for_path(&file.into())
+                .map(|entry| entry.status),
+            status
+        );
     }
 
     project_local.read_with(cx_a, |project, cx| {
@@ -3092,6 +3104,27 @@ async fn test_git_status_sync(
         assert_status("a.txt", Some(A_STATUS_END), project, cx);
         assert_status("b.txt", Some(B_STATUS_END), project, cx);
         assert_status("c.txt", Some(C_STATUS_END), project, cx);
+    });
+
+    // Now remove the original git repository and check that collaborators are notified.
+    client_a
+        .fs()
+        .remove_dir("/dir/.git".as_ref(), RemoveOptions::default())
+        .await
+        .unwrap();
+
+    executor.run_until_parked();
+    project_remote.update(cx_b, |project, cx| {
+        pretty_assertions::assert_eq!(
+            project.git_store().read(cx).repo_snapshots(cx),
+            HashMap::default()
+        );
+    });
+    project_remote_c.update(cx_c, |project, cx| {
+        pretty_assertions::assert_eq!(
+            project.git_store().read(cx).repo_snapshots(cx),
+            HashMap::default()
+        );
     });
 }
 
@@ -4479,7 +4512,7 @@ async fn test_formatting_buffer(
         project.register_buffer_with_language_servers(&buffer_b, cx)
     });
     let fake_language_server = fake_language_servers.next().await.unwrap();
-    fake_language_server.handle_request::<lsp::request::Formatting, _, _>(|_, _| async move {
+    fake_language_server.set_request_handler::<lsp::request::Formatting, _, _>(|_, _| async move {
         Ok(Some(vec![
             lsp::TextEdit {
                 range: lsp::Range::new(lsp::Position::new(0, 4), lsp::Position::new(0, 4)),
@@ -4632,7 +4665,7 @@ async fn test_prettier_formatting_buffer(
         });
     });
     let fake_language_server = fake_language_servers.next().await.unwrap();
-    fake_language_server.handle_request::<lsp::request::Formatting, _, _>(|_, _| async move {
+    fake_language_server.set_request_handler::<lsp::request::Formatting, _, _>(|_, _| async move {
         panic!(
             "Unexpected: prettier should be preferred since it's enabled and language supports it"
         )
@@ -4730,14 +4763,16 @@ async fn test_definition(
 
     // Request the definition of a symbol as the guest.
     let fake_language_server = fake_language_servers.next().await.unwrap();
-    fake_language_server.handle_request::<lsp::request::GotoDefinition, _, _>(|_, _| async move {
-        Ok(Some(lsp::GotoDefinitionResponse::Scalar(
-            lsp::Location::new(
-                lsp::Url::from_file_path("/root/dir-2/b.rs").unwrap(),
-                lsp::Range::new(lsp::Position::new(0, 6), lsp::Position::new(0, 9)),
-            ),
-        )))
-    });
+    fake_language_server.set_request_handler::<lsp::request::GotoDefinition, _, _>(
+        |_, _| async move {
+            Ok(Some(lsp::GotoDefinitionResponse::Scalar(
+                lsp::Location::new(
+                    lsp::Url::from_file_path("/root/dir-2/b.rs").unwrap(),
+                    lsp::Range::new(lsp::Position::new(0, 6), lsp::Position::new(0, 9)),
+                ),
+            )))
+        },
+    );
 
     let definitions_1 = project_b
         .update(cx_b, |p, cx| p.definition(&buffer_b, 23, cx))
@@ -4759,14 +4794,16 @@ async fn test_definition(
 
     // Try getting more definitions for the same buffer, ensuring the buffer gets reused from
     // the previous call to `definition`.
-    fake_language_server.handle_request::<lsp::request::GotoDefinition, _, _>(|_, _| async move {
-        Ok(Some(lsp::GotoDefinitionResponse::Scalar(
-            lsp::Location::new(
-                lsp::Url::from_file_path("/root/dir-2/b.rs").unwrap(),
-                lsp::Range::new(lsp::Position::new(1, 6), lsp::Position::new(1, 11)),
-            ),
-        )))
-    });
+    fake_language_server.set_request_handler::<lsp::request::GotoDefinition, _, _>(
+        |_, _| async move {
+            Ok(Some(lsp::GotoDefinitionResponse::Scalar(
+                lsp::Location::new(
+                    lsp::Url::from_file_path("/root/dir-2/b.rs").unwrap(),
+                    lsp::Range::new(lsp::Position::new(1, 6), lsp::Position::new(1, 11)),
+                ),
+            )))
+        },
+    );
 
     let definitions_2 = project_b
         .update(cx_b, |p, cx| p.definition(&buffer_b, 33, cx))
@@ -4790,7 +4827,7 @@ async fn test_definition(
         definitions_2[0].target.buffer
     );
 
-    fake_language_server.handle_request::<lsp::request::GotoTypeDefinition, _, _>(
+    fake_language_server.set_request_handler::<lsp::request::GotoTypeDefinition, _, _>(
         |req, _| async move {
             assert_eq!(
                 req.text_document_position_params.position,
@@ -4880,7 +4917,7 @@ async fn test_references(
     // Request references to a symbol as the guest.
     let fake_language_server = fake_language_servers.next().await.unwrap();
     let (lsp_response_tx, rx) = mpsc::unbounded::<Result<Option<Vec<lsp::Location>>>>();
-    fake_language_server.handle_request::<lsp::request::References, _, _>({
+    fake_language_server.set_request_handler::<lsp::request::References, _, _>({
         let rx = Arc::new(Mutex::new(Some(rx)));
         move |params, _| {
             assert_eq!(
@@ -5130,7 +5167,7 @@ async fn test_document_highlights(
 
     // Request document highlights as the guest.
     let fake_language_server = fake_language_servers.next().await.unwrap();
-    fake_language_server.handle_request::<lsp::request::DocumentHighlightRequest, _, _>(
+    fake_language_server.set_request_handler::<lsp::request::DocumentHighlightRequest, _, _>(
         |params, _| async move {
             assert_eq!(
                 params
@@ -5267,7 +5304,7 @@ async fn test_lsp_hover(
             "CrabLang-ls" => {
                 servers_with_hover_requests.insert(
                     new_server_name.clone(),
-                    new_server.handle_request::<lsp::request::HoverRequest, _, _>(
+                    new_server.set_request_handler::<lsp::request::HoverRequest, _, _>(
                         move |params, _| {
                             assert_eq!(
                                 params
@@ -5293,7 +5330,7 @@ async fn test_lsp_hover(
             "rust-analyzer" => {
                 servers_with_hover_requests.insert(
                     new_server_name.clone(),
-                    new_server.handle_request::<lsp::request::HoverRequest, _, _>(
+                    new_server.set_request_handler::<lsp::request::HoverRequest, _, _>(
                         |params, _| async move {
                             assert_eq!(
                                 params
@@ -5394,9 +5431,16 @@ async fn test_project_symbols(
     let active_call_a = cx_a.read(ActiveCall::global);
 
     client_a.language_registry().add(rust_lang());
-    let mut fake_language_servers = client_a
-        .language_registry()
-        .register_fake_lsp("Rust", Default::default());
+    let mut fake_language_servers = client_a.language_registry().register_fake_lsp(
+        "Rust",
+        FakeLspAdapter {
+            capabilities: lsp::ServerCapabilities {
+                workspace_symbol_provider: Some(OneOf::Left(true)),
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+    );
 
     client_a
         .fs()
@@ -5431,22 +5475,24 @@ async fn test_project_symbols(
         .unwrap();
 
     let fake_language_server = fake_language_servers.next().await.unwrap();
-    fake_language_server.handle_request::<lsp::WorkspaceSymbolRequest, _, _>(|_, _| async move {
-        Ok(Some(lsp::WorkspaceSymbolResponse::Flat(vec![
-            #[allow(deprecated)]
-            lsp::SymbolInformation {
-                name: "TWO".into(),
-                location: lsp::Location {
-                    uri: lsp::Url::from_file_path("/code/crate-2/two.rs").unwrap(),
-                    range: lsp::Range::new(lsp::Position::new(0, 6), lsp::Position::new(0, 9)),
+    fake_language_server.set_request_handler::<lsp::WorkspaceSymbolRequest, _, _>(
+        |_, _| async move {
+            Ok(Some(lsp::WorkspaceSymbolResponse::Flat(vec![
+                #[allow(deprecated)]
+                lsp::SymbolInformation {
+                    name: "TWO".into(),
+                    location: lsp::Location {
+                        uri: lsp::Url::from_file_path("/code/crate-2/two.rs").unwrap(),
+                        range: lsp::Range::new(lsp::Position::new(0, 6), lsp::Position::new(0, 9)),
+                    },
+                    kind: lsp::SymbolKind::CONSTANT,
+                    tags: None,
+                    container_name: None,
+                    deprecated: None,
                 },
-                kind: lsp::SymbolKind::CONSTANT,
-                tags: None,
-                container_name: None,
-                deprecated: None,
-            },
-        ])))
-    });
+            ])))
+        },
+    );
 
     // Request the definition of a symbol as the guest.
     let symbols = project_b
@@ -5528,14 +5574,16 @@ async fn test_open_buffer_while_getting_definition_pointing_to_it(
         .unwrap();
 
     let fake_language_server = fake_language_servers.next().await.unwrap();
-    fake_language_server.handle_request::<lsp::request::GotoDefinition, _, _>(|_, _| async move {
-        Ok(Some(lsp::GotoDefinitionResponse::Scalar(
-            lsp::Location::new(
-                lsp::Url::from_file_path("/root/b.rs").unwrap(),
-                lsp::Range::new(lsp::Position::new(0, 6), lsp::Position::new(0, 9)),
-            ),
-        )))
-    });
+    fake_language_server.set_request_handler::<lsp::request::GotoDefinition, _, _>(
+        |_, _| async move {
+            Ok(Some(lsp::GotoDefinitionResponse::Scalar(
+                lsp::Location::new(
+                    lsp::Url::from_file_path("/root/b.rs").unwrap(),
+                    lsp::Range::new(lsp::Position::new(0, 6), lsp::Position::new(0, 9)),
+                ),
+            )))
+        },
+    );
 
     let definitions;
     let buffer_b2;
@@ -6771,7 +6819,7 @@ async fn test_remote_git_branches(
         .map(ToString::to_string)
         .collect::<HashSet<_>>();
 
-    let (project_a, worktree_id) = client_a.build_local_project("/project", cx_a).await;
+    let (project_a, _) = client_a.build_local_project("/project", cx_a).await;
 
     let project_id = active_call_a
         .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
@@ -6783,8 +6831,6 @@ async fn test_remote_git_branches(
     executor.run_until_parked();
 
     let repo_b = cx_b.update(|cx| project_b.read(cx).active_repository(cx).unwrap());
-
-    let root_path = ProjectPath::root_path(worktree_id);
 
     let branches_b = cx_b
         .update(|cx| repo_b.update(cx, |repository, _| repository.branches()))
@@ -6810,11 +6856,15 @@ async fn test_remote_git_branches(
 
     let host_branch = cx_a.update(|cx| {
         project_a.update(cx, |project, cx| {
-            project.worktree_store().update(cx, |worktree_store, cx| {
-                worktree_store
-                    .current_branch(root_path.clone(), cx)
-                    .unwrap()
-            })
+            project
+                .repositories(cx)
+                .values()
+                .next()
+                .unwrap()
+                .read(cx)
+                .current_branch()
+                .unwrap()
+                .clone()
         })
     });
 
@@ -6843,9 +6893,15 @@ async fn test_remote_git_branches(
 
     let host_branch = cx_a.update(|cx| {
         project_a.update(cx, |project, cx| {
-            project.worktree_store().update(cx, |worktree_store, cx| {
-                worktree_store.current_branch(root_path, cx).unwrap()
-            })
+            project
+                .repositories(cx)
+                .values()
+                .next()
+                .unwrap()
+                .read(cx)
+                .current_branch()
+                .unwrap()
+                .clone()
         })
     });
 

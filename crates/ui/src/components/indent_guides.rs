@@ -172,10 +172,10 @@ mod uniform_list {
                     .map(|layout| RenderedIndentGuide {
                         bounds: Bounds::new(
                             point(
-                                px(layout.offset.x as f32) * self.indent_size,
-                                px(layout.offset.y as f32) * item_height,
+                                layout.offset.x * self.indent_size,
+                                layout.offset.y * item_height,
                             ),
-                            size(px(1.), px(layout.length as f32) * item_height),
+                            size(px(1.), layout.length * item_height),
                         ),
                         layout,
                         is_active: false,
@@ -311,7 +311,7 @@ mod uniform_list {
                     });
                     let mut hovered_hitbox_id = None;
                     for (i, hitbox) in hitboxes.iter().enumerate() {
-                        window.set_cursor_style(gpui::CursorStyle::PointingHand, hitbox);
+                        window.set_cursor_style(gpui::CursorStyle::PointingHand, Some(hitbox));
                         let indent_guide = &self.indent_guides[i];
                         let fill_color = if hitbox.is_hovered(window) {
                             hovered_hitbox_id = Some(hitbox.id);

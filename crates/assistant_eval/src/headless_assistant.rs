@@ -89,7 +89,7 @@ impl HeadlessAssistant {
             ThreadEvent::DoneStreaming => {
                 let thread = thread.read(cx);
                 if let Some(message) = thread.messages().last() {
-                    println!("Message: {}", message.text,);
+                    println!("Message: {}", message.to_string());
                 }
                 if thread.all_tools_finished() {
                     self.done_tx.send_blocking(Ok(())).unwrap()
@@ -128,12 +128,7 @@ impl HeadlessAssistant {
                     }
                 }
             }
-            ThreadEvent::StreamedCompletion
-            | ThreadEvent::SummaryChanged
-            | ThreadEvent::StreamedAssistantText(_, _)
-            | ThreadEvent::MessageAdded(_)
-            | ThreadEvent::MessageEdited(_)
-            | ThreadEvent::MessageDeleted(_) => {}
+            _ => {}
         }
     }
 }
