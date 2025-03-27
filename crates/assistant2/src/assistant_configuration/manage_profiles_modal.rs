@@ -1,3 +1,5 @@
+mod profile_modal_header;
+
 use std::sync::Arc;
 
 use assistant_settings::{
@@ -10,9 +12,10 @@ use fs::Fs;
 use gpui::{prelude::*, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, Subscription};
 use indexmap::IndexMap;
 use settings::{update_settings_file, Settings as _};
-use ui::{prelude::*, ListItem, ListItemSpacing, Navigable, NavigableEntry};
+use ui::{prelude::*, ListItem, ListItemSpacing, ListSeparator, Navigable, NavigableEntry};
 use workspace::{ModalView, Workspace};
 
+use crate::assistant_configuration::manage_profiles_modal::profile_modal_header::ProfileModalHeader;
 use crate::assistant_configuration::profile_picker::{ProfilePicker, ProfilePickerDelegate};
 use crate::assistant_configuration::tool_picker::{ToolPicker, ToolPickerDelegate};
 use crate::{AssistantPanel, ManageProfiles};
@@ -208,7 +211,13 @@ impl ManageProfilesModal {
     fn cancel(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         match &self.mode {
             Mode::ChooseProfile { .. } => {}
-            Mode::NewProfile(_) => {}
+            Mode::NewProfile(mode) => {
+                if let Some(profile_id) = mode.base_profile_id.clone() {
+                    self.view_profile(profile_id, window, cx);
+                } else {
+                    self.choose_profile(window, cx);
+                }
+            }
             Mode::ViewProfile(_) => self.choose_profile(window, cx),
             Mode::ConfigureTools { .. } => {}
         }
@@ -290,8 +299,14 @@ impl ManageProfilesModal {
             div()
                 .track_focus(&self.focus_handle(cx))
                 .size_full()
+                .child(ProfileModalHeader::new(
+                    mode.profile_id.clone(),
+                    IconName::ZedAssistant,
+                ))
                 .child(
                     v_flex()
+                        .pb_1()
+                        .child(ListSeparator)
                         .child(
                             div()
                                 .id("fork-profile")
@@ -379,9 +394,11 @@ impl Render for ManageProfilesModal {
             }))
             .on_mouse_down_out(cx.listener(|_this, _, _, cx| cx.emit(DismissEvent)))
             .child(match &self.mode {
-                Mode::ChooseProfile { profile_picker, .. } => {
-                    profile_picker.clone().into_any_element()
-                }
+                Mode::ChooseProfile { profile_picker, .. } => div()
+                    .child(ProfileModalHeader::new("Profiles", IconName::ZedAssistant))
+                    .child(ListSeparator)
+                    .child(profile_picker.clone())
+                    .into_any_element(),
                 Mode::NewProfile(mode) => self
                     .render_new_profile(mode.clone(), window, cx)
                     .into_any_element(),

@@ -21,7 +21,7 @@ impl ProfilePicker {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let picker = cx.new(|cx| Picker::uniform_list(delegate, window, cx));
+        let picker = cx.new(|cx| Picker::uniform_list(delegate, window, cx).modal(false));
         Self { picker }
     }
 }
