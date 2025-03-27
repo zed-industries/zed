@@ -116,7 +116,7 @@ use mouse_context_menu::MouseContextMenu;
 use persistence::DB;
 use project::{
     debugger::breakpoint_store::{BreakpointEditAction, BreakpointStore, BreakpointStoreEvent},
-    ProjectPath,
+    ProjectPath, SemanticToken,
 };
 
 pub use proposed_changes_editor::{
@@ -3850,7 +3850,9 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<()> {
-        let project = self.project.as_ref()?;
+        if self.semantics_provider.is_none() {
+            return None;
+        }
         match reason {
             SemanticTokensRefreshReason::Toggle(false) => {
                 self.display_map.update(cx, |display_map, _| {
@@ -3875,9 +3877,10 @@ impl Editor {
             | SemanticTokensRefreshReason::SettingsChange(_)
             | SemanticTokensRefreshReason::Toggle(true) => {
                 for buffer in self.buffer.read(cx).all_buffers() {
-                    let semantic_tokens = project.update(cx, |project, cx| {
-                        project.semantic_tokens(buffer.clone(), cx)
-                    });
+                    let semantic_tokens = self
+                        .semantics_provider
+                        .as_ref()?
+                        .semantic_tokens(buffer.clone(), cx)?;
                     let snapshot = buffer.read(cx).snapshot();
                     let multibuffer = self.buffer.clone();
                     let task: Task<Result<()>> = cx.spawn_in(window, async move |editor, cx| {
@@ -17788,6 +17791,12 @@ pub trait SemanticsProvider {
         cx: &mut App,
     ) -> Option<Task<Vec<project::Hover>>>;
 
+    fn semantic_tokens(
+        &self,
+        buffer_handle: Entity<Buffer>,
+        cx: &mut App,
+    ) -> Option<Task<anyhow::Result<Vec<SemanticToken>>>>;
+
     fn inlay_hints(
         &self,
         buffer_handle: Entity<Buffer>,
@@ -18226,6 +18235,14 @@ impl SemanticsProvider for Entity<Project> {
                 this.any_language_server_supports_inlay_hints(buffer, cx)
             })
         })
+    }
+
+    fn semantic_tokens(
+        &self,
+        buffer_handle: Entity<Buffer>,
+        cx: &mut App,
+    ) -> Option<Task<anyhow::Result<Vec<SemanticToken>>>> {
+        Some(self.update(cx, |project, cx| project.semantic_tokens(buffer_handle, cx)))
     }
 
     fn inlay_hints(

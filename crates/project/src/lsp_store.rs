@@ -5383,17 +5383,43 @@ impl LspStore {
         buffer_handle: Entity<Buffer>,
         cx: &mut Context<Self>,
     ) -> Task<anyhow::Result<Vec<SemanticToken>>> {
-        let buffer = buffer_handle.read(cx);
-        let lsp_request = SemanticTokensFull;
         if let Some((client, project_id)) = self.upstream_client() {
             todo!("rpc not implemented yet")
         } else {
-            self.request_lsp(
-                buffer_handle.clone(),
-                LanguageServerToQuery::FirstCapable,
-                lsp_request,
-                cx,
-            )
+            let Some(server_ids) = buffer_handle.update(cx, |buffer, cx| {
+                self.as_local().map(|local| {
+                    local
+                        .language_servers_for_buffer(buffer, cx)
+                        .filter_map(|(_, server)| {
+                            if SemanticTokensFull
+                                .check_capabilities(server.adapter_server_capabilities())
+                            {
+                                Some(server.server_id())
+                            } else {
+                                None
+                            }
+                        })
+                        .collect_vec()
+                })
+            }) else {
+                return Task::ready(Ok(vec![]));
+            };
+            let requests = server_ids
+                .into_iter()
+                .map(|id| {
+                    let lsp = LanguageServerToQuery::Other(id);
+                    self.request_lsp(buffer_handle.clone(), lsp, SemanticTokensFull, cx)
+                })
+                .collect_vec();
+
+            cx.spawn(async move |_, _| {
+                let mut output = vec![];
+                for request in requests {
+                    let tokens = request.await?;
+                    output.extend(tokens);
+                }
+                Ok(output)
+            })
         }
     }
 

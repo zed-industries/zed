@@ -15,6 +15,13 @@ impl LspCommand for SemanticTokensFull {
         "Semantic Tokens"
     }
 
+    fn check_capabilities(&self, capabilities: AdapterServerCapabilities) -> bool {
+        capabilities
+            .server_capabilities
+            .semantic_tokens_provider
+            .is_some()
+    }
+
     fn to_lsp(
         &self,
         path: &Path,
