@@ -8,24 +8,19 @@ use ui::{prelude::*, ListItem, ListItemSpacing, Navigable, NavigableEntry};
 use workspace::{ModalView, Workspace};
 
 use crate::assistant_configuration::profile_picker::{ProfilePicker, ProfilePickerDelegate};
+use crate::assistant_configuration::tool_picker::{ToolPicker, ToolPickerDelegate};
 use crate::{AssistantPanel, ManageProfiles};
 
 enum Mode {
     ChooseProfile(Entity<ProfilePicker>),
     ViewProfile(ViewProfileMode),
-    ConfigureTools(ConfigureToolsMode),
+    ConfigureTools(Entity<ToolPicker>),
 }
 
 #[derive(Clone)]
 pub struct ViewProfileMode {
     profile_id: Arc<str>,
     configure_tools: NavigableEntry,
-}
-
-#[derive(Clone)]
-pub struct ConfigureToolsMode {
-    #[allow(dead_code)]
-    profile_id: Arc<str>,
 }
 
 pub struct ManageProfilesModal {
@@ -97,10 +92,19 @@ impl ManageProfilesModal {
     fn configure_tools(
         &mut self,
         profile_id: Arc<str>,
-        _window: &mut Window,
-        _cx: &mut Context<Self>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
     ) {
-        self.mode = Mode::ConfigureTools(ConfigureToolsMode { profile_id });
+        let settings = AssistantSettings::get_global(cx);
+        let Some(profile) = settings.profiles.get(&profile_id).cloned() else {
+            return;
+        };
+
+        self.mode = Mode::ConfigureTools(cx.new(|cx| {
+            let delegate = ToolPickerDelegate::new(self.tools.clone(), profile, |_, _, _| {}, cx);
+            ToolPicker::new(delegate, window, cx)
+        }));
+        self.focus_handle(cx).focus(window);
     }
 
     fn confirm(&mut self, _window: &mut Window, _cx: &mut Context<Self>) {}
@@ -113,8 +117,9 @@ impl ModalView for ManageProfilesModal {}
 impl Focusable for ManageProfilesModal {
     fn focus_handle(&self, cx: &App) -> FocusHandle {
         match &self.mode {
-            Mode::ChooseProfile(profile_picker) => profile_picker.read(cx).focus_handle(cx),
-            Mode::ViewProfile(_) | Mode::ConfigureTools(_) => self.focus_handle.clone(),
+            Mode::ChooseProfile(profile_picker) => profile_picker.focus_handle(cx),
+            Mode::ConfigureTools(tool_picker) => tool_picker.focus_handle(cx),
+            Mode::ViewProfile(_) => self.focus_handle.clone(),
         }
     }
 }
@@ -167,59 +172,6 @@ impl ManageProfilesModal {
         )
         .entry(mode.configure_tools)
     }
-
-    fn render_configure_tools(
-        &mut self,
-        mode: ConfigureToolsMode,
-        _window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> impl IntoElement {
-        let settings = AssistantSettings::get_global(cx);
-
-        let Some(profile) = settings.profiles.get(&mode.profile_id) else {
-            return div().into_any_element();
-        };
-
-        v_flex()
-            .children(profile.tools.iter().filter_map(|(tool_id, enabled)| {
-                let tool = self.tools.tool(tool_id, cx)?;
-
-                Some(
-                    ListItem::new(SharedString::from(tool.name()))
-                        .inset(true)
-                        .child(Label::new(tool.name()))
-                        .end_slot::<Icon>(enabled.then(|| {
-                            Icon::new(IconName::Check)
-                                .size(IconSize::Small)
-                                .color(Color::Success)
-                        })),
-                )
-            }))
-            .children(
-                profile
-                    .context_servers
-                    .iter()
-                    .filter_map(|(context_server_id, preset)| {
-                        Some(v_flex().child(Label::new(context_server_id)).children(
-                            preset.tools.iter().filter_map(|(tool_id, enabled)| {
-                                let tool = self.tools.tool(tool_id, cx)?;
-
-                                Some(
-                                    ListItem::new(SharedString::from(tool.name()))
-                                        .inset(true)
-                                        .child(Label::new(tool.name()))
-                                        .end_slot::<Icon>(enabled.then(|| {
-                                            Icon::new(IconName::Check)
-                                                .size(IconSize::Small)
-                                                .color(Color::Success)
-                                        })),
-                                )
-                            }),
-                        ))
-                    }),
-            )
-            .into_any_element()
-    }
 }
 
 impl Render for ManageProfilesModal {
@@ -239,9 +191,7 @@ impl Render for ManageProfilesModal {
                 Mode::ViewProfile(mode) => self
                     .render_view_profile(mode.clone(), window, cx)
                     .into_any_element(),
-                Mode::ConfigureTools(mode) => self
-                    .render_configure_tools(mode.clone(), window, cx)
-                    .into_any_element(),
+                Mode::ConfigureTools(tool_picker) => tool_picker.clone().into_any_element(),
             })
     }
 }
