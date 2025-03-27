@@ -547,11 +547,30 @@ impl LanguageModel for BedrockModel {
         name: String,
         description: String,
         schema: Value,
-        _cx: &AsyncApp,
+        cx: &AsyncApp,
     ) -> BoxFuture<'static, Result<BoxStream<'static, Result<String>>>> {
+        let Ok(region) = cx.read_entity(&self.state, |state, _cx| {
+            // Get region - from credentials or directly from settings
+            let region = state
+                .settings
+                .as_ref()
+                .and_then(|s| s.region.clone())
+                .unwrap_or(String::from("us-east-1"));
+
+            region
+        }) else {
+            return async move { Err(anyhow!("App State Dropped")) }.boxed();
+        };
+
+        let model_id = match self.model.cross_region_inference_id(&region) {
+            Ok(s) => s,
+            Err(e) => {
+                return async move { Err(e) }.boxed();
+            }
+        };
         let mut request = into_bedrock(
             request,
-            self.model.id().into(),
+            model_id,
             self.model.default_temperature(),
             self.model.max_output_tokens(),
         );
@@ -574,7 +593,7 @@ impl LanguageModel for BedrockModel {
 
         let handle = self.handler.clone();
 
-        let request = self.stream_completion(request, _cx);
+        let request = self.stream_completion(request, cx);
         self.request_limiter
             .run(async move {
                 let response = request.map_err(|err| anyhow!(err))?.await;

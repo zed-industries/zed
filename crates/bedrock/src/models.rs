@@ -448,8 +448,5 @@ mod tests {
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("unsupported model-region combination"));
         */
-
-        // Since current implementation doesn't return errors for this scenario,
-        // we skip the actual test and leave this as a placeholder for future implementation
     }
 }

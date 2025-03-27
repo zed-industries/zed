@@ -163,11 +163,11 @@ pub struct AnthropicSettingsContentV1 {
 
 #[derive(Default, Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
 pub struct AmazonBedrockSettingsContent {
-    available_models: Option<Vec<provider::bedrock::AvailableModel>>,
-    api_url: Option<String>,
-    region: Option<String>,
-    profile: Option<String>,
-    authentication_method: Option<provider::bedrock::BedrockAuthMethod>,
+    pub available_models: Option<Vec<provider::bedrock::AvailableModel>>,
+    pub api_url: Option<String>,
+    pub region: Option<String>,
+    pub profile: Option<String>,
+    pub authentication_method: Option<provider::bedrock::BedrockAuthMethod>,
 }
 
 #[derive(Default, Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
