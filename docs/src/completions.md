@@ -244,7 +244,7 @@ Alternatively, if you're using Zed's Edit Prediction, you can [use Subtle Mode](
 
 ### Turning Off Completely
 
-To completely turn off any edit prediction to show, across all provider, explicitly set the settings to `none`, like so:
+To completely turn off edit prediction across all providers, explicitly set the settings to `none`, like so:
 
 ```json
 "features": {
