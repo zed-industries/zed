@@ -1308,7 +1308,7 @@ impl GitRepository for RealGitRepository {
             .spawn(async move {
                 let working_directory = working_directory?;
                 let git = GitBinary::new(git_binary_path, working_directory, executor);
-                git.run(&[
+                git.run_raw(&[
                     "diff",
                     "--find-renames",
                     "--patch",
@@ -1463,7 +1463,7 @@ impl GitBinary {
         S: AsRef<OsStr>,
     {
         let mut stdout = self.run_raw(args).await?;
-        if stdout.chars().last() == Some('\n') {
+        if stdout.ends_with('\n') {
             stdout.pop();
         }
         Ok(stdout)
