@@ -47,6 +47,7 @@ pub struct ActiveThread {
     last_error: Option<ThreadError>,
     pop_ups: Vec<WindowHandle<ToolReadyPopUp>>,
     _subscriptions: Vec<Subscription>,
+    pop_up_subscriptions: HashMap<WindowHandle<ToolReadyPopUp>, Vec<Subscription>>,
 }
 
 struct RenderedMessage {
@@ -253,6 +254,7 @@ impl ActiveThread {
             last_error: None,
             pop_ups: Vec::new(),
             _subscriptions: subscriptions,
+            pop_up_subscriptions: HashMap::default(),
         };
 
         for message in thread.read(cx).messages().cloned().collect::<Vec<_>>() {
@@ -548,42 +550,64 @@ impl ActiveThread {
                     .log_err()
                 {
                     if let Some(pop_up) = screen_window.entity(cx).log_err() {
-                        cx.subscribe_in(&pop_up, window, {
-                            |this, _, event, window, cx| match event {
-                                ToolReadyPopupEvent::Accepted => {
-                                    let handle = window.window_handle();
-                                    cx.activate(true); // Switch back to the Zed application
+                        self.pop_up_subscriptions
+                            .entry(screen_window)
+                            .or_insert_with(Vec::new)
+                            .push(cx.subscribe_in(&pop_up, window, {
+                                |this, _, event, window, cx| match event {
+                                    ToolReadyPopupEvent::Accepted => {
+                                        let handle = window.window_handle();
+                                        cx.activate(true); // Switch back to the Zed application
 
-                                    let workspace_handle = this.workspace.clone();
+                                        let workspace_handle = this.workspace.clone();
 
-                                    // If there are multiple Zed windows, activate the correct one.
-                                    cx.defer(move |cx| {
-                                        handle
-                                            .update(cx, |_view, window, _cx| {
-                                                window.activate_window();
+                                        // If there are multiple Zed windows, activate the correct one.
+                                        cx.defer(move |cx| {
+                                            handle
+                                                .update(cx, |_view, window, _cx| {
+                                                    window.activate_window();
 
-                                                if let Some(workspace) = workspace_handle.upgrade()
-                                                {
-                                                    workspace.update(_cx, |workspace, cx| {
-                                                        workspace.focus_panel::<AssistantPanel>(
-                                                            window, cx,
-                                                        );
-                                                    });
-                                                }
-                                            })
-                                            .log_err();
-                                    });
+                                                    if let Some(workspace) =
+                                                        workspace_handle.upgrade()
+                                                    {
+                                                        workspace.update(_cx, |workspace, cx| {
+                                                            workspace
+                                                                .focus_panel::<AssistantPanel>(
+                                                                    window, cx,
+                                                                );
+                                                        });
+                                                    }
+                                                })
+                                                .log_err();
+                                        });
 
-                                    this.dismiss_notifications(cx);
+                                        this.dismiss_notifications(cx);
+                                    }
+                                    ToolReadyPopupEvent::Dismissed => {
+                                        this.dismiss_notifications(cx);
+                                    }
                                 }
-                                ToolReadyPopupEvent::Dismissed => {
-                                    this.dismiss_notifications(cx);
-                                }
-                            }
-                        })
-                        .detach();
+                            }));
 
                         self.pop_ups.push(screen_window);
+
+                        // If the user manually refocuses the original window, dismiss the popup.
+                        self.pop_up_subscriptions
+                            .entry(screen_window)
+                            .or_insert_with(Vec::new)
+                            .push({
+                                let pop_up_weak = pop_up.downgrade();
+
+                                cx.observe_window_activation(window, move |_, window, cx| {
+                                    if window.is_window_active() {
+                                        if let Some(pop_up) = pop_up_weak.upgrade() {
+                                            pop_up.update(cx, |_, cx| {
+                                                cx.emit(ToolReadyPopupEvent::Dismissed);
+                                            });
+                                        }
+                                    }
+                                })
+                            });
                     }
                 }
             }
@@ -1750,6 +1774,8 @@ impl ActiveThread {
                     window.remove_window();
                 })
                 .ok();
+
+            self.pop_up_subscriptions.remove(&window);
         }
     }
 
