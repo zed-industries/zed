@@ -374,4 +374,10 @@ impl DebugAdapter for FakeAdapter {
             },
         })
     }
+
+    fn attach_processes_filter(&self) -> regex::Regex {
+        static REGEX: LazyLock<regex::Regex> =
+            LazyLock::new(|| regex::Regex::new("^debugger_ui").unwrap());
+        REGEX.clone()
+    }
 }
