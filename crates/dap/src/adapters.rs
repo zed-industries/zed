@@ -351,13 +351,13 @@ impl DebugAdapter for FakeAdapter {
         unimplemented!("get installed binary");
     }
 
-    fn request_args(&self, config: &DebugAdapterConfig) -> Value {
+    fn request_args(&self, config: &DebugTaskDefinition) -> Value {
         use serde_json::json;
         use task::DebugRequestType;
 
         json!({
             "request": match config.request {
-                DebugRequestType::Launch => "launch",
+                DebugRequestType::Launch(_) => "launch",
                 DebugRequestType::Attach(_) => "attach",
             },
             "process_id": if let DebugRequestType::Attach(attach_config) = &config.request {

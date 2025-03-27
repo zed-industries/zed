@@ -29,7 +29,7 @@ pub fn test_config(
                 ..Default::default()
             }),
         )),
-        request,
+        request: task::DebugRequestDisposition::UserConfigured(request),
         initialize_args: None,
     }
 }
