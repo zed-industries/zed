@@ -53,7 +53,7 @@ pub trait Panel: Focusable + EventEmitter<PanelEvent> + Render + Sized {
         None
     }
     fn activation_priority(&self) -> u32;
-    fn activatable(&self, _cx: &App) -> bool {
+    fn enabled(&self, _cx: &App) -> bool {
         true
     }
 }
@@ -78,7 +78,7 @@ pub trait PanelHandle: Send + Sync {
     fn panel_focus_handle(&self, cx: &App) -> FocusHandle;
     fn to_any(&self) -> AnyView;
     fn activation_priority(&self, cx: &App) -> u32;
-    fn activatable(&self, cx: &App) -> bool;
+    fn enabled(&self, cx: &App) -> bool;
     fn move_to_next_position(&self, window: &mut Window, cx: &mut App) {
         let current_position = self.position(window, cx);
         let next_position = [
@@ -176,8 +176,8 @@ where
         self.read(cx).activation_priority()
     }
 
-    fn activatable(&self, cx: &App) -> bool {
-        self.read(cx).activatable(cx)
+    fn enabled(&self, cx: &App) -> bool {
+        self.read(cx).enabled(cx)
     }
 }
 

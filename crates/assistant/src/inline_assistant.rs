@@ -1,5 +1,6 @@
 use crate::{
-    AssistantPanel, AssistantPanelEvent, CycleNextInlineAssist, CyclePreviousInlineAssist,
+    Assistant, AssistantPanel, AssistantPanelEvent, CycleNextInlineAssist,
+    CyclePreviousInlineAssist,
 };
 use anyhow::{anyhow, Context as _, Result};
 use assistant_context_editor::{humanize_token_count, RequestType};
@@ -3555,7 +3556,7 @@ impl CodeActionProvider for AssistantCodeActionProvider {
         _: &mut Window,
         cx: &mut App,
     ) -> Task<Result<Vec<CodeAction>>> {
-        if !AssistantSettings::get_global(cx).enabled {
+        if !Assistant::enabled(cx) {
             return Task::ready(Ok(Vec::new()));
         }
 
