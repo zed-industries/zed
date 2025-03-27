@@ -28,6 +28,7 @@ enum Mode {
     NewProfile(NewProfileMode),
     ViewProfile(ViewProfileMode),
     ConfigureTools {
+        profile_id: Arc<str>,
         tool_picker: Entity<ToolPicker>,
         _subscription: Subscription,
     },
@@ -181,6 +182,7 @@ impl ManageProfilesModal {
         });
 
         self.mode = Mode::ConfigureTools {
+            profile_id,
             tool_picker,
             _subscription: dismiss_subscription,
         };
@@ -405,7 +407,18 @@ impl Render for ManageProfilesModal {
                 Mode::ViewProfile(mode) => self
                     .render_view_profile(mode.clone(), window, cx)
                     .into_any_element(),
-                Mode::ConfigureTools { tool_picker, .. } => tool_picker.clone().into_any_element(),
+                Mode::ConfigureTools {
+                    profile_id,
+                    tool_picker,
+                    ..
+                } => div()
+                    .child(ProfileModalHeader::new(
+                        format!("{profile_id}: Configure Tools"),
+                        IconName::Cog,
+                    ))
+                    .child(ListSeparator)
+                    .child(tool_picker.clone())
+                    .into_any_element(),
             })
     }
 }
