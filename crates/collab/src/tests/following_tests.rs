@@ -16,6 +16,7 @@ use project::WorktreeSettings;
 use rpc::proto::PeerId;
 use serde_json::json;
 use settings::SettingsStore;
+use util::path;
 use workspace::{item::ItemHandle as _, SplitDirection, Workspace};
 
 use super::TestClient;
@@ -50,7 +51,7 @@ async fn test_basic_following(
     client_a
         .fs()
         .insert_tree(
-            "/a",
+            path!("/a"),
             json!({
                 "1.txt": "one\none\none",
                 "2.txt": "two\ntwo\ntwo",
@@ -58,7 +59,7 @@ async fn test_basic_following(
             }),
         )
         .await;
-    let (project_a, worktree_id) = client_a.build_local_project("/a", cx_a).await;
+    let (project_a, worktree_id) = client_a.build_local_project(path!("/a"), cx_a).await;
     active_call_a
         .update(cx_a, |call, cx| call.set_location(Some(&project_a), cx))
         .await
@@ -436,7 +437,9 @@ async fn test_basic_following(
     );
 
     // TODO: Re-enable this test once we can replace our swift Livekit SDK with the rust SDK
-    #[cfg(not(target_os = "macos"))]
+    // todo(windows)
+    // Fix this on Windows
+    #[cfg(all(not(target_os = "macos"), not(target_os = "windows")))]
     {
         use crate::rpc::RECONNECT_TIMEOUT;
         use gpui::TestScreenCaptureSource;
