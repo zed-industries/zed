@@ -1,4 +1,3 @@
-mod auto_command;
 mod cargo_workspace_command;
 mod context_server_command;
 mod default_command;
@@ -21,7 +20,6 @@ use gpui::App;
 use language::{CodeLabel, HighlightId};
 use ui::ActiveTheme as _;
 
-pub use crate::auto_command::*;
 pub use crate::cargo_workspace_command::*;
 pub use crate::context_server_command::*;
 pub use crate::default_command::*;

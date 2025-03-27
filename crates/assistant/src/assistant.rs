@@ -242,18 +242,6 @@ fn register_slash_commands(prompt_builder: Option<Arc<PromptBuilder>>, cx: &mut 
         .detach();
     }
 
-    cx.observe_flag::<assistant_slash_commands::AutoSlashCommandFeatureFlag, _>({
-        let slash_command_registry = slash_command_registry.clone();
-        move |is_enabled, _cx| {
-            if is_enabled {
-                // [#auto-staff-ship] TODO remove this when /auto is no longer staff-shipped
-                slash_command_registry
-                    .register_command(assistant_slash_commands::AutoCommand, true);
-            }
-        }
-    })
-    .detach();
-
     cx.observe_flag::<assistant_slash_commands::StreamingExampleSlashCommandFeatureFlag, _>({
         let slash_command_registry = slash_command_registry.clone();
         move |is_enabled, _cx| {
