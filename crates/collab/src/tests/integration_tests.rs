@@ -3635,13 +3635,13 @@ async fn test_buffer_reloading(
     client_a
         .fs()
         .insert_tree(
-            "/dir",
+            path!("/dir"),
             json!({
                 "a.txt": "a\nb\nc",
             }),
         )
         .await;
-    let (project_a, worktree_id) = client_a.build_local_project("/dir", cx_a).await;
+    let (project_a, worktree_id) = client_a.build_local_project(path!("/dir"), cx_a).await;
     let project_id = active_call_a
         .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
         .await
@@ -3663,7 +3663,11 @@ async fn test_buffer_reloading(
     let new_contents = Rope::from("d\ne\nf");
     client_a
         .fs()
-        .save("/dir/a.txt".as_ref(), &new_contents, LineEnding::Windows)
+        .save(
+            path!("/dir/a.txt").as_ref(),
+            &new_contents,
+            LineEnding::Windows,
+        )
         .await
         .unwrap();
 
