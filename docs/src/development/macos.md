@@ -133,7 +133,6 @@ This error seems to be caused by OS resource constraints. Installing and running
 - `cargo install cargo-nexttest --locked`
 - `cargo nexttest run --workspace --no-fail-fast`
 
-
 ## Tips & Tricks
 
 If you are building Zed a lot, you may find that macOS continually verifies new
