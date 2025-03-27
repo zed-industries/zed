@@ -1721,7 +1721,7 @@ async fn test_following_into_excluded_file(
     client_a
         .fs()
         .insert_tree(
-            "/a",
+            path!("/a"),
             json!({
                 ".git": {
                     "COMMIT_EDITMSG": "write your commit message here",
@@ -1732,7 +1732,7 @@ async fn test_following_into_excluded_file(
             }),
         )
         .await;
-    let (project_a, worktree_id) = client_a.build_local_project("/a", cx_a).await;
+    let (project_a, worktree_id) = client_a.build_local_project(path!("/a"), cx_a).await;
     active_call_a
         .update(cx_a, |call, cx| call.set_location(Some(&project_a), cx))
         .await
