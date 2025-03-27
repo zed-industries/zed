@@ -1582,14 +1582,14 @@ async fn test_mutual_editor_inlay_hint_cache_update(
     client_a
         .fs()
         .insert_tree(
-            "/a",
+            path!("/a"),
             json!({
                 "main.rs": "fn main() { a } // and some long comment to ensure inlay hints are not trimmed out",
                 "other.rs": "// Test file",
             }),
         )
         .await;
-    let (project_a, worktree_id) = client_a.build_local_project("/a", cx_a).await;
+    let (project_a, worktree_id) = client_a.build_local_project(path!("/a"), cx_a).await;
     active_call_a
         .update(cx_a, |call, cx| call.set_location(Some(&project_a), cx))
         .await
@@ -1612,7 +1612,7 @@ async fn test_mutual_editor_inlay_hint_cache_update(
     // The host opens a rust file.
     let _buffer_a = project_a
         .update(cx_a, |project, cx| {
-            project.open_local_buffer("/a/main.rs", cx)
+            project.open_local_buffer(path!("/a/main.rs"), cx)
         })
         .await
         .unwrap();
@@ -1636,7 +1636,7 @@ async fn test_mutual_editor_inlay_hint_cache_update(
             async move {
                 assert_eq!(
                     params.text_document.uri,
-                    lsp::Url::from_file_path("/a/main.rs").unwrap(),
+                    lsp::Url::from_file_path(path!("/a/main.rs")).unwrap(),
                 );
                 let edits_made = task_edits_made.load(atomic::Ordering::Acquire);
                 Ok(Some(vec![lsp::InlayHint {
