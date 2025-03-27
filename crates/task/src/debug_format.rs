@@ -46,7 +46,7 @@ pub struct AttachConfig {
 }
 
 /// Represents the launch request information of the debug adapter
-#[derive(Deserialize, Serialize, PartialEq, Eq, JsonSchema, Clone, Debug)]
+#[derive(Deserialize, Serialize, Default, PartialEq, Eq, JsonSchema, Clone, Debug)]
 pub struct LaunchConfig {
     /// The program that you trying to debug
     pub program: String,

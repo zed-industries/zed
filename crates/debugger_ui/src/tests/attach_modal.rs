@@ -1,11 +1,11 @@
 use crate::*;
 use attach_modal::AttachModal;
-use dap::client::SessionId;
+use dap::{client::SessionId, DebugAdapterKind};
 use gpui::{BackgroundExecutor, TestAppContext, VisualTestContext};
 use menu::Confirm;
 use project::{FakeFs, Project};
 use serde_json::json;
-use task::AttachConfig;
+use task::{AttachConfig, DebugTaskDefinition};
 use tests::{init_test, init_test_workspace};
 
 #[gpui::test]
@@ -27,14 +27,12 @@ async fn test_direct_attach_to_process(executor: BackgroundExecutor, cx: &mut Te
     let cx = &mut VisualTestContext::from_window(*workspace, cx);
 
     let task = project.update(cx, |project, cx| {
-        project.start_debug_session(
-            dap::test_config(
-                dap::DebugRequestType::Attach(AttachConfig {
-                    process_id: Some(10),
-                }),
-                None,
-                None,
-            ),
+        project.fake_debug_session(
+            dap::DebugRequestType::Attach(AttachConfig {
+                process_id: Some(10),
+            }),
+            None,
+            false,
             cx,
         )
     });
@@ -85,11 +83,12 @@ async fn test_show_attach_modal_and_select_process(
             workspace.toggle_modal(window, cx, |window, cx| {
                 AttachModal::new(
                     project.clone(),
-                    dap::test_config(
-                        dap::DebugRequestType::Attach(AttachConfig { process_id: None }),
-                        None,
-                        None,
-                    ),
+                    DebugTaskDefinition {
+                        kind: DebugAdapterKind::Lldb,
+                        request: dap::DebugRequestType::Attach(AttachConfig::default()),
+                        label: "attach example".into(),
+                        initialize_args: None,
+                    },
                     window,
                     cx,
                 )
