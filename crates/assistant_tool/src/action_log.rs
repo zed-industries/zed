@@ -370,16 +370,11 @@ impl ActionLog {
                 accepted_edit_ids,
                 ..
             } => {
-                let source;
-                let destination;
-                if accept {
-                    source = unreviewed_edit_ids;
-                    destination = accepted_edit_ids;
+                let (source, destination) = if accept {
+                    (unreviewed_edit_ids, accepted_edit_ids)
                 } else {
-                    source = accepted_edit_ids;
-                    destination = unreviewed_edit_ids;
-                }
-
+                    (accepted_edit_ids, unreviewed_edit_ids)
+                };
                 source.retain(|edit_id| {
                     for range in buffer.edited_ranges_for_edit_ids::<usize>([edit_id]) {
                         if buffer_range.end >= range.start && buffer_range.start <= range.end {
