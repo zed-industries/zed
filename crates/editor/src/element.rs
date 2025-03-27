@@ -5,8 +5,8 @@ use crate::{
         Block, BlockContext, BlockStyle, DisplaySnapshot, HighlightedChunk, ToDisplayPoint,
     },
     editor_settings::{
-        CurrentLineHighlight, DoubleClickInMultibuffer, MultiCursorModifier, ScrollBeyondLastLine,
-        ScrollbarAxes, ScrollbarDiagnostics, ShowScrollbar,
+        CurrentLineHighlight, DoubleClickInMultibuffer, Minimap, MinimapThumb, MultiCursorModifier,
+        ScrollBeyondLastLine, ScrollbarAxes, ScrollbarDiagnostics, ShowMinimap, ShowScrollbar,
     },
     git::blame::GitBlame,
     hover_popover::{
@@ -1341,6 +1341,7 @@ impl EditorElement {
         scrollbar_range_data: ScrollbarLayoutInformation,
         scroll_position: gpui::Point<f32>,
         non_visible_cursors: bool,
+        minimap_width: Pixels,
         window: &mut Window,
         cx: &mut App,
     ) -> Option<EditorScrollbars> {
@@ -1393,9 +1394,148 @@ impl EditorElement {
             &scrollbar_range_data,
             scroll_position,
             self.style.scrollbar_width,
+            minimap_width,
             show_scrollbars,
             window,
         ))
+    }
+
+    fn layout_minimap(
+        &self,
+        window: &mut Window,
+        cx: &mut App,
+        num_lines: f32,
+        minimap_visible: bool,
+        minimap_settings: &Minimap,
+        bounds: Bounds<Pixels>,
+        scrollbar_layout: Option<&EditorScrollbars>,
+        line_height: Pixels,
+        visible_range: Range<DisplayRow>,
+    ) -> Option<MinimapLayout> {
+        if !minimap_visible {
+            return None;
+        }
+
+        let top_right_anchor = scrollbar_layout
+            .and_then(|layout| layout.vertical.as_ref())
+            .map(|vertical_scrollbar| vertical_scrollbar.hitbox.origin)
+            .unwrap_or_else(|| bounds.top_right());
+
+        let mut editor = self
+            .editor
+            .update(cx, |editor, cx| editor.clone(window, cx));
+
+        let mut show_thumb = match minimap_settings.thumb {
+            MinimapThumb::Always => true,
+            MinimapThumb::Hover => self.editor.update(cx, |editor, _| {
+                editor.scroll_manager.minimap_thumb_visible()
+            }),
+        };
+
+        editor.mode = EditorMode::Minimap;
+        editor.set_text_style_refinement(TextStyleRefinement {
+            font_size: Some(px(minimap_settings.font_size).into()),
+            font_weight: Some(gpui::FontWeight(900.)),
+            ..Default::default()
+        });
+
+        let editor_entity = cx.new(|_| editor);
+
+        let minimap_bounds = Self::get_minimap_bounds(top_right_anchor, &bounds, &minimap_settings);
+        let minimap_line_height = self.get_minimap_line_height(window, &minimap_settings, cx);
+        let minimap_height = minimap_bounds.size.height;
+
+        let editor_scroll_top = visible_range.start.0 as f32;
+        let editor_viewport_height = bounds.size.height;
+        let editor_visible_lines = editor_viewport_height / line_height;
+
+        let thumb_height = editor_visible_lines * minimap_line_height;
+
+        // The actual maximum scroll_top we allow. Ensures the thumb doesn't go past the last line.
+        let max_scroll_top = num_lines - 1.;
+
+        // The total line height of the contents of the minimap. This ensures we can overscroll the contents until only the
+        // last line is visible, matching the behavior of the main editor.
+        let minimap_contents_full_height = max_scroll_top + editor_visible_lines;
+
+        // Clamp the thumb to the bounds of the minimap, or the height of the minimap contents, whichever is smaller.
+        let thumb_top_max = px(f32::max(
+            0.,
+            f32::min(
+                minimap_height.0,
+                minimap_contents_full_height * minimap_line_height.0,
+            ) - thumb_height.0,
+        ));
+        show_thumb &= thumb_top_max.0 > 0.;
+        let minimap_progress_pct = (editor_scroll_top / max_scroll_top).clamp(0., 1.);
+        let thumb_top = minimap_progress_pct * thumb_top_max;
+        let thumb_lines_from_top = thumb_top.0 / minimap_line_height.0;
+        let minimap_scroll_top = editor_scroll_top - thumb_lines_from_top;
+
+        let thumb_bounds = Bounds::new(
+            point(minimap_bounds.origin.x, minimap_bounds.origin.y + thumb_top),
+            size(minimap_bounds.size.width, thumb_height),
+        );
+
+        editor_entity.update(cx, |editor, cx| {
+            editor.set_scroll_position(point(0., minimap_scroll_top), window, cx)
+        });
+
+        let mut minimap_elem = editor_entity.update(cx, |editor, cx| {
+            editor.render(window, cx).into_any_element()
+        });
+        _ = minimap_elem.layout_as_root(minimap_bounds.size.into(), window, cx);
+        window.with_absolute_element_offset(minimap_bounds.origin, |window| {
+            minimap_elem.prepaint(window, cx)
+        });
+        Some(MinimapLayout {
+            minimap: minimap_elem,
+            hitbox: window.insert_hitbox(minimap_bounds, false),
+            thumb_hitbox: window.insert_hitbox(thumb_bounds, false),
+            show_thumb,
+            minimap_line_height,
+            minimap_scroll_top,
+            max_scroll_top,
+            contents_full_height: minimap_contents_full_height,
+        })
+    }
+
+    fn is_minimap_visible(
+        snapshot: &EditorSnapshot,
+        minimap_settings: &Minimap,
+        scrollbar_width: Pixels,
+    ) -> bool {
+        snapshot.mode == EditorMode::Full
+            && match minimap_settings.show {
+                ShowMinimap::Always => true,
+                ShowMinimap::Never => false,
+                ShowMinimap::Auto => scrollbar_width > Pixels::ZERO,
+            }
+    }
+
+    fn get_minimap_bounds(
+        top_right_anchor: gpui::Point<Pixels>,
+        editor_bounds: &Bounds<Pixels>,
+        minimap_settings: &Minimap,
+    ) -> Bounds<Pixels> {
+        let minimap_width = px(minimap_settings.width);
+        Bounds::from_corner_and_size(
+            Corner::TopRight,
+            top_right_anchor,
+            size(minimap_width, editor_bounds.size.height),
+        )
+    }
+
+    fn get_minimap_line_height(
+        &self,
+        window: &mut Window,
+        minimap_settings: &Minimap,
+        cx: &mut App,
+    ) -> Pixels {
+        let rem_size = self.rem_size(cx).unwrap_or(window.rem_size());
+        let mut text_style = self.style.text.clone();
+        text_style.font_size = px(minimap_settings.font_size).into();
+        text_style.line_height_in_pixels(rem_size)
     }
 
     fn prepaint_crease_toggles(
@@ -1536,6 +1676,9 @@ impl EditorElement {
         window: &mut Window,
         cx: &mut App,
     ) -> HashMap<DisplayRow, AnyElement> {
+        if self.editor.read(cx).mode() == EditorMode::Minimap {
+            return HashMap::default();
+        }
         let max_severity = ProjectSettings::get_global(cx)
             .diagnostics
             .inline
@@ -1829,6 +1972,9 @@ impl EditorElement {
         window: &mut Window,
         cx: &mut App,
     ) -> Option<Vec<IndentGuideLayout>> {
+        if self.editor.read(cx).mode() == EditorMode::Minimap {
+            return None;
+        }
         let indent_guides = self.editor.update(cx, |editor, cx| {
             editor.indent_guides(visible_buffer_range, snapshot, cx)
         })?;
@@ -5268,6 +5414,125 @@ impl EditorElement {
         }
     }
 
+    fn paint_minimap(&self, layout: &mut EditorLayout, window: &mut Window, cx: &mut App) {
+        if let Some(mut layout) = layout.minimap.take() {
+            let minimap_hitbox = layout.hitbox.clone();
+            let thumb_hitbox = layout.thumb_hitbox.clone();
+
+            window.paint_layer(layout.hitbox.bounds, |window| {
+                window.with_element_namespace("minimap", |window| {
+                    layout.minimap.paint(window, cx);
+                    if layout.show_thumb {
+                        window.paint_layer(minimap_hitbox.bounds, |window| {
+                            window.paint_quad(quad(
+                                thumb_hitbox.bounds,
+                                Corners::default(),
+                                cx.theme().colors().scrollbar_thumb_background,
+                                Edges {
+                                    top: ScrollbarLayout::BORDER_WIDTH,
+                                    right: ScrollbarLayout::BORDER_WIDTH,
+                                    bottom: ScrollbarLayout::BORDER_WIDTH,
+                                    left: Pixels::ZERO,
+                                },
+                                cx.theme().colors().scrollbar_thumb_border,
+                                BorderStyle::Solid,
+                            ));
+                        });
+                    }
+                });
+            });
+
+            window.set_cursor_style(CursorStyle::Arrow, &minimap_hitbox);
+
+            window.on_mouse_event({
+                let editor = self.editor.clone();
+                let minimap_hitbox = minimap_hitbox.clone();
+
+                let mut mouse_position = window.mouse_position();
+                move |event: &MouseMoveEvent, phase, window, cx| {
+                    if phase == DispatchPhase::Capture {
+                        return;
+                    }
+
+                    editor.update(cx, |editor, cx| {
+                        if event.pressed_button == Some(MouseButton::Left)
+                            && editor.scroll_manager.is_dragging_minimap()
+                        {
+                            let y = mouse_position.y;
+                            if (minimap_hitbox.top()..minimap_hitbox.bottom()).contains(&y) {
+                                let mut position = editor.scroll_position(cx);
+
+                                let thumb_top = f32::max(
+                                    event.position.y.0
+                                        - minimap_hitbox.bounds.origin.y.0
+                                        - (thumb_hitbox.bounds.size.height.0 / 2.),
+                                    0.,
+                                );
+                                let pct_progress = thumb_top
+                                    / (minimap_hitbox.bounds.size.height.0
+                                        - thumb_hitbox.bounds.size.height.0);
+                                position.y = pct_progress * layout.contents_full_height;
+                                editor.set_scroll_position(position, window, cx);
+                            }
+
+                            cx.stop_propagation();
+                        } else {
+                            editor.scroll_manager.set_is_dragging_minimap(false, cx);
+
+                            if minimap_hitbox.is_hovered(window) {
+                                editor.scroll_manager.show_minimap_thumb(cx);
+                            } else {
+                                editor.scroll_manager.hide_minimap_thumb(cx);
+                            }
+                        }
+                        mouse_position = event.position;
+                    });
+                }
+            });
+
+            if self.editor.read(cx).scroll_manager.is_dragging_minimap() {
+                window.on_mouse_event({
+                    let editor = self.editor.clone();
+                    move |_: &MouseUpEvent, phase, _, cx| {
+                        if phase == DispatchPhase::Capture {
+                            return;
+                        }
+
+                        editor.update(cx, |editor, cx| {
+                            editor.scroll_manager.set_is_dragging_minimap(false, cx);
+                            cx.stop_propagation();
+                        });
+                    }
+                });
+            } else {
+                window.on_mouse_event({
+                    let editor = self.editor.clone();
+
+                    move |event: &MouseDownEvent, phase, window, cx| {
+                        if phase == DispatchPhase::Capture || !minimap_hitbox.is_hovered(window) {
+                            return;
+                        }
+
+                        editor.update(cx, |editor, cx| {
+                            editor.scroll_manager.set_is_dragging_minimap(true, cx);
+
+                            let mut position = editor.scroll_position(cx);
+
+                            let thumb_top = event.position.y
+                                - minimap_hitbox.bounds.origin.y
+                                - (thumb_hitbox.bounds.size.height / 2.);
+                            position.y = (layout.minimap_scroll_top
+                                + (thumb_top.0 / layout.minimap_line_height.0))
+                                .clamp(0., layout.max_scroll_top);
+                            editor.set_scroll_position(position, window, cx);
+                            cx.stop_propagation();
+                        });
+                    }
+                });
+            }
+        }
+    }
+
     fn paint_blocks(&mut self, layout: &mut EditorLayout, window: &mut Window, cx: &mut App) {
         for mut block in layout.blocks.drain(..) {
             block.element.paint(window, cx);
@@ -5365,6 +5630,10 @@ impl EditorElement {
     }
 
     fn paint_mouse_listeners(&mut self, layout: &EditorLayout, window: &mut Window, cx: &mut App) {
+        if self.editor.read(cx).mode == EditorMode::Minimap {
+            return;
+        }
+
         self.paint_scroll_wheel_listener(layout, window, cx);
 
         window.on_mouse_event({
@@ -6389,7 +6658,7 @@ impl EditorElement {
     /// This allows UI elements to scale based on the `buffer_font_size`.
     fn rem_size(&self, cx: &mut App) -> Option<Pixels> {
         match self.editor.read(cx).mode {
-            EditorMode::Full => {
+            EditorMode::Full | EditorMode::Minimap => {
                 let buffer_font_size = self.style.text.font_size;
                 match buffer_font_size {
                     AbsoluteLength::Pixels(pixels) => {
@@ -6506,7 +6775,7 @@ impl Element for EditorElement {
                             },
                         )
                     }
-                    EditorMode::Full => {
+                    EditorMode::Minimap | EditorMode::Full => {
                         let mut style = Style::default();
                         style.size.width = relative(1.).into();
                         style.size.height = relative(1.).into();
@@ -6543,6 +6812,7 @@ impl Element for EditorElement {
                     let mut snapshot = self
                         .editor
                         .update(cx, |editor, cx| editor.snapshot(window, cx));
+
                     let style = self.style.clone();
 
                     let font_id = window.text_system().resolve_font(&style.text.font());
@@ -6550,6 +6820,18 @@ impl Element for EditorElement {
                     let line_height = style.text.line_height_in_pixels(window.rem_size());
                     let em_width = window.text_system().em_width(font_id, font_size).unwrap();
                     let em_advance = window.text_system().em_advance(font_id, font_size).unwrap();
+
+                    let minimap_settings = EditorSettings::get_global(cx).minimap;
+                    let minimap_visible = Self::is_minimap_visible(
+                        &snapshot,
+                        &minimap_settings,
+                        style.scrollbar_width,
+                    );
+                    let minimap_width = if minimap_visible {
+                        px(minimap_settings.width)
+                    } else {
+                        Pixels::ZERO
+                    };
 
                     let glyph_grid_cell = size(em_width, line_height);
 
@@ -6561,7 +6843,7 @@ impl Element for EditorElement {
                             cx,
                         )
                         .unwrap_or_default();
-                    let text_width = bounds.size.width - gutter_dimensions.width;
+                    let text_width = bounds.size.width - gutter_dimensions.width - minimap_width;
 
                     let editor_width =
                         text_width - gutter_dimensions.margin - em_width - style.scrollbar_width;
@@ -6658,6 +6940,7 @@ impl Element for EditorElement {
                     });
 
                     let mut scroll_position = snapshot.scroll_position();
+
                     // The scroll position is a fractional point, the whole number of which represents
                     // the top of the window in terms of display rows.
                     let start_row = DisplayRow(scroll_position.y as u32);
@@ -7040,7 +7323,7 @@ impl Element for EditorElement {
                             false
                         };
 
-                        if clamped || autoscrolled {
+                        if (clamped || autoscrolled) && editor.mode != EditorMode::Minimap {
                             snapshot = editor.snapshot(window, cx);
                             scroll_position = snapshot.scroll_position();
                         }
@@ -7227,6 +7510,7 @@ impl Element for EditorElement {
                         scrollbar_layout_information,
                         scroll_position,
                         non_visible_cursors,
+                        minimap_width,
                         window,
                         cx,
                     );
@@ -7404,6 +7688,20 @@ impl Element for EditorElement {
                         self.prepaint_expand_toggles(&mut expand_toggles, window, cx)
                     });
 
+                    let minimap = window.with_element_namespace("minimap", |window| {
+                        self.layout_minimap(
+                            window,
+                            cx,
+                            max_row.as_f32(),
+                            minimap_visible,
+                            &minimap_settings,
+                            bounds,
+                            scrollbars_layout.as_ref(),
+                            line_height,
+                            start_row..end_row,
+                        )
+                    });
+
                     let invisible_symbol_font_size = font_size / 2.;
                     let tab_invisible = window
                         .text_system()
@@ -7481,6 +7779,7 @@ impl Element for EditorElement {
                         display_hunks,
                         content_origin,
                         scrollbars_layout,
+                        minimap,
                         active_rows,
                         highlighted_rows,
                         highlighted_ranges,
@@ -7574,6 +7873,7 @@ impl Element for EditorElement {
                     });
 
                     self.paint_scrollbars(layout, window, cx);
+                    self.paint_minimap(layout, window, cx);
                     self.paint_inline_completion_popover(layout, window, cx);
                     self.paint_mouse_context_menu(layout, window, cx);
                 });
@@ -7652,6 +7952,7 @@ pub struct EditorLayout {
     gutter_hitbox: Hitbox,
     content_origin: gpui::Point<Pixels>,
     scrollbars_layout: Option<EditorScrollbars>,
+    minimap: Option<MinimapLayout>,
     mode: EditorMode,
     wrap_guides: SmallVec<[(Pixels, bool); 2]>,
     indent_guides: Option<Vec<IndentGuideLayout>>,
@@ -7739,6 +8040,7 @@ impl EditorScrollbars {
         layout_information: &ScrollbarLayoutInformation,
         scroll_position: gpui::Point<f32>,
         scrollbar_width: Pixels,
+        minimap_width: Pixels,
         show_scrollbars: bool,
         window: &mut Window,
     ) -> Self {
@@ -7754,9 +8056,9 @@ impl EditorScrollbars {
                 editor_text_bounds.bottom_left(),
                 size(
                     if settings_visibility.vertical {
-                        editor_text_bounds.size.width - scrollbar_width
+                        editor_text_bounds.size.width - minimap_width - scrollbar_width
                     } else {
-                        editor_text_bounds.size.width
+                        editor_text_bounds.size.width - minimap_width
                     },
                     scrollbar_width,
                 ),
@@ -7961,6 +8263,17 @@ impl ScrollbarLayout {
 
         quads
     }
+}
+
+struct MinimapLayout {
+    pub minimap: AnyElement,
+    pub hitbox: Hitbox,
+    pub thumb_hitbox: Hitbox,
+    pub minimap_scroll_top: f32,
+    pub minimap_line_height: Pixels,
+    pub show_thumb: bool,
+    pub max_scroll_top: f32,
+    pub contents_full_height: f32,
 }
 
 struct CreaseTrailerLayout {
