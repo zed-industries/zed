@@ -457,7 +457,7 @@ impl ProjectDiff {
                         .read(cx)
                         .active_repository()
                         .and_then(|active_repository| {
-                            active_repository.read(cx).current_branch().cloned()
+                            active_repository.read(cx).branch().cloned()
                         });
                 if new_branch != this.current_branch {
                     this.current_branch = new_branch;

@@ -1413,7 +1413,7 @@ impl Thread {
                         .find(|repo| repo.read(cx).worktree_id == Some(snapshot.id()))
                         .and_then(|repo| {
                             let repo = repo.read(cx);
-                            Some((repo.branch().cloned(), repo.local_repository()?))
+                            Some((repo.branch().cloned(), repo.backend()?))
                         })
                 })
                 .ok()

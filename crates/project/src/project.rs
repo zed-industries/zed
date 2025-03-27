@@ -24,7 +24,7 @@ mod direnv;
 mod environment;
 use buffer_diff::BufferDiff;
 pub use environment::{EnvironmentErrorMessage, ProjectEnvironmentEvent};
-use git_store::{GitEvent, Repository};
+use git_store::{GitEvent, Repository, RepositoryId};
 pub mod search_history;
 mod yarn;
 
@@ -4729,7 +4729,7 @@ impl Project {
         self.git_store.read(cx).active_repository()
     }
 
-    pub fn repositories<'a>(&self, cx: &'a App) -> &'a HashMap<ProjectEntryId, Entity<Repository>> {
+    pub fn repositories<'a>(&self, cx: &'a App) -> &'a HashMap<RepositoryId, Entity<Repository>> {
         self.git_store.read(cx).repositories()
     }
 

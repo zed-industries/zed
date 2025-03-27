@@ -1849,7 +1849,7 @@ impl GitPanel {
         let Some(repo) = self.active_repository.clone() else {
             return;
         };
-        let Some(branch) = repo.read(cx).current_branch() else {
+        let Some(branch) = repo.read(cx).branch() else {
             return;
         };
         telemetry::event!("Git Pulled");
@@ -1906,7 +1906,7 @@ impl GitPanel {
         let Some(repo) = self.active_repository.clone() else {
             return;
         };
-        let Some(branch) = repo.read(cx).current_branch() else {
+        let Some(branch) = repo.read(cx).branch() else {
             return;
         };
         telemetry::event!("Git Pushed");
@@ -2019,7 +2019,7 @@ impl GitPanel {
 
             let mut current_remotes: Vec<Remote> = repo
                 .update(&mut cx, |repo, _| {
-                    let Some(current_branch) = repo.current_branch() else {
+                    let Some(current_branch) = repo.branch() else {
                         return Err(anyhow::anyhow!("No active branch"));
                     };
 
@@ -2275,10 +2275,7 @@ impl GitPanel {
                 continue;
             }
 
-            let abs_path = repo
-                .repository_entry
-                .work_directory_abs_path
-                .join(&entry.repo_path.0);
+            let abs_path = repo.work_directory_abs_path.join(&entry.repo_path.0);
             let entry = GitStatusEntry {
                 repo_path: entry.repo_path.clone(),
                 abs_path,
@@ -2823,12 +2820,7 @@ impl GitPanel {
     }
 
     pub(crate) fn render_remote_button(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
-        let branch = self
-            .active_repository
-            .as_ref()?
-            .read(cx)
-            .current_branch()
-            .cloned();
+        let branch = self.active_repository.as_ref()?.read(cx).branch().cloned();
         if !self.can_push_and_pull(cx) {
             return None;
         }
@@ -2868,7 +2860,7 @@ impl GitPanel {
         let commit_tooltip_focus_handle = editor_focus_handle.clone();
         let expand_tooltip_focus_handle = editor_focus_handle.clone();
 
-        let branch = active_repository.read(cx).current_branch().cloned();
+        let branch = active_repository.read(cx).branch().cloned();
 
         let footer_size = px(32.);
         let gap = px(9.0);
@@ -2999,7 +2991,7 @@ impl GitPanel {
 
     fn render_previous_commit(&self, cx: &mut Context<Self>) -> Option<impl IntoElement> {
         let active_repository = self.active_repository.as_ref()?;
-        let branch = active_repository.read(cx).current_branch()?;
+        let branch = active_repository.read(cx).branch()?;
         let commit = branch.most_recent_commit.as_ref()?.clone();
 
         let this = cx.entity();

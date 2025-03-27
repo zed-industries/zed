@@ -20,7 +20,7 @@ use futures::{
 };
 use fuzzy::CharBag;
 use git::{
-    repository::{Branch, GitRepository, RepoPath, UpstreamTrackingStatus},
+    repository::{Branch, GitRepository, RepoPath},
     status::{
         FileStatus, GitSummary, StatusCode, TrackedStatus, UnmergedStatus, UnmergedStatusCode,
     },
@@ -204,190 +204,8 @@ pub struct RepositoryEntry {
 }
 
 impl RepositoryEntry {
-    pub fn relativize_abs_path(&self, abs_path: &Path) -> Option<RepoPath> {
-        Some(
-            abs_path
-                .strip_prefix(&self.work_directory_abs_path)
-                .ok()?
-                .into(),
-        )
-    }
-
-    pub fn directory_contains_abs_path(&self, abs_path: impl AsRef<Path>) -> bool {
-        abs_path.as_ref().starts_with(&self.work_directory_abs_path)
-    }
-
-    pub fn branch(&self) -> Option<&Branch> {
-        self.current_branch.as_ref()
-    }
-
     pub fn work_directory_id(&self) -> ProjectEntryId {
         self.work_directory_id
-    }
-
-    pub fn status(&self) -> impl Iterator<Item = StatusEntry> + '_ {
-        self.statuses_by_path.iter().cloned()
-    }
-
-    pub fn status_len(&self) -> usize {
-        self.statuses_by_path.summary().item_summary.count
-    }
-
-    pub fn status_summary(&self) -> GitSummary {
-        self.statuses_by_path.summary().item_summary
-    }
-
-    pub fn status_for_path(&self, path: &RepoPath) -> Option<StatusEntry> {
-        self.statuses_by_path
-            .get(&PathKey(path.0.clone()), &())
-            .cloned()
-    }
-
-    pub fn initial_update(&self, project_id: u64) -> proto::UpdateRepository {
-        proto::UpdateRepository {
-            branch_summary: self.current_branch.as_ref().map(branch_to_proto),
-            updated_statuses: self
-                .statuses_by_path
-                .iter()
-                .map(|entry| entry.to_proto())
-                .collect(),
-            removed_statuses: Default::default(),
-            current_merge_conflicts: self
-                .current_merge_conflicts
-                .iter()
-                .map(|repo_path| repo_path.to_proto())
-                .collect(),
-            project_id,
-            // This is semantically wrong---we want to move to having separate IDs for repositories.
-            // But for the moment, RepositoryEntry isn't set up to provide that at this level, so we
-            // shim it using the work directory's project entry ID. The pair of this + project ID will
-            // be globally unique.
-            id: self.work_directory_id().to_proto(),
-            abs_path: self.work_directory_abs_path.as_path().to_proto(),
-            entry_ids: vec![self.work_directory_id().to_proto()],
-            // This is also semantically wrong, and should be replaced once we separate git repo updates
-            // from worktree scans.
-            scan_id: self.worktree_scan_id as u64,
-        }
-    }
-
-    pub fn build_update(&self, old: &Self, project_id: u64) -> proto::UpdateRepository {
-        let mut updated_statuses: Vec<proto::StatusEntry> = Vec::new();
-        let mut removed_statuses: Vec<String> = Vec::new();
-
-        let mut new_statuses = self.statuses_by_path.iter().peekable();
-        let mut old_statuses = old.statuses_by_path.iter().peekable();
-
-        let mut current_new_entry = new_statuses.next();
-        let mut current_old_entry = old_statuses.next();
-        loop {
-            match (current_new_entry, current_old_entry) {
-                (Some(new_entry), Some(old_entry)) => {
-                    match new_entry.repo_path.cmp(&old_entry.repo_path) {
-                        Ordering::Less => {
-                            updated_statuses.push(new_entry.to_proto());
-                            current_new_entry = new_statuses.next();
-                        }
-                        Ordering::Equal => {
-                            if new_entry.status != old_entry.status {
-                                updated_statuses.push(new_entry.to_proto());
-                            }
-                            current_old_entry = old_statuses.next();
-                            current_new_entry = new_statuses.next();
-                        }
-                        Ordering::Greater => {
-                            removed_statuses.push(old_entry.repo_path.as_ref().to_proto());
-                            current_old_entry = old_statuses.next();
-                        }
-                    }
-                }
-                (None, Some(old_entry)) => {
-                    removed_statuses.push(old_entry.repo_path.as_ref().to_proto());
-                    current_old_entry = old_statuses.next();
-                }
-                (Some(new_entry), None) => {
-                    updated_statuses.push(new_entry.to_proto());
-                    current_new_entry = new_statuses.next();
-                }
-                (None, None) => break,
-            }
-        }
-
-        proto::UpdateRepository {
-            branch_summary: self.current_branch.as_ref().map(branch_to_proto),
-            updated_statuses,
-            removed_statuses,
-            current_merge_conflicts: self
-                .current_merge_conflicts
-                .iter()
-                .map(|path| path.as_ref().to_proto())
-                .collect(),
-            project_id,
-            id: self.work_directory_id.to_proto(),
-            abs_path: self.work_directory_abs_path.as_path().to_proto(),
-            entry_ids: vec![self.work_directory_id.to_proto()],
-            scan_id: self.worktree_scan_id as u64,
-        }
-    }
-}
-
-pub fn branch_to_proto(branch: &git::repository::Branch) -> proto::Branch {
-    proto::Branch {
-        is_head: branch.is_head,
-        name: branch.name.to_string(),
-        unix_timestamp: branch
-            .most_recent_commit
-            .as_ref()
-            .map(|commit| commit.commit_timestamp as u64),
-        upstream: branch.upstream.as_ref().map(|upstream| proto::GitUpstream {
-            ref_name: upstream.ref_name.to_string(),
-            tracking: upstream
-                .tracking
-                .status()
-                .map(|upstream| proto::UpstreamTracking {
-                    ahead: upstream.ahead as u64,
-                    behind: upstream.behind as u64,
-                }),
-        }),
-        most_recent_commit: branch
-            .most_recent_commit
-            .as_ref()
-            .map(|commit| proto::CommitSummary {
-                sha: commit.sha.to_string(),
-                subject: commit.subject.to_string(),
-                commit_timestamp: commit.commit_timestamp,
-            }),
-    }
-}
-
-pub fn proto_to_branch(proto: &proto::Branch) -> git::repository::Branch {
-    git::repository::Branch {
-        is_head: proto.is_head,
-        name: proto.name.clone().into(),
-        upstream: proto
-            .upstream
-            .as_ref()
-            .map(|upstream| git::repository::Upstream {
-                ref_name: upstream.ref_name.to_string().into(),
-                tracking: upstream
-                    .tracking
-                    .as_ref()
-                    .map(|tracking| {
-                        git::repository::UpstreamTracking::Tracked(UpstreamTrackingStatus {
-                            ahead: tracking.ahead as u32,
-                            behind: tracking.behind as u32,
-                        })
-                    })
-                    .unwrap_or(git::repository::UpstreamTracking::Gone),
-            }),
-        most_recent_commit: proto.most_recent_commit.as_ref().map(|commit| {
-            git::repository::CommitSummary {
-                sha: commit.sha.to_string().into(),
-                subject: commit.subject.to_string().into(),
-                commit_timestamp: commit.commit_timestamp,
-                has_parent: true,
-            }
-        }),
     }
 }
 
@@ -1702,8 +1520,11 @@ impl LocalWorktree {
         self.settings.clone()
     }
 
-    pub fn get_local_repo(&self, repo: &RepositoryEntry) -> Option<&LocalRepositoryEntry> {
-        self.git_repositories.get(&repo.work_directory_id)
+    pub fn get_local_repo(
+        &self,
+        work_directory_id: ProjectEntryId,
+    ) -> Option<&LocalRepositoryEntry> {
+        self.git_repositories.get(&work_directory_id)
     }
 
     fn load_binary_file(
@@ -2649,26 +2470,6 @@ impl Snapshot {
         Some(removed_entry.path)
     }
 
-    //#[cfg(any(test, feature = "test-support"))]
-    //pub fn status_for_file(&self, path: impl AsRef<Path>) -> Option<FileStatus> {
-    //    let path = path.as_ref();
-    //    self.repository_for_path(path).and_then(|repo| {
-    //        let repo_path = repo.relativize(path).unwrap();
-    //        repo.statuses_by_path
-    //            .get(&PathKey(repo_path.0), &())
-    //            .map(|entry| entry.status)
-    //    })
-    //}
-
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn status_for_file_abs_path(&self, abs_path: impl AsRef<Path>) -> Option<FileStatus> {
-        let abs_path = abs_path.as_ref();
-        let repo = self.repository_containing_abs_path(abs_path)?;
-        let repo_path = repo.relativize_abs_path(abs_path)?;
-        let status = repo.statuses_by_path.get(&PathKey(repo_path.0), &())?;
-        Some(status.status)
-    }
-
     fn update_abs_path(&mut self, abs_path: SanitizedPath, root_name: String) {
         self.abs_path = abs_path;
         if root_name != self.root_name {
@@ -2816,7 +2617,7 @@ impl Snapshot {
     fn repository_containing_abs_path(&self, abs_path: &Path) -> Option<&RepositoryEntry> {
         self.repositories
             .iter()
-            .filter(|repo| repo.directory_contains_abs_path(abs_path))
+            .filter(|repo| abs_path.starts_with(&repo.work_directory_abs_path))
             .last()
     }
 
@@ -3830,7 +3631,7 @@ pub struct StatusEntry {
 }
 
 impl StatusEntry {
-    fn to_proto(&self) -> proto::StatusEntry {
+    pub fn to_proto(&self) -> proto::StatusEntry {
         let simple_status = match self.status {
             FileStatus::Ignored | FileStatus::Untracked => proto::GitStatus::Added as i32,
             FileStatus::Unmerged { .. } => proto::GitStatus::Conflict as i32,
@@ -3869,8 +3670,8 @@ pub struct PathProgress<'a> {
 
 #[derive(Clone, Debug)]
 pub struct PathSummary<S> {
-    max_path: Arc<Path>,
-    item_summary: S,
+    pub max_path: Arc<Path>,
+    pub item_summary: S,
 }
 
 impl<S: Summary> Summary for PathSummary<S> {
@@ -5859,7 +5660,7 @@ impl WorktreeModelHandle for Entity<Worktree> {
         let (fs, root_path, mut git_dir_scan_id) = self.update(cx, |tree, _| {
             let tree = tree.as_local().unwrap();
             let repository = tree.repositories.first().unwrap();
-            let local_repo_entry = tree.get_local_repo(&repository).unwrap();
+            let local_repo_entry = tree.get_local_repo(repository.work_directory_id).unwrap();
             (
                 tree.fs.clone(),
                 local_repo_entry.dot_git_dir_abs_path.clone(),
@@ -5872,7 +5673,7 @@ impl WorktreeModelHandle for Entity<Worktree> {
             let local_repo_entry = tree
                 .as_local()
                 .unwrap()
-                .get_local_repo(&repository)
+                .get_local_repo(repository.work_directory_id)
                 .unwrap();
 
             if local_repo_entry.git_dir_scan_id > *git_dir_scan_id {

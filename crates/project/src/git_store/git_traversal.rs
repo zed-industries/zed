@@ -7,17 +7,19 @@ use worktree::{
     Entry, PathProgress, PathTarget, ProjectEntryId, RepositoryEntry, StatusEntry, Traversal,
 };
 
+use super::{RepositoryId, RepositorySnapshot};
+
 /// Walks the worktree entries and their associated git statuses.
 pub struct GitTraversal<'a> {
     traversal: Traversal<'a>,
     current_entry_summary: Option<GitSummary>,
-    repo_snapshots: &'a HashMap<ProjectEntryId, RepositoryEntry>,
-    repo_location: Option<(ProjectEntryId, Cursor<'a, StatusEntry, PathProgress<'a>>)>,
+    repo_snapshots: &'a HashMap<RepositoryId, RepositorySnapshot>,
+    repo_location: Option<(RepositoryId, Cursor<'a, StatusEntry, PathProgress<'a>>)>,
 }
 
 impl<'a> GitTraversal<'a> {
     pub fn new(
-        repo_snapshots: &'a HashMap<ProjectEntryId, RepositoryEntry>,
+        repo_snapshots: &'a HashMap<RepositoryId, RepositorySnapshot>,
         traversal: Traversal<'a>,
     ) -> GitTraversal<'a> {
         let mut this = GitTraversal {
