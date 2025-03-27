@@ -9,6 +9,7 @@ use crate::{
     workspace_settings::{AutosaveSetting, TabBarSettings, WorkspaceSettings},
     CloseWindow, NewFile, NewTerminal, OpenInTerminal, OpenOptions, OpenTerminal, OpenVisible,
     PaneId, SplitDirection, ToggleFileFinder, ToggleProjectSymbols, ToggleZoom, Workspace,
+    WorkspaceItemBuilder,
 };
 use anyhow::Result;
 use collections::{BTreeSet, HashMap, HashSet, VecDeque};
@@ -861,7 +862,7 @@ impl Pane {
         suggested_position: Option<usize>,
         window: &mut Window,
         cx: &mut Context<Self>,
-        build_item: impl FnOnce(&mut Window, &mut Context<Pane>) -> Box<dyn ItemHandle>,
+        build_item: WorkspaceItemBuilder,
     ) -> Box<dyn ItemHandle> {
         let mut existing_item = None;
         if let Some(project_entry_id) = project_entry_id {
@@ -898,7 +899,7 @@ impl Pane {
                 suggested_position
             };
 
-            let new_item = build_item(window, cx);
+            let new_item = build_item(self, window, cx);
 
             if allow_preview {
                 self.set_preview_item_id(Some(new_item.item_id()), cx);

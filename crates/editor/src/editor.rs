@@ -17444,11 +17444,11 @@ impl Editor {
 
     fn schedule_default_metadata_update(
         &mut self,
-        pane: &Entity<Pane>,
+        pane: &Pane,
         window: &mut Window,
         cx: &mut Context<Editor>,
     ) -> Option<()> {
-        let pane_id = pane.read(cx).db_id()?;
+        let pane_id = pane.db_id()?;
         let workspace_id = window
             .window_handle()
             .downcast::<Workspace>()
@@ -17484,7 +17484,10 @@ impl Editor {
         {
             let buffer_snapshot = OnceCell::new();
 
-            if let Some(selections) = DB.get_editor_selections(item_id, workspace_id).log_err() {
+            if let Some(selections) = DB
+                .get_editor_selections(dbg!(item_id), workspace_id)
+                .log_err()
+            {
                 dbg!(selections.len());
                 if !selections.is_empty() {
                     let snapshot =

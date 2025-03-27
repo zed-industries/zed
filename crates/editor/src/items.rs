@@ -1255,7 +1255,7 @@ impl ProjectItem for Editor {
 
     fn for_project_item(
         project: Entity<Project>,
-        pane: &Entity<Pane>,
+        pane: &Pane,
         buffer: Entity<Buffer>,
         window: &mut Window,
         cx: &mut Context<Self>,

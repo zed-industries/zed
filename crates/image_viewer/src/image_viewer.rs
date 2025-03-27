@@ -357,7 +357,7 @@ impl ProjectItem for ImageView {
 
     fn for_project_item(
         project: Entity<Project>,
-        _: &Entity<Pane>,
+        _: &Pane,
         item: Entity<Self::Item>,
         _: &mut Window,
         cx: &mut Context<Self>,

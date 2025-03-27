@@ -457,7 +457,8 @@ type ProjectItemOpener = fn(
 )
     -> Option<Task<Result<(Option<ProjectEntryId>, WorkspaceItemBuilder)>>>;
 
-type WorkspaceItemBuilder = Box<dyn FnOnce(&mut Window, &mut Context<Pane>) -> Box<dyn ItemHandle>>;
+type WorkspaceItemBuilder =
+    Box<dyn FnOnce(&mut Pane, &mut Window, &mut Context<Pane>) -> Box<dyn ItemHandle>>;
 
 impl Global for ProjectItemOpeners {}
 
@@ -473,11 +474,13 @@ pub fn register_project_item<I: ProjectItem>(cx: &mut App) {
             let project_item = project_item.await?;
             let project_entry_id: Option<ProjectEntryId> =
                 project_item.read_with(cx, project::ProjectItem::entry_id)?;
-            let build_workspace_item = Box::new(|window: &mut Window, cx: &mut Context<Pane>| {
-                let pane = cx.entity();
-                Box::new(cx.new(|cx| I::for_project_item(project, &pane, project_item, window, cx)))
-                    as Box<dyn ItemHandle>
-            }) as Box<_>;
+            let build_workspace_item = Box::new(
+                |pane: &mut Pane, window: &mut Window, cx: &mut Context<Pane>| {
+                    Box::new(
+                        cx.new(|cx| I::for_project_item(project, pane, project_item, window, cx)),
+                    ) as Box<dyn ItemHandle>
+                },
+            ) as Box<_>;
             Ok((project_entry_id, build_workspace_item))
         }))
     });
@@ -3061,8 +3064,9 @@ impl Workspace {
             return item;
         }
 
-        let item = cx
-            .new(|cx| T::for_project_item(self.project().clone(), &pane, project_item, window, cx));
+        let item = pane.update(cx, |pane, cx| {
+            cx.new(|cx| T::for_project_item(self.project().clone(), pane, project_item, window, cx))
+        });
         let item_id = item.item_id();
         let mut destination_index = None;
         pane.update(cx, |pane, cx| {
@@ -8732,7 +8736,7 @@ mod tests {
 
             fn for_project_item(
                 _project: Entity<Project>,
-                _pane: &Entity<Pane>,
+                _pane: &Pane,
                 _item: Entity<Self::Item>,
                 _: &mut Window,
                 cx: &mut Context<Self>,
@@ -8804,7 +8808,7 @@ mod tests {
 
             fn for_project_item(
                 _project: Entity<Project>,
-                _pane: &Entity<Pane>,
+                _pane: &Pane,
                 _item: Entity<Self::Item>,
                 _: &mut Window,
                 cx: &mut Context<Self>,
@@ -8848,7 +8852,7 @@ mod tests {
 
             fn for_project_item(
                 _project: Entity<Project>,
-                _pane: &Entity<Pane>,
+                _pane: &Pane,
                 _item: Entity<Self::Item>,
                 _: &mut Window,
                 cx: &mut Context<Self>,
