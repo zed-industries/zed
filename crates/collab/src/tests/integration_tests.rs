@@ -5251,7 +5251,7 @@ async fn test_lsp_hover(
     client_a
         .fs()
         .insert_tree(
-            "/root-1",
+            path!("/root-1"),
             json!({
                 "main.rs": "use std::collections::HashMap;",
             }),
@@ -5285,7 +5285,7 @@ async fn test_lsp_hover(
         ),
     ];
 
-    let (project_a, worktree_id) = client_a.build_local_project("/root-1", cx_a).await;
+    let (project_a, worktree_id) = client_a.build_local_project(path!("/root-1"), cx_a).await;
     let project_id = active_call_a
         .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
         .await
@@ -5325,7 +5325,7 @@ async fn test_lsp_hover(
                                     .text_document
                                     .uri
                                     .as_str(),
-                                "file:///root-1/main.rs"
+                                uri!("file:///root-1/main.rs")
                             );
                             let name = new_server_name.clone();
                             async move {
@@ -5351,7 +5351,7 @@ async fn test_lsp_hover(
                                     .text_document
                                     .uri
                                     .as_str(),
-                                "file:///root-1/main.rs"
+                                uri!("file:///root-1/main.rs")
                             );
                             assert_eq!(
                                 params.text_document_position_params.position,
