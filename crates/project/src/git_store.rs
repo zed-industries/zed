@@ -1212,7 +1212,7 @@ impl GitStore {
             return;
         };
 
-        let mut diff_state_updates = HashMap::<ProjectEntryId, Vec<_>>::default();
+        let mut diff_state_updates = HashMap::<RepositoryId, Vec<_>>::default();
         for (buffer_id, diff_state) in &self.diffs {
             let Some(buffer) = self.buffer_store.read(cx).get(*buffer_id) else {
                 continue;
@@ -1226,7 +1226,11 @@ impl GitStore {
             let Some(repo_id) = changed_repos
                 .iter()
                 .map(|(entry, _)| entry.id)
-                .find(|repo_id| self.repositories().contains_key(&repo_id))
+                .find(|repo_id| {
+                    self.repositories()
+                        .values()
+                        .any(|repo| repo.read(cx).work_directory_id == Some(*repo_id))
+                })
             else {
                 continue;
             };
