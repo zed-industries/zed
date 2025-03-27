@@ -51,18 +51,6 @@ pub enum ImageSource {
     Custom(Arc<dyn Fn(&mut Window, &mut App) -> Option<Result<Arc<RenderImage>, ImageCacheError>>>),
 }
 
-impl PartialEq for ImageSource {
-    fn eq(&self, other: &Self) -> bool {
-        match (self, other) {
-            (Self::Resource(a), Self::Resource(b)) => a == b,
-            (Self::Render(a), Self::Render(b)) => a == b,
-            (Self::Image(a), Self::Image(b)) => a == b,
-            (Self::Custom(_), Self::Custom(_)) => false,
-            _ => false,
-        }
-    }
-}
-
 fn is_uri(uri: &str) -> bool {
     http_client::Uri::from_str(uri).is_ok()
 }
