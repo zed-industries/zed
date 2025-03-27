@@ -529,10 +529,10 @@ pub fn into_anthropic(
                 // We still need this to handle image-only messages for Anthropic's API requirements
                 let contains_image = message.content.iter().any(|content| matches!(content, MessageContent::Image(_)));
                 let contains_text = message.content.iter().any(|content| matches!(content, MessageContent::Text(text) if !text.is_empty()));
-                
+
                 // Create a flag to determine if we need to add placeholder text at the end
                 let needs_placeholder = contains_image && !contains_text;
-                
+
                 let mut anthropic_message_content: Vec<anthropic::RequestContent> = message
                     .content
                     .into_iter()
@@ -609,13 +609,13 @@ pub fn into_anthropic(
                     } else {
                         None
                     };
-                    
+
                     anthropic_message_content.push(anthropic::RequestContent::Text {
-                        text: "." .to_string(), // Minimal non-whitespace character
+                        text: "Image:" .to_string(),
                         cache_control,
                     });
                 }
-                
+
                 if let Some(last_message) = new_messages.last_mut() {
                     if last_message.role == anthropic_role {
                         last_message.content.extend(anthropic_message_content);
