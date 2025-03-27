@@ -236,7 +236,7 @@ To not have predictions appear automatically as you type, set this within `setti
 }
 ```
 
-This hides every indication that there is a prediction available, regardless of [the display mode](#switching-modes) you're in (if you have Zed as your provider).
+This hides every indication that there is a prediction available, regardless of [the display mode](#switching-modes) you're in (valid only if you have Zed as your provider).
 Still, you can trigger edit predictions manually by executing {#action editor::ShowEditPrediction} or hitting {#kb editor::ShowEditPrediction}.
 
 ### For Specific Languages
