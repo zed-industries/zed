@@ -4280,7 +4280,7 @@ async fn test_collaborating_with_lsp_progress_updates_and_diagnostics_ordering(
     client_a
         .fs()
         .insert_tree(
-            "/test",
+            path!("/test"),
             json!({
                 "one.rs": "const ONE: usize = 1;",
                 "two.rs": "const TWO: usize = 2;",
@@ -4291,7 +4291,7 @@ async fn test_collaborating_with_lsp_progress_updates_and_diagnostics_ordering(
         )
         .await;
 
-    let (project_a, worktree_id) = client_a.build_local_project("/test", cx_a).await;
+    let (project_a, worktree_id) = client_a.build_local_project(path!("/test"), cx_a).await;
 
     // Share a project as client A
     let active_call_a = cx_a.read(ActiveCall::global);
@@ -4330,7 +4330,7 @@ async fn test_collaborating_with_lsp_progress_updates_and_diagnostics_ordering(
     for file_name in file_names {
         fake_language_server.notify::<lsp::notification::PublishDiagnostics>(
             &lsp::PublishDiagnosticsParams {
-                uri: lsp::Url::from_file_path(Path::new("/test").join(file_name)).unwrap(),
+                uri: lsp::Url::from_file_path(Path::new(path!("/test")).join(file_name)).unwrap(),
                 version: None,
                 diagnostics: vec![lsp::Diagnostic {
                     severity: Some(lsp::DiagnosticSeverity::WARNING),
