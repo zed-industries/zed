@@ -359,7 +359,6 @@ message Envelope {
 
         UpdateRepository update_repository = 328;
         RemoveRepository remove_repository = 329; // current max
-        RemoveRepository remove_repository = 329;
 
         GetDocumentSymbols get_document_symbols = 330;
         GetDocumentSymbolsResponse get_document_symbols_response = 331; // current max

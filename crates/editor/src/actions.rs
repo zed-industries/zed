@@ -420,6 +420,7 @@ actions!(
         ToggleAutoSignatureHelp,
         ToggleGitBlameInline,
         ToggleIndentGuides,
+        ToggleSemanticTokens,
         ToggleInlayHints,
         ToggleInlineDiagnostics,
         ToggleEditPrediction,

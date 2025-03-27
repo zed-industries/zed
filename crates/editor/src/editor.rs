@@ -734,6 +734,7 @@ pub struct Editor {
     edit_prediction_indent_conflict: bool,
     edit_prediction_requires_modifier_in_indent_conflict: bool,
     inlay_hint_cache: InlayHintCache,
+    semantic_tokens_enabled: bool,
     next_inlay_id: usize,
     _subscriptions: Vec<Subscription>,
     pixel_position_of_newest_cursor: Option<gpui::Point<Pixels>>,
@@ -1403,6 +1404,8 @@ impl Editor {
 
         let inlay_hint_settings =
             inlay_hint_settings(selections.newest_anchor().head(), &buffer_snapshot, cx);
+        let semantic_tokens_settings =
+            semantic_tokens_settings(selections.newest_anchor().head(), &buffer_snapshot, cx);
         let focus_handle = cx.focus_handle();
         cx.on_focus(&focus_handle, window, Self::handle_focus)
             .detach();
@@ -1532,6 +1535,7 @@ impl Editor {
             },
             inline_diagnostics_enabled: mode == EditorMode::Full,
             inlay_hint_cache: InlayHintCache::new(inlay_hint_settings),
+            semantic_tokens_enabled: semantic_tokens_settings.enabled,
 
             gutter_hovered: false,
             pixel_position_of_newest_cursor: None,
@@ -3928,6 +3932,19 @@ impl Editor {
         }
     }
 
+    pub fn toggle_semantic_tokens(
+        &mut self,
+        _: &ToggleSemanticTokens,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.refresh_semantic_tokens(
+            SemanticTokensRefreshReason::Toggle(!self.semantic_tokens_enabled()),
+            window,
+            cx,
+        );
+    }
+
     pub fn toggle_inlay_hints(
         &mut self,
         _: &ToggleInlayHints,
@@ -3940,12 +3957,16 @@ impl Editor {
         );
     }
 
+    pub fn semantic_tokens_enabled(&self) -> bool {
+        self.semantic_tokens_enabled
+    }
+
     pub fn inlay_hints_enabled(&self) -> bool {
         self.inlay_hint_cache.enabled
     }
 
     fn refresh_semantic_tokens(
-        &self,
+        &mut self,
         reason: SemanticTokensRefreshReason,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -3957,6 +3978,10 @@ impl Editor {
             "Fetching semantic tokens for editor: {}",
             reason.description()
         );
+        if let SemanticTokensRefreshReason::Toggle(ref value) = reason {
+            self.semantic_tokens_enabled = *value;
+            cx.notify();
+        }
         match reason {
             SemanticTokensRefreshReason::Toggle(false) => {
                 self.display_map.update(cx, |display_map, _| {
@@ -3971,15 +3996,21 @@ impl Editor {
                 cx.notify();
             }
             // All reasons implemented, so we can implement the "delta" requests in the future
-            SemanticTokensRefreshReason::NewLinesShown
-            | SemanticTokensRefreshReason::ExcerptsRemoved(_) => {
+            SemanticTokensRefreshReason::NewLinesShown => {
                 // If it's using full semantic tokens, this line isn't needed, if it's using
                 // range/delta features, this is a TODO
+            }
+            SemanticTokensRefreshReason::ExcerptsRemoved(excerpts) => {
+                // If it's using full semantic tokens, this line isn't needed, if it's using
+                // range/delta features, this is a TODO
+                let _ = excerpts;
             }
             SemanticTokensRefreshReason::RefreshRequested
             | SemanticTokensRefreshReason::BufferEdited(_)
             | SemanticTokensRefreshReason::SettingsChange(_)
-            | SemanticTokensRefreshReason::Toggle(true) => {
+            | SemanticTokensRefreshReason::Toggle(true)
+                if self.semantic_tokens_enabled() =>
+            {
                 for buffer in self.buffer.read(cx).all_buffers() {
                     let semantic_tokens = self
                         .semantics_provider
@@ -4032,6 +4063,7 @@ impl Editor {
                 }
                 cx.notify();
             }
+            _ => {}
         }
         Some(())
     }
@@ -17326,6 +17358,21 @@ impl Editor {
         self.handle_input(text, window, cx);
     }
 
+    pub fn supports_semantic_tokens(&self, cx: &mut App) -> bool {
+        let Some(provider) = self.semantics_provider.as_ref() else {
+            return false;
+        };
+
+        let mut supports = false;
+        self.buffer().update(cx, |this, cx| {
+            this.for_each_buffer(|buffer| {
+                supports |= provider.supports_semantic_tokens(buffer, cx);
+            });
+        });
+
+        supports
+    }
+
     pub fn supports_inlay_hints(&self, cx: &mut App) -> bool {
         let Some(provider) = self.semantics_provider.as_ref() else {
             return false;
@@ -18110,6 +18157,8 @@ pub trait SemanticsProvider {
 
     fn supports_inlay_hints(&self, buffer: &Entity<Buffer>, cx: &mut App) -> bool;
 
+    fn supports_semantic_tokens(&self, buffer: &Entity<Buffer>, cx: &mut App) -> bool;
+
     fn document_highlights(
         &self,
         buffer: &Entity<Buffer>,
@@ -18529,6 +18578,15 @@ impl SemanticsProvider for Entity<Project> {
             GotoDefinitionKind::Type => project.type_definition(&buffer, position, cx),
             GotoDefinitionKind::Implementation => project.implementation(&buffer, position, cx),
         }))
+    }
+
+    fn supports_semantic_tokens(&self, buffer: &Entity<Buffer>, cx: &mut App) -> bool {
+        // TODO: make this work for remote projects
+        self.update(cx, |this, cx| {
+            buffer.update(cx, |buffer, cx| {
+                this.any_language_server_supports_semantic_tokens(buffer, cx)
+            })
+        })
     }
 
     fn supports_inlay_hints(&self, buffer: &Entity<Buffer>, cx: &mut App) -> bool {

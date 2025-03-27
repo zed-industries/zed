@@ -4686,6 +4686,17 @@ impl Project {
         self.lsp_store.read(cx).supplementary_language_servers()
     }
 
+    pub fn any_language_server_supports_semantic_tokens(
+        &self,
+        buffer: &Buffer,
+        cx: &mut App,
+    ) -> bool {
+        self.lsp_store.update(cx, |this, cx| {
+            this.language_servers_for_local_buffer(buffer, cx)
+                .any(|(_, server)| server.capabilities().semantic_tokens_provider.is_some())
+        })
+    }
+
     pub fn any_language_server_supports_inlay_hints(&self, buffer: &Buffer, cx: &mut App) -> bool {
         self.lsp_store.update(cx, |this, cx| {
             this.language_servers_for_local_buffer(buffer, cx)
