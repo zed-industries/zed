@@ -2,9 +2,9 @@ use dap::DebugRequestType;
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::Subscription;
 use gpui::{DismissEvent, Entity, EventEmitter, Focusable, Render};
-use itertools::Itertools;
 use picker::{Picker, PickerDelegate};
 
+use std::cell::LazyCell;
 use std::sync::Arc;
 use sysinfo::System;
 use ui::{prelude::*, Context, Tooltip};
@@ -15,7 +15,7 @@ use workspace::ModalView;
 #[derive(Debug, Clone)]
 pub(super) struct Candidate {
     pub(super) pid: u32,
-    pub(super) name: String,
+    pub(super) name: SharedString,
     pub(super) command: Vec<String>,
 }
 
@@ -57,42 +57,46 @@ impl AttachModal {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let adapter = project
-            .read(cx)
-            .debug_adapters()
-            .adapter(&debug_config.adapter);
-        let processes = adapter
-            .map(|adapter| {
-                let filter = adapter.attach_processes_filter();
-                System::new_all()
-                    .processes()
-                    .values()
-                    .filter_map(|process| {
-                        let name = process.name().to_string_lossy();
-                        filter.is_match(&name).then(|| Candidate {
-                            name: name.into_owned(),
-                            pid: process.pid().as_u32(),
-                            command: process
-                                .cmd()
-                                .iter()
-                                .map(|s| s.to_string_lossy().to_string())
-                                .collect::<Vec<_>>(),
-                        })
-                    })
-                    .sorted_by_key(|candidate| candidate.name.clone())
-                    .collect()
+        let mut processes: Vec<_> = System::new_all()
+            .processes()
+            .values()
+            .map(|process| {
+                let name = process.name().to_string_lossy().into_owned();
+                Candidate {
+                    name: name.into(),
+                    pid: process.pid().as_u32(),
+                    command: process
+                        .cmd()
+                        .iter()
+                        .map(|s| s.to_string_lossy().to_string())
+                        .collect::<Vec<_>>(),
+                }
             })
-            .unwrap_or_default();
+            .collect();
+        processes.sort_by_key(|k| k.name.clone());
         Self::with_processes(project, debug_config, processes, window, cx)
     }
 
     pub(super) fn with_processes(
         project: Entity<project::Project>,
         debug_config: task::DebugTaskDefinition,
-        processes: Arc<[Candidate]>,
+        processes: Vec<Candidate>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
+        let adapter = project
+            .read(cx)
+            .debug_adapters()
+            .adapter(&debug_config.adapter);
+        let filter = LazyCell::new(|| adapter.map(|adapter| adapter.attach_processes_filter()));
+        let processes = processes
+            .into_iter()
+            .filter(|process| {
+                filter
+                    .as_ref()
+                    .map_or(false, |filter| filter.is_match(&process.name))
+            })
+            .collect();
         let picker = cx.new(|cx| {
             Picker::uniform_list(
                 AttachModalDelegate::new(project, debug_config, processes),
@@ -233,7 +237,11 @@ impl PickerDelegate for AttachModalDelegate {
         let config = self.debug_config.clone();
         self.project
             .update(cx, |project, cx| {
-                project.start_debug_session(config.into(), cx)
+                #[cfg(any(test, feature = "test-support"))]
+                let ret = project.fake_debug_session(config.request, None, false, cx);
+                #[cfg(not(any(test, feature = "test-support")))]
+                let ret = project.start_debug_session(config.into(), cx);
+                ret
             })
             .detach_and_log_err(cx);
 
@@ -297,9 +305,8 @@ impl PickerDelegate for AttachModalDelegate {
     }
 }
 
-#[allow(dead_code)]
 #[cfg(any(test, feature = "test-support"))]
-pub(crate) fn process_names(modal: &AttachModal, cx: &mut Context<AttachModal>) -> Vec<String> {
+pub(crate) fn _process_names(modal: &AttachModal, cx: &mut Context<AttachModal>) -> Vec<String> {
     modal.picker.update(cx, |picker, _| {
         picker
             .delegate

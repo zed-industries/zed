@@ -1,5 +1,3 @@
-use std::sync::Arc;
-
 use crate::{attach_modal::Candidate, *};
 use attach_modal::AttachModal;
 use dap::{client::SessionId, FakeAdapter};
@@ -92,7 +90,7 @@ async fn test_show_attach_modal_and_select_process(
                         initialize_args: None,
                         tcp_connection: Some(TCPHost::default()),
                     },
-                    Arc::from([
+                    vec![
                         Candidate {
                             pid: 0,
                             name: "fake-binary-1".into(),
@@ -108,7 +106,7 @@ async fn test_show_attach_modal_and_select_process(
                             name: "fake-binary-2".into(),
                             command: vec![],
                         },
-                    ]),
+                    ],
                     window,
                     cx,
                 )
@@ -124,7 +122,7 @@ async fn test_show_attach_modal_and_select_process(
     workspace
         .update(cx, |_, _, cx| {
             let names =
-                attach_modal.update(cx, |modal, cx| attach_modal::process_names(&modal, cx));
+                attach_modal.update(cx, |modal, cx| attach_modal::_process_names(&modal, cx));
 
             // we filtered out all processes that are not starting with `fake-binary`
             assert_eq!(2, names.len());
