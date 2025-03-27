@@ -1041,7 +1041,10 @@ impl Worktree {
                             if let Some(git_repo) =
                                 snapshot.git_repositories.get(&repo.work_directory_id)
                             {
-                                return Ok(git_repo.repo_ptr.load_index_text(repo_path).await);
+                                return Ok(git_repo
+                                    .repo_ptr
+                                    .load_index_text(None, repo_path)
+                                    .await);
                             }
                         }
                     }

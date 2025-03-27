@@ -2259,7 +2259,7 @@ impl GitPanel {
 
         let repo = repo.read(cx);
 
-        for entry in repo.status() {
+        for entry in repo.cached_status() {
             let is_conflict = repo.has_conflict(&entry.repo_path);
             let is_new = entry.status.is_created();
             let staging = entry.status.staging();
