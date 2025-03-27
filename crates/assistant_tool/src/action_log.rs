@@ -203,6 +203,9 @@ impl ActionLog {
     pub fn unreviewed_buffers(&self) -> BTreeMap<Entity<Buffer>, TrackedBuffer> {
         self.tracked_buffers
             .iter()
+            .filter(|(_, tracked)| {
+                !tracked.accepted_edit_ids.is_empty() || !tracked.unreviewed_edit_ids.is_empty()
+            })
             .map(|(buffer, tracked)| (buffer.clone(), tracked.clone()))
             .collect()
     }
