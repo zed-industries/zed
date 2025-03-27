@@ -5,6 +5,63 @@ use super::*;
 #[derive(Debug)]
 pub struct SemanticTokensFull;
 
+impl SemanticTokensFull {
+    pub fn legend(
+        lsp_store: Entity<LspStore>,
+        server_id: LanguageServerId,
+        cx: &AsyncApp,
+    ) -> Result<lsp::SemanticTokensLegend> {
+        let language_server = cx.update(|cx| {
+            lsp_store
+                .read(cx)
+                .language_server_for_id(server_id)
+                .with_context(|| {
+                    format!("Missing the language server that just returned a response {server_id}")
+                })
+        })??;
+        let server_capabilities = language_server.capabilities();
+        let legend = match server_capabilities.semantic_tokens_provider {
+            Some(lsp::SemanticTokensServerCapabilities::SemanticTokensOptions(options)) => {
+                options.legend
+            }
+            Some(lsp::SemanticTokensServerCapabilities::SemanticTokensRegistrationOptions(
+                options,
+            )) => options.semantic_tokens_options.legend,
+            None => anyhow::bail!("Missing semantic tokens provider in the server"),
+        };
+        Ok(legend)
+    }
+
+    pub fn serialize_semantic_token(token: SemanticToken) -> proto::SemanticToken {
+        proto::SemanticToken {
+            start: Some(language::proto::serialize_anchor(&token.range.start)),
+            end: Some(language::proto::serialize_anchor(&token.range.end)),
+            token: token.r#type.as_str().into(),
+            modifiers: token
+                .modifiers
+                .into_iter()
+                .map(|r#mod| r#mod.as_str().into())
+                .collect_vec(),
+        }
+    }
+
+    pub fn proto_to_semantic_token(proto: proto::SemanticToken) -> anyhow::Result<SemanticToken> {
+        let start = proto
+            .start
+            .and_then(language::proto::deserialize_anchor)
+            .context("invalid start position")?;
+        let end = proto
+            .end
+            .and_then(language::proto::deserialize_anchor)
+            .context("invalid end position")?;
+        Ok(SemanticToken {
+            range: start..end,
+            modifiers: vec![],
+            r#type: lsp::SemanticTokenType::from(proto.token),
+        })
+    }
+}
+
 #[async_trait(?Send)]
 impl LspCommand for SemanticTokensFull {
     type Response = Vec<SemanticToken>;
@@ -12,7 +69,7 @@ impl LspCommand for SemanticTokensFull {
     type ProtoRequest = proto::SemanticTokensFullRequest;
 
     fn display_name(&self) -> &str {
-        "Semantic Tokens"
+        "Semantic tokens full"
     }
 
     fn check_capabilities(&self, capabilities: AdapterServerCapabilities) -> bool {
@@ -47,24 +104,7 @@ impl LspCommand for SemanticTokensFull {
         mut cx: AsyncApp,
     ) -> Result<Self::Response> {
         let snapshot = buffer.update(&mut cx, |buffer, _| buffer.snapshot())?;
-        let language_server = cx.update(|cx| {
-            lsp_store
-                .read(cx)
-                .language_server_for_id(server_id)
-                .with_context(|| {
-                    format!("Missing the language server that just returned a response {server_id}")
-                })
-        })??;
-        let server_capabilities = language_server.capabilities();
-        let legend = match server_capabilities.semantic_tokens_provider {
-            Some(lsp::SemanticTokensServerCapabilities::SemanticTokensOptions(options)) => {
-                options.legend
-            }
-            Some(lsp::SemanticTokensServerCapabilities::SemanticTokensRegistrationOptions(
-                options,
-            )) => options.semantic_tokens_options.legend,
-            None => anyhow::bail!("Missing semantic tokens provider in the server"),
-        };
+        let legend = Self::legend(lsp_store, server_id, &cx)?;
         let tokens = match message {
             Some(lsp::SemanticTokensResult::Partial(tokens)) => tokens.data,
             Some(lsp::SemanticTokensResult::Tokens(tokens)) => tokens.data,
@@ -109,40 +149,52 @@ impl LspCommand for SemanticTokensFull {
     }
 
     fn to_proto(&self, project_id: u64, buffer: &Buffer) -> Self::ProtoRequest {
-        todo!()
+        proto::SemanticTokensFullRequest {
+            project_id,
+            buffer_id: buffer.remote_id().to_proto(),
+        }
     }
 
     async fn from_proto(
-        message: Self::ProtoRequest,
-        lsp_store: Entity<LspStore>,
-        buffer: Entity<Buffer>,
-        cx: AsyncApp,
+        _: proto::SemanticTokensFullRequest,
+        _: Entity<LspStore>,
+        _: Entity<Buffer>,
+        _: AsyncApp,
     ) -> Result<Self> {
-        todo!()
+        Ok(Self)
     }
 
     fn response_to_proto(
         response: Self::Response,
-        lsp_store: &mut LspStore,
-        peer_id: PeerId,
-        buffer_version: &clock::Global,
-        cx: &mut App,
-    ) -> <Self::ProtoRequest as proto::RequestMessage>::Response {
-        todo!()
+        _: &mut LspStore,
+        _: PeerId,
+        _: &clock::Global,
+        _: &mut App,
+    ) -> proto::SemanticTokensResponse {
+        proto::SemanticTokensResponse {
+            tokens: response
+                .into_iter()
+                .map(Self::serialize_semantic_token)
+                .collect_vec(),
+        }
     }
 
     async fn response_from_proto(
         self,
-        message: <Self::ProtoRequest as proto::RequestMessage>::Response,
-        lsp_store: Entity<LspStore>,
-        buffer: Entity<Buffer>,
-        cx: AsyncApp,
+        message: proto::SemanticTokensResponse,
+        _: Entity<LspStore>,
+        _: Entity<Buffer>,
+        _: AsyncApp,
     ) -> Result<Self::Response> {
-        todo!()
+        message
+            .tokens
+            .into_iter()
+            .map(Self::proto_to_semantic_token)
+            .collect::<Result<Vec<_>>>()
     }
 
-    fn buffer_id_from_proto(message: &Self::ProtoRequest) -> Result<BufferId> {
-        todo!()
+    fn buffer_id_from_proto(message: &proto::SemanticTokensFullRequest) -> Result<BufferId> {
+        BufferId::new(message.buffer_id)
     }
 }
 

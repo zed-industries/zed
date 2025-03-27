@@ -5560,7 +5560,26 @@ impl LspStore {
         cx: &mut Context<Self>,
     ) -> Task<anyhow::Result<Vec<SemanticToken>>> {
         if let Some((client, project_id)) = self.upstream_client() {
-            todo!("rpc not implemented yet")
+            let buffer = buffer_handle.read(cx);
+            let request = proto::SemanticTokensFullRequest {
+                project_id,
+                buffer_id: buffer.remote_id().to_proto(),
+            };
+            cx.spawn(async move |project, cx| {
+                let response = client
+                    .request(request)
+                    .await
+                    .context("semantic tokens proto request")?;
+                LspCommand::response_from_proto(
+                    SemanticTokensFull,
+                    response,
+                    project.upgrade().ok_or_else(|| anyhow!("No project"))?,
+                    buffer_handle.clone(),
+                    cx.clone(),
+                )
+                .await
+                .context("semantic tokens proto response conversion")
+            })
         } else {
             let Some(local) = self.as_local() else {
                 return Task::ready(Ok(vec![]));

@@ -3982,6 +3982,11 @@ impl Editor {
             self.semantic_tokens_enabled = *value;
             cx.notify();
         }
+        if let SemanticTokensRefreshReason::BufferEdited(languages) = reason {
+            // If it's using full semantic tokens, this line isn't needed, if it's using
+            // range/delta features, this is a TODO
+            let _ = languages;
+        }
         match reason {
             SemanticTokensRefreshReason::Toggle(false) => {
                 self.display_map.update(cx, |display_map, _| {

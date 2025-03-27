@@ -3584,11 +3584,10 @@ message SemanticTokensFullRequest {
 }
 
 message SemanticToken {
-  uint32 line = 1;
-  uint32 start_char = 2;
-  uint32 length = 3;
-  uint32 token_type = 4;
-  uint32 token_modifiers = 5;
+  Anchor start = 1;
+  Anchor end = 2;
+  string token = 3;
+  repeated string modifiers = 4;
 }
 
 message SemanticTokensResponse {
