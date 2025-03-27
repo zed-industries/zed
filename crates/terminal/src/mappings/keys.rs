@@ -390,12 +390,12 @@ mod test {
         for (lower, upper) in letters_lower.zip(letters_upper) {
             assert_eq!(
                 to_esc_str(
-                    &Keystroke::parse(&format!("ctrl-{}", lower)).unwrap(),
+                    &Keystroke::parse(&format!("ctrl-shift-{}", lower)).unwrap(),
                     &mode,
                     false
                 ),
                 to_esc_str(
-                    &Keystroke::parse(&format!("ctrl-shift-{}", upper)).unwrap(),
+                    &Keystroke::parse_case_insensitive(&format!("ctrl-{}", upper)).unwrap(),
                     &mode,
                     false
                 ),
@@ -410,6 +410,9 @@ mod test {
     fn alt_is_meta() {
         let ascii_printable = ' '..='~';
         for character in ascii_printable {
+            if character.is_ascii_uppercase() {
+                continue;
+            }
             assert_eq!(
                 to_esc_str(
                     &Keystroke::parse(&format!("alt-{}", character)).unwrap(),
@@ -453,15 +456,15 @@ mod test {
         //    8     | Shift + Alt + Control
         // ---------+---------------------------
         // from: https://invisible-island.net/xterm/ctlseqs/ctlseqs.html#h2-PC-Style-Function-Keys
-        assert_eq!(2, modifier_code(&Keystroke::parse("shift-A").unwrap()));
-        assert_eq!(3, modifier_code(&Keystroke::parse("alt-A").unwrap()));
-        assert_eq!(4, modifier_code(&Keystroke::parse("shift-alt-A").unwrap()));
-        assert_eq!(5, modifier_code(&Keystroke::parse("ctrl-A").unwrap()));
-        assert_eq!(6, modifier_code(&Keystroke::parse("shift-ctrl-A").unwrap()));
-        assert_eq!(7, modifier_code(&Keystroke::parse("alt-ctrl-A").unwrap()));
+        assert_eq!(2, modifier_code(&Keystroke::parse("shift-a").unwrap()));
+        assert_eq!(3, modifier_code(&Keystroke::parse("alt-a").unwrap()));
+        assert_eq!(4, modifier_code(&Keystroke::parse("shift-alt-a").unwrap()));
+        assert_eq!(5, modifier_code(&Keystroke::parse("ctrl-a").unwrap()));
+        assert_eq!(6, modifier_code(&Keystroke::parse("shift-ctrl-a").unwrap()));
+        assert_eq!(7, modifier_code(&Keystroke::parse("alt-ctrl-a").unwrap()));
         assert_eq!(
             8,
-            modifier_code(&Keystroke::parse("shift-ctrl-alt-A").unwrap())
+            modifier_code(&Keystroke::parse("shift-ctrl-alt-a").unwrap())
         );
     }
 }

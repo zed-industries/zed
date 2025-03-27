@@ -81,6 +81,28 @@ impl Keystroke {
     /// secondary means "cmd" on macOS and "ctrl" on other platforms
     /// when matching a key with an key_char set will be matched without it.
     pub fn parse(source: &str) -> std::result::Result<Self, InvalidKeystrokeError> {
+        return Self::parse_impl(source, true);
+    }
+
+    /// Parse a keystroke case-insensitively. This means
+    /// keystrokes like `ctrl-T` will not be rejected.
+    /// Useful in tests to allow more concise keystroke inputs,
+    /// e.g., `simulate_keystrokes("ctrl-T")` instead of `simulate_keystrokes("ctrl-shift-t")`.
+    /// This also allows `simulate_input` style functions to support capital letters,
+    /// e.g., `simulate_input("Title Case")` can work by just parsing each character as a keystroke
+    /// and dispatching it, instead of needing to parse something like
+    /// `simulate_input("shift-title shift-case")`.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn parse_case_insensitive(
+        source: &str,
+    ) -> std::result::Result<Self, InvalidKeystrokeError> {
+        return Self::parse_impl(source, false);
+    }
+
+    fn parse_impl(
+        source: &str,
+        case_sensitive: bool,
+    ) -> std::result::Result<Self, InvalidKeystrokeError> {
         let mut control = false;
         let mut alt = false;
         let mut shift = false;
@@ -91,33 +113,48 @@ impl Keystroke {
 
         let mut components = source.split('-').peekable();
         while let Some(component) = components.next() {
-            if false { //
-            } else if component.eq_ignore_ascii_case("ctrl") {
+            if component.eq_ignore_ascii_case("ctrl") {
                 control = true;
-            } else if component.eq_ignore_ascii_case("alt") {
+                continue;
+            }
+            if component.eq_ignore_ascii_case("alt") {
                 alt = true;
-            } else if component.eq_ignore_ascii_case("shift") {
+                continue;
+            }
+            if component.eq_ignore_ascii_case("shift") {
                 shift = true;
-            } else if component.eq_ignore_ascii_case("fn") {
+                continue;
+            }
+            if component.eq_ignore_ascii_case("fn") {
                 function = true;
-            } else if component.eq_ignore_ascii_case("secondary") {
+                continue;
+            }
+            if component.eq_ignore_ascii_case("secondary") {
                 if cfg!(target_os = "macos") {
                     platform = true;
                 } else {
                     control = true;
                 };
-            } else if component.eq_ignore_ascii_case("cmd") {
+                continue;
+            }
+
+            let is_platform = component.eq_ignore_ascii_case("cmd")
+                || component.eq_ignore_ascii_case("super")
+                || component.eq_ignore_ascii_case("win");
+
+            if is_platform {
                 platform = true;
-            } else if component.eq_ignore_ascii_case("super") {
-                platform = true;
-            } else if component.eq_ignore_ascii_case("win") {
-                platform = true;
-            } else if let Some(next) = components.peek() {
+                continue;
+            }
+
+            let mut key_str = component.to_string();
+
+            if let Some(next) = components.peek() {
                 if next.is_empty() && source.ends_with('-') {
                     key = Some(String::from("-"));
                     break;
                 } else if next.len() > 1 && next.starts_with('>') {
-                    key = Some(String::from(component));
+                    key = Some(key_str);
                     key_char = Some(String::from(&next[1..]));
                     components.next();
                 } else {
@@ -125,15 +162,25 @@ impl Keystroke {
                         keystroke: source.to_owned(),
                     });
                 }
-            } else if component.len() == 1 && component.as_bytes()[0].is_ascii_uppercase() {
-                return Err(InvalidKeystrokeError {
-                    keystroke: source.to_owned(),
-                });
-            } else {
-                // to_ascii_lowercase so that keys like "pageup" and "home" are accepted case insensitively
-                // and stored how we expect so they are matched properly
-                key = Some(component.to_ascii_lowercase());
+                continue;
             }
+
+            if component.len() == 1 && component.as_bytes()[0].is_ascii_uppercase() {
+                if case_sensitive {
+                    return Err(InvalidKeystrokeError {
+                        keystroke: source.to_owned(),
+                    });
+                } else {
+                    // Convert to shift + lowercase char if parsing case insensitively
+                    shift = true;
+                    key_str.make_ascii_lowercase();
+                }
+            } else if case_sensitive {
+                // convert ascii chars to lowercase so that named keys like "tab" and "enter"
+                // are accepted case insensitively and stored how we expect so they are matched properly
+                key_str.make_ascii_lowercase()
+            }
+            key = Some(key_str);
         }
 
         // Allow for the user to specify a keystroke modifier as the key itself
