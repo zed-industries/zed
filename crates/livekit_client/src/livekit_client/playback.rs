@@ -19,6 +19,7 @@ use livekit::webrtc::{
 };
 use parking_lot::Mutex;
 use std::slice;
+use std::sync::atomic::AtomicU8;
 use std::time::Duration;
 use std::{borrow::Cow, collections::VecDeque, sync::Arc, thread};
 use util::{maybe, ResultExt as _};
@@ -350,7 +351,6 @@ fn start_output_stream(
     track: &track::RemoteAudioTrack,
     background_executor: &BackgroundExecutor,
 ) -> (Task<()>, std::sync::mpsc::Sender<()>) {
-    let buffer = Arc::new(Mutex::new(VecDeque::<i16>::new()));
     // NOTE: the audio mixer can only do 16k, 32k, 48k
     // (and irritatingly, macOS seems to default to 44.1k)
     let sample_rate = 48000;
@@ -403,15 +403,7 @@ fn start_output_stream(
                         output_config.channels() as u32,
                         output_config.sample_rate().0,
                     );
-                    if sampled.len() < data.len() {
-                        // Instead of partially filling a buffer, output silence. If a partial
-                        // buffer was outputted then this could lead to a perpetual state of
-                        // outputting partial buffers as it never gets filled enough for a full
-                        // frame.
-                        data.fill(0);
-                    } else {
-                        data.copy_from_slice(&sampled);
-                    }
+                    data.copy_from_slice(&sampled);
                     apm.lock()
                         .process_reverse_stream(
                             data,
@@ -812,7 +804,6 @@ pub(crate) async fn capture_local_wav_track(
                     audio_frame.data.to_mut()[i] = sample;
                 }
 
-                dbg!("wav");
                 source.capture_frame(&audio_frame).await.unwrap();
                 written_samples += frame_size;
             }
