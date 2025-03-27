@@ -1,5 +1,5 @@
 use crate::{
-    px, swap_rgba_pa_to_bgra, AbsoluteLength, AnyElement, App, Asset, AssetLogger, Bounds,
+    hash, px, swap_rgba_pa_to_bgra, AbsoluteLength, AnyElement, App, Asset, AssetLogger, Bounds,
     DefiniteLength, Element, ElementId, GlobalElementId, Hitbox, Image, InteractiveElement,
     Interactivity, IntoElement, LayoutId, Length, ObjectFit, Pixels, RenderImage, Resource,
     SharedString, SharedUri, StyleRefinement, Styled, SvgSize, Task, Window,
@@ -14,6 +14,7 @@ use image::{
 };
 use smallvec::SmallVec;
 use std::{
+    any::TypeId,
     fs,
     io::{self, Cursor},
     ops::{Deref, DerefMut},
@@ -253,9 +254,6 @@ impl DerefMut for Stateful<Img> {
 
 /// The image state between frames
 struct ImgState {
-    /// Used to track the last time image source, if element has been changed to new source,
-    /// we will remove the old source cache.
-    source: Rc<ImageSource>,
     frame_index: usize,
     last_frame_time: Option<Instant>,
     started_loading: Option<(Instant, Task<()>)>,
@@ -289,7 +287,6 @@ impl Element for Img {
         window.with_optional_element_state(global_id, |state, window| {
             let mut state = state.map(|state| {
                 state.unwrap_or(ImgState {
-                    source: self.source.clone(),
                     frame_index: 0,
                     last_frame_time: None,
                     started_loading: None,
@@ -298,12 +295,13 @@ impl Element for Img {
 
             let frame_index = state.as_ref().map(|state| state.frame_index).unwrap_or(0);
 
-            if let Some(state) = &mut state {
-                // Remove old source cache if changed for cycle memory.
-                if state.source != self.source {
-                    state.source.remove_cache(window, cx);
-                    state.source = self.source.clone();
-                }
+            if let Some(asset_id) = self.source.asset_id() {
+                // Log asset_id and source to frame, to help window draw to
+                // remove unused assets cache in frame.
+                window
+                    .next_frame
+                    .asset_sources
+                    .insert(asset_id, self.source.clone());
             }
 
             let layout_id = self.interactivity.request_layout(
@@ -519,6 +517,19 @@ impl ImageSource {
             ImageSource::Custom(loading_fn) => loading_fn(window, cx),
             ImageSource::Render(data) => Some(Ok(data.to_owned())),
             ImageSource::Image(data) => window.use_asset::<AssetLogger<ImageDecoder>>(data, cx),
+        }
+    }
+
+    pub(crate) fn asset_id(&self) -> Option<(TypeId, u64)> {
+        match self {
+            ImageSource::Resource(resource) => {
+                Some((TypeId::of::<ImgResourceLoader>(), hash(&resource)))
+            }
+            ImageSource::Custom(_) => None,
+            ImageSource::Render(_) => None,
+            ImageSource::Image(data) => {
+                Some((TypeId::of::<AssetLogger<ImageDecoder>>(), hash(data)))
+            }
         }
     }
 

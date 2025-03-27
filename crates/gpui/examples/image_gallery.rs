@@ -76,7 +76,7 @@ impl Render for ImageGallery {
                     .justify_around()
                     .children(
                         (0..self.items_count)
-                            .map(|ix| img(format!("{}-{}", image_url, ix)).id(ix).size_20()),
+                            .map(|ix| img(format!("{}-{}", image_url, ix)).size_20()),
                     ),
             )
     }
