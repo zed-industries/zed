@@ -225,12 +225,12 @@ impl AssistantPanel {
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) {
-        let settings = AssistantSettings::get_global(cx);
-        if !settings.enabled {
-            return;
+        if workspace
+            .panel::<Self>(cx)
+            .is_some_and(|panel| panel.read(cx).enabled(cx))
+        {
+            workspace.toggle_panel_focus::<Self>(window, cx);
         }
-
-        workspace.toggle_panel_focus::<Self>(window, cx);
     }
 
     pub(crate) fn local_timezone(&self) -> UtcOffset {
@@ -637,12 +637,8 @@ impl Panel for AssistantPanel {
     }
 
     fn icon(&self, _window: &Window, cx: &App) -> Option<IconName> {
-        let settings = AssistantSettings::get_global(cx);
-        if !settings.enabled || !settings.button {
-            return None;
-        }
-
-        Some(IconName::ZedAssistant)
+        (self.enabled(cx) && AssistantSettings::get_global(cx).button)
+            .then_some(IconName::ZedAssistant)
     }
 
     fn icon_tooltip(&self, _window: &Window, _cx: &App) -> Option<&'static str> {
@@ -655,6 +651,10 @@ impl Panel for AssistantPanel {
 
     fn activation_priority(&self) -> u32 {
         3
+    }
+
+    fn enabled(&self, cx: &App) -> bool {
+        AssistantSettings::get_global(cx).enabled
     }
 }
 

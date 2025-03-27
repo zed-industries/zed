@@ -2522,8 +2522,14 @@ impl Workspace {
             let was_visible = dock.is_open() && !other_is_zoomed;
             dock.set_open(!was_visible, window, cx);
 
-            if dock.active_panel().is_none() && dock.panels_len() > 0 {
-                dock.activate_panel(0, window, cx);
+            if dock.active_panel().is_none() {
+                let Some(panel_ix) = dock
+                    .first_enabled_panel_idx(cx)
+                    .log_with_level(log::Level::Info)
+                else {
+                    return;
+                };
+                dock.activate_panel(panel_ix, window, cx);
             }
 
             if let Some(active_panel) = dock.active_panel() {

@@ -15,7 +15,7 @@ use client::Client;
 use command_palette_hooks::CommandPaletteFilter;
 use feature_flags::FeatureFlagAppExt;
 use fs::Fs;
-use gpui::{actions, App, Global, UpdateGlobal};
+use gpui::{actions, App, Global, ReadGlobal, UpdateGlobal};
 use language_model::{
     LanguageModelId, LanguageModelProviderId, LanguageModelRegistry, LanguageModelResponseMessage,
 };
@@ -85,6 +85,10 @@ impl Assistant {
         CommandPaletteFilter::update_global(cx, |filter, _cx| {
             filter.show_namespace(Self::NAMESPACE);
         });
+    }
+
+    pub fn enabled(cx: &App) -> bool {
+        Self::global(cx).enabled
     }
 }
 
