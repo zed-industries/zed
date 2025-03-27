@@ -1455,7 +1455,7 @@ impl GitBinary {
     fn path_for_index(&self, index: GitIndex) -> PathBuf {
         self.working_directory
             .join(".git")
-            .join(format!("index-{}.tmp", index.id.to_string()))
+            .join(format!("index-{}.tmp", index.id))
     }
 
     pub async fn run<S>(&self, args: impl IntoIterator<Item = S>) -> Result<String>
@@ -2033,9 +2033,7 @@ mod tests {
             +file2
         "#
         .unindent();
-        repo.apply_diff(index.clone(), diff.to_string())
-            .await
-            .unwrap();
+        repo.apply_diff(index, diff.to_string()).await.unwrap();
 
         assert_eq!(
             repo.status(Some(index), &[])
