@@ -1,11 +1,13 @@
 use ::proto::{FromProto, ToProto};
 use anyhow::{anyhow, Result};
+use dap::DapRegistry;
 use extension::ExtensionHostProxy;
 use extension_host::headless_host::HeadlessExtensionStore;
 use fs::Fs;
 use gpui::{App, AppContext as _, AsyncApp, Context, Entity, PromptLevel};
 use http_client::HttpClient;
 use language::{proto::serialize_operation, Buffer, BufferEvent, LanguageRegistry};
+use log::debug;
 use node_runtime::NodeRuntime;
 use project::{
     buffer_store::{BufferStore, BufferStoreEvent},
@@ -52,6 +54,7 @@ pub struct HeadlessAppState {
     pub http_client: Arc<dyn HttpClient>,
     pub node_runtime: NodeRuntime,
     pub languages: Arc<LanguageRegistry>,
+    pub debug_adapters: Arc<DapRegistry>,
     pub extension_host_proxy: Arc<ExtensionHostProxy>,
 }
 
@@ -69,6 +72,7 @@ impl HeadlessProject {
             http_client,
             node_runtime,
             languages,
+            debug_adapters,
             extension_host_proxy: proxy,
         }: HeadlessAppState,
         cx: &mut Context<Self>,
@@ -108,6 +112,7 @@ impl HeadlessProject {
                 node_runtime.clone(),
                 fs.clone(),
                 languages.clone(),
+                debug_adapters.clone(),
                 environment.clone(),
                 toolchain_store.read(cx).as_language_toolchain_store(),
                 breakpoint_store.clone(),

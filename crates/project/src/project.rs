@@ -38,7 +38,7 @@ use client::{
 };
 use clock::ReplicaId;
 
-use dap::{client::DebugAdapterClient, DebugAdapterConfig};
+use dap::{client::DebugAdapterClient, DapRegistry, DebugAdapterConfig};
 
 use collections::{BTreeSet, HashMap, HashSet};
 use debounced_delay::DebouncedDelay;
@@ -163,6 +163,7 @@ pub struct Project {
     active_entry: Option<ProjectEntryId>,
     buffer_ordered_messages_tx: mpsc::UnboundedSender<BufferOrderedMessage>,
     languages: Arc<LanguageRegistry>,
+    debug_adapters: Arc<DapRegistry>,
     dap_store: Entity<DapStore>,
     breakpoint_store: Entity<BreakpointStore>,
     client: Arc<client::Client>,
@@ -819,6 +820,7 @@ impl Project {
         node: NodeRuntime,
         user_store: Entity<UserStore>,
         languages: Arc<LanguageRegistry>,
+        debug_adapters: Arc<DapRegistry>,
         fs: Arc<dyn Fs>,
         env: Option<HashMap<String, String>>,
         cx: &mut App,
@@ -855,6 +857,7 @@ impl Project {
                     node.clone(),
                     fs.clone(),
                     languages.clone(),
+                    debug_adapters.clone(),
                     environment.clone(),
                     toolchain_store.read(cx).as_language_toolchain_store(),
                     breakpoint_store.clone(),
@@ -940,6 +943,7 @@ impl Project {
                 active_entry: None,
                 snippets,
                 languages,
+                debug_adapters: Arc::new(DapRegistry::default()),
                 client,
                 task_store,
                 user_store,
@@ -1102,6 +1106,7 @@ impl Project {
                 active_entry: None,
                 snippets,
                 languages,
+                debug_adapters: Arc::new(DapRegistry::default()),
                 client,
                 task_store,
                 user_store,
@@ -1241,7 +1246,6 @@ impl Project {
 
         let breakpoint_store =
             cx.new(|_| BreakpointStore::remote(remote_id, client.clone().into()))?;
-
         let dap_store = cx.new(|_cx| {
             DapStore::new_remote(remote_id, client.clone().into(), breakpoint_store.clone())
         })?;
@@ -1328,6 +1332,7 @@ impl Project {
                 collaborators: Default::default(),
                 join_project_response_message_id: response.message_id,
                 languages,
+                debug_adapters: Arc::new(DapRegistry::default()),
                 user_store: user_store.clone(),
                 task_store,
                 snippets,
@@ -1486,6 +1491,7 @@ impl Project {
             kind: DebugAdapterKind::Lldb,
             request: DebugRequestDisposition::UserConfigured(request),
             initialize_args: None,
+            tcp_connection: None,
         };
         let caps = caps.unwrap_or(Capabilities {
             supports_step_back: Some(false),
@@ -1507,6 +1513,7 @@ impl Project {
 
         let fs = Arc::new(RealFs::default());
         let languages = LanguageRegistry::test(cx.background_executor().clone());
+        let debug_adapters = DapRegistry::default().into();
         let clock = Arc::new(FakeSystemClock::new());
         let http_client = http_client::FakeHttpClient::with_404_response();
         let client = cx
@@ -1520,6 +1527,7 @@ impl Project {
                     node_runtime::NodeRuntime::unavailable(),
                     user_store,
                     Arc::new(languages),
+                    debug_adapters,
                     fs,
                     None,
                     cx,
@@ -1550,6 +1558,7 @@ impl Project {
         use clock::FakeSystemClock;
 
         let languages = LanguageRegistry::test(cx.executor());
+        let debug_adapters = DapRegistry::test();
         let clock = Arc::new(FakeSystemClock::new());
         let http_client = http_client::FakeHttpClient::with_404_response();
         let client = cx.update(|cx| client::Client::new(clock, http_client.clone(), cx));
@@ -1560,6 +1569,7 @@ impl Project {
                 node_runtime::NodeRuntime::unavailable(),
                 user_store,
                 Arc::new(languages),
+                Arc::new(debug_adapters),
                 fs,
                 None,
                 cx,

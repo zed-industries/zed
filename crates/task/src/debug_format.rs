@@ -85,45 +85,13 @@ impl DebugRequestDisposition {
         }
     }
 }
-/// The Debug adapter to use
-#[derive(Deserialize, Serialize, PartialEq, Eq, JsonSchema, Clone, Debug)]
-#[serde(rename_all = "lowercase", tag = "adapter")]
-pub enum DebugAdapterKind {
-    /// Use debugpy
-    Python,
-    /// Use vscode-php-debug
-    Php,
-    /// Use vscode-js-debug
-    Javascript,
-    /// Use delve
-    Go,
-    /// Use lldb
-    Lldb,
-    /// Use GDB's built-in DAP support
-    Gdb,
-}
-
-impl DebugAdapterKind {
-    /// Returns the display name for the adapter kind
-    pub fn display_name(&self) -> &str {
-        match self {
-            Self::Python => "Python",
-            Self::Php => "PHP",
-            Self::Javascript => "JavaScript",
-            Self::Lldb => "LLDB",
-            Self::Gdb => "GDB",
-            Self::Go => "Go",
-        }
-    }
-}
-
 /// Represents the configuration for the debug adapter
 #[derive(PartialEq, Eq, Clone, Debug)]
 pub struct DebugAdapterConfig {
     /// Name of the debug task
     pub label: String,
     /// The type of adapter you want to use
-    pub kind: DebugAdapterKind,
+    pub kind: String,
     /// The type of request that should be called on the debug adapter
     pub request: DebugRequestDisposition,
     /// Additional initialization arguments to be sent on DAP initialization
@@ -207,8 +175,7 @@ pub enum DebugConnectionType {
 #[serde(rename_all = "snake_case")]
 pub struct DebugTaskDefinition {
     /// The adapter to run
-    #[serde(flatten)]
-    pub kind: DebugAdapterKind,
+    pub kind: String,
     /// The type of request that should be called on the debug adapter
     #[serde(flatten)]
     pub request: DebugRequestType,

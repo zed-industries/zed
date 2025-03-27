@@ -21,8 +21,7 @@ use dap::{
     Capabilities, ContinueArguments, EvaluateArgumentsContext, Module, Source, StackFrameId,
     SteppingGranularity, StoppedEvent, VariableReference,
 };
-use dap::{DebugRequestType, OutputEventCategory};
-use dap_adapters::build_adapter;
+use dap::{DapRegistry, DebugRequestType, OutputEventCategory};
 use futures::channel::oneshot;
 use futures::{future::Shared, FutureExt};
 use gpui::{
@@ -183,6 +182,7 @@ fn client_source(abs_path: &Path) -> dap::Source {
 
 impl LocalMode {
     fn new(
+        debug_adapters: Arc<DapRegistry>,
         session_id: SessionId,
         parent_session: Option<Entity<Session>>,
         breakpoint_store: Entity<BreakpointStore>,
@@ -192,6 +192,7 @@ impl LocalMode {
         cx: AsyncApp,
     ) -> Task<Result<(Self, Capabilities)>> {
         Self::new_inner(
+            debug_adapters,
             session_id,
             parent_session,
             breakpoint_store,
@@ -310,6 +311,7 @@ impl LocalMode {
             session.client.fake_event(Events::Initialized(None)).await;
         };
         Self::new_inner(
+            DapRegistry::fake().into(),
             session_id,
             parent_session,
             breakpoint_store,
@@ -321,17 +323,19 @@ impl LocalMode {
         )
     }
     fn new_inner(
+        registry: Arc<DapRegistry>,
         session_id: SessionId,
         parent_session: Option<Entity<Session>>,
         breakpoint_store: Entity<BreakpointStore>,
         config: DebugAdapterConfig,
         delegate: DapAdapterDelegate,
         messages_tx: futures::channel::mpsc::UnboundedSender<Message>,
-        on_initialized: impl AsyncFnOnce(&mut LocalMode, AsyncApp) + Send + Sync + 'static,
+        on_initialized: impl AsyncFnOnce(&mut LocalMode, AsyncApp) + 'static,
         cx: AsyncApp,
     ) -> Task<Result<(Self, Capabilities)>> {
         cx.spawn(async move |cx| {
-            let (adapter, binary) = Self::get_adapter_binary(&config, &delegate, cx).await?;
+            let (adapter, binary) =
+                Self::get_adapter_binary(&registry, &config, &delegate, cx).await?;
 
             let message_handler = Box::new(move |message| {
                 messages_tx.unbounded_send(message).ok();
@@ -474,11 +478,14 @@ impl LocalMode {
     }
 
     async fn get_adapter_binary(
+        registry: &Arc<DapRegistry>,
         config: &DebugAdapterConfig,
         delegate: &DapAdapterDelegate,
         cx: &mut AsyncApp,
     ) -> Result<(Arc<dyn DebugAdapter>, DebugAdapterBinary)> {
-        let adapter = build_adapter(&config.kind);
+        let adapter = registry
+            .adapter(&config.kind)
+            .ok_or_else(|| anyhow!("Debug adapter with name `{}` was not found", config.kind))?;
 
         let binary = cx.update(|cx| {
             ProjectSettings::get_global(cx)
@@ -815,12 +822,14 @@ impl Session {
         config: DebugAdapterConfig,
         start_debugging_requests_tx: futures::channel::mpsc::UnboundedSender<(SessionId, Message)>,
         initialized_tx: oneshot::Sender<()>,
+        debug_adapters: Arc<DapRegistry>,
         cx: &mut App,
     ) -> Task<Result<Entity<Self>>> {
         let (message_tx, message_rx) = futures::channel::mpsc::unbounded();
 
         cx.spawn(async move |cx| {
             let (mode, capabilities) = LocalMode::new(
+                debug_adapters,
                 session_id,
                 parent_session.clone(),
                 breakpoint_store.clone(),

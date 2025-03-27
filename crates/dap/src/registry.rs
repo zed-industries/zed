@@ -27,4 +27,10 @@ impl DapRegistry {
     pub fn enumerate_adapters(&self) -> Vec<DebugAdapterName> {
         self.0.read().adapters.keys().cloned().collect()
     }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn fake() -> Self {
+        let register = DapRegistryState::default();
+        Self(Arc::from(register))
+    }
 }

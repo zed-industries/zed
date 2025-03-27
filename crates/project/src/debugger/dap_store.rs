@@ -20,8 +20,8 @@ use dap::{
         Completions, Evaluate, Request as _, RunInTerminal, SetExpression, SetVariable,
         StartDebugging,
     },
-    Capabilities, CompletionItem, CompletionsArguments, ErrorResponse, EvaluateArguments,
-    EvaluateArgumentsContext, EvaluateResponse, RunInTerminalRequestArguments,
+    Capabilities, CompletionItem, CompletionsArguments, DapRegistry, ErrorResponse,
+    EvaluateArguments, EvaluateArgumentsContext, EvaluateResponse, RunInTerminalRequestArguments,
     SetExpressionArguments, SetVariableArguments, Source, StartDebuggingRequestArguments,
 };
 use fs::Fs;
@@ -88,6 +88,7 @@ pub struct LocalDapStore {
     worktree_store: Entity<WorktreeStore>,
     environment: Entity<ProjectEnvironment>,
     language_registry: Arc<LanguageRegistry>,
+    debug_adapters: Arc<DapRegistry>,
     toolchain_store: Arc<dyn LanguageToolchainStore>,
     start_debugging_tx: futures::channel::mpsc::UnboundedSender<(SessionId, Message)>,
     _start_debugging_task: Task<()>,
@@ -137,6 +138,7 @@ impl DapStore {
         node_runtime: NodeRuntime,
         fs: Arc<dyn Fs>,
         language_registry: Arc<LanguageRegistry>,
+        debug_adapters: Arc<DapRegistry>,
         environment: Entity<ProjectEnvironment>,
         toolchain_store: Arc<dyn LanguageToolchainStore>,
         breakpoint_store: Entity<BreakpointStore>,
@@ -177,6 +179,7 @@ impl DapStore {
                 worktree_store,
                 toolchain_store,
                 language_registry,
+                debug_adapters,
                 start_debugging_tx,
                 _start_debugging_task,
                 next_session_id: Default::default(),
@@ -363,6 +366,7 @@ impl DapStore {
             config,
             local_store.start_debugging_tx.clone(),
             initialized_tx,
+            local_store.debug_adapters.clone(),
             cx,
         );
 

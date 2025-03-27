@@ -6,7 +6,8 @@ mod registry;
 pub mod transport;
 
 pub use dap_types::*;
-pub use task::{DebugAdapterConfig, DebugAdapterKind, DebugRequestType};
+pub use registry::DapRegistry;
+pub use task::{DebugAdapterConfig, DebugRequestType};
 
 pub type ScopeId = u64;
 pub type VariableReference = u64;
