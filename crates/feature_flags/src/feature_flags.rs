@@ -101,15 +101,6 @@ impl FeatureFlag for NotebookFeatureFlag {
     const NAME: &'static str = "notebooks";
 }
 
-pub struct AutoCommand {}
-impl FeatureFlag for AutoCommand {
-    const NAME: &'static str = "auto-command";
-
-    fn enabled_for_staff() -> bool {
-        false
-    }
-}
-
 pub struct Debugger {}
 impl FeatureFlag for Debugger {
     const NAME: &'static str = "debugger";

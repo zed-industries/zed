@@ -670,7 +670,6 @@ dependencies = [
  "indexed_docs",
  "language",
  "language_model",
- "log",
  "pretty_assertions",
  "project",
  "prompt_store",
