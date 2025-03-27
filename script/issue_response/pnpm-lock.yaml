@@ -28,8 +28,8 @@ importers:
         specifier: ^2.14.0
         version: 2.14.0
       '@tsconfig/node20':
-        specifier: 20.1.4
-        version: 20.1.4
+        specifier: 20.1.5
+        version: 20.1.5
       '@tsconfig/strictest':
         specifier: 2.0.5
         version: 2.0.5
@@ -164,8 +164,8 @@ packages:
     resolution: {integrity: sha512-PmbZx89+SmH4zt78FUwe4If8hWX2MAIRmGXjmlF0A8PwyJb/H7CWaQYV6DDlZn1+7Zs6CEytKH0ejEE/idVSDw==}
     engines: {node: '>= 18', npm: '>= 8.6.0'}
 
-  '@tsconfig/node20@20.1.4':
-    resolution: {integrity: sha512-sqgsT69YFeLWf5NtJ4Xq/xAF8p4ZQHlmGW74Nu2tD4+g5fAsposc4ZfaaPixVu4y01BEiDCWLRDCvDM5JOsRxg==}
+  '@tsconfig/node20@20.1.5':
+    resolution: {integrity: sha512-Vm8e3WxDTqMGPU4GATF9keQAIy1Drd7bPwlgzKJnZtoOsTm1tduUTbDjg0W5qERvGuxPI2h9RbMufH0YdfBylA==}
 
   '@tsconfig/strictest@2.0.5':
     resolution: {integrity: sha512-ec4tjL2Rr0pkZ5hww65c+EEPYwxOi4Ryv+0MtjeaSQRJyq322Q27eOQiFbuNgw2hpL4hB1/W/HBGk3VKS43osg==}
@@ -473,7 +473,7 @@ snapshots:
     transitivePeerDependencies:
       - debug
 
-  '@tsconfig/node20@20.1.4': {}
+  '@tsconfig/node20@20.1.5': {}
 
   '@tsconfig/strictest@2.0.5': {}
 
