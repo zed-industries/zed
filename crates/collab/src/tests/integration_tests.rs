@@ -5565,14 +5565,14 @@ async fn test_open_buffer_while_getting_definition_pointing_to_it(
     client_a
         .fs()
         .insert_tree(
-            "/root",
+            path!("/root"),
             json!({
                 "a.rs": "const ONE: usize = b::TWO;",
                 "b.rs": "const TWO: usize = 2",
             }),
         )
         .await;
-    let (project_a, worktree_id) = client_a.build_local_project("/root", cx_a).await;
+    let (project_a, worktree_id) = client_a.build_local_project(path!("/root"), cx_a).await;
     let project_id = active_call_a
         .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
         .await
@@ -5591,7 +5591,7 @@ async fn test_open_buffer_while_getting_definition_pointing_to_it(
         |_, _| async move {
             Ok(Some(lsp::GotoDefinitionResponse::Scalar(
                 lsp::Location::new(
-                    lsp::Url::from_file_path("/root/b.rs").unwrap(),
+                    lsp::Url::from_file_path(path!("/root/b.rs")).unwrap(),
                     lsp::Range::new(lsp::Position::new(0, 6), lsp::Position::new(0, 9)),
                 ),
             )))
