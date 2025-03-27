@@ -313,8 +313,10 @@ pub trait GitRepository: Send + Sync {
         target_checkpoint: GitRepositoryCheckpoint,
     ) -> BoxFuture<Result<String>>;
 
+    /// Creates a new index for the repository.
     fn create_index(&self) -> BoxFuture<Result<GitIndex>>;
 
+    /// Applies a diff to the repository's index.
     fn apply_diff(&self, index: GitIndex, diff: String) -> BoxFuture<Result<()>>;
 }
 
