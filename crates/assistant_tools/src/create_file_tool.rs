@@ -7,7 +7,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use ui::IconName;
-use util::markdown::MarkdownString;
+use util::{markdown::MarkdownString, ResultExt};
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct CreateFileToolInput {
@@ -70,7 +70,7 @@ impl Tool for CreateFileTool {
         input: serde_json::Value,
         _messages: &[LanguageModelRequestMessage],
         project: Entity<Project>,
-        _action_log: Entity<ActionLog>,
+        action_log: Entity<ActionLog>,
         cx: &mut App,
     ) -> Task<Result<String>> {
         let input = match serde_json::from_value::<CreateFileToolInput>(input) {
@@ -97,12 +97,17 @@ impl Tool for CreateFileTool {
                 })?
                 .await
                 .map_err(|err| anyhow!("Unable to open buffer for {destination_path}: {err}"))?;
-            buffer.update(cx, |buffer, cx| {
-                buffer.set_text(contents, cx);
-            })?;
+            let edit_id = buffer.update(cx, |buffer, cx| buffer.set_text(contents, cx))?;
+
+            action_log
+                .update(cx, |action_log, cx| {
+                    action_log.buffer_edited(buffer.clone(), edit_id.into_iter().collect(), cx)
+                })?
+                .await
+                .log_err();
 
             project
-                .update(cx, |project, cx| project.save_buffer(buffer.clone(), cx))?
+                .update(cx, |project, cx| project.save_buffer(buffer, cx))?
                 .await
                 .map_err(|err| anyhow!("Unable to save buffer for {destination_path}: {err}"))?;
 
