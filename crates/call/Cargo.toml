@@ -43,10 +43,10 @@ telemetry.workspace = true
 util.workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]
-livekit_client_macos = { workspace = true }
+livekit_client_macos.workspace = true
 
 [target.'cfg(not(target_os = "macos"))'.dependencies]
-livekit_client = { workspace = true }
+livekit_client.workspace = true
 
 [dev-dependencies]
 client = { workspace = true, features = ["test-support"] }
