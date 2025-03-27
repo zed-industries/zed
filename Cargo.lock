@@ -459,6 +459,7 @@ dependencies = [
  "collections",
  "command_palette_hooks",
  "context_server",
+ "convert_case 0.8.0",
  "db",
  "editor",
  "feature_flags",
