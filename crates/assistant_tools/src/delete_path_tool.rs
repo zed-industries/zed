@@ -1,8 +1,9 @@
 use anyhow::{anyhow, Result};
 use assistant_tool::{ActionLog, Tool};
-use gpui::{App, Entity, Task};
+use futures::{channel::mpsc, SinkExt, StreamExt};
+use gpui::{App, AppContext, Entity, Task};
 use language_model::LanguageModelRequestMessage;
-use project::Project;
+use project::{Project, ProjectPath};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -73,25 +74,65 @@ impl Tool for DeletePathTool {
             )));
         };
 
-        // todo!("handle directories")
-        let buffer = project.update(cx, |project, cx| {
-            project.open_buffer(project_path.clone(), cx)
-        });
+        let Some(worktree) = project
+            .read(cx)
+            .worktree_for_id(project_path.worktree_id, cx)
+        else {
+            return Task::ready(Err(anyhow!(
+                "Couldn't delete {path_str} because that path isn't in this project."
+            )));
+        };
+
+        let worktree_snapshot = worktree.read(cx).snapshot();
+        let (mut paths_tx, mut paths_rx) = mpsc::channel(256);
+        cx.background_spawn({
+            let project_path = project_path.clone();
+            async move {
+                for entry in
+                    worktree_snapshot.traverse_from_path(true, false, false, &project_path.path)
+                {
+                    if !entry.path.starts_with(&project_path.path) {
+                        break;
+                    }
+                    paths_tx
+                        .send(ProjectPath {
+                            worktree_id: project_path.worktree_id,
+                            path: entry.path.clone(),
+                        })
+                        .await?;
+                }
+                anyhow::Ok(())
+            }
+        })
+        .detach();
+
         cx.spawn(async move |cx| {
-            let buffer = buffer.await?;
-            action_log.update(cx, |action_log, cx| {
-                action_log.buffer_read(buffer.clone(), cx)
-            })?;
+            let mut deleted_buffers = Vec::new();
+            while let Some(path) = paths_rx.next().await {
+                if let Ok(buffer) = project
+                    .update(cx, |project, cx| project.open_buffer(path, cx))?
+                    .await
+                {
+                    action_log.update(cx, |action_log, cx| {
+                        action_log.buffer_read(buffer.clone(), cx)
+                    })?;
+                    deleted_buffers.push(buffer);
+                }
+            }
+
             let delete = project.update(cx, |project, cx| {
                 project.delete_file(project_path, false, cx)
             })?;
+
             match delete {
                 Some(deletion_task) => match deletion_task.await {
                     Ok(()) => {
-                        action_log
-                            .update(cx, |action_log, cx| action_log.buffer_deleted(buffer, cx))?
-                            .await
-                            .ok();
+                        for buffer in deleted_buffers {
+                            action_log.update(cx, |action_log, cx| {
+                                action_log.buffer_deleted(buffer.clone(), cx).detach();
+                            })?;
+                        }
+
                         Ok(format!("Deleted {path_str}"))
                     }
                     Err(err) => Err(anyhow!("Failed to delete {path_str}: {err}")),
