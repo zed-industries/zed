@@ -30,7 +30,10 @@ impl DapRegistry {
 
     #[cfg(any(test, feature = "test-support"))]
     pub fn fake() -> Self {
-        let register = DapRegistryState::default();
-        Self(Arc::from(register))
+        use crate::FakeAdapter;
+
+        let register = Self::default();
+        register.add_adapter(FakeAdapter);
+        register
     }
 }
