@@ -2,7 +2,8 @@ use std::sync::Arc;
 
 use assistant_settings::AssistantSettings;
 use assistant_tool::ToolWorkingSet;
-use gpui::{prelude::*, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, WeakEntity};
+use fs::Fs;
+use gpui::{prelude::*, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable};
 use settings::Settings as _;
 use ui::{prelude::*, ListItem, ListItemSpacing, Navigable, NavigableEntry};
 use workspace::{ModalView, Workspace};
@@ -24,8 +25,7 @@ pub struct ViewProfileMode {
 }
 
 pub struct ManageProfilesModal {
-    #[allow(dead_code)]
-    workspace: WeakEntity<Workspace>,
+    fs: Arc<dyn Fs>,
     tools: Arc<ToolWorkingSet>,
     focus_handle: FocusHandle,
     mode: Mode,
@@ -39,18 +39,16 @@ impl ManageProfilesModal {
     ) {
         workspace.register_action(|workspace, _: &ManageProfiles, window, cx| {
             if let Some(panel) = workspace.panel::<AssistantPanel>(cx) {
-                let workspace_handle = cx.entity().downgrade();
+                let fs = workspace.app_state().fs.clone();
                 let thread_store = panel.read(cx).thread_store().read(cx);
                 let tools = thread_store.tools();
-                workspace.toggle_modal(window, cx, |window, cx| {
-                    Self::new(workspace_handle, tools, window, cx)
-                })
+                workspace.toggle_modal(window, cx, |window, cx| Self::new(fs, tools, window, cx))
             }
         });
     }
 
     pub fn new(
-        workspace: WeakEntity<Workspace>,
+        fs: Arc<dyn Fs>,
         tools: Arc<ToolWorkingSet>,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -59,7 +57,7 @@ impl ManageProfilesModal {
         let handle = cx.entity();
 
         Self {
-            workspace,
+            fs,
             tools,
             focus_handle,
             mode: Mode::ChooseProfile(cx.new(|cx| {
@@ -101,7 +99,13 @@ impl ManageProfilesModal {
         };
 
         self.mode = Mode::ConfigureTools(cx.new(|cx| {
-            let delegate = ToolPickerDelegate::new(self.tools.clone(), profile, |_, _, _| {}, cx);
+            let delegate = ToolPickerDelegate::new(
+                self.fs.clone(),
+                self.tools.clone(),
+                profile_id,
+                profile,
+                cx,
+            );
             ToolPicker::new(delegate, window, cx)
         }));
         self.focus_handle(cx).focus(window);

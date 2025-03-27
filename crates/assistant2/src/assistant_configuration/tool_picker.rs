@@ -1,10 +1,14 @@
 use std::sync::Arc;
 
-use assistant_settings::AgentProfile;
+use assistant_settings::{
+    AgentProfile, AssistantSettings, AssistantSettingsContent, VersionedAssistantSettingsContent,
+};
 use assistant_tool::{ToolSource, ToolWorkingSet};
+use fs::Fs;
 use fuzzy::{match_strings, StringMatch, StringMatchCandidate};
 use gpui::{App, Context, DismissEvent, Entity, EventEmitter, Focusable, Task, WeakEntity, Window};
 use picker::{Picker, PickerDelegate};
+use settings::update_settings_file;
 use ui::{prelude::*, HighlightedLabel, ListItem, ListItemSpacing};
 use util::ResultExt as _;
 
@@ -33,7 +37,7 @@ impl Render for ToolPicker {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ToolEntry {
     pub name: Arc<str>,
     pub source: ToolSource,
@@ -41,19 +45,20 @@ pub struct ToolEntry {
 
 pub struct ToolPickerDelegate {
     tool_picker: WeakEntity<ToolPicker>,
-    tool_set: Arc<ToolWorkingSet>,
+    fs: Arc<dyn Fs>,
     tools: Vec<ToolEntry>,
+    profile_id: Arc<str>,
     profile: AgentProfile,
     matches: Vec<StringMatch>,
     selected_index: usize,
-    on_confirm: Arc<dyn Fn(&Arc<str>, &mut Window, &mut App) + 'static>,
 }
 
 impl ToolPickerDelegate {
     pub fn new(
+        fs: Arc<dyn Fs>,
         tool_set: Arc<ToolWorkingSet>,
+        profile_id: Arc<str>,
         profile: AgentProfile,
-        on_confirm: impl Fn(&Arc<str>, &mut Window, &mut App) + 'static,
         cx: &mut Context<ToolPicker>,
     ) -> Self {
         let mut tool_entries = Vec::new();
@@ -67,12 +72,12 @@ impl ToolPickerDelegate {
 
         Self {
             tool_picker: cx.entity().downgrade(),
-            tool_set,
+            fs,
             tools: tool_entries,
+            profile_id,
             profile,
             matches: Vec::new(),
             selected_index: 0,
-            on_confirm: Arc::new(on_confirm),
         }
     }
 }
@@ -159,10 +164,11 @@ impl PickerDelegate for ToolPickerDelegate {
         let candidate_id = self.matches[self.selected_index].candidate_id;
         let tool = &self.tools[candidate_id];
 
-        match &tool.source {
+        let is_enabled = match &tool.source {
             ToolSource::Native => {
                 let is_enabled = self.profile.tools.entry(tool.name.clone()).or_default();
                 *is_enabled = !*is_enabled;
+                *is_enabled
             }
             ToolSource::ContextServer { id } => {
                 let preset = self
@@ -172,10 +178,38 @@ impl PickerDelegate for ToolPickerDelegate {
                     .or_default();
                 let is_enabled = preset.tools.entry(tool.name.clone()).or_default();
                 *is_enabled = !*is_enabled;
+                *is_enabled
             }
-        }
+        };
 
-        // (self.on_confirm)(&profile.id, window, cx);
+        update_settings_file::<AssistantSettings>(self.fs.clone(), cx, {
+            let profile_id = self.profile_id.clone();
+            let tool = tool.clone();
+            move |settings, _cx| match settings {
+                AssistantSettingsContent::Versioned(VersionedAssistantSettingsContent::V2(
+                    settings,
+                )) => {
+                    if let Some(profiles) = &mut settings.profiles {
+                        if let Some(profile) = profiles.get_mut(&profile_id) {
+                            match tool.source {
+                                ToolSource::Native => {
+                                    *profile.tools.entry(tool.name).or_default() = is_enabled;
+                                }
+                                ToolSource::ContextServer { id } => {
+                                    let preset = profile
+                                        .context_servers
+                                        .entry(id.clone().into())
+                                        .or_default();
+                                    *preset.tools.entry(tool.name.clone()).or_default() =
+                                        is_enabled;
+                                }
+                            }
+                        }
+                    }
+                }
+                _ => {}
+            }
+        });
     }
 
     fn dismissed(&mut self, _window: &mut Window, cx: &mut Context<Picker<Self>>) {
