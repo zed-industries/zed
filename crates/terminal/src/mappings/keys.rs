@@ -245,7 +245,12 @@ pub fn to_esc_str(keystroke: &Keystroke, mode: &TermMode, alt_is_meta: bool) -> 
         let is_alt_uppercase_ascii =
             keystroke.modifiers.alt && keystroke.modifiers.shift && keystroke.key.is_ascii();
         if is_alt_lowercase_ascii || is_alt_uppercase_ascii {
-            return Some(format!("\x1b{}", keystroke.key));
+            let key = if is_alt_uppercase_ascii {
+                &keystroke.key.to_ascii_uppercase()
+            } else {
+                &keystroke.key
+            };
+            return Some(format!("\x1b{}", key));
         }
     }
 
