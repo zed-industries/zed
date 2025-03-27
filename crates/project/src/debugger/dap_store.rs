@@ -455,6 +455,7 @@ impl DapStore {
                 kind: config.kind,
                 request: DebugRequestDisposition::ReverseRequest(args),
                 initialize_args: config.initialize_args.clone(),
+                tcp_connection: config.tcp_connection.clone(),
             },
             &worktree,
             Some(parent_session.clone()),

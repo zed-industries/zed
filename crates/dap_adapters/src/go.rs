@@ -1,26 +1,14 @@
-use dap::transport::TcpTransport;
 use gpui::AsyncApp;
-use std::{ffi::OsStr, net::Ipv4Addr, path::PathBuf};
+use std::{ffi::OsStr, path::PathBuf};
 use task::DebugTaskDefinition;
 
 use crate::*;
 
-pub(crate) struct GoDebugAdapter {
-    port: u16,
-    host: Ipv4Addr,
-    timeout: Option<u64>,
-}
+#[derive(Default, Debug)]
+pub(crate) struct GoDebugAdapter;
 
 impl GoDebugAdapter {
     const ADAPTER_NAME: &'static str = "delve";
-
-    pub(crate) async fn new(host: &TCPHost) -> Result<Self> {
-        Ok(GoDebugAdapter {
-            port: TcpTransport::port(host).await?,
-            host: host.host(),
-            timeout: host.timeout,
-        })
-    }
 }
 
 #[async_trait(?Send)]
@@ -65,7 +53,7 @@ impl DebugAdapter for GoDebugAdapter {
     async fn get_installed_binary(
         &self,
         delegate: &dyn DapDelegate,
-        _: &DebugAdapterConfig,
+        config: &DebugAdapterConfig,
         _: Option<PathBuf>,
         _: &mut AsyncApp,
     ) -> Result<DebugAdapterBinary> {
@@ -74,19 +62,29 @@ impl DebugAdapter for GoDebugAdapter {
             .and_then(|p| p.to_str().map(|p| p.to_string()))
             .ok_or(anyhow!("Dlv not found in path"))?;
 
+        let Some((host, port)) = config
+            .tcp_connection
+            .clone()
+            .and_then(|tcp| tcp.host.zip(tcp.port))
+        else {
+            return Err(anyhow!(
+                "Attempting to start go adapter without connecting to a tcp host"
+            ));
+        };
+
         Ok(DebugAdapterBinary {
             command: delve_path,
             arguments: Some(vec![
                 "dap".into(),
                 "--listen".into(),
-                format!("{}:{}", self.host, self.port).into(),
+                format!("{}:{}", host, port).into(),
             ]),
             cwd: None,
             envs: None,
             connection: Some(adapters::TcpArguments {
-                host: self.host,
-                port: self.port,
-                timeout: self.timeout,
+                host,
+                port,
+                timeout: config.tcp_connection.as_ref().and_then(|tcp| tcp.timeout),
             }),
         })
     }

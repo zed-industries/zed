@@ -1,30 +1,18 @@
 use adapters::latest_github_release;
-use dap::transport::TcpTransport;
 use gpui::AsyncApp;
 use regex::Regex;
-use std::{collections::HashMap, net::Ipv4Addr, path::PathBuf};
+use std::{collections::HashMap, path::PathBuf};
 use sysinfo::{Pid, Process};
 use task::{DebugRequestType, DebugTaskDefinition};
 
 use crate::*;
 
-pub(crate) struct JsDebugAdapter {
-    port: u16,
-    host: Ipv4Addr,
-    timeout: Option<u64>,
-}
+#[derive(Default, Debug)]
+pub(crate) struct JsDebugAdapter;
 
 impl JsDebugAdapter {
     const ADAPTER_NAME: &'static str = "vscode-js-debug";
     const ADAPTER_PATH: &'static str = "js-debug/src/dapDebugServer.js";
-
-    pub(crate) async fn new(host: TCPHost) -> Result<Self> {
-        Ok(JsDebugAdapter {
-            host: host.host(),
-            timeout: host.timeout,
-            port: TcpTransport::port(&host).await?,
-        })
-    }
 
     pub fn attach_processes(processes: &HashMap<Pid, Process>) -> Vec<(&Pid, &Process)> {
         let regex = Regex::new(r"(?i)^(?:node|bun|iojs)(?:$|\b)").unwrap();
@@ -71,7 +59,7 @@ impl DebugAdapter for JsDebugAdapter {
     async fn get_installed_binary(
         &self,
         delegate: &dyn DapDelegate,
-        _: &DebugAdapterConfig,
+        config: &DebugAdapterConfig,
         user_installed_path: Option<PathBuf>,
         _: &mut AsyncApp,
     ) -> Result<DebugAdapterBinary> {
@@ -89,6 +77,16 @@ impl DebugAdapter for JsDebugAdapter {
             .ok_or_else(|| anyhow!("Couldn't find JavaScript dap directory"))?
         };
 
+        let Some((host, port)) = config
+            .tcp_connection
+            .as_ref()
+            .and_then(|tcp| tcp.host.zip(tcp.port))
+        else {
+            return Err(anyhow!(
+                "Attempting to start go adapter without connecting to a tcp host"
+            ));
+        };
+
         Ok(DebugAdapterBinary {
             command: delegate
                 .node_runtime()
@@ -98,15 +96,15 @@ impl DebugAdapter for JsDebugAdapter {
                 .into_owned(),
             arguments: Some(vec![
                 adapter_path.join(Self::ADAPTER_PATH).into(),
-                self.port.to_string().into(),
-                self.host.to_string().into(),
+                port.to_string().into(),
+                host.to_string().into(),
             ]),
             cwd: None,
             envs: None,
             connection: Some(adapters::TcpArguments {
-                host: self.host,
-                port: self.port,
-                timeout: self.timeout,
+                host,
+                port,
+                timeout: config.tcp_connection.as_ref().and_then(|tcp| tcp.timeout),
             }),
         })
     }

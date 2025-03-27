@@ -1,28 +1,18 @@
 use adapters::latest_github_release;
+use anyhow::bail;
 use dap::{adapters::TcpArguments, transport::TcpTransport};
 use gpui::AsyncApp;
-use std::{net::Ipv4Addr, path::PathBuf};
+use std::path::PathBuf;
 use task::DebugTaskDefinition;
 
 use crate::*;
 
-pub(crate) struct PhpDebugAdapter {
-    port: u16,
-    host: Ipv4Addr,
-    timeout: Option<u64>,
-}
+#[derive(Default)]
+pub(crate) struct PhpDebugAdapter;
 
 impl PhpDebugAdapter {
     const ADAPTER_NAME: &'static str = "vscode-php-debug";
     const ADAPTER_PATH: &'static str = "extension/out/phpDebug.js";
-
-    pub(crate) async fn new(host: TCPHost) -> Result<Self> {
-        Ok(PhpDebugAdapter {
-            port: TcpTransport::port(&host).await?,
-            host: host.host(),
-            timeout: host.timeout,
-        })
-    }
 }
 
 #[async_trait(?Send)]
@@ -60,10 +50,21 @@ impl DebugAdapter for PhpDebugAdapter {
     async fn get_installed_binary(
         &self,
         delegate: &dyn DapDelegate,
-        _: &DebugAdapterConfig,
+        config: &DebugAdapterConfig,
         user_installed_path: Option<PathBuf>,
         _: &mut AsyncApp,
     ) -> Result<DebugAdapterBinary> {
+        let Some(tcp_connection) = config.tcp_connection.clone() else {
+            bail!("PHP Debug Adapter expects tcp connection arguments to be provided");
+        };
+        let host = tcp_connection.host();
+        let timeout = tcp_connection.timeout;
+
+        let port = if let Some(port) = tcp_connection.port {
+            port
+        } else {
+            TcpTransport::port(&tcp_connection).await?
+        };
         let adapter_path = if let Some(user_installed_path) = user_installed_path {
             user_installed_path
         } else {
@@ -87,12 +88,12 @@ impl DebugAdapter for PhpDebugAdapter {
                 .into_owned(),
             arguments: Some(vec![
                 adapter_path.join(Self::ADAPTER_PATH).into(),
-                format!("--server={}", self.port).into(),
+                format!("--server={}", port).into(),
             ]),
             connection: Some(TcpArguments {
-                port: self.port,
-                host: self.host,
-                timeout: self.timeout,
+                port,
+                host,
+                timeout,
             }),
             cwd: None,
             envs: None,

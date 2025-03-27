@@ -7,14 +7,11 @@ use task::{DebugAdapterConfig, DebugTaskDefinition};
 
 use crate::*;
 
-pub(crate) struct GdbDebugAdapter {}
+#[derive(Default)]
+pub(crate) struct GdbDebugAdapter;
 
 impl GdbDebugAdapter {
     const ADAPTER_NAME: &'static str = "gdb";
-
-    pub(crate) fn new() -> Self {
-        GdbDebugAdapter {}
-    }
 }
 
 #[async_trait(?Send)]

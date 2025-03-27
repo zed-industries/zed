@@ -88,6 +88,7 @@ async fn test_show_attach_modal_and_select_process(
                         request: dap::DebugRequestType::Attach(AttachConfig::default()),
                         label: "attach example".into(),
                         initialize_args: None,
+                        tcp_connection: None,
                     },
                     window,
                     cx,

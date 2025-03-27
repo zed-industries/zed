@@ -1,4 +1,3 @@
-use collections::HashMap;
 use parking_lot::RwLock;
 
 use crate::adapters::{DebugAdapter, DebugAdapterName};

@@ -1,27 +1,17 @@
 use crate::*;
+use anyhow::bail;
 use dap::{transport::TcpTransport, DebugRequestType};
 use gpui::AsyncApp;
-use std::{ffi::OsStr, net::Ipv4Addr, path::PathBuf};
+use std::{ffi::OsStr, path::PathBuf};
 use task::DebugTaskDefinition;
 
-pub(crate) struct PythonDebugAdapter {
-    port: u16,
-    host: Ipv4Addr,
-    timeout: Option<u64>,
-}
+#[derive(Default)]
+pub(crate) struct PythonDebugAdapter {}
 
 impl PythonDebugAdapter {
     const ADAPTER_NAME: &'static str = "debugpy";
     const ADAPTER_PATH: &'static str = "src/debugpy/adapter";
     const LANGUAGE_NAME: &'static str = "Python";
-
-    pub(crate) async fn new(host: &TCPHost) -> Result<Self> {
-        Ok(PythonDebugAdapter {
-            port: TcpTransport::port(host).await?,
-            host: host.host(),
-            timeout: host.timeout,
-        })
-    }
 }
 
 #[async_trait(?Send)]
@@ -74,12 +64,22 @@ impl DebugAdapter for PythonDebugAdapter {
     async fn get_installed_binary(
         &self,
         delegate: &dyn DapDelegate,
-        _: &DebugAdapterConfig,
+        config: &DebugAdapterConfig,
         user_installed_path: Option<PathBuf>,
         cx: &mut AsyncApp,
     ) -> Result<DebugAdapterBinary> {
         const BINARY_NAMES: [&str; 3] = ["python3", "python", "py"];
+        let Some(tcp_connection) = config.tcp_connection.clone() else {
+            bail!("Python Debug Adapter expects tcp connection arguments to be provided");
+        };
+        let host = tcp_connection.host();
+        let timeout = tcp_connection.timeout;
 
+        let port = if let Some(port) = tcp_connection.port {
+            port
+        } else {
+            TcpTransport::port(&tcp_connection).await?
+        };
         let debugpy_dir = if let Some(user_installed_path) = user_installed_path {
             user_installed_path
         } else {
@@ -119,13 +119,13 @@ impl DebugAdapter for PythonDebugAdapter {
             command: python_path.ok_or(anyhow!("failed to find binary path for python"))?,
             arguments: Some(vec![
                 debugpy_dir.join(Self::ADAPTER_PATH).into(),
-                format!("--port={}", self.port).into(),
-                format!("--host={}", self.host).into(),
+                format!("--port={}", port).into(),
+                format!("--host={}", host).into(),
             ]),
             connection: Some(adapters::TcpArguments {
-                host: self.host,
-                port: self.port,
-                timeout: self.timeout,
+                host,
+                port,
+                timeout,
             }),
             cwd: None,
             envs: None,

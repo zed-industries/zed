@@ -8,14 +8,11 @@ use task::{DebugAdapterConfig, DebugRequestType, DebugTaskDefinition};
 
 use crate::*;
 
-pub(crate) struct LldbDebugAdapter {}
+#[derive(Default)]
+pub(crate) struct LldbDebugAdapter;
 
 impl LldbDebugAdapter {
     const ADAPTER_NAME: &'static str = "lldb";
-
-    pub(crate) fn new() -> Self {
-        LldbDebugAdapter {}
-    }
 
     pub fn attach_processes(processes: &HashMap<Pid, Process>) -> Vec<(&Pid, &Process)> {
         processes.iter().collect::<Vec<_>>()

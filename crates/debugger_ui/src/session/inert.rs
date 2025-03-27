@@ -4,7 +4,7 @@ use dap::{DebugAdapterKind, DebugRequestType};
 use editor::{Editor, EditorElement, EditorStyle};
 use gpui::{App, AppContext, Entity, EventEmitter, FocusHandle, Focusable, TextStyle, WeakEntity};
 use settings::Settings as _;
-use task::{DebugTaskDefinition, LaunchConfig, TCPHost};
+use task::{DebugTaskDefinition, LaunchConfig};
 use theme::ThemeSettings;
 use ui::{
     div, h_flex, relative, v_flex, ActiveTheme as _, ButtonCommon, ButtonLike, Clickable, Context,
@@ -61,10 +61,10 @@ impl InertState {
     ) -> Self {
         let selected_debugger = debug_config.as_ref().and_then(|config| match config.kind {
             DebugAdapterKind::Lldb => Some("LLDB".into()),
-            DebugAdapterKind::Go(_) => Some("Delve".into()),
-            DebugAdapterKind::Php(_) => Some("PHP".into()),
-            DebugAdapterKind::Javascript(_) => Some("JavaScript".into()),
-            DebugAdapterKind::Python(_) => Some("Debugpy".into()),
+            DebugAdapterKind::Go => Some("Delve".into()),
+            DebugAdapterKind::Php => Some("PHP".into()),
+            DebugAdapterKind::Javascript => Some("JavaScript".into()),
+            DebugAdapterKind::Python => Some("Debugpy".into()),
             _ => None,
         });
 
@@ -157,7 +157,7 @@ impl Render for InertState {
                                 program,
                                 cwd: Some(cwd),
                             }),
-
+                            tcp_connection: None,
                             initialize_args: None,
                         },
                     });
@@ -275,10 +275,10 @@ impl Render for InertState {
 fn kind_for_label(label: &str) -> DebugAdapterKind {
     match label {
         "LLDB" => DebugAdapterKind::Lldb,
-        "Debugpy" => DebugAdapterKind::Python(TCPHost::default()),
-        "JavaScript" => DebugAdapterKind::Javascript(TCPHost::default()),
-        "PHP" => DebugAdapterKind::Php(TCPHost::default()),
-        "Delve" => DebugAdapterKind::Go(TCPHost::default()),
+        "Debugpy" => DebugAdapterKind::Python,
+        "JavaScript" => DebugAdapterKind::Javascript,
+        "PHP" => DebugAdapterKind::Php,
+        "Delve" => DebugAdapterKind::Go,
         _ => {
             unimplemented!()
         } // Maybe we should set a toast notification here
@@ -318,6 +318,7 @@ impl InertState {
             kind,
             request: DebugRequestType::Attach(task::AttachConfig { process_id: None }),
             initialize_args: None,
+            tcp_connection: None,
         };
 
         let _ = self.workspace.update(cx, |workspace, cx| {

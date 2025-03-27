@@ -478,7 +478,7 @@ impl LocalMode {
         delegate: &DapAdapterDelegate,
         cx: &mut AsyncApp,
     ) -> Result<(Arc<dyn DebugAdapter>, DebugAdapterBinary)> {
-        let adapter = build_adapter(&config.kind).await?;
+        let adapter = build_adapter(&config.kind);
 
         let binary = cx.update(|cx| {
             ProjectSettings::get_global(cx)

@@ -90,13 +90,13 @@ impl DebugRequestDisposition {
 #[serde(rename_all = "lowercase", tag = "adapter")]
 pub enum DebugAdapterKind {
     /// Use debugpy
-    Python(TCPHost),
+    Python,
     /// Use vscode-php-debug
-    Php(TCPHost),
+    Php,
     /// Use vscode-js-debug
-    Javascript(TCPHost),
+    Javascript,
     /// Use delve
-    Go(TCPHost),
+    Go,
     /// Use lldb
     Lldb,
     /// Use GDB's built-in DAP support
@@ -107,12 +107,12 @@ impl DebugAdapterKind {
     /// Returns the display name for the adapter kind
     pub fn display_name(&self) -> &str {
         match self {
-            Self::Python(_) => "Python",
-            Self::Php(_) => "PHP",
-            Self::Javascript(_) => "JavaScript",
+            Self::Python => "Python",
+            Self::Php => "PHP",
+            Self::Javascript => "JavaScript",
             Self::Lldb => "LLDB",
             Self::Gdb => "GDB",
-            Self::Go(_) => "Go",
+            Self::Go => "Go",
         }
     }
 }
@@ -128,6 +128,12 @@ pub struct DebugAdapterConfig {
     pub request: DebugRequestDisposition,
     /// Additional initialization arguments to be sent on DAP initialization
     pub initialize_args: Option<serde_json::Value>,
+    /// Optional TCP connection information
+    ///
+    /// If provided, this will be used to connect to the debug adapter instead of
+    /// spawning a new process. This is useful for connecting to a debug adapter
+    /// that is already running or is started by another process.
+    pub tcp_connection: Option<TCPHost>,
 }
 
 impl From<DebugTaskDefinition> for DebugAdapterConfig {
@@ -137,6 +143,7 @@ impl From<DebugTaskDefinition> for DebugAdapterConfig {
             kind: def.kind,
             request: DebugRequestDisposition::UserConfigured(def.request),
             initialize_args: def.initialize_args,
+            tcp_connection: def.tcp_connection,
         }
     }
 }
@@ -154,6 +161,7 @@ impl TryFrom<DebugAdapterConfig> for DebugTaskDefinition {
             kind: def.kind,
             request,
             initialize_args: def.initialize_args,
+            tcp_connection: def.tcp_connection,
         })
     }
 }
@@ -208,6 +216,12 @@ pub struct DebugTaskDefinition {
     pub label: String,
     /// Additional initialization arguments to be sent on DAP initialization
     pub initialize_args: Option<serde_json::Value>,
+    /// Optional TCP connection information
+    ///
+    /// If provided, this will be used to connect to the debug adapter instead of
+    /// spawning a new process. This is useful for connecting to a debug adapter
+    /// that is already running or is started by another process.
+    pub tcp_connection: Option<TCPHost>,
 }
 
 /// A group of Debug Tasks defined in a JSON file.
