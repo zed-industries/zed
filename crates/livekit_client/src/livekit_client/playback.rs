@@ -298,19 +298,20 @@ fn get_default_output() -> anyhow::Result<(cpal::Device, cpal::SupportedStreamCo
     Ok((output_device, output_config))
 }
 
+#[derive(Clone)]
 struct AudioMixerSource {
     ssrc: i32,
-    sample_rate: i32,
-    num_channels: u16,
-    buffer: Mutex<VecDeque<Vec<i16>>>,
+    sample_rate: u32,
+    num_channels: u32,
+    buffer: Arc<Mutex<VecDeque<Vec<i16>>>>,
 }
 
 impl AudioMixerSource {
     fn receive(&self, frame: AudioFrame) {
-        let frame_size = frame.samples_per_channel * frame.num_channels;
-        debug_assert!(frame.data.len() == frame_size as usize);
-        debug_assert!(frame.sample_rate as i32 == self.sample_rate);
-        debug_assert!(frame.num_channels as u16 == self.num_channels);
+        assert_eq!(
+            frame.data.len() as u32,
+            self.sample_rate * self.num_channels / 100
+        );
 
         let mut buffer = self.buffer.lock();
         buffer.push_back(frame.data.to_vec());
@@ -321,36 +322,24 @@ impl AudioMixerSource {
     }
 }
 
-impl webrtc_sys::audio_mixer::AudioMixerSource for AudioMixerSource {
+impl libwebrtc::native::audio_mixer::AudioMixerSource for AudioMixerSource {
     fn ssrc(&self) -> i32 {
         self.ssrc
     }
 
-    fn preferred_sample_rate(&self) -> i32 {
+    fn preferred_sample_rate(&self) -> u32 {
         self.sample_rate
     }
 
-    fn get_audio_frame_with_info<'a>(
-        &self,
-        target_sample_rate: i32,
-        frame: webrtc_sys::audio_mixer::NativeAudioFrame<'a>,
-    ) -> webrtc_sys::audio_mixer::ffi::AudioFrameInfo {
-        debug_assert!(target_sample_rate == self.sample_rate);
-        let Some(buf) = self.buffer.lock().pop_front() else {
-            return AudioFrameInfo::Muted;
-        };
-
-        unsafe {
-            frame.update_frame(
-                0,
-                buf.as_ptr(),
-                self.sample_rate as usize / 100,
-                self.sample_rate,
-                self.num_channels as usize,
-            );
-        }
-
-        AudioFrameInfo::Normal
+    fn get_audio_frame_with_info<'a>(&self, target_sample_rate: u32) -> Option<AudioFrame> {
+        assert_eq!(self.sample_rate, target_sample_rate);
+        let buf = self.buffer.lock().pop_front()?;
+        Some(AudioFrame {
+            data: Cow::Owned(buf),
+            sample_rate: self.sample_rate,
+            num_channels: self.num_channels,
+            samples_per_channel: self.sample_rate / 100,
+        })
     }
 }
 
@@ -366,17 +355,17 @@ fn start_output_stream(
     // (and irritatingly, macOS seems to default to 44.1k)
     let sample_rate = 48000;
 
-    let mut mixer = webrtc_sys::audio_mixer::ffi::create_audio_mixer();
-    let source = Arc::new(AudioMixerSource {
+    let mut mixer = libwebrtc::native::audio_mixer::AudioMixer::new();
+    let source = AudioMixerSource {
         ssrc: 1,
         sample_rate,
-        num_channels: output_config.channels() as u16,
-        buffer: Mutex::default(),
-    });
+        num_channels: output_config.channels() as u32,
+        buffer: Arc::default(),
+    };
 
     let mut stream = NativeAudioStream::new(
         track.rtc_track(),
-        sample_rate,
+        sample_rate as i32,
         output_config.channels() as i32,
     );
 
@@ -388,11 +377,7 @@ fn start_output_stream(
             }
         }
     });
-    unsafe {
-        mixer.pin_mut().add_source(Box::new(
-            webrtc_sys::audio_mixer::AudioMixerSourceWrapper::new(source.clone()),
-        ));
-    }
+    mixer.add_source(source);
     let mut resampler = libwebrtc::native::audio_resampler::AudioResampler::default();
 
     // The _output_stream needs to be on it's own thread because it's !Send
@@ -409,17 +394,24 @@ fn start_output_stream(
             },
             {
                 move |data, _info| {
-                    let len = unsafe { mixer.pin_mut().mix(output_config.channels() as usize) };
-                    let bytes = unsafe {
-                        resampler.remix_and_resample(
-                            std::slice::from_raw_parts(mixer.data(), len),
-                            sample_rate as u32 / 100,
-                            output_config.channels() as u32,
-                            sample_rate as u32,
-                            output_config.channels() as u32,
-                            output_config.sample_rate().0,
-                        )
-                    };
+                    let mixed = mixer.mix(output_config.channels() as usize);
+                    let sampled = resampler.remix_and_resample(
+                        mixed,
+                        sample_rate as u32 / 100,
+                        output_config.channels() as u32,
+                        sample_rate as u32,
+                        output_config.channels() as u32,
+                        output_config.sample_rate().0,
+                    );
+                    if sampled.len() < data.len() {
+                        // Instead of partially filling a buffer, output silence. If a partial
+                        // buffer was outputted then this could lead to a perpetual state of
+                        // outputting partial buffers as it never gets filled enough for a full
+                        // frame.
+                        data.fill(0);
+                    } else {
+                        data.copy_from_slice(&sampled);
+                    }
                     apm.lock()
                         .process_reverse_stream(
                             data,
@@ -427,20 +419,6 @@ fn start_output_stream(
                             output_config.channels() as i32,
                         )
                         .ok();
-                    if bytes.len() < data.len() {
-                        // Instead of partially filling a buffer, output silence. If a partial
-                        // buffer was outputted then this could lead to a perpetual state of
-                        // outputting partial buffers as it never gets filled enough for a full
-                        // frame.
-                        data.fill(0);
-                    } else {
-                        data.copy_from_slice(&bytes);
-
-                        // // SAFETY: We know that buffer has at least data.len() values in it.
-                        // // because we just checked
-                        // let mut drain = buffer.drain(..data.len());
-                        // data.fill_with(|| unsafe { drain.next().unwrap_unchecked() });
-                    }
                 }
             },
             |error| log::error!("error playing audio track: {:?}", error),
