@@ -160,7 +160,7 @@ impl PickerDelegate for AttachModalDelegate {
     ) -> gpui::Task<()> {
         cx.spawn(async move |this, cx| {
             let Some(processes) = this
-                .update(cx, |this, cx| this.delegate.candidates.clone())
+                .update(cx, |this, _| this.delegate.candidates.clone())
                 .ok()
             else {
                 return;
