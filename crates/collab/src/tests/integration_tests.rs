@@ -4409,9 +4409,9 @@ async fn test_reloading_buffer_manually(
 
     client_a
         .fs()
-        .insert_tree("/a", json!({ "a.rs": "let one = 1;" }))
+        .insert_tree(path!("/a"), json!({ "a.rs": "let one = 1;" }))
         .await;
-    let (project_a, worktree_id) = client_a.build_local_project("/a", cx_a).await;
+    let (project_a, worktree_id) = client_a.build_local_project(path!("/a"), cx_a).await;
     let buffer_a = project_a
         .update(cx_a, |p, cx| p.open_buffer((worktree_id, "a.rs"), cx))
         .await
@@ -4439,7 +4439,7 @@ async fn test_reloading_buffer_manually(
     client_a
         .fs()
         .save(
-            "/a/a.rs".as_ref(),
+            path!("/a/a.rs").as_ref(),
             &Rope::from("let seven = 7;"),
             LineEnding::Unix,
         )
