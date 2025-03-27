@@ -381,7 +381,7 @@ impl ActiveThread {
             ThreadEvent::DoneStreaming => {
                 if !self.thread().read(cx).is_generating() {
                     self.show_notification(
-                        "Your changes have been applied.",
+                        "The assistant response has concluded.",
                         IconName::Check,
                         Color::Success,
                         window,
