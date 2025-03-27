@@ -219,7 +219,7 @@ impl LocalMode {
         let DebugRequestDisposition::UserConfigured(request) = config.request.clone() else {
             unimplemented!()
         };
-        let callback = async move |session: &mut LocalMode, cx| {
+        let callback = async move |session: &mut LocalMode, cx: AsyncApp| {
             session
                 .client
                 .on_request::<dap::requests::Initialize, _>(move |_, _| Ok(caps.clone()))
