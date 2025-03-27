@@ -521,6 +521,10 @@ impl ActiveThread {
                 }
             }
             ThreadEvent::CheckpointChanged => cx.notify(),
+            ThreadEvent::DiffChanged => {
+                // todo!("update list of changed files")
+                cx.notify();
+            }
         }
     }
 

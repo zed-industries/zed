@@ -43,10 +43,11 @@ use workspace::{
 
 actions!(git, [Diff, Add]);
 
+#[derive(Debug)]
 pub struct StatusEntry {
-    project_path: ProjectPath,
-    status: FileStatus,
-    has_conflict: bool,
+    pub project_path: ProjectPath,
+    pub status: FileStatus,
+    pub has_conflict: bool,
 }
 
 pub trait DiffSource {
@@ -186,7 +187,7 @@ impl ProjectDiff {
         })
     }
 
-    fn new(
+    pub fn new(
         source: Arc<dyn DiffSource>,
         project: Entity<Project>,
         workspace: Entity<Workspace>,

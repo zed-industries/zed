@@ -29,7 +29,7 @@ use crate::context_strip::{ContextStrip, ContextStripEvent, SuggestContextKind};
 use crate::profile_selector::ProfileSelector;
 use crate::thread::{RequestKind, Thread};
 use crate::thread_store::ThreadStore;
-use crate::{Chat, ChatMode, RemoveAllContext, ThreadEvent, ToggleContextPicker};
+use crate::{Chat, ChatMode, RemoveAllContext, ShowThreadDiff, ThreadEvent, ToggleContextPicker};
 
 pub struct MessageEditor {
     thread: Entity<Thread>,
@@ -152,6 +152,32 @@ impl MessageEditor {
     ) {
         self.context_picker_menu_handle.toggle(window, cx);
     }
+
+    fn show_thread_diff(
+        &mut self,
+        _: &ShowThreadDiff,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(workspace) = self.workspace.upgrade() else {
+            return;
+        };
+        let diff_source = Arc::new(self.thread.read(cx).diff_source(cx));
+        let project_diff = cx.new(|cx| {
+            git_ui::project_diff::ProjectDiff::new(
+                diff_source,
+                self.project.clone(),
+                workspace.clone(),
+                window,
+                cx,
+            )
+        });
+
+        workspace.update(cx, |workspace, cx| {
+            workspace.add_item_to_active_pane(Box::new(project_diff), None, true, window, cx)
+        });
+    }
+
     pub fn remove_all_context(
         &mut self,
         _: &RemoveAllContext,
@@ -565,6 +591,7 @@ impl Render for MessageEditor {
                         this.model_selector
                             .update(cx, |model_selector, cx| model_selector.toggle(window, cx));
                     }))
+                    .on_action(cx.listener(Self::show_thread_diff))
                     .on_action(cx.listener(Self::toggle_context_picker))
                     .on_action(cx.listener(Self::remove_all_context))
                     .on_action(cx.listener(Self::move_up))

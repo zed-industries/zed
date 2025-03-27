@@ -34,6 +34,7 @@ use crate::thread_store::{
     SerializedToolUse,
 };
 use crate::tool_use::{PendingToolUse, ToolUse, ToolUseState};
+use crate::{ChangeAuthor, ThreadDiff, ThreadDiffSource};
 
 #[derive(Debug, Clone, Copy)]
 pub enum RequestKind {
@@ -181,6 +182,7 @@ pub struct Thread {
     completion_count: usize,
     pending_completions: Vec<PendingCompletion>,
     project: Entity<Project>,
+    git_store: Entity<GitStore>,
     prompt_builder: Arc<PromptBuilder>,
     tools: Arc<ToolWorkingSet>,
     tool_use: ToolUseState,
@@ -190,6 +192,7 @@ pub struct Thread {
     initial_project_snapshot: Shared<Task<Option<Arc<ProjectSnapshot>>>>,
     cumulative_token_usage: TokenUsage,
     feedback: Option<ThreadFeedback>,
+    diff: Entity<ThreadDiff>,
 }
 
 impl Thread {
@@ -213,6 +216,7 @@ impl Thread {
             completion_count: 0,
             pending_completions: Vec::new(),
             project: project.clone(),
+            git_store: project.read(cx).git_store().clone(),
             prompt_builder,
             tools: tools.clone(),
             last_restore_checkpoint: None,
@@ -220,13 +224,14 @@ impl Thread {
             tool_use: ToolUseState::new(tools.clone()),
             action_log: cx.new(|_| ActionLog::new()),
             initial_project_snapshot: {
-                let project_snapshot = Self::project_snapshot(project, cx);
+                let project_snapshot = Self::project_snapshot(project.clone(), cx);
                 cx.foreground_executor()
                     .spawn(async move { Some(project_snapshot.await) })
                     .shared()
             },
             cumulative_token_usage: TokenUsage::default(),
             feedback: None,
+            diff: cx.new(|cx| ThreadDiff::new(project.clone(), cx)),
         }
     }
 
@@ -280,6 +285,8 @@ impl Thread {
             pending_completions: Vec::new(),
             last_restore_checkpoint: None,
             pending_checkpoint: None,
+            diff: cx.new(|cx| ThreadDiff::new(project.clone(), cx)),
+            git_store: project.read(cx).git_store().clone(),
             project,
             prompt_builder,
             tools,
@@ -354,6 +361,15 @@ impl Thread {
 
     pub fn has_pending_tool_uses(&self) -> bool {
         !self.tool_use.pending_tool_uses().is_empty()
+    }
+
+    pub fn diff_source(&self, cx: &App) -> ThreadDiffSource {
+        let project = self.project.read(cx);
+        ThreadDiffSource::new(
+            self.diff.clone(),
+            project.git_store().clone(),
+            project.languages().clone(),
+        )
     }
 
     pub fn checkpoint_for_message(&self, id: MessageId) -> Option<ThreadCheckpoint> {
@@ -1231,17 +1247,37 @@ impl Thread {
         tool: Arc<dyn Tool>,
         cx: &mut Context<Thread>,
     ) -> Task<()> {
-        let run_tool = tool.run(
-            input,
-            messages,
-            self.project.clone(),
-            self.action_log.clone(),
-            cx,
-        );
+        let diff = self.diff.clone();
+        let git_store = self.git_store.clone();
+        let checkpoint = git_store.read(cx).checkpoint(cx);
+        let messages = messages.to_vec();
+        let project = self.project.clone();
+        let action_log = self.action_log.clone();
 
         cx.spawn({
             async move |thread: WeakEntity<Thread>, cx| {
-                let output = run_tool.await;
+                if let Ok(checkpoint) = checkpoint.await {
+                    diff.update(cx, |diff, cx| {
+                        diff.compute_changes(ChangeAuthor::User, checkpoint)
+                    })
+                    .ok();
+                }
+
+                let Ok(output) =
+                    cx.update(|cx| tool.run(input, &messages, project, action_log, cx))
+                else {
+                    return;
+                };
+                let output = output.await;
+
+                if let Ok(checkpoint) = git_store.read_with(cx, |git, cx| git.checkpoint(cx)) {
+                    if let Ok(checkpoint) = checkpoint.await {
+                        diff.update(cx, |diff, cx| {
+                            diff.compute_changes(ChangeAuthor::Agent, checkpoint)
+                        })
+                        .ok();
+                    }
+                }
 
                 thread
                     .update(cx, |thread, cx| {
@@ -1562,6 +1598,7 @@ pub enum ThreadEvent {
         canceled: bool,
     },
     CheckpointChanged,
+    DiffChanged,
     ToolConfirmationNeeded,
 }
 
