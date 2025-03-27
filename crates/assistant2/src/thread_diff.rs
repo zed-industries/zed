@@ -1,5 +1,6 @@
 use anyhow::{Context as _, Result};
 use buffer_diff::BufferDiff;
+use collections::HashMap;
 use futures::{channel::mpsc, future::Shared, FutureExt, StreamExt};
 use gpui::{prelude::*, App, Entity, Task};
 use language::{Buffer, LanguageRegistry};
@@ -18,6 +19,7 @@ pub enum ChangeAuthor {
 
 pub struct ThreadDiff {
     base: Shared<Task<Option<GitStoreIndex>>>,
+    diffs_by_buffer: HashMap<Entity<Buffer>, Entity<BufferDiff>>,
     status: GitStoreStatus,
     project: Entity<Project>,
     git_store: Entity<GitStore>,
@@ -43,6 +45,7 @@ impl ThreadDiff {
         Self {
             base: base.clone(),
             status: GitStoreStatus::default(),
+            diffs_by_buffer: HashMap::default(),
             git_store: git_store.clone(),
             project,
             checkpoints_tx,
@@ -155,15 +158,22 @@ impl git_ui::project_diff::DiffSource for ThreadDiffSource {
         let base = self.thread_diff.read(cx).base.clone();
         let git_store = self.git_store.clone();
         let language_registry = self.language_registry.clone();
+        let thread_diff = self.thread_diff.clone();
         cx.spawn(async move |cx| {
             let base = base.await.context("failed to load diff base")?;
             let base_text = git_store
                 .read_with(cx, |git, cx| git.load_index_text(Some(base), &buffer, cx))?
                 .await;
             let snapshot = buffer.read_with(cx, |buffer, _cx| buffer.snapshot())?;
-            let diff = cx.new(|cx| BufferDiff::new(&snapshot, cx))?;
-            let base_text = base_text.unwrap_or(String::new());
-            let base_text: Arc<String> = Arc::from(base_text);
+
+            let diff = thread_diff.update(cx, |thread_diff, cx| {
+                thread_diff
+                    .diffs_by_buffer
+                    .entry(buffer.clone())
+                    .or_insert_with(|| cx.new(|cx| BufferDiff::new(&snapshot, cx)))
+                    .clone()
+            })?;
+            let base_text = Arc::new(base_text.unwrap_or_default());
             let diff_snapshot = BufferDiff::update_diff(
                 diff.clone(),
                 snapshot.text.clone(),
