@@ -1,6 +1,5 @@
 use std::sync::Arc;
 
-use coreaudio::sys::exit;
 use futures::StreamExt;
 use gpui::{
     actions, bounds, div, point,
@@ -105,9 +104,10 @@ impl LivekitWindow {
                 .await
                 .unwrap_or_else(|err| {
                     eprintln!(
-                "Failed to connect to {url}: {err}.\nTry `foreman start` to run the livekit server"
-            );
-                    unsafe { exit(1) }
+                        "Failed to connect to {url}: {err}.\nTry `foreman start` to run the livekit server"
+                    );
+
+                    std::process::exit(1)
                 });
 
         cx.update(|cx| {
