@@ -547,6 +547,13 @@ pub enum Thinking {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum StringOrContents {
+    String(String),
+    Content(Vec<RequestContent>),
+}
+
+#[derive(Debug, Serialize, Deserialize)]
 pub struct Request {
     pub model: String,
     pub max_tokens: u32,
@@ -557,8 +564,8 @@ pub struct Request {
     pub thinking: Option<Thinking>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tool_choice: Option<ToolChoice>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub system: Vec<RequestContent>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub system: Option<StringOrContents>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub metadata: Option<Metadata>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
