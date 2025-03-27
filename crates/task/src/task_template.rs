@@ -78,7 +78,6 @@ pub struct TaskTemplate {
 /// Represents the type of task that is being ran
 #[derive(Default, Deserialize, Serialize, Eq, PartialEq, JsonSchema, Clone, Debug)]
 #[serde(rename_all = "snake_case", tag = "type")]
-#[expect(clippy::large_enum_variant)]
 pub enum TaskType {
     /// Act like a typically task that runs commands
     #[default]
@@ -105,7 +104,7 @@ mod deserialization_tests {
 
     #[test]
     fn deserialize_task_type_debug() {
-        let adapter_config = DebugAdapterConfig {
+        let adapter_config = DebugTaskDefinition {
             label: "test config".into(),
             kind: DebugAdapterKind::Python(TCPHost::default()),
             request: crate::DebugRequestType::Launch(LaunchConfig {
