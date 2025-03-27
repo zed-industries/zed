@@ -3853,6 +3853,10 @@ impl Editor {
         if self.semantics_provider.is_none() {
             return None;
         }
+        log::debug!(
+            "Fetching semantic tokens for editor: {}",
+            reason.description()
+        );
         match reason {
             SemanticTokensRefreshReason::Toggle(false) => {
                 self.display_map.update(cx, |display_map, _| {
@@ -3884,7 +3888,9 @@ impl Editor {
                     let snapshot = buffer.read(cx).snapshot();
                     let multibuffer = self.buffer.clone();
                     let task: Task<Result<()>> = cx.spawn_in(window, async move |editor, cx| {
-                        let tokens = semantic_tokens.await?;
+                        let tokens = semantic_tokens
+                            .await
+                            .context("semantic tokens fetch task")?;
                         let multibuffer = multibuffer.clone();
                         let tokens: Vec<_> = cx.update(|_, cx| {
                             let multibuffer = multibuffer.read(cx).snapshot(cx);
