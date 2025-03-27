@@ -2092,11 +2092,16 @@ impl LspCommand for GetCompletions {
             completions.retain(|lsp_completion| {
                 let lsp_edit = lsp_completion.text_edit.clone().or_else(|| {
                     let default_text_edit = lsp_defaults.as_deref()?.edit_range.as_ref()?;
+                    let new_text = lsp_completion
+                        .insert_text
+                        .as_ref()
+                        .unwrap_or(&lsp_completion.label)
+                        .clone();
                     match default_text_edit {
                         CompletionListItemDefaultsEditRange::Range(range) => {
                             Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
                                 range: *range,
-                                new_text: lsp_completion.label.clone(),
+                                new_text,
                             }))
                         }
                         CompletionListItemDefaultsEditRange::InsertAndReplace {
@@ -2104,7 +2109,7 @@ impl LspCommand for GetCompletions {
                             replace,
                         } => Some(lsp::CompletionTextEdit::InsertAndReplace(
                             lsp::InsertReplaceEdit {
-                                new_text: lsp_completion.label.clone(),
+                                new_text,
                                 insert: *insert,
                                 replace: *replace,
                             },
@@ -2167,6 +2172,7 @@ impl LspCommand for GetCompletions {
                                 .clone()
                         };
 
+                        // We already know text_edit is None here
                         let text = lsp_completion
                             .insert_text
                             .as_ref()
