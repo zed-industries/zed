@@ -150,6 +150,12 @@ impl Keystroke {
             keystroke: source.to_owned(),
         })?;
 
+        if key.chars().any(|c| c.is_uppercase()) {
+            return Err(InvalidKeystrokeError {
+                keystroke: source.to_owned(),
+            });
+        }
+
         Ok(Keystroke {
             modifiers: Modifiers {
                 control,
