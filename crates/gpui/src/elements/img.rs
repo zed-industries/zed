@@ -277,13 +277,13 @@ impl Element for Img {
 
             let frame_index = state.as_ref().map(|state| state.frame_index).unwrap_or(0);
 
-            if let Some(asset_id) = self.source.asset_id() {
+            if let Some(cache_id) = self.source.cache_id() {
                 // Log asset_id and source to frame, to help window draw to
                 // remove unused assets cache in frame.
                 window
                     .next_frame
                     .asset_sources
-                    .insert(asset_id, self.source.clone());
+                    .insert(cache_id, self.source.clone());
             }
 
             let layout_id = self.interactivity.request_layout(
@@ -502,7 +502,7 @@ impl ImageSource {
         }
     }
 
-    pub(crate) fn asset_id(&self) -> Option<(TypeId, u64)> {
+    pub(crate) fn cache_id(&self) -> Option<(TypeId, u64)> {
         match self {
             ImageSource::Resource(resource) => {
                 Some((TypeId::of::<ImgResourceLoader>(), hash(&resource)))
