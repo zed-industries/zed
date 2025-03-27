@@ -4549,39 +4549,45 @@ async fn test_formatting_buffer(
         "let honey = \"two\"\n"
     );
 
-    // Ensure buffer can be formatted using an external command. Notice how the
-    // host's configuration is honored as opposed to using the guest's settings.
-    cx_a.update(|cx| {
-        SettingsStore::update_global(cx, |store, cx| {
-            store.update_user_settings::<AllLanguageSettings>(cx, |file| {
-                file.defaults.formatter = Some(SelectedFormatter::List(FormatterList(
-                    vec![Formatter::External {
-                        command: "awk".into(),
-                        arguments: Some(vec!["{sub(/two/,\"{buffer_path}\")}1".to_string()].into()),
-                    }]
-                    .into(),
-                )));
+    // There is no `awk` command on Windows.
+    #[cfg(not(target_os = "windows"))]
+    {
+        // Ensure buffer can be formatted using an external command. Notice how the
+        // host's configuration is honored as opposed to using the guest's settings.
+        cx_a.update(|cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings::<AllLanguageSettings>(cx, |file| {
+                    file.defaults.formatter = Some(SelectedFormatter::List(FormatterList(
+                        vec![Formatter::External {
+                            command: "awk".into(),
+                            arguments: Some(
+                                vec!["{sub(/two/,\"{buffer_path}\")}1".to_string()].into(),
+                            ),
+                        }]
+                        .into(),
+                    )));
+                });
             });
         });
-    });
 
-    executor.allow_parking();
-    project_b
-        .update(cx_b, |project, cx| {
-            project.format(
-                HashSet::from_iter([buffer_b.clone()]),
-                LspFormatTarget::Buffers,
-                true,
-                FormatTrigger::Save,
-                cx,
-            )
-        })
-        .await
-        .unwrap();
-    assert_eq!(
-        buffer_b.read_with(cx_b, |buffer, _| buffer.text()),
-        format!("let honey = \"{}/a.rs\"\n", directory.to_str().unwrap())
-    );
+        executor.allow_parking();
+        project_b
+            .update(cx_b, |project, cx| {
+                project.format(
+                    HashSet::from_iter([buffer_b.clone()]),
+                    LspFormatTarget::Buffers,
+                    true,
+                    FormatTrigger::Save,
+                    cx,
+                )
+            })
+            .await
+            .unwrap();
+        assert_eq!(
+            buffer_b.read_with(cx_b, |buffer, _| buffer.text()),
+            format!("let honey = \"{}/a.rs\"\n", directory.to_str().unwrap())
+        );
+    }
 }
 
 #[gpui::test(iterations = 10)]
