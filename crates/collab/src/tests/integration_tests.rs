@@ -1460,7 +1460,7 @@ async fn test_project_reconnect(
     client_a
         .fs()
         .insert_tree(
-            "/root-1",
+            path!("/root-1"),
             json!({
                 "dir1": {
                     "a.txt": "a",
@@ -1488,7 +1488,7 @@ async fn test_project_reconnect(
     client_a
         .fs()
         .insert_tree(
-            "/root-2",
+            path!("/root-2"),
             json!({
                 "2.txt": "2",
             }),
@@ -1497,7 +1497,7 @@ async fn test_project_reconnect(
     client_a
         .fs()
         .insert_tree(
-            "/root-3",
+            path!("/root-3"),
             json!({
                 "3.txt": "3",
             }),
@@ -1505,9 +1505,11 @@ async fn test_project_reconnect(
         .await;
 
     let active_call_a = cx_a.read(ActiveCall::global);
-    let (project_a1, _) = client_a.build_local_project("/root-1/dir1", cx_a).await;
-    let (project_a2, _) = client_a.build_local_project("/root-2", cx_a).await;
-    let (project_a3, _) = client_a.build_local_project("/root-3", cx_a).await;
+    let (project_a1, _) = client_a
+        .build_local_project(path!("/root-1/dir1"), cx_a)
+        .await;
+    let (project_a2, _) = client_a.build_local_project(path!("/root-2"), cx_a).await;
+    let (project_a3, _) = client_a.build_local_project(path!("/root-3"), cx_a).await;
     let worktree_a1 =
         project_a1.read_with(cx_a, |project, cx| project.worktrees(cx).next().unwrap());
     let project1_id = active_call_a
@@ -1534,7 +1536,7 @@ async fn test_project_reconnect(
     });
     let (worktree_a2, _) = project_a1
         .update(cx_a, |p, cx| {
-            p.find_or_create_worktree("/root-1/dir2", true, cx)
+            p.find_or_create_worktree(path!("/root-1/dir2"), true, cx)
         })
         .await
         .unwrap();
@@ -1580,7 +1582,7 @@ async fn test_project_reconnect(
     client_a
         .fs()
         .insert_tree(
-            "/root-1/dir1/subdir2",
+            path!("/root-1/dir1/subdir2"),
             json!({
                 "f.txt": "f-contents",
                 "g.txt": "g-contents",
@@ -1592,7 +1594,7 @@ async fn test_project_reconnect(
     client_a
         .fs()
         .remove_dir(
-            "/root-1/dir1/subdir1".as_ref(),
+            path!("/root-1/dir1/subdir1").as_ref(),
             RemoveOptions {
                 recursive: true,
                 ..Default::default()
@@ -1607,7 +1609,7 @@ async fn test_project_reconnect(
     });
     let (worktree_a3, _) = project_a1
         .update(cx_a, |p, cx| {
-            p.find_or_create_worktree("/root-1/dir3", true, cx)
+            p.find_or_create_worktree(path!("/root-1/dir3"), true, cx)
         })
         .await
         .unwrap();
@@ -1648,13 +1650,13 @@ async fn test_project_reconnect(
                 .map(|p| p.to_str().unwrap())
                 .collect::<Vec<_>>(),
             vec![
-                "a.txt",
-                "b.txt",
-                "subdir2",
-                "subdir2/f.txt",
-                "subdir2/g.txt",
-                "subdir2/h.txt",
-                "subdir2/i.txt"
+                separator!("a.txt"),
+                separator!("b.txt"),
+                separator!("subdir2"),
+                separator!("subdir2/f.txt"),
+                separator!("subdir2/g.txt"),
+                separator!("subdir2/h.txt"),
+                separator!("subdir2/i.txt")
             ]
         );
         assert!(worktree_a3.read(cx).has_update_observer());
@@ -1681,13 +1683,13 @@ async fn test_project_reconnect(
                 .map(|p| p.to_str().unwrap())
                 .collect::<Vec<_>>(),
             vec![
-                "a.txt",
-                "b.txt",
-                "subdir2",
-                "subdir2/f.txt",
-                "subdir2/g.txt",
-                "subdir2/h.txt",
-                "subdir2/i.txt"
+                separator!("a.txt"),
+                separator!("b.txt"),
+                separator!("subdir2"),
+                separator!("subdir2/f.txt"),
+                separator!("subdir2/g.txt"),
+                separator!("subdir2/h.txt"),
+                separator!("subdir2/i.txt")
             ]
         );
         assert!(project.worktree_for_id(worktree2_id, cx).is_none());
@@ -1720,18 +1722,21 @@ async fn test_project_reconnect(
     // While client B is disconnected, add and remove files from client A's project
     client_a
         .fs()
-        .insert_file("/root-1/dir1/subdir2/j.txt", "j-contents".into())
+        .insert_file(path!("/root-1/dir1/subdir2/j.txt"), "j-contents".into())
         .await;
     client_a
         .fs()
-        .remove_file("/root-1/dir1/subdir2/i.txt".as_ref(), Default::default())
+        .remove_file(
+            path!("/root-1/dir1/subdir2/i.txt").as_ref(),
+            Default::default(),
+        )
         .await
         .unwrap();
 
     // While client B is disconnected, add and remove worktrees from client A's project.
     let (worktree_a4, _) = project_a1
         .update(cx_a, |p, cx| {
-            p.find_or_create_worktree("/root-1/dir4", true, cx)
+            p.find_or_create_worktree(path!("/root-1/dir4"), true, cx)
         })
         .await
         .unwrap();
@@ -1774,13 +1779,13 @@ async fn test_project_reconnect(
                 .map(|p| p.to_str().unwrap())
                 .collect::<Vec<_>>(),
             vec![
-                "a.txt",
-                "b.txt",
-                "subdir2",
-                "subdir2/f.txt",
-                "subdir2/g.txt",
-                "subdir2/h.txt",
-                "subdir2/j.txt"
+                separator!("a.txt"),
+                separator!("b.txt"),
+                separator!("subdir2"),
+                separator!("subdir2/f.txt"),
+                separator!("subdir2/g.txt"),
+                separator!("subdir2/h.txt"),
+                separator!("subdir2/j.txt")
             ]
         );
         assert!(project.worktree_for_id(worktree2_id, cx).is_none());
