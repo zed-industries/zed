@@ -1442,7 +1442,6 @@ impl ShellExec {
                         show_summary: false,
                         show_command: false,
                         show_rerun: false,
-                        debug_config: None,
                     }),
                 });
             });

@@ -42,7 +42,7 @@ use pty_info::PtyProcessInfo;
 use serde::{Deserialize, Serialize};
 use settings::Settings;
 use smol::channel::{Receiver, Sender};
-use task::{DebugAdapterConfig, HideStrategy, Shell, TaskId};
+use task::{HideStrategy, Shell, TaskId};
 use terminal_settings::{AlternateScroll, CursorShape, TerminalSettings};
 use theme::{ActiveTheme, Theme};
 use util::{paths::home_dir, truncate_and_trailoff};
@@ -109,7 +109,7 @@ pub enum Event {
     SelectionsChanged,
     NewNavigationTarget(Option<MaybeNavigationTarget>),
     Open(MaybeNavigationTarget),
-    TaskLocatorReady(TaskId),
+    TaskLocatorReady { task_id: TaskId, success: bool },
 }
 
 #[derive(Clone, Debug)]
@@ -647,7 +647,6 @@ pub struct TaskState {
     pub show_summary: bool,
     pub show_command: bool,
     pub show_rerun: bool,
-    pub debug_config: Option<DebugAdapterConfig>,
 }
 
 /// A status of the current terminal tab's task.
@@ -1864,9 +1863,10 @@ impl Terminal {
             unsafe { append_text_to_term(&mut self.term.lock(), &lines_to_show) };
         }
 
-        if let Some(_) = task.debug_config.take() {
-            cx.emit(Event::TaskLocatorReady(task.id.clone()));
-        }
+        cx.emit(Event::TaskLocatorReady {
+            task_id: task.id.clone(),
+            success: finished_successfully,
+        });
 
         match task.hide {
             HideStrategy::Never => {}

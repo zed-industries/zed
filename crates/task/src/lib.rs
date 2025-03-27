@@ -67,8 +67,6 @@ pub struct SpawnInTerminal {
     pub show_command: bool,
     /// Whether to show the rerun button in the terminal tab.
     pub show_rerun: bool,
-    /// Debug Config used for locator SpawnInTerminals
-    pub debug_config: Option<DebugAdapterConfig>,
 }
 
 /// A final form of the [`TaskTemplate`], that got resolved with a particular [`TaskContext`] and now is ready to spawn the actual task.
