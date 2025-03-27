@@ -10,12 +10,10 @@ pub(super) struct LocatorStore {
 
 impl LocatorStore {
     pub(super) fn new() -> Self {
-        let locators = HashMap::from_iter([
-            (
-                SharedString::new("cargo"), 
-                Box::new(CargoLocator {}) as Box<dyn DapLocator>
-            )
-        ]);
+        let locators = HashMap::from_iter([(
+            SharedString::new("cargo"),
+            Box::new(CargoLocator {}) as Box<dyn DapLocator>,
+        )]);
         Self { locators }
     }
 
