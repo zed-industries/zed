@@ -77,7 +77,7 @@ impl std::fmt::Display for DebugAdapterName {
 
 impl From<DebugAdapterName> for SharedString {
     fn from(name: DebugAdapterName) -> Self {
-        SharedString::from(name.0)
+        name.0
     }
 }
 
