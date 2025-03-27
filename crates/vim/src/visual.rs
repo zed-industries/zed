@@ -169,15 +169,9 @@ impl Vim {
                 )
             {
                 let is_up_or_down = matches!(motion, Motion::Up { .. } | Motion::Down { .. });
-                vim.visual_block_motion(
-                    is_up_or_down,
-                    editor,
-                    window,
-                    cx,
-                    |map, point, goal, reversed| {
-                        motion.move_point_2(map, point, goal, times, &text_layout_details, reversed)
-                    },
-                )
+                vim.visual_block_motion(is_up_or_down, editor, window, cx, |map, point, goal| {
+                    motion.move_point(map, point, goal, times, &text_layout_details)
+                })
             } else {
                 editor.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
                     s.move_with(|map, selection| {
@@ -248,14 +242,13 @@ impl Vim {
             &DisplaySnapshot,
             DisplayPoint,
             SelectionGoal,
-            bool,
         ) -> Option<(DisplayPoint, SelectionGoal)>,
     ) {
         let text_layout_details = editor.text_layout_details(window);
         editor.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
             let map = &s.display_map();
-            let newest_anchor = s.newest_anchor();
-            let mut head = newest_anchor.clone().head().to_display_point(map);
+
+            let mut head = s.newest_anchor().head().to_display_point(map);
             let mut tail = s.oldest_anchor().tail().to_display_point(map);
 
             let mut head_x = map.x_for_display_point(head, &text_layout_details);
@@ -271,26 +264,25 @@ impl Vim {
 
             let was_reversed = tail_x > head_x;
 
-            // let actual_goal = if was_reversed {
-            //     SelectionGoal::HorizontalRange {
-            //         start: end,
-            //         end: start,
-            //     }
-            // } else {
-            //     goal
-            // };
-
             if !was_reversed && !preserve_goal {
                 head = movement::saturating_left(map, head);
             }
 
-            let Some((new_head, _)) = move_selection(map, head, goal, was_reversed) else {
+            let reverse_aware_goal = if was_reversed {
+                SelectionGoal::HorizontalRange {
+                    start: end,
+                    end: start,
+                }
+            } else {
+                goal
+            };
+
+            let Some((new_head, _)) = move_selection(map, head, reverse_aware_goal) else {
                 return;
             };
             head = new_head;
             head_x = map.x_for_display_point(head, &text_layout_details);
 
-            // This will always be false after an up call it seems
             let is_reversed = tail_x > head_x;
             if was_reversed && !is_reversed {
                 tail = movement::saturating_left(map, tail);
@@ -341,7 +333,9 @@ impl Vim {
                         id: s.new_selection_id(),
                         start: start.to_point(map),
                         end: end.to_point(map),
-                        reversed: is_reversed,
+                        reversed: is_reversed &&
+                                    // For neovim parity: cursor is not reversed when column is a single character
+                                    end.column() - start.column() > 1,
                         goal,
                     };
 
@@ -1210,26 +1204,6 @@ mod test {
             "The «qˇ»uick brown
 
             fox «jˇ»umps over
-            the lazy dog
-            "
-        });
-    }
-
-    #[gpui::test]
-    async fn test_visual_block_issue_2123(cx: &mut gpui::TestAppContext) {
-        let mut cx = NeovimBackedTestContext::new(cx).await;
-
-        cx.set_shared_state(indoc! {
-            "The ˇquick brown
-            fox jumps over
-            the lazy dog
-            "
-        })
-        .await;
-        cx.simulate_shared_keystrokes("ctrl-v right down").await;
-        cx.shared_state().await.assert_eq(indoc! {
-            "The «quˇ»ick brown
-            fox «juˇ»mps over
             the lazy dog
             "
         });

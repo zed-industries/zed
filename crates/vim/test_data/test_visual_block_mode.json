@@ -24,3 +24,15 @@
 {"Get":{"state":"The«ˇ q»uick\nbro«ˇwn»\nfoxˇ\njumps over the\n\nlazy dog\n","mode":"VisualBlock"}}
 {"Key":"down"}
 {"Get":{"state":"The «qˇ»uick\nbrow«nˇ»\nfox\njump«sˇ» over the\n\nlazy dog\n","mode":"VisualBlock"}}
+{"Key":"left"}
+{"Get":{"state":"The«ˇ q»uick\nbro«ˇwn»\nfoxˇ\njum«ˇps» over the\n\nlazy dog\n","mode":"VisualBlock"}}
+{"Key":"s"}
+{"Key":"o"}
+{"Key":"escape"}
+{"Get":{"state":"Theˇouick\nbroo\nfoxo\njumo over the\n\nlazy dog\n","mode":"Normal"}}
+{"Put":{"state":"Theˇ quick brown\n\nfox jumps over\nthe lazy dog\n"}}
+{"Key":"l"}
+{"Key":"ctrl-v"}
+{"Key":"j"}
+{"Key":"j"}
+{"Get":{"state":"The «qˇ»uick brown\n\nfox «jˇ»umps over\nthe lazy dog\n","mode":"VisualBlock"}}
