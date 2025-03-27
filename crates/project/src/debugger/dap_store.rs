@@ -460,8 +460,8 @@ impl DapStore {
             initialize_args: config.initialize_args.clone(),
             tcp_connection: config.tcp_connection.clone(),
         };
-
-        let new_session_task = if cfg!(any(test, feature = "test-support")) {
+        #[cfg(any(test, feature = "test-support"))]
+        let new_session_task = {
             let caps = parent_session.read(cx).capabilities.clone();
             self.new_fake_session(
                 debug_config,
@@ -472,10 +472,11 @@ impl DapStore {
                 cx,
             )
             .1
-        } else {
-            self.new_session(debug_config, &worktree, Some(parent_session.clone()), cx)
-                .1
         };
+        #[cfg(not(any(test, feature = "test-support")))]
+        let new_session_task = self
+            .new_session(debug_config, &worktree, Some(parent_session.clone()), cx)
+            .1;
 
         let request_seq = request.seq;
         cx.spawn(async move |_, cx| {
