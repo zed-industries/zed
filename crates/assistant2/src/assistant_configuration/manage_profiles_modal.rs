@@ -1,7 +1,9 @@
 use std::sync::Arc;
 
+use assistant_settings::AssistantSettings;
 use assistant_tool::ToolWorkingSet;
 use gpui::{prelude::*, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, WeakEntity};
+use settings::Settings as _;
 use ui::{prelude::*, ListItem, ListItemSpacing, Navigable, NavigableEntry};
 use workspace::{ModalView, Workspace};
 
@@ -43,7 +45,8 @@ impl ManageProfilesModal {
         workspace.register_action(|workspace, _: &ManageProfiles, window, cx| {
             if let Some(panel) = workspace.panel::<AssistantPanel>(cx) {
                 let workspace_handle = cx.entity().downgrade();
-                let tools = panel.read(cx).thread_store().read(cx).tools();
+                let thread_store = panel.read(cx).thread_store().read(cx);
+                let tools = thread_store.tools();
                 workspace.toggle_modal(window, cx, |window, cx| {
                     Self::new(workspace_handle, tools, window, cx)
                 })
@@ -161,26 +164,55 @@ impl ManageProfilesModal {
 
     fn render_configure_tools(
         &mut self,
-        _mode: ConfigureToolsMode,
+        mode: ConfigureToolsMode,
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        let tools_by_source = self.tools.tools_by_source(cx);
+        let settings = AssistantSettings::get_global(cx);
 
-        v_flex().children(tools_by_source.into_iter().map(|(source, tools)| {
-            v_flex().children(tools.into_iter().map(|tool| {
-                ListItem::new(SharedString::from(tool.name()))
-                    .inset(true)
-                    .child(Label::new(tool.name()))
-                    .end_slot::<Icon>(self.tools.is_enabled(&source, &tool.name().into()).then(
-                        || {
+        let Some(profile) = settings.profiles.get(&mode.profile_id) else {
+            return div().into_any_element();
+        };
+
+        v_flex()
+            .children(profile.tools.iter().filter_map(|(tool_id, enabled)| {
+                let tool = self.tools.tool(tool_id, cx)?;
+
+                Some(
+                    ListItem::new(SharedString::from(tool.name()))
+                        .inset(true)
+                        .child(Label::new(tool.name()))
+                        .end_slot::<Icon>(enabled.then(|| {
                             Icon::new(IconName::Check)
                                 .size(IconSize::Small)
                                 .color(Color::Success)
-                        },
-                    ))
+                        })),
+                )
             }))
-        }))
+            .children(
+                profile
+                    .context_servers
+                    .iter()
+                    .filter_map(|(context_server_id, preset)| {
+                        Some(v_flex().child(Label::new(context_server_id)).children(
+                            preset.tools.iter().filter_map(|(tool_id, enabled)| {
+                                let tool = self.tools.tool(tool_id, cx)?;
+
+                                Some(
+                                    ListItem::new(SharedString::from(tool.name()))
+                                        .inset(true)
+                                        .child(Label::new(tool.name()))
+                                        .end_slot::<Icon>(enabled.then(|| {
+                                            Icon::new(IconName::Check)
+                                                .size(IconSize::Small)
+                                                .color(Color::Success)
+                                        })),
+                                )
+                            }),
+                        ))
+                    }),
+            )
+            .into_any_element()
     }
 }
 
