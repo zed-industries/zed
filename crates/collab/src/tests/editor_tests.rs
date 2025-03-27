@@ -1113,7 +1113,7 @@ async fn test_share_project(
     client_a
         .fs()
         .insert_tree(
-            "/a",
+            path!("/a"),
             json!({
                 ".gitignore": "ignored-dir",
                 "a.txt": "a-contents",
@@ -1127,7 +1127,7 @@ async fn test_share_project(
         .await;
 
     // Invite client B to collaborate on a project
-    let (project_a, worktree_id) = client_a.build_local_project("/a", cx_a).await;
+    let (project_a, worktree_id) = client_a.build_local_project(path!("/a"), cx_a).await;
     active_call_a
         .update(cx_a, |call, cx| {
             call.invite(client_b.user_id().unwrap(), Some(project_a.clone()), cx)
