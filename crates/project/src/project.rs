@@ -1476,7 +1476,7 @@ impl Project {
         fails: bool,
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<Session>>> {
-        use dap::Capabilities;
+        use dap::{Capabilities, FakeAdapter};
         use task::DebugRequestDisposition;
 
         let worktree = maybe!({ self.worktrees(cx).next() });
@@ -1486,7 +1486,7 @@ impl Project {
         };
         let config = DebugAdapterConfig {
             label: "test config".into(),
-            adapter: DebugAdapterKind::Lldb,
+            adapter: FakeAdapter::ADAPTER_NAME.into(),
             request: DebugRequestDisposition::UserConfigured(request),
             initialize_args: None,
             tcp_connection: None,

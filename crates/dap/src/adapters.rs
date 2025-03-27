@@ -303,7 +303,7 @@ pub struct FakeAdapter {}
 
 #[cfg(any(test, feature = "test-support"))]
 impl FakeAdapter {
-    const ADAPTER_NAME: &'static str = "fake-adapter";
+    pub const ADAPTER_NAME: &'static str = "fake-adapter";
 
     pub fn new() -> Self {
         Self {}
