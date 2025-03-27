@@ -409,7 +409,10 @@ async fn test_ssh_collaboration_formatting_with_prettier(
     let buffer_text = "let one = \"two\"";
     let prettier_format_suffix = project::TEST_PRETTIER_FORMAT_SUFFIX;
     remote_fs
-        .insert_tree("/project", serde_json::json!({ "a.ts": buffer_text }))
+        .insert_tree(
+            path!("/project"),
+            serde_json::json!({ "a.ts": buffer_text }),
+        )
         .await;
 
     let test_plugin = "test_plugin";
@@ -456,7 +459,7 @@ async fn test_ssh_collaboration_formatting_with_prettier(
 
     let client_ssh = SshRemoteClient::fake_client(opts, cx_a).await;
     let (project_a, worktree_id) = client_a
-        .build_ssh_project("/project", client_ssh, cx_a)
+        .build_ssh_project(path!("/project"), client_ssh, cx_a)
         .await;
 
     // While the SSH worktree is being scanned, user A shares the remote project.
