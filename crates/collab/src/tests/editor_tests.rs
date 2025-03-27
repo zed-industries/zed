@@ -307,14 +307,14 @@ async fn test_collaborating_with_completion(cx_a: &mut TestAppContext, cx_b: &mu
     client_a
         .fs()
         .insert_tree(
-            "/a",
+            path!("/a"),
             json!({
                 "main.rs": "fn main() { a }",
                 "other.rs": "",
             }),
         )
         .await;
-    let (project_a, worktree_id) = client_a.build_local_project("/a", cx_a).await;
+    let (project_a, worktree_id) = client_a.build_local_project(path!("/a"), cx_a).await;
     let project_id = active_call_a
         .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
         .await
@@ -352,7 +352,7 @@ async fn test_collaborating_with_completion(cx_a: &mut TestAppContext, cx_b: &mu
         .set_request_handler::<lsp::request::Completion, _, _>(|params, _| async move {
             assert_eq!(
                 params.text_document_position.text_document.uri,
-                lsp::Url::from_file_path("/a/main.rs").unwrap(),
+                lsp::Url::from_file_path(path!("/a/main.rs")).unwrap(),
             );
             assert_eq!(
                 params.text_document_position.position,
@@ -469,7 +469,7 @@ async fn test_collaborating_with_completion(cx_a: &mut TestAppContext, cx_b: &mu
         .set_request_handler::<lsp::request::Completion, _, _>(|params, _| async move {
             assert_eq!(
                 params.text_document_position.text_document.uri,
-                lsp::Url::from_file_path("/a/main.rs").unwrap(),
+                lsp::Url::from_file_path(path!("/a/main.rs")).unwrap(),
             );
             assert_eq!(
                 params.text_document_position.position,
