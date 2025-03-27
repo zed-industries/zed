@@ -33,10 +33,10 @@ pub struct FindReplaceFileToolInput {
     /// </example>
     pub path: PathBuf,
 
-    /// A user-friendly description of what's being replaced. This will be shown in the UI.
+    /// A user-friendly markdown description of what's being replaced. This will be shown in the UI.
     ///
     /// <example>Fix API endpoint URLs</example>
-    /// <example>Update copyright year</example>
+    /// <example>Update copyright year in `page_footer`</example>
     pub display_description: String,
 
     /// The unique string to find in the file. This string cannot be empty;

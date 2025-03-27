@@ -339,7 +339,8 @@ impl EditorTestContext {
         let mut found = None;
         fs.with_git_state(&Self::root_path().join(".git"), false, |git_state| {
             found = git_state.index_contents.get(path.as_ref()).cloned();
-        });
+        })
+        .unwrap();
         assert_eq!(expected, found.as_deref());
     }
 

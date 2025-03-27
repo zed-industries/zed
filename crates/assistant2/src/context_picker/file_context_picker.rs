@@ -282,7 +282,10 @@ pub fn render_file_context_entry(
     cx: &App,
 ) -> Stateful<Div> {
     let (file_name, directory) = if path == Path::new("") {
-        (SharedString::from(path_prefix.clone()), None)
+        (
+            SharedString::from(path_prefix.trim_end_matches('/').to_string()),
+            None,
+        )
     } else {
         let file_name = path
             .file_name()
@@ -291,8 +294,10 @@ pub fn render_file_context_entry(
             .to_string()
             .into();
 
-        let mut directory = format!("{}/", path_prefix);
-
+        let mut directory = path_prefix.to_string();
+        if !directory.ends_with('/') {
+            directory.push('/');
+        }
         if let Some(parent) = path.parent().filter(|parent| parent != &Path::new("")) {
             directory.push_str(&parent.to_string_lossy());
             directory.push('/');

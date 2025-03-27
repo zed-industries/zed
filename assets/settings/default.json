@@ -155,6 +155,8 @@
   //
   // Default: not set, defaults to "bar"
   "cursor_shape": null,
+  // Determines whether the mouse cursor is hidden when typing in an editor or input box.
+  "hide_mouse_while_typing": true,
   // How to highlight the current line in the editor.
   //
   // 1. Don't highlight the current line:
@@ -427,6 +429,8 @@
   "project_panel": {
     // Whether to show the project panel button in the status bar
     "button": true,
+    // Whether to hide the gitignore entries in the project panel.
+    "hide_gitignore": false,
     // Default width of the project panel.
     "default_width": 240,
     // Where to dock the project panel. Can be 'left' or 'right'.
@@ -620,6 +624,7 @@
       // The model to use.
       "model": "claude-3-5-sonnet-latest"
     },
+    "default_profile": "code-writer",
     "profiles": {
       "read-only": {
         "name": "Read-only",
