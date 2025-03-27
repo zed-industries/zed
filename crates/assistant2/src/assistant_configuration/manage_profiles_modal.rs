@@ -13,12 +13,45 @@ use crate::assistant_configuration::tool_picker::{ToolPicker, ToolPickerDelegate
 use crate::{AssistantPanel, ManageProfiles};
 
 enum Mode {
-    ChooseProfile(Entity<ProfilePicker>),
+    ChooseProfile {
+        profile_picker: Entity<ProfilePicker>,
+        _subscription: Subscription,
+    },
     ViewProfile(ViewProfileMode),
     ConfigureTools {
         tool_picker: Entity<ToolPicker>,
         _subscription: Subscription,
     },
+}
+
+impl Mode {
+    pub fn choose_profile(window: &mut Window, cx: &mut Context<ManageProfilesModal>) -> Self {
+        let this = cx.entity();
+
+        let profile_picker = cx.new(|cx| {
+            let delegate = ProfilePickerDelegate::new(
+                move |profile_id, window, cx| {
+                    this.update(cx, |this, cx| {
+                        this.view_profile(profile_id.clone(), window, cx);
+                    })
+                },
+                cx,
+            );
+            ProfilePicker::new(delegate, window, cx)
+        });
+        let dismiss_subscription = cx.subscribe_in(
+            &profile_picker,
+            window,
+            |_this, _profile_picker, _: &DismissEvent, _window, cx| {
+                cx.emit(DismissEvent);
+            },
+        );
+
+        Self::ChooseProfile {
+            profile_picker,
+            _subscription: dismiss_subscription,
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -57,24 +90,18 @@ impl ManageProfilesModal {
         cx: &mut Context<Self>,
     ) -> Self {
         let focus_handle = cx.focus_handle();
-        let handle = cx.entity();
 
         Self {
             fs,
             tools,
             focus_handle,
-            mode: Mode::ChooseProfile(cx.new(|cx| {
-                let delegate = ProfilePickerDelegate::new(
-                    move |profile_id, window, cx| {
-                        handle.update(cx, |this, cx| {
-                            this.view_profile(profile_id.clone(), window, cx);
-                        })
-                    },
-                    cx,
-                );
-                ProfilePicker::new(delegate, window, cx)
-            })),
+            mode: Mode::choose_profile(window, cx),
         }
+    }
+
+    fn choose_profile(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.mode = Mode::choose_profile(window, cx);
+        self.focus_handle(cx).focus(window);
     }
 
     pub fn view_profile(
@@ -127,7 +154,13 @@ impl ManageProfilesModal {
 
     fn confirm(&mut self, _window: &mut Window, _cx: &mut Context<Self>) {}
 
-    fn cancel(&mut self, _window: &mut Window, _cx: &mut Context<Self>) {}
+    fn cancel(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        match &self.mode {
+            Mode::ChooseProfile { .. } => {}
+            Mode::ViewProfile(_) => self.choose_profile(window, cx),
+            Mode::ConfigureTools { .. } => {}
+        }
+    }
 }
 
 impl ModalView for ManageProfilesModal {}
@@ -135,7 +168,7 @@ impl ModalView for ManageProfilesModal {}
 impl Focusable for ManageProfilesModal {
     fn focus_handle(&self, cx: &App) -> FocusHandle {
         match &self.mode {
-            Mode::ChooseProfile(profile_picker) => profile_picker.focus_handle(cx),
+            Mode::ChooseProfile { profile_picker, .. } => profile_picker.focus_handle(cx),
             Mode::ConfigureTools { tool_picker, .. } => tool_picker.focus_handle(cx),
             Mode::ViewProfile(_) => self.focus_handle.clone(),
         }
@@ -205,7 +238,9 @@ impl Render for ManageProfilesModal {
             }))
             .on_mouse_down_out(cx.listener(|_this, _, _, cx| cx.emit(DismissEvent)))
             .child(match &self.mode {
-                Mode::ChooseProfile(profile_picker) => profile_picker.clone().into_any_element(),
+                Mode::ChooseProfile { profile_picker, .. } => {
+                    profile_picker.clone().into_any_element()
+                }
                 Mode::ViewProfile(mode) => self
                     .render_view_profile(mode.clone(), window, cx)
                     .into_any_element(),
