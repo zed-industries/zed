@@ -1974,7 +1974,7 @@ async fn test_git_blame_is_forwarded(cx_a: &mut TestAppContext, cx_b: &mut TestA
     client_a
         .fs()
         .insert_tree(
-            "/my-repo",
+            path!("/my-repo"),
             json!({
                 ".git": {},
                 "file.txt": "line1\nline2\nline3\nline\n",
@@ -2000,11 +2000,12 @@ async fn test_git_blame_is_forwarded(cx_a: &mut TestAppContext, cx_b: &mut TestA
         .collect(),
         remote_url: Some("git@github.com:zed-industries/zed.git".to_string()),
     };
-    client_a
-        .fs()
-        .set_blame_for_repo(Path::new("/my-repo/.git"), vec![("file.txt".into(), blame)]);
+    client_a.fs().set_blame_for_repo(
+        Path::new(path!("/my-repo/.git")),
+        vec![("file.txt".into(), blame)],
+    );
 
-    let (project_a, worktree_id) = client_a.build_local_project("/my-repo", cx_a).await;
+    let (project_a, worktree_id) = client_a.build_local_project(path!("/my-repo"), cx_a).await;
     let project_id = active_call_a
         .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
         .await
