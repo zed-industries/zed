@@ -1472,6 +1472,8 @@ impl Project {
         fails: Option<bool>,
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<Session>>> {
+        use dap::Capabilities;
+
         let worktree = maybe!({ self.worktrees(cx).next() });
 
         let Some(worktree) = &worktree else {
@@ -1479,7 +1481,7 @@ impl Project {
         };
         self.dap_store
             .update(cx, |dap_store, cx| {
-                dap_store.new_session(config, worktree, None, cx)
+                dap_store.new_fake_session(config, worktree, None, cx)
             })
             .1
     }
