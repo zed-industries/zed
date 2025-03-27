@@ -91,37 +91,48 @@ impl Keystroke {
 
         let mut components = source.split('-').peekable();
         while let Some(component) = components.next() {
-            match component {
-                "ctrl" => control = true,
-                "alt" => alt = true,
-                "shift" => shift = true,
-                "fn" => function = true,
-                "secondary" => {
-                    if cfg!(target_os = "macos") {
-                        platform = true
-                    } else {
-                        control = true
-                    };
+            if false { //
+            } else if component.eq_ignore_ascii_case("ctrl") {
+                control = true;
+            } else if component.eq_ignore_ascii_case("alt") {
+                alt = true;
+            } else if component.eq_ignore_ascii_case("shift") {
+                shift = true;
+            } else if component.eq_ignore_ascii_case("fn") {
+                function = true;
+            } else if component.eq_ignore_ascii_case("secondary") {
+                if cfg!(target_os = "macos") {
+                    platform = true;
+                } else {
+                    control = true;
+                };
+            } else if component.eq_ignore_ascii_case("cmd") {
+                platform = true;
+            } else if component.eq_ignore_ascii_case("super") {
+                platform = true;
+            } else if component.eq_ignore_ascii_case("win") {
+                platform = true;
+            } else if let Some(next) = components.peek() {
+                if next.is_empty() && source.ends_with('-') {
+                    key = Some(String::from("-"));
+                    break;
+                } else if next.len() > 1 && next.starts_with('>') {
+                    key = Some(String::from(component));
+                    key_char = Some(String::from(&next[1..]));
+                    components.next();
+                } else {
+                    return Err(InvalidKeystrokeError {
+                        keystroke: source.to_owned(),
+                    });
                 }
-                "cmd" | "super" | "win" => platform = true,
-                _ => {
-                    if let Some(next) = components.peek() {
-                        if next.is_empty() && source.ends_with('-') {
-                            key = Some(String::from("-"));
-                            break;
-                        } else if next.len() > 1 && next.starts_with('>') {
-                            key = Some(String::from(component));
-                            key_char = Some(String::from(&next[1..]));
-                            components.next();
-                        } else {
-                            return Err(InvalidKeystrokeError {
-                                keystroke: source.to_owned(),
-                            });
-                        }
-                    } else {
-                        key = Some(String::from(component));
-                    }
-                }
+            } else if component.len() == 1 && component.as_bytes()[0].is_ascii_uppercase() {
+                return Err(InvalidKeystrokeError {
+                    keystroke: source.to_owned(),
+                });
+            } else {
+                // to_ascii_lowercase so that keys like "pageup" and "home" are accepted case insensitively
+                // and stored how we expect so they are matched properly
+                key = Some(component.to_ascii_lowercase());
             }
         }
 
@@ -150,12 +161,6 @@ impl Keystroke {
             keystroke: source.to_owned(),
         })?;
 
-        if key.chars().any(|c| c.is_uppercase()) {
-            return Err(InvalidKeystrokeError {
-                keystroke: source.to_owned(),
-            });
-        }
-
         Ok(Keystroke {
             modifiers: Modifiers {
                 control,
@@ -165,7 +170,7 @@ impl Keystroke {
                 function,
             },
             key,
-            key_char: key_char,
+            key_char,
         })
     }
 
