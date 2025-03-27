@@ -206,6 +206,12 @@ pub struct Img {
 }
 
 /// Create a new image element.
+///
+/// Note:
+///
+/// If you set `source` with [`Resource::Path`], [`Resource::Uri`] or [`ImageSource::Image`],
+/// you must to set [`Img::id`], then GPUI will know to clear the cache to recycle the memory
+/// when the image source changes.
 pub fn img(source: impl Into<ImageSource>) -> Img {
     Img {
         interactivity: Interactivity::default(),
@@ -222,6 +228,12 @@ impl Img {
             "avif", "jpg", "jpeg", "png", "gif", "webp", "tif", "tiff", "tga", "dds", "bmp", "ico",
             "hdr", "exr", "pbm", "pam", "ppm", "pgm", "ff", "farbfeld", "qoi", "svg",
         ]
+    }
+
+    /// Set element id.
+    pub fn id(mut self, id: impl Into<ElementId>) -> Self {
+        self.interactivity.element_id = Some(id.into());
+        self
     }
 }
 
