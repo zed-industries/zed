@@ -5,7 +5,7 @@ use collections::HashMap;
 use futures::future::BoxFuture;
 use futures::{select_biased, AsyncWriteExt, FutureExt as _};
 use git2::BranchType;
-use gpui::{BackgroundExecutor, SharedString};
+use gpui::{AsyncApp, BackgroundExecutor, SharedString};
 use parking_lot::Mutex;
 use rope::Rope;
 use schemars::JsonSchema;
@@ -251,6 +251,9 @@ pub trait GitRepository: Send + Sync {
         options: Option<PushOptions>,
         askpass: AskPassSession,
         env: HashMap<String, String>,
+        // This method takes an AsyncApp to ensure it's invoked on the main thread,
+        // otherwise git-credentials-manager won't work.
+        cx: AsyncApp,
     ) -> BoxFuture<Result<RemoteCommandOutput>>;
 
     fn pull(
@@ -259,12 +262,18 @@ pub trait GitRepository: Send + Sync {
         upstream_name: String,
         askpass: AskPassSession,
         env: HashMap<String, String>,
+        // This method takes an AsyncApp to ensure it's invoked on the main thread,
+        // otherwise git-credentials-manager won't work.
+        cx: AsyncApp,
     ) -> BoxFuture<Result<RemoteCommandOutput>>;
 
     fn fetch(
         &self,
         askpass: AskPassSession,
         env: HashMap<String, String>,
+        // This method takes an AsyncApp to ensure it's invoked on the main thread,
+        // otherwise git-credentials-manager won't work.
+        cx: AsyncApp,
     ) -> BoxFuture<Result<RemoteCommandOutput>>;
 
     fn get_remotes(&self, branch_name: Option<String>) -> BoxFuture<Result<Vec<Remote>>>;
@@ -867,6 +876,7 @@ impl GitRepository for RealGitRepository {
         options: Option<PushOptions>,
         ask_pass: AskPassSession,
         env: HashMap<String, String>,
+        _cx: AsyncApp,
     ) -> BoxFuture<Result<RemoteCommandOutput>> {
         let working_directory = self.working_directory();
         async move {
@@ -903,6 +913,7 @@ impl GitRepository for RealGitRepository {
         remote_name: String,
         ask_pass: AskPassSession,
         env: HashMap<String, String>,
+        _cx: AsyncApp,
     ) -> BoxFuture<Result<RemoteCommandOutput>> {
         let working_directory = self.working_directory();
         async {
@@ -929,6 +940,7 @@ impl GitRepository for RealGitRepository {
         &self,
         ask_pass: AskPassSession,
         env: HashMap<String, String>,
+        _cx: AsyncApp,
     ) -> BoxFuture<Result<RemoteCommandOutput>> {
         let working_directory = self.working_directory();
         async {

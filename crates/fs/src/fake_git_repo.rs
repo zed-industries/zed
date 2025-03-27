@@ -10,7 +10,7 @@ use git::{
     },
     status::{FileStatus, GitStatus, StatusCode, TrackedStatus, UnmergedStatus},
 };
-use gpui::BackgroundExecutor;
+use gpui::{AsyncApp, BackgroundExecutor};
 use ignore::gitignore::GitignoreBuilder;
 use rope::Rope;
 use smol::future::FutureExt as _;
@@ -374,6 +374,7 @@ impl GitRepository for FakeGitRepository {
         _options: Option<PushOptions>,
         _askpass: AskPassSession,
         _env: HashMap<String, String>,
+        _cx: AsyncApp,
     ) -> BoxFuture<Result<git::repository::RemoteCommandOutput>> {
         unimplemented!()
     }
@@ -384,6 +385,7 @@ impl GitRepository for FakeGitRepository {
         _remote: String,
         _askpass: AskPassSession,
         _env: HashMap<String, String>,
+        _cx: AsyncApp,
     ) -> BoxFuture<Result<git::repository::RemoteCommandOutput>> {
         unimplemented!()
     }
@@ -392,6 +394,7 @@ impl GitRepository for FakeGitRepository {
         &self,
         _askpass: AskPassSession,
         _env: HashMap<String, String>,
+        _cx: AsyncApp,
     ) -> BoxFuture<Result<git::repository::RemoteCommandOutput>> {
         unimplemented!()
     }
