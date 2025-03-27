@@ -27,7 +27,7 @@ use std::{
     rc::Rc,
     sync::Arc,
 };
-use util::ResultExt;
+use util::{path, ResultExt};
 
 #[gpui::test(
     iterations = 100,
@@ -280,7 +280,7 @@ impl RandomizedTest for ProjectCollaborationTest {
                             let mut paths = client.fs().paths(false);
                             paths.remove(0);
                             let new_root_path = if paths.is_empty() || rng.gen() {
-                                Path::new("/").join(plan.next_root_dir_name())
+                                Path::new(path!("/")).join(plan.next_root_dir_name())
                             } else {
                                 paths.choose(rng).unwrap().clone()
                             };
@@ -547,7 +547,7 @@ impl RandomizedTest for ProjectCollaborationTest {
                     first_root_name
                 );
 
-                let root_path = Path::new("/").join(&first_root_name);
+                let root_path = Path::new(path!("/")).join(&first_root_name);
                 client.fs().create_dir(&root_path).await.unwrap();
                 client
                     .fs()
