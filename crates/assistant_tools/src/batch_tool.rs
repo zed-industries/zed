@@ -20,32 +20,120 @@ pub struct ToolInvocation {
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct BatchToolInput {
-    /// The tool call groups to invoke sequentially. Within each group, the tools will be invoked concurrently.
+    /// The tool invocations to run as a batch. These tools will be run either sequentially
+    /// or concurrently depending on the `run_tools_concurrently` flag.
     ///
     /// <example>
-    /// A batch combining several common operations (file reading, directory listing, and code search):
+    /// Basic file operations (concurrent)
     ///
     /// ```json
-    /// [
-    ///   {
-    ///     "name": "read-file", 
-    ///     "input": {
-    ///       "path": "src/main.rs"
+    /// {
+    ///   "invocations": [
+    ///     {
+    ///       "name": "read-file",
+    ///       "input": {
+    ///         "path": "src/main.rs"
+    ///       }
+    ///     },
+    ///     {
+    ///       "name": "list-directory",
+    ///       "input": {
+    ///         "path": "src/lib"
+    ///       }
+    ///     },
+    ///     {
+    ///       "name": "regex-search",
+    ///       "input": {
+    ///         "regex": "fn run\\("
+    ///       }
     ///     }
-    ///   },
-    ///   {
-    ///     "name": "list-directory",
-    ///     "input": {
-    ///       "path": "src/lib"
+    ///   ],
+    ///   "run_tools_concurrently": true
+    /// }
+    /// ```
+    /// </example>
+    ///
+    /// <example>
+    /// Multiple find-replace operations on the same file (sequential)
+    ///
+    /// ```json
+    /// {
+    ///   "invocations": [
+    ///     {
+    ///       "name": "find-replace-file",
+    ///       "input": {
+    ///         "path": "src/config.rs",
+    ///         "display_description": "Update default timeout value",
+    ///         "find": "pub const DEFAULT_TIMEOUT: u64 = 30;\n\npub const MAX_RETRIES: u32 = 3;\n\npub const SERVER_URL: &str = \"https://api.example.com\";",
+    ///         "replace": "pub const DEFAULT_TIMEOUT: u64 = 60;\n\npub const MAX_RETRIES: u32 = 3;\n\npub const SERVER_URL: &str = \"https://api.example.com\";"
+    ///       }
+    ///     },
+    ///     {
+    ///       "name": "find-replace-file",
+    ///       "input": {
+    ///         "path": "src/config.rs",
+    ///         "display_description": "Update API endpoint URL",
+    ///         "find": "pub const MAX_RETRIES: u32 = 3;\n\npub const SERVER_URL: &str = \"https://api.example.com\";\n\npub const API_VERSION: &str = \"v1\";",
+    ///         "replace": "pub const MAX_RETRIES: u32 = 3;\n\npub const SERVER_URL: &str = \"https://api.newdomain.com\";\n\npub const API_VERSION: &str = \"v1\";"
+    ///       }
     ///     }
-    ///   },
-    ///   {
-    ///     "name": "regex-search",
-    ///     "input": {
-    ///       "regex": "fn run\\("
+    ///   ],
+    ///   "run_tools_concurrently": false
+    /// }
+    /// ```
+    /// </example>
+    ///
+    /// <example>
+    /// Searching and analyzing code (concurrent)
+    ///
+    /// ```json
+    /// {
+    ///   "invocations": [
+    ///     {
+    ///       "name": "regex-search",
+    ///       "input": {
+    ///         "regex": "impl Database"
+    ///       }
+    ///     },
+    ///     {
+    ///       "name": "path-search",
+    ///       "input": {
+    ///         "glob": "**/*test*.rs"
+    ///       }
     ///     }
-    ///   }
-    /// ]
+    ///   ],
+    ///   "run_tools_concurrently": true
+    /// }
+    /// ```
+    /// </example>
+    ///
+    /// <example>
+    /// Multi-file refactoring (concurrent)
+    ///
+    /// ```json
+    /// {
+    ///   "invocations": [
+    ///     {
+    ///       "name": "find-replace-file",
+    ///       "input": {
+    ///         "path": "src/models/user.rs",
+    ///         "display_description": "Add email field to User struct",
+    ///         "find": "pub struct User {\n    pub id: u64,\n    pub username: String,\n    pub created_at: DateTime<Utc>,\n}",
+    ///         "replace": "pub struct User {\n    pub id: u64,\n    pub username: String,\n    pub email: String,\n    pub created_at: DateTime<Utc>,\n}"
+    ///       }
+    ///     },
+    ///     {
+    ///       "name": "find-replace-file",
+    ///       "input": {
+    ///         "path": "src/db/queries.rs",
+    ///         "display_description": "Update user insertion query",
+    ///         "find": "pub async fn insert_user(conn: &mut Connection, user: &User) -> Result<(), DbError> {\n    conn.execute(\n        \"INSERT INTO users (id, username, created_at) VALUES ($1, $2, $3)\",\n        &[&user.id, &user.username, &user.created_at],\n    ).await?;\n    \n    Ok(())\n}",
+    ///         "replace": "pub async fn insert_user(conn: &mut Connection, user: &User) -> Result<(), DbError> {\n    conn.execute(\n        \"INSERT INTO users (id, username, email, created_at) VALUES ($1, $2, $3, $4)\",\n        &[&user.id, &user.username, &user.email, &user.created_at],\n    ).await?;\n    \n    Ok(())\n}"
+    ///       }
+    ///     }
+    ///   ],
+    ///   "run_tools_concurrently": true
+    /// }
     /// ```
     /// </example>
     pub invocations: Vec<ToolInvocation>,
