@@ -7,10 +7,10 @@ use assistant_settings::{
     ContextServerPresetContent, VersionedAssistantSettingsContent,
 };
 use assistant_tool::ToolWorkingSet;
+use convert_case::{Case, Casing as _};
 use editor::Editor;
 use fs::Fs;
 use gpui::{prelude::*, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, Subscription};
-use indexmap::IndexMap;
 use settings::{update_settings_file, Settings as _};
 use ui::{prelude::*, ListItem, ListItemSpacing, ListSeparator, Navigable, NavigableEntry};
 use workspace::{ModalView, Workspace};
@@ -193,13 +193,25 @@ impl ManageProfilesModal {
         match &self.mode {
             Mode::ChooseProfile { .. } => {}
             Mode::NewProfile(mode) => {
+                let settings = AssistantSettings::get_global(cx);
+
+                let base_profile = mode
+                    .base_profile_id
+                    .as_ref()
+                    .and_then(|profile_id| settings.profiles.get(profile_id).cloned());
+
                 let name = mode.name_editor.read(cx).text(cx);
-                let profile_id: Arc<str> = name.to_lowercase().into();
+                let profile_id: Arc<str> = name.to_case(Case::Kebab).into();
 
                 let profile = AgentProfile {
                     name: name.into(),
-                    tools: IndexMap::new(),
-                    context_servers: IndexMap::new(),
+                    tools: base_profile
+                        .as_ref()
+                        .map(|profile| profile.tools.clone())
+                        .unwrap_or_default(),
+                    context_servers: base_profile
+                        .map(|profile| profile.context_servers)
+                        .unwrap_or_default(),
                 };
 
                 self.create_profile(profile_id.clone(), profile, cx);
@@ -297,12 +309,20 @@ impl ManageProfilesModal {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
+        let settings = AssistantSettings::get_global(cx);
+
+        let profile_name = settings
+            .profiles
+            .get(&mode.profile_id)
+            .map(|profile| profile.name.clone())
+            .unwrap_or_else(|| "Unknown".into());
+
         Navigable::new(
             div()
                 .track_focus(&self.focus_handle(cx))
                 .size_full()
                 .child(ProfileModalHeader::new(
-                    mode.profile_id.clone(),
+                    profile_name,
                     IconName::ZedAssistant,
                 ))
                 .child(
@@ -385,6 +405,8 @@ impl ManageProfilesModal {
 
 impl Render for ManageProfilesModal {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let settings = AssistantSettings::get_global(cx);
+
         div()
             .elevation_3(cx)
             .w(rems(34.))
@@ -411,14 +433,22 @@ impl Render for ManageProfilesModal {
                     profile_id,
                     tool_picker,
                     ..
-                } => div()
-                    .child(ProfileModalHeader::new(
-                        format!("{profile_id}: Configure Tools"),
-                        IconName::Cog,
-                    ))
-                    .child(ListSeparator)
-                    .child(tool_picker.clone())
-                    .into_any_element(),
+                } => {
+                    let profile_name = settings
+                        .profiles
+                        .get(profile_id)
+                        .map(|profile| profile.name.clone())
+                        .unwrap_or_else(|| "Unknown".into());
+
+                    div()
+                        .child(ProfileModalHeader::new(
+                            format!("{profile_name}: Configure Tools"),
+                            IconName::Cog,
+                        ))
+                        .child(ListSeparator)
+                        .child(tool_picker.clone())
+                        .into_any_element()
+                }
             })
     }
 }
