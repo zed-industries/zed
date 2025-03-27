@@ -24,7 +24,7 @@ mod direnv;
 mod environment;
 use buffer_diff::BufferDiff;
 pub use environment::{EnvironmentErrorMessage, ProjectEnvironmentEvent};
-use git_store::Repository;
+use git_store::{GitEvent, Repository};
 pub mod search_history;
 mod yarn;
 
@@ -270,7 +270,6 @@ pub enum Event {
     WorktreeOrderChanged,
     WorktreeRemoved(WorktreeId),
     WorktreeUpdatedEntries(WorktreeId, UpdatedEntriesSet),
-    WorktreeUpdatedGitRepositories(WorktreeId),
     DiskBasedDiagnosticsStarted {
         language_server_id: LanguageServerId,
     },
@@ -300,6 +299,8 @@ pub enum Event {
     RevealInProjectPanel(ProjectEntryId),
     SnippetEdit(BufferId, Vec<(lsp::Range, Snippet)>),
     ExpandedAllForEntry(WorktreeId, ProjectEntryId),
+    GitStateUpdated,
+    ActiveRepositoryChanged,
 }
 
 pub enum DebugAdapterClientState {
@@ -793,8 +794,6 @@ impl Project {
         client.add_entity_message_handler(Self::handle_unshare_project);
         client.add_entity_request_handler(Self::handle_update_buffer);
         client.add_entity_message_handler(Self::handle_update_worktree);
-        client.add_entity_message_handler(Self::handle_update_repository);
-        client.add_entity_message_handler(Self::handle_remove_repository);
         client.add_entity_request_handler(Self::handle_synchronize_buffers);
 
         client.add_entity_request_handler(Self::handle_search_candidate_buffers);
@@ -922,6 +921,7 @@ impl Project {
                     cx,
                 )
             });
+            cx.subscribe(&git_store, Self::on_git_store_event).detach();
 
             cx.subscribe(&lsp_store, Self::on_lsp_store_event).detach();
 
@@ -1136,8 +1136,6 @@ impl Project {
 
             ssh_proto.add_entity_message_handler(Self::handle_create_buffer_for_peer);
             ssh_proto.add_entity_message_handler(Self::handle_update_worktree);
-            ssh_proto.add_entity_message_handler(Self::handle_update_repository);
-            ssh_proto.add_entity_message_handler(Self::handle_remove_repository);
             ssh_proto.add_entity_message_handler(Self::handle_update_project);
             ssh_proto.add_entity_message_handler(Self::handle_toast);
             ssh_proto.add_entity_request_handler(Self::handle_language_server_prompt_request);
@@ -2040,6 +2038,11 @@ impl Project {
         self.worktree_store.update(cx, |worktree_store, cx| {
             worktree_store.send_project_updates(cx);
         });
+        if let Some(remote_id) = self.remote_id() {
+            self.git_store.update(cx, |git_store, cx| {
+                git_store.shared(remote_id, self.client.clone().into(), cx)
+            });
+        }
         cx.emit(Event::Reshared);
         Ok(())
     }
@@ -2707,6 +2710,19 @@ impl Project {
         }
     }
 
+    fn on_git_store_event(
+        &mut self,
+        _: Entity<GitStore>,
+        event: &GitEvent,
+        cx: &mut Context<Self>,
+    ) {
+        match event {
+            GitEvent::GitStateUpdated => cx.emit(Event::GitStateUpdated),
+            GitEvent::ActiveRepositoryChanged => cx.emit(Event::ActiveRepositoryChanged),
+            GitEvent::FileSystemUpdated | GitEvent::IndexWriteError(_) => {}
+        }
+    }
+
     fn on_ssh_event(
         &mut self,
         _: Entity<SshRemoteClient>,
@@ -2792,12 +2808,11 @@ impl Project {
                     .report_discovered_project_events(*worktree_id, changes);
                 cx.emit(Event::WorktreeUpdatedEntries(*worktree_id, changes.clone()))
             }
-            WorktreeStoreEvent::WorktreeUpdatedGitRepositories(worktree_id) => {
-                cx.emit(Event::WorktreeUpdatedGitRepositories(*worktree_id))
-            }
             WorktreeStoreEvent::WorktreeDeletedEntry(worktree_id, id) => {
                 cx.emit(Event::DeletedEntry(*worktree_id, *id))
             }
+            // Listen to the GitStore instead.
+            WorktreeStoreEvent::WorktreeUpdatedGitRepositories(_, _) => {}
         }
     }
 
@@ -4309,43 +4324,7 @@ impl Project {
             if let Some(worktree) = this.worktree_for_id(worktree_id, cx) {
                 worktree.update(cx, |worktree, _| {
                     let worktree = worktree.as_remote_mut().unwrap();
-                    worktree.update_from_remote(envelope.payload.into());
-                });
-            }
-            Ok(())
-        })?
-    }
-
-    async fn handle_update_repository(
-        this: Entity<Self>,
-        envelope: TypedEnvelope<proto::UpdateRepository>,
-        mut cx: AsyncApp,
-    ) -> Result<()> {
-        this.update(&mut cx, |this, cx| {
-            if let Some((worktree, _relative_path)) =
-                this.find_worktree(envelope.payload.abs_path.as_ref(), cx)
-            {
-                worktree.update(cx, |worktree, _| {
-                    let worktree = worktree.as_remote_mut().unwrap();
-                    worktree.update_from_remote(envelope.payload.into());
-                });
-            }
-            Ok(())
-        })?
-    }
-
-    async fn handle_remove_repository(
-        this: Entity<Self>,
-        envelope: TypedEnvelope<proto::RemoveRepository>,
-        mut cx: AsyncApp,
-    ) -> Result<()> {
-        this.update(&mut cx, |this, cx| {
-            if let Some(worktree) =
-                this.worktree_for_entry(ProjectEntryId::from_proto(envelope.payload.id), cx)
-            {
-                worktree.update(cx, |worktree, _| {
-                    let worktree = worktree.as_remote_mut().unwrap();
-                    worktree.update_from_remote(envelope.payload.into());
+                    worktree.update_from_remote(envelope.payload);
                 });
             }
             Ok(())

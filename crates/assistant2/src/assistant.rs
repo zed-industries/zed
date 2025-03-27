@@ -11,13 +11,13 @@ mod history_store;
 mod inline_assistant;
 mod inline_prompt_editor;
 mod message_editor;
+mod profile_selector;
 mod terminal_codegen;
 mod terminal_inline_assistant;
 mod thread;
 mod thread_diff;
 mod thread_history;
 mod thread_store;
-mod tool_selector;
 mod tool_use;
 mod ui;
 
@@ -33,7 +33,7 @@ use prompt_store::PromptBuilder;
 use settings::Settings as _;
 
 pub use crate::active_thread::ActiveThread;
-use crate::assistant_configuration::AddContextServerModal;
+use crate::assistant_configuration::{AddContextServerModal, ManageProfilesModal};
 pub use crate::assistant_panel::{AssistantPanel, ConcreteAssistantPanelDelegate};
 pub use crate::inline_assistant::InlineAssistant;
 pub use crate::thread::{Message, RequestKind, Thread, ThreadEvent};
@@ -49,6 +49,7 @@ actions!(
         RemoveAllContext,
         OpenHistory,
         OpenConfiguration,
+        ManageProfiles,
         AddContextServer,
         RemoveSelectedThread,
         Chat,
@@ -91,6 +92,7 @@ pub fn init(
         cx,
     );
     cx.observe_new(AddContextServerModal::register).detach();
+    cx.observe_new(ManageProfilesModal::register).detach();
 
     feature_gate_assistant2_actions(cx);
 }

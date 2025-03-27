@@ -44,9 +44,9 @@ postage.workspace = true
 core-foundation.workspace = true
 
 [target.'cfg(all(not(target_os = "macos")))'.dependencies]
-async-trait = { workspace = true }
-collections = { workspace = true }
-gpui = { workspace = true }
+async-trait.workspace = true
+collections.workspace = true
+gpui.workspace = true
 livekit_api.workspace = true
 nanoid.workspace = true
 

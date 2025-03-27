@@ -3,7 +3,8 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use anyhow::{anyhow, Result};
-use assistant_tool::{ToolId, ToolWorkingSet};
+use assistant_settings::{AgentProfile, AssistantSettings};
+use assistant_tool::{ToolId, ToolSource, ToolWorkingSet};
 use chrono::{DateTime, Utc};
 use collections::HashMap;
 use context_server::manager::ContextServerManager;
@@ -19,6 +20,7 @@ use language_model::{LanguageModelToolUseId, Role};
 use project::Project;
 use prompt_store::PromptBuilder;
 use serde::{Deserialize, Serialize};
+use settings::Settings as _;
 use util::ResultExt as _;
 
 use crate::thread::{MessageId, ProjectSnapshot, Thread, ThreadEvent, ThreadId};
@@ -57,6 +59,7 @@ impl ThreadStore {
                 context_server_tool_ids: HashMap::default(),
                 threads: Vec::new(),
             };
+            this.load_default_profile(cx);
             this.register_context_server_handlers(cx);
             this.reload(cx).detach_and_log_err(cx);
 
@@ -182,6 +185,45 @@ impl ThreadStore {
                 cx.notify();
             })
         })
+    }
+
+    fn load_default_profile(&self, cx: &Context<Self>) {
+        let assistant_settings = AssistantSettings::get_global(cx);
+
+        self.load_profile_by_id(&assistant_settings.default_profile, cx);
+    }
+
+    pub fn load_profile_by_id(&self, profile_id: &Arc<str>, cx: &Context<Self>) {
+        let assistant_settings = AssistantSettings::get_global(cx);
+
+        if let Some(profile) = assistant_settings.profiles.get(profile_id) {
+            self.load_profile(profile);
+        }
+    }
+
+    pub fn load_profile(&self, profile: &AgentProfile) {
+        self.tools.disable_all_tools();
+        self.tools.enable(
+            ToolSource::Native,
+            &profile
+                .tools
+                .iter()
+                .filter_map(|(tool, enabled)| enabled.then(|| tool.clone()))
+                .collect::<Vec<_>>(),
+        );
+
+        for (context_server_id, preset) in &profile.context_servers {
+            self.tools.enable(
+                ToolSource::ContextServer {
+                    id: context_server_id.clone().into(),
+                },
+                &preset
+                    .tools
+                    .iter()
+                    .filter_map(|(tool, enabled)| enabled.then(|| tool.clone()))
+                    .collect::<Vec<_>>(),
+            )
+        }
     }
 
     fn register_context_server_handlers(&self, cx: &mut Context<Self>) {

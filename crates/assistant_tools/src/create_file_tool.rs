@@ -58,8 +58,8 @@ impl Tool for CreateFileTool {
     fn ui_text(&self, input: &serde_json::Value) -> String {
         match serde_json::from_value::<CreateFileToolInput>(input.clone()) {
             Ok(input) => {
-                let path = MarkdownString::escape(&input.path);
-                format!("Create file `{path}`")
+                let path = MarkdownString::inline_code(&input.path);
+                format!("Create file {path}")
             }
             Err(_) => "Create file".to_string(),
         }
