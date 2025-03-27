@@ -643,6 +643,7 @@
         "name": "Code Writer",
         "tools": {
           "bash": true,
+          "batch-tool": true,
           "copy-path": true,
           "create-file": true,
           "delete-path": true,
