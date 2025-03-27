@@ -4912,7 +4912,7 @@ async fn test_references(
     client_a
         .fs()
         .insert_tree(
-            "/root",
+            path!("/root"),
             json!({
                 "dir-1": {
                     "one.rs": "const ONE: usize = 1;",
@@ -4924,7 +4924,9 @@ async fn test_references(
             }),
         )
         .await;
-    let (project_a, worktree_id) = client_a.build_local_project("/root/dir-1", cx_a).await;
+    let (project_a, worktree_id) = client_a
+        .build_local_project(path!("/root/dir-1"), cx_a)
+        .await;
     let project_id = active_call_a
         .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
         .await
@@ -4947,7 +4949,7 @@ async fn test_references(
         move |params, _| {
             assert_eq!(
                 params.text_document_position.text_document.uri.as_str(),
-                "file:///root/dir-1/one.rs"
+                uri!("file:///root/dir-1/one.rs")
             );
             let rx = rx.clone();
             async move {
@@ -4976,15 +4978,15 @@ async fn test_references(
     lsp_response_tx
         .unbounded_send(Ok(Some(vec![
             lsp::Location {
-                uri: lsp::Url::from_file_path("/root/dir-1/two.rs").unwrap(),
+                uri: lsp::Url::from_file_path(path!("/root/dir-1/two.rs")).unwrap(),
                 range: lsp::Range::new(lsp::Position::new(0, 24), lsp::Position::new(0, 27)),
             },
             lsp::Location {
-                uri: lsp::Url::from_file_path("/root/dir-1/two.rs").unwrap(),
+                uri: lsp::Url::from_file_path(path!("/root/dir-1/two.rs")).unwrap(),
                 range: lsp::Range::new(lsp::Position::new(0, 35), lsp::Position::new(0, 38)),
             },
             lsp::Location {
-                uri: lsp::Url::from_file_path("/root/dir-2/three.rs").unwrap(),
+                uri: lsp::Url::from_file_path(path!("/root/dir-2/three.rs")).unwrap(),
                 range: lsp::Range::new(lsp::Position::new(0, 37), lsp::Position::new(0, 40)),
             },
         ])))
@@ -5009,7 +5011,7 @@ async fn test_references(
         assert_eq!(references[1].buffer, references[0].buffer);
         assert_eq!(
             three_buffer.file().unwrap().full_path(cx),
-            Path::new("/root/dir-2/three.rs")
+            Path::new(path!("/root/dir-2/three.rs"))
         );
 
         assert_eq!(references[0].range.to_offset(two_buffer), 24..27);
