@@ -12637,7 +12637,7 @@ impl Editor {
         );
     }
 
-    fn go_to_hunk_before_or_after_position(
+    pub fn go_to_hunk_before_or_after_position(
         &mut self,
         snapshot: &EditorSnapshot,
         position: Point,

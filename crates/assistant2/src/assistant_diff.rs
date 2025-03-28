@@ -1,8 +1,11 @@
-use crate::{Thread, ThreadEvent};
+use crate::{Thread, ThreadEvent, ToggleKeep};
 use anyhow::Result;
 use buffer_diff::DiffHunkStatus;
 use collections::HashSet;
-use editor::{Editor, EditorEvent, MultiBuffer, ToPoint};
+use editor::{
+    actions::{GoToHunk, GoToPreviousHunk},
+    Direction, Editor, EditorEvent, MultiBuffer, ToPoint,
+};
 use gpui::{
     prelude::*, AnyElement, AnyView, App, Entity, EventEmitter, FocusHandle, Focusable,
     SharedString, Subscription, Task, WeakEntity, Window,
@@ -215,12 +218,7 @@ impl AssistantDiff {
         }
     }
 
-    fn toggle_accept(
-        &mut self,
-        _: &crate::ToggleAccept,
-        _window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    fn toggle_keep(&mut self, _: &crate::ToggleKeep, _window: &mut Window, cx: &mut Context<Self>) {
         let ranges = self
             .editor
             .read(cx)
@@ -246,7 +244,7 @@ impl AssistantDiff {
         }
     }
 
-    fn undo(&mut self, _: &crate::Undo, window: &mut Window, cx: &mut Context<Self>) {
+    fn reject(&mut self, _: &crate::Reject, window: &mut Window, cx: &mut Context<Self>) {
         let ranges = self
             .editor
             .update(cx, |editor, cx| editor.selections.ranges(cx));
@@ -465,8 +463,8 @@ impl Render for AssistantDiff {
             } else {
                 "AssistantDiff"
             })
-            .on_action(cx.listener(Self::toggle_accept))
-            .on_action(cx.listener(Self::undo))
+            .on_action(cx.listener(Self::toggle_keep))
+            .on_action(cx.listener(Self::reject))
             .bg(cx.theme().colors().editor_background)
             .flex()
             .items_center()
@@ -503,13 +501,13 @@ fn render_diff_hunk_controls(
         .shadow_md()
         .children(if status.has_secondary_hunk() {
             vec![
-                Button::new(("accept", row as u64), "Accept")
+                Button::new(("keep", row as u64), "Keep")
                     .tooltip({
                         let focus_handle = editor.focus_handle(cx);
                         move |window, cx| {
                             Tooltip::for_action_in(
-                                "Accept Hunk",
-                                &crate::ToggleAccept,
+                                "Keep Hunk",
+                                &crate::ToggleKeep,
                                 &focus_handle,
                                 window,
                                 cx,
@@ -528,13 +526,13 @@ fn render_diff_hunk_controls(
                             });
                         }
                     }),
-                Button::new("undo", "Undo")
+                Button::new("reject", "Reject")
                     .tooltip({
                         let focus_handle = editor.focus_handle(cx);
                         move |window, cx| {
                             Tooltip::for_action_in(
-                                "Undo Hunk",
-                                &crate::Undo,
+                                "Reject Hunk",
+                                &crate::Reject,
                                 &focus_handle,
                                 window,
                                 cx,
@@ -555,20 +553,12 @@ fn render_diff_hunk_controls(
             ]
         } else {
             vec![Button::new(("review", row as u64), "Review")
-                .alpha(if status.is_pending() { 0.66 } else { 1.0 })
-                // TODO: add tooltip
-                // .tooltip({
-                //     let focus_handle = editor.focus_handle(cx);
-                //     move |window, cx| {
-                //         Tooltip::for_action_in(
-                //             "Review",
-                //             &::git::ToggleStaged,
-                //             &focus_handle,
-                //             window,
-                //             cx,
-                //         )
-                //     }
-                // })
+                .tooltip({
+                    let focus_handle = editor.focus_handle(cx);
+                    move |window, cx| {
+                        Tooltip::for_action_in("Review", &ToggleKeep, &focus_handle, window, cx)
+                    }
+                })
                 .on_click({
                     let assistant_diff = assistant_diff.clone();
                     move |_event, _window, cx| {
@@ -590,36 +580,34 @@ fn render_diff_hunk_controls(
                         .shape(IconButtonShape::Square)
                         .icon_size(IconSize::Small)
                         // .disabled(!has_multiple_hunks)
-                        // TODO: add tooltip
-                        // .tooltip({
-                        //     let focus_handle = editor.focus_handle(cx);
-                        //     move |window, cx| {
-                        //         Tooltip::for_action_in(
-                        //             "Next Hunk",
-                        //             &GoToHunk,
-                        //             &focus_handle,
-                        //             window,
-                        //             cx,
-                        //         )
-                        //     }
-                        // })
+                        .tooltip({
+                            let focus_handle = editor.focus_handle(cx);
+                            move |window, cx| {
+                                Tooltip::for_action_in(
+                                    "Next Hunk",
+                                    &GoToHunk,
+                                    &focus_handle,
+                                    window,
+                                    cx,
+                                )
+                            }
+                        })
                         .on_click({
-                            let _editor = editor.clone();
-                            move |_event, _window, _cx| {
-                                // TODO: wire this up
-                                // editor.update(cx, |editor, cx| {
-                                //     let snapshot = editor.snapshot(window, cx);
-                                //     let position =
-                                //         hunk_range.end.to_point(&snapshot.buffer_snapshot);
-                                //     editor.go_to_hunk_before_or_after_position(
-                                //         &snapshot,
-                                //         position,
-                                //         Direction::Next,
-                                //         window,
-                                //         cx,
-                                //     );
-                                //     editor.expand_selected_diff_hunks(cx);
-                                // });
+                            let editor = editor.clone();
+                            move |_event, window, cx| {
+                                editor.update(cx, |editor, cx| {
+                                    let snapshot = editor.snapshot(window, cx);
+                                    let position =
+                                        hunk_range.end.to_point(&snapshot.buffer_snapshot);
+                                    editor.go_to_hunk_before_or_after_position(
+                                        &snapshot,
+                                        position,
+                                        Direction::Next,
+                                        window,
+                                        cx,
+                                    );
+                                    editor.expand_selected_diff_hunks(cx);
+                                });
                             }
                         }),
                 )
@@ -628,36 +616,34 @@ fn render_diff_hunk_controls(
                         .shape(IconButtonShape::Square)
                         .icon_size(IconSize::Small)
                         // .disabled(!has_multiple_hunks)
-                        // TODO: add tooltip
-                        // .tooltip({
-                        //     let focus_handle = editor.focus_handle(cx);
-                        //     move |window, cx| {
-                        //         Tooltip::for_action_in(
-                        //             "Previous Hunk",
-                        //             &GoToPreviousHunk,
-                        //             &focus_handle,
-                        //             window,
-                        //             cx,
-                        //         )
-                        //     }
-                        // })
+                        .tooltip({
+                            let focus_handle = editor.focus_handle(cx);
+                            move |window, cx| {
+                                Tooltip::for_action_in(
+                                    "Previous Hunk",
+                                    &GoToPreviousHunk,
+                                    &focus_handle,
+                                    window,
+                                    cx,
+                                )
+                            }
+                        })
                         .on_click({
-                            let _editor = editor.clone();
-                            move |_event, _window, _cx| {
-                                // TODO: wire this up
-                                // editor.update(cx, |editor, cx| {
-                                //     let snapshot = editor.snapshot(window, cx);
-                                //     let point =
-                                //         hunk_range.start.to_point(&snapshot.buffer_snapshot);
-                                //     editor.go_to_hunk_before_or_after_position(
-                                //         &snapshot,
-                                //         point,
-                                //         Direction::Prev,
-                                //         window,
-                                //         cx,
-                                //     );
-                                //     editor.expand_selected_diff_hunks(cx);
-                                // });
+                            let editor = editor.clone();
+                            move |_event, window, cx| {
+                                editor.update(cx, |editor, cx| {
+                                    let snapshot = editor.snapshot(window, cx);
+                                    let point =
+                                        hunk_range.start.to_point(&snapshot.buffer_snapshot);
+                                    editor.go_to_hunk_before_or_after_position(
+                                        &snapshot,
+                                        point,
+                                        Direction::Prev,
+                                        window,
+                                        cx,
+                                    );
+                                    editor.expand_selected_diff_hunks(cx);
+                                });
                             }
                         }),
                 )

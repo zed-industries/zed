@@ -64,8 +64,8 @@ actions!(
         RemoveFocusedContext,
         AcceptSuggestedContext,
         OpenActiveThreadAsMarkdown,
-        ToggleAccept,
-        Undo
+        ToggleKeep,
+        Reject
     ]
 );
 

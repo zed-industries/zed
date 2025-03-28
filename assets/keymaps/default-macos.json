@@ -241,8 +241,8 @@
     "context": "AssistantDiff",
     "use_key_equivalents": true,
     "bindings": {
-      "cmd-y": "assistant2::ToggleAccept",
-      "cmd-alt-z": "assistant2::Undo"
+      "cmd-y": "assistant2::ToggleKeep",
+      "cmd-alt-z": "assistant2::Reject"
     }
   },
   {

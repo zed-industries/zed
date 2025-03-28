@@ -276,7 +276,6 @@ impl ActionLog {
                 deletion_id,
                 ..
             } => {
-                println!("Turning into edited!");
                 edit_ids.extend(*deletion_id);
                 tracked_buffer.change = Change::Edited {
                     unreviewed_edit_ids: edit_ids.into_iter().collect(),
@@ -575,8 +574,6 @@ pub struct ChangedBuffer {
 
 #[cfg(test)]
 mod tests {
-    use std::path::Path;
-
     use super::*;
     use buffer_diff::DiffHunkStatusKind;
     use gpui::TestAppContext;
@@ -586,7 +583,7 @@ mod tests {
     use settings::SettingsStore;
     use util::path;
 
-    #[gpui::test]
+    #[gpui::test(iterations = 10)]
     async fn test_edit_review(cx: &mut TestAppContext) {
         let action_log = cx.new(|_| ActionLog::new());
         let buffer = cx.new(|cx| Buffer::local("abc\ndef\nghi\njkl\nmno", cx));
@@ -712,7 +709,7 @@ mod tests {
         );
     }
 
-    #[gpui::test]
+    #[gpui::test(iterations = 10)]
     async fn test_overlapping_user_edits(cx: &mut TestAppContext) {
         let action_log = cx.new(|_| ActionLog::new());
         let buffer = cx.new(|cx| Buffer::local("abc\ndef\nghi\njkl\nmno", cx));
@@ -798,7 +795,7 @@ mod tests {
         );
     }
 
-    #[gpui::test]
+    #[gpui::test(iterations = 10)]
     async fn test_deletion(cx: &mut TestAppContext) {
         cx.update(|cx| {
             let settings_store = SettingsStore::test(cx);
@@ -878,7 +875,7 @@ mod tests {
         );
 
         // Simulate file1 being recreated externally.
-        fs.insert_file(Path::new("/dir/file1"), "LOREM".as_bytes().to_vec())
+        fs.insert_file(path!("/dir/file1"), "LOREM".as_bytes().to_vec())
             .await;
         let buffer2 = project
             .update(cx, |project, cx| project.open_buffer(file2_path, cx))
@@ -909,7 +906,7 @@ mod tests {
         );
 
         // Simulate file2 being deleted externally.
-        fs.remove_file(Path::new("/dir/file2"), RemoveOptions::default())
+        fs.remove_file(path!("/dir/file2").as_ref(), RemoveOptions::default())
             .await
             .unwrap();
         cx.run_until_parked();
