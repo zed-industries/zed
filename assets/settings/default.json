@@ -624,10 +624,10 @@
       // The model to use.
       "model": "claude-3-5-sonnet-latest"
     },
-    "default_profile": "code-writer",
+    "default_profile": "write",
     "profiles": {
-      "read-only": {
-        "name": "Read-only",
+      "ask": {
+        "name": "Ask",
         "tools": {
           "diagnostics": true,
           "fetch": true,
@@ -639,8 +639,8 @@
           "thinking": true
         }
       },
-      "code-writer": {
-        "name": "Code Writer",
+      "write": {
+        "name": "Write",
         "tools": {
           "bash": true,
           "batch-tool": true,
