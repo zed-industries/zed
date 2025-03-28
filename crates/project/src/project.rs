@@ -38,7 +38,7 @@ use client::{
 };
 use clock::ReplicaId;
 
-use dap::{client::DebugAdapterClient, DebugAdapterConfig};
+use dap::{client::DebugAdapterClient, DapRegistry, DebugAdapterConfig};
 
 use collections::{BTreeSet, HashMap, HashSet};
 use debounced_delay::DebouncedDelay;
@@ -163,6 +163,7 @@ pub struct Project {
     active_entry: Option<ProjectEntryId>,
     buffer_ordered_messages_tx: mpsc::UnboundedSender<BufferOrderedMessage>,
     languages: Arc<LanguageRegistry>,
+    debug_adapters: Arc<DapRegistry>,
     dap_store: Entity<DapStore>,
     breakpoint_store: Entity<BreakpointStore>,
     client: Arc<client::Client>,
@@ -818,6 +819,7 @@ impl Project {
         node: NodeRuntime,
         user_store: Entity<UserStore>,
         languages: Arc<LanguageRegistry>,
+        debug_adapters: Arc<DapRegistry>,
         fs: Arc<dyn Fs>,
         env: Option<HashMap<String, String>>,
         cx: &mut App,
@@ -854,6 +856,7 @@ impl Project {
                     node.clone(),
                     fs.clone(),
                     languages.clone(),
+                    debug_adapters.clone(),
                     environment.clone(),
                     toolchain_store.read(cx).as_language_toolchain_store(),
                     breakpoint_store.clone(),
@@ -940,6 +943,7 @@ impl Project {
                 active_entry: None,
                 snippets,
                 languages,
+                debug_adapters,
                 client,
                 task_store,
                 user_store,
@@ -1102,6 +1106,7 @@ impl Project {
                 active_entry: None,
                 snippets,
                 languages,
+                debug_adapters: Arc::new(DapRegistry::default()),
                 client,
                 task_store,
                 user_store,
@@ -1239,7 +1244,6 @@ impl Project {
 
         let breakpoint_store =
             cx.new(|_| BreakpointStore::remote(remote_id, client.clone().into()))?;
-
         let dap_store = cx.new(|_cx| {
             DapStore::new_remote(remote_id, client.clone().into(), breakpoint_store.clone())
         })?;
@@ -1326,6 +1330,7 @@ impl Project {
                 collaborators: Default::default(),
                 join_project_response_message_id: response.message_id,
                 languages,
+                debug_adapters: Arc::new(DapRegistry::default()),
                 user_store: user_store.clone(),
                 task_store,
                 snippets,
@@ -1450,13 +1455,7 @@ impl Project {
         config: DebugAdapterConfig,
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<Session>>> {
-        let worktree = maybe!({
-            if let Some(cwd) = &config.cwd {
-                Some(self.find_worktree(cwd.as_path(), cx)?.0)
-            } else {
-                self.worktrees(cx).next()
-            }
-        });
+        let worktree = maybe!({ self.worktrees(cx).next() });
 
         let Some(worktree) = &worktree else {
             return Task::ready(Err(anyhow!("Failed to find a worktree")));
@@ -1470,6 +1469,40 @@ impl Project {
     }
 
     #[cfg(any(test, feature = "test-support"))]
+    pub fn fake_debug_session(
+        &mut self,
+        request: task::DebugRequestType,
+        caps: Option<dap::Capabilities>,
+        fails: bool,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<Entity<Session>>> {
+        use dap::{Capabilities, FakeAdapter};
+        use task::DebugRequestDisposition;
+
+        let worktree = maybe!({ self.worktrees(cx).next() });
+
+        let Some(worktree) = &worktree else {
+            return Task::ready(Err(anyhow!("Failed to find a worktree")));
+        };
+        let config = DebugAdapterConfig {
+            label: "test config".into(),
+            adapter: FakeAdapter::ADAPTER_NAME.into(),
+            request: DebugRequestDisposition::UserConfigured(request),
+            initialize_args: None,
+            tcp_connection: None,
+        };
+        let caps = caps.unwrap_or(Capabilities {
+            supports_step_back: Some(false),
+            ..Default::default()
+        });
+        self.dap_store
+            .update(cx, |dap_store, cx| {
+                dap_store.new_fake_session(config, worktree, None, caps, fails, cx)
+            })
+            .1
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
     pub async fn example(
         root_paths: impl IntoIterator<Item = &Path>,
         cx: &mut AsyncApp,
@@ -1478,6 +1511,7 @@ impl Project {
 
         let fs = Arc::new(RealFs::new(None, cx.background_executor().clone()));
         let languages = LanguageRegistry::test(cx.background_executor().clone());
+        let debug_adapters = DapRegistry::default().into();
         let clock = Arc::new(FakeSystemClock::new());
         let http_client = http_client::FakeHttpClient::with_404_response();
         let client = cx
@@ -1491,6 +1525,7 @@ impl Project {
                     node_runtime::NodeRuntime::unavailable(),
                     user_store,
                     Arc::new(languages),
+                    debug_adapters,
                     fs,
                     None,
                     cx,
@@ -1521,6 +1556,7 @@ impl Project {
         use clock::FakeSystemClock;
 
         let languages = LanguageRegistry::test(cx.executor());
+        let debug_adapters = DapRegistry::fake();
         let clock = Arc::new(FakeSystemClock::new());
         let http_client = http_client::FakeHttpClient::with_404_response();
         let client = cx.update(|cx| client::Client::new(clock, http_client.clone(), cx));
@@ -1531,6 +1567,7 @@ impl Project {
                 node_runtime::NodeRuntime::unavailable(),
                 user_store,
                 Arc::new(languages),
+                Arc::new(debug_adapters),
                 fs,
                 None,
                 cx,
@@ -1572,6 +1609,10 @@ impl Project {
 
     pub fn languages(&self) -> &Arc<LanguageRegistry> {
         &self.languages
+    }
+
+    pub fn debug_adapters(&self) -> &Arc<DapRegistry> {
+        &self.debug_adapters
     }
 
     pub fn client(&self) -> Arc<Client> {

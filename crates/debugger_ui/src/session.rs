@@ -6,7 +6,6 @@ mod starting;
 use std::time::Duration;
 
 use dap::client::SessionId;
-use dap::DebugAdapterConfig;
 use failed::FailedState;
 use gpui::{
     percentage, Animation, AnimationExt, AnyElement, App, Entity, EventEmitter, FocusHandle,
@@ -19,6 +18,7 @@ use project::Project;
 use rpc::proto::{self, PeerId};
 use running::RunningState;
 use starting::{StartingEvent, StartingState};
+use task::DebugTaskDefinition;
 use ui::{prelude::*, Indicator};
 use util::ResultExt;
 use workspace::{
@@ -73,7 +73,7 @@ impl DebugSession {
         project: Entity<Project>,
         workspace: WeakEntity<Workspace>,
         debug_panel: WeakEntity<DebugPanel>,
-        config: Option<DebugAdapterConfig>,
+        config: Option<DebugTaskDefinition>,
         window: &mut Window,
         cx: &mut App,
     ) -> Entity<Self> {
@@ -171,7 +171,7 @@ impl DebugSession {
             .flatten()
             .expect("worktree-less project");
         let Ok((new_session_id, task)) = dap_store.update(cx, |store, cx| {
-            store.new_session(config, &worktree, None, cx)
+            store.new_session(config.into(), &worktree, None, cx)
         }) else {
             return;
         };
