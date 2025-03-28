@@ -15,7 +15,7 @@ use std::{
     ops::Range,
     sync::Arc,
 };
-use ui::{prelude::*, IconButtonShape};
+use ui::{prelude::*, IconButtonShape, Tooltip};
 use workspace::{
     item::{BreadcrumbText, ItemEvent, TabContentParams},
     searchable::SearchableItemHandle,
@@ -93,6 +93,7 @@ impl AssistantDiff {
             editor.disable_inline_diagnostics();
             editor.set_expand_all_diff_hunks(cx);
             editor.set_render_diff_hunk_controls(render_diff_hunk_controls, cx);
+            editor.register_addon(AssistantDiffAddon);
             editor
         });
 
@@ -212,6 +213,46 @@ impl AssistantDiff {
             ThreadEvent::SummaryChanged => self.update_title(cx),
             _ => {}
         }
+    }
+
+    fn toggle_accept(
+        &mut self,
+        _: &crate::ToggleAccept,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let ranges = self
+            .editor
+            .read(cx)
+            .selections
+            .disjoint_anchor_ranges()
+            .collect::<Vec<_>>();
+
+        let snapshot = self.multibuffer.read(cx).snapshot(cx);
+        let diff_hunks_in_ranges = self
+            .editor
+            .read(cx)
+            .diff_hunks_in_ranges(&ranges, &snapshot)
+            .collect::<Vec<_>>();
+
+        for hunk in diff_hunks_in_ranges {
+            let buffer = self.multibuffer.read(cx).buffer(hunk.buffer_id);
+            if let Some(buffer) = buffer {
+                self.thread.update(cx, |thread, cx| {
+                    let accept = hunk.status().has_secondary_hunk();
+                    thread.review_edits_in_range(buffer, hunk.buffer_range, accept, cx)
+                });
+            }
+        }
+    }
+
+    fn undo(&mut self, _: &crate::Undo, window: &mut Window, cx: &mut Context<Self>) {
+        let ranges = self
+            .editor
+            .update(cx, |editor, cx| editor.selections.ranges(cx));
+        self.editor.update(cx, |editor, cx| {
+            editor.restore_hunks_in_ranges(ranges, window, cx)
+        })
     }
 
     fn review_diff_hunks(
@@ -424,6 +465,8 @@ impl Render for AssistantDiff {
             } else {
                 "AssistantDiff"
             })
+            .on_action(cx.listener(Self::toggle_accept))
+            .on_action(cx.listener(Self::undo))
             .bg(cx.theme().colors().editor_background)
             .flex()
             .items_center()
@@ -460,21 +503,19 @@ fn render_diff_hunk_controls(
         .shadow_md()
         .children(if status.has_secondary_hunk() {
             vec![
-                Button::new(("stage", row as u64), "Accept")
-                    .alpha(if status.is_pending() { 0.66 } else { 1.0 })
-                    // TODO: add tooltip
-                    // .tooltip({
-                    //     let focus_handle = editor.focus_handle(cx);
-                    //     move |window, cx| {
-                    //         Tooltip::for_action_in(
-                    //             "Stage Hunk",
-                    //             &::git::ToggleStaged,
-                    //             &focus_handle,
-                    //             window,
-                    //             cx,
-                    //         )
-                    //     }
-                    // })
+                Button::new(("accept", row as u64), "Accept")
+                    .tooltip({
+                        let focus_handle = editor.focus_handle(cx);
+                        move |window, cx| {
+                            Tooltip::for_action_in(
+                                "Accept Hunk",
+                                &crate::ToggleAccept,
+                                &focus_handle,
+                                window,
+                                cx,
+                            )
+                        }
+                    })
                     .on_click({
                         let assistant_diff = assistant_diff.clone();
                         move |_event, _window, cx| {
@@ -488,13 +529,18 @@ fn render_diff_hunk_controls(
                         }
                     }),
                 Button::new("undo", "Undo")
-                    // TODO: add tooltip
-                    // .tooltip({
-                    //     let focus_handle = editor.focus_handle(cx);
-                    //     move |window, cx| {
-                    //         Tooltip::for_action_in("Undo Hunk", &::git::Undo, &focus_handle, window, cx)
-                    //     }
-                    // })
+                    .tooltip({
+                        let focus_handle = editor.focus_handle(cx);
+                        move |window, cx| {
+                            Tooltip::for_action_in(
+                                "Undo Hunk",
+                                &crate::Undo,
+                                &focus_handle,
+                                window,
+                                cx,
+                            )
+                        }
+                    })
                     .on_click({
                         let editor = editor.clone();
                         move |_event, window, cx| {
@@ -618,4 +664,16 @@ fn render_diff_hunk_controls(
             },
         )
         .into_any_element()
+}
+
+struct AssistantDiffAddon;
+
+impl editor::Addon for AssistantDiffAddon {
+    fn to_any(&self) -> &dyn std::any::Any {
+        self
+    }
+
+    fn extend_key_context(&self, key_context: &mut gpui::KeyContext, _: &App) {
+        key_context.add("assistant_diff");
+    }
 }

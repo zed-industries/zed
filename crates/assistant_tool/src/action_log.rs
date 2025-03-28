@@ -248,7 +248,6 @@ impl ActionLog {
         edit_id: Option<clock::Lamport>,
         cx: &mut Context<Self>,
     ) {
-        println!("WILL CREATE BUFFER");
         self.track_buffer(buffer.clone(), true, cx);
         self.buffer_edited(buffer, edit_id.into_iter().collect(), cx)
     }
