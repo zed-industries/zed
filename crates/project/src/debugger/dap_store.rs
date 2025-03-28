@@ -851,7 +851,7 @@ fn create_new_session(
     session_id: SessionId,
     initialized_rx: oneshot::Receiver<()>,
     start_client_task: Task<Result<Entity<Session>, anyhow::Error>>,
-    cx: &mut Context<'_, DapStore>,
+    cx: &mut Context<DapStore>,
 ) -> Task<Result<Entity<Session>>> {
     let task = cx.spawn(async move |this, cx| {
         let session = match start_client_task.await {

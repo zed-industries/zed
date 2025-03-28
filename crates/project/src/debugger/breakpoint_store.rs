@@ -466,7 +466,7 @@ impl BreakpointStore {
     pub fn with_serialized_breakpoints(
         &self,
         breakpoints: BTreeMap<Arc<Path>, Vec<SerializedBreakpoint>>,
-        cx: &mut Context<'_, BreakpointStore>,
+        cx: &mut Context<BreakpointStore>,
     ) -> Task<Result<()>> {
         if let BreakpointStoreMode::Local(mode) = &self.mode {
             let mode = mode.clone();

@@ -344,7 +344,7 @@ pub(crate) fn commit_message_editor(
     project: Entity<Project>,
     in_panel: bool,
     window: &mut Window,
-    cx: &mut Context<'_, Editor>,
+    cx: &mut Context<Editor>,
 ) -> Editor {
     let buffer = cx.new(|cx| MultiBuffer::singleton(commit_message_buffer, cx));
     let max_lines = if in_panel { MAX_PANEL_EDITOR_LINES } else { 18 };
@@ -3976,7 +3976,7 @@ impl GitPanelMessageTooltip {
 }
 
 impl Render for GitPanelMessageTooltip {
-    fn render(&mut self, _window: &mut Window, _cx: &mut Context<'_, Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
         if let Some(commit_tooltip) = &self.commit_tooltip {
             commit_tooltip.clone().into_any_element()
         } else {

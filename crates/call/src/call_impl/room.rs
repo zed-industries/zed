@@ -1570,7 +1570,7 @@ impl Room {
 
 fn spawn_room_connection(
     livekit_connection_info: Option<proto::LiveKitConnectionInfo>,
-    cx: &mut Context<'_, Room>,
+    cx: &mut Context<Room>,
 ) {
     if let Some(connection_info) = livekit_connection_info {
         cx.spawn(async move |this, cx| {
