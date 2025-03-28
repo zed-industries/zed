@@ -1,9 +1,10 @@
 /// On Windows, this is the Virtual-Key Codes
 /// https://docs.microsoft.com/en-us/windows/win32/inputdev/virtual-key-codes
 /// On macOS and Linux, this is the Scan Codes
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
 pub enum KeyCode {
     /// Un-recognized key
+    #[default]
     Unknown,
     /// Fn on macOS
     Function,
@@ -293,6 +294,376 @@ impl std::hash::Hash for KeyPosition {
             KeyPosition::Right => 2,
         }
         .hash(state)
+    }
+}
+
+impl KeyCode {
+    fn basic_parse(input: &str) -> Option<Self> {
+        Some(match input {
+            "fn" => Self::Function,
+            "cancel" => Self::Cancel,
+            "backspace" => Self::Backspace,
+            "tab" => Self::Tab,
+            "enter" => Self::Enter,
+            "shift" => Self::Shift(KeyPosition::Any),
+            "ctrl" => Self::Control(KeyPosition::Any),
+            "alt" => Self::Alt(KeyPosition::Any),
+            "capslock" => Self::Capital,
+            "escape" => Self::Escape,
+            "space" => Self::Space,
+            "pageup" => Self::PageUp,
+            "pagedown" => Self::PageDown,
+            "end" => Self::End,
+            "home" => Self::Home,
+            "left" => Self::Left,
+            "up" => Self::Up,
+            "right" => Self::Right,
+            "down" => Self::Down,
+            // VirtualKeyCode::PrintScreen => "UnImplemented",
+            "insert" => Self::Insert,
+            "delete" => Self::Delete,
+            "win" | "cmd" | "super" => Self::Platform(KeyPosition::Any),
+            "menu" => Self::App, // TODO: Chrome use this as Fn key
+            "a" => Self::A,
+            "b" => Self::B,
+            "c" => Self::C,
+            "d" => Self::D,
+            "e" => Self::E,
+            "f" => Self::F,
+            "g" => Self::G,
+            "h" => Self::H,
+            "i" => Self::I,
+            "j" => Self::J,
+            "k" => Self::K,
+            "l" => Self::L,
+            "m" => Self::M,
+            "n" => Self::N,
+            "o" => Self::O,
+            "p" => Self::P,
+            "q" => Self::Q,
+            "r" => Self::R,
+            "s" => Self::S,
+            "t" => Self::T,
+            "u" => Self::U,
+            "v" => Self::V,
+            "w" => Self::W,
+            "x" => Self::X,
+            "y" => Self::Y,
+            "z" => Self::Z,
+            // VirtualKeyCode::Numpad0 => "UnImplemented", // TODO: Handle numpad keys
+            // VirtualKeyCode::Numpad1 => "UnImplemented",
+            // VirtualKeyCode::Numpad2 => "UnImplemented",
+            // VirtualKeyCode::Numpad3 => "UnImplemented",
+            // VirtualKeyCode::Numpad4 => "UnImplemented",
+            // VirtualKeyCode::Numpad5 => "UnImplemented",
+            // VirtualKeyCode::Numpad6 => "UnImplemented",
+            // VirtualKeyCode::Numpad7 => "UnImplemented",
+            // VirtualKeyCode::Numpad8 => "UnImplemented",
+            // VirtualKeyCode::Numpad9 => "UnImplemented",
+            // VirtualKeyCode::Multiply => "UnImplemented",
+            // VirtualKeyCode::Add => "UnImplemented",
+            // VirtualKeyCode::Separator => "UnImplemented",
+            // VirtualKeyCode::Subtract => "UnImplemented",
+            // VirtualKeyCode::Decimal => "UnImplemented",
+            // VirtualKeyCode::Divide => "UnImplemented",
+            "f1" => Self::F1,
+            "f2" => Self::F2,
+            "f3" => Self::F3,
+            "f4" => Self::F4,
+            "f5" => Self::F5,
+            "f6" => Self::F6,
+            "f7" => Self::F7,
+            "f8" => Self::F8,
+            "f9" => Self::F9,
+            "f10" => Self::F10,
+            "f11" => Self::F11,
+            "f12" => Self::F12,
+            "f13" => Self::F13,
+            "f14" => Self::F14,
+            "f15" => Self::F15,
+            "f16" => Self::F16,
+            "f17" => Self::F17,
+            "f18" => Self::F18,
+            "f19" => Self::F19,
+            "f20" => Self::F20,
+            "f21" => Self::F21,
+            "f22" => Self::F22,
+            "f23" => Self::F23,
+            "f24" => Self::F24,
+            "back" => Self::BrowserBack,
+            "forward" => Self::BrowserForward,
+            _ => return None,
+        })
+    }
+    /// input is standard US English layout key
+    pub fn parse(input: &str) -> anyhow::Result<Self> {
+        if let Some(key) = Self::basic_parse(input) {
+            return Ok(key);
+        }
+        match input {
+            "0" => Ok(Self::Digital0),
+            "1" => Ok(Self::Digital1),
+            "2" => Ok(Self::Digital2),
+            "3" => Ok(Self::Digital3),
+            "4" => Ok(Self::Digital4),
+            "5" => Ok(Self::Digital5),
+            "6" => Ok(Self::Digital6),
+            "7" => Ok(Self::Digital7),
+            "8" => Ok(Self::Digital8),
+            "9" => Ok(Self::Digital9),
+            ";" => Ok(Self::Semicolon),
+            "=" => Ok(Self::Plus),
+            "," => Ok(Self::Comma),
+            "-" => Ok(Self::Minus),
+            "." => Ok(Self::Period),
+            "/" => Ok(Self::Slash),
+            "`" => Ok(Self::Tilde),
+            "[" => Ok(Self::LeftBracket),
+            "\\" => Ok(Self::Backslash),
+            "]" => Ok(Self::RightBracket),
+            "'" => Ok(Self::Quote),
+            _ => Err(anyhow::anyhow!(
+                "Error parsing keystroke to virtual keycode: {input}"
+            )),
+        }
+    }
+
+    // /// TODO:
+    // fn parse_char(input: &str) -> anyhow::Result<(Self, bool, bool, bool)> {
+    //     if let Some(key) = Self::basic_parse(input) {
+    //         return Ok((key, false, false, false));
+    //     }
+    //     if input.chars().count() != 1 {
+    //         return Err(anyhow::anyhow!(
+    //             "Error parsing keystroke to virtual keycode (char based): {input}"
+    //         ));
+    //     }
+    //     let ch = input.chars().next().unwrap();
+    //     let result = unsafe { VkKeyScanW(ch as u16) };
+    //     if result == -1 {
+    //         return Err(anyhow::anyhow!(
+    //             "Error parsing keystroke to virtual keycode (char based): {input}"
+    //         ));
+    //     }
+    //     let high = (result >> 8) as u8;
+    //     let low = result as u8;
+    //     let shift = high & 1;
+    //     let ctrl = (high >> 1) & 1;
+    //     let alt = (high >> 2) & 1;
+    //     let this = VIRTUAL_KEY(low as u16).try_into()?;
+    //     Ok((this, shift != 0, ctrl != 0, alt != 0))
+    // }
+
+    // /// TODO:
+    // pub fn unparse(&self) -> &str {
+    //     match self {
+    //         Self::Unknown(content) => &content,
+    //         Self::Function => "fn",
+    //         Self::Cancel => "cancel",
+    //         Self::Backspace => "backspace",
+    //         Self::Tab => "tab",
+    //         Self::Clear => "UnImplemented",
+    //         Self::Enter => "enter",
+    //         // TODO: position
+    //         Self::Shift(_) => "shift",
+    //         Self::Control(_) => "ctrl",
+    //         Self::Alt(_) => "alt",
+    //         Self::Pause => "UnImplemented",
+    //         Self::Capital => "capslock",
+    //         // Self::Kana => "UnImplemented",
+    //         // Self::Hangul => "UnImplemented",
+    //         // Self::Junja => "UnImplemented",
+    //         // Self::Final => "UnImplemented",
+    //         // Self::Hanja => "UnImplemented",
+    //         // Self::Kanji => "UnImplemented",
+    //         Self::Escape => "escape",
+    //         Self::Convert => "UnImplemented",
+    //         Self::Nonconvert => "UnImplemented",
+    //         Self::Accept => "UnImplemented",
+    //         Self::ModeChange => "UnImplemented",
+    //         Self::Space => "space",
+    //         Self::PageUp => "pageup",
+    //         Self::PageDown => "pagedown",
+    //         Self::End => "end",
+    //         Self::Home => "home",
+    //         Self::Left => "left",
+    //         Self::Up => "up",
+    //         Self::Right => "right",
+    //         Self::Down => "down",
+    //         Self::Select => "UnImplemented",
+    //         Self::Print => "UnImplemented",
+    //         Self::Execute => "UnImplemented",
+    //         Self::PrintScreen => "UnImplemented",
+    //         Self::Insert => "insert",
+    //         Self::Delete => "delete",
+    //         Self::Help => "UnImplemented",
+    //         Self::Digital0 => "0",
+    //         Self::Digital1 => "1",
+    //         Self::Digital2 => "2",
+    //         Self::Digital3 => "3",
+    //         Self::Digital4 => "4",
+    //         Self::Digital5 => "5",
+    //         Self::Digital6 => "6",
+    //         Self::Digital7 => "7",
+    //         Self::Digital8 => "8",
+    //         Self::Digital9 => "9",
+    //         Self::A => "a",
+    //         Self::B => "b",
+    //         Self::C => "c",
+    //         Self::D => "d",
+    //         Self::E => "e",
+    //         Self::F => "f",
+    //         Self::G => "g",
+    //         Self::H => "h",
+    //         Self::I => "i",
+    //         Self::J => "j",
+    //         Self::K => "k",
+    //         Self::L => "l",
+    //         Self::M => "m",
+    //         Self::N => "n",
+    //         Self::O => "o",
+    //         Self::P => "p",
+    //         Self::Q => "q",
+    //         Self::R => "r",
+    //         Self::S => "s",
+    //         Self::T => "t",
+    //         Self::U => "u",
+    //         Self::V => "v",
+    //         Self::W => "w",
+    //         Self::X => "x",
+    //         Self::Y => "y",
+    //         Self::Z => "z",
+    //         // TODO: handle position
+    //         Self::Platform(_) => "win",
+    //         Self::App => "menu", // TODO: Chrome use this as Fn key
+    //         Self::Sleep => "UnImplemented",
+    //         Self::Numpad0 => "UnImplemented", // TODO: handle numpad key
+    //         Self::Numpad1 => "UnImplemented",
+    //         Self::Numpad2 => "UnImplemented",
+    //         Self::Numpad3 => "UnImplemented",
+    //         Self::Numpad4 => "UnImplemented",
+    //         Self::Numpad5 => "UnImplemented",
+    //         Self::Numpad6 => "UnImplemented",
+    //         Self::Numpad7 => "UnImplemented",
+    //         Self::Numpad8 => "UnImplemented",
+    //         Self::Numpad9 => "UnImplemented",
+    //         Self::Multiply => "UnImplemented",
+    //         Self::Add => "UnImplemented",
+    //         Self::Separator => "UnImplemented",
+    //         Self::Subtract => "UnImplemented",
+    //         Self::Decimal => "UnImplemented",
+    //         Self::Divide => "UnImplemented",
+    //         Self::F1 => "f1",
+    //         Self::F2 => "f2",
+    //         Self::F3 => "f3",
+    //         Self::F4 => "f4",
+    //         Self::F5 => "f5",
+    //         Self::F6 => "f6",
+    //         Self::F7 => "f7",
+    //         Self::F8 => "f8",
+    //         Self::F9 => "f9",
+    //         Self::F10 => "f10",
+    //         Self::F11 => "f11",
+    //         Self::F12 => "f12",
+    //         Self::F13 => "f13",
+    //         Self::F14 => "f14",
+    //         Self::F15 => "f15",
+    //         Self::F16 => "f16",
+    //         Self::F17 => "f17",
+    //         Self::F18 => "f18",
+    //         Self::F19 => "f19",
+    //         Self::F20 => "f20",
+    //         Self::F21 => "f21",
+    //         Self::F22 => "f22",
+    //         Self::F23 => "f23",
+    //         Self::F24 => "f24",
+    //         Self::NumLock => "UnImplemented",
+    //         Self::ScrollLock => "UnImplemented",
+    //         Self::BrowserBack => "back",
+    //         Self::BrowserForward => "forward",
+    //         Self::BrowserRefresh => "UnImplemented",
+    //         Self::BrowserStop => "UnImplemented",
+    //         Self::BrowserSearch => "UnImplemented",
+    //         Self::BrowserFavorites => "UnImplemented",
+    //         Self::BrowserHome => "UnImplemented",
+    //         Self::VolumeMute => "UnImplemented",
+    //         Self::VolumeDown => "UnImplemented",
+    //         Self::VolumeUp => "UnImplemented",
+    //         Self::MediaNextTrack => "UnImplemented",
+    //         Self::MediaPrevTrack => "UnImplemented",
+    //         Self::MediaStop => "UnImplemented",
+    //         Self::MediaPlayPause => "UnImplemented",
+    //         Self::LaunchMail => "UnImplemented",
+    //         Self::LaunchMediaSelect => "UnImplemented",
+    //         Self::LaunchApp1 => "UnImplemented",
+    //         Self::LaunchApp2 => "UnImplemented",
+    //         Self::Semicolon => ";",
+    //         Self::Plus => "=",
+    //         Self::Comma => ",",
+    //         Self::Minus => "-",
+    //         Self::Period => ".",
+    //         Self::Slash => "/",
+    //         Self::Tilde => "`",
+    //         Self::LeftBracket => "[",
+    //         Self::Backslash => "\\",
+    //         Self::RightBracket => "]",
+    //         Self::Quote => "'",
+    //         Self::OEM8 => "UnImplemented",
+    //         Self::OEM102 => "UnImplemented",
+    //         // Self::ProcessKey => "UnImplemented",
+    //         // Self::Packet => "UnImplemented",
+    //         // Self::Attn => "UnImplemented",
+    //         // Self::CrSel => "UnImplemented",
+    //         // Self::ExSel => "UnImplemented",
+    //         // Self::EraseEOF => "UnImplemented",
+    //         // Self::Play => "UnImplemented",
+    //         // Self::Zoom => "UnImplemented",
+    //         // Self::PA1 => "UnImplemented",
+    //         // Self::OEMClear => "UnImplemented",
+    //     }
+    // }
+    pub fn is_printable(&self) -> bool {
+        !matches!(
+            self,
+            Self::F1
+                | Self::F2
+                | Self::F3
+                | Self::F4
+                | Self::F5
+                | Self::F6
+                | Self::F7
+                | Self::F8
+                | Self::F9
+                | Self::F10
+                | Self::F11
+                | Self::F12
+                | Self::F13
+                | Self::F14
+                | Self::F15
+                | Self::F16
+                | Self::F17
+                | Self::F18
+                | Self::F19
+                | Self::F20
+                | Self::F21
+                | Self::F22
+                | Self::F23
+                | Self::F24
+                | Self::Backspace
+                | Self::Delete
+                | Self::Left
+                | Self::Up
+                | Self::Right
+                | Self::Down
+                | Self::PageUp
+                | Self::PageDown
+                | Self::Insert
+                | Self::Home
+                | Self::End
+                | Self::BrowserBack
+                | Self::BrowserForward
+                | Self::Escape
+        )
     }
 }
 
