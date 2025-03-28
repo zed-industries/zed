@@ -605,6 +605,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "assistant_rules"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "fs",
+ "futures 0.3.31",
+ "gpui",
+ "indoc",
+ "util",
+ "worktree",
+]
+
+[[package]]
 name = "assistant_settings"
 version = "0.1.0"
 dependencies = [
