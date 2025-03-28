@@ -70,6 +70,8 @@ pub enum IconName {
     CursorIBeam,
     Dash,
     DebugBreakpoint,
+    DebugDisabledBreakpoint,
+    DebugDisabledLogBreakpoint,
     DebugIgnoreBreakpoints,
     DebugPause,
     DebugContinue,
