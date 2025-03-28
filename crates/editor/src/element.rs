@@ -8,7 +8,7 @@ use crate::{
         CurrentLineHighlight, DoubleClickInMultibuffer, MultiCursorModifier, ScrollBeyondLastLine,
         ScrollbarAxes, ScrollbarDiagnostics, ShowScrollbar,
     },
-    git::blame::GitBlame,
+    git::blame::{GitBlame, GlobalBlameRenderer},
     hover_popover::{
         self, hover_at, HOVER_POPOVER_GAP, MIN_POPOVER_CHARACTER_WIDTH, MIN_POPOVER_LINE_HEIGHT,
     },
@@ -16,15 +16,16 @@ use crate::{
     items::BufferSearchHighlights,
     mouse_context_menu::{self, MenuPosition, MouseContextMenu},
     scroll::scroll_amount::ScrollAmount,
-    BlockId, ChunkReplacement, ContextMenuPlacement, CursorShape, CustomBlockId, DisplayDiffHunk,
-    DisplayPoint, DisplayRow, DocumentHighlightRead, DocumentHighlightWrite, EditDisplayMode,
-    Editor, EditorMode, EditorSettings, EditorSnapshot, EditorStyle, FocusedBlock, GoToHunk,
-    GoToPreviousHunk, GutterDimensions, HalfPageDown, HalfPageUp, HandleInput, HoveredCursor,
-    InlayHintRefreshReason, InlineCompletion, JumpData, LineDown, LineHighlight, LineUp,
-    OpenExcerpts, PageDown, PageUp, Point, RowExt, RowRangeExt, SelectPhase, SelectedTextHighlight,
-    Selection, SoftWrap, StickyHeaderExcerpt, ToPoint, ToggleFold, COLUMNAR_SELECTION_MODIFIERS,
-    CURSORS_VISIBLE_FOR, FILE_HEADER_HEIGHT, GIT_BLAME_MAX_AUTHOR_CHARS_DISPLAYED, MAX_LINE_LEN,
-    MIN_LINE_NUMBER_DIGITS, MULTI_BUFFER_EXCERPT_HEADER_HEIGHT,
+    BlameRenderer, BlockId, ChunkReplacement, ContextMenuPlacement, CursorShape, CustomBlockId,
+    DisplayDiffHunk, DisplayPoint, DisplayRow, DocumentHighlightRead, DocumentHighlightWrite,
+    EditDisplayMode, Editor, EditorMode, EditorSettings, EditorSnapshot, EditorStyle, FocusedBlock,
+    GoToHunk, GoToPreviousHunk, GutterDimensions, HalfPageDown, HalfPageUp, HandleInput,
+    HoveredCursor, InlayHintRefreshReason, InlineCompletion, JumpData, LineDown, LineHighlight,
+    LineUp, OpenExcerpts, PageDown, PageUp, Point, RowExt, RowRangeExt, SelectPhase,
+    SelectedTextHighlight, Selection, SoftWrap, StickyHeaderExcerpt, ToPoint, ToggleFold,
+    COLUMNAR_SELECTION_MODIFIERS, CURSORS_VISIBLE_FOR, FILE_HEADER_HEIGHT,
+    GIT_BLAME_MAX_AUTHOR_CHARS_DISPLAYED, MAX_LINE_LEN, MIN_LINE_NUMBER_DIGITS,
+    MULTI_BUFFER_EXCERPT_HEADER_HEIGHT,
 };
 use buffer_diff::{DiffHunkStatus, DiffHunkStatusKind};
 use client::ParticipantIndex;
@@ -82,7 +83,7 @@ use ui::{
 };
 use unicode_segmentation::UnicodeSegmentation;
 use util::{debug_panic, RangeExt, ResultExt};
-use workspace::{item::Item, notifications::NotifyTaskExt};
+use workspace::{item::Item, notifications::NotifyTaskExt, Workspace};
 
 const INLINE_BLAME_PADDING_EM_WIDTHS: f32 = 7.;
 
@@ -1769,6 +1770,7 @@ impl EditorElement {
         }
 
         let blame = self.editor.read(cx).blame.clone()?;
+        let workspace = self.editor.read(cx).workspace()?;
         let blamed_rows: Vec<_> = blame.update(cx, |blame, cx| {
             blame.blame_for_rows(buffer_rows, cx).collect()
         });
@@ -1783,6 +1785,8 @@ impl EditorElement {
 
         let mut last_used_color: Option<(PlayerColor, Oid)> = None;
 
+        let renderer = cx.global::<GlobalBlameRenderer>().0.clone();
+
         let shaped_lines = blamed_rows
             .into_iter()
             .enumerate()
@@ -1795,6 +1799,8 @@ impl EditorElement {
                         &self.style,
                         &mut last_used_color,
                         self.editor.clone(),
+                        workspace.clone(),
+                        renderer.clone(),
                         cx,
                     );
 
@@ -5677,7 +5683,7 @@ fn prepaint_gutter_button(
 
 fn render_inline_blame_entry(
     editor: Entity<Editor>,
-    blame: &gpui::Entity<GitBlame>,
+    blame: &Entity<GitBlame>,
     blame_entry: BlameEntry,
     style: &EditorStyle,
     cx: &mut App,
@@ -5721,11 +5727,13 @@ fn render_inline_blame_entry(
 
 fn render_blame_entry(
     ix: usize,
-    blame: &gpui::Entity<GitBlame>,
+    blame: &Entity<GitBlame>,
     blame_entry: BlameEntry,
     style: &EditorStyle,
     last_used_color: &mut Option<(PlayerColor, Oid)>,
     editor: Entity<Editor>,
+    workspace: Entity<Workspace>,
+    renderer: Arc<dyn BlameRenderer>,
     cx: &mut App,
 ) -> AnyElement {
     let mut sha_color = cx
@@ -5751,7 +5759,7 @@ fn render_blame_entry(
     let name = util::truncate_and_trailoff(author_name, GIT_BLAME_MAX_AUTHOR_CHARS_DISPLAYED);
     let details = blame.read(cx).details_for_entry(&blame_entry);
 
-    h_flex()
+    let div = h_flex()
         .w_full()
         .justify_between()
         .font_family(style.text.font().family)
@@ -5768,6 +5776,7 @@ fn render_blame_entry(
                 .child(name),
         )
         .child(relative_timestamp)
+        .hover(|style| style.bg(cx.theme().colors().element_hover))
         .on_mouse_down(MouseButton::Right, {
             let blame_entry = blame_entry.clone();
             let details = details.clone();
@@ -5781,24 +5790,15 @@ fn render_blame_entry(
                     cx,
                 );
             }
-        })
-        .hover(|style| style.bg(cx.theme().colors().element_hover))
-        .when_some(
-            details
-                .as_ref()
-                .and_then(|details| details.permalink.clone()),
-            |this, url| {
-                this.cursor_pointer().on_click(move |_, _, cx| {
-                    cx.stop_propagation();
-                    cx.open_url(url.as_str())
-                })
-            },
-        )
-        .hoverable_tooltip(move |window, cx| {
-            cx.new(|cx| CommitTooltip::blame_entry(&blame_entry, details.clone(), window, cx))
-                .into()
-        })
-        .into_any()
+        });
+    renderer.render_blame_entry(
+        div,
+        blame_entry,
+        details,
+        blame.read(cx).repository(cx),
+        workspace.downgrade(),
+        cx,
+    )
 }
 
 fn deploy_blame_entry_context_menu(

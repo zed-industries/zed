@@ -3,13 +3,20 @@ use std::any::Any;
 use ::settings::Settings;
 use command_palette_hooks::CommandPaletteFilter;
 use commit_modal::CommitModal;
+use commit_view::CommitView;
+use editor::{
+    commit_tooltip::{CommitTooltip, ParsedCommitMessage},
+    BlameRenderer,
+};
 use git::{
-    repository::{Branch, Upstream, UpstreamTracking, UpstreamTrackingStatus},
+    blame::BlameEntry,
+    repository::{Branch, CommitSummary, Upstream, UpstreamTracking, UpstreamTrackingStatus},
     status::{FileStatus, StatusCode, UnmergedStatus, UnmergedStatusCode},
 };
 use git_panel_settings::GitPanelSettings;
-use gpui::{actions, App, FocusHandle};
+use gpui::{actions, App, Entity, FocusHandle, Stateful, WeakEntity};
 use onboarding::GitOnboardingModal;
+use project::git_store::Repository;
 use project_diff::ProjectDiff;
 use ui::prelude::*;
 use workspace::Workspace;
@@ -30,6 +37,8 @@ actions!(git, [ResetOnboarding]);
 
 pub fn init(cx: &mut App) {
     GitPanelSettings::register(cx);
+
+    editor::set_blame_renderer(GitBlameRenderer, cx);
 
     cx.observe_new(|workspace: &mut Workspace, _, cx| {
         ProjectDiff::register(workspace, cx);
@@ -121,6 +130,45 @@ pub fn init(cx: &mut App) {
 
 pub fn git_status_icon(status: FileStatus) -> impl IntoElement {
     GitStatusIcon::new(status)
+}
+
+struct GitBlameRenderer;
+
+impl BlameRenderer for GitBlameRenderer {
+    fn render_blame_entry(
+        &self,
+        div: Stateful<Div>,
+        blame_entry: BlameEntry,
+        details: Option<ParsedCommitMessage>,
+        repository: Option<Entity<Repository>>,
+        workspace: WeakEntity<Workspace>,
+        _cx: &App,
+    ) -> AnyElement {
+        div.when_some(repository, {
+            let blame_entry = blame_entry.clone();
+            move |this, repository| {
+                this.cursor_pointer().on_click(move |_, window, cx| {
+                    CommitView::open(
+                        CommitSummary {
+                            sha: blame_entry.sha.to_string().into(),
+                            subject: blame_entry.summary.clone().unwrap_or_default().into(),
+                            commit_timestamp: blame_entry.committer_time.unwrap_or_default(),
+                            has_parent: true,
+                        },
+                        repository.downgrade(),
+                        workspace.clone(),
+                        window,
+                        cx,
+                    )
+                })
+            }
+        })
+        .hoverable_tooltip(move |window, cx| {
+            cx.new(|cx| CommitTooltip::blame_entry(&blame_entry, details.clone(), window, cx))
+                .into()
+        })
+        .into_any()
+    }
 }
 
 fn render_remote_button(

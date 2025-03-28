@@ -3,8 +3,8 @@ use buffer_diff::{BufferDiff, BufferDiffSnapshot};
 use editor::{Editor, EditorEvent, MultiBuffer};
 use git::repository::{CommitDiff, CommitSummary, RepoPath};
 use gpui::{
-    AnyElement, App, AppContext as _, AsyncApp, AsyncWindowContext, Context, Entity, EventEmitter,
-    FocusHandle, Focusable, IntoElement, Render, WeakEntity, Window,
+    AnyElement, App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, FocusHandle,
+    Focusable, IntoElement, Render, WeakEntity, Window,
 };
 use language::{
     Anchor, Buffer, Capability, DiskState, File, LanguageRegistry, LineEnding, OffsetRangeExt as _,
@@ -37,19 +37,31 @@ struct GitBlob {
 impl CommitView {
     pub fn open(
         commit: CommitSummary,
-        commit_diff: CommitDiff,
         repo: WeakEntity<Repository>,
         workspace: WeakEntity<Workspace>,
-        cx: &mut AsyncWindowContext,
-    ) -> Result<()> {
-        workspace.update_in(cx, |workspace, window, cx| {
-            let repo = repo.upgrade().ok_or_else(|| anyhow!("repo removed"))?;
-            let project = workspace.project();
-            let commit_view = cx
-                .new(|cx| CommitView::new(commit, commit_diff, repo, project.clone(), window, cx));
-            workspace.add_item_to_center(Box::new(commit_view), window, cx);
-            anyhow::Ok(())
-        })?
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        let commit_diff = repo
+            .update(cx, |repo, _| repo.load_commit(commit.sha.to_string()))
+            .ok();
+
+        window
+            .spawn(cx, async move |cx| {
+                let commit_diff = commit_diff?.await.ok()?.log_err()?;
+                workspace
+                    .update_in(cx, |workspace, window, cx| {
+                        let repo = repo.upgrade().ok_or_else(|| anyhow!("repo removed"))?;
+                        let project = workspace.project();
+                        let commit_view = cx.new(|cx| {
+                            CommitView::new(commit, commit_diff, repo, project.clone(), window, cx)
+                        });
+                        workspace.add_item_to_center(Box::new(commit_view), window, cx);
+                        anyhow::Ok(())
+                    })
+                    .log_err()
+            })
+            .detach();
     }
 
     pub fn new(

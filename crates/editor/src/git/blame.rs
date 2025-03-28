@@ -4,18 +4,21 @@ use git::{
     blame::{Blame, BlameEntry},
     parse_git_remote_url, GitHostingProvider, GitHostingProviderRegistry, Oid,
 };
-use gpui::{App, AppContext as _, Context, Entity, Subscription, Task};
+use gpui::{
+    App, AppContext as _, Context, Div, Entity, IntoElement as _, SharedString, Stateful,
+    Subscription, Task, WeakEntity,
+};
 use http_client::HttpClient;
 use language::{Bias, Buffer, BufferSnapshot, Edit};
 use multi_buffer::RowInfo;
-use project::{Project, ProjectItem};
+use project::{git_store::Repository, Project, ProjectItem};
 use smallvec::SmallVec;
 use std::{sync::Arc, time::Duration};
 use sum_tree::SumTree;
-use ui::SharedString;
 use url::Url;
 
 use crate::commit_tooltip::ParsedCommitMessage;
+use workspace::Workspace;
 
 #[derive(Clone, Debug, Default)]
 pub struct GitBlameEntry {
@@ -96,7 +99,7 @@ pub struct GitBlame {
     project: Entity<Project>,
     buffer: Entity<Buffer>,
     entries: SumTree<GitBlameEntry>,
-    commit_details: HashMap<Oid, crate::commit_tooltip::ParsedCommitMessage>,
+    commit_details: HashMap<Oid, ParsedCommitMessage>,
     buffer_snapshot: BufferSnapshot,
     buffer_edits: text::Subscription,
     task: Task<Result<()>>,
@@ -107,6 +110,38 @@ pub struct GitBlame {
     regenerate_on_edit_task: Task<Result<()>>,
     _regenerate_subscriptions: Vec<Subscription>,
 }
+
+pub trait BlameRenderer {
+    fn render_blame_entry(
+        &self,
+        div: Stateful<Div>,
+        _: BlameEntry,
+        _: Option<ParsedCommitMessage>,
+        _: Option<Entity<Repository>>,
+        _: WeakEntity<Workspace>,
+        _: &App,
+    ) -> gpui::AnyElement {
+        div.into_any_element()
+    }
+}
+
+impl BlameRenderer for () {
+    fn render_blame_entry(
+        &self,
+        div: Stateful<Div>,
+        _: BlameEntry,
+        _: Option<ParsedCommitMessage>,
+        _: Option<Entity<Repository>>,
+        _: WeakEntity<Workspace>,
+        _: &App,
+    ) -> gpui::AnyElement {
+        div.into_any_element()
+    }
+}
+
+pub(crate) struct GlobalBlameRenderer(pub Arc<dyn BlameRenderer>);
+
+impl gpui::Global for GlobalBlameRenderer {}
 
 impl GitBlame {
     pub fn new(
@@ -178,6 +213,15 @@ impl GitBlame {
         };
         this.generate(cx);
         this
+    }
+
+    pub fn repository(&self, cx: &App) -> Option<Entity<Repository>> {
+        self.project
+            .read(cx)
+            .git_store()
+            .read(cx)
+            .repository_and_path_for_buffer_id(self.buffer.read(cx).remote_id(), cx)
+            .map(|(repo, _)| repo)
     }
 
     pub fn has_generated_entries(&self) -> bool {

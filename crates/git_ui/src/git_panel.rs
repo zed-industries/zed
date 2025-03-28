@@ -3025,28 +3025,16 @@ impl GitPanel {
                         )
                         .id("commit-msg-hover")
                         .on_click({
-                            let repo = active_repository.downgrade();
-                            let sha = commit.sha.clone();
                             let commit = commit.clone();
+                            let repo = active_repository.downgrade();
                             move |_, window, cx| {
-                                let commit = commit.clone();
-                                let repo = repo.clone();
-                                let workspace = workspace.clone();
-                                let commit_diff = repo
-                                    .update(cx, |repo, _| repo.load_commit(sha.to_string()))
-                                    .ok();
-                                window
-                                    .spawn(cx, async move |cx| {
-                                        CommitView::open(
-                                            commit,
-                                            commit_diff?.await.ok()?.log_err()?,
-                                            repo,
-                                            workspace.clone(),
-                                            cx,
-                                        )
-                                        .log_err()
-                                    })
-                                    .detach()
+                                CommitView::open(
+                                    commit.clone(),
+                                    repo.clone(),
+                                    workspace.clone().clone(),
+                                    window,
+                                    cx,
+                                );
                             }
                         })
                         .hoverable_tooltip(move |window, cx| {
