@@ -13234,6 +13234,7 @@ dependencies = [
  "theme",
  "title_bar",
  "ui",
+ "workspace",
 ]
 
 [[package]]
