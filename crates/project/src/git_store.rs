@@ -232,7 +232,7 @@ struct GitJob {
 #[derive(PartialEq, Eq)]
 enum GitJobKey {
     WriteIndex(RepoPath),
-    BatchReadIndex(ProjectEntryId),
+    BatchReadIndex,
 }
 
 impl GitStore {
@@ -1342,12 +1342,7 @@ impl GitStore {
     ) {
         debug_assert!(worktree.read(cx).is_local());
 
-        let Some(active_repo) = self.active_repository() else {
-            log::error!("local worktree changed but we have no active repository");
-            return;
-        };
-
-        let mut diff_state_updates = HashMap::<ProjectEntryId, Vec<_>>::default();
+        let mut diff_state_updates = HashMap::<Entity<Repository>, Vec<_>>::default();
         for (buffer_id, diff_state) in &self.diffs {
             let Some(buffer) = self.buffer_store.read(cx).get(*buffer_id) else {
                 continue;
@@ -1358,17 +1353,19 @@ impl GitStore {
             if file.worktree != worktree {
                 continue;
             }
-            let Some(repo_id) = changed_repos
-                .iter()
-                .map(|update| update.work_directory_id)
-                .find(|repo_id| {
-                    self.repositories()
-                        .values()
-                        .any(|repo| repo.read(cx).work_directory_id == Some(*repo_id))
-                })
+            let Some((repo, _)) =
+                self.repository_and_path_for_buffer_id(buffer.read(cx).remote_id(), cx)
             else {
                 continue;
             };
+            if !changed_repos.iter().any(|update| {
+                update.old_work_directory_abs_path.as_ref()
+                    == Some(&repo.read(cx).work_directory_abs_path)
+                    || update.new_work_directory_abs_path.as_ref()
+                        == Some(&repo.read(cx).work_directory_abs_path)
+            }) {
+                continue;
+            }
 
             let diff_state = diff_state.read(cx);
             let has_unstaged_diff = diff_state
@@ -1387,19 +1384,19 @@ impl GitStore {
                 has_uncommitted_diff.then(|| diff_state.head_text.clone()),
                 diff_state.hunk_staging_operation_count,
             );
-            diff_state_updates.entry(repo_id).or_default().push(update);
+            diff_state_updates.entry(repo).or_default().push(update);
         }
 
         if diff_state_updates.is_empty() {
             return;
         }
 
-        for (repo_id, repo_diff_state_updates) in diff_state_updates.into_iter() {
+        for (repo, repo_diff_state_updates) in diff_state_updates.into_iter() {
             let worktree = worktree.downgrade();
             let git_store = cx.weak_entity();
 
-            let _ = active_repo.read(cx).send_keyed_job(
-                Some(GitJobKey::BatchReadIndex(repo_id)),
+            let _ = repo.read(cx).send_keyed_job(
+                Some(GitJobKey::BatchReadIndex),
                 |_, mut cx| async move {
                     let snapshot = worktree.update(&mut cx, |tree, _| {
                         tree.as_local().map(|local_tree| local_tree.snapshot())

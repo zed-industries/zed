@@ -1402,6 +1402,7 @@ impl LocalWorktree {
             cx.emit(Event::UpdatedEntries(entry_changes));
         }
         if !repo_changes.is_empty() {
+            eprintln!("event");
             cx.emit(Event::UpdatedGitRepositories(repo_changes));
         }
     }
@@ -1490,7 +1491,7 @@ impl LocalWorktree {
             (value.0.clone(), value.1.clone())
         }
 
-        changes.into()
+        dbg!(changes.into())
     }
 
     pub fn scan_complete(&self) -> impl Future<Output = ()> {
