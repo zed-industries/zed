@@ -363,7 +363,7 @@ impl ManageProfilesModal {
                                     .on_click({
                                         let profile_id = profile.id.clone();
                                         cx.listener(move |this, _, window, cx| {
-                                            this.new_profile(Some(profile_id.clone()), window, cx);
+                                            this.view_profile(profile_id.clone(), window, cx);
                                         })
                                     }),
                                 )
