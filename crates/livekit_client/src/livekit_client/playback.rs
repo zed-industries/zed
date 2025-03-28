@@ -172,42 +172,49 @@ impl AudioStack {
             let mixer = mixer.clone();
             let apm = apm.clone();
             let mut resampler = audio_resampler::AudioResampler::default();
+            let mut buf = Vec::new();
+
             thread::spawn(move || {
                 let output_stream = output_device.build_output_stream(
-                    &StreamConfig {
-                        channels: output_config.channels(),
-                        sample_rate: output_config.sample_rate(),
-                        // NOTE: all operations in WebRTC happen on 10ms chunk lengths.
-                        // We could set this to a multiple of 10ms..
-                        buffer_size: cpal::BufferSize::Fixed(
-                            output_config.sample_rate().0 as u32 / 100,
-                        ),
-                    },
+                    &output_config.config(),
                     {
-                        move |data, _info| {
-                            let mut mixer = mixer.lock();
-                            let mixed = mixer.mix(output_config.channels() as usize);
-                            let sampled = resampler.remix_and_resample(
-                                mixed,
-                                sample_rate / 100,
-                                num_channels,
-                                sample_rate,
-                                output_config.channels() as u32,
-                                output_config.sample_rate().0,
-                            );
-                            drop(mixer);
-                            data.copy_from_slice(&sampled);
-                            apm.lock()
-                                .process_reverse_stream(
-                                    data,
-                                    output_config.sample_rate().0 as i32,
-                                    output_config.channels() as i32,
-                                )
-                                .ok();
+                        move |mut data, _info| {
+                            while data.len() > 0 {
+                                if data.len() <= buf.len() {
+                                    let rest = buf.split_off(data.len());
+                                    data.copy_from_slice(&buf);
+                                    buf = rest;
+                                    return;
+                                }
+                                if buf.len() > 0 {
+                                    let (prefix, suffix) = data.split_at_mut(buf.len());
+                                    prefix.copy_from_slice(&buf);
+                                    data = suffix;
+                                }
+
+                                let mut mixer = mixer.lock();
+                                let mixed = mixer.mix(output_config.channels() as usize);
+                                let sampled = resampler.remix_and_resample(
+                                    mixed,
+                                    sample_rate / 100,
+                                    num_channels,
+                                    sample_rate,
+                                    output_config.channels() as u32,
+                                    output_config.sample_rate().0,
+                                );
+                                buf = sampled.to_vec();
+                                apm.lock()
+                                    .process_reverse_stream(
+                                        &mut buf,
+                                        output_config.sample_rate().0 as i32,
+                                        output_config.channels() as i32,
+                                    )
+                                    .ok();
+                            }
                         }
                     },
                     |error| log::error!("error playing audio track: {:?}", error),
-                    Some(Duration::from_millis(10)),
+                    Some(Duration::from_millis(100)),
                 );
 
                 let Some(output_stream) = output_stream.log_err() else {
@@ -292,7 +299,7 @@ impl AudioStack {
                                 }
                             },
                             |err| log::error!("error capturing audio track: {:?}", err),
-                            Some(Duration::from_millis(10)),
+                            Some(Duration::from_millis(100)),
                         )
                         .context("failed to build input stream")?;
 
