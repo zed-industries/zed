@@ -115,6 +115,15 @@
   "confirm_quit": false,
   // Whether to restore last closed project when fresh Zed instance is opened.
   "restore_on_startup": "last_session",
+  // Whether to attempt to restore previous file's state when opening it again.
+  // The state is stored per pane.
+  // When disabled, defaults are applied instead of the state restoration.
+  //
+  // E.g. for editors, selections, folds and scroll positions are restored, if the same file is closed and, later, opened again in the same pane.
+  // When disabled, a single selection in the very beginning of the file, zero scroll position and no folds state is used as a default.
+  //
+  // Default: true
+  "restore_on_file_reopen": true,
   // Size of the drop target in the editor.
   "drop_target_size": 0.2,
   // Whether the window should be closed when using 'close active item' on a window with no tabs.
