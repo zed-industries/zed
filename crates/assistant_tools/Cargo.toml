@@ -36,6 +36,7 @@ ui.workspace = true
 util.workspace = true
 workspace.workspace = true
 worktree.workspace = true
+open = { workspace = true }
 
 [dev-dependencies]
 clock = { workspace = true, features = ["test-support"] }

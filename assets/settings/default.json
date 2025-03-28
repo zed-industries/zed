@@ -643,6 +643,7 @@
         "name": "Code Writer",
         "tools": {
           "bash": true,
+          "batch-tool": true,
           "copy-path": true,
           "create-file": true,
           "delete-path": true,
@@ -660,6 +661,7 @@
         }
       }
     },
+    // Shows a notification when the agent needs confirmation before running an edit tool call or when that's concluded.
     "notify_when_agent_waiting": true
   },
   // The settings for slash commands.

@@ -4,7 +4,7 @@ use crate::thread::{
 };
 use crate::thread_store::ThreadStore;
 use crate::tool_use::{PendingToolUseStatus, ToolUse, ToolUseStatus};
-use crate::ui::{ContextPill, ToolReadyPopUp, ToolReadyPopupEvent};
+use crate::ui::{AgentNotification, AgentNotificationEvent, ContextPill};
 use crate::AssistantPanel;
 use assistant_settings::AssistantSettings;
 use collections::HashMap;
@@ -12,9 +12,9 @@ use editor::{Editor, MultiBuffer};
 use gpui::{
     linear_color_stop, linear_gradient, list, percentage, pulsating_between, AbsoluteLength,
     Animation, AnimationExt, AnyElement, App, ClickEvent, DefiniteLength, EdgesRefinement, Empty,
-    Entity, Focusable, Hsla, Length, ListAlignment, ListOffset, ListState, MouseButton,
-    ScrollHandle, Stateful, StyleRefinement, Subscription, Task, TextStyleRefinement,
-    Transformation, UnderlineStyle, WeakEntity, WindowHandle,
+    Entity, Focusable, Hsla, Length, ListAlignment, ListState, MouseButton, ScrollHandle, Stateful,
+    StyleRefinement, Subscription, Task, TextStyleRefinement, Transformation, UnderlineStyle,
+    WeakEntity, WindowHandle,
 };
 use language::{Buffer, LanguageRegistry};
 use language_model::{LanguageModelRegistry, LanguageModelToolUseId, Role};
@@ -45,8 +45,9 @@ pub struct ActiveThread {
     expanded_tool_uses: HashMap<LanguageModelToolUseId, bool>,
     expanded_thinking_segments: HashMap<(MessageId, usize), bool>,
     last_error: Option<ThreadError>,
-    pop_ups: Vec<WindowHandle<ToolReadyPopUp>>,
+    notifications: Vec<WindowHandle<AgentNotification>>,
     _subscriptions: Vec<Subscription>,
+    notification_subscriptions: HashMap<WindowHandle<AgentNotification>, Vec<Subscription>>,
 }
 
 struct RenderedMessage {
@@ -251,8 +252,9 @@ impl ActiveThread {
             scrollbar_state: ScrollbarState::new(list_state),
             editing_message: None,
             last_error: None,
-            pop_ups: Vec::new(),
+            notifications: Vec::new(),
             _subscriptions: subscriptions,
+            notification_subscriptions: HashMap::default(),
         };
 
         for message in thread.read(cx).messages().cloned().collect::<Vec<_>>() {
@@ -315,10 +317,6 @@ impl ActiveThread {
         let rendered_message =
             RenderedMessage::from_segments(segments, self.language_registry.clone(), window, cx);
         self.rendered_messages_by_id.insert(*id, rendered_message);
-        self.list_state.scroll_to(ListOffset {
-            item_ix: old_len,
-            offset_in_item: Pixels(0.0),
-        });
     }
 
     fn edited_message(
@@ -379,24 +377,23 @@ impl ActiveThread {
                 self.save_thread(cx);
             }
             ThreadEvent::DoneStreaming => {
-                if !self.thread().read(cx).is_generating() {
+                let thread = self.thread.read(cx);
+
+                if !thread.is_generating() {
                     self.show_notification(
-                        "Your changes have been applied.",
-                        IconName::Check,
-                        Color::Success,
+                        if thread.used_tools_since_last_user_message() {
+                            "Finished running tools"
+                        } else {
+                            "New message"
+                        },
+                        IconName::ZedAssistant,
                         window,
                         cx,
                     );
                 }
             }
             ThreadEvent::ToolConfirmationNeeded => {
-                self.show_notification(
-                    "There's a tool confirmation needed.",
-                    IconName::Info,
-                    Color::Muted,
-                    window,
-                    cx,
-                );
+                self.show_notification("Waiting for tool confirmation", IconName::Info, window, cx);
             }
             ThreadEvent::StreamedAssistantText(message_id, text) => {
                 if let Some(rendered_message) = self.rendered_messages_by_id.get_mut(&message_id) {
@@ -528,29 +525,40 @@ impl ActiveThread {
         &mut self,
         caption: impl Into<SharedString>,
         icon: IconName,
-        icon_color: Color,
         window: &mut Window,
         cx: &mut Context<'_, ActiveThread>,
     ) {
-        if !window.is_window_active()
-            && self.pop_ups.is_empty()
-            && AssistantSettings::get_global(cx).notify_when_agent_waiting
+        if window.is_window_active()
+            || !self.notifications.is_empty()
+            || !AssistantSettings::get_global(cx).notify_when_agent_waiting
         {
-            let caption = caption.into();
+            return;
+        }
 
-            for screen in cx.displays() {
-                let options = ToolReadyPopUp::window_options(screen, cx);
+        let caption = caption.into();
 
-                if let Some(screen_window) = cx
-                    .open_window(options, |_, cx| {
-                        cx.new(|_| ToolReadyPopUp::new(caption.clone(), icon, icon_color))
-                    })
-                    .log_err()
-                {
-                    if let Some(pop_up) = screen_window.entity(cx).log_err() {
-                        cx.subscribe_in(&pop_up, window, {
+        let title = self
+            .thread
+            .read(cx)
+            .summary()
+            .unwrap_or("Agent Panel".into());
+
+        for screen in cx.displays() {
+            let options = AgentNotification::window_options(screen, cx);
+
+            if let Some(screen_window) = cx
+                .open_window(options, |_, cx| {
+                    cx.new(|_| AgentNotification::new(title.clone(), caption.clone(), icon))
+                })
+                .log_err()
+            {
+                if let Some(pop_up) = screen_window.entity(cx).log_err() {
+                    self.notification_subscriptions
+                        .entry(screen_window)
+                        .or_insert_with(Vec::new)
+                        .push(cx.subscribe_in(&pop_up, window, {
                             |this, _, event, window, cx| match event {
-                                ToolReadyPopupEvent::Accepted => {
+                                AgentNotificationEvent::Accepted => {
                                     let handle = window.window_handle();
                                     cx.activate(true); // Switch back to the Zed application
 
@@ -576,15 +584,31 @@ impl ActiveThread {
 
                                     this.dismiss_notifications(cx);
                                 }
-                                ToolReadyPopupEvent::Dismissed => {
+                                AgentNotificationEvent::Dismissed => {
                                     this.dismiss_notifications(cx);
                                 }
                             }
-                        })
-                        .detach();
+                        }));
 
-                        self.pop_ups.push(screen_window);
-                    }
+                    self.notifications.push(screen_window);
+
+                    // If the user manually refocuses the original window, dismiss the popup.
+                    self.notification_subscriptions
+                        .entry(screen_window)
+                        .or_insert_with(Vec::new)
+                        .push({
+                            let pop_up_weak = pop_up.downgrade();
+
+                            cx.observe_window_activation(window, move |_, window, cx| {
+                                if window.is_window_active() {
+                                    if let Some(pop_up) = pop_up_weak.upgrade() {
+                                        pop_up.update(cx, |_, cx| {
+                                            cx.emit(AgentNotificationEvent::Dismissed);
+                                        });
+                                    }
+                                }
+                            })
+                        });
                 }
             }
         }
@@ -1744,12 +1768,14 @@ impl ActiveThread {
     }
 
     fn dismiss_notifications(&mut self, cx: &mut Context<'_, ActiveThread>) {
-        for window in self.pop_ups.drain(..) {
+        for window in self.notifications.drain(..) {
             window
                 .update(cx, |_, window, _| {
                     window.remove_window();
                 })
                 .ok();
+
+            self.notification_subscriptions.remove(&window);
         }
     }
 

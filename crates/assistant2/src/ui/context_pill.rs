@@ -190,9 +190,10 @@ impl RenderOnce for ContextPill {
                 .child(
                     Label::new(match kind {
                         ContextKind::File => "Active Tab",
-                        ContextKind::Thread | ContextKind::Directory | ContextKind::FetchedUrl => {
-                            "Active"
-                        }
+                        ContextKind::Thread
+                        | ContextKind::Directory
+                        | ContextKind::FetchedUrl
+                        | ContextKind::Symbol => "Active",
                     })
                     .size(LabelSize::XSmall)
                     .color(Color::Muted),

@@ -17,11 +17,11 @@ use crate::{
 };
 use anyhow::{anyhow, Context as _, Result};
 use collections::{FxHashMap, FxHashSet};
+#[cfg(target_os = "macos")]
+use core_video::pixel_buffer::CVPixelBuffer;
 use derive_more::{Deref, DerefMut};
 use futures::channel::oneshot;
 use futures::FutureExt;
-#[cfg(target_os = "macos")]
-use media::core_video::CVImageBuffer;
 use parking_lot::RwLock;
 use raw_window_handle::{HandleError, HasWindowHandle};
 use refineable::Refineable;
@@ -2658,7 +2658,7 @@ impl Window {
     ///
     /// This method should only be called as part of the paint phase of element drawing.
     #[cfg(target_os = "macos")]
-    pub fn paint_surface(&mut self, bounds: Bounds<Pixels>, image_buffer: CVImageBuffer) {
+    pub fn paint_surface(&mut self, bounds: Bounds<Pixels>, image_buffer: CVPixelBuffer) {
         use crate::PaintSurface;
 
         self.invalidator.debug_assert_paint();
