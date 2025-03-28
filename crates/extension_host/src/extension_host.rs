@@ -846,26 +846,18 @@ impl ExtensionStore {
             )
             .await?;
 
-            // TODO:
+            // todo(windows)
             // Stop the server here.
+            this.update(cx, |this, cx| this.reload(None, cx))?.await;
 
-            this.update(&mut cx, |this, cx| this.reload(None, cx))?
-                .await;
-
-            let ret1 = fs
-                .remove_dir(
-                    &work_dir,
-                    RemoveOptions {
-                        recursive: true,
-                        ignore_if_not_exists: true,
-                    },
-                )
-                .await;
-            println!("=> 1: {:?}", ret1);
-            println!("=> 1: work dir: {:?}", work_dir.display());
-            ret1?;
-            this.update(&mut cx, |this, cx| this.reload(None, cx))?
-                .await;
+            fs.remove_dir(
+                &work_dir,
+                RemoveOptions {
+                    recursive: true,
+                    ignore_if_not_exists: true,
+                },
+            )
+            .await?;
 
             anyhow::Ok(())
         })
