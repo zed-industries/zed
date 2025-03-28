@@ -1,9 +1,10 @@
+use editor::hover_markdown_style;
 use futures::Future;
 use git::blame::BlameEntry;
-use git::PullRequest;
+use git::{blame::ParsedCommitMessage, GitRemote};
 use gpui::{
-    App, Asset, ClipboardItem, Element, Entity, MouseButton, ParentElement, Render, ScrollHandle,
-    StatefulInteractiveElement,
+    prelude::*, App, Asset, ClipboardItem, Element, Entity, MouseButton, ParentElement, Render,
+    ScrollHandle, StatefulInteractiveElement,
 };
 use markdown::Markdown;
 use settings::Settings;
@@ -12,10 +13,6 @@ use theme::ThemeSettings;
 use time::{OffsetDateTime, UtcOffset};
 use time_format::format_local_timestamp;
 use ui::{prelude::*, tooltip_container, Avatar, Divider, IconButtonShape};
-use url::Url;
-
-use crate::git::blame::GitRemote;
-use crate::hover_popover::hover_markdown_style;
 
 #[derive(Clone, Debug)]
 pub struct CommitDetails {
@@ -24,14 +21,6 @@ pub struct CommitDetails {
     pub committer_email: SharedString,
     pub commit_time: OffsetDateTime,
     pub message: Option<ParsedCommitMessage>,
-}
-
-#[derive(Clone, Debug, Default)]
-pub struct ParsedCommitMessage {
-    pub message: SharedString,
-    pub permalink: Option<Url>,
-    pub pull_request: Option<PullRequest>,
-    pub remote: Option<GitRemote>,
 }
 
 struct CommitAvatar<'a> {
@@ -54,10 +43,10 @@ impl<'a> CommitAvatar<'a> {
             .commit
             .message
             .as_ref()
-            .and_then(|details| details.remote.as_ref())
+            .and_then(|details| details.remote.clone())
             .filter(|remote| remote.host_supports_avatars())?;
 
-        let avatar_url = CommitAvatarAsset::new(remote.clone(), self.commit.sha.clone());
+        let avatar_url = CommitAvatarAsset::new(remote, self.commit.sha.clone());
 
         let element = match window.use_asset::<CommitAvatarAsset>(&avatar_url, cx) {
             // Loading or no avatar found

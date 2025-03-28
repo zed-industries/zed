@@ -1,9 +1,10 @@
+use crate::commit_tooltip::CommitTooltip;
 use crate::commit_view::CommitView;
-use editor::{
-    commit_tooltip::{CommitTooltip, ParsedCommitMessage},
-    BlameRenderer, Editor,
+use editor::{BlameRenderer, Editor};
+use git::{
+    blame::{BlameEntry, ParsedCommitMessage},
+    repository::CommitSummary,
 };
-use git::{blame::BlameEntry, repository::CommitSummary};
 use gpui::{
     AnyElement, App, AppContext as _, Div, Entity, Stateful, StatefulInteractiveElement as _,
     Styled as _, WeakEntity,

@@ -1,23 +1,20 @@
+use crate::Editor;
 use anyhow::Result;
 use collections::HashMap;
 use git::{
-    blame::{Blame, BlameEntry},
-    parse_git_remote_url, GitHostingProvider, GitHostingProviderRegistry, Oid,
+    blame::{Blame, BlameEntry, ParsedCommitMessage},
+    parse_git_remote_url, GitHostingProviderRegistry, GitRemote, Oid,
 };
 use gpui::{
-    App, AppContext as _, Context, Div, Entity, IntoElement as _, SharedString, Stateful,
-    Subscription, Task, WeakEntity,
+    App, AppContext as _, Context, Div, Entity, IntoElement as _, Stateful, Subscription, Task,
+    WeakEntity,
 };
-use http_client::HttpClient;
 use language::{Bias, Buffer, BufferSnapshot, Edit};
 use multi_buffer::RowInfo;
 use project::{git_store::Repository, Project, ProjectItem};
 use smallvec::SmallVec;
 use std::{sync::Arc, time::Duration};
 use sum_tree::SumTree;
-use url::Url;
-
-use crate::{commit_tooltip::ParsedCommitMessage, Editor};
 use workspace::Workspace;
 
 #[derive(Clone, Debug, Default)]
@@ -61,40 +58,6 @@ impl<'a> sum_tree::Dimension<'a, GitBlameEntrySummary> for u32 {
     }
 }
 
-#[derive(Clone)]
-pub struct GitRemote {
-    pub host: Arc<dyn GitHostingProvider + Send + Sync + 'static>,
-    pub owner: String,
-    pub repo: String,
-}
-
-impl std::fmt::Debug for GitRemote {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("GitRemote")
-            .field("host", &self.host.name())
-            .field("owner", &self.owner)
-            .field("repo", &self.repo)
-            .finish()
-    }
-}
-
-impl GitRemote {
-    pub fn host_supports_avatars(&self) -> bool {
-        self.host.supports_avatars()
-    }
-
-    pub async fn avatar_url(
-        &self,
-        commit: SharedString,
-        client: Arc<dyn HttpClient>,
-    ) -> Option<Url> {
-        self.host
-            .commit_author_avatar_url(&self.owner, &self.repo, commit, client)
-            .await
-            .ok()
-            .flatten()
-    }
-}
 pub struct GitBlame {
     project: Entity<Project>,
     buffer: Entity<Buffer>,

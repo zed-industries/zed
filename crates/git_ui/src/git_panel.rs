@@ -1,5 +1,6 @@
 use crate::askpass_modal::AskPassModal;
 use crate::commit_modal::CommitModal;
+use crate::commit_tooltip::CommitTooltip;
 use crate::commit_view::CommitView;
 use crate::git_panel_settings::StatusStyle;
 use crate::project_diff::Diff;
@@ -13,13 +14,13 @@ use anyhow::Result;
 use askpass::AskPassDelegate;
 use assistant_settings::AssistantSettings;
 use db::kvp::KEY_VALUE_STORE;
-use editor::commit_tooltip::CommitTooltip;
 
 use editor::{
     scroll::ScrollbarAutoHide, Editor, EditorElement, EditorMode, EditorSettings, MultiBuffer,
     ShowScrollbar,
 };
 use futures::StreamExt as _;
+use git::blame::ParsedCommitMessage;
 use git::repository::{
     Branch, CommitDetails, CommitSummary, DiffType, PushOptions, Remote, RemoteCommandOutput,
     ResetMode, Upstream, UpstreamTracking, UpstreamTrackingStatus,
@@ -3963,12 +3964,12 @@ impl GitPanelMessageTooltip {
                     })?
                     .await?;
 
-                let commit_details = editor::commit_tooltip::CommitDetails {
+                let commit_details = crate::commit_tooltip::CommitDetails {
                     sha: details.sha.clone(),
                     committer_name: details.committer_name.clone(),
                     committer_email: details.committer_email.clone(),
                     commit_time: OffsetDateTime::from_unix_timestamp(details.commit_timestamp)?,
-                    message: Some(editor::commit_tooltip::ParsedCommitMessage {
+                    message: Some(ParsedCommitMessage {
                         message: details.message.clone(),
                         ..Default::default()
                     }),

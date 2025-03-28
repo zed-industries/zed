@@ -18,6 +18,7 @@ use workspace::Workspace;
 mod askpass_modal;
 pub mod branch_picker;
 mod commit_modal;
+pub mod commit_tooltip;
 mod commit_view;
 pub mod git_panel;
 mod git_panel_settings;

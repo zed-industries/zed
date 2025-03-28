@@ -1,6 +1,5 @@
 use crate::{
     code_context_menus::{CodeActionsMenu, MENU_ASIDE_MAX_WIDTH, MENU_ASIDE_MIN_WIDTH, MENU_GAP},
-    commit_tooltip::{blame_entry_relative_timestamp, ParsedCommitMessage},
     display_map::{
         Block, BlockContext, BlockStyle, DisplaySnapshot, HighlightedChunk, ToDisplayPoint,
     },
@@ -32,7 +31,11 @@ use client::ParticipantIndex;
 use collections::{BTreeMap, HashMap, HashSet};
 use feature_flags::{Debugger, FeatureFlagAppExt};
 use file_icons::FileIcons;
-use git::{blame::BlameEntry, status::FileStatus, Oid};
+use git::{
+    blame::{BlameEntry, ParsedCommitMessage},
+    status::FileStatus,
+    Oid,
+};
 use gpui::{
     anchored, deferred, div, fill, linear_color_stop, linear_gradient, outline, point, px, quad,
     relative, size, solid_background, transparent_black, Action, Along, AnyElement, App,
@@ -5794,6 +5797,25 @@ fn render_blame_entry(
         workspace.downgrade(),
         cx,
     )
+}
+
+fn blame_entry_timestamp(blame_entry: &BlameEntry, format: time_format::TimestampFormat) -> String {
+    match blame_entry.author_offset_date_time() {
+        Ok(timestamp) => {
+            let local = chrono::Local::now().offset().local_minus_utc();
+            time_format::format_localized_timestamp(
+                timestamp,
+                time::OffsetDateTime::now_utc(),
+                time::UtcOffset::from_whole_seconds(local).unwrap(),
+                format,
+            )
+        }
+        Err(_) => "Error parsing date".to_string(),
+    }
+}
+
+pub fn blame_entry_relative_timestamp(blame_entry: &BlameEntry) -> String {
+    blame_entry_timestamp(blame_entry, time_format::TimestampFormat::Relative)
 }
 
 fn deploy_blame_entry_context_menu(
