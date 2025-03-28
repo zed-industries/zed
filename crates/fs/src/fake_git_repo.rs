@@ -123,7 +123,7 @@ impl GitRepository for FakeGitRepository {
         &self,
         path: RepoPath,
         content: Option<String>,
-        _env: HashMap<String, String>,
+        _env: Arc<HashMap<String, String>>,
     ) -> BoxFuture<anyhow::Result<()>> {
         self.with_state_async(true, move |state| {
             if let Some(message) = state.simulated_index_write_error_message.clone() {
@@ -157,7 +157,7 @@ impl GitRepository for FakeGitRepository {
         &self,
         _commit: String,
         _mode: ResetMode,
-        _env: HashMap<String, String>,
+        _env: Arc<HashMap<String, String>>,
     ) -> BoxFuture<Result<()>> {
         unimplemented!()
     }
@@ -166,7 +166,7 @@ impl GitRepository for FakeGitRepository {
         &self,
         _commit: String,
         _paths: Vec<RepoPath>,
-        _env: HashMap<String, String>,
+        _env: Arc<HashMap<String, String>>,
     ) -> BoxFuture<Result<()>> {
         unimplemented!()
     }
@@ -364,7 +364,7 @@ impl GitRepository for FakeGitRepository {
     fn stage_paths(
         &self,
         _paths: Vec<RepoPath>,
-        _env: HashMap<String, String>,
+        _env: Arc<HashMap<String, String>>,
     ) -> BoxFuture<Result<()>> {
         unimplemented!()
     }
@@ -372,7 +372,7 @@ impl GitRepository for FakeGitRepository {
     fn unstage_paths(
         &self,
         _paths: Vec<RepoPath>,
-        _env: HashMap<String, String>,
+        _env: Arc<HashMap<String, String>>,
     ) -> BoxFuture<Result<()>> {
         unimplemented!()
     }
@@ -381,7 +381,7 @@ impl GitRepository for FakeGitRepository {
         &self,
         _message: gpui::SharedString,
         _name_and_email: Option<(gpui::SharedString, gpui::SharedString)>,
-        _env: HashMap<String, String>,
+        _env: Arc<HashMap<String, String>>,
     ) -> BoxFuture<Result<()>> {
         unimplemented!()
     }
@@ -392,7 +392,7 @@ impl GitRepository for FakeGitRepository {
         _remote: String,
         _options: Option<PushOptions>,
         _askpass: AskPassSession,
-        _env: HashMap<String, String>,
+        _env: Arc<HashMap<String, String>>,
         _cx: AsyncApp,
     ) -> BoxFuture<Result<git::repository::RemoteCommandOutput>> {
         unimplemented!()
@@ -403,7 +403,7 @@ impl GitRepository for FakeGitRepository {
         _branch: String,
         _remote: String,
         _askpass: AskPassSession,
-        _env: HashMap<String, String>,
+        _env: Arc<HashMap<String, String>>,
         _cx: AsyncApp,
     ) -> BoxFuture<Result<git::repository::RemoteCommandOutput>> {
         unimplemented!()
@@ -412,7 +412,7 @@ impl GitRepository for FakeGitRepository {
     fn fetch(
         &self,
         _askpass: AskPassSession,
-        _env: HashMap<String, String>,
+        _env: Arc<HashMap<String, String>>,
         _cx: AsyncApp,
     ) -> BoxFuture<Result<git::repository::RemoteCommandOutput>> {
         unimplemented!()

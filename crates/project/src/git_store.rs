@@ -66,7 +66,6 @@ pub struct GitStore {
     loading_diffs:
         HashMap<(BufferId, DiffKind), Shared<Task<Result<Entity<BufferDiff>, Arc<anyhow::Error>>>>>,
     diffs: HashMap<BufferId, Entity<BufferDiffState>>,
-    update_sender: mpsc::UnboundedSender<GitJob>,
     shared_diffs: HashMap<proto::PeerId, HashMap<BufferId, SharedDiffs>>,
     _subscriptions: [Subscription; 2],
 }
@@ -200,7 +199,7 @@ impl std::ops::Deref for Repository {
 enum RepositoryState {
     Local {
         backend: Arc<dyn GitRepository>,
-        project_environment: WeakEntity<ProjectEnvironment>,
+        environment: Arc<HashMap<String, String>>,
     },
     Remote {
         project_id: ProjectId,
@@ -217,7 +216,7 @@ pub enum GitEvent {
 }
 
 struct GitJob {
-    job: Box<dyn FnOnce(&mut AsyncApp) -> Task<()>>,
+    job: Box<dyn FnOnce(RepositoryState, &mut AsyncApp) -> Task<()>>,
     key: Option<GitJobKey>,
 }
 
@@ -295,7 +294,6 @@ impl GitStore {
         state: GitStoreState,
         cx: &mut Context<Self>,
     ) -> Self {
-        let update_sender = Self::spawn_git_worker(cx);
         let _subscriptions = [
             cx.subscribe(&worktree_store, Self::on_worktree_store_event),
             cx.subscribe(&buffer_store, Self::on_buffer_store_event),
@@ -307,7 +305,6 @@ impl GitStore {
             worktree_store,
             repositories: HashMap::default(),
             active_repo_id: None,
-            update_sender,
             _subscriptions,
             loading_diffs: HashMap::default(),
             shared_diffs: HashMap::default(),
@@ -1050,7 +1047,7 @@ impl GitStore {
                     project_environment,
                     downstream,
                     next_repository_id,
-                    ..
+                    fs,
                 } = &self.state
                 {
                     self.update_repositories_from_worktrees(
@@ -1060,6 +1057,7 @@ impl GitStore {
                             .as_ref()
                             .map(|downstream| downstream.updates_tx.clone()),
                         changed_repos.clone(),
+                        fs.clone(),
                         cx,
                     );
                     if let Some(worktree) =
@@ -1085,6 +1083,7 @@ impl GitStore {
         next_repository_id: Arc<AtomicU64>,
         updates_tx: Option<mpsc::UnboundedSender<DownstreamUpdate>>,
         updated_git_repositories: UpdatedGitRepositoriesSet,
+        fs: Arc<dyn Fs>,
         cx: &mut Context<'_, GitStore>,
     ) {
         let mut removed_ids = Vec::new();
@@ -1117,6 +1116,7 @@ impl GitStore {
                         dot_git_abs_path,
                         updates_tx.clone(),
                         project_environment.downgrade(),
+                        fs.clone(),
                         git_store,
                         cx,
                     )
@@ -1645,37 +1645,6 @@ impl GitStore {
                 Some((repo.clone(), repo_path))
             })
             .max_by_key(|(repo, _)| repo.read(cx).work_directory_abs_path.clone())
-    }
-
-    fn spawn_git_worker(cx: &mut Context<GitStore>) -> mpsc::UnboundedSender<GitJob> {
-        let (job_tx, mut job_rx) = mpsc::unbounded::<GitJob>();
-
-        cx.spawn(async move |_, cx| {
-            let mut jobs = VecDeque::new();
-            loop {
-                while let Ok(Some(next_job)) = job_rx.try_next() {
-                    jobs.push_back(next_job);
-                }
-
-                if let Some(job) = jobs.pop_front() {
-                    if let Some(current_key) = &job.key {
-                        if jobs
-                            .iter()
-                            .any(|other_job| other_job.key.as_ref() == Some(current_key))
-                        {
-                            continue;
-                        }
-                    }
-                    (job.job)(cx).await;
-                } else if let Some(job) = job_rx.next().await {
-                    jobs.push_back(job);
-                } else {
-                    break;
-                }
-            }
-        })
-        .detach();
-        job_tx
     }
 
     pub fn git_init(
@@ -2916,10 +2885,11 @@ impl Repository {
         dot_git_abs_path: Arc<Path>,
         updates_tx: Option<mpsc::UnboundedSender<DownstreamUpdate>>,
         project_environment: WeakEntity<ProjectEnvironment>,
+        fs: Arc<dyn Fs>,
         git_store: WeakEntity<GitStore>,
         cx: &mut Context<Self>,
     ) -> Self {
-        let snapshot = RepositorySnapshot::empty(id, work_directory_abs_path);
+        let snapshot = RepositorySnapshot::empty(id, work_directory_abs_path.clone());
         let this = Repository {
             git_store,
             snapshot,
@@ -2927,8 +2897,10 @@ impl Repository {
             askpass_delegates: Default::default(),
             latest_askpass_id: 0,
             job_sender: Repository::spawn_local_git_worker(
+                work_directory_abs_path,
                 dot_git_abs_path,
                 project_environment,
+                fs,
                 cx,
             ),
         };
@@ -2975,12 +2947,11 @@ impl Repository {
         R: Send + 'static,
     {
         let (result_tx, result_rx) = futures::channel::oneshot::channel();
-        let git_repo = self.state.clone();
         self.job_sender
             .unbounded_send(GitJob {
                 key,
-                job: Box::new(|cx: &mut AsyncApp| {
-                    let job = job(git_repo, cx.clone());
+                job: Box::new(|state, cx: &mut AsyncApp| {
+                    let job = job(state, cx.clone());
                     cx.spawn(async move |_| {
                         let result = job.await;
                         result_tx.send(result).ok();
@@ -3061,13 +3032,6 @@ impl Repository {
             .snapshot
             .work_directory_abs_path
             .starts_with(&self.snapshot.work_directory_abs_path)
-    }
-
-    pub fn backend(&self) -> Option<Arc<dyn GitRepository>> {
-        match &self.state {
-            RepositoryState::Local { backend, .. } => Some(backend.clone()),
-            RepositoryState::Remote { .. } => None,
-        }
     }
 
     pub fn open_commit_buffer(
@@ -3310,7 +3274,6 @@ impl Repository {
         if entries.is_empty() {
             return Task::ready(Ok(()));
         }
-        let env = self.environment(cx);
         let id = self.id;
 
         let mut save_futures = Vec::new();
@@ -3342,9 +3305,11 @@ impl Repository {
             this.update(cx, |this, _| {
                 this.send_job(move |git_repo, _cx| async move {
                     match git_repo {
-                        RepositoryState::Local { backend, .. } => {
-                            backend.unstage_paths(entries, env).await
-                        }
+                        RepositoryState::Local {
+                            backend,
+                            environment,
+                            ..
+                        } => backend.unstage_paths(entries, env).await,
                         RepositoryState::Remote { project_id, client } => {
                             client
                                 .request(proto::Unstage {
@@ -3385,25 +3350,6 @@ impl Repository {
             .map(|entry| entry.repo_path.clone())
             .collect();
         self.unstage_entries(to_unstage, cx)
-    }
-
-    fn environment(&self, cx: &mut App) -> impl Future<Output = HashMap<String, String>> + 'static {
-        let environment = match &self.state {
-            RepositoryState::Local {
-                project_environment,
-                ..
-            } => project_environment.upgrade(),
-            _ => None,
-        };
-        let task = environment.map_or_else(
-            || Task::ready(None).shared(),
-            |environment| {
-                environment.update(cx, |env, cx| {
-                    env.get_environment(self.work_directory_abs_path.clone().into(), cx)
-                })
-            },
-        );
-        async move { task.await.unwrap_or_default() }
     }
 
     pub fn commit(
@@ -3919,21 +3865,35 @@ impl Repository {
     }
 
     fn spawn_local_git_worker(
+        work_directory_abs_path: Arc<Path>,
         dot_git_abs_path: Arc<Path>,
         project_environment: WeakEntity<ProjectEnvironment>,
+        fs: Arc<dyn Fs>,
         cx: &mut Context<Self>,
     ) -> mpsc::UnboundedSender<GitJob> {
-        todo!()
-    }
-
-    fn spawn_remote_git_worker() -> mpsc::UnboundedSender<GitJob> {
-        todo!()
-    }
-
-    fn spawn_git_worker(cx: &mut Context<Self>) -> mpsc::UnboundedSender<GitJob> {
         let (job_tx, mut job_rx) = mpsc::unbounded::<GitJob>();
 
         cx.spawn(async move |_, cx| {
+            let environment = project_environment
+                .upgrade()
+                .ok_or_else(|| anyhow!("missing project environment"))?
+                .update(cx, |project_environment, cx| {
+                    project_environment.get_environment(Some(work_directory_abs_path), cx)
+                })?
+                .await
+                .ok_or_else(|| {
+                    anyhow!("failed to get environment for repository working directory")
+                })?;
+            let backend = cx
+                .background_spawn(async move {
+                    fs.open_repo(&dot_git_abs_path)
+                        .ok_or_else(|| anyhow!("failed to build repository"))
+                })
+                .await?;
+            let state = RepositoryState::Local {
+                backend,
+                environment: Arc::new(environment),
+            };
             let mut jobs = VecDeque::new();
             loop {
                 while let Ok(Some(next_job)) = job_rx.try_next() {
@@ -3949,16 +3909,28 @@ impl Repository {
                             continue;
                         }
                     }
-                    (job.job)(cx).await;
+                    (job.job)(state.clone(), cx).await;
                 } else if let Some(job) = job_rx.next().await {
                     jobs.push_back(job);
                 } else {
                     break;
                 }
             }
+            anyhow::Ok(())
         })
-        .detach();
+        .detach_and_log_err(cx);
+
+        //cx.spawn(async move |_, cx| {
+        //    loop {
+        //    }
+        //})
+        //.detach();
+
         job_tx
+    }
+
+    fn spawn_remote_git_worker() -> mpsc::UnboundedSender<GitJob> {
+        todo!()
     }
 }
 
