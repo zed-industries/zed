@@ -1252,7 +1252,8 @@ impl Terminal {
             return;
         }
 
-        let mut key = keystroke.key.clone();
+        // todo(zjk)
+        let mut key = keystroke.face.clone();
         if keystroke.modifiers.shift {
             key = key.to_uppercase();
         }

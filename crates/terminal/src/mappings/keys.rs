@@ -45,7 +45,8 @@ pub fn to_esc_str(keystroke: &Keystroke, mode: &TermMode, alt_is_meta: bool) -> 
     let modifiers = AlacModifiers::new(keystroke);
 
     // Manual Bindings including modifiers
-    let manual_esc_str = match (keystroke.key.as_ref(), &modifiers) {
+    // todo(zjk)
+    let manual_esc_str = match (keystroke.face.as_ref(), &modifiers) {
         //Basic special keys
         ("tab", AlacModifiers::None) => Some("\x09".to_string()),
         ("escape", AlacModifiers::None) => Some("\x1b".to_string()),
@@ -202,7 +203,8 @@ pub fn to_esc_str(keystroke: &Keystroke, mode: &TermMode, alt_is_meta: bool) -> 
     // Automated bindings applying modifiers
     if modifiers.any() {
         let modifier_code = modifier_code(keystroke);
-        let modified_esc_str = match keystroke.key.as_ref() {
+        // todo(zjk)
+        let modified_esc_str = match keystroke.face.as_ref() {
             "up" => Some(format!("\x1b[1;{}A", modifier_code)),
             "down" => Some(format!("\x1b[1;{}B", modifier_code)),
             "right" => Some(format!("\x1b[1;{}C", modifier_code)),
