@@ -57,7 +57,7 @@ use notifications::{
 pub use pane::*;
 pub use pane_group::*;
 pub use persistence::{
-    model::{ItemId, LocalPaths, PaneId, SerializedWorkspaceLocation},
+    model::{ItemId, LocalPaths, SerializedWorkspaceLocation},
     WorkspaceDb, DB as WORKSPACE_DB,
 };
 use persistence::{
@@ -4613,7 +4613,7 @@ impl Workspace {
                 )
             };
 
-            SerializedPane::new(None, items, active, pinned_count)
+            SerializedPane::new(items, active, pinned_count)
         }
 
         fn build_serialized_pane_group(
@@ -4727,19 +4727,8 @@ impl Workspace {
                 breakpoints,
                 window_id: Some(window.window_handle().window_id().as_u64()),
             };
-            let panes = self.panes.clone();
-            return window.spawn(cx, async move |cx| {
-                for (pane, pane_id) in persistence::DB
-                    .save_workspace(serialized_workspace)
-                    .await
-                    .into_iter()
-                    .map(|(index, pane_id)| (&panes[index], pane_id))
-                {
-                    pane.update(cx, |pane, _| {
-                        pane.set_db_id(pane_id);
-                    })
-                    .ok();
-                }
+            return window.spawn(cx, async move |_| {
+                persistence::DB.save_workspace(serialized_workspace).await
             });
         }
         Task::ready(())

@@ -17448,24 +17448,13 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Editor>,
     ) -> Option<()> {
-        let pane_id = pane.db_id()?;
-        let workspace_id = pane
-            .workspace
-            .update(cx, |workspace, _| workspace.database_id())
-            .ok()
-            .flatten()?;
-        let file = project::File::from_dyn(self.buffer().read(cx).as_singleton()?.read(cx).file())?;
+        let buffer = self.buffer().read(cx).as_singleton()?;
+        let file = project::File::from_dyn(buffer.read(cx).file())?;
         let buffer_path = file.worktree.read(cx).absolutize(&file.path).ok()?;
+        let buffer_id = buffer.read(cx).remote_id();
 
-        dbg!(("4", &buffer_path, workspace_id, pane_id));
         // TODO kb config option to disable this behavior
-        let item_id = dbg!(DB.most_relevant_editor_item(&buffer_path, workspace_id, pane_id))
-            // TODO kb something very broken is happening with the persisted IDs
-            .log_err()?? as u64;
-        dbg!("5");
-
-        // TODO kb do not overwrite non-default values
-        self.read_metadata_from_db(item_id, workspace_id, window, cx);
+        dbg!(("4", &buffer_path));
 
         Some(())
     }

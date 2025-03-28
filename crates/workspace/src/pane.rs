@@ -8,7 +8,7 @@ use crate::{
     toolbar::Toolbar,
     workspace_settings::{AutosaveSetting, TabBarSettings, WorkspaceSettings},
     CloseWindow, NewFile, NewTerminal, OpenInTerminal, OpenOptions, OpenTerminal, OpenVisible,
-    PaneId, SplitDirection, ToggleFileFinder, ToggleProjectSymbols, ToggleZoom, Workspace,
+    SplitDirection, ToggleFileFinder, ToggleProjectSymbols, ToggleZoom, Workspace,
     WorkspaceItemBuilder,
 };
 use anyhow::Result;
@@ -291,7 +291,7 @@ pub struct Pane {
     last_focus_handle_by_item: HashMap<EntityId, WeakFocusHandle>,
     nav_history: NavHistory,
     toolbar: Entity<Toolbar>,
-    pub workspace: WeakEntity<Workspace>,
+    pub(crate) workspace: WeakEntity<Workspace>,
     project: WeakEntity<Project>,
     drag_split_direction: Option<SplitDirection>,
     can_drop_predicate: Option<Arc<dyn Fn(&dyn Any, &mut Window, &mut App) -> bool>>,
@@ -322,7 +322,6 @@ pub struct Pane {
     pinned_tab_count: usize,
     diagnostics: HashMap<ProjectPath, DiagnosticSeverity>,
     zoom_out_on_close: bool,
-    db_id: Option<PaneId>,
 }
 
 pub struct ActivationHistoryEntry {
@@ -528,7 +527,6 @@ impl Pane {
             pinned_tab_count: 0,
             diagnostics: Default::default(),
             zoom_out_on_close: true,
-            db_id: None,
         }
     }
 
@@ -3134,14 +3132,6 @@ impl Pane {
 
     pub fn set_zoom_out_on_close(&mut self, zoom_out_on_close: bool) {
         self.zoom_out_on_close = zoom_out_on_close;
-    }
-
-    pub(crate) fn set_db_id(&mut self, pane_id: PaneId) {
-        self.db_id = Some(pane_id);
-    }
-
-    pub fn db_id(&self) -> Option<i64> {
-        self.db_id
     }
 }
 

@@ -3,12 +3,12 @@ use db::sqlez::bindable::{Bind, Column, StaticColumnCount};
 use db::sqlez::statement::Statement;
 use fs::MTime;
 use itertools::Itertools as _;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use db::sqlez_macros::sql;
 use db::{define_connection, query};
 
-use workspace::{ItemId, PaneId, WorkspaceDb, WorkspaceId};
+use workspace::{ItemId, WorkspaceDb, WorkspaceId};
 
 #[derive(Clone, Debug, PartialEq, Default)]
 pub(crate) struct SerializedEditor {
@@ -397,23 +397,6 @@ VALUES {placeholders};
             statement.exec()
         })
         .await
-    }
-
-    query! {
-        pub fn most_relevant_editor_item(
-            buffer_path: &Path,
-            workspace_id: WorkspaceId,
-            pane_id: PaneId
-        ) -> Result<Option<usize>> {
-            SELECT e.item_id
-            FROM editors e
-                     JOIN items i
-                          ON e.item_id = i.item_id
-            WHERE e.buffer_path = ?1
-            AND e.workspace_id = ?2
-            ORDER BY i.pane_id = ?3 DESC, i.item_id DESC
-            LIMIT 1
-        }
     }
 }
 
