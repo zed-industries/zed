@@ -1,7 +1,8 @@
 use crate::{
-    KeyCode, KeyDownEvent, KeyUpEvent, Keystroke, Modifiers, ModifiersChangedEvent,
-    MouseButton, MouseDownEvent, MouseExitEvent, MouseMoveEvent, MouseUpEvent, NavigationDirection,
-    Pixels, PlatformInput, ScrollDelta, ScrollWheelEvent, TouchPhase,
+    KeyCode, KeyDownEvent, KeyPosition, KeyUpEvent, Keystroke, Modifiers,
+    ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseExitEvent, MouseMoveEvent,
+    MouseUpEvent, NavigationDirection, Pixels, PlatformInput, ScrollDelta, ScrollWheelEvent,
+    TouchPhase,
     platform::mac::{
         LMGetKbdType, NSStringExt, TISCopyCurrentKeyboardLayoutInputSource,
         TISGetInputSourceProperty, UCKeyTranslate, kTISPropertyUnicodeKeyLayoutData,
@@ -292,7 +293,7 @@ unsafe fn parse_keystroke(native_event: id) -> Keystroke {
     unsafe {
         use cocoa::appkit::*;
 
-    let code = native_event.keyCode();
+    let scan_code = native_event.keyCode();
         let mut characters = native_event
             .charactersIgnoringModifiers()
             .to_str()
@@ -311,8 +312,135 @@ unsafe fn parse_keystroke(native_event: id) -> Keystroke {
             });
     println!(
         "characters: {}, code {}, {:?}",
-        characters, code, first_char
+        characters, scan_code, first_char
     );
+
+    let code = match scan_code {
+        0x033 => KeyCode::Backspace,
+        0x030 => KeyCode::Tab,
+        // Enter key and numpad enter key
+        0x0024 | 0x004c => KeyCode::Enter,
+        0x0038 => KeyCode::Shift(KeyPosition::Left),
+        0x003c => KeyCode::Shift(KeyPosition::Right),
+        0x003b => KeyCode::Control(KeyPosition::Left),
+        0x003e => KeyCode::Control(KeyPosition::Right),
+        0x003a => KeyCode::Alt(KeyPosition::Left),
+        0x003d => KeyCode::Alt(KeyPosition::Right),
+        0x0039 => KeyCode::Capital,
+        0x0035 => KeyCode::Escape,
+        0x0031 => KeyCode::Space,
+        0x0074 => KeyCode::PageUp,
+        0x0079 => KeyCode::PageDown,
+        0x0077 => KeyCode::End,
+        0x0073 => KeyCode::Home,
+        0x007b => KeyCode::Left,
+        0x007e => KeyCode::Up,
+        0x007c => KeyCode::Right,
+        0x007d => KeyCode::Down,
+        // PrintScreen is effectively F13 on Mac OS X.
+        // 0xffff => KeyCode::PrintScreen,
+        0x0072 => KeyCode::Insert,
+        0x0075 => KeyCode::Delete,
+        0x0037 => KeyCode::Platform(KeyPosition::Left),
+        0x0036 => KeyCode::Platform(KeyPosition::Right),
+
+        0x001d => KeyCode::Digital0,
+        0x0012 => KeyCode::Digital1,
+        0x0013 => KeyCode::Digital2,
+        0x0014 => KeyCode::Digital3,
+        0x0015 => KeyCode::Digital4,
+        0x0017 => KeyCode::Digital5,
+        0x0016 => KeyCode::Digital6,
+        0x001a => KeyCode::Digital7,
+        0x001c => KeyCode::Digital8,
+        0x0019 => KeyCode::Digital9,
+
+        0x006e => KeyCode::ContextMenu,
+        // /// Numeric keypad 0 key, `VK_NUMPAD0` on Windows.
+        // Numpad0,
+        // /// Numeric keypad 0 key, `VK_NUMPAD0` on Windows.
+        // Numpad1,
+        // /// Numeric keypad 0 key, `VK_NUMPAD0` on Windows.
+        // Numpad2,
+        // /// Numeric keypad 0 key, `VK_NUMPAD0` on Windows.
+        // Numpad3,
+        // /// Numeric keypad 0 key, `VK_NUMPAD0` on Windows.
+        // Numpad4,
+        // /// Numeric keypad 0 key, `VK_NUMPAD0` on Windows.
+        // Numpad5,
+        // /// Numeric keypad 0 key, `VK_NUMPAD0` on Windows.
+        // Numpad6,
+        // /// Numeric keypad 0 key, `VK_NUMPAD0` on Windows.
+        // Numpad7,
+        // /// Numeric keypad 0 key, `VK_NUMPAD0` on Windows.
+        // Numpad8,
+        // /// Numeric keypad 0 key, `VK_NUMPAD0` on Windows.
+        // Numpad9,
+        // /// Multiply key, `VK_MULTIPLY` on Windows.
+        // Multiply,
+        // /// Add key, `VK_ADD` on Windows.
+        // Add,
+        // /// Separator key, `VK_SEPARATOR` on Windows.
+        // Separator,
+        // /// Subtract key, `VK_SUBTRACT` on Windows.
+        // Subtract,
+        // /// Decimal key, `VK_DECIMAL` on Windows.
+        // Decimal,
+        // /// Divide key, `VK_DIVIDE` on Windows.
+        // Divide,
+        0x007a => KeyCode::F1,
+        0x0078 => KeyCode::F2,
+        0x0063 => KeyCode::F3,
+        0x0076 => KeyCode::F4,
+        0x0060 => KeyCode::F5,
+        0x0061 => KeyCode::F6,
+        0x0062 => KeyCode::F7,
+        0x0064 => KeyCode::F8,
+        0x0065 => KeyCode::F9,
+        0x006d => KeyCode::F10,
+        0x0067 => KeyCode::F11,
+        0x006f => KeyCode::F12,
+        0x0069 => KeyCode::F13,
+        0x006b => KeyCode::F14,
+        0x0071 => KeyCode::F15,
+        0x006a => KeyCode::F16,
+        0x0040 => KeyCode::F17,
+        0x004f => KeyCode::F18,
+        0x0050 => KeyCode::F19,
+        0x005a => KeyCode::F20,
+        // F21,
+        // F22,
+        // F23,
+        // F24,
+        // /// NUM LOCK key
+        // NumLock,
+        // /// SCROLL LOCK key
+        // ScrollLock,
+        // Browser Back key, `VK_BROWSER_BACK` on Windows.
+        // BrowserBack,
+        // /// Browser Forward key
+        // BrowserForward,
+        0x0029 => KeyCode::Semicolon,
+        0x0018 => KeyCode::Plus,
+        0x002b => KeyCode::Comma,
+        0x001b => KeyCode::Minus,
+        0x002f => KeyCode::Period,
+        0x002c => KeyCode::Slash,
+        0x0032 => KeyCode::Tilde,
+        0x0021 => KeyCode::LeftBracket,
+        0x002a => KeyCode::Backslash,
+        0x001e => KeyCode::RightBracket,
+        0x0027 => KeyCode::Quote,
+        // /// Used for miscellaneous characters; it can vary by keyboard.
+        // OEM8,
+        // /// The `<>` keys on the US standard keyboard, or the `\|` key on the
+        // /// non-US 102-key keyboard
+        // OEM102,
+        _ => KeyCode::Unknown,
+    };
+    if code == KeyCode::Unknown {
+        println!("!!!Unknown code: {}", scan_code);
+    }
 
         #[allow(non_upper_case_globals)]
         let key = match first_char {
@@ -445,7 +573,7 @@ unsafe fn parse_keystroke(native_event: id) -> Keystroke {
             }
         };
 
-        Keystroke {
+        let ret = Keystroke {
             modifiers: Modifiers {
                 control,
                 alt,
@@ -453,11 +581,13 @@ unsafe fn parse_keystroke(native_event: id) -> Keystroke {
                 platform: command,
                 function,
             },
-            code: KeyCode::Unknown,
+            code,
         face: key,
             key_char,
         }
-    }
+    };
+    println!("=> Keystroke: {:#?}", ret);
+    ret
 }
 
 fn always_use_command_layout() -> bool {
