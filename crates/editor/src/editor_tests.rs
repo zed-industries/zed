@@ -32,7 +32,7 @@ use multi_buffer::{IndentGuide, PathKey};
 use parking_lot::Mutex;
 use pretty_assertions::{assert_eq, assert_ne};
 use project::{
-    debugger::breakpoint_store::{BreakpointKind, BreakpointState, SourceBreakpoint},
+    debugger::breakpoint_store::{BreakpointState, SourceBreakpoint},
     project_settings::{LspSettings, ProjectSettings},
     FakeFs,
 };
