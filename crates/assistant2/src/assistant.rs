@@ -28,8 +28,10 @@ use client::Client;
 use command_palette_hooks::CommandPaletteFilter;
 use feature_flags::{Assistant2FeatureFlag, FeatureFlagAppExt};
 use fs::Fs;
-use gpui::{actions, App};
+use gpui::{actions, impl_actions, App};
 use prompt_store::PromptBuilder;
+use schemars::JsonSchema;
+use serde::Deserialize;
 use settings::Settings as _;
 
 pub use crate::active_thread::ActiveThread;
@@ -50,7 +52,6 @@ actions!(
         RemoveAllContext,
         OpenHistory,
         OpenConfiguration,
-        ManageProfiles,
         AddContextServer,
         RemoveSelectedThread,
         Chat,
@@ -68,6 +69,22 @@ actions!(
         Reject
     ]
 );
+
+#[derive(PartialEq, Clone, Default, Debug, Deserialize, JsonSchema)]
+pub struct ManageProfiles {
+    #[serde(default)]
+    pub customize_tools: Option<Arc<str>>,
+}
+
+impl ManageProfiles {
+    pub fn customize_tools(profile_id: Arc<str>) -> Self {
+        Self {
+            customize_tools: Some(profile_id),
+        }
+    }
+}
+
+impl_actions!(assistant, [ManageProfiles]);
 
 const NAMESPACE: &str = "assistant2";
 

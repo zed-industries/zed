@@ -65,6 +65,7 @@ prompt_store.workspace = true
 proto.workspace = true
 release_channel.workspace = true
 rope.workspace = true
+schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 settings.workspace = true
