@@ -252,7 +252,7 @@ pub trait ScreenCaptureSource {
     /// with each frame.
     fn stream(
         &self,
-        frame_callback: Box<dyn Fn(ScreenCaptureFrame)>,
+        frame_callback: Box<dyn Fn(ScreenCaptureFrame) + Send>,
     ) -> oneshot::Receiver<Result<Box<dyn ScreenCaptureStream>>>;
 }
 

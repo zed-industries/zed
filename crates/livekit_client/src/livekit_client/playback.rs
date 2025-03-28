@@ -2,9 +2,10 @@ use anyhow::{anyhow, Context as _, Result};
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait as _};
 use futures::channel::mpsc::UnboundedSender;
-use futures::{Stream, StreamExt as _};
+use futures::{SinkExt, Stream, StreamExt as _};
 use gpui::{
-    BackgroundExecutor, ScreenCaptureFrame, ScreenCaptureSource, ScreenCaptureStream, Task,
+    AppContext, BackgroundExecutor, ScreenCaptureFrame, ScreenCaptureSource, ScreenCaptureStream,
+    Task,
 };
 use libwebrtc::native::{apm, audio_mixer, audio_resampler};
 use livekit::track;
@@ -323,40 +324,83 @@ pub enum AudioStream {
     Output { _drop: Box<dyn std::any::Any> },
 }
 
+struct Wrapper(Task<()>);
+impl ScreenCaptureStream for Wrapper {}
+
 pub(crate) async fn capture_local_video_track(
-    capture_source: &dyn ScreenCaptureSource,
     cx: &mut gpui::AsyncApp,
 ) -> Result<(crate::LocalVideoTrack, Box<dyn ScreenCaptureStream>)> {
-    let resolution = capture_source.resolution()?;
+    let running = Arc::new(atomic::AtomicBool::new(true));
+    // todo! bound
+    let (mut frame_tx, mut frame_rx) = futures::channel::mpsc::channel(1);
+    std::thread::spawn(move || {
+        // TODO: needed?
+        if !scap::has_permission() {
+            if !scap::request_permission() {
+                // todo! no panic
+                panic!("no permission");
+            }
+        }
+
+        let mut capturer = scap::capturer::Capturer::build(scap::capturer::Options {
+            fps: 60,
+            show_cursor: true,
+            show_highlight: true,
+            output_type: scap::frame::FrameType::YUVFrame,
+            output_resolution: scap::capturer::Resolution::Captured,
+            crop_area: None,
+            target: None,
+            excluded_targets: None,
+        })
+        .unwrap();
+
+        capturer.start_capture();
+        while running.load(atomic::Ordering::Relaxed) {
+            // todo! how to handle errors?
+            if let Ok(frame) = capturer.get_next_frame() {
+                // todo! remove log_err
+                frame_tx.try_send(frame).log_err();
+            }
+        }
+    });
+
+    let first_frame = frame_rx.next().await.unwrap();
+
+    let (width, height) = match first_frame {
+        scap::frame::Frame::YUVFrame(frame) => (frame.width, frame.height),
+        scap::frame::Frame::RGB(frame) => (frame.width, frame.height),
+        scap::frame::Frame::RGBx(frame) => (frame.width, frame.height),
+        scap::frame::Frame::XBGR(frame) => (frame.width, frame.height),
+        scap::frame::Frame::BGRx(frame) => (frame.width, frame.height),
+        scap::frame::Frame::BGR0(frame) => (frame.width, frame.height),
+        scap::frame::Frame::BGRA(frame) => (frame.width, frame.height),
+    };
+
     let track_source = gpui_tokio::Tokio::spawn(cx, async move {
         NativeVideoSource::new(VideoResolution {
-            width: resolution.width.0 as u32,
-            height: resolution.height.0 as u32,
+            width: width as u32,
+            height: height as u32,
         })
     })?
     .await?;
+    let track_source_2 = track_source.clone();
 
-    let capture_stream = capture_source
-        .stream({
-            let track_source = track_source.clone();
-            Box::new(move |frame| {
-                if let Some(buffer) = video_frame_buffer_to_webrtc(frame) {
-                    track_source.capture_frame(&VideoFrame {
-                        rotation: VideoRotation::VideoRotation0,
-                        timestamp_us: 0,
-                        buffer,
-                    });
-                }
-            })
-        })
-        .await??;
+    let task = cx.background_spawn(async move {
+        while let Some(frame) = frame_rx.next().await {
+            track_source_2.capture_frame(&VideoFrame {
+                rotation: VideoRotation::VideoRotation0,
+                timestamp_us: 0,
+                buffer: video_frame_buffer_to_webrtc(frame).unwrap(),
+            });
+        }
+    });
 
     Ok((
         LocalVideoTrack(track::LocalVideoTrack::create_video_track(
             "screen share",
             RtcVideoSource::Native(track_source),
         )),
-        capture_stream,
+        Box::new(Wrapper(task)),
     ))
 }
 
@@ -622,8 +666,50 @@ fn video_frame_buffer_to_webrtc(frame: ScreenCaptureFrame) -> Option<impl AsRef<
 }
 
 #[cfg(not(target_os = "macos"))]
-fn video_frame_buffer_to_webrtc(_frame: ScreenCaptureFrame) -> Option<impl AsRef<dyn VideoBuffer>> {
-    None as Option<Box<dyn VideoBuffer>>
+fn video_frame_buffer_to_webrtc(frame: scap::frame::Frame) -> Option<impl AsRef<dyn VideoBuffer>> {
+    use libwebrtc::native::yuv_helper::argb_to_nv12;
+    use livekit::webrtc::prelude::NV12Buffer;
+    match frame {
+        scap::frame::Frame::BGRx(frame) => {
+            let mut buffer = NV12Buffer::new(frame.width as u32, frame.height as u32);
+            let (stride_y, stride_uv) = buffer.strides();
+            let (data_y, data_uv) = buffer.data_mut();
+            argb_to_nv12(
+                &frame.data,
+                frame.width as u32 * 4,
+                data_y,
+                stride_y,
+                data_uv,
+                stride_uv,
+                frame.width,
+                frame.height,
+            );
+            Some(buffer)
+        }
+        _ => {
+            log::error!("Expected BGRx frame from scap but got some other format.");
+            None
+        }
+    }
+
+    // match frame {
+    //     scap::frame::Frame::YUVFrame(yuvframe) => {
+    //         let mut buffer = NV12Buffer::with_strides(
+    //             yuvframe.width as u32,
+    //             yuvframe.height as u32,
+    //             yuvframe.luminance_stride as u32,
+    //             yuvframe.chrominance_stride as u32,
+    //         );
+    //         let (luminance, chrominance) = buffer.data_mut();
+    //         luminance.copy_from_slice(yuvframe.luminance_bytes.as_slice());
+    //         chrominance.copy_from_slice(yuvframe.chrominance_bytes.as_slice());
+    //         Some(buffer)
+    //     }
+    //     _ => {
+    //         log::error!("Expected YUV frame from scap but got some other format.");
+    //         None
+    //     }
+    // }
 }
 
 trait DeviceChangeListenerApi: Stream<Item = ()> + Sized {

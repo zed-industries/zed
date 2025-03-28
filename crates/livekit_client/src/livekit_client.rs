@@ -159,10 +159,9 @@ impl Room {
 impl LocalParticipant {
     pub async fn publish_screenshare_track(
         &self,
-        source: &dyn ScreenCaptureSource,
         cx: &mut AsyncApp,
     ) -> Result<(LocalTrackPublication, Box<dyn ScreenCaptureStream>)> {
-        let (track, stream) = capture_local_video_track(&*source, cx).await?;
+        let (track, stream) = capture_local_video_track(cx).await?;
         let options = livekit::options::TrackPublishOptions {
             source: livekit::track::TrackSource::Screenshare,
             video_codec: livekit::options::VideoCodec::VP8,

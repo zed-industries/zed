@@ -57,7 +57,6 @@ impl LocalParticipant {
 
     pub async fn publish_screenshare_track(
         &self,
-        _source: &dyn ScreenCaptureSource,
         _cx: &mut AsyncApp,
     ) -> Result<(LocalTrackPublication, Box<dyn ScreenCaptureStream>)> {
         let this = self.clone();

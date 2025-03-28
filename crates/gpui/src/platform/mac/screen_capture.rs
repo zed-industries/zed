@@ -61,7 +61,7 @@ impl ScreenCaptureSource for MacScreenCaptureSource {
 
     fn stream(
         &self,
-        frame_callback: Box<dyn Fn(ScreenCaptureFrame)>,
+        frame_callback: Box<dyn Fn(ScreenCaptureFrame) + Send>,
     ) -> oneshot::Receiver<Result<Box<dyn ScreenCaptureStream>>> {
         unsafe {
             let stream: id = msg_send![class!(SCStream), alloc];

@@ -1385,13 +1385,13 @@ impl Room {
             return Task::ready(Err(anyhow!("live-kit was not initialized")));
         };
 
-        let sources = cx.screen_capture_sources();
+        // let sources = cx.screen_capture_sources();
 
         cx.spawn(async move |this, cx| {
-            let sources = sources.await??;
-            let source = sources.first().ok_or_else(|| anyhow!("no display found"))?;
+            // let sources = sources.await??;
+            // let source = sources.first().ok_or_else(|| anyhow!("no display found"))?;
 
-            let publication = participant.publish_screenshare_track(&**source, cx).await;
+            let publication = participant.publish_screenshare_track(cx).await;
 
             this.update(cx, |this, cx| {
                 let live_kit = this

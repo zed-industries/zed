@@ -52,7 +52,7 @@ impl ScreenCaptureSource for TestScreenCaptureSource {
 
     fn stream(
         &self,
-        _frame_callback: Box<dyn Fn(ScreenCaptureFrame)>,
+        _frame_callback: Box<dyn Fn(ScreenCaptureFrame) + Send>,
     ) -> oneshot::Receiver<Result<Box<dyn ScreenCaptureStream>>> {
         let (mut tx, rx) = oneshot::channel();
         let stream = TestScreenCaptureStream {};
