@@ -137,7 +137,8 @@ impl MessageEditor {
                     cx,
                 )
             }),
-            profile_selector: cx.new(|cx| ProfileSelector::new(fs, thread_store, cx)),
+            profile_selector: cx
+                .new(|cx| ProfileSelector::new(fs, thread_store, editor.focus_handle(cx), cx)),
             _subscriptions: subscriptions,
         }
     }
