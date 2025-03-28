@@ -383,28 +383,21 @@ impl ActiveThread {
             ThreadEvent::DoneStreaming => {
                 let thread = self.thread.read(cx);
 
-                if self.should_show_notification(window, cx) && !thread.is_generating() {
-                    if thread.used_tools_since_last_user_message() {
-                        self.show_notification(
-                            "Finished running tools",
-                            IconName::ZedAssistant,
-                            window,
-                            cx,
-                        );
-                    } else {
-                        self.show_notification("New message", IconName::ZedAssistant, window, cx);
-                    }
-                }
-            }
-            ThreadEvent::ToolConfirmationNeeded => {
-                if self.should_show_notification(window, cx) {
+                if !thread.is_generating() {
                     self.show_notification(
-                        "Waiting for tool confirmation",
-                        IconName::Info,
+                        if thread.used_tools_since_last_user_message() {
+                            "Finished running tools"
+                        } else {
+                            "New message"
+                        },
+                        IconName::ZedAssistant,
                         window,
                         cx,
                     );
                 }
+            }
+            ThreadEvent::ToolConfirmationNeeded => {
+                self.show_notification("Waiting for tool confirmation", IconName::Info, window, cx);
             }
             ThreadEvent::StreamedAssistantText(message_id, text) => {
                 if let Some(rendered_message) = self.rendered_messages_by_id.get_mut(&message_id) {
@@ -532,12 +525,6 @@ impl ActiveThread {
         }
     }
 
-    fn should_show_notification(&self, window: &Window, cx: &Context<'_, ActiveThread>) -> bool {
-        !window.is_window_active()
-            && self.notifications.is_empty()
-            && AssistantSettings::get_global(cx).notify_when_agent_waiting
-    }
-
     fn show_notification(
         &mut self,
         caption: impl Into<SharedString>,
@@ -545,10 +532,12 @@ impl ActiveThread {
         window: &mut Window,
         cx: &mut Context<'_, ActiveThread>,
     ) {
-        debug_assert!(
-            self.should_show_notification(window, cx),
-            "Check should_show_notification before calling show_notification!"
-        );
+        if window.is_window_active()
+            || !self.notifications.is_empty()
+            || !AssistantSettings::get_global(cx).notify_when_agent_waiting
+        {
+            return;
+        }
 
         let caption = caption.into();
 
