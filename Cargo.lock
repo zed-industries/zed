@@ -494,6 +494,7 @@ dependencies = [
  "regex",
  "release_channel",
  "rope",
+ "schemars",
  "serde",
  "serde_json",
  "settings",

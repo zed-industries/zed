@@ -23,6 +23,7 @@ use project::{Project, Worktree};
 use prompt_store::{
     AssistantSystemPromptContext, PromptBuilder, RulesFile, WorktreeInfoForSystemPrompt,
 };
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::Settings;
 use util::{maybe, post_inc, ResultExt as _, TryFutureExt as _};
@@ -42,7 +43,9 @@ pub enum RequestKind {
     Summarize,
 }
 
-#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Serialize, Deserialize)]
+#[derive(
+    Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Serialize, Deserialize, JsonSchema,
+)]
 pub struct ThreadId(Arc<str>);
 
 impl ThreadId {
@@ -170,7 +173,7 @@ impl LastRestoreCheckpoint {
 pub enum DetailedSummaryState {
     NotGenerated,
     Generating {
-        task: Task<Option<()>>,
+        _task: Task<Option<()>>,
         message_id: MessageId,
     },
     Generated {
@@ -1256,7 +1259,7 @@ impl Thread {
 
         self.detailed_summary_state = DetailedSummaryState::Generating {
             message_id: last_message_id,
-            task,
+            _task: task,
         };
     }
 

@@ -29,7 +29,7 @@ use crate::context_strip::{ContextStrip, ContextStripEvent, SuggestContextKind};
 use crate::profile_selector::ProfileSelector;
 use crate::thread::{RequestKind, Thread};
 use crate::thread_store::ThreadStore;
-use crate::{Chat, ChatMode, RemoveAllContext, ThreadEvent, ToggleContextPicker};
+use crate::{Chat, ChatMode, NewThread, RemoveAllContext, ThreadEvent, ToggleContextPicker};
 
 pub struct MessageEditor {
     thread: Entity<Thread>,
@@ -732,6 +732,13 @@ impl Render for MessageEditor {
                         )
                         .child(
                             Button::new("new-thread", "Start New Thread")
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    let from_thread_id = Some(this.thread.read(cx).id().clone());
+
+                                    window.dispatch_action(Box::new(NewThread {
+                                        from_thread_id
+                                    }), cx);
+                                }))
                                 .icon(IconName::Plus)
                                 .icon_position(IconPosition::Start)
                                 .icon_size(IconSize::Small)

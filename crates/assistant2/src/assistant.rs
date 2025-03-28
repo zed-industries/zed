@@ -27,9 +27,12 @@ use client::Client;
 use command_palette_hooks::CommandPaletteFilter;
 use feature_flags::{Assistant2FeatureFlag, FeatureFlagAppExt};
 use fs::Fs;
-use gpui::{actions, App};
+use gpui::{actions, impl_actions, App};
 use prompt_store::PromptBuilder;
+use schemars::JsonSchema;
+use serde::Deserialize;
 use settings::Settings as _;
+use thread::ThreadId;
 
 pub use crate::active_thread::ActiveThread;
 use crate::assistant_configuration::AddContextServerModal;
@@ -41,7 +44,6 @@ pub use crate::thread_store::ThreadStore;
 actions!(
     assistant2,
     [
-        NewThread,
         NewPromptEditor,
         ToggleContextPicker,
         RemoveAllContext,
@@ -62,6 +64,14 @@ actions!(
         OpenActiveThreadAsMarkdown
     ]
 );
+
+#[derive(Default, Clone, PartialEq, Deserialize, JsonSchema)]
+pub struct NewThread {
+    #[serde(default)]
+    from_thread_id: Option<ThreadId>,
+}
+
+impl_actions!(assistant2, [NewThread]);
 
 const NAMESPACE: &str = "assistant2";
 

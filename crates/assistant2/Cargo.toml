@@ -64,6 +64,7 @@ proto.workspace = true
 release_channel.workspace = true
 regex.workspace = true
 rope.workspace = true
+schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 settings.workspace = true

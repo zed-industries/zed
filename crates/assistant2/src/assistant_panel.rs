@@ -53,9 +53,9 @@ pub fn init(cx: &mut App) {
     cx.observe_new(
         |workspace: &mut Workspace, _window, _cx: &mut Context<Workspace>| {
             workspace
-                .register_action(|workspace, _: &NewThread, window, cx| {
+                .register_action(|workspace, action: &NewThread, window, cx| {
                     if let Some(panel) = workspace.panel::<AssistantPanel>(cx) {
-                        panel.update(cx, |panel, cx| panel.new_thread(window, cx));
+                        panel.update(cx, |panel, cx| panel.new_thread(action, window, cx));
                         workspace.focus_panel::<AssistantPanel>(window, cx);
                     }
                 })
@@ -251,7 +251,7 @@ impl AssistantPanel {
             .update(cx, |thread, cx| thread.cancel_last_completion(cx));
     }
 
-    fn new_thread(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    fn new_thread(&mut self, action: &NewThread, window: &mut Window, cx: &mut Context<Self>) {
         let thread = self
             .thread_store
             .update(cx, |this, cx| this.create_thread(cx));
@@ -260,6 +260,26 @@ impl AssistantPanel {
 
         let message_editor_context_store =
             cx.new(|_cx| crate::context_store::ContextStore::new(self.workspace.clone()));
+
+        if let Some(other_thread_id) = action.from_thread_id.clone() {
+            let other_thread_task = self
+                .thread_store
+                .update(cx, |this, cx| this.open_thread(&other_thread_id, cx));
+
+            cx.spawn({
+                let context_store = message_editor_context_store.clone();
+
+                async move |_panel, cx| {
+                    let other_thread = other_thread_task.await?;
+
+                    context_store.update(cx, |this, cx| {
+                        this.add_thread(other_thread, false, cx);
+                    })?;
+                    anyhow::Ok(())
+                }
+            })
+            .detach_and_log_err(cx);
+        }
 
         self.thread = cx.new(|cx| {
             ActiveThread::new(
@@ -529,7 +549,7 @@ impl AssistantPanel {
                     }
                 }
 
-                self.new_thread(window, cx);
+                self.new_thread(&NewThread::default(), window, cx);
             }
         }
     }
@@ -734,11 +754,16 @@ impl AssistantPanel {
                                             window,
                                             cx,
                                             |menu, _window, _cx| {
-                                                menu.action("New Thread", NewThread.boxed_clone())
-                                                    .action(
-                                                        "New Prompt Editor",
-                                                        NewPromptEditor.boxed_clone(),
-                                                    )
+                                                menu.action(
+                                                    "New Thread",
+                                                    Box::new(NewThread {
+                                                        from_thread_id: None,
+                                                    }),
+                                                )
+                                                .action(
+                                                    "New Prompt Editor",
+                                                    NewPromptEditor.boxed_clone(),
+                                                )
                                             },
                                         ))
                                     }),
@@ -1097,8 +1122,8 @@ impl Render for AssistantPanel {
             .justify_between()
             .size_full()
             .on_action(cx.listener(Self::cancel))
-            .on_action(cx.listener(|this, _: &NewThread, window, cx| {
-                this.new_thread(window, cx);
+            .on_action(cx.listener(|this, action: &NewThread, window, cx| {
+                this.new_thread(action, window, cx);
             }))
             .on_action(cx.listener(|this, _: &OpenHistory, window, cx| {
                 this.open_history(window, cx);

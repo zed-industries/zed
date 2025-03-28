@@ -273,6 +273,10 @@ impl ContextStore {
                 self.remove_context(context_id);
             }
         } else {
+            thread.update(cx, |thread, cx| {
+                thread.detailed_summarize(cx);
+            });
+
             self.insert_thread(thread, cx);
         }
     }
