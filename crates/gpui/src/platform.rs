@@ -1262,7 +1262,7 @@ pub enum ClipboardEntry {
 impl ClipboardItem {
     /// Create a new ClipboardItem::String with no associated metadata
     pub fn new_string(text: String) -> Self {
-        Self::from(ClipboardString::new(text))
+        Self::from(text)
     }
 
     /// Create a new ClipboardItem::String with the given text and associated metadata
