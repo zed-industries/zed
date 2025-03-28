@@ -10,15 +10,13 @@ use ui::{prelude::*, Render};
 pub struct AgentNotification {
     caption: SharedString,
     icon: IconName,
-    icon_color: Color,
 }
 
 impl AgentNotification {
-    pub fn new(caption: impl Into<SharedString>, icon: IconName, icon_color: Color) -> Self {
+    pub fn new(caption: impl Into<SharedString>, icon: IconName) -> Self {
         Self {
             caption: caption.into(),
             icon,
-            icon_color,
         }
     }
 
@@ -71,6 +69,7 @@ impl Render for AgentNotification {
         let line_height = window.line_height();
 
         h_flex()
+            .id("agent-notification")
             .size_full()
             .p_3()
             .gap_4()
@@ -80,14 +79,18 @@ impl Render for AgentNotification {
             .font(ui_font)
             .border_color(cx.theme().colors().border)
             .rounded_xl()
+            .on_click(cx.listener(|_, _, _, cx| {
+                cx.emit(AgentNotificationEvent::Accepted);
+            }))
             .child(
                 h_flex()
                     .items_start()
                     .gap_2()
+                    .flex_1()
                     .child(
                         h_flex().h(line_height).justify_center().child(
                             Icon::new(self.icon)
-                                .color(self.icon_color)
+                                .color(Color::Muted)
                                 .size(IconSize::Small),
                         ),
                     )
@@ -95,21 +98,28 @@ impl Render for AgentNotification {
                         v_flex()
                             .child(
                                 div()
-                                    .text_size(px(16.))
+                                    .text_size(px(14.))
                                     .text_color(cx.theme().colors().text)
                                     .child("Agent Panel"),
                             )
                             .child(
                                 div()
-                                    .text_size(px(14.))
+                                    .text_size(px(12.))
                                     .text_color(cx.theme().colors().text_muted)
+                                    .max_w_72()
+                                    .truncate()
                                     .child(self.caption.clone()),
                             ),
                     ),
             )
             .child(
-                h_flex()
-                    .gap_0p5()
+                v_flex()
+                    .gap_1()
+                    .child(Button::new("dismiss", "Dismiss").on_click({
+                        cx.listener(move |_, _event, _, cx| {
+                            cx.emit(AgentNotificationEvent::Dismissed);
+                        })
+                    }))
                     .child(
                         Button::new("open", "View Panel")
                             .style(ButtonStyle::Tinted(ui::TintColor::Accent))
@@ -118,12 +128,7 @@ impl Render for AgentNotification {
                                     cx.emit(AgentNotificationEvent::Accepted);
                                 })
                             }),
-                    )
-                    .child(Button::new("dismiss", "Dismiss").on_click({
-                        cx.listener(move |_, _event, _, cx| {
-                            cx.emit(AgentNotificationEvent::Dismissed);
-                        })
-                    })),
+                    ),
             )
     }
 }

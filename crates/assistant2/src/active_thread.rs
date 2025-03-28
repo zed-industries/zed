@@ -45,7 +45,7 @@ pub struct ActiveThread {
     expanded_tool_uses: HashMap<LanguageModelToolUseId, bool>,
     expanded_thinking_segments: HashMap<(MessageId, usize), bool>,
     last_error: Option<ThreadError>,
-    pop_ups: Vec<WindowHandle<AgentNotification>>,
+    notifications: Vec<WindowHandle<AgentNotification>>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -251,7 +251,7 @@ impl ActiveThread {
             scrollbar_state: ScrollbarState::new(list_state),
             editing_message: None,
             last_error: None,
-            pop_ups: Vec::new(),
+            notifications: Vec::new(),
             _subscriptions: subscriptions,
         };
 
@@ -379,24 +379,53 @@ impl ActiveThread {
                 self.save_thread(cx);
             }
             ThreadEvent::DoneStreaming => {
-                if !self.thread().read(cx).is_generating() {
+                let thread = self.thread.read(cx);
+
+                if self.should_show_notification(window, cx) && !thread.is_generating() {
+                    if thread.used_tools_since_last_user_message() {
+                        let thread = self.thread.clone();
+
+                        let window_handle = window.window_handle();
+
+                        cx.spawn(async move |active_thread, cx| {
+                            let summary = thread
+                                .update(cx, |thread, cx| thread.generate_notification_summary(cx))
+                                .ok();
+
+                            if let Some(summary_task) = summary {
+                                let summary = summary_task.await;
+
+                                window_handle
+                                    .update(cx, |_, window, cx| {
+                                        active_thread.update(cx, |active_thread, cx| {
+                                            active_thread.show_notification(
+                                                summary
+                                                    .log_err()
+                                                    .unwrap_or("New message".to_string()),
+                                                IconName::ZedAssistant,
+                                                window,
+                                                cx,
+                                            );
+                                        })
+                                    })
+                                    .ok();
+                            }
+                        })
+                        .detach();
+                    } else {
+                        self.show_notification("New message", IconName::ZedAssistant, window, cx);
+                    }
+                }
+            }
+            ThreadEvent::ToolConfirmationNeeded => {
+                if self.should_show_notification(window, cx) {
                     self.show_notification(
-                        "The assistant response has concluded.",
-                        IconName::Check,
-                        Color::Success,
+                        "Waiting for tool confirmation",
+                        IconName::Info,
                         window,
                         cx,
                     );
                 }
-            }
-            ThreadEvent::ToolConfirmationNeeded => {
-                self.show_notification(
-                    "There's a tool confirmation needed.",
-                    IconName::Info,
-                    Color::Muted,
-                    window,
-                    cx,
-                );
             }
             ThreadEvent::StreamedAssistantText(message_id, text) => {
                 if let Some(rendered_message) = self.rendered_messages_by_id.get_mut(&message_id) {
@@ -524,67 +553,70 @@ impl ActiveThread {
         }
     }
 
+    fn should_show_notification(&self, window: &Window, cx: &Context<'_, ActiveThread>) -> bool {
+        !window.is_window_active()
+            && self.notifications.is_empty()
+            && AssistantSettings::get_global(cx).notify_when_agent_waiting
+    }
+
     fn show_notification(
         &mut self,
         caption: impl Into<SharedString>,
         icon: IconName,
-        icon_color: Color,
         window: &mut Window,
         cx: &mut Context<'_, ActiveThread>,
     ) {
-        if !window.is_window_active()
-            && self.pop_ups.is_empty()
-            && AssistantSettings::get_global(cx).notify_when_agent_waiting
-        {
-            let caption = caption.into();
+        debug_assert!(
+            self.should_show_notification(window, cx),
+            "Check should_show_notification before calling show_notification!"
+        );
 
-            for screen in cx.displays() {
-                let options = AgentNotification::window_options(screen, cx);
+        let caption = caption.into();
 
-                if let Some(screen_window) = cx
-                    .open_window(options, |_, cx| {
-                        cx.new(|_| AgentNotification::new(caption.clone(), icon, icon_color))
-                    })
-                    .log_err()
-                {
-                    if let Some(pop_up) = screen_window.entity(cx).log_err() {
-                        cx.subscribe_in(&pop_up, window, {
-                            |this, _, event, window, cx| match event {
-                                AgentNotificationEvent::Accepted => {
-                                    let handle = window.window_handle();
-                                    cx.activate(true); // Switch back to the Zed application
+        for screen in cx.displays() {
+            let options = AgentNotification::window_options(screen, cx);
 
-                                    let workspace_handle = this.workspace.clone();
+            if let Some(screen_window) = cx
+                .open_window(options, |_, cx| {
+                    cx.new(|_| AgentNotification::new(caption.clone(), icon))
+                })
+                .log_err()
+            {
+                if let Some(pop_up) = screen_window.entity(cx).log_err() {
+                    cx.subscribe_in(&pop_up, window, {
+                        |this, _, event, window, cx| match event {
+                            AgentNotificationEvent::Accepted => {
+                                let handle = window.window_handle();
+                                cx.activate(true); // Switch back to the Zed application
 
-                                    // If there are multiple Zed windows, activate the correct one.
-                                    cx.defer(move |cx| {
-                                        handle
-                                            .update(cx, |_view, window, _cx| {
-                                                window.activate_window();
+                                let workspace_handle = this.workspace.clone();
 
-                                                if let Some(workspace) = workspace_handle.upgrade()
-                                                {
-                                                    workspace.update(_cx, |workspace, cx| {
-                                                        workspace.focus_panel::<AssistantPanel>(
-                                                            window, cx,
-                                                        );
-                                                    });
-                                                }
-                                            })
-                                            .log_err();
-                                    });
+                                // If there are multiple Zed windows, activate the correct one.
+                                cx.defer(move |cx| {
+                                    handle
+                                        .update(cx, |_view, window, _cx| {
+                                            window.activate_window();
 
-                                    this.dismiss_notifications(cx);
-                                }
-                                AgentNotificationEvent::Dismissed => {
-                                    this.dismiss_notifications(cx);
-                                }
+                                            if let Some(workspace) = workspace_handle.upgrade() {
+                                                workspace.update(_cx, |workspace, cx| {
+                                                    workspace
+                                                        .focus_panel::<AssistantPanel>(window, cx);
+                                                });
+                                            }
+                                        })
+                                        .log_err();
+                                });
+
+                                this.dismiss_notifications(cx);
                             }
-                        })
-                        .detach();
+                            AgentNotificationEvent::Dismissed => {
+                                this.dismiss_notifications(cx);
+                            }
+                        }
+                    })
+                    .detach();
 
-                        self.pop_ups.push(screen_window);
-                    }
+                    self.notifications.push(screen_window);
                 }
             }
         }
@@ -1744,7 +1776,7 @@ impl ActiveThread {
     }
 
     fn dismiss_notifications(&mut self, cx: &mut Context<'_, ActiveThread>) {
-        for window in self.pop_ups.drain(..) {
+        for window in self.notifications.drain(..) {
             window
                 .update(cx, |_, window, _| {
                     window.remove_window();

@@ -2,7 +2,7 @@ use std::fmt::Write as _;
 use std::io::Write;
 use std::sync::Arc;
 
-use anyhow::{Context as _, Result};
+use anyhow::{anyhow, Context as _, Result};
 use assistant_settings::AssistantSettings;
 use assistant_tool::{ActionLog, Tool, ToolWorkingSet};
 use chrono::{DateTime, Utc};
@@ -40,6 +40,8 @@ pub enum RequestKind {
     Chat,
     /// Used when summarizing a thread.
     Summarize,
+    /// Notification summary
+    NotificationSummary,
 }
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Serialize, Deserialize)]
@@ -786,6 +788,18 @@ impl Thread {
         self.stream_completion(request, model, cx);
     }
 
+    pub fn used_tools_since_last_user_message(&self) -> bool {
+        for message in self.messages.iter().rev() {
+            if self.tool_use.message_has_tool_results(message.id) {
+                return true;
+            } else if message.role == Role::User {
+                return false;
+            }
+        }
+
+        false
+    }
+
     pub fn to_completion_request(
         &self,
         request_kind: RequestKind,
@@ -798,26 +812,40 @@ impl Thread {
             temperature: None,
         };
 
-        if let Some(system_prompt_context) = self.system_prompt_context.as_ref() {
-            if let Some(system_prompt) = self
-                .prompt_builder
-                .generate_assistant_system_prompt(system_prompt_context)
-                .context("failed to generate assistant system prompt")
-                .log_err()
-            {
-                request.messages.push(LanguageModelRequestMessage {
-                    role: Role::System,
-                    content: vec![MessageContent::Text(system_prompt)],
-                    cache: true,
-                });
-            }
-        } else {
-            log::error!("system_prompt_context not set.")
-        }
-
         let mut referenced_context_ids = HashSet::default();
 
-        for message in &self.messages {
+        let messages = match request_kind {
+            RequestKind::NotificationSummary => self
+                .messages
+                .iter()
+                .rposition(|message| {
+                    message.role == Role::User
+                        && !self.tool_use.message_has_tool_results(message.id)
+                })
+                .map_or(&self.messages[..], |index| &self.messages[index..]),
+            RequestKind::Chat | RequestKind::Summarize => {
+                if let Some(system_prompt_context) = self.system_prompt_context.as_ref() {
+                    if let Some(system_prompt) = self
+                        .prompt_builder
+                        .generate_assistant_system_prompt(system_prompt_context)
+                        .context("failed to generate assistant system prompt")
+                        .log_err()
+                    {
+                        request.messages.push(LanguageModelRequestMessage {
+                            role: Role::System,
+                            content: vec![MessageContent::Text(system_prompt)],
+                            cache: true,
+                        });
+                    }
+                } else {
+                    log::error!("system_prompt_context not set.")
+                }
+
+                &self.messages
+            }
+        };
+
+        for message in messages {
             if let Some(context_ids) = self.context_by_message.get(&message.id) {
                 referenced_context_ids.extend(context_ids);
             }
@@ -833,8 +861,11 @@ impl Thread {
                     self.tool_use
                         .attach_tool_results(message.id, &mut request_message);
                 }
-                RequestKind::Summarize => {
+                RequestKind::Summarize | RequestKind::NotificationSummary => {
                     // We don't care about tool use during summarization.
+                    if self.tool_use.message_has_tool_results(message.id) {
+                        continue;
+                    }
                 }
             }
 
@@ -849,7 +880,7 @@ impl Thread {
                     self.tool_use
                         .attach_tool_uses(message.id, &mut request_message);
                 }
-                RequestKind::Summarize => {
+                RequestKind::Summarize | RequestKind::NotificationSummary => {
                     // We don't care about tool use during summarization.
                 }
             };
@@ -1119,7 +1150,10 @@ impl Thread {
         request.messages.push(LanguageModelRequestMessage {
             role: Role::User,
             content: vec![
-                "Generate a concise 3-7 word title for this conversation, omitting punctuation. Go straight to the title, without any preamble and prefix like `Here's a concise suggestion:...` or `Title:`"
+                "Generate a concise 3-7 word title for this conversation, omitting punctuation. \
+                 Go straight to the title, without any preamble and prefix like `Here's a concise suggestion:...` or `Title:`. \
+                 If the conversation is about a specific subject, include it in the title. \
+                 Be descriptive. DO NOT speak in the first person."
                     .into(),
             ],
             cache: false,
@@ -1514,6 +1548,56 @@ impl Thread {
 
     pub fn cumulative_token_usage(&self) -> TokenUsage {
         self.cumulative_token_usage.clone()
+    }
+
+    pub fn generate_notification_summary(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<String>> {
+        let Some(provider) = LanguageModelRegistry::read_global(cx).active_provider() else {
+            return Task::ready(Err(anyhow!("No active provider")));
+        };
+
+        let Some(model) = LanguageModelRegistry::read_global(cx).active_model() else {
+            return Task::ready(Err(anyhow!("No active model")));
+        };
+
+        if !provider.is_authenticated(cx) {
+            return Task::ready(Err(anyhow!("Not authenticated")));
+        }
+
+        let mut request = self.to_completion_request(RequestKind::NotificationSummary, cx);
+        request.messages.push(LanguageModelRequestMessage {
+            role: Role::User,
+            content: vec![
+                "Summarize briefly what the assistant just did and found in 3-10 words. \
+                Make it compact for a notification with no introduction phrases like 'The assistant...'. \
+                Fixing diagnostics introduced by assistant changes is part of the overall task, so AVOID mentioning those steps. \
+                Do not mention tool failures if the overall outcome was successful. \
+                Avoid ending with words like 'successfully' if success is already implied. \
+                Just focus on the main task and its outcome."
+                    .into(),
+            ],
+            cache: false,
+        });
+
+        cx.spawn(async move |_, cx| {
+            let mut messages = model.stream_completion_text(request, cx).await?;
+
+            let mut notification_summary = String::new();
+
+            while let Some(chunk) = messages.stream.next().await {
+                notification_summary.push_str(&chunk?);
+            }
+
+            let notification_summary = notification_summary.trim();
+
+            if notification_summary.is_empty() {
+                return Err(anyhow!("Generated empty summary"));
+            }
+
+            Ok(notification_summary.to_string())
+        })
     }
 
     pub fn deny_tool_use(&mut self, tool_use_id: LanguageModelToolUseId, cx: &mut Context<Self>) {
