@@ -400,7 +400,7 @@ pub fn render_symbol_context_entry(id: ElementId, entry: &SymbolEntry) -> Statef
         .file_name()
         .map(|s| s.to_string_lossy())
         .unwrap_or_default();
-    let symbol_location = format!("{} L{}", path, entry.symbol.range.start.0.row);
+    let symbol_location = format!("{} L{}", path, entry.symbol.range.start.0.row + 1);
 
     h_flex()
         .id(id)
