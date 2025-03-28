@@ -772,11 +772,11 @@ pub struct Editor {
     expect_bounds_change: Option<Bounds<Pixels>>,
     tasks: BTreeMap<(BufferId, BufferRow), RunnableTasks>,
     tasks_update_task: Option<Task<()>>,
-    pub breakpoint_store: Option<Entity<BreakpointStore>>,
+    breakpoint_store: Option<Entity<BreakpointStore>>,
     /// Allow's a user to create a breakpoint by selecting this indicator
     /// It should be None while a user is not hovering over the gutter
     /// Otherwise it represents the point that the breakpoint will be shown
-    pub gutter_breakpoint_indicator: Option<DisplayPoint>,
+    gutter_breakpoint_indicator: (Option<(DisplayPoint, bool)>, Option<Task<()>>),
     in_project_search: bool,
     previous_search_ranges: Option<Arc<[Range<Anchor>]>>,
     breadcrumb_header: Option<String>,
@@ -1535,7 +1535,7 @@ impl Editor {
             tasks: Default::default(),
 
             breakpoint_store,
-            gutter_breakpoint_indicator: None,
+            gutter_breakpoint_indicator: (None, None),
             _subscriptions: vec![
                 cx.observe(&buffer, Self::on_buffer_changed),
                 cx.subscribe_in(&buffer, window, Self::on_buffer_event),
@@ -6267,7 +6267,8 @@ impl Editor {
         let (color, icon) = {
             let color = if self
                 .gutter_breakpoint_indicator
-                .is_some_and(|point| point.row() == row)
+                .0
+                .is_some_and(|(point, is_visible)| is_visible && point.row() == row)
             {
                 Color::Hint
             } else if breakpoint.is_disabled() {
