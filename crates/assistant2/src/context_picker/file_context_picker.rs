@@ -279,7 +279,11 @@ pub fn extract_file_name_and_directory(
 ) -> (SharedString, Option<SharedString>) {
     if path == Path::new("") {
         (
-            SharedString::from(path_prefix.trim_end_matches('/').to_string()),
+            SharedString::from(
+                path_prefix
+                    .trim_end_matches(std::path::MAIN_SEPARATOR)
+                    .to_string(),
+            ),
             None,
         )
     } else {
@@ -290,7 +294,9 @@ pub fn extract_file_name_and_directory(
             .to_string()
             .into();
 
-        let mut directory = path_prefix.to_string();
+        let mut directory = path_prefix
+            .trim_end_matches(std::path::MAIN_SEPARATOR)
+            .to_string();
         if !directory.ends_with('/') {
             directory.push('/');
         }

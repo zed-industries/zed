@@ -828,10 +828,7 @@ mod tests {
         });
 
         editor.update(&mut cx, |editor, cx| {
-            assert_eq!(
-                editor.text(cx),
-                format!("Lorem @file {}", separator!("dir/a/one.txt"))
-            );
+            assert_eq!(editor.text(cx), "Lorem @file dir/a/one.txt",);
             assert!(!editor.has_visible_completions_menu());
             assert_eq!(
                 crease_ranges(editor, cx),
@@ -842,10 +839,7 @@ mod tests {
         cx.simulate_input(" ");
 
         editor.update(&mut cx, |editor, cx| {
-            assert_eq!(
-                editor.text(cx),
-                format!("Lorem @file {} ", separator!("dir/a/one.txt"))
-            );
+            assert_eq!(editor.text(cx), "Lorem @file dir/a/one.txt ",);
             assert!(!editor.has_visible_completions_menu());
             assert_eq!(
                 crease_ranges(editor, cx),
@@ -856,10 +850,7 @@ mod tests {
         cx.simulate_input("Ipsum ");
 
         editor.update(&mut cx, |editor, cx| {
-            assert_eq!(
-                editor.text(cx),
-                format!("Lorem @file {} Ipsum ", separator!("dir/a/one.txt"))
-            );
+            assert_eq!(editor.text(cx), "Lorem @file dir/a/one.txt Ipsum ",);
             assert!(!editor.has_visible_completions_menu());
             assert_eq!(
                 crease_ranges(editor, cx),
@@ -870,10 +861,7 @@ mod tests {
         cx.simulate_input("@file ");
 
         editor.update(&mut cx, |editor, cx| {
-            assert_eq!(
-                editor.text(cx),
-                format!("Lorem @file {} Ipsum @file ", separator!("dir/a/one.txt"))
-            );
+            assert_eq!(editor.text(cx), "Lorem @file dir/a/one.txt Ipsum @file ",);
             assert!(editor.has_visible_completions_menu());
             assert_eq!(
                 crease_ranges(editor, cx),
@@ -890,11 +878,7 @@ mod tests {
         editor.update(&mut cx, |editor, cx| {
             assert_eq!(
                 editor.text(cx),
-                format!(
-                    "Lorem @file {} Ipsum @file {}",
-                    separator!("dir/a/one.txt"),
-                    separator!("dir/b/seven.txt")
-                )
+                "Lorem @file dir/a/one.txt Ipsum @file dir/b/seven.txt"
             );
             assert!(!editor.has_visible_completions_menu());
             assert_eq!(
@@ -911,11 +895,7 @@ mod tests {
         editor.update(&mut cx, |editor, cx| {
             assert_eq!(
                 editor.text(cx),
-                format!(
-                    "Lorem @file {} Ipsum @file {}\n@",
-                    separator!("dir/a/one.txt"),
-                    separator!("dir/b/seven.txt")
-                )
+                "Lorem @file dir/a/one.txt Ipsum @file dir/b/seven.txt\n@"
             );
             assert!(editor.has_visible_completions_menu());
             assert_eq!(
@@ -936,12 +916,7 @@ mod tests {
         editor.update(&mut cx, |editor, cx| {
             assert_eq!(
                 editor.text(cx),
-                format!(
-                    "Lorem @file {} Ipsum @file {}\n@file {}",
-                    separator!("dir/a/one.txt"),
-                    separator!("dir/b/seven.txt"),
-                    separator!("dir/b/six.txt"),
-                )
+                "Lorem @file dir/a/one.txt Ipsum @file dir/b/seven.txt\n@file dir/b/six.txt"
             );
             assert!(!editor.has_visible_completions_menu());
             assert_eq!(
