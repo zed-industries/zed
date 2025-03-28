@@ -130,37 +130,33 @@ impl ActionLog {
         }
 
         // If the buffer operation overlaps with any tracked edits, mark it as unreviewed.
+        // If it intersects an already-accepted id, mark that edit as unreviewed again.
         let buffer = buffer.read(cx);
         let operation_edit_ranges = buffer
             .edited_ranges_for_edit_ids::<usize>([&operation.timestamp])
-            .peekable();
-        let tracked_edit_ranges = buffer
-            .edited_ranges_for_edit_ids::<usize>(
-                unreviewed_edit_ids.iter().chain(accepted_edit_ids.iter()),
-            )
-            .peekable();
-        let mut operation_edit_ranges_iter = operation_edit_ranges.peekable();
-        let mut tracked_edit_ranges_iter = tracked_edit_ranges.peekable();
+            .collect::<Vec<_>>();
 
-        let mut overlaps = false;
-        while let (Some(op_range), Some(tracked_range)) = (
-            operation_edit_ranges_iter.peek(),
-            tracked_edit_ranges_iter.peek(),
-        ) {
-            if op_range.end < tracked_range.start {
-                operation_edit_ranges_iter.next();
-            } else if tracked_range.end < op_range.start {
-                tracked_edit_ranges_iter.next();
-            } else {
-                overlaps = true;
-                break;
+        let intersects_unreviewed_edits = ranges_intersect(
+            operation_edit_ranges.iter().cloned(),
+            buffer.edited_ranges_for_edit_ids::<usize>(unreviewed_edit_ids.iter()),
+        );
+        let mut intersected_accepted_edits = HashSet::default();
+        for accepted_edit_id in accepted_edit_ids.iter() {
+            let intersects_accepted_edit = ranges_intersect(
+                operation_edit_ranges.iter().cloned(),
+                buffer.edited_ranges_for_edit_ids::<usize>([accepted_edit_id]),
+            );
+            if intersects_accepted_edit {
+                intersected_accepted_edits.insert(*accepted_edit_id);
             }
         }
-        drop(operation_edit_ranges_iter);
-        drop(tracked_edit_ranges_iter);
 
-        if overlaps {
+        if intersects_unreviewed_edits || !intersected_accepted_edits.is_empty() {
             unreviewed_edit_ids.insert(operation.timestamp);
+            for accepted_edit_id in intersected_accepted_edits {
+                unreviewed_edit_ids.insert(accepted_edit_id);
+                accepted_edit_ids.remove(&accepted_edit_id);
+            }
             tracked_buffer.schedule_diff_update();
         }
     }
@@ -338,6 +334,24 @@ impl ActionLog {
     pub fn take_stale_buffers_in_context(&mut self) -> HashSet<Entity<Buffer>> {
         std::mem::take(&mut self.stale_buffers_in_context)
     }
+}
+
+fn ranges_intersect(
+    ranges_a: impl IntoIterator<Item = Range<usize>>,
+    ranges_b: impl IntoIterator<Item = Range<usize>>,
+) -> bool {
+    let mut ranges_a_iter = ranges_a.into_iter().peekable();
+    let mut ranges_b_iter = ranges_b.into_iter().peekable();
+    while let (Some(range_a), Some(range_b)) = (ranges_a_iter.peek(), ranges_b_iter.peek()) {
+        if range_a.end < range_b.start {
+            ranges_a_iter.next();
+        } else if range_b.end < range_a.start {
+            ranges_b_iter.next();
+        } else {
+            return true;
+        }
+    }
+    false
 }
 
 struct TrackedBuffer {
@@ -673,9 +687,41 @@ mod tests {
             )]
         );
 
+        action_log.update(cx, |log, cx| {
+            log.review_edits_in_range(buffer.clone(), Point::new(0, 0)..Point::new(1, 0), true, cx)
+        });
+        cx.run_until_parked();
+        assert_eq!(
+            unreviewed_hunks(&action_log, cx),
+            vec![(
+                buffer.clone(),
+                vec![HunkStatus {
+                    range: Point::new(0, 0)..Point::new(3, 0),
+                    review_status: ReviewStatus::Reviewed,
+                    diff_status: DiffHunkStatusKind::Modified,
+                    old_text: "abc\ndef\nghi\n".into(),
+                }],
+            )]
+        );
+
         buffer.update(cx, |buffer, cx| {
             buffer.edit([(Point::new(0, 2)..Point::new(0, 2), "X")], None, cx)
         });
+        cx.run_until_parked();
+        assert_eq!(
+            unreviewed_hunks(&action_log, cx),
+            vec![(
+                buffer.clone(),
+                vec![HunkStatus {
+                    range: Point::new(0, 0)..Point::new(3, 0),
+                    review_status: ReviewStatus::Unreviewed,
+                    diff_status: DiffHunkStatusKind::Modified,
+                    old_text: "abc\ndef\nghi\n".into(),
+                }],
+            )]
+        );
+
+        action_log.update(cx, |log, cx| log.clear_reviewed_changes(cx));
         cx.run_until_parked();
         assert_eq!(
             unreviewed_hunks(&action_log, cx),
