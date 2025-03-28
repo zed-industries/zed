@@ -9,7 +9,7 @@ use serde_json::Value;
 use std::{ops::Range, str::FromStr, sync::Arc};
 use text::*;
 
-pub use proto::{BufferState, Operation};
+pub use proto::{BufferState, File, Operation};
 
 /// Deserializes a `[text::LineEnding]` from the RPC representation.
 pub fn deserialize_line_ending(message: proto::LineEnding) -> text::LineEnding {

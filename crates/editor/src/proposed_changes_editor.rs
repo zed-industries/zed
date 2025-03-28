@@ -109,7 +109,7 @@ impl ProposedChangesEditor {
                                     let diff =
                                         this.multibuffer.read(cx).diff_for(buffer.remote_id())?;
                                     Some(diff.update(cx, |diff, cx| {
-                                        diff.set_base_text(base_buffer.clone(), buffer, cx)
+                                        diff.set_base_text_buffer(base_buffer.clone(), buffer, cx)
                                     }))
                                 })
                                 .collect::<Vec<_>>()
@@ -185,7 +185,7 @@ impl ProposedChangesEditor {
                 branch_buffer = location.buffer.update(cx, |buffer, cx| buffer.branch(cx));
                 new_diffs.push(cx.new(|cx| {
                     let mut diff = BufferDiff::new(&branch_buffer.read(cx).snapshot(), cx);
-                    let _ = diff.set_base_text(
+                    let _ = diff.set_base_text_buffer(
                         location.buffer.clone(),
                         branch_buffer.read(cx).text_snapshot(),
                         cx,

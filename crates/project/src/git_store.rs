@@ -20,8 +20,8 @@ use git::{
     blame::Blame,
     parse_git_remote_url,
     repository::{
-        Branch, CommitDetails, DiffType, GitIndex, GitRepository, GitRepositoryCheckpoint,
-        PushOptions, Remote, RemoteCommandOutput, RepoPath, ResetMode,
+        Branch, CommitDetails, CommitDiff, DiffType, GitIndex, GitRepository,
+        GitRepositoryCheckpoint, PushOptions, Remote, RemoteCommandOutput, RepoPath, ResetMode,
     },
     status::{FileStatus, GitStatus},
     BuildPermalinkParams, GitHostingProviderRegistry,
@@ -2593,7 +2593,10 @@ impl BufferDiffState {
                 unstaged_diff.as_ref().zip(new_unstaged_diff.clone())
             {
                 unstaged_diff.update(cx, |diff, cx| {
-                    diff.set_snapshot(&buffer, new_unstaged_diff, language_changed, None, cx)
+                    if language_changed {
+                        diff.language_changed(cx);
+                    }
+                    diff.set_snapshot(new_unstaged_diff, &buffer, None, cx)
                 })?
             } else {
                 None
@@ -2602,14 +2605,11 @@ impl BufferDiffState {
             if let Some((uncommitted_diff, new_uncommitted_diff)) =
                 uncommitted_diff.as_ref().zip(new_uncommitted_diff.clone())
             {
-                uncommitted_diff.update(cx, |uncommitted_diff, cx| {
-                    uncommitted_diff.set_snapshot(
-                        &buffer,
-                        new_uncommitted_diff,
-                        language_changed,
-                        unstaged_changed_range,
-                        cx,
-                    );
+                uncommitted_diff.update(cx, |diff, cx| {
+                    if language_changed {
+                        diff.language_changed(cx);
+                    }
+                    diff.set_snapshot(new_uncommitted_diff, &buffer, unstaged_changed_range, cx);
                 })?;
             }
 
@@ -3081,6 +3081,19 @@ impl Repository {
                         committer_email: resp.committer_email.into(),
                         committer_name: resp.committer_name.into(),
                     })
+                }
+            }
+        })
+    }
+
+    pub fn load_commit(&self, commit: String) -> oneshot::Receiver<Result<CommitDiff>> {
+        self.send_job(|git_repo, cx| async move {
+            match git_repo {
+                RepositoryState::Local(git_repository) => {
+                    git_repository.load_commit(commit, cx).await
+                }
+                RepositoryState::Remote { .. } => {
+                    todo!()
                 }
             }
         })

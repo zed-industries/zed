@@ -1,9 +1,9 @@
 use crate::askpass_modal::AskPassModal;
 use crate::commit_modal::CommitModal;
+use crate::commit_view::CommitView;
 use crate::git_panel_settings::StatusStyle;
 use crate::project_diff::Diff;
 use crate::remote_output::{self, RemoteAction, SuccessMessage};
-
 use crate::{branch_picker, render_remote_button};
 use crate::{
     git_panel_settings::GitPanelSettings, git_status_icon, repository_selector::RepositorySelector,
@@ -3001,6 +3001,7 @@ impl GitPanel {
         let active_repository = self.active_repository.as_ref()?;
         let branch = active_repository.read(cx).current_branch()?;
         let commit = branch.most_recent_commit.as_ref()?.clone();
+        let workspace = self.workspace.clone();
 
         let this = cx.entity();
         Some(
@@ -3023,6 +3024,19 @@ impl GitPanel {
                                 .truncate(),
                         )
                         .id("commit-msg-hover")
+                        .on_click({
+                            let commit = commit.clone();
+                            let repo = active_repository.downgrade();
+                            move |_, window, cx| {
+                                CommitView::open(
+                                    commit.clone(),
+                                    repo.clone(),
+                                    workspace.clone().clone(),
+                                    window,
+                                    cx,
+                                );
+                            }
+                        })
                         .hoverable_tooltip(move |window, cx| {
                             GitPanelMessageTooltip::new(
                                 this.clone(),
