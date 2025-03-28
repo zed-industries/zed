@@ -7,7 +7,6 @@ use crate::thread_store::ThreadStore;
 use crate::tool_use::{PendingToolUseStatus, ToolUse, ToolUseStatus};
 use crate::ui::{AgentNotification, AgentNotificationEvent, ContextPill};
 use crate::AssistantPanel;
-use anyhow::Context;
 use assistant_settings::AssistantSettings;
 use collections::HashMap;
 use editor::{Editor, MultiBuffer};
