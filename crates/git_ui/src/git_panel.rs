@@ -45,8 +45,9 @@ use panel::{
     panel_button, panel_editor_container, panel_editor_style, panel_filled_button,
     panel_icon_button, PanelHeader,
 };
+use project::git_store::RepositoryEvent;
 use project::{
-    git_store::{GitEvent, Repository},
+    git_store::{GitStoreEvent, Repository},
     Fs, Project, ProjectPath,
 };
 use serde::{Deserialize, Serialize};
@@ -403,14 +404,18 @@ impl GitPanel {
             &git_store,
             window,
             move |this, git_store, event, window, cx| match event {
-                GitEvent::FileSystemUpdated => {
-                    this.schedule_update(false, window, cx);
-                }
-                GitEvent::ActiveRepositoryChanged | GitEvent::GitStateUpdated => {
+                GitStoreEvent::ActiveRepositoryChanged(_) => {
                     this.active_repository = git_store.read(cx).active_repository();
                     this.schedule_update(true, window, cx);
                 }
-                GitEvent::IndexWriteError(error) => {
+                GitStoreEvent::RepositoryUpdated(_, RepositoryEvent::GitStateUpdated, true) => {
+                    this.schedule_update(true, window, cx);
+                }
+                GitStoreEvent::RepositoryUpdated(_, _, _) => {}
+                GitStoreEvent::RepositoryAdded(_) | GitStoreEvent::RepositoryRemoved(_) => {
+                    this.schedule_update(false, window, cx);
+                }
+                GitStoreEvent::IndexWriteError(error) => {
                     this.workspace
                         .update(cx, |workspace, cx| {
                             workspace.show_error(error, cx);

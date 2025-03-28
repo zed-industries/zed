@@ -24,7 +24,7 @@ mod direnv;
 mod environment;
 use buffer_diff::BufferDiff;
 pub use environment::{EnvironmentErrorMessage, ProjectEnvironmentEvent};
-use git_store::{GitEvent, Repository, RepositoryId};
+use git_store::{GitStoreEvent, Repository, RepositoryEvent, RepositoryId};
 pub mod search_history;
 mod yarn;
 
@@ -2707,13 +2707,15 @@ impl Project {
     fn on_git_store_event(
         &mut self,
         _: Entity<GitStore>,
-        event: &GitEvent,
+        event: &GitStoreEvent,
         cx: &mut Context<Self>,
     ) {
         match event {
-            GitEvent::GitStateUpdated => cx.emit(Event::GitStateUpdated),
-            GitEvent::ActiveRepositoryChanged => cx.emit(Event::ActiveRepositoryChanged),
-            GitEvent::FileSystemUpdated | GitEvent::IndexWriteError(_) => {}
+            GitStoreEvent::RepositoryUpdated(_, RepositoryEvent::GitStateUpdated, _)
+            | GitStoreEvent::RepositoryAdded(_)
+            | GitStoreEvent::RepositoryRemoved(_) => cx.emit(Event::GitStateUpdated),
+            GitStoreEvent::ActiveRepositoryChanged(_) => cx.emit(Event::ActiveRepositoryChanged),
+            GitStoreEvent::IndexWriteError(_) => {}
         }
     }
 

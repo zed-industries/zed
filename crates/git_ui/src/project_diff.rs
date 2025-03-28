@@ -23,7 +23,7 @@ use gpui::{
 use language::{Anchor, Buffer, Capability, OffsetRangeExt};
 use multi_buffer::{MultiBuffer, PathKey};
 use project::{
-    git_store::{GitEvent, GitStore},
+    git_store::{GitStore, GitStoreEvent, RepositoryEvent},
     Project, ProjectPath,
 };
 use std::any::{Any, TypeId};
@@ -153,14 +153,14 @@ impl ProjectDiff {
             &git_store,
             window,
             move |this, _git_store, event, _window, _cx| match event {
-                GitEvent::ActiveRepositoryChanged
-                | GitEvent::FileSystemUpdated
-                | GitEvent::GitStateUpdated => {
+                GitStoreEvent::ActiveRepositoryChanged(_)
+                | GitStoreEvent::RepositoryUpdated(_, RepositoryEvent::GitStateUpdated, true) => {
                     *this.update_needed.borrow_mut() = ();
                 }
                 _ => {}
             },
         );
+        // FIXME worktree store subscription
 
         let (mut send, recv) = postage::watch::channel::<()>();
         let worker = window.spawn(cx, {

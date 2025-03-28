@@ -67,7 +67,7 @@ pub struct GitStore {
         HashMap<(BufferId, DiffKind), Shared<Task<Result<Entity<BufferDiff>, Arc<anyhow::Error>>>>>,
     diffs: HashMap<BufferId, Entity<BufferDiffState>>,
     shared_diffs: HashMap<proto::PeerId, HashMap<BufferId, SharedDiffs>>,
-    _subscriptions: [Subscription; 2],
+    _subscriptions: Vec<Subscription>,
 }
 
 #[derive(Default)]
@@ -207,13 +207,22 @@ enum RepositoryState {
     },
 }
 
-#[derive(Debug)]
-pub enum GitEvent {
-    ActiveRepositoryChanged,
-    FileSystemUpdated,
+#[derive(Clone, Debug)]
+pub enum RepositoryEvent {
     GitStateUpdated,
+}
+
+#[derive(Debug)]
+pub enum GitStoreEvent {
+    ActiveRepositoryChanged(Option<RepositoryId>),
+    RepositoryUpdated(RepositoryId, RepositoryEvent, bool),
+    RepositoryAdded(RepositoryId),
+    RepositoryRemoved(RepositoryId),
     IndexWriteError(anyhow::Error),
 }
+
+impl EventEmitter<RepositoryEvent> for Repository {}
+impl EventEmitter<GitStoreEvent> for GitStore {}
 
 struct GitJob {
     job: Box<dyn FnOnce(RepositoryState, &mut AsyncApp) -> Task<()>>,
@@ -224,12 +233,7 @@ struct GitJob {
 enum GitJobKey {
     WriteIndex(RepoPath),
     BatchReadIndex(ProjectEntryId),
-    Scan,
 }
-
-// FIXME different kinds of events?
-impl EventEmitter<GitEvent> for Repository {}
-impl EventEmitter<GitEvent> for GitStore {}
 
 impl GitStore {
     pub fn local(
@@ -294,7 +298,7 @@ impl GitStore {
         state: GitStoreState,
         cx: &mut Context<Self>,
     ) -> Self {
-        let _subscriptions = [
+        let _subscriptions = vec![
             cx.subscribe(&worktree_store, Self::on_worktree_store_event),
             cx.subscribe(&buffer_store, Self::on_buffer_store_event),
         ];
@@ -1059,15 +1063,24 @@ impl GitStore {
                     {
                         self.local_worktree_git_repos_changed(worktree, changed_repos, cx);
                     }
-                    cx.emit(GitEvent::GitStateUpdated);
-                    // FIXME emit active repository changed as well
                 }
             }
-            WorktreeStoreEvent::WorktreeAdded(_) => {}
-            _ => {
-                cx.emit(GitEvent::FileSystemUpdated);
-            }
+            _ => {}
         }
+    }
+
+    fn on_repository_event(
+        &mut self,
+        repo: Entity<Repository>,
+        event: &RepositoryEvent,
+        cx: &mut Context<Self>,
+    ) {
+        let id = repo.read(cx).id;
+        cx.emit(GitStoreEvent::RepositoryUpdated(
+            id,
+            event.clone(),
+            self.active_repo_id == Some(id),
+        ))
     }
 
     /// Update our list of repositories and schedule git scans in response to a notification from a worktree,
@@ -1105,21 +1118,25 @@ impl GitStore {
                 let id = RepositoryId(next_repository_id.fetch_add(1, atomic::Ordering::Release));
                 let git_store = cx.weak_entity();
                 let repo = cx.new(|cx| {
-                    Repository::local(
+                    let repo = Repository::local(
                         id,
                         work_directory_abs_path,
                         dot_git_abs_path,
-                        updates_tx.clone(),
                         project_environment.downgrade(),
                         fs.clone(),
                         git_store,
                         cx,
-                    )
+                    );
+                    // detach
+                    let _ = repo.schedule_scan(updates_tx.clone(), cx);
+                    repo
                 });
+                self._subscriptions
+                    .push(cx.subscribe(&repo, Self::on_repository_event));
                 self.repositories.insert(id, repo);
-                cx.emit(GitEvent::GitStateUpdated);
+                cx.emit(GitStoreEvent::RepositoryAdded(id));
                 self.active_repo_id.get_or_insert_with(|| {
-                    cx.emit(GitEvent::ActiveRepositoryChanged);
+                    cx.emit(GitStoreEvent::ActiveRepositoryChanged(Some(id)));
                     id
                 });
             }
@@ -1128,6 +1145,7 @@ impl GitStore {
         for id in removed_ids {
             if self.active_repo_id == Some(id) {
                 self.active_repo_id = None;
+                cx.emit(GitStoreEvent::ActiveRepositoryChanged(None));
             }
             self.repositories.remove(&id);
             if let Some(updates_tx) = updates_tx.as_ref() {
@@ -1329,7 +1347,7 @@ impl GitStore {
                             diff.clear_pending_hunks(cx);
                         })
                         .ok();
-                        this.update(cx, |_, cx| cx.emit(GitEvent::IndexWriteError(error)))
+                        this.update(cx, |_, cx| cx.emit(GitStoreEvent::IndexWriteError(error)))
                             .ok();
                     }
                 })
@@ -1697,7 +1715,9 @@ impl GitStore {
                 .context("no upstream client")?
                 .clone();
 
+            let mut is_new = false;
             let repo = this.repositories.entry(id).or_insert_with(|| {
+                is_new = true;
                 let git_store = cx.weak_entity();
                 cx.new(|cx| {
                     Repository::remote(
@@ -1710,14 +1730,18 @@ impl GitStore {
                     )
                 })
             });
+            if is_new {
+                this._subscriptions
+                    .push(cx.subscribe(&repo, Self::on_repository_event))
+            }
 
             repo.update(cx, {
                 let update = update.clone();
-                |repo, _cx| repo.apply_remote_update(update)
+                |repo, cx| repo.apply_remote_update(update, cx)
             })?;
-            cx.emit(GitEvent::GitStateUpdated);
+
             this.active_repo_id.get_or_insert_with(|| {
-                cx.emit(GitEvent::ActiveRepositoryChanged);
+                cx.emit(GitStoreEvent::ActiveRepositoryChanged(Some(id)));
                 id
             });
 
@@ -1744,9 +1768,9 @@ impl GitStore {
             }
             if this.active_repo_id == Some(id) {
                 this.active_repo_id = None;
-                cx.emit(GitEvent::ActiveRepositoryChanged);
+                cx.emit(GitStoreEvent::ActiveRepositoryChanged(None));
             }
-            cx.emit(GitEvent::GitStateUpdated);
+            cx.emit(GitStoreEvent::RepositoryRemoved(id));
         })
     }
 
@@ -2881,14 +2905,13 @@ impl Repository {
         id: RepositoryId,
         work_directory_abs_path: Arc<Path>,
         dot_git_abs_path: Arc<Path>,
-        updates_tx: Option<mpsc::UnboundedSender<DownstreamUpdate>>,
         project_environment: WeakEntity<ProjectEnvironment>,
         fs: Arc<dyn Fs>,
         git_store: WeakEntity<GitStore>,
         cx: &mut Context<Self>,
     ) -> Self {
         let snapshot = RepositorySnapshot::empty(id, work_directory_abs_path.clone());
-        let this = Repository {
+        Repository {
             git_store,
             snapshot,
             commit_message_buffer: None,
@@ -2901,9 +2924,7 @@ impl Repository {
                 fs,
                 cx,
             ),
-        };
-        let _ = this.schedule_scan(updates_tx, cx);
-        this
+        }
     }
 
     fn remote(
@@ -2974,7 +2995,7 @@ impl Repository {
                 return;
             };
             git_store.active_repo_id = Some(id);
-            cx.emit(GitEvent::ActiveRepositoryChanged);
+            cx.emit(GitStoreEvent::ActiveRepositoryChanged(Some(id)));
         });
     }
 
@@ -3768,7 +3789,11 @@ impl Repository {
         })
     }
 
-    pub(crate) fn apply_remote_update(&mut self, update: proto::UpdateRepository) -> Result<()> {
+    pub(crate) fn apply_remote_update(
+        &mut self,
+        update: proto::UpdateRepository,
+        cx: &mut Context<Self>,
+    ) -> Result<()> {
         let conflicted_paths = TreeSet::from_ordered_entries(
             update
                 .current_merge_conflicts
@@ -3794,6 +3819,7 @@ impl Repository {
         self.snapshot.statuses_by_path.edit(edits, &());
         self.snapshot.worktree_scan_id = update.scan_id as usize;
         self.snapshot.completed_scan_id = update.scan_id as usize;
+        cx.emit(RepositoryEvent::GitStateUpdated);
         Ok(())
     }
 
@@ -3867,7 +3893,7 @@ impl Repository {
         cx: &Context<Self>,
     ) -> oneshot::Receiver<anyhow::Result<()>> {
         let this = cx.weak_entity();
-        self.send_keyed_job(Some(GitJobKey::Scan), |state, mut cx| async move {
+        self.send_job(|state, mut cx| async move {
             let Some(this) = this.upgrade() else {
                 return Ok(());
             };
@@ -3881,7 +3907,7 @@ impl Repository {
                 .await?;
             this.update(&mut cx, |this, cx| {
                 this.snapshot = snapshot.clone();
-                cx.emit(GitEvent::GitStateUpdated);
+                cx.emit(RepositoryEvent::GitStateUpdated);
             })?;
             if let Some(updates_tx) = updates_tx {
                 updates_tx
@@ -3987,6 +4013,11 @@ impl Repository {
         .detach_and_log_err(cx);
 
         job_tx
+    }
+
+    /// Returns a channel that will resolve when all previously-submitted git jobs have completed.
+    pub fn scan_barrier(&self) -> oneshot::Receiver<()> {
+        todo!()
     }
 }
 
