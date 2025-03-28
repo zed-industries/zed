@@ -46,6 +46,7 @@ members = [
     "crates/diagnostics",
     "crates/docs_preprocessor",
     "crates/editor",
+    "crates/explorer_command_injector",
     "crates/evals",
     "crates/extension",
     "crates/extension_api",
@@ -401,8 +402,12 @@ async-tungstenite = "0.28"
 async-watch = "0.3.1"
 async_zip = { version = "0.0.17", features = ["deflate", "deflate64"] }
 aws-config = { version = "1.5.16", features = ["behavior-version-latest"] }
-aws-credential-types = { version = "1.2.1", features = ["hardcoded-credentials"] }
-aws-sdk-bedrockruntime = { version = "1.73.0", features = ["behavior-version-latest"] }
+aws-credential-types = { version = "1.2.1", features = [
+    "hardcoded-credentials",
+] }
+aws-sdk-bedrockruntime = { version = "1.73.0", features = [
+    "behavior-version-latest",
+] }
 aws-smithy-runtime-api = { version = "1.7.3", features = ["http-1x", "client"] }
 aws-smithy-types = { version = "1.2.13", features = ["http-body-1-x"] }
 base64 = "0.22"
@@ -594,6 +599,7 @@ wasmtime = { version = "29", default-features = false, features = [
 ] }
 wasmtime-wasi = "29"
 which = "6.0.0"
+windows-core = "0.61"
 wit-component = "0.221"
 zed_llm_client = "0.4"
 zstd = "0.11"
