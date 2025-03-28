@@ -523,6 +523,9 @@ define_connection! {
     ),
     sql!(
         ALTER TABLE breakpoints ADD COLUMN state INTEGER DEFAULT(0) NOT NULL
+    ),
+    sql!(
+        ALTER TABLE breakpoints DROP COLUMN kind
     )
     ];
 }
@@ -676,7 +679,7 @@ impl WorkspaceDb {
     fn breakpoints(&self, workspace_id: WorkspaceId) -> BTreeMap<Arc<Path>, Vec<SourceBreakpoint>> {
         let breakpoints: Result<Vec<(PathBuf, Breakpoint)>> = self
             .select_bound(sql! {
-                SELECT path, breakpoint_location, kind, log_message, state
+                SELECT path, breakpoint_location, log_message, state
                 FROM breakpoints
                 WHERE workspace_id = ?
             })
