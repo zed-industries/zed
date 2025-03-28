@@ -385,35 +385,12 @@ impl ActiveThread {
 
                 if self.should_show_notification(window, cx) && !thread.is_generating() {
                     if thread.used_tools_since_last_user_message() {
-                        let thread = self.thread.clone();
-
-                        let window_handle = window.window_handle();
-
-                        cx.spawn(async move |active_thread, cx| {
-                            let summary = thread
-                                .update(cx, |thread, cx| thread.generate_notification_summary(cx))
-                                .ok();
-
-                            if let Some(summary_task) = summary {
-                                let summary = summary_task.await;
-
-                                window_handle
-                                    .update(cx, |_, window, cx| {
-                                        active_thread.update(cx, |active_thread, cx| {
-                                            active_thread.show_notification(
-                                                summary
-                                                    .log_err()
-                                                    .unwrap_or("New message".to_string()),
-                                                IconName::ZedAssistant,
-                                                window,
-                                                cx,
-                                            );
-                                        })
-                                    })
-                                    .ok();
-                            }
-                        })
-                        .detach();
+                        self.show_notification(
+                            "Finished running tools",
+                            IconName::ZedAssistant,
+                            window,
+                            cx,
+                        );
                     } else {
                         self.show_notification("New message", IconName::ZedAssistant, window, cx);
                     }
@@ -575,12 +552,18 @@ impl ActiveThread {
 
         let caption = caption.into();
 
+        let title = self
+            .thread
+            .read(cx)
+            .summary()
+            .unwrap_or("Agent Panel".into());
+
         for screen in cx.displays() {
             let options = AgentNotification::window_options(screen, cx);
 
             if let Some(screen_window) = cx
                 .open_window(options, |_, cx| {
-                    cx.new(|_| AgentNotification::new(caption.clone(), icon))
+                    cx.new(|_| AgentNotification::new(title.clone(), caption.clone(), icon))
                 })
                 .log_err()
             {

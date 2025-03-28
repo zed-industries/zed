@@ -9,13 +9,19 @@ use theme;
 use ui::{prelude::*, Render};
 
 pub struct AgentNotification {
+    title: SharedString,
     caption: SharedString,
     icon: IconName,
 }
 
 impl AgentNotification {
-    pub fn new(caption: impl Into<SharedString>, icon: IconName) -> Self {
+    pub fn new(
+        title: impl Into<SharedString>,
+        caption: impl Into<SharedString>,
+        icon: IconName,
+    ) -> Self {
         Self {
+            title: title.into(),
             caption: caption.into(),
             icon,
         }
@@ -103,13 +109,13 @@ impl Render for AgentNotification {
                                 div()
                                     .text_size(px(14.))
                                     .text_color(cx.theme().colors().text)
-                                    .child("Agent Panel"),
+                                    .child(self.title.clone()),
                             )
                             .child(
                                 div()
                                     .text_size(px(12.))
                                     .text_color(cx.theme().colors().text_muted)
-                                    .max_w(px(318.))
+                                    .max_w(px(340.))
                                     .truncate()
                                     .child(self.caption.clone())
                                     .relative()
@@ -128,20 +134,22 @@ impl Render for AgentNotification {
             .child(
                 v_flex()
                     .gap_1()
-                    .child(Button::new("dismiss", "Dismiss").on_click({
-                        cx.listener(move |_, _event, _, cx| {
-                            cx.emit(AgentNotificationEvent::Dismissed);
-                        })
-                    }))
+                    .items_center()
                     .child(
                         Button::new("open", "View Panel")
                             .style(ButtonStyle::Tinted(ui::TintColor::Accent))
+                            .full_width()
                             .on_click({
                                 cx.listener(move |_this, _event, _, cx| {
                                     cx.emit(AgentNotificationEvent::Accepted);
                                 })
                             }),
-                    ),
+                    )
+                    .child(Button::new("dismiss", "Dismiss").full_width().on_click({
+                        cx.listener(move |_, _event, _, cx| {
+                            cx.emit(AgentNotificationEvent::Dismissed);
+                        })
+                    })),
             )
     }
 }
