@@ -125,7 +125,7 @@ impl AssistantDiff {
         let changed_buffers = thread.action_log().read(cx).changed_buffers();
         let mut paths_to_delete = self.multibuffer.read(cx).paths().collect::<HashSet<_>>();
 
-        for (buffer, tracked) in changed_buffers {
+        for (buffer, changed) in changed_buffers {
             let Some(file) = buffer.read(cx).file().cloned() else {
                 continue;
             };
@@ -134,7 +134,7 @@ impl AssistantDiff {
             paths_to_delete.remove(&path_key);
 
             let snapshot = buffer.read(cx).snapshot();
-            let diff = tracked.diff().read(cx);
+            let diff = changed.diff.read(cx);
             let diff_hunk_ranges = diff
                 .hunks_intersecting_range(
                     language::Anchor::MIN..language::Anchor::MAX,
@@ -153,7 +153,7 @@ impl AssistantDiff {
                     editor::DEFAULT_MULTIBUFFER_CONTEXT,
                     cx,
                 );
-                multibuffer.add_diff(tracked.diff().clone(), cx);
+                multibuffer.add_diff(changed.diff.clone(), cx);
                 was_empty
             });
 

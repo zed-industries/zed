@@ -708,6 +708,7 @@ dependencies = [
  "project",
  "serde",
  "serde_json",
+ "text",
 ]
 
 [[package]]

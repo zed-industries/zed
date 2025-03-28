@@ -450,7 +450,7 @@ impl Render for MessageEditor {
                             parent.child(
                                 v_flex().bg(cx.theme().colors().editor_background).children(
                                     changed_buffers.into_iter().enumerate().flat_map(
-                                        |(index, (buffer, tracked))| {
+                                        |(index, (buffer, changed))| {
                                             let file = buffer.read(cx).file()?;
                                             let path = file.path();
 
@@ -505,7 +505,7 @@ impl Render for MessageEditor {
                                                         .child(
                                                             Label::new("-").color(Color::Deleted),
                                                         )
-                                                        .when(!tracked.needs_review(), |parent| {
+                                                        .when(!changed.needs_review, |parent| {
                                                             parent.child(
                                                                 Icon::new(IconName::Check)
                                                                     .color(Color::Success),
