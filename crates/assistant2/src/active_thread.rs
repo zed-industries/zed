@@ -1512,13 +1512,13 @@ impl ActiveThread {
                 ),
             });
 
-        fn gradient_overlay(color: Hsla, position: Pixels) -> impl IntoElement {
+        fn gradient_overlay(color: Hsla) -> impl IntoElement {
             div()
                 .h_full()
                 .absolute()
                 .w_8()
                 .bottom_0()
-                .right(position)
+                .right_12()
                 .bg(linear_gradient(
                     90.,
                     linear_color_stop(color, 1.),
@@ -1538,6 +1538,7 @@ impl ActiveThread {
                                 .justify_between()
                                 .opacity(0.8)
                                 .hover(|style| style.opacity(1.))
+                                .pr_2()
                                 // .when(!is_open, |this| {
                                 //     this.pb_1()
                                 //         .border_b_1()
@@ -1585,10 +1586,7 @@ impl ActiveThread {
                                         )
                                         .child(status_icons),
                                 )
-                                .child(gradient_overlay(
-                                    cx.theme().colors().panel_background,
-                                    px(42.),
-                                )),
+                                .child(gradient_overlay(cx.theme().colors().panel_background)),
                         )
                         .map(|parent| {
                             if !is_open {
@@ -1672,7 +1670,7 @@ impl ActiveThread {
                                         )
                                         .child(status_icons),
                                 )
-                                .child(gradient_overlay(self.tool_card_header_bg(cx), px(48.))),
+                                .child(gradient_overlay(self.tool_card_header_bg(cx))),
                         )
                         .map(|parent| {
                             if !is_open {
