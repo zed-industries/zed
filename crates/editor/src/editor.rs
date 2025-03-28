@@ -17519,12 +17519,14 @@ impl Editor {
         self.read_scroll_position_from_db(item_id, workspace_id, window, cx);
     }
 
-    // TODO kb settings to disable this
     pub fn update_restoration_data<T>(
         &self,
         cx: &mut Context<Self>,
         write: impl FnOnce(&mut RestorationData) -> T,
     ) -> Option<T> {
+        if !WorkspaceSettings::get(None, cx).restore_on_file_reopen {
+            return None;
+        }
         let kind = Editor::project_item_kind()?;
         let pane = self.workspace()?.read(cx).pane_for(&cx.entity())?;
         let buffer = self.buffer().read(cx).as_singleton()?;

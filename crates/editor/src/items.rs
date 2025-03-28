@@ -42,7 +42,7 @@ use util::{paths::PathExt, ResultExt, TryFutureExt};
 use workspace::{
     item::{BreadcrumbText, FollowEvent, ProjectItemKind},
     searchable::SearchOptions,
-    OpenVisible, Pane,
+    OpenVisible, Pane, WorkspaceSettings,
 };
 use workspace::{
     item::{Dedup, ItemSettings, SerializableItem, TabContentParams},
@@ -1291,20 +1291,21 @@ impl ProjectItem for Editor {
     ) -> Self {
         let mut editor = Self::for_buffer(buffer.clone(), Some(project), window, cx);
 
-        let entry_id = buffer.read(cx).entry_id(cx);
-        if let Some(restoration_data) = Self::project_item_kind()
-            .and_then(|kind| pane.item_restoration_data.get(&kind))
-            .and_then(|data| data.downcast_ref::<EditorRestorationData>())
-            .and_then(|data| data.entries.get(&entry_id?))
-            .filter(|data| !buffer.read(cx).version.changed_since(&data.buffer_version))
-        {
-            editor.fold_ranges(restoration_data.folds.clone(), false, window, cx);
-            if !restoration_data.selections.is_empty() {
-                editor.change_selections(None, window, cx, |s| {
-                    s.select_ranges(restoration_data.selections.clone());
-                });
+        if WorkspaceSettings::get(None, cx).restore_on_file_reopen {
+            if let Some(restoration_data) = Self::project_item_kind()
+                .and_then(|kind| pane.item_restoration_data.get(&kind))
+                .and_then(|data| data.downcast_ref::<EditorRestorationData>())
+                .and_then(|data| data.entries.get(&buffer.read(cx).entry_id(cx)?))
+                .filter(|data| !buffer.read(cx).version.changed_since(&data.buffer_version))
+            {
+                editor.fold_ranges(restoration_data.folds.clone(), false, window, cx);
+                if !restoration_data.selections.is_empty() {
+                    editor.change_selections(None, window, cx, |s| {
+                        s.select_ranges(restoration_data.selections.clone());
+                    });
+                }
+                editor.set_scroll_anchor(restoration_data.scroll_anchor, window, cx);
             }
-            editor.set_scroll_anchor(restoration_data.scroll_anchor, window, cx);
         }
 
         editor
