@@ -400,6 +400,7 @@ impl GitPanel {
 
         let scroll_handle = UniformListScrollHandle::new();
 
+        // FIXME need a worktree store subscription?
         cx.subscribe_in(
             &git_store,
             window,

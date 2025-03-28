@@ -53,7 +53,7 @@ use std::{
 };
 use sum_tree::{SumTree, TreeSet};
 use text::BufferId;
-use util::{debug_panic, maybe, ResultExt};
+use util::{debug_panic, ResultExt};
 use worktree::{File, PathKey, ProjectEntryId, StatusEntry, UpdatedGitRepositoriesSet, Worktree};
 
 pub struct GitStore {
@@ -853,61 +853,39 @@ impl GitStore {
         cx: &App,
     ) -> Task<Result<Option<Blame>>> {
         let buffer = buffer.read(cx);
-        let Some(file) = File::from_dyn(buffer.file()) else {
-            return Task::ready(Err(anyhow!("buffer has no file")));
+        let Some((repo, repo_path)) =
+            self.repository_and_path_for_buffer_id(buffer.remote_id(), cx)
+        else {
+            return Task::ready(Err(anyhow!("failed to find a git repository for buffer")));
         };
+        let content = match &version {
+            Some(version) => buffer.rope_for_version(version).clone(),
+            None => buffer.as_rope().clone(),
+        };
+        let version = version.unwrap_or(buffer.version());
+        let buffer_id = buffer.remote_id();
 
-        match file.worktree.clone().read(cx) {
-            Worktree::Local(worktree) => {
-                let worktree = worktree.snapshot();
-                // FIXME git store!!
-                let blame_params = maybe!({
-                    let local_repo = match worktree.local_repo_containing_path(&file.path) {
-                        Some(repo_for_path) => repo_for_path,
-                        None => return Ok(None),
-                    };
-
-                    let relative_path = local_repo
-                        .relativize(&file.path)
-                        .context("failed to relativize buffer path")?;
-
-                    let repo = local_repo.repo().clone();
-
-                    let content = match version {
-                        Some(version) => buffer.rope_for_version(&version).clone(),
-                        None => buffer.as_rope().clone(),
-                    };
-
-                    anyhow::Ok(Some((repo, relative_path, content)))
-                });
-
-                cx.spawn(async move |_cx| {
-                    let Some((repo, relative_path, content)) = blame_params? else {
-                        return Ok(None);
-                    };
-                    repo.blame(relative_path.clone(), content)
-                        .await
-                        .with_context(|| format!("Failed to blame {:?}", relative_path.0))
-                        .map(Some)
-                })
-            }
-            Worktree::Remote(worktree) => {
-                let buffer_id = buffer.remote_id();
-                let version = buffer.version();
-                let project_id = worktree.project_id();
-                let client = worktree.client();
-                cx.spawn(async move |_| {
+        let rx = repo.read(cx).send_job(move |state, _| async move {
+            match state {
+                RepositoryState::Local { backend, .. } => backend
+                    .blame(repo_path.clone(), content)
+                    .await
+                    .with_context(|| format!("Failed to blame {:?}", repo_path))
+                    .map(Some),
+                RepositoryState::Remote { project_id, client } => {
                     let response = client
                         .request(proto::BlameBuffer {
-                            project_id,
+                            project_id: project_id.to_proto(),
                             buffer_id: buffer_id.into(),
                             version: serialize_version(&version),
                         })
                         .await?;
                     Ok(deserialize_blame_buffer_response(response))
-                })
+                }
             }
-        }
+        });
+
+        cx.spawn(|_: &mut AsyncApp| async move { Ok(rx.await??) })
     }
 
     pub fn get_permalink_to_line(

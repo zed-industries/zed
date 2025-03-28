@@ -160,7 +160,7 @@ impl ProjectDiff {
                 _ => {}
             },
         );
-        // FIXME worktree store subscription
+        // FIXME worktree store subscription?
 
         let (mut send, recv) = postage::watch::channel::<()>();
         let worker = window.spawn(cx, {
