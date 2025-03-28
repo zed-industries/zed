@@ -10,7 +10,7 @@ use std::sync::Arc;
 
 use assistant_settings::AssistantSettings;
 use assistant_slash_command::SlashCommandRegistry;
-use assistant_slash_commands::{ProjectSlashCommandFeatureFlag, SearchSlashCommandFeatureFlag};
+use assistant_slash_commands::SearchSlashCommandFeatureFlag;
 use client::Client;
 use command_palette_hooks::CommandPaletteFilter;
 use feature_flags::FeatureFlagAppExt;
@@ -108,11 +108,8 @@ pub fn init(
             let is_search_slash_command_enabled = cx
                 .update(|cx| cx.wait_for_flag::<SearchSlashCommandFeatureFlag>())?
                 .await;
-            let is_project_slash_command_enabled = cx
-                .update(|cx| cx.wait_for_flag::<ProjectSlashCommandFeatureFlag>())?
-                .await;
 
-            if !is_search_slash_command_enabled && !is_project_slash_command_enabled {
+            if !is_search_slash_command_enabled {
                 return Ok(());
             }
 
@@ -137,7 +134,7 @@ pub fn init(
     assistant_panel::init(cx);
     context_server::init(cx);
 
-    register_slash_commands(Some(prompt_builder.clone()), cx);
+    register_slash_commands(cx);
     inline_assistant::init(
         fs.clone(),
         prompt_builder.clone(),
@@ -213,7 +210,7 @@ fn update_active_language_model_from_settings(cx: &mut App) {
     });
 }
 
-fn register_slash_commands(prompt_builder: Option<Arc<PromptBuilder>>, cx: &mut App) {
+fn register_slash_commands(cx: &mut App) {
     let slash_command_registry = SlashCommandRegistry::global(cx);
 
     slash_command_registry.register_command(assistant_slash_commands::FileSlashCommand, true);
@@ -230,21 +227,6 @@ fn register_slash_commands(prompt_builder: Option<Arc<PromptBuilder>>, cx: &mut 
     slash_command_registry
         .register_command(assistant_slash_commands::DiagnosticsSlashCommand, true);
     slash_command_registry.register_command(assistant_slash_commands::FetchSlashCommand, true);
-
-    if let Some(prompt_builder) = prompt_builder {
-        cx.observe_flag::<assistant_slash_commands::ProjectSlashCommandFeatureFlag, _>({
-            let slash_command_registry = slash_command_registry.clone();
-            move |is_enabled, _cx| {
-                if is_enabled {
-                    slash_command_registry.register_command(
-                        assistant_slash_commands::ProjectSlashCommand::new(prompt_builder.clone()),
-                        true,
-                    );
-                }
-            }
-        })
-        .detach();
-    }
 
     cx.observe_flag::<assistant_slash_commands::StreamingExampleSlashCommandFeatureFlag, _>({
         let slash_command_registry = slash_command_registry.clone();
