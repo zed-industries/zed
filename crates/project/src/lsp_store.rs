@@ -1228,7 +1228,7 @@ impl LocalLspStore {
                         .await;
                     buffer.handle.update(cx, |buffer, cx| {
                         buffer.start_transaction();
-                        buffer.apply_diff(diff, cx);
+                        buffer.apply_diff(diff, true, cx);
                         transaction_id_format =
                             transaction_id_format.or(buffer.end_transaction(cx));
                         if let Some(transaction_id) = transaction_id_format {
@@ -1362,7 +1362,7 @@ impl LocalLspStore {
                         zlog::trace!(logger => "Applying changes");
                         buffer.handle.update(cx, |buffer, cx| {
                             buffer.start_transaction();
-                            buffer.apply_diff(diff, cx);
+                            buffer.apply_diff(diff, true, cx);
                             transaction_id_format =
                                 transaction_id_format.or(buffer.end_transaction(cx));
                             if let Some(transaction_id) = transaction_id_format {
@@ -1405,7 +1405,7 @@ impl LocalLspStore {
                         zlog::trace!(logger => "Applying changes");
                         buffer.handle.update(cx, |buffer, cx| {
                             buffer.start_transaction();
-                            buffer.apply_diff(diff, cx);
+                            buffer.apply_diff(diff, true, cx);
                             transaction_id_format =
                                 transaction_id_format.or(buffer.end_transaction(cx));
                             if let Some(transaction_id) = transaction_id_format {

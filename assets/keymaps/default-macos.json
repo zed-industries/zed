@@ -147,10 +147,6 @@
       "ctrl-shift-v": ["editor::MovePageUp", { "center_cursor": true }],
       "ctrl-cmd-space": "editor::ShowCharacterPalette",
       "cmd-;": "editor::ToggleLineNumbers",
-      "cmd-alt-z": "git::Restore",
-      "cmd-alt-y": "git::ToggleStaged",
-      "cmd-y": "git::StageAndNext",
-      "cmd-shift-y": "git::UnstageAndNext",
       "cmd-'": "editor::ToggleSelectedDiffHunks",
       "cmd-\"": "editor::ExpandAllDiffHunks",
       "cmd-alt-g b": "editor::ToggleGitBlame",
@@ -229,6 +225,24 @@
     "bindings": {
       "ctrl-shift-enter": "repl::Run",
       "ctrl-alt-enter": "repl::RunInPlace"
+    }
+  },
+  {
+    "context": "Editor && !assistant_diff",
+    "use_key_equivalents": true,
+    "bindings": {
+      "cmd-alt-z": "git::Restore",
+      "cmd-alt-y": "git::ToggleStaged",
+      "cmd-y": "git::StageAndNext",
+      "cmd-shift-y": "git::UnstageAndNext"
+    }
+  },
+  {
+    "context": "AssistantDiff",
+    "use_key_equivalents": true,
+    "bindings": {
+      "cmd-y": "assistant2::ToggleKeep",
+      "cmd-alt-z": "assistant2::Reject"
     }
   },
   {
