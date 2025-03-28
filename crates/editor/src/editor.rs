@@ -797,7 +797,7 @@ pub struct Editor {
     serialize_selections: Task<()>,
     serialize_folds: Task<()>,
     mouse_cursor_hidden: bool,
-    hide_mouse: HideMouseMode,
+    hide_mouse_mode: HideMouseMode,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Default)]
@@ -1577,7 +1577,7 @@ impl Editor {
             text_style_refinement: None,
             load_diff_task: load_uncommitted_diff,
             mouse_cursor_hidden: false,
-            hide_mouse: EditorSettings::get_global(cx)
+            hide_mouse_mode: EditorSettings::get_global(cx)
                 .hide_mouse
                 .unwrap_or_default(),
         };
@@ -1709,12 +1709,12 @@ impl Editor {
         self.mouse_cursor_hidden = match origin {
             HideMouseCursorOrigin::TypingAction => {
                 matches!(
-                    self.hide_mouse,
+                    self.hide_mouse_mode,
                     HideMouseMode::OnTyping | HideMouseMode::OnTypingAndMovement
                 )
             }
             HideMouseCursorOrigin::MovementAction => {
-                matches!(self.hide_mouse, HideMouseMode::OnTypingAndMovement)
+                matches!(self.hide_mouse_mode, HideMouseMode::OnTypingAndMovement)
             }
         };
     }
@@ -16680,7 +16680,7 @@ impl Editor {
             self.scroll_manager.vertical_scroll_margin = editor_settings.vertical_scroll_margin;
             self.show_breadcrumbs = editor_settings.toolbar.breadcrumbs;
             self.cursor_shape = editor_settings.cursor_shape.unwrap_or_default();
-            self.hide_mouse = editor_settings.hide_mouse.unwrap_or_default();
+            self.hide_mouse_mode = editor_settings.hide_mouse.unwrap_or_default();
         }
 
         if old_cursor_shape != self.cursor_shape {
