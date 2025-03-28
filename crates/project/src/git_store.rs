@@ -42,7 +42,7 @@ use rpc::{
 use serde::Deserialize;
 use std::{
     cmp::Ordering,
-    collections::{hash_map, VecDeque},
+    collections::VecDeque,
     future::Future,
     ops::Range,
     path::{Path, PathBuf},
@@ -484,28 +484,31 @@ impl GitStore {
             }
         }
 
-        let task = match self.loading_diffs.entry((buffer_id, DiffKind::Unstaged)) {
-            hash_map::Entry::Occupied(e) => e.get().clone(),
-            hash_map::Entry::Vacant(entry) => {
-                let staged_text = self.state.load_staged_text(&buffer, &self.buffer_store, cx);
-                entry
-                    .insert(
-                        cx.spawn(async move |this, cx| {
-                            Self::open_diff_internal(
-                                this,
-                                DiffKind::Unstaged,
-                                staged_text.await.map(DiffBasesChange::SetIndex),
-                                buffer,
-                                cx,
-                            )
-                            .await
-                            .map_err(Arc::new)
-                        })
-                        .shared(),
-                    )
-                    .clone()
-            }
+        let Some((repo, repo_path)) =
+            self.repository_and_path_for_buffer_id(buffer.read(cx).remote_id(), cx)
+        else {
+            return Task::ready(Err(anyhow!("failed to find git repository for buffer")));
         };
+
+        let task = self
+            .loading_diffs
+            .entry((buffer_id, DiffKind::Unstaged))
+            .or_insert_with(|| {
+                let staged_text = repo.read(cx).load_staged_text(buffer_id, repo_path, cx);
+                cx.spawn(async move |this, cx| {
+                    Self::open_diff_internal(
+                        this,
+                        DiffKind::Unstaged,
+                        staged_text.await.map(DiffBasesChange::SetIndex),
+                        buffer,
+                        cx,
+                    )
+                    .await
+                    .map_err(Arc::new)
+                })
+                .shared()
+            })
+            .clone();
 
         cx.background_spawn(async move { task.await.map_err(|e| anyhow!("{e}")) })
     }
@@ -536,31 +539,25 @@ impl GitStore {
             }
         }
 
-        let task = match self.loading_diffs.entry((buffer_id, DiffKind::Uncommitted)) {
-            hash_map::Entry::Occupied(e) => e.get().clone(),
-            hash_map::Entry::Vacant(entry) => {
-                let changes = self
-                    .state
-                    .load_committed_text(&buffer, &self.buffer_store, cx);
-
-                entry
-                    .insert(
-                        cx.spawn(async move |this, cx| {
-                            Self::open_diff_internal(
-                                this,
-                                DiffKind::Uncommitted,
-                                changes.await,
-                                buffer,
-                                cx,
-                            )
-                            .await
-                            .map_err(Arc::new)
-                        })
-                        .shared(),
-                    )
-                    .clone()
-            }
+        let Some((repo, repo_path)) =
+            self.repository_and_path_for_buffer_id(buffer.read(cx).remote_id(), cx)
+        else {
+            return Task::ready(Err(anyhow!("failed to find git repository for buffer")));
         };
+
+        let task = self
+            .loading_diffs
+            .entry((buffer_id, DiffKind::Uncommitted))
+            .or_insert_with(|| {
+                let changes = repo.read(cx).load_committed_text(buffer_id, repo_path, cx);
+                cx.spawn(async move |this, cx| {
+                    Self::open_diff_internal(this, DiffKind::Uncommitted, changes.await, buffer, cx)
+                        .await
+                        .map_err(Arc::new)
+                })
+                .shared()
+            })
+            .clone();
 
         cx.background_spawn(async move { task.await.map_err(|e| anyhow!("{e}")) })
     }
@@ -1353,7 +1350,7 @@ impl GitStore {
             if file.worktree != worktree {
                 continue;
             }
-            let Some((repo, _)) =
+            let Some((repo, repo_path)) =
                 self.repository_and_path_for_buffer_id(buffer.read(cx).remote_id(), cx)
             else {
                 continue;
@@ -1379,7 +1376,7 @@ impl GitStore {
 
             let update = (
                 buffer,
-                file.path.clone(),
+                repo_path,
                 has_unstaged_diff.then(|| diff_state.index_text.clone()),
                 has_uncommitted_diff.then(|| diff_state.head_text.clone()),
                 diff_state.hunk_staging_operation_count,
@@ -1392,46 +1389,31 @@ impl GitStore {
         }
 
         for (repo, repo_diff_state_updates) in diff_state_updates.into_iter() {
-            let worktree = worktree.downgrade();
             let git_store = cx.weak_entity();
 
             let _ = repo.read(cx).send_keyed_job(
                 Some(GitJobKey::BatchReadIndex),
-                |_, mut cx| async move {
-                    let snapshot = worktree.update(&mut cx, |tree, _| {
-                        tree.as_local().map(|local_tree| local_tree.snapshot())
-                    });
-                    let Ok(Some(snapshot)) = snapshot else {
+                |state, mut cx| async move {
+                    let RepositoryState::Local { backend, .. } = state else {
+                        log::error!("tried to recompute diffs for a non-local repository");
                         return;
                     };
-
                     let mut diff_bases_changes_by_buffer = Vec::new();
                     for (
                         buffer,
-                        path,
+                        repo_path,
                         current_index_text,
                         current_head_text,
                         hunk_staging_operation_count,
                     ) in &repo_diff_state_updates
                     {
-                        let Some(local_repo) = snapshot.local_repo_containing_path(&path) else {
-                            continue;
-                        };
-                        let Some(relative_path) = local_repo.relativize(&path).ok() else {
-                            continue;
-                        };
-
-                        log::debug!("reloading git state for buffer {}", path.display());
                         let index_text = if current_index_text.is_some() {
-                            local_repo
-                                .repo()
-                                .load_index_text(None, relative_path.clone())
-                                .await
+                            backend.load_index_text(None, repo_path.clone()).await
                         } else {
                             None
                         };
                         let head_text = if current_head_text.is_some() {
-                            local_repo.repo().load_committed_text(relative_path).await
+                            backend.load_committed_text(repo_path.clone()).await
                         } else {
                             None
                         };
@@ -2615,116 +2597,6 @@ fn make_remote_delegate(
         })
         .log_err();
     })
-}
-
-impl GitStoreState {
-    fn load_staged_text(
-        &self,
-        buffer: &Entity<Buffer>,
-        buffer_store: &Entity<BufferStore>,
-        cx: &App,
-    ) -> Task<Result<Option<String>>> {
-        match self {
-            GitStoreState::Local { .. } => {
-                if let Some((worktree, path)) =
-                    buffer_store.read(cx).worktree_for_buffer(buffer, cx)
-                {
-                    worktree.read(cx).load_staged_file(path.as_ref(), cx)
-                } else {
-                    return Task::ready(Err(anyhow!("no such worktree")));
-                }
-            }
-            GitStoreState::Ssh {
-                upstream_client,
-                upstream_project_id: project_id,
-                ..
-            }
-            | GitStoreState::Remote {
-                upstream_client,
-                upstream_project_id: project_id,
-            } => {
-                let buffer_id = buffer.read(cx).remote_id();
-                let project_id = *project_id;
-                let client = upstream_client.clone();
-                cx.background_spawn(async move {
-                    let response = client
-                        .request(proto::OpenUnstagedDiff {
-                            project_id: project_id.to_proto(),
-                            buffer_id: buffer_id.to_proto(),
-                        })
-                        .await?;
-                    Ok(response.staged_text)
-                })
-            }
-        }
-    }
-
-    fn load_committed_text(
-        &self,
-        buffer: &Entity<Buffer>,
-        buffer_store: &Entity<BufferStore>,
-        cx: &App,
-    ) -> Task<Result<DiffBasesChange>> {
-        match self {
-            GitStoreState::Local { .. } => {
-                if let Some((worktree, path)) =
-                    buffer_store.read(cx).worktree_for_buffer(buffer, cx)
-                {
-                    let worktree = worktree.read(cx);
-                    let committed_text = worktree.load_committed_file(&path, cx);
-                    let staged_text = worktree.load_staged_file(&path, cx);
-                    cx.background_spawn(async move {
-                        let committed_text = committed_text.await?;
-                        let staged_text = staged_text.await?;
-                        let diff_bases_change = if committed_text == staged_text {
-                            DiffBasesChange::SetBoth(committed_text)
-                        } else {
-                            DiffBasesChange::SetEach {
-                                index: staged_text,
-                                head: committed_text,
-                            }
-                        };
-                        Ok(diff_bases_change)
-                    })
-                } else {
-                    Task::ready(Err(anyhow!("no such worktree")))
-                }
-            }
-            GitStoreState::Ssh {
-                upstream_client,
-                upstream_project_id: project_id,
-                ..
-            }
-            | GitStoreState::Remote {
-                upstream_client,
-                upstream_project_id: project_id,
-            } => {
-                use proto::open_uncommitted_diff_response::Mode;
-
-                let buffer_id = buffer.read(cx).remote_id();
-                let project_id = *project_id;
-                let client = upstream_client.clone();
-                cx.background_spawn(async move {
-                    let response = client
-                        .request(proto::OpenUncommittedDiff {
-                            project_id: project_id.to_proto(),
-                            buffer_id: buffer_id.to_proto(),
-                        })
-                        .await?;
-                    let mode =
-                        Mode::from_i32(response.mode).ok_or_else(|| anyhow!("Invalid mode"))?;
-                    let bases = match mode {
-                        Mode::IndexMatchesHead => DiffBasesChange::SetBoth(response.committed_text),
-                        Mode::IndexAndHead => DiffBasesChange::SetEach {
-                            head: response.committed_text,
-                            index: response.staged_text,
-                        },
-                    };
-                    Ok(bases)
-                })
-            }
-        }
-    }
 }
 
 impl RepositoryId {
@@ -3993,6 +3865,78 @@ impl Repository {
     /// Returns a channel that will resolve when all previously-submitted git jobs have completed.
     pub fn scan_barrier(&self) -> oneshot::Receiver<()> {
         todo!()
+    }
+
+    fn load_staged_text(
+        &self,
+        buffer_id: BufferId,
+        repo_path: RepoPath,
+        cx: &App,
+    ) -> Task<Result<Option<String>>> {
+        let rx = self.send_job(move |state, _| async move {
+            match state {
+                RepositoryState::Local { backend, .. } => {
+                    anyhow::Ok(backend.load_index_text(None, repo_path).await)
+                }
+                RepositoryState::Remote { project_id, client } => {
+                    let response = client
+                        .request(proto::OpenUnstagedDiff {
+                            project_id: project_id.to_proto(),
+                            buffer_id: buffer_id.to_proto(),
+                        })
+                        .await?;
+                    Ok(response.staged_text)
+                }
+            }
+        });
+        cx.spawn(|_: &mut AsyncApp| async move { Ok(rx.await??) })
+    }
+
+    fn load_committed_text(
+        &self,
+        buffer_id: BufferId,
+        repo_path: RepoPath,
+        cx: &App,
+    ) -> Task<Result<DiffBasesChange>> {
+        let rx = self.send_job(move |state, _| async move {
+            match state {
+                RepositoryState::Local { backend, .. } => {
+                    let committed_text = backend.load_committed_text(repo_path.clone()).await;
+                    let staged_text = backend.load_index_text(None, repo_path).await;
+                    let diff_bases_change = if committed_text == staged_text {
+                        DiffBasesChange::SetBoth(committed_text)
+                    } else {
+                        DiffBasesChange::SetEach {
+                            index: staged_text,
+                            head: committed_text,
+                        }
+                    };
+                    anyhow::Ok(diff_bases_change)
+                }
+                RepositoryState::Remote { project_id, client } => {
+                    use proto::open_uncommitted_diff_response::Mode;
+
+                    let response = client
+                        .request(proto::OpenUncommittedDiff {
+                            project_id: project_id.to_proto(),
+                            buffer_id: buffer_id.to_proto(),
+                        })
+                        .await?;
+                    let mode =
+                        Mode::from_i32(response.mode).ok_or_else(|| anyhow!("Invalid mode"))?;
+                    let bases = match mode {
+                        Mode::IndexMatchesHead => DiffBasesChange::SetBoth(response.committed_text),
+                        Mode::IndexAndHead => DiffBasesChange::SetEach {
+                            head: response.committed_text,
+                            index: response.staged_text,
+                        },
+                    };
+                    Ok(bases)
+                }
+            }
+        });
+
+        cx.spawn(|_: &mut AsyncApp| async move { Ok(rx.await??) })
     }
 }
 
