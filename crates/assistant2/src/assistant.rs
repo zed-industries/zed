@@ -35,7 +35,7 @@ use settings::Settings as _;
 use thread::ThreadId;
 
 pub use crate::active_thread::ActiveThread;
-use crate::assistant_configuration::AddContextServerModal;
+use crate::assistant_configuration::{AddContextServerModal, ManageProfilesModal};
 pub use crate::assistant_panel::{AssistantPanel, ConcreteAssistantPanelDelegate};
 pub use crate::inline_assistant::InlineAssistant;
 pub use crate::thread::{Message, RequestKind, Thread, ThreadEvent};
@@ -49,6 +49,7 @@ actions!(
         RemoveAllContext,
         OpenHistory,
         OpenConfiguration,
+        ManageProfiles,
         AddContextServer,
         RemoveSelectedThread,
         Chat,
@@ -99,6 +100,7 @@ pub fn init(
         cx,
     );
     cx.observe_new(AddContextServerModal::register).detach();
+    cx.observe_new(ManageProfilesModal::register).detach();
 
     feature_gate_assistant2_actions(cx);
 }

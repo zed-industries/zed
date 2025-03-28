@@ -11,6 +11,7 @@ use cli::FORCE_CLI_MODE_ENV_VAR_NAME;
 use client::{parse_zed_link, Client, ProxySettings, UserStore};
 use collab_ui::channel_view::ChannelView;
 use collections::HashMap;
+use dap::DapRegistry;
 use db::kvp::{GLOBAL_KEY_VALUE_STORE, KEY_VALUE_STORE};
 use editor::Editor;
 use extension::ExtensionHostProxy;
@@ -264,7 +265,7 @@ fn main() {
         };
     log::info!("Using git binary path: {:?}", git_binary_path);
 
-    let fs = Arc::new(RealFs::new(git_binary_path));
+    let fs = Arc::new(RealFs::new(git_binary_path, app.background_executor()));
     let user_settings_file_rx = watch_config_file(
         &app.background_executor(),
         fs.clone(),
@@ -422,6 +423,7 @@ fn main() {
 
         let app_state = Arc::new(AppState {
             languages: languages.clone(),
+            debug_adapters: DapRegistry::default().into(),
             client: client.clone(),
             user_store: user_store.clone(),
             fs: fs.clone(),
@@ -433,6 +435,7 @@ fn main() {
         AppState::set_global(Arc::downgrade(&app_state), cx);
 
         auto_update::init(client.http_client(), cx);
+        dap_adapters::init(app_state.debug_adapters.clone());
         auto_update_ui::init(cx);
         reliability::init(
             client.http_client(),

@@ -61,9 +61,9 @@ impl Tool for CopyPathTool {
     fn ui_text(&self, input: &serde_json::Value) -> String {
         match serde_json::from_value::<CopyPathToolInput>(input.clone()) {
             Ok(input) => {
-                let src = MarkdownString::escape(&input.source_path);
-                let dest = MarkdownString::escape(&input.destination_path);
-                format!("Copy `{src}` to `{dest}`")
+                let src = MarkdownString::inline_code(&input.source_path);
+                let dest = MarkdownString::inline_code(&input.destination_path);
+                format!("Copy {src} to {dest}")
             }
             Err(_) => "Copy path".to_string(),
         }

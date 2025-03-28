@@ -586,7 +586,11 @@ pub fn into_anthropic(
         model,
         messages: new_messages,
         max_tokens: max_output_tokens,
-        system: Some(system_message),
+        system: if system_message.is_empty() {
+            None
+        } else {
+            Some(anthropic::StringOrContents::String(system_message))
+        },
         thinking: if let AnthropicModelMode::Thinking { budget_tokens } = mode {
             Some(anthropic::Thinking::Enabled { budget_tokens })
         } else {

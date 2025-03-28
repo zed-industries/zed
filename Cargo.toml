@@ -470,6 +470,7 @@ mlua = { version = "0.10", features = ["lua54", "vendored", "async", "send"] }
 nanoid = "0.4"
 nbformat = { version = "0.10.0" }
 nix = "0.29"
+open = "5.0.0"
 num-format = "0.4.4"
 ordered-float = "2.1.1"
 palette = { version = "0.7.5", default-features = false, features = ["std"] }

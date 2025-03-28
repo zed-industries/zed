@@ -14,6 +14,7 @@ use client::{
 use clock::FakeSystemClock;
 use collab_ui::channel_view::ChannelView;
 use collections::{HashMap, HashSet};
+use dap::DapRegistry;
 use fs::FakeFs;
 use futures::{channel::oneshot, StreamExt as _};
 use git::GitHostingProviderRegistry;
@@ -43,6 +44,7 @@ use std::{
         Arc,
     },
 };
+use util::path;
 use workspace::{Workspace, WorkspaceStore};
 
 #[cfg(not(target_os = "macos"))]
@@ -276,12 +278,14 @@ impl TestServer {
         let user_store = cx.new(|cx| UserStore::new(client.clone(), cx));
         let workspace_store = cx.new(|cx| WorkspaceStore::new(client.clone(), cx));
         let language_registry = Arc::new(LanguageRegistry::test(cx.executor()));
+        let debug_adapters = Arc::new(DapRegistry::default());
         let session = cx.new(|cx| AppSession::new(Session::test(), cx));
         let app_state = Arc::new(workspace::AppState {
             client: client.clone(),
             user_store: user_store.clone(),
             workspace_store,
             languages: language_registry,
+            debug_adapters,
             fs: fs.clone(),
             build_window_options: |_, _| Default::default(),
             node_runtime: NodeRuntime::unavailable(),
@@ -741,7 +745,7 @@ impl TestClient {
     pub async fn build_test_project(&self, cx: &mut TestAppContext) -> Entity<Project> {
         self.fs()
             .insert_tree(
-                "/a",
+                path!("/a"),
                 json!({
                     "1.txt": "one\none\none",
                     "2.js": "function two() { return 2; }",
@@ -749,7 +753,7 @@ impl TestClient {
                 }),
             )
             .await;
-        self.build_local_project("/a", cx).await.0
+        self.build_local_project(path!("/a"), cx).await.0
     }
 
     pub async fn host_workspace(
@@ -794,6 +798,7 @@ impl TestClient {
                 self.app_state.node_runtime.clone(),
                 self.app_state.user_store.clone(),
                 self.app_state.languages.clone(),
+                self.app_state.debug_adapters.clone(),
                 self.app_state.fs.clone(),
                 None,
                 cx,

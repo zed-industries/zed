@@ -6,14 +6,13 @@ use crate::thread_store::ThreadStore;
 use crate::tool_use::{PendingToolUseStatus, ToolUse, ToolUseStatus};
 use crate::ui::{ContextPill, ToolReadyPopUp, ToolReadyPopupEvent};
 use crate::AssistantPanel;
-
 use assistant_settings::AssistantSettings;
 use collections::HashMap;
 use editor::{Editor, MultiBuffer};
 use gpui::{
     linear_color_stop, linear_gradient, list, percentage, pulsating_between, AbsoluteLength,
     Animation, AnimationExt, AnyElement, App, ClickEvent, DefiniteLength, EdgesRefinement, Empty,
-    Entity, Focusable, Hsla, Length, ListAlignment, ListOffset, ListState, ScrollHandle,
+    Entity, Focusable, Hsla, Length, ListAlignment, ListState, MouseButton, ScrollHandle, Stateful,
     StyleRefinement, Subscription, Task, TextStyleRefinement, Transformation, UnderlineStyle,
     WeakEntity, WindowHandle,
 };
@@ -24,7 +23,7 @@ use settings::Settings as _;
 use std::sync::Arc;
 use std::time::Duration;
 use theme::ThemeSettings;
-use ui::{prelude::*, Disclosure, IconButton, KeyBinding, Tooltip};
+use ui::{prelude::*, Disclosure, IconButton, KeyBinding, Scrollbar, ScrollbarState, Tooltip};
 use util::ResultExt as _;
 use workspace::{OpenOptions, Workspace};
 
@@ -39,6 +38,7 @@ pub struct ActiveThread {
     save_thread_task: Option<Task<()>>,
     messages: Vec<MessageId>,
     list_state: ListState,
+    scrollbar_state: ScrollbarState,
     rendered_messages_by_id: HashMap<MessageId, RenderedMessage>,
     rendered_tool_use_labels: HashMap<LanguageModelToolUseId, Entity<Markdown>>,
     editing_message: Option<(MessageId, EditMessageState)>,
@@ -47,6 +47,7 @@ pub struct ActiveThread {
     last_error: Option<ThreadError>,
     pop_ups: Vec<WindowHandle<ToolReadyPopUp>>,
     _subscriptions: Vec<Subscription>,
+    pop_up_subscriptions: HashMap<WindowHandle<ToolReadyPopUp>, Vec<Subscription>>,
 }
 
 struct RenderedMessage {
@@ -227,6 +228,14 @@ impl ActiveThread {
             cx.subscribe_in(&thread, window, Self::handle_thread_event),
         ];
 
+        let list_state = ListState::new(0, ListAlignment::Bottom, px(2048.), {
+            let this = cx.entity().downgrade();
+            move |ix, window: &mut Window, cx: &mut App| {
+                this.update(cx, |this, cx| this.render_message(ix, window, cx))
+                    .unwrap()
+            }
+        });
+
         let mut this = Self {
             language_registry,
             thread_store,
@@ -239,17 +248,13 @@ impl ActiveThread {
             rendered_tool_use_labels: HashMap::default(),
             expanded_tool_uses: HashMap::default(),
             expanded_thinking_segments: HashMap::default(),
-            list_state: ListState::new(0, ListAlignment::Bottom, px(1024.), {
-                let this = cx.entity().downgrade();
-                move |ix, window: &mut Window, cx: &mut App| {
-                    this.update(cx, |this, cx| this.render_message(ix, window, cx))
-                        .unwrap()
-                }
-            }),
+            list_state: list_state.clone(),
+            scrollbar_state: ScrollbarState::new(list_state),
             editing_message: None,
             last_error: None,
             pop_ups: Vec::new(),
             _subscriptions: subscriptions,
+            pop_up_subscriptions: HashMap::default(),
         };
 
         for message in thread.read(cx).messages().cloned().collect::<Vec<_>>() {
@@ -312,10 +317,6 @@ impl ActiveThread {
         let rendered_message =
             RenderedMessage::from_segments(segments, self.language_registry.clone(), window, cx);
         self.rendered_messages_by_id.insert(*id, rendered_message);
-        self.list_state.scroll_to(ListOffset {
-            item_ix: old_len,
-            offset_in_item: Pixels(0.0),
-        });
     }
 
     fn edited_message(
@@ -380,7 +381,7 @@ impl ActiveThread {
             ThreadEvent::DoneStreaming => {
                 if !self.thread().read(cx).is_generating() {
                     self.show_notification(
-                        "Your changes have been applied.",
+                        "The assistant response has concluded.",
                         IconName::Check,
                         Color::Success,
                         window,
@@ -547,42 +548,64 @@ impl ActiveThread {
                     .log_err()
                 {
                     if let Some(pop_up) = screen_window.entity(cx).log_err() {
-                        cx.subscribe_in(&pop_up, window, {
-                            |this, _, event, window, cx| match event {
-                                ToolReadyPopupEvent::Accepted => {
-                                    let handle = window.window_handle();
-                                    cx.activate(true); // Switch back to the Zed application
+                        self.pop_up_subscriptions
+                            .entry(screen_window)
+                            .or_insert_with(Vec::new)
+                            .push(cx.subscribe_in(&pop_up, window, {
+                                |this, _, event, window, cx| match event {
+                                    ToolReadyPopupEvent::Accepted => {
+                                        let handle = window.window_handle();
+                                        cx.activate(true); // Switch back to the Zed application
 
-                                    let workspace_handle = this.workspace.clone();
+                                        let workspace_handle = this.workspace.clone();
 
-                                    // If there are multiple Zed windows, activate the correct one.
-                                    cx.defer(move |cx| {
-                                        handle
-                                            .update(cx, |_view, window, _cx| {
-                                                window.activate_window();
+                                        // If there are multiple Zed windows, activate the correct one.
+                                        cx.defer(move |cx| {
+                                            handle
+                                                .update(cx, |_view, window, _cx| {
+                                                    window.activate_window();
 
-                                                if let Some(workspace) = workspace_handle.upgrade()
-                                                {
-                                                    workspace.update(_cx, |workspace, cx| {
-                                                        workspace.focus_panel::<AssistantPanel>(
-                                                            window, cx,
-                                                        );
-                                                    });
-                                                }
-                                            })
-                                            .log_err();
-                                    });
+                                                    if let Some(workspace) =
+                                                        workspace_handle.upgrade()
+                                                    {
+                                                        workspace.update(_cx, |workspace, cx| {
+                                                            workspace
+                                                                .focus_panel::<AssistantPanel>(
+                                                                    window, cx,
+                                                                );
+                                                        });
+                                                    }
+                                                })
+                                                .log_err();
+                                        });
 
-                                    this.dismiss_notifications(cx);
+                                        this.dismiss_notifications(cx);
+                                    }
+                                    ToolReadyPopupEvent::Dismissed => {
+                                        this.dismiss_notifications(cx);
+                                    }
                                 }
-                                ToolReadyPopupEvent::Dismissed => {
-                                    this.dismiss_notifications(cx);
-                                }
-                            }
-                        })
-                        .detach();
+                            }));
 
                         self.pop_ups.push(screen_window);
+
+                        // If the user manually refocuses the original window, dismiss the popup.
+                        self.pop_up_subscriptions
+                            .entry(screen_window)
+                            .or_insert_with(Vec::new)
+                            .push({
+                                let pop_up_weak = pop_up.downgrade();
+
+                                cx.observe_window_activation(window, move |_, window, cx| {
+                                    if window.is_window_active() {
+                                        if let Some(pop_up) = pop_up_weak.upgrade() {
+                                            pop_up.update(cx, |_, cx| {
+                                                cx.emit(ToolReadyPopupEvent::Dismissed);
+                                            });
+                                        }
+                                    }
+                                })
+                            });
                     }
                 }
             }
@@ -1749,7 +1772,42 @@ impl ActiveThread {
                     window.remove_window();
                 })
                 .ok();
+
+            self.pop_up_subscriptions.remove(&window);
         }
+    }
+
+    fn render_vertical_scrollbar(&self, cx: &mut Context<Self>) -> Stateful<Div> {
+        div()
+            .occlude()
+            .id("active-thread-scrollbar")
+            .on_mouse_move(cx.listener(|_, _, _, cx| {
+                cx.notify();
+                cx.stop_propagation()
+            }))
+            .on_hover(|_, _, cx| {
+                cx.stop_propagation();
+            })
+            .on_any_mouse_down(|_, _, cx| {
+                cx.stop_propagation();
+            })
+            .on_mouse_up(
+                MouseButton::Left,
+                cx.listener(|_, _, _, cx| {
+                    cx.stop_propagation();
+                }),
+            )
+            .on_scroll_wheel(cx.listener(|_, _, _, cx| {
+                cx.notify();
+            }))
+            .h_full()
+            .absolute()
+            .right_1()
+            .top_1()
+            .bottom_0()
+            .w(px(12.))
+            .cursor_default()
+            .children(Scrollbar::vertical(self.scrollbar_state.clone()))
     }
 }
 
@@ -1757,7 +1815,9 @@ impl Render for ActiveThread {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         v_flex()
             .size_full()
+            .relative()
             .child(list(self.list_state.clone()).flex_grow())
             .children(self.render_confirmations(cx))
+            .child(self.render_vertical_scrollbar(cx))
     }
 }

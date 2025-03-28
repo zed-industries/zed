@@ -1,11 +1,11 @@
-use crate::*;
+use crate::{attach_modal::Candidate, *};
 use attach_modal::AttachModal;
-use dap::client::SessionId;
+use dap::{client::SessionId, FakeAdapter};
 use gpui::{BackgroundExecutor, TestAppContext, VisualTestContext};
 use menu::Confirm;
 use project::{FakeFs, Project};
 use serde_json::json;
-use task::AttachConfig;
+use task::{AttachConfig, DebugTaskDefinition, TCPHost};
 use tests::{init_test, init_test_workspace};
 
 #[gpui::test]
@@ -27,14 +27,12 @@ async fn test_direct_attach_to_process(executor: BackgroundExecutor, cx: &mut Te
     let cx = &mut VisualTestContext::from_window(*workspace, cx);
 
     let task = project.update(cx, |project, cx| {
-        project.start_debug_session(
-            dap::test_config(
-                dap::DebugRequestType::Attach(AttachConfig {
-                    process_id: Some(10),
-                }),
-                None,
-                None,
-            ),
+        project.fake_debug_session(
+            dap::DebugRequestType::Attach(AttachConfig {
+                process_id: Some(10),
+            }),
+            None,
+            false,
             cx,
         )
     });
@@ -83,13 +81,32 @@ async fn test_show_attach_modal_and_select_process(
     let attach_modal = workspace
         .update(cx, |workspace, window, cx| {
             workspace.toggle_modal(window, cx, |window, cx| {
-                AttachModal::new(
+                AttachModal::with_processes(
                     project.clone(),
-                    dap::test_config(
-                        dap::DebugRequestType::Attach(AttachConfig { process_id: None }),
-                        None,
-                        None,
-                    ),
+                    DebugTaskDefinition {
+                        adapter: FakeAdapter::ADAPTER_NAME.into(),
+                        request: dap::DebugRequestType::Attach(AttachConfig::default()),
+                        label: "attach example".into(),
+                        initialize_args: None,
+                        tcp_connection: Some(TCPHost::default()),
+                    },
+                    vec![
+                        Candidate {
+                            pid: 0,
+                            name: "fake-binary-1".into(),
+                            command: vec![],
+                        },
+                        Candidate {
+                            pid: 3,
+                            name: "non-fake-binary-1".into(),
+                            command: vec![],
+                        },
+                        Candidate {
+                            pid: 1,
+                            name: "fake-binary-2".into(),
+                            command: vec![],
+                        },
+                    ],
                     window,
                     cx,
                 )
@@ -105,10 +122,10 @@ async fn test_show_attach_modal_and_select_process(
     workspace
         .update(cx, |_, _, cx| {
             let names =
-                attach_modal.update(cx, |modal, cx| attach_modal::process_names(&modal, cx));
+                attach_modal.update(cx, |modal, cx| attach_modal::_process_names(&modal, cx));
 
-            // we filtered out all processes that are not the current process(zed itself)
-            assert_eq!(1, names.len());
+            // we filtered out all processes that are not starting with `fake-binary`
+            assert_eq!(2, names.len());
         })
         .unwrap();
 
