@@ -10,7 +10,6 @@ use collections::{BTreeMap, HashMap, HashSet};
 use fs::Fs;
 use futures::future::Shared;
 use futures::{FutureExt, StreamExt as _};
-use git;
 use gpui::{App, AppContext, Context, Entity, EventEmitter, SharedString, Task, WeakEntity};
 use language_model::{
     LanguageModel, LanguageModelCompletionEvent, LanguageModelRegistry, LanguageModelRequest,
@@ -1417,7 +1416,7 @@ impl Thread {
                         })
                         .and_then(|repo| {
                             let repo = repo.read(cx);
-                            Some((repo.branch.clone(), repo.backend()?))
+                            Some((repo.branch.clone() /* repo.backend()? */,))
                         })
                 })
                 .ok()
@@ -1426,22 +1425,22 @@ impl Thread {
             // Extract git information
             let git_state = match repo_info {
                 None => None,
-                Some((branch, repo)) => {
+                Some((branch /* repo */,)) => {
                     let current_branch = branch.map(|branch| branch.name.to_string());
-                    let remote_url = repo.remote_url("origin");
-                    let head_sha = repo.head_sha();
+                    //let remote_url = repo.remote_url("origin");
+                    //let head_sha = repo.head_sha();
 
-                    // Get diff asynchronously
-                    let diff = repo
-                        .diff(git::repository::DiffType::HeadToWorktree)
-                        .await
-                        .ok();
+                    //// Get diff asynchronously
+                    //let diff = repo
+                    //    .diff(git::repository::DiffType::HeadToWorktree)
+                    //    .await
+                    //    .ok();
 
                     Some(GitState {
-                        remote_url,
-                        head_sha,
+                        remote_url: None,
+                        head_sha: None,
                         current_branch,
-                        diff,
+                        diff: None,
                     })
                 }
             };
