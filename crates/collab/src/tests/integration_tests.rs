@@ -2911,8 +2911,8 @@ async fn test_git_branch_name(
         assert_eq!(
             repository
                 .read(cx)
-                .repository_entry
-                .branch()
+                .branch
+                .as_ref()
                 .map(|branch| branch.name.to_string()),
             branch_name
         )
@@ -3046,7 +3046,6 @@ async fn test_git_status_sync(
         let repo = repos.into_iter().next().unwrap();
         assert_eq!(
             repo.read(cx)
-                .repository_entry
                 .status_for_path(&file.into())
                 .map(|entry| entry.status),
             status
@@ -6891,7 +6890,8 @@ async fn test_remote_git_branches(
                 .next()
                 .unwrap()
                 .read(cx)
-                .current_branch()
+                .branch
+                .as_ref()
                 .unwrap()
                 .clone()
         })
@@ -6928,7 +6928,8 @@ async fn test_remote_git_branches(
                 .next()
                 .unwrap()
                 .read(cx)
-                .current_branch()
+                .branch
+                .as_ref()
                 .unwrap()
                 .clone()
         })

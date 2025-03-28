@@ -313,7 +313,8 @@ async fn test_ssh_collaboration_git_branches(
                     .next()
                     .unwrap()
                     .read(cx)
-                    .current_branch()
+                    .branch
+                    .as_ref()
                     .unwrap()
                     .clone()
             })
@@ -352,7 +353,8 @@ async fn test_ssh_collaboration_git_branches(
                     .next()
                     .unwrap()
                     .read(cx)
-                    .current_branch()
+                    .branch
+                    .as_ref()
                     .unwrap()
                     .clone()
             })

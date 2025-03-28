@@ -826,7 +826,7 @@ pub fn split_worktree_update(mut message: UpdateWorktree) -> impl Iterator<Item 
             let removed_statuses_limit = cmp::min(repo.removed_statuses.len(), limit);
 
             updated_repositories.push(RepositoryEntry {
-                work_directory_id: repo.work_directory_id,
+                repository_id: repo.repository_id,
                 branch_summary: repo.branch_summary.clone(),
                 updated_statuses: repo
                     .updated_statuses

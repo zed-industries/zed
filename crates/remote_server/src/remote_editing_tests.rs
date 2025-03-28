@@ -1379,7 +1379,8 @@ async fn test_remote_git_branches(cx: &mut TestAppContext, server_cx: &mut TestA
                     .next()
                     .unwrap()
                     .read(cx)
-                    .current_branch()
+                    .branch
+                    .as_ref()
                     .unwrap()
                     .clone()
             })
@@ -1418,7 +1419,8 @@ async fn test_remote_git_branches(cx: &mut TestAppContext, server_cx: &mut TestA
                     .next()
                     .unwrap()
                     .read(cx)
-                    .current_branch()
+                    .branch
+                    .as_ref()
                     .unwrap()
                     .clone()
             })

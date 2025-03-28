@@ -234,7 +234,7 @@ impl CommitModal {
 
         let branch = active_repo
             .as_ref()
-            .and_then(|repo| repo.read(cx).repository_entry.branch())
+            .and_then(|repo| repo.read(cx).branch.as_ref())
             .map(|b| b.name.clone())
             .unwrap_or_else(|| "<no branch>".into());
 

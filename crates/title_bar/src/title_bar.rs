@@ -522,7 +522,7 @@ impl TitleBar {
     pub fn render_project_branch(&self, cx: &mut Context<Self>) -> Option<impl IntoElement> {
         let repository = self.project.read(cx).active_repository(cx)?;
         let workspace = self.workspace.upgrade()?;
-        let branch_name = repository.read(cx).current_branch()?.name.clone();
+        let branch_name = repository.read(cx).branch.as_ref()?.name.clone();
         let branch_name = util::truncate_and_trailoff(&branch_name, MAX_BRANCH_NAME_LENGTH);
         Some(
             Button::new("project_branch_trigger", branch_name)

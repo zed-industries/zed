@@ -298,7 +298,7 @@ fn local_task_context_for_location(
         let worktree_abs_path = worktree_abs_path.clone();
         let project_env = environment
             .update(cx, |environment, cx| {
-                environment.get_environment(worktree_id, worktree_abs_path.clone(), cx)
+                environment.get_environment(worktree_abs_path.clone(), cx)
             })
             .ok()?
             .await;

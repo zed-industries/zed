@@ -336,7 +336,7 @@ impl PickerDelegate for BranchListDelegate {
 
         let current_branch = self.repo.as_ref().map(|repo| {
             repo.update(cx, |repo, _| {
-                repo.current_branch().map(|branch| branch.name.clone())
+                repo.branch.as_ref().map(|branch| branch.name.clone())
             })
         });
 
@@ -463,7 +463,7 @@ impl PickerDelegate for BranchListDelegate {
                                 let message = if entry.is_new {
                                     if let Some(current_branch) =
                                         self.repo.as_ref().and_then(|repo| {
-                                            repo.read(cx).current_branch().map(|b| b.name.clone())
+                                            repo.read(cx).branch.as_ref().map(|b| b.name.clone())
                                         })
                                     {
                                         format!("based off {}", current_branch)
