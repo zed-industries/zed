@@ -1031,7 +1031,6 @@ impl<T: Item> WeakItemHandle for WeakEntity<T> {
     }
 }
 
-/// TODO kb docs
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct ProjectItemKind(pub &'static str);
 

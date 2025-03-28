@@ -1293,7 +1293,7 @@ impl ProjectItem for Editor {
 
         if WorkspaceSettings::get(None, cx).restore_on_file_reopen {
             if let Some(restoration_data) = Self::project_item_kind()
-                .and_then(|kind| pane.item_restoration_data.get(&kind))
+                .and_then(|kind| pane.project_item_restoration_data.get(&kind))
                 .and_then(|data| data.downcast_ref::<EditorRestorationData>())
                 .and_then(|data| data.entries.get(&buffer.read(cx).entry_id(cx)?))
                 .filter(|data| !buffer.read(cx).version.changed_since(&data.buffer_version))

@@ -17534,7 +17534,7 @@ impl Editor {
         let buffer_version = buffer.read(cx).version();
         pane.update(cx, |pane, _| {
             let data = pane
-                .item_restoration_data
+                .project_item_restoration_data
                 .entry(kind)
                 .or_insert_with(|| Box::new(EditorRestorationData::default()) as Box<_>);
             let data = match data.downcast_mut::<EditorRestorationData>() {
