@@ -52,7 +52,7 @@ cargo run -p assistant_eval -- --all --languages python,rust
 cargo run -p assistant_eval -- --all --concurrency 5
 
 # Limit number of exercises per language
-cargo run -p assistant_eval -- --all --max_exercises_per_language 3
+cargo run -p assistant_eval -- --all --max-exercises-per-language 3
 ```
 
 ### Evaluation Template Types
