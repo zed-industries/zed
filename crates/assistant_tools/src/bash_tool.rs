@@ -19,6 +19,41 @@ pub struct BashToolInput {
     cd: String,
 }
 
+/// Custom deserialization function for BashToolInput that handles missing "cd" field
+/// Returns a BashToolInput with the project's first worktree root as default "cd" if missing
+fn from_value_with_default_cd(value: serde_json::Value, project: Option<&Project>, cx: Option<&App>) -> Result<BashToolInput> {
+    // Try standard deserialization first
+    if let Ok(input) = serde_json::from_value::<BashToolInput>(value.clone()) {
+        return Ok(input);
+    }
+
+    // If that fails, check if it's because "cd" is missing
+    let mut obj = match value {
+        serde_json::Value::Object(obj) => obj,
+        _ => return Err(anyhow!("Expected object for BashToolInput")),
+    };
+
+    if !obj.contains_key("cd") {
+        // Find first worktree root to use as default if project context is available
+        if let (Some(project), Some(cx)) = (project, cx) {
+            if let Some(worktree) = project.worktrees(cx).next() {
+                let root_name = worktree.read(cx).root_name().to_string();
+                obj.insert("cd".to_string(), serde_json::Value::String(root_name));
+            } else {
+                // No worktrees available, use "." as fallback
+                obj.insert("cd".to_string(), serde_json::Value::String(".".to_string()));
+            }
+        } else {
+            // No project context, use "." as fallback
+            obj.insert("cd".to_string(), serde_json::Value::String(".".to_string()));
+        }
+    }
+
+    // Try to deserialize with the modified object
+    serde_json::from_value::<BashToolInput>(serde_json::Value::Object(obj))
+        .map_err(|e| anyhow!("Failed to deserialize BashToolInput: {}", e))
+}
+
 pub struct BashTool;
 
 impl Tool for BashTool {
@@ -44,7 +79,7 @@ impl Tool for BashTool {
     }
 
     fn ui_text(&self, input: &serde_json::Value) -> String {
-        match serde_json::from_value::<BashToolInput>(input.clone()) {
+        match from_value_with_default_cd(input.clone(), None, None) {
             Ok(input) => {
                 if input.command.contains('\n') {
                     MarkdownString::code_block("bash", &input.command).0
@@ -64,7 +99,7 @@ impl Tool for BashTool {
         _action_log: Entity<ActionLog>,
         cx: &mut App,
     ) -> Task<Result<String>> {
-        let input: BashToolInput = match serde_json::from_value(input) {
+        let input: BashToolInput = match from_value_with_default_cd(input, Some(&project.read(cx)), Some(cx)) {
             Ok(input) => input,
             Err(err) => return Task::ready(Err(anyhow!(err))),
         };
