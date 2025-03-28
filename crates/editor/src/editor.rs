@@ -6294,12 +6294,18 @@ impl Editor {
             .on_click(cx.listener({
                 let breakpoint = breakpoint.clone();
 
-                move |editor, _e, window, cx| {
+                move |editor, event: &ClickEvent, window, cx| {
+                    let edit_action = if event.modifiers().platform || breakpoint.is_disabled() {
+                        BreakpointEditAction::InvertState
+                    } else {
+                        BreakpointEditAction::Toggle
+                    };
+
                     window.focus(&editor.focus_handle(cx));
                     editor.edit_breakpoint_at_anchor(
                         position,
                         breakpoint.as_ref().clone(),
-                        BreakpointEditAction::Toggle,
+                        edit_action,
                         cx,
                     );
                 }
