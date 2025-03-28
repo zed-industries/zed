@@ -551,7 +551,6 @@ impl<'a> MutableSelectionsCollection<'a> {
 
     pub fn select_anchors(&mut self, selections: Vec<Selection<Anchor>>) {
         let map = self.display_map();
-        println!("Selections supposedly not in order: {:#?}", selections);
         let resolved_selections =
             resolve_selections::<usize, _>(&selections, &map).collect::<Vec<_>>();
         self.select(resolved_selections);
