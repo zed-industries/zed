@@ -518,7 +518,7 @@ impl Thread {
         cx: &mut Context<Self>,
     ) -> MessageId {
         self.action_log
-            .update(cx, |action_log, _| action_log.clear_reviewed_changes(cx));
+            .update(cx, |action_log, cx| action_log.clear_reviewed_changes(cx));
         let message_id =
             self.insert_message(Role::User, vec![MessageSegment::Text(text.into())], cx);
         let context_ids = context.iter().map(|context| context.id).collect::<Vec<_>>();

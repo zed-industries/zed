@@ -1950,13 +1950,16 @@ impl Buffer {
         if self.capability == Capability::ReadOnly {
             return false;
         }
-        if self.has_conflict || self.has_unsaved_edits() {
+
+        if self.has_conflict {
             return true;
         }
+
         match self.file.as_ref().map(|f| f.disk_state()) {
-            Some(DiskState::New) => !self.is_empty(),
-            Some(DiskState::Deleted) => true,
-            _ => false,
+            Some(DiskState::New) | Some(DiskState::Deleted) | None => {
+                !self.is_empty() && self.has_unsaved_edits()
+            }
+            Some(DiskState::Present { .. }) => self.has_unsaved_edits(),
         }
     }
 
@@ -1977,7 +1980,7 @@ impl Buffer {
                 }
                 None => true,
             },
-            DiskState::Deleted => true,
+            DiskState::Deleted => !self.is_empty(),
         }
     }
 
