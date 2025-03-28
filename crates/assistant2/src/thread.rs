@@ -786,6 +786,18 @@ impl Thread {
         self.stream_completion(request, model, cx);
     }
 
+    pub fn used_tools_since_last_user_message(&self) -> bool {
+        for message in self.messages.iter().rev() {
+            if self.tool_use.message_has_tool_results(message.id) {
+                return true;
+            } else if message.role == Role::User {
+                return false;
+            }
+        }
+
+        false
+    }
+
     pub fn to_completion_request(
         &self,
         request_kind: RequestKind,
@@ -835,6 +847,9 @@ impl Thread {
                 }
                 RequestKind::Summarize => {
                     // We don't care about tool use during summarization.
+                    if self.tool_use.message_has_tool_results(message.id) {
+                        continue;
+                    }
                 }
             }
 
@@ -1126,7 +1141,10 @@ impl Thread {
         request.messages.push(LanguageModelRequestMessage {
             role: Role::User,
             content: vec![
-                "Generate a concise 3-7 word title for this conversation, omitting punctuation. Go straight to the title, without any preamble and prefix like `Here's a concise suggestion:...` or `Title:`"
+                "Generate a concise 3-7 word title for this conversation, omitting punctuation. \
+                 Go straight to the title, without any preamble and prefix like `Here's a concise suggestion:...` or `Title:`. \
+                 If the conversation is about a specific subject, include it in the title. \
+                 Be descriptive. DO NOT speak in the first person."
                     .into(),
             ],
             cache: false,
