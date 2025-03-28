@@ -3209,17 +3209,24 @@ impl Window {
                 && self.pending_modifier.modifiers.number_of_modifiers() == 1
                 && !self.pending_modifier.saw_keystroke
             {
-                let key = match self.pending_modifier.modifiers {
-                    modifiers if modifiers.shift => Some("shift"),
-                    modifiers if modifiers.control => Some("control"),
-                    modifiers if modifiers.alt => Some("alt"),
-                    modifiers if modifiers.platform => Some("platform"),
-                    modifiers if modifiers.function => Some("function"),
+                let key_info = match self.pending_modifier.modifiers {
+                    modifiers if modifiers.shift => {
+                        Some((KeyCode::Shift(KeyPosition::Any), "shift"))
+                    }
+                    modifiers if modifiers.control => {
+                        Some((KeyCode::Control(KeyPosition::Any), "control"))
+                    }
+                    modifiers if modifiers.alt => Some((KeyCode::Alt(KeyPosition::Any), "alt")),
+                    modifiers if modifiers.platform => {
+                        Some((KeyCode::Platform(KeyPosition::Any), "platform"))
+                    }
+                    modifiers if modifiers.function => Some((KeyCode::Function, "function")),
                     _ => None,
                 };
-                if let Some(key) = key {
+                if let Some((code, key)) = key_info {
                     keystroke = Some(Keystroke {
-                        key: key.to_string(),
+                        code,
+                        face: key.to_string(),
                         key_char: None,
                         modifiers: Modifiers::default(),
                     });
