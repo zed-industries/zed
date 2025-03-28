@@ -134,9 +134,7 @@ impl<T: ReceiveData> DataOffer<T> {
 
             if let Some(bytes) = self.read_bytes(connection, mime_type) {
                 let id = hash(&bytes);
-                return Some(ClipboardItem {
-                    entries: vec![ClipboardEntry::Image(Image { format, bytes, id })],
-                });
+                return Some(ClipboardItem::from(Image { format, bytes, id }));
             }
         }
         None

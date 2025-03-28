@@ -4,11 +4,10 @@ use super::{
     renderer, screen_capture, BoolExt,
 };
 use crate::{
-    hash, Action, AnyWindowHandle, BackgroundExecutor, ClipboardEntry, ClipboardItem,
-    ClipboardString, CursorStyle, ForegroundExecutor, Image, ImageFormat, Keymap, MacDispatcher,
-    MacDisplay, MacWindow, Menu, MenuItem, PathPromptOptions, Platform, PlatformDisplay,
-    PlatformTextSystem, PlatformWindow, Result, ScreenCaptureSource, SemanticVersion, Task,
-    WindowAppearance, WindowParams,
+    hash, Action, AnyWindowHandle, BackgroundExecutor, ClipboardItem, ClipboardString, CursorStyle,
+    ForegroundExecutor, Image, ImageFormat, Keymap, MacDispatcher, MacDisplay, MacWindow, Menu,
+    MenuItem, PathPromptOptions, Platform, PlatformDisplay, PlatformTextSystem, PlatformWindow,
+    Result, ScreenCaptureSource, SemanticVersion, Task, WindowAppearance, WindowParams,
 };
 use anyhow::{anyhow, Context as _};
 use block::ConcreteBlock;
@@ -1196,9 +1195,7 @@ impl MacPlatform {
                 }
             });
 
-        ClipboardItem {
-            entries: vec![ClipboardEntry::String(ClipboardString { text, metadata })],
-        }
+        ClipboardItem::from(ClipboardString { text, metadata })
     }
 
     unsafe fn write_plaintext_to_clipboard(&self, string: &ClipboardString) {
@@ -1268,9 +1265,7 @@ fn try_clipboard_image(pasteboard: id, format: ImageFormat) -> Option<ClipboardI
                 ));
                 let id = hash(&bytes);
 
-                Some(ClipboardItem {
-                    entries: vec![ClipboardEntry::Image(Image { format, bytes, id })],
-                })
+                Some(ClipboardItem::from(Image { format, bytes, id }))
             }
         } else {
             None
@@ -1582,11 +1577,10 @@ mod tests {
         platform.write_to_clipboard(item.clone());
         assert_eq!(platform.read_from_clipboard(), Some(item));
 
-        let item = ClipboardItem {
-            entries: vec![ClipboardEntry::String(
-                ClipboardString::new("2".to_string()).with_json_metadata(vec![3, 4]),
-            )],
-        };
+        let item = ClipboardItem::from(
+            ClipboardString::new("2".to_string()).with_json_metadata(vec![3, 4]),
+        );
+
         platform.write_to_clipboard(item.clone());
         assert_eq!(platform.read_from_clipboard(), Some(item));
 

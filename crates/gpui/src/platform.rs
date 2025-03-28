@@ -1262,35 +1262,22 @@ pub enum ClipboardEntry {
 impl ClipboardItem {
     /// Create a new ClipboardItem::String with no associated metadata
     pub fn new_string(text: String) -> Self {
-        Self {
-            entries: vec![ClipboardEntry::String(ClipboardString::new(text))],
-        }
+        Self::from(ClipboardString::new(text))
     }
 
     /// Create a new ClipboardItem::String with the given text and associated metadata
     pub fn new_string_with_metadata(text: String, metadata: String) -> Self {
-        Self {
-            entries: vec![ClipboardEntry::String(ClipboardString {
-                text,
-                metadata: Some(metadata),
-            })],
-        }
+        Self::from(ClipboardString::new(text).with_metadata(metadata))
     }
 
     /// Create a new ClipboardItem::String with the given text and associated metadata
     pub fn new_string_with_json_metadata<T: Serialize>(text: String, metadata: T) -> Self {
-        Self {
-            entries: vec![ClipboardEntry::String(
-                ClipboardString::new(text).with_json_metadata(metadata),
-            )],
-        }
+        Self::from(ClipboardString::new(text).with_json_metadata(metadata))
     }
 
     /// Create a new ClipboardItem::Image with the given image with no associated metadata
     pub fn new_image(image: &Image) -> Self {
-        Self {
-            entries: vec![ClipboardEntry::Image(image.clone())],
-        }
+        Self::from(image.clone())
     }
 
     /// Concatenates together all the ClipboardString entries in the item.
@@ -1358,6 +1345,12 @@ impl From<ClipboardEntry> for ClipboardItem {
         Self {
             entries: vec![value],
         }
+    }
+}
+
+impl From<ClipboardString> for ClipboardItem {
+    fn from(value: ClipboardString) -> Self {
+        Self::from(ClipboardEntry::from(value))
     }
 }
 
@@ -1501,10 +1494,13 @@ pub struct ClipboardString {
 impl ClipboardString {
     /// Create a new clipboard string with the given text
     pub fn new(text: String) -> Self {
-        Self {
-            text,
-            metadata: None,
-        }
+        Self::from(text)
+    }
+
+    /// Return a new clipboard item with the metadata replaced by the given metadata
+    pub fn with_metadata(mut self, metadata: String) -> Self {
+        self.metadata = Some(metadata);
+        self
     }
 
     /// Return a new clipboard item with the metadata replaced by the given metadata,

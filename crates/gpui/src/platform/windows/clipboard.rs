@@ -244,9 +244,7 @@ where
             continue;
         };
         if let Some(entry) = f(*item_format) {
-            return Some(ClipboardItem {
-                entries: vec![entry],
-            });
+            return Some(ClipboardItem::from(entry));
         }
     }
     // log the formats that we don't support yet.
@@ -276,18 +274,17 @@ fn read_string_from_clipboard() -> Option<ClipboardEntry> {
         String::from_utf16_lossy(unsafe { text.as_wide() })
     };
     let Some(hash) = read_hash_from_clipboard() else {
-        return Some(ClipboardEntry::String(ClipboardString::new(text)));
+        return Some(ClipboardEntry::from(text));
     };
     let Some(metadata) = read_metadata_from_clipboard() else {
-        return Some(ClipboardEntry::String(ClipboardString::new(text)));
+        return Some(ClipboardEntry::from(text));
     };
     if hash == ClipboardString::text_hash(&text) {
-        Some(ClipboardEntry::String(ClipboardString {
-            text,
-            metadata: Some(metadata),
-        }))
+        Some(ClipboardEntry::String(
+            ClipboardString::new(text).with_metadata(metadata),
+        ))
     } else {
-        Some(ClipboardEntry::String(ClipboardString::new(text)))
+        Some(ClipboardEntry::from(text))
     }
 }
 
@@ -344,10 +341,7 @@ fn read_files_from_clipboard() -> Option<ClipboardEntry> {
     with_file_names(hdrop, |file_name| {
         filenames.push_str(&file_name);
     });
-    Some(ClipboardEntry::String(ClipboardString {
-        text: filenames,
-        metadata: None,
-    }))
+    Some(ClipboardEntry::from(filenames))
 }
 
 impl From<ImageFormat> for image::ImageFormat {
