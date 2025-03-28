@@ -63,7 +63,6 @@ impl ActionLog {
             .tracked_buffers
             .entry(buffer.clone())
             .or_insert_with(|| {
-                println!("INSERTING BUFFER");
                 let text_snapshot = buffer.read(cx).text_snapshot();
                 let unreviewed_diff = cx.new(|cx| BufferDiff::new(&text_snapshot, cx));
                 let diff = cx.new(|cx| {
