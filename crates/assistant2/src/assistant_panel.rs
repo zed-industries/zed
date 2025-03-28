@@ -65,6 +65,12 @@ pub fn init(cx: &mut App) {
                         panel.update(cx, |panel, cx| panel.open_history(window, cx));
                     }
                 })
+                .register_action(|workspace, _: &OpenConfiguration, window, cx| {
+                    if let Some(panel) = workspace.panel::<AssistantPanel>(cx) {
+                        workspace.focus_panel::<AssistantPanel>(window, cx);
+                        panel.update(cx, |panel, cx| panel.open_configuration(window, cx));
+                    }
+                })
                 .register_action(|workspace, _: &NewPromptEditor, window, cx| {
                     if let Some(panel) = workspace.panel::<AssistantPanel>(cx) {
                         workspace.focus_panel::<AssistantPanel>(window, cx);
@@ -1095,6 +1101,9 @@ impl Render for AssistantPanel {
             }))
             .on_action(cx.listener(|this, _: &OpenHistory, window, cx| {
                 this.open_history(window, cx);
+            }))
+            .on_action(cx.listener(|this, _: &OpenConfiguration, window, cx| {
+                this.open_configuration(window, cx);
             }))
             .on_action(cx.listener(Self::open_active_thread_as_markdown))
             .on_action(cx.listener(Self::deploy_prompt_library))
