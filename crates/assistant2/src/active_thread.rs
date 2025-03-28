@@ -47,7 +47,7 @@ pub struct ActiveThread {
     last_error: Option<ThreadError>,
     notifications: Vec<WindowHandle<AgentNotification>>,
     _subscriptions: Vec<Subscription>,
-    pop_up_subscriptions: HashMap<WindowHandle<AgentNotification>, Vec<Subscription>>,
+    notification_subscriptions: HashMap<WindowHandle<AgentNotification>, Vec<Subscription>>,
 }
 
 struct RenderedMessage {
@@ -254,7 +254,7 @@ impl ActiveThread {
             last_error: None,
             notifications: Vec::new(),
             _subscriptions: subscriptions,
-            pop_up_subscriptions: HashMap::default(),
+            notification_subscriptions: HashMap::default(),
         };
 
         for message in thread.read(cx).messages().cloned().collect::<Vec<_>>() {
@@ -585,7 +585,7 @@ impl ActiveThread {
                 .log_err()
             {
                 if let Some(pop_up) = screen_window.entity(cx).log_err() {
-                    self.pop_up_subscriptions
+                    self.notification_subscriptions
                         .entry(screen_window)
                         .or_insert_with(Vec::new)
                         .push(cx.subscribe_in(&pop_up, window, {
@@ -602,10 +602,12 @@ impl ActiveThread {
                                             .update(cx, |_view, window, _cx| {
                                                 window.activate_window();
 
-                                                if let Some(workspace) = workspace_handle.upgrade() {
+                                                if let Some(workspace) = workspace_handle.upgrade()
+                                                {
                                                     workspace.update(_cx, |workspace, cx| {
-                                                        workspace
-                                                            .focus_panel::<AssistantPanel>(window, cx);
+                                                        workspace.focus_panel::<AssistantPanel>(
+                                                            window, cx,
+                                                        );
                                                     });
                                                 }
                                             })
@@ -623,7 +625,7 @@ impl ActiveThread {
                     self.notifications.push(screen_window);
 
                     // If the user manually refocuses the original window, dismiss the popup.
-                    self.pop_up_subscriptions
+                    self.notification_subscriptions
                         .entry(screen_window)
                         .or_insert_with(Vec::new)
                         .push({
@@ -1805,7 +1807,7 @@ impl ActiveThread {
                 })
                 .ok();
 
-            self.pop_up_subscriptions.remove(&window);
+            self.notification_subscriptions.remove(&window);
         }
     }
 
