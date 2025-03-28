@@ -737,7 +737,8 @@ fn test_expand_excerpts(cx: &mut App) {
     let multibuffer = cx.new(|_| MultiBuffer::new(Capability::ReadWrite));
 
     multibuffer.update(cx, |multibuffer, cx| {
-        multibuffer.push_excerpts_with_context_lines(
+        multibuffer.set_excerpts_for_path(
+            PathKey::for_buffer(&buffer.read(cx), cx),
             buffer.clone(),
             vec![
                 // Note that in this test, this first excerpt
@@ -782,9 +783,6 @@ fn test_expand_excerpts(cx: &mut App) {
 
     let snapshot = multibuffer.read(cx).snapshot(cx);
 
-    // Expanding context lines causes the line containing 'fff' to appear in two different excerpts.
-    // We don't attempt to merge them, because removing the excerpt could create inconsistency with other layers
-    // that are tracking excerpt ids.
     assert_eq!(
         snapshot.text(),
         concat!(
@@ -792,7 +790,6 @@ fn test_expand_excerpts(cx: &mut App) {
             "ccc\n", //
             "ddd\n", //
             "eee\n", //
-            "fff\n", // End of excerpt
             "fff\n", //
             "ggg\n", //
             "hhh\n", //
@@ -804,59 +801,6 @@ fn test_expand_excerpts(cx: &mut App) {
             "qqq\n", //
             "rrr",   // End of excerpt
         )
-    );
-}
-
-#[gpui::test]
-fn test_push_excerpts_with_context_lines(cx: &mut App) {
-    let buffer = cx.new(|cx| Buffer::local(sample_text(20, 3, 'a'), cx));
-    let multibuffer = cx.new(|_| MultiBuffer::new(Capability::ReadWrite));
-    let anchor_ranges = multibuffer.update(cx, |multibuffer, cx| {
-        multibuffer.push_excerpts_with_context_lines(
-            buffer.clone(),
-            vec![
-                // Note that in this test, this first excerpt
-                // does contain a new line
-                Point::new(3, 2)..Point::new(4, 2),
-                Point::new(7, 1)..Point::new(7, 3),
-                Point::new(15, 0)..Point::new(15, 0),
-            ],
-            2,
-            cx,
-        )
-    });
-
-    let snapshot = multibuffer.read(cx).snapshot(cx);
-    assert_eq!(
-        snapshot.text(),
-        concat!(
-            "bbb\n", // Preserve newlines
-            "ccc\n", //
-            "ddd\n", //
-            "eee\n", //
-            "fff\n", //
-            "ggg\n", //
-            "hhh\n", //
-            "iii\n", //
-            "jjj\n", //
-            "nnn\n", //
-            "ooo\n", //
-            "ppp\n", //
-            "qqq\n", //
-            "rrr",   //
-        )
-    );
-
-    assert_eq!(
-        anchor_ranges
-            .iter()
-            .map(|range| range.to_point(&snapshot))
-            .collect::<Vec<_>>(),
-        vec![
-            Point::new(2, 2)..Point::new(3, 2),
-            Point::new(6, 1)..Point::new(6, 3),
-            Point::new(11, 0)..Point::new(11, 0)
-        ]
     );
 }
 
@@ -1587,7 +1531,7 @@ fn test_set_excerpts_for_buffer_ordering(cx: &mut TestAppContext) {
             cx,
         )
     });
-    let path1: PathKey = PathKey::namespaced("0", Path::new("/").into());
+    let path1: PathKey = PathKey::namespaced(0, Path::new("/").into());
 
     let multibuffer = cx.new(|_| MultiBuffer::new(Capability::ReadWrite));
     multibuffer.update(cx, |multibuffer, cx| {
@@ -1683,7 +1627,7 @@ fn test_set_excerpts_for_buffer(cx: &mut TestAppContext) {
             cx,
         )
     });
-    let path1: PathKey = PathKey::namespaced("0", Path::new("/").into());
+    let path1: PathKey = PathKey::namespaced(0, Path::new("/").into());
     let buf2 = cx.new(|cx| {
         Buffer::local(
             indoc! {
@@ -1702,7 +1646,7 @@ fn test_set_excerpts_for_buffer(cx: &mut TestAppContext) {
             cx,
         )
     });
-    let path2 = PathKey::namespaced("x", Path::new("/").into());
+    let path2 = PathKey::namespaced(0, Path::new("/").into());
 
     let multibuffer = cx.new(|_| MultiBuffer::new(Capability::ReadWrite));
     multibuffer.update(cx, |multibuffer, cx| {
