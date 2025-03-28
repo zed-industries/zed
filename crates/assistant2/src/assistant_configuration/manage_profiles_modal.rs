@@ -15,7 +15,9 @@ use gpui::{
     WeakEntity,
 };
 use settings::{update_settings_file, Settings as _};
-use ui::{prelude::*, ListItem, ListItemSpacing, ListSeparator, Navigable, NavigableEntry};
+use ui::{
+    prelude::*, KeyBinding, ListItem, ListItemSpacing, ListSeparator, Navigable, NavigableEntry,
+};
 use workspace::{ModalView, Workspace};
 
 use crate::assistant_configuration::manage_profiles_modal::profile_modal_header::ProfileModalHeader;
@@ -347,6 +349,17 @@ impl ManageProfilesModal {
                                     .inset(true)
                                     .spacing(ListItemSpacing::Sparse)
                                     .child(Label::new(profile.name.clone()))
+                                    .end_slot(
+                                        h_flex()
+                                            .gap_1()
+                                            .child(Label::new("Customize").size(LabelSize::Small))
+                                            .children(KeyBinding::for_action_in(
+                                                &menu::Confirm,
+                                                &self.focus_handle,
+                                                window,
+                                                cx,
+                                            )),
+                                    )
                                     .on_click({
                                         let profile_id = profile.id.clone();
                                         cx.listener(move |this, _, window, cx| {
