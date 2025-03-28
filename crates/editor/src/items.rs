@@ -6,7 +6,8 @@ use crate::{
     MultiBuffer, MultiBufferSnapshot, NavigationData, SearchWithinRange, ToPoint as _,
 };
 use anyhow::{anyhow, Context as _, Result};
-use collections::HashSet;
+use clock::Global;
+use collections::{HashMap, HashSet};
 use file_icons::FileIcons;
 use futures::future::try_join_all;
 use git::status::GitSummary;
@@ -21,7 +22,7 @@ use language::{
 use lsp::DiagnosticSeverity;
 use project::{
     lsp_store::FormatTrigger, project_settings::ProjectSettings, search::SearchQuery, Project,
-    ProjectItem as _, ProjectPath,
+    ProjectEntryId, ProjectItem as _, ProjectPath,
 };
 use rpc::proto::{self, update_view, PeerId};
 use settings::Settings;
@@ -39,7 +40,7 @@ use theme::{Theme, ThemeSettings};
 use ui::{prelude::*, IconDecorationKind};
 use util::{paths::PathExt, ResultExt, TryFutureExt};
 use workspace::{
-    item::{BreadcrumbText, FollowEvent},
+    item::{BreadcrumbText, FollowEvent, ProjectItemKind},
     searchable::SearchOptions,
     OpenVisible, Pane,
 };
@@ -1250,8 +1251,36 @@ impl SerializableItem for Editor {
     }
 }
 
+#[derive(Debug, Default)]
+pub(super) struct EditorRestorationData {
+    pub entries: HashMap<ProjectEntryId, RestorationData>,
+}
+
+#[derive(Debug)]
+pub struct RestorationData {
+    pub scroll_anchor: ScrollAnchor,
+    pub folds: Vec<Range<Anchor>>,
+    pub selections: Vec<Range<Anchor>>,
+    pub buffer_version: Global,
+}
+
+impl Default for RestorationData {
+    fn default() -> Self {
+        Self {
+            scroll_anchor: ScrollAnchor::new(),
+            folds: Vec::new(),
+            selections: Vec::new(),
+            buffer_version: Global::default(),
+        }
+    }
+}
+
 impl ProjectItem for Editor {
     type Item = Buffer;
+
+    fn project_item_kind() -> Option<ProjectItemKind> {
+        Some(ProjectItemKind("Editor"))
+    }
 
     fn for_project_item(
         project: Entity<Project>,
@@ -1260,8 +1289,24 @@ impl ProjectItem for Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let mut editor = Self::for_buffer(buffer, Some(project), window, cx);
-        editor.schedule_default_metadata_update(pane, window, cx);
+        let mut editor = Self::for_buffer(buffer.clone(), Some(project), window, cx);
+
+        let entry_id = buffer.read(cx).entry_id(cx);
+        if let Some(restoration_data) = Self::project_item_kind()
+            .and_then(|kind| pane.item_restoration_data.get(&kind))
+            .and_then(|data| data.downcast_ref::<EditorRestorationData>())
+            .and_then(|data| data.entries.get(&entry_id?))
+            .filter(|data| !buffer.read(cx).version.changed_since(&data.buffer_version))
+        {
+            editor.fold_ranges(restoration_data.folds.clone(), false, window, cx);
+            if !restoration_data.selections.is_empty() {
+                editor.change_selections(None, window, cx, |s| {
+                    s.select_ranges(restoration_data.selections.clone());
+                });
+            }
+            editor.set_scroll_anchor(restoration_data.scroll_anchor, window, cx);
+        }
+
         editor
     }
 }

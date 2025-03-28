@@ -100,6 +100,7 @@ use inlay_hint_cache::{InlayHintCache, InlaySplice, InvalidationStrategy};
 pub use inline_completion::Direction;
 use inline_completion::{EditPredictionProvider, InlineCompletionProviderHandle};
 pub use items::MAX_TAB_TITLE_LEN;
+use items::{EditorRestorationData, RestorationData};
 use itertools::Itertools;
 use language::{
     language_settings::{
@@ -126,7 +127,7 @@ pub use proposed_changes_editor::{
     ProposedChangeLocation, ProposedChangesEditor, ProposedChangesEditorToolbar,
 };
 use smallvec::smallvec;
-use std::{cell::OnceCell, iter::Peekable};
+use std::{cell::OnceCell, collections::hash_map, iter::Peekable};
 use task::{ResolvedTask, TaskTemplate, TaskVariables};
 
 pub use lsp::CompletionContext;
@@ -190,10 +191,10 @@ use ui::{
 };
 use util::{maybe, post_inc, RangeExt, ResultExt, TryFutureExt};
 use workspace::{
-    item::{ItemHandle, PreviewTabsSettings},
+    item::{ItemHandle, PreviewTabsSettings, ProjectItem as _},
     notifications::{DetachAndPromptErr, NotificationId, NotifyTaskExt},
     searchable::SearchEvent,
-    Item as WorkspaceItem, ItemId, ItemNavHistory, OpenInTerminal, OpenTerminal, Pane,
+    Item as WorkspaceItem, ItemId, ItemNavHistory, OpenInTerminal, OpenTerminal,
     RestoreOnStartupBehavior, SplitDirection, TabBarSettings, Toast, ViewId, Workspace,
     WorkspaceId, WorkspaceSettings, SERIALIZATION_THROTTLE_TIME,
 };
@@ -1597,6 +1598,16 @@ impl Editor {
         }
         this.tasks_update_task = Some(this.refresh_runnables(window, cx));
         this._subscriptions.extend(project_subscriptions);
+        this._subscriptions
+            .push(cx.subscribe_self(|editor, e: &EditorEvent, cx| {
+                if let EditorEvent::SelectionsChanged { local } = e {
+                    if *local {
+                        editor.update_restoration_data(cx, |data| {
+                            data.scroll_anchor = editor.scroll_manager.anchor();
+                        });
+                    }
+                }
+            }));
 
         this.end_selection(window, cx);
         this.scroll_manager.show_scrollbars(window, cx);
@@ -2322,13 +2333,19 @@ impl Editor {
             && WorkspaceSettings::get(None, cx).restore_on_startup != RestoreOnStartupBehavior::None
         {
             if let Some(workspace_id) = self.workspace.as_ref().and_then(|workspace| workspace.1) {
-                let background_executor = cx.background_executor().clone();
-                let editor_id = cx.entity().entity_id().as_u64() as ItemId;
                 let snapshot = self.buffer().read(cx).snapshot(cx);
                 let selections = selections.clone();
+
+                let inmemory_selections = selections.iter().map(|s| s.range()).collect();
+                self.update_restoration_data(cx, |data| {
+                    data.selections = inmemory_selections;
+                });
+
+                let background_executor = cx.background_executor().clone();
+                let editor_id = cx.entity().entity_id().as_u64() as ItemId;
                 self.serialize_selections = cx.background_spawn(async move {
                     background_executor.timer(SERIALIZATION_THROTTLE_TIME).await;
-                    let selections = selections
+                    let db_selections = selections
                         .iter()
                         .map(|selection| {
                             (
@@ -2338,7 +2355,7 @@ impl Editor {
                         })
                         .collect();
 
-                    DB.save_editor_selections(editor_id, workspace_id, selections)
+                    DB.save_editor_selections(editor_id, workspace_id, db_selections)
                         .await
                         .with_context(|| format!("persisting editor selections for editor {editor_id}, workspace {workspace_id:?}"))
                         .log_err();
@@ -2356,13 +2373,24 @@ impl Editor {
             return;
         }
 
+        let snapshot = self.buffer().read(cx).snapshot(cx);
+        let inmemory_folds = self.display_map.update(cx, |display_map, cx| {
+            display_map
+                .snapshot(cx)
+                .folds_in_range(0..snapshot.len())
+                .map(|fold| fold.range.deref().clone())
+                .collect()
+        });
+        self.update_restoration_data(cx, |data| {
+            data.folds = inmemory_folds;
+        });
+
         let Some(workspace_id) = self.workspace.as_ref().and_then(|workspace| workspace.1) else {
             return;
         };
         let background_executor = cx.background_executor().clone();
         let editor_id = cx.entity().entity_id().as_u64() as ItemId;
-        let snapshot = self.buffer().read(cx).snapshot(cx);
-        let folds = self.display_map.update(cx, |display_map, cx| {
+        let db_folds = self.display_map.update(cx, |display_map, cx| {
             display_map
                 .snapshot(cx)
                 .folds_in_range(0..snapshot.len())
@@ -2376,7 +2404,7 @@ impl Editor {
         });
         self.serialize_folds = cx.background_spawn(async move {
             background_executor.timer(SERIALIZATION_THROTTLE_TIME).await;
-            DB.save_editor_folds(editor_id, workspace_id, folds)
+            DB.save_editor_folds(editor_id, workspace_id, db_folds)
                 .await
                 .with_context(|| format!("persisting editor folds for editor {editor_id}, workspace {workspace_id:?}"))
                 .log_err();
@@ -17442,23 +17470,6 @@ impl Editor {
         self.load_diff_task.clone()
     }
 
-    fn schedule_default_metadata_update(
-        &mut self,
-        pane: &Pane,
-        window: &mut Window,
-        cx: &mut Context<Editor>,
-    ) -> Option<()> {
-        let buffer = self.buffer().read(cx).as_singleton()?;
-        let file = project::File::from_dyn(buffer.read(cx).file())?;
-        let buffer_path = file.worktree.read(cx).absolutize(&file.path).ok()?;
-        let buffer_id = buffer.read(cx).remote_id();
-
-        // TODO kb config option to disable this behavior
-        dbg!(("4", &buffer_path));
-
-        Some(())
-    }
-
     fn read_metadata_from_db(
         &mut self,
         item_id: u64,
@@ -17471,22 +17482,7 @@ impl Editor {
         {
             let buffer_snapshot = OnceCell::new();
 
-            if let Some(selections) = DB.get_editor_selections(item_id, workspace_id).log_err() {
-                dbg!(selections.len());
-                if !selections.is_empty() {
-                    let snapshot =
-                        buffer_snapshot.get_or_init(|| self.buffer.read(cx).snapshot(cx));
-                    self.change_selections(None, window, cx, |s| {
-                        s.select_ranges(selections.into_iter().map(|(start, end)| {
-                            snapshot.clip_offset(start, Bias::Left)
-                                ..snapshot.clip_offset(end, Bias::Right)
-                        }));
-                    });
-                }
-            };
-
             if let Some(folds) = DB.get_editor_folds(item_id, workspace_id).log_err() {
-                dbg!(folds.len());
                 if !folds.is_empty() {
                     let snapshot =
                         buffer_snapshot.get_or_init(|| self.buffer.read(cx).snapshot(cx));
@@ -17504,9 +17500,62 @@ impl Editor {
                     );
                 }
             }
+
+            if let Some(selections) = DB.get_editor_selections(item_id, workspace_id).log_err() {
+                if !selections.is_empty() {
+                    let snapshot =
+                        buffer_snapshot.get_or_init(|| self.buffer.read(cx).snapshot(cx));
+                    self.change_selections(None, window, cx, |s| {
+                        s.select_ranges(selections.into_iter().map(|(start, end)| {
+                            snapshot.clip_offset(start, Bias::Left)
+                                ..snapshot.clip_offset(end, Bias::Right)
+                        }));
+                    });
+                }
+            };
         }
 
         self.read_scroll_position_from_db(item_id, workspace_id, window, cx);
+    }
+
+    // TODO kb settings to disable this
+    pub fn update_restoration_data<T>(
+        &self,
+        cx: &mut Context<Self>,
+        write: impl FnOnce(&mut RestorationData) -> T,
+    ) -> Option<T> {
+        let kind = Editor::project_item_kind()?;
+        let pane = self.workspace()?.read(cx).pane_for(&cx.entity())?;
+        let buffer = self.buffer().read(cx).as_singleton()?;
+        let entry_id = buffer.read(cx).entry_id(cx)?;
+        let buffer_version = buffer.read(cx).version();
+        pane.update(cx, |pane, _| {
+            let data = pane
+                .item_restoration_data
+                .entry(kind)
+                .or_insert_with(|| Box::new(EditorRestorationData::default()) as Box<_>);
+            let data = match data.downcast_mut::<EditorRestorationData>() {
+                Some(data) => data,
+                None => {
+                    *data = Box::new(EditorRestorationData::default());
+                    data.downcast_mut::<EditorRestorationData>()
+                        .expect("just written the type downcasted to")
+                }
+            };
+
+            let data = match data.entries.entry(entry_id) {
+                hash_map::Entry::Occupied(o) => {
+                    if buffer_version.changed_since(&o.get().buffer_version) {
+                        return None;
+                    }
+                    o.into_mut()
+                }
+                hash_map::Entry::Vacant(v) => v.insert(RestorationData::default()),
+            };
+            let return_value = write(data);
+            data.buffer_version = buffer_version;
+            Some(return_value)
+        })
     }
 }
 
