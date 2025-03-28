@@ -23,7 +23,6 @@ use crate::context_store::ContextStore;
 use crate::thread_store::ThreadStore;
 
 use super::fetch_context_picker::fetch_url_content;
-use super::symbol_context_picker::SymbolMatch;
 use super::thread_context_picker::ThreadContextEntry;
 use super::{recent_context_picker_entries, supported_context_picker_modes, ContextPickerMode};
 
@@ -462,9 +461,9 @@ impl CompletionProvider for ContextPickerCompletionProvider {
                             .await?;
                         cx.update(|cx| {
                             completions.extend(symbol_matches.into_iter().filter_map(
-                                |symbol_match| {
+                                |(_, symbol)| {
                                     Self::completion_for_symbol(
-                                        symbol_match.symbol,
+                                        symbol,
                                         excerpt_id,
                                         source_range.clone(),
                                         editor.clone(),

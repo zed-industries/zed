@@ -7,7 +7,7 @@ use collections::{BTreeMap, HashMap, HashSet};
 use futures::{self, future, Future, FutureExt};
 use gpui::{App, AppContext as _, AsyncApp, Context, Entity, SharedString, Task, WeakEntity};
 use language::Buffer;
-use project::{ProjectPath, Worktree};
+use project::{ProjectItem, ProjectPath, Worktree};
 use rope::Rope;
 use text::{Anchor, BufferId};
 use util::maybe;
@@ -28,6 +28,8 @@ pub struct ContextStore {
     files: BTreeMap<BufferId, ContextId>,
     directories: HashMap<PathBuf, ContextId>,
     symbols: HashMap<ContextSymbolId, ContextId>,
+    symbol_buffers: HashMap<ContextSymbolId, Entity<Buffer>>,
+    symbols_by_path: HashMap<ProjectPath, Vec<ContextSymbolId>>,
     threads: HashMap<ThreadId, ContextId>,
     fetched_urls: HashMap<String, ContextId>,
 }
@@ -41,6 +43,8 @@ impl ContextStore {
             files: BTreeMap::default(),
             directories: HashMap::default(),
             symbols: HashMap::default(),
+            symbol_buffers: HashMap::default(),
+            symbols_by_path: HashMap::default(),
             threads: HashMap::default(),
             fetched_urls: HashMap::default(),
         }
@@ -276,13 +280,13 @@ impl ContextStore {
         symbol_enclosing_range: Range<Anchor>,
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
-        let Some(workspace) = self.workspace.upgrade() else {
-            return Task::ready(Err(anyhow!("Cannot add symbol: Workspace was dropped")));
-        };
-
         let buffer_ref = buffer.read(cx);
         let Some(file) = buffer_ref.file() else {
             return Task::ready(Err(anyhow!("Buffer has no path.")));
+        };
+
+        let Some(project_path) = buffer_ref.project_path(cx) else {
+            return Task::ready(Err(anyhow!("Buffer has no project path.")));
         };
 
         let (buffer_info, collect_content_task) = collect_buffer_info_and_text(
@@ -299,6 +303,7 @@ impl ContextStore {
             this.update(cx, |this, _cx| {
                 this.insert_symbol(make_context_symbol(
                     buffer_info,
+                    project_path,
                     symbol_name,
                     symbol_range,
                     symbol_enclosing_range,
@@ -311,7 +316,13 @@ impl ContextStore {
 
     fn insert_symbol(&mut self, context_symbol: ContextSymbol) {
         let id = self.next_context_id.post_inc();
-        self.symbols.insert(context_symbol.id.clone(), id);
+        self.symbols_by_path
+            .entry(context_symbol.id.path.clone())
+            .or_insert_with(Vec::new)
+            .push(context_symbol.id.clone());
+
+        self.symbol_buffers
+            .insert(context_symbol.id.clone(), context_symbol.buffer.clone());
         self.context.push(AssistantContext::Symbol(SymbolContext {
             id,
             context_symbol,
@@ -396,7 +407,16 @@ impl ContextStore {
             AssistantContext::Directory(_) => {
                 self.directories.retain(|_, context_id| *context_id != id);
             }
-            AssistantContext::Symbol(_) => {
+            AssistantContext::Symbol(symbol) => {
+                if let Some(symbols_in_path) =
+                    self.symbols_by_path.get_mut(&symbol.context_symbol.id.path)
+                {
+                    symbols_in_path.retain(|s| {
+                        self.symbols
+                            .get(s)
+                            .map_or(false, |context_id| *context_id != id)
+                    });
+                }
                 self.symbols.retain(|_, context_id| *context_id != id);
             }
             AssistantContext::FetchedUrl(_) => {
@@ -462,8 +482,16 @@ impl ContextStore {
         self.directories.get(path).copied()
     }
 
-    pub fn includes_symbol(&self, symbol_id: &ContextSymbolId) -> Option<ContextId> {
+    pub fn included_symbol(&self, symbol_id: &ContextSymbolId) -> Option<ContextId> {
         self.symbols.get(symbol_id).copied()
+    }
+
+    pub fn included_symbols_by_path(&self) -> &HashMap<ProjectPath, Vec<ContextSymbolId>> {
+        &self.symbols_by_path
+    }
+
+    pub fn buffer_for_symbol(&self, symbol_id: &ContextSymbolId) -> Option<Entity<Buffer>> {
+        self.symbol_buffers.get(symbol_id).cloned()
     }
 
     pub fn includes_thread(&self, thread_id: &ThreadId) -> Option<ContextId> {
@@ -529,13 +557,14 @@ fn make_context_buffer(info: BufferInfo, text: SharedString) -> ContextBuffer {
 
 fn make_context_symbol(
     info: BufferInfo,
+    path: ProjectPath,
     name: SharedString,
     range: Range<Anchor>,
     enclosing_range: Range<Anchor>,
     text: SharedString,
 ) -> ContextSymbol {
     ContextSymbol {
-        id: ContextSymbolId { name, range },
+        id: ContextSymbolId { name, range, path },
         buffer_version: info.version,
         enclosing_range,
         buffer: info.buffer_entity,
@@ -822,6 +851,7 @@ fn refresh_context_symbol(
 ) -> Option<impl Future<Output = ContextSymbol>> {
     let buffer = context_symbol.buffer.read(cx);
     let path = buffer_path_log_err(buffer)?;
+    let project_path = buffer.project_path(cx)?;
     if buffer.version.changed_since(&context_symbol.buffer_version) {
         let (buffer_info, text_task) = collect_buffer_info_and_text(
             path,
@@ -833,11 +863,16 @@ fn refresh_context_symbol(
         let name = context_symbol.id.name.clone();
         let range = context_symbol.id.range.clone();
         let enclosing_range = context_symbol.enclosing_range.clone();
-        Some(
-            text_task.map(move |text| {
-                make_context_symbol(buffer_info, name, range, enclosing_range, text)
-            }),
-        )
+        Some(text_task.map(move |text| {
+            make_context_symbol(
+                buffer_info,
+                project_path,
+                name,
+                range,
+                enclosing_range,
+                text,
+            )
+        }))
     } else {
         None
     }

@@ -5,6 +5,7 @@ use file_icons::FileIcons;
 use gpui::{App, Entity, SharedString};
 use language::Buffer;
 use language_model::{LanguageModelRequestMessage, MessageContent};
+use project::ProjectPath;
 use serde::{Deserialize, Serialize};
 use text::{Anchor, BufferId};
 use ui::IconName;
@@ -136,6 +137,7 @@ pub struct ContextSymbol {
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ContextSymbolId {
+    pub path: ProjectPath,
     pub name: SharedString,
     pub range: Range<Anchor>,
 }

@@ -1,26 +1,22 @@
 use std::cmp::Reverse;
-use std::ops::Range;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
-use anyhow::{anyhow, Context as _, Result};
-use editor::{Anchor, AnchorRangeExt, Editor, MultiBufferSnapshot};
-use file_icons::FileIcons;
+use anyhow::{Context as _, Result};
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
-    App, AppContext, AsyncApp, DismissEvent, Entity, FocusHandle, Focusable, Stateful, Task,
-    WeakEntity,
+    App, AppContext, DismissEvent, Entity, FocusHandle, Focusable, Stateful, Task, WeakEntity,
 };
-use language::OutlineItem;
 use ordered_float::OrderedFloat;
 use picker::{Picker, PickerDelegate};
 use project::{DocumentSymbol, Symbol};
-use ui::{prelude::*, ListItem, Tooltip};
+use text::OffsetRangeExt;
+use ui::{prelude::*, ListItem};
 use util::ResultExt as _;
-use workspace::{notifications::NotifyResultExt, Workspace};
+use workspace::Workspace;
 
 use crate::context_picker::{ConfirmBehavior, ContextPicker};
-use crate::context_store::{ContextStore, FileInclusion};
+use crate::context_store::ContextStore;
 
 pub struct SymbolContextPicker {
     picker: Entity<Picker<SymbolContextPickerDelegate>>,
@@ -64,7 +60,7 @@ pub struct SymbolContextPickerDelegate {
     workspace: WeakEntity<Workspace>,
     context_store: WeakEntity<ContextStore>,
     confirm_behavior: ConfirmBehavior,
-    matches: Vec<SymbolMatch>,
+    matches: Vec<SymbolEntry>,
     selected_index: usize,
 }
 
@@ -121,14 +117,23 @@ impl PickerDelegate for SymbolContextPickerDelegate {
         };
 
         let search_task = search_symbols(query, Arc::<AtomicBool>::default(), &workspace, cx);
+        let context_store = self.context_store.clone();
         cx.spawn_in(window, async move |this, cx| {
             let symbols = search_task
                 .await
                 .context("Failed to load symbols")
-                .log_err();
+                .log_err()
+                .unwrap_or_default();
+
+            let symbol_entries = context_store
+                .read_with(cx, |context_store, cx| {
+                    compute_symbol_entries(symbols, context_store, cx)
+                })
+                .log_err()
+                .unwrap_or_default();
 
             this.update(cx, |this, _cx| {
-                this.delegate.matches = symbols.unwrap_or_default();
+                this.delegate.matches = symbol_entries;
             })
             .log_err();
         })
@@ -149,11 +154,18 @@ impl PickerDelegate for SymbolContextPickerDelegate {
             self.context_store.clone(),
             cx,
         );
+
+        let selected_index = self.selected_index;
         cx.spawn_in(window, async move |this, cx| {
             add_symbol_task.await?;
-            this.update_in(cx, |this, window, cx| match confirm_behavior {
-                ConfirmBehavior::KeepOpen => {}
-                ConfirmBehavior::Close => this.delegate.dismissed(window, cx),
+            this.update_in(cx, |this, window, cx| {
+                if let Some(mat) = this.delegate.matches.get_mut(selected_index) {
+                    mat.is_included = true;
+                }
+                match confirm_behavior {
+                    ConfirmBehavior::KeepOpen => {}
+                    ConfirmBehavior::Close => this.delegate.dismissed(window, cx),
+                }
             })
         })
         .detach_and_log_err(cx);
@@ -172,7 +184,7 @@ impl PickerDelegate for SymbolContextPickerDelegate {
         ix: usize,
         selected: bool,
         _window: &mut Window,
-        cx: &mut Context<Picker<Self>>,
+        _: &mut Context<Picker<Self>>,
     ) -> Option<Self::ListItem> {
         let mat = &self.matches[ix];
 
@@ -180,16 +192,14 @@ impl PickerDelegate for SymbolContextPickerDelegate {
             render_symbol_context_entry(
                 ElementId::NamedInteger("symbol-ctx-picker".into(), ix),
                 mat,
-                self.context_store.clone(),
-                cx,
             ),
         ))
     }
 }
 
-pub(crate) struct SymbolMatch {
-    pub mat: StringMatch,
+pub(crate) struct SymbolEntry {
     pub symbol: Symbol,
+    pub is_included: bool,
 }
 
 pub(crate) fn add_symbol(
@@ -226,7 +236,7 @@ pub(crate) fn add_symbol(
             (symbol.name, symbol.range.clone(), symbol.range)
         };
 
-        let (range, enclosing_range) = buffer.read_with(cx, |buffer, cx| {
+        let (range, enclosing_range) = buffer.read_with(cx, |buffer, _| {
             (
                 buffer.anchor_after(range.start)..buffer.anchor_before(range.end),
                 buffer.anchor_after(enclosing_range.start)
@@ -271,7 +281,7 @@ pub(crate) fn search_symbols(
     cancellation_flag: Arc<AtomicBool>,
     workspace: &Entity<Workspace>,
     cx: &mut App,
-) -> Task<Result<Vec<SymbolMatch>>> {
+) -> Task<Result<Vec<(StringMatch, Symbol)>>> {
     let symbols_task = workspace.update(cx, |workspace, cx| {
         workspace
             .project()
@@ -328,27 +338,60 @@ pub(crate) fn search_symbols(
                 for position in &mut mat.positions {
                     *position += filter_start;
                 }
-                SymbolMatch { mat, symbol }
+                (mat, symbol)
             })
             .collect())
     })
 }
 
-pub fn render_symbol_context_entry(
-    id: ElementId,
-    mat: &SymbolMatch,
-    context_store: WeakEntity<ContextStore>,
+fn compute_symbol_entries(
+    symbols: Vec<(StringMatch, Symbol)>,
+    context_store: &ContextStore,
     cx: &App,
-) -> Stateful<Div> {
-    //TODO: Check if symbol is added
-    let path = mat
+) -> Vec<SymbolEntry> {
+    let mut symbol_entries = Vec::with_capacity(symbols.len());
+    for (_, symbol) in symbols {
+        let symbols_for_path = context_store.included_symbols_by_path().get(&symbol.path);
+        let is_included = if let Some(symbols_for_path) = symbols_for_path {
+            let mut is_included = false;
+            for included_symbol_id in symbols_for_path {
+                if included_symbol_id.name.as_ref() == symbol.name.as_str() {
+                    if let Some(buffer) = context_store.buffer_for_symbol(included_symbol_id) {
+                        let snapshot = buffer.read(cx).snapshot();
+                        let included_symbol_range =
+                            included_symbol_id.range.to_point_utf16(&snapshot);
+
+                        if included_symbol_range.start == symbol.range.start.0
+                            && included_symbol_range.end == symbol.range.end.0
+                        {
+                            is_included = true;
+                            break;
+                        }
+                    }
+                }
+            }
+            is_included
+        } else {
+            false
+        };
+
+        symbol_entries.push(SymbolEntry {
+            symbol,
+            is_included,
+        })
+    }
+    symbol_entries
+}
+
+pub fn render_symbol_context_entry(id: ElementId, entry: &SymbolEntry) -> Stateful<Div> {
+    let path = entry
         .symbol
         .path
         .path
         .file_name()
         .map(|s| s.to_string_lossy())
         .unwrap_or_default();
-    let symbol_location = format!("{} L{}", path, mat.symbol.range.start.0.row);
+    let symbol_location = format!("{} L{}", path, entry.symbol.range.start.0.row);
 
     h_flex()
         .id(id)
@@ -360,10 +403,27 @@ pub fn render_symbol_context_entry(
                 .color(Color::Muted),
         )
         .child(
-            h_flex().gap_1().child(Label::new(&mat.symbol.name)).child(
-                Label::new(symbol_location)
-                    .size(LabelSize::Small)
-                    .color(Color::Muted),
-            ),
+            h_flex()
+                .gap_1()
+                .child(Label::new(&entry.symbol.name))
+                .child(
+                    Label::new(symbol_location)
+                        .size(LabelSize::Small)
+                        .color(Color::Muted),
+                ),
         )
+        .when(entry.is_included, |el| {
+            el.child(
+                h_flex()
+                    .w_full()
+                    .justify_end()
+                    .gap_0p5()
+                    .child(
+                        Icon::new(IconName::Check)
+                            .size(IconSize::Small)
+                            .color(Color::Success),
+                    )
+                    .child(Label::new("Added").size(LabelSize::Small)),
+            )
+        })
 }
