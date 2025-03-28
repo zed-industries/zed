@@ -7393,12 +7393,14 @@ impl Editor {
                 true,
             )))
             .when(is_platform_style_mac, |parent| {
-                parent.child(accept_keystroke.key.clone())
+                // todo(zjk)
+                parent.child(accept_keystroke.face.clone())
             })
             .when(!is_platform_style_mac, |parent| {
+                // todo(zjk)
                 parent.child(
                     Key::new(
-                        util::capitalize(&accept_keystroke.key),
+                        util::capitalize(&accept_keystroke.face),
                         Some(Color::Default),
                     )
                     .size(Some(IconSize::XSmall.rems().into())),
