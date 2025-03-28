@@ -32,6 +32,7 @@ actions!(
         VisualYank,
         VisualYankLine,
         OtherEnd,
+        OtherEndRowAware,
         SelectNext,
         SelectPrevious,
         SelectNextMatch,
@@ -55,6 +56,7 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
         vim.toggle_mode(Mode::VisualBlock, window, cx)
     });
     Vim::action(editor, cx, Vim::other_end);
+    Vim::action(editor, cx, Vim::other_end_row_aware);
     Vim::action(editor, cx, Vim::visual_insert_end_of_line);
     Vim::action(editor, cx, Vim::visual_insert_first_non_white_space);
     Vim::action(editor, cx, |vim, _: &VisualDelete, window, cx| {
@@ -469,6 +471,21 @@ impl Vim {
     }
 
     pub fn other_end(&mut self, _: &OtherEnd, window: &mut Window, cx: &mut Context<Self>) {
+        self.update_editor(window, cx, |_, editor, window, cx| {
+            editor.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
+                s.move_with(|_, selection| {
+                    selection.reversed = !selection.reversed;
+                });
+            })
+        });
+    }
+
+    pub fn other_end_row_aware(
+        &mut self,
+        _: &OtherEndRowAware,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let mode = self.mode;
         self.update_editor(window, cx, |_, editor, window, cx| {
             editor.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
