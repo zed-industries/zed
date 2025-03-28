@@ -175,10 +175,14 @@ impl RenderOnce for ContextPill {
             } => base_pill
                 .cursor_pointer()
                 .pr_1()
+                .when(*focused, |this| {
+                    this.bg(color.element_background.opacity(0.5))
+                })
+                .border_dashed()
                 .border_color(if *focused {
                     color.border_focused
                 } else {
-                    color.border_variant.opacity(0.5)
+                    color.border
                 })
                 .hover(|style| style.bg(color.element_hover.opacity(0.5)))
                 .child(

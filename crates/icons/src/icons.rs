@@ -225,6 +225,7 @@ pub enum IconName {
     Unpin,
     Update,
     UserGroup,
+    UserRoundPen,
     Visible,
     Wand,
     Warning,
