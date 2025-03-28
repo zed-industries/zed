@@ -60,7 +60,7 @@ impl ProfileSelector {
     ) -> Entity<ContextMenu> {
         ContextMenu::build(window, cx, |mut menu, _window, cx| {
             let settings = AssistantSettings::get_global(cx);
-            let icon_position = IconPosition::Start;
+            let icon_position = IconPosition::End;
 
             menu = menu.header("Profiles");
             for (profile_id, profile) in self.profiles.clone() {
@@ -91,14 +91,11 @@ impl ProfileSelector {
             }
 
             menu = menu.separator();
-            menu = menu.item(
-                ContextMenuEntry::new("Configure Profiles")
-                    .icon(IconName::Pencil)
-                    .icon_color(Color::Muted)
-                    .handler(move |window, cx| {
-                        window.dispatch_action(ManageProfiles.boxed_clone(), cx);
-                    }),
-            );
+            menu = menu.item(ContextMenuEntry::new("Configure Profiles").handler(
+                move |window, cx| {
+                    window.dispatch_action(ManageProfiles.boxed_clone(), cx);
+                },
+            ));
 
             menu
         })
