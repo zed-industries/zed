@@ -136,7 +136,7 @@ pub enum KeyCode {
     /// WIN key
     Platform(KeyPosition),
     /// Applications key, `VK_APPS` on Windows.
-    App,
+    ContextMenu,
     // /// Numeric keypad 0 key, `VK_NUMPAD0` on Windows.
     // Numpad0,
     // /// Numeric keypad 0 key, `VK_NUMPAD0` on Windows.
@@ -323,7 +323,7 @@ impl KeyCode {
             "insert" => Self::Insert,
             "delete" => Self::Delete,
             "win" | "cmd" | "super" => Self::Platform(KeyPosition::Any),
-            "menu" => Self::App, // TODO: Chrome use this as Fn key
+            "menu" => Self::ContextMenu,
             "a" => Self::A,
             "b" => Self::B,
             "c" => Self::C,
@@ -622,6 +622,8 @@ impl KeyCode {
     //         // Self::OEMClear => "UnImplemented",
     //     }
     // }
+
+    /// TODO:
     pub fn is_printable(&self) -> bool {
         !matches!(
             self,
