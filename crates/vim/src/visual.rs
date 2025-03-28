@@ -349,7 +349,6 @@ impl Vim {
                     row.0 += 1
                 }
             }
-            println!("selections {:#?}", selections);
             s.select(selections);
         })
     }
