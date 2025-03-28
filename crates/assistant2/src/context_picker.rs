@@ -1,6 +1,7 @@
 mod completion_provider;
 mod fetch_context_picker;
 mod file_context_picker;
+mod symbol_context_picker;
 mod thread_context_picker;
 
 use std::ops::Range;
@@ -16,6 +17,7 @@ use gpui::{
 };
 use multi_buffer::MultiBufferRow;
 use project::ProjectPath;
+use symbol_context_picker::SymbolContextPicker;
 use thread_context_picker::{render_thread_context_entry, ThreadContextEntry};
 use ui::{
     prelude::*, ButtonLike, ContextMenu, ContextMenuEntry, ContextMenuItem, Disclosure, TintColor,
@@ -39,6 +41,7 @@ pub enum ConfirmBehavior {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ContextPickerMode {
     File,
+    Symbol,
     Fetch,
     Thread,
 }
@@ -49,6 +52,7 @@ impl TryFrom<&str> for ContextPickerMode {
     fn try_from(value: &str) -> Result<Self, Self::Error> {
         match value {
             "file" => Ok(Self::File),
+            "symbol" => Ok(Self::Symbol),
             "fetch" => Ok(Self::Fetch),
             "thread" => Ok(Self::Thread),
             _ => Err(format!("Invalid context picker mode: {}", value)),
@@ -60,6 +64,7 @@ impl ContextPickerMode {
     pub fn mention_prefix(&self) -> &'static str {
         match self {
             Self::File => "file",
+            Self::Symbol => "symbol",
             Self::Fetch => "fetch",
             Self::Thread => "thread",
         }
@@ -68,6 +73,7 @@ impl ContextPickerMode {
     pub fn label(&self) -> &'static str {
         match self {
             Self::File => "Files & Directories",
+            Self::Symbol => "Symbols",
             Self::Fetch => "Fetch",
             Self::Thread => "Thread",
         }
@@ -76,6 +82,7 @@ impl ContextPickerMode {
     pub fn icon(&self) -> IconName {
         match self {
             Self::File => IconName::File,
+            Self::Symbol => IconName::Code,
             Self::Fetch => IconName::Globe,
             Self::Thread => IconName::MessageCircle,
         }
@@ -86,6 +93,7 @@ impl ContextPickerMode {
 enum ContextPickerState {
     Default(Entity<ContextMenu>),
     File(Entity<FileContextPicker>),
+    Symbol(Entity<SymbolContextPicker>),
     Fetch(Entity<FetchContextPicker>),
     Thread(Entity<ThreadContextPicker>),
 }
@@ -196,6 +204,18 @@ impl ContextPicker {
             ContextPickerMode::File => {
                 self.mode = ContextPickerState::File(cx.new(|cx| {
                     FileContextPicker::new(
+                        context_picker.clone(),
+                        self.workspace.clone(),
+                        self.context_store.clone(),
+                        self.confirm_behavior,
+                        window,
+                        cx,
+                    )
+                }));
+            }
+            ContextPickerMode::Symbol => {
+                self.mode = ContextPickerState::Symbol(cx.new(|cx| {
+                    SymbolContextPicker::new(
                         context_picker.clone(),
                         self.workspace.clone(),
                         self.context_store.clone(),
@@ -416,6 +436,7 @@ impl Focusable for ContextPicker {
         match &self.mode {
             ContextPickerState::Default(menu) => menu.focus_handle(cx),
             ContextPickerState::File(file_picker) => file_picker.focus_handle(cx),
+            ContextPickerState::Symbol(symbol_picker) => symbol_picker.focus_handle(cx),
             ContextPickerState::Fetch(fetch_picker) => fetch_picker.focus_handle(cx),
             ContextPickerState::Thread(thread_picker) => thread_picker.focus_handle(cx),
         }
@@ -430,6 +451,7 @@ impl Render for ContextPicker {
             .map(|parent| match &self.mode {
                 ContextPickerState::Default(menu) => parent.child(menu.clone()),
                 ContextPickerState::File(file_picker) => parent.child(file_picker.clone()),
+                ContextPickerState::Symbol(symbol_picker) => parent.child(symbol_picker.clone()),
                 ContextPickerState::Fetch(fetch_picker) => parent.child(fetch_picker.clone()),
                 ContextPickerState::Thread(thread_picker) => parent.child(thread_picker.clone()),
             })
@@ -446,7 +468,11 @@ enum RecentEntry {
 fn supported_context_picker_modes(
     thread_store: &Option<WeakEntity<ThreadStore>>,
 ) -> Vec<ContextPickerMode> {
-    let mut modes = vec![ContextPickerMode::File, ContextPickerMode::Fetch];
+    let mut modes = vec![
+        ContextPickerMode::File,
+        ContextPickerMode::Symbol,
+        ContextPickerMode::Fetch,
+    ];
     if thread_store.is_some() {
         modes.push(ContextPickerMode::Thread);
     }

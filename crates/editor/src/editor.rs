@@ -15494,9 +15494,9 @@ impl Editor {
         }
     }
 
-    pub fn project_path(&self, cx: &mut Context<Self>) -> Option<ProjectPath> {
+    pub fn project_path(&self, cx: &App) -> Option<ProjectPath> {
         if let Some(buffer) = self.buffer.read(cx).as_singleton() {
-            buffer.read_with(cx, |buffer, cx| buffer.project_path(cx))
+            buffer.read(cx).project_path(cx)
         } else {
             None
         }
