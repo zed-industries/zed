@@ -17,11 +17,11 @@ use crate::{
 };
 use anyhow::{anyhow, Context as _, Result};
 use collections::{FxHashMap, FxHashSet};
+#[cfg(target_os = "macos")]
+use core_video::pixel_buffer::CVPixelBuffer;
 use derive_more::{Deref, DerefMut};
 use futures::channel::oneshot;
 use futures::FutureExt;
-#[cfg(target_os = "macos")]
-use media::core_video::CVImageBuffer;
 use parking_lot::RwLock;
 use raw_window_handle::{HandleError, HasWindowHandle};
 use refineable::Refineable;
@@ -1009,7 +1009,7 @@ impl Window {
     pub fn replace_root<E>(
         &mut self,
         cx: &mut App,
-        build_view: impl FnOnce(&mut Window, &mut Context<'_, E>) -> E,
+        build_view: impl FnOnce(&mut Window, &mut Context<E>) -> E,
     ) -> Entity<E>
     where
         E: 'static + Render,
@@ -2658,7 +2658,7 @@ impl Window {
     ///
     /// This method should only be called as part of the paint phase of element drawing.
     #[cfg(target_os = "macos")]
-    pub fn paint_surface(&mut self, bounds: Bounds<Pixels>, image_buffer: CVImageBuffer) {
+    pub fn paint_surface(&mut self, bounds: Bounds<Pixels>, image_buffer: CVPixelBuffer) {
         use crate::PaintSurface;
 
         self.invalidator.debug_assert_paint();
@@ -3824,7 +3824,7 @@ impl<V: 'static + Render> WindowHandle<V> {
     pub fn update<C, R>(
         &self,
         cx: &mut C,
-        update: impl FnOnce(&mut V, &mut Window, &mut Context<'_, V>) -> R,
+        update: impl FnOnce(&mut V, &mut Window, &mut Context<V>) -> R,
     ) -> Result<R>
     where
         C: AppContext,

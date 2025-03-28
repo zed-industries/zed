@@ -349,7 +349,7 @@ impl PickerDelegate for TasksModalDelegate {
                             _ => {
                                 project.update(cx, |project, cx| {
                                     project
-                                        .start_debug_session(config, cx)
+                                        .start_debug_session(config.into(), cx)
                                         .detach_and_log_err(cx);
                                 });
                             }
@@ -521,7 +521,10 @@ impl PickerDelegate for TasksModalDelegate {
                     // This would allow users to access to debug history and other issues
                     TaskType::Debug(_) => workspace.project().update(cx, |project, cx| {
                         project
-                            .start_debug_session(task.resolved_debug_adapter_config().unwrap(), cx)
+                            .start_debug_session(
+                                task.resolved_debug_adapter_config().unwrap().into(),
+                                cx,
+                            )
                             .detach_and_log_err(cx);
                     }),
                 };

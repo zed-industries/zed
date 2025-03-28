@@ -162,7 +162,9 @@ impl RenderOnce for ContextPill {
                 })
                 .when_some(on_click.as_ref(), |element, on_click| {
                     let on_click = on_click.clone();
-                    element.on_click(move |event, window, cx| on_click(event, window, cx))
+                    element
+                        .cursor_pointer()
+                        .on_click(move |event, window, cx| on_click(event, window, cx))
                 }),
             ContextPill::Suggested {
                 name,
@@ -190,9 +192,10 @@ impl RenderOnce for ContextPill {
                 .child(
                     Label::new(match kind {
                         ContextKind::File => "Active Tab",
-                        ContextKind::Thread | ContextKind::Directory | ContextKind::FetchedUrl => {
-                            "Active"
-                        }
+                        ContextKind::Thread
+                        | ContextKind::Directory
+                        | ContextKind::FetchedUrl
+                        | ContextKind::Symbol => "Active",
                     })
                     .size(LabelSize::XSmall)
                     .color(Color::Muted),

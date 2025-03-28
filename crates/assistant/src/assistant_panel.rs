@@ -1,4 +1,5 @@
 use crate::assistant_configuration::{ConfigurationView, ConfigurationViewEvent};
+use crate::Assistant;
 use crate::{
     terminal_inline_assistant::TerminalInlineAssistant, DeployHistory, InlineAssistant, NewChat,
 };
@@ -58,8 +59,7 @@ pub fn init(cx: &mut App) {
 
     cx.observe_new(
         |terminal_panel: &mut TerminalPanel, _, cx: &mut Context<TerminalPanel>| {
-            let settings = AssistantSettings::get_global(cx);
-            terminal_panel.set_assistant_enabled(settings.enabled, cx);
+            terminal_panel.set_assistant_enabled(Assistant::enabled(cx), cx);
         },
     )
     .detach();
@@ -342,12 +342,12 @@ impl AssistantPanel {
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) {
-        let settings = AssistantSettings::get_global(cx);
-        if !settings.enabled {
-            return;
+        if workspace
+            .panel::<Self>(cx)
+            .is_some_and(|panel| panel.read(cx).enabled(cx))
+        {
+            workspace.toggle_panel_focus::<Self>(window, cx);
         }
-
-        workspace.toggle_panel_focus::<Self>(window, cx);
     }
 
     fn watch_client_status(
@@ -595,12 +595,10 @@ impl AssistantPanel {
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) {
-        let settings = AssistantSettings::get_global(cx);
-        if !settings.enabled {
-            return;
-        }
-
-        let Some(assistant_panel) = workspace.panel::<AssistantPanel>(cx) else {
+        let Some(assistant_panel) = workspace
+            .panel::<AssistantPanel>(cx)
+            .filter(|panel| panel.read(cx).enabled(cx))
+        else {
             return;
         };
 
@@ -1298,12 +1296,8 @@ impl Panel for AssistantPanel {
     }
 
     fn icon(&self, _: &Window, cx: &App) -> Option<IconName> {
-        let settings = AssistantSettings::get_global(cx);
-        if !settings.enabled || !settings.button {
-            return None;
-        }
-
-        Some(IconName::ZedAssistant)
+        (self.enabled(cx) && AssistantSettings::get_global(cx).button)
+            .then_some(IconName::ZedAssistant)
     }
 
     fn icon_tooltip(&self, _: &Window, _: &App) -> Option<&'static str> {
@@ -1316,6 +1310,10 @@ impl Panel for AssistantPanel {
 
     fn activation_priority(&self) -> u32 {
         4
+    }
+
+    fn enabled(&self, cx: &App) -> bool {
+        Assistant::enabled(cx)
     }
 }
 

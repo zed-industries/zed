@@ -17842,6 +17842,10 @@ async fn test_breakpoint_enabling_and_disabling(cx: &mut TestAppContext) {
         editor.disable_breakpoint(&actions::DisableBreakpoint, window, cx);
         editor.move_to_end(&MoveToEnd, window, cx);
         editor.disable_breakpoint(&actions::DisableBreakpoint, window, cx);
+        // Disabling a breakpoint that doesn't exist should do nothing
+        editor.move_up(&MoveUp, window, cx);
+        editor.move_up(&MoveUp, window, cx);
+        editor.disable_breakpoint(&actions::DisableBreakpoint, window, cx);
     });
 
     let breakpoints = editor.update(cx, |editor, cx| {

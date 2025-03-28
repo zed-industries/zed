@@ -1,10 +1,11 @@
+use crate::context::{AssistantContext, ContextId};
 use crate::thread::{
     LastRestoreCheckpoint, MessageId, MessageSegment, RequestKind, Thread, ThreadError,
     ThreadEvent, ThreadFeedback,
 };
 use crate::thread_store::ThreadStore;
 use crate::tool_use::{PendingToolUseStatus, ToolUse, ToolUseStatus};
-use crate::ui::{ContextPill, ToolReadyPopUp, ToolReadyPopupEvent};
+use crate::ui::{AgentNotification, AgentNotificationEvent, ContextPill};
 use crate::AssistantPanel;
 use assistant_settings::AssistantSettings;
 use collections::HashMap;
@@ -12,16 +13,19 @@ use editor::{Editor, MultiBuffer};
 use gpui::{
     linear_color_stop, linear_gradient, list, percentage, pulsating_between, AbsoluteLength,
     Animation, AnimationExt, AnyElement, App, ClickEvent, DefiniteLength, EdgesRefinement, Empty,
-    Entity, Focusable, Hsla, Length, ListAlignment, ListOffset, ListState, MouseButton,
-    ScrollHandle, Stateful, StyleRefinement, Subscription, Task, TextStyleRefinement,
-    Transformation, UnderlineStyle, WeakEntity, WindowHandle,
+    Entity, Focusable, Hsla, Length, ListAlignment, ListState, MouseButton, ScrollHandle, Stateful,
+    StyleRefinement, Subscription, Task, TextStyleRefinement, Transformation, UnderlineStyle,
+    WeakEntity, WindowHandle,
 };
 use language::{Buffer, LanguageRegistry};
 use language_model::{LanguageModelRegistry, LanguageModelToolUseId, Role};
 use markdown::{Markdown, MarkdownStyle};
+use project::ProjectItem as _;
 use settings::Settings as _;
+use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Duration;
+use text::ToPoint;
 use theme::ThemeSettings;
 use ui::{prelude::*, Disclosure, IconButton, KeyBinding, Scrollbar, ScrollbarState, Tooltip};
 use util::ResultExt as _;
@@ -45,8 +49,9 @@ pub struct ActiveThread {
     expanded_tool_uses: HashMap<LanguageModelToolUseId, bool>,
     expanded_thinking_segments: HashMap<(MessageId, usize), bool>,
     last_error: Option<ThreadError>,
-    pop_ups: Vec<WindowHandle<ToolReadyPopUp>>,
+    notifications: Vec<WindowHandle<AgentNotification>>,
     _subscriptions: Vec<Subscription>,
+    notification_subscriptions: HashMap<WindowHandle<AgentNotification>, Vec<Subscription>>,
 }
 
 struct RenderedMessage {
@@ -251,8 +256,9 @@ impl ActiveThread {
             scrollbar_state: ScrollbarState::new(list_state),
             editing_message: None,
             last_error: None,
-            pop_ups: Vec::new(),
+            notifications: Vec::new(),
             _subscriptions: subscriptions,
+            notification_subscriptions: HashMap::default(),
         };
 
         for message in thread.read(cx).messages().cloned().collect::<Vec<_>>() {
@@ -315,10 +321,6 @@ impl ActiveThread {
         let rendered_message =
             RenderedMessage::from_segments(segments, self.language_registry.clone(), window, cx);
         self.rendered_messages_by_id.insert(*id, rendered_message);
-        self.list_state.scroll_to(ListOffset {
-            item_ix: old_len,
-            offset_in_item: Pixels(0.0),
-        });
     }
 
     fn edited_message(
@@ -379,24 +381,23 @@ impl ActiveThread {
                 self.save_thread(cx);
             }
             ThreadEvent::DoneStreaming => {
-                if !self.thread().read(cx).is_generating() {
+                let thread = self.thread.read(cx);
+
+                if !thread.is_generating() {
                     self.show_notification(
-                        "Your changes have been applied.",
-                        IconName::Check,
-                        Color::Success,
+                        if thread.used_tools_since_last_user_message() {
+                            "Finished running tools"
+                        } else {
+                            "New message"
+                        },
+                        IconName::ZedAssistant,
                         window,
                         cx,
                     );
                 }
             }
             ThreadEvent::ToolConfirmationNeeded => {
-                self.show_notification(
-                    "There's a tool confirmation needed.",
-                    IconName::Info,
-                    Color::Muted,
-                    window,
-                    cx,
-                );
+                self.show_notification("Waiting for tool confirmation", IconName::Info, window, cx);
             }
             ThreadEvent::StreamedAssistantText(message_id, text) => {
                 if let Some(rendered_message) = self.rendered_messages_by_id.get_mut(&message_id) {
@@ -528,29 +529,40 @@ impl ActiveThread {
         &mut self,
         caption: impl Into<SharedString>,
         icon: IconName,
-        icon_color: Color,
         window: &mut Window,
-        cx: &mut Context<'_, ActiveThread>,
+        cx: &mut Context<ActiveThread>,
     ) {
-        if !window.is_window_active()
-            && self.pop_ups.is_empty()
-            && AssistantSettings::get_global(cx).notify_when_agent_waiting
+        if window.is_window_active()
+            || !self.notifications.is_empty()
+            || !AssistantSettings::get_global(cx).notify_when_agent_waiting
         {
-            let caption = caption.into();
+            return;
+        }
 
-            for screen in cx.displays() {
-                let options = ToolReadyPopUp::window_options(screen, cx);
+        let caption = caption.into();
 
-                if let Some(screen_window) = cx
-                    .open_window(options, |_, cx| {
-                        cx.new(|_| ToolReadyPopUp::new(caption.clone(), icon, icon_color))
-                    })
-                    .log_err()
-                {
-                    if let Some(pop_up) = screen_window.entity(cx).log_err() {
-                        cx.subscribe_in(&pop_up, window, {
+        let title = self
+            .thread
+            .read(cx)
+            .summary()
+            .unwrap_or("Agent Panel".into());
+
+        for screen in cx.displays() {
+            let options = AgentNotification::window_options(screen, cx);
+
+            if let Some(screen_window) = cx
+                .open_window(options, |_, cx| {
+                    cx.new(|_| AgentNotification::new(title.clone(), caption.clone(), icon))
+                })
+                .log_err()
+            {
+                if let Some(pop_up) = screen_window.entity(cx).log_err() {
+                    self.notification_subscriptions
+                        .entry(screen_window)
+                        .or_insert_with(Vec::new)
+                        .push(cx.subscribe_in(&pop_up, window, {
                             |this, _, event, window, cx| match event {
-                                ToolReadyPopupEvent::Accepted => {
+                                AgentNotificationEvent::Accepted => {
                                     let handle = window.window_handle();
                                     cx.activate(true); // Switch back to the Zed application
 
@@ -576,15 +588,31 @@ impl ActiveThread {
 
                                     this.dismiss_notifications(cx);
                                 }
-                                ToolReadyPopupEvent::Dismissed => {
+                                AgentNotificationEvent::Dismissed => {
                                     this.dismiss_notifications(cx);
                                 }
                             }
-                        })
-                        .detach();
+                        }));
 
-                        self.pop_ups.push(screen_window);
-                    }
+                    self.notifications.push(screen_window);
+
+                    // If the user manually refocuses the original window, dismiss the popup.
+                    self.notification_subscriptions
+                        .entry(screen_window)
+                        .or_insert_with(Vec::new)
+                        .push({
+                            let pop_up_weak = pop_up.downgrade();
+
+                            cx.observe_window_activation(window, move |_, window, cx| {
+                                if window.is_window_active() {
+                                    if let Some(pop_up) = pop_up_weak.upgrade() {
+                                        pop_up.update(cx, |_, cx| {
+                                            cx.emit(AgentNotificationEvent::Dismissed);
+                                        });
+                                    }
+                                }
+                            })
+                        });
                 }
             }
         }
@@ -754,6 +782,9 @@ impl ActiveThread {
             return Empty.into_any();
         };
 
+        let context_store = self.context_store.clone();
+        let workspace = self.workspace.clone();
+
         let thread = self.thread.read(cx);
         // Get all the data we need from thread before we start using it in closures
         let checkpoint = thread.checkpoint_for_message(message_id);
@@ -877,36 +908,53 @@ impl ActiveThread {
                 .into_any_element(),
         };
 
-        let message_content = v_flex()
-            .gap_1p5()
-            .child(
-                if let Some(edit_message_editor) = edit_message_editor.clone() {
-                    div()
-                        .key_context("EditMessageEditor")
-                        .on_action(cx.listener(Self::cancel_editing_message))
-                        .on_action(cx.listener(Self::confirm_editing_message))
-                        .min_h_6()
-                        .child(edit_message_editor)
-                } else {
-                    div()
-                        .min_h_6()
-                        .text_ui(cx)
-                        .child(self.render_message_content(message_id, rendered_message, cx))
-                },
-            )
-            .when_some(context, |parent, context| {
-                if !context.is_empty() {
-                    parent.child(
-                        h_flex().flex_wrap().gap_1().children(
-                            context
-                                .into_iter()
-                                .map(|context| ContextPill::added(context, false, false, None)),
-                        ),
-                    )
-                } else {
-                    parent
-                }
-            });
+        let message_content =
+            v_flex()
+                .gap_1p5()
+                .child(
+                    if let Some(edit_message_editor) = edit_message_editor.clone() {
+                        div()
+                            .key_context("EditMessageEditor")
+                            .on_action(cx.listener(Self::cancel_editing_message))
+                            .on_action(cx.listener(Self::confirm_editing_message))
+                            .min_h_6()
+                            .child(edit_message_editor)
+                    } else {
+                        div()
+                            .min_h_6()
+                            .text_ui(cx)
+                            .child(self.render_message_content(message_id, rendered_message, cx))
+                    },
+                )
+                .when_some(context, |parent, context| {
+                    if !context.is_empty() {
+                        parent.child(h_flex().flex_wrap().gap_1().children(
+                            context.into_iter().map(|context| {
+                                let context_id = context.id;
+                                ContextPill::added(context, false, false, None).on_click(Rc::new(
+                                    cx.listener({
+                                        let workspace = workspace.clone();
+                                        let context_store = context_store.clone();
+                                        move |_, _, window, cx| {
+                                            if let Some(workspace) = workspace.upgrade() {
+                                                open_context(
+                                                    context_id,
+                                                    context_store.clone(),
+                                                    workspace,
+                                                    window,
+                                                    cx,
+                                                );
+                                                cx.notify();
+                                            }
+                                        }
+                                    }),
+                                ))
+                            }),
+                        ))
+                    } else {
+                        parent
+                    }
+                });
 
         let styled_message = match message.role {
             Role::User => v_flex()
@@ -1743,13 +1791,15 @@ impl ActiveThread {
             })
     }
 
-    fn dismiss_notifications(&mut self, cx: &mut Context<'_, ActiveThread>) {
-        for window in self.pop_ups.drain(..) {
+    fn dismiss_notifications(&mut self, cx: &mut Context<ActiveThread>) {
+        for window in self.notifications.drain(..) {
             window
                 .update(cx, |_, window, _| {
                     window.remove_window();
                 })
                 .ok();
+
+            self.notification_subscriptions.remove(&window);
         }
     }
 
@@ -1795,5 +1845,95 @@ impl Render for ActiveThread {
             .child(list(self.list_state.clone()).flex_grow())
             .children(self.render_confirmations(cx))
             .child(self.render_vertical_scrollbar(cx))
+    }
+}
+
+pub(crate) fn open_context(
+    id: ContextId,
+    context_store: Entity<ContextStore>,
+    workspace: Entity<Workspace>,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    let Some(context) = context_store.read(cx).context_for_id(id) else {
+        return;
+    };
+
+    match context {
+        AssistantContext::File(file_context) => {
+            if let Some(project_path) = file_context.context_buffer.buffer.read(cx).project_path(cx)
+            {
+                workspace.update(cx, |workspace, cx| {
+                    workspace
+                        .open_path(project_path, None, true, window, cx)
+                        .detach_and_log_err(cx);
+                });
+            }
+        }
+        AssistantContext::Directory(directory_context) => {
+            let path = directory_context.path.clone();
+            workspace.update(cx, |workspace, cx| {
+                workspace.project().update(cx, |project, cx| {
+                    if let Some(entry) = project.entry_for_path(&path, cx) {
+                        cx.emit(project::Event::RevealInProjectPanel(entry.id));
+                    }
+                })
+            })
+        }
+        AssistantContext::Symbol(symbol_context) => {
+            if let Some(project_path) = symbol_context
+                .context_symbol
+                .buffer
+                .read(cx)
+                .project_path(cx)
+            {
+                let snapshot = symbol_context.context_symbol.buffer.read(cx).snapshot();
+                let target_position = symbol_context
+                    .context_symbol
+                    .id
+                    .range
+                    .start
+                    .to_point(&snapshot);
+
+                let open_task = workspace.update(cx, |workspace, cx| {
+                    workspace.open_path(project_path, None, true, window, cx)
+                });
+                window
+                    .spawn(cx, async move |cx| {
+                        if let Some(active_editor) = open_task
+                            .await
+                            .log_err()
+                            .and_then(|item| item.downcast::<Editor>())
+                        {
+                            active_editor
+                                .downgrade()
+                                .update_in(cx, |editor, window, cx| {
+                                    editor.go_to_singleton_buffer_point(
+                                        target_position,
+                                        window,
+                                        cx,
+                                    );
+                                })
+                                .log_err();
+                        }
+                    })
+                    .detach();
+            }
+        }
+        AssistantContext::FetchedUrl(fetched_url_context) => {
+            cx.open_url(&fetched_url_context.url);
+        }
+        AssistantContext::Thread(thread_context) => {
+            let thread_id = thread_context.thread.read(cx).id().clone();
+            workspace.update(cx, |workspace, cx| {
+                if let Some(panel) = workspace.panel::<AssistantPanel>(cx) {
+                    panel.update(cx, |panel, cx| {
+                        panel
+                            .open_thread(&thread_id, window, cx)
+                            .detach_and_log_err(cx)
+                    });
+                }
+            })
+        }
     }
 }
