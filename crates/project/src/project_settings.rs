@@ -725,7 +725,7 @@ impl SettingsObserver {
         fs: Arc<dyn Fs>,
         task_kind: TaskKind,
         file_path: PathBuf,
-        cx: &mut Context<'_, Self>,
+        cx: &mut Context<Self>,
     ) -> Task<()> {
         let mut user_tasks_file_rx =
             watch_config_file(&cx.background_executor(), fs, file_path.clone());

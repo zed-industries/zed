@@ -1242,7 +1242,7 @@ impl Thread {
         input: serde_json::Value,
         messages: &[LanguageModelRequestMessage],
         tool: Arc<dyn Tool>,
-        cx: &mut Context<'_, Thread>,
+        cx: &mut Context<Thread>,
     ) {
         let task = self.spawn_tool_use(tool_use_id.clone(), messages, input, tool, cx);
         self.tool_use

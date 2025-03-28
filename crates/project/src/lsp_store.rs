@@ -2960,7 +2960,7 @@ impl LocalLspStore {
     fn remove_worktree(
         &mut self,
         id_to_remove: WorktreeId,
-        cx: &mut Context<'_, LspStore>,
+        cx: &mut Context<LspStore>,
     ) -> Vec<LanguageServerId> {
         self.diagnostics.remove(&id_to_remove);
         self.prettier_store.update(cx, |prettier_store, cx| {
@@ -3567,7 +3567,7 @@ impl LspStore {
         client: AnyProtoClient,
         upstream_project_id: u64,
         request: R,
-        cx: &mut Context<'_, LspStore>,
+        cx: &mut Context<LspStore>,
     ) -> Task<anyhow::Result<<R as LspCommand>::Response>> {
         let message = request.to_proto(upstream_project_id, buffer.read(cx));
         cx.spawn(async move |this, cx| {
@@ -4297,7 +4297,7 @@ impl LspStore {
         cx.notify();
     }
 
-    fn refresh_server_tree(&mut self, cx: &mut Context<'_, Self>) {
+    fn refresh_server_tree(&mut self, cx: &mut Context<Self>) {
         let buffer_store = self.buffer_store.clone();
         if let Some(local) = self.as_local_mut() {
             let mut adapters = BTreeMap::default();
@@ -6643,7 +6643,7 @@ impl LspStore {
         buffer: &Entity<Buffer>,
         position: Option<P>,
         request: R,
-        cx: &mut Context<'_, Self>,
+        cx: &mut Context<Self>,
     ) -> Task<Vec<R::Response>>
     where
         P: ToOffset,

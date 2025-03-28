@@ -774,7 +774,7 @@ fn determine_query_ranges(
     excerpt_id: ExcerptId,
     excerpt_buffer: &Entity<Buffer>,
     excerpt_visible_range: Range<usize>,
-    cx: &mut Context<'_, MultiBuffer>,
+    cx: &mut Context<MultiBuffer>,
 ) -> Option<QueryRanges> {
     let buffer = excerpt_buffer.read(cx);
     let full_excerpt_range = multi_buffer

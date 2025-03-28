@@ -530,7 +530,7 @@ impl ActiveThread {
         caption: impl Into<SharedString>,
         icon: IconName,
         window: &mut Window,
-        cx: &mut Context<'_, ActiveThread>,
+        cx: &mut Context<ActiveThread>,
     ) {
         if window.is_window_active()
             || !self.notifications.is_empty()
@@ -1791,7 +1791,7 @@ impl ActiveThread {
             })
     }
 
-    fn dismiss_notifications(&mut self, cx: &mut Context<'_, ActiveThread>) {
+    fn dismiss_notifications(&mut self, cx: &mut Context<ActiveThread>) {
         for window in self.notifications.drain(..) {
             window
                 .update(cx, |_, window, _| {

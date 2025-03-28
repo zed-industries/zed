@@ -984,7 +984,7 @@ impl GitStore {
     fn update_repositories(
         &mut self,
         worktree_store: &Entity<WorktreeStore>,
-        cx: &mut Context<'_, GitStore>,
+        cx: &mut Context<GitStore>,
     ) {
         let mut new_repositories = HashMap::default();
         let git_store = cx.weak_entity();
