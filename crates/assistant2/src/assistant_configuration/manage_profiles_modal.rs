@@ -19,15 +19,11 @@ use ui::{prelude::*, ListItem, ListItemSpacing, ListSeparator, Navigable, Naviga
 use workspace::{ModalView, Workspace};
 
 use crate::assistant_configuration::manage_profiles_modal::profile_modal_header::ProfileModalHeader;
-use crate::assistant_configuration::profile_picker::{ProfilePicker, ProfilePickerDelegate};
 use crate::assistant_configuration::tool_picker::{ToolPicker, ToolPickerDelegate};
 use crate::{AssistantPanel, ManageProfiles, ThreadStore};
 
 enum Mode {
-    ChooseProfile {
-        profile_picker: Entity<ProfilePicker>,
-        _subscription: Subscription,
-    },
+    ChooseProfile(ChooseProfileMode),
     NewProfile(NewProfileMode),
     ViewProfile(ViewProfileMode),
     ConfigureTools {
@@ -38,33 +34,44 @@ enum Mode {
 }
 
 impl Mode {
-    pub fn choose_profile(window: &mut Window, cx: &mut Context<ManageProfilesModal>) -> Self {
-        let this = cx.entity();
+    pub fn choose_profile(_window: &mut Window, cx: &mut Context<ManageProfilesModal>) -> Self {
+        let settings = AssistantSettings::get_global(cx);
 
-        let profile_picker = cx.new(|cx| {
-            let delegate = ProfilePickerDelegate::new(
-                move |profile_id, window, cx| {
-                    this.update(cx, |this, cx| {
-                        this.view_profile(profile_id.clone(), window, cx);
-                    })
-                },
-                cx,
-            );
-            ProfilePicker::new(delegate, window, cx)
+        let mut profiles = settings.profiles.clone();
+        profiles.sort_unstable_by(|_, a, _, b| a.name.cmp(&b.name));
+
+        let mut profiles = profiles
+            .into_iter()
+            .map(|(id, profile)| ProfileEntry::Profile {
+                id: id.clone(),
+                name: profile.name.clone(),
+                navigation: NavigableEntry::focusable(cx),
+            })
+            .collect::<Vec<_>>();
+
+        profiles.push(ProfileEntry::NewProfile {
+            navigation: NavigableEntry::focusable(cx),
         });
-        let dismiss_subscription = cx.subscribe_in(
-            &profile_picker,
-            window,
-            |_this, _profile_picker, _: &DismissEvent, _window, cx| {
-                cx.emit(DismissEvent);
-            },
-        );
 
-        Self::ChooseProfile {
-            profile_picker,
-            _subscription: dismiss_subscription,
-        }
+        Self::ChooseProfile(ChooseProfileMode { profiles })
     }
+}
+
+#[derive(Clone)]
+enum ProfileEntry {
+    Profile {
+        id: Arc<str>,
+        name: SharedString,
+        navigation: NavigableEntry,
+    },
+    NewProfile {
+        navigation: NavigableEntry,
+    },
+}
+
+#[derive(Clone)]
+pub struct ChooseProfileMode {
+    profiles: Vec<ProfileEntry>,
 }
 
 #[derive(Clone)]
@@ -234,7 +241,9 @@ impl ManageProfilesModal {
 
     fn cancel(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         match &self.mode {
-            Mode::ChooseProfile { .. } => {}
+            Mode::ChooseProfile { .. } => {
+                cx.emit(DismissEvent);
+            }
             Mode::NewProfile(mode) => {
                 if let Some(profile_id) = mode.base_profile_id.clone() {
                     self.view_profile(profile_id, window, cx);
@@ -290,7 +299,7 @@ impl ModalView for ManageProfilesModal {}
 impl Focusable for ManageProfilesModal {
     fn focus_handle(&self, cx: &App) -> FocusHandle {
         match &self.mode {
-            Mode::ChooseProfile { profile_picker, .. } => profile_picker.focus_handle(cx),
+            Mode::ChooseProfile(_) => self.focus_handle.clone(),
             Mode::NewProfile(mode) => mode.name_editor.focus_handle(cx),
             Mode::ViewProfile(_) => self.focus_handle.clone(),
             Mode::ConfigureTools { tool_picker, .. } => tool_picker.focus_handle(cx),
@@ -301,6 +310,102 @@ impl Focusable for ManageProfilesModal {
 impl EventEmitter<DismissEvent> for ManageProfilesModal {}
 
 impl ManageProfilesModal {
+    fn render_choose_profile(
+        &mut self,
+        mode: ChooseProfileMode,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        Navigable::new(
+            div()
+                .track_focus(&self.focus_handle(cx))
+                .size_full()
+                .child(ProfileModalHeader::new(
+                    "Agent Profiles",
+                    IconName::ZedAssistant,
+                ))
+                .child(
+                    v_flex()
+                        .pb_1()
+                        .child(ListSeparator)
+                        .children(mode.profiles.iter().map(|profile| {
+                            match profile {
+                                ProfileEntry::Profile {
+                                    id: profile_id,
+                                    name,
+                                    navigation,
+                                } => div()
+                                    .id(SharedString::from(format!("profile-{profile_id}")))
+                                    .track_focus(&navigation.focus_handle)
+                                    .on_action({
+                                        let profile_id = profile_id.clone();
+                                        cx.listener(move |this, _: &menu::Confirm, window, cx| {
+                                            this.view_profile(profile_id.clone(), window, cx);
+                                        })
+                                    })
+                                    .child(
+                                        ListItem::new(SharedString::from(format!(
+                                            "profile-{profile_id}"
+                                        )))
+                                        .toggle_state(
+                                            navigation.focus_handle.contains_focused(window, cx),
+                                        )
+                                        .inset(true)
+                                        .spacing(ListItemSpacing::Sparse)
+                                        .child(Label::new(name))
+                                        .on_click({
+                                            let profile_id = profile_id.clone();
+                                            cx.listener(move |this, _, window, cx| {
+                                                this.new_profile(
+                                                    Some(profile_id.clone()),
+                                                    window,
+                                                    cx,
+                                                );
+                                            })
+                                        }),
+                                    ),
+                                ProfileEntry::NewProfile { navigation } => div()
+                                    .id("new-profile")
+                                    .track_focus(&navigation.focus_handle)
+                                    .on_action(cx.listener(
+                                        |this, _: &menu::Confirm, window, cx| {
+                                            this.new_profile(None, window, cx);
+                                        },
+                                    ))
+                                    .child(
+                                        ListItem::new("new-profile")
+                                            .toggle_state(
+                                                navigation
+                                                    .focus_handle
+                                                    .contains_focused(window, cx),
+                                            )
+                                            .inset(true)
+                                            .spacing(ListItemSpacing::Sparse)
+                                            .start_slot(Icon::new(IconName::Plus))
+                                            .child(Label::new("Add New Profile"))
+                                            .on_click({
+                                                cx.listener(move |this, _, window, cx| {
+                                                    this.new_profile(None, window, cx);
+                                                })
+                                            }),
+                                    ),
+                            }
+                        })),
+                )
+                .into_any_element(),
+        )
+        .map(|mut navigable| {
+            for entry in mode.profiles {
+                navigable = navigable.entry(match entry {
+                    ProfileEntry::Profile { navigation, .. } => navigation,
+                    ProfileEntry::NewProfile { navigation } => navigation,
+                })
+            }
+
+            navigable
+        })
+    }
+
     fn render_new_profile(
         &mut self,
         mode: NewProfileMode,
@@ -446,10 +551,8 @@ impl Render for ManageProfilesModal {
             }))
             .on_mouse_down_out(cx.listener(|_this, _, _, cx| cx.emit(DismissEvent)))
             .child(match &self.mode {
-                Mode::ChooseProfile { profile_picker, .. } => div()
-                    .child(ProfileModalHeader::new("Profiles", IconName::ZedAssistant))
-                    .child(ListSeparator)
-                    .child(profile_picker.clone())
+                Mode::ChooseProfile(mode) => self
+                    .render_choose_profile(mode.clone(), window, cx)
                     .into_any_element(),
                 Mode::NewProfile(mode) => self
                     .render_new_profile(mode.clone(), window, cx)
