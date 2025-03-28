@@ -13,7 +13,7 @@ use client::DevServerProjectId;
 use db::{define_connection, query, sqlez::connection::Connection, sqlez_macros::sql};
 use gpui::{point, size, Axis, Bounds, WindowBounds, WindowId};
 use itertools::Itertools;
-use project::debugger::breakpoint_store::{BreakpointKind, BreakpointState, SourceBreakpoint};
+use project::debugger::breakpoint_store::{BreakpointState, SourceBreakpoint};
 
 use language::{LanguageName, Toolchain};
 use project::WorktreeId;
@@ -147,7 +147,7 @@ impl Column for SerializedWindowBounds {
 #[derive(Debug)]
 pub struct Breakpoint {
     pub position: u32,
-    pub kind: BreakpointKind,
+    pub message: Option<Arc<str>>,
     pub state: BreakpointState,
 }
 
@@ -183,50 +183,6 @@ impl Column for BreakpointStateWrapper<'_> {
     }
 }
 
-/// Wrapper for DB type of a breakpoint
-#[derive(Debug)]
-struct BreakpointKindWrapper<'a>(Cow<'a, BreakpointKind>);
-
-impl From<BreakpointKind> for BreakpointKindWrapper<'static> {
-    fn from(kind: BreakpointKind) -> Self {
-        BreakpointKindWrapper(Cow::Owned(kind))
-    }
-}
-impl StaticColumnCount for BreakpointKindWrapper<'_> {
-    fn column_count() -> usize {
-        1
-    }
-}
-
-impl Bind for BreakpointKindWrapper<'_> {
-    fn bind(&self, statement: &Statement, start_index: i32) -> anyhow::Result<i32> {
-        let next_index = statement.bind(&self.0.to_int(), start_index)?;
-
-        match self.0.as_ref() {
-            BreakpointKind::Standard => {
-                statement.bind_null(next_index)?;
-                Ok(next_index + 1)
-            }
-            BreakpointKind::Log(message) => statement.bind(&message.as_ref(), next_index),
-        }
-    }
-}
-
-impl Column for BreakpointKindWrapper<'_> {
-    fn column(statement: &mut Statement, start_index: i32) -> anyhow::Result<(Self, i32)> {
-        let kind = statement.column_int(start_index)?;
-
-        match kind {
-            0 => Ok((BreakpointKind::Standard.into(), start_index + 2)),
-            1 => {
-                let message = statement.column_text(start_index)?.to_string();
-                Ok((BreakpointKind::Log(message.into()).into(), start_index + 1))
-            }
-            _ => Err(anyhow::anyhow!("Invalid BreakpointKind discriminant")),
-        }
-    }
-}
-
 /// This struct is used to implement traits on Vec<breakpoint>
 #[derive(Debug)]
 #[allow(dead_code)]
@@ -234,7 +190,7 @@ struct Breakpoints(Vec<Breakpoint>);
 
 impl sqlez::bindable::StaticColumnCount for Breakpoint {
     fn column_count() -> usize {
-        1 + BreakpointKindWrapper::column_count() + BreakpointStateWrapper::column_count()
+        2 + BreakpointStateWrapper::column_count()
     }
 }
 
@@ -245,10 +201,7 @@ impl sqlez::bindable::Bind for Breakpoint {
         start_index: i32,
     ) -> anyhow::Result<i32> {
         let next_index = statement.bind(&self.position, start_index)?;
-        let next_index = statement.bind(
-            &BreakpointKindWrapper(Cow::Borrowed(&self.kind)),
-            next_index,
-        )?;
+        let next_index = statement.bind(&self.message, next_index)?;
         statement.bind(
             &BreakpointStateWrapper(Cow::Borrowed(&self.state)),
             next_index,
@@ -262,13 +215,13 @@ impl Column for Breakpoint {
             .column_int(start_index)
             .with_context(|| format!("Failed to read BreakPoint at index {start_index}"))?
             as u32;
-        let (kind, next_index) = BreakpointKindWrapper::column(statement, start_index + 1)?;
+        let (message, next_index) = Option::<String>::column(statement, start_index + 1)?;
         let (state, next_index) = BreakpointStateWrapper::column(statement, next_index)?;
 
         Ok((
             Breakpoint {
                 position,
-                kind: kind.0.into_owned(),
+                message: message.map(Arc::from),
                 state: state.0.into_owned(),
             },
             next_index,
@@ -742,7 +695,7 @@ impl WorkspaceDb {
                     map.entry(path.clone()).or_default().push(SourceBreakpoint {
                         row: breakpoint.position,
                         path,
-                        kind: breakpoint.kind,
+                        message: breakpoint.message,
                         state: breakpoint.state,
                     });
                 }
@@ -770,17 +723,17 @@ impl WorkspaceDb {
                     conn.exec_bound(sql!(DELETE FROM breakpoints WHERE workspace_id = ?1 AND path = ?2))?((workspace.id, path.as_ref()))
                     .context("Clearing old breakpoints")?;
                     for bp in breakpoints {
-                        let kind = BreakpointKindWrapper::from(bp.kind);
+                        let message = bp.message;
                         let state = BreakpointStateWrapper::from(bp.state);
                         match conn.exec_bound(sql!(
-                            INSERT INTO breakpoints (workspace_id, path, breakpoint_location, kind, log_message, state)
-                            VALUES (?1, ?2, ?3, ?4, ?5, ?6);))?
+                            INSERT INTO breakpoints (workspace_id, path, breakpoint_location,  log_message, state)
+                            VALUES (?1, ?2, ?3, ?4, ?5);))?
 
                         ((
                             workspace.id,
                             path.as_ref(),
                             bp.row,
-                            kind,
+                            message,
                             state,
                         )) {
                             Ok(_) => {}
@@ -1448,19 +1401,19 @@ mod tests {
 
         let breakpoint = Breakpoint {
             position: 123,
-            kind: BreakpointKind::Standard,
+            message: None,
             state: BreakpointState::Enabled,
         };
 
         let log_breakpoint = Breakpoint {
             position: 456,
-            kind: BreakpointKind::Log("Test log message".into()),
+            message: Some("Test log message".into()),
             state: BreakpointState::Enabled,
         };
 
         let disable_breakpoint = Breakpoint {
             position: 578,
-            kind: BreakpointKind::Standard,
+            message: None,
             state: BreakpointState::Disabled,
         };
 
@@ -1480,19 +1433,19 @@ mod tests {
                         SourceBreakpoint {
                             row: breakpoint.position,
                             path: Arc::from(path),
-                            kind: breakpoint.kind.clone(),
+                            message: breakpoint.message.clone(),
                             state: breakpoint.state,
                         },
                         SourceBreakpoint {
                             row: log_breakpoint.position,
                             path: Arc::from(path),
-                            kind: log_breakpoint.kind.clone(),
+                            message: log_breakpoint.message.clone(),
                             state: log_breakpoint.state,
                         },
                         SourceBreakpoint {
                             row: disable_breakpoint.position,
                             path: Arc::from(path),
-                            kind: disable_breakpoint.kind.clone(),
+                            message: disable_breakpoint.message.clone(),
                             state: disable_breakpoint.state,
                         },
                     ],

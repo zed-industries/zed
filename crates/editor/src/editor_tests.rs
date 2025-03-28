@@ -17405,7 +17405,7 @@ fn assert_breakpoint(
                 (
                     breakpoint.row,
                     Breakpoint {
-                        kind: breakpoint.kind.clone(),
+                        message: breakpoint.message.clone(),
                         state: breakpoint.state,
                     },
                 )
@@ -17435,12 +17435,10 @@ fn add_log_breakpoint_at_cursor(
                 .buffer_snapshot
                 .anchor_before(Point::new(cursor_position.row, 0));
 
-            let kind = BreakpointKind::Log(Arc::from(log_message));
-
             (
                 breakpoint_position,
                 Breakpoint {
-                    kind,
+                    message: Some(Arc::from(log_message)),
                     state: BreakpointState::Enabled,
                 },
             )

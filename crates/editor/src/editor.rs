@@ -147,7 +147,7 @@ use multi_buffer::{
 };
 use parking_lot::Mutex;
 use project::{
-    debugger::breakpoint_store::{Breakpoint, BreakpointKind},
+    debugger::breakpoint_store::Breakpoint,
     lsp_store::{CompletionDocumentation, FormatTrigger, LspFormatTarget, OpenLspBufferHandle},
     project_settings::{GitGutterSetting, ProjectSettings},
     CodeAction, Completion, CompletionIntent, CompletionSource, DocumentHighlight, InlayHint,
@@ -6183,10 +6183,7 @@ impl Editor {
             .breakpoint_at_row(row, window, cx)
             .map(|(_, bp)| Arc::from(bp));
 
-        let log_breakpoint_msg = if breakpoint
-            .as_ref()
-            .is_some_and(|bp| bp.kind.log_message().is_some())
-        {
+        let log_breakpoint_msg = if breakpoint.as_ref().is_some_and(|bp| bp.message.is_some()) {
             "Edit Log Breakpoint"
         } else {
             "Set Log Breakpoint"
@@ -6206,7 +6203,7 @@ impl Editor {
         let breakpoint = breakpoint.unwrap_or_else(|| {
             Arc::new(Breakpoint {
                 state: BreakpointState::Enabled,
-                kind: BreakpointKind::Standard,
+                message: None,
             })
         });
 
@@ -6276,9 +6273,10 @@ impl Editor {
             } else {
                 Color::Debugger
             };
-            let icon = match &breakpoint.kind {
-                BreakpointKind::Standard => ui::IconName::DebugBreakpoint,
-                BreakpointKind::Log(_) => ui::IconName::DebugLogBreakpoint,
+            let icon = if breakpoint.message.is_some() {
+                ui::IconName::DebugLogBreakpoint
+            } else {
+                ui::IconName::DebugBreakpoint
             };
             (color, icon)
         };
@@ -8604,7 +8602,7 @@ impl Editor {
                 (
                     breakpoint_position,
                     Breakpoint {
-                        kind: BreakpointKind::Standard,
+                        message: None,
                         state: BreakpointState::Enabled,
                     },
                 )
@@ -19699,8 +19697,8 @@ impl BreakpointPromptEditor {
         let buffer = cx.new(|cx| {
             Buffer::local(
                 breakpoint
-                    .kind
-                    .log_message()
+                    .message
+                    .as_ref()
                     .map(|msg| msg.to_string())
                     .unwrap_or_default(),
                 cx,
