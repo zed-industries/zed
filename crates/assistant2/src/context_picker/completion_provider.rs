@@ -877,6 +877,7 @@ mod tests {
                     "five.txt dir/b/",
                     "four.txt dir/a/",
                     "Files & Directories",
+                    "Symbols",
                     "Fetch"
                 ]
             );
