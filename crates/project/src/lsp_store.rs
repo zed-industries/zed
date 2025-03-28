@@ -3891,7 +3891,7 @@ impl LspStore {
                 *refcount += 1;
             }
 
-            if !ignore_refcounts || *refcount == 1 {
+            if ignore_refcounts || *refcount == 1 {
                 local.register_buffer_with_language_servers(buffer, cx);
             }
             if !ignore_refcounts {
