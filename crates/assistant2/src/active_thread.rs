@@ -12,9 +12,9 @@ use editor::{Editor, MultiBuffer};
 use gpui::{
     linear_color_stop, linear_gradient, list, percentage, pulsating_between, AbsoluteLength,
     Animation, AnimationExt, AnyElement, App, ClickEvent, DefiniteLength, EdgesRefinement, Empty,
-    Entity, Focusable, Hsla, Length, ListAlignment, ListOffset, ListState, MouseButton,
-    ScrollHandle, Stateful, StyleRefinement, Subscription, Task, TextStyleRefinement,
-    Transformation, UnderlineStyle, WeakEntity, WindowHandle,
+    Entity, Focusable, Hsla, Length, ListAlignment, ListState, MouseButton, ScrollHandle, Stateful,
+    StyleRefinement, Subscription, Task, TextStyleRefinement, Transformation, UnderlineStyle,
+    WeakEntity, WindowHandle,
 };
 use language::{Buffer, LanguageRegistry};
 use language_model::{LanguageModelRegistry, LanguageModelToolUseId, Role};
@@ -317,10 +317,6 @@ impl ActiveThread {
         let rendered_message =
             RenderedMessage::from_segments(segments, self.language_registry.clone(), window, cx);
         self.rendered_messages_by_id.insert(*id, rendered_message);
-        self.list_state.scroll_to(ListOffset {
-            item_ix: old_len,
-            offset_in_item: Pixels(0.0),
-        });
     }
 
     fn edited_message(
