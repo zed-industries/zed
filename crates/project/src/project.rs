@@ -3770,7 +3770,7 @@ impl Project {
         &mut self,
         source: WorktreeId,
         destination: WorktreeId,
-        cx: &mut Context<'_, Self>,
+        cx: &mut Context<Self>,
     ) -> Result<()> {
         self.worktree_store.update(cx, |worktree_store, cx| {
             worktree_store.move_worktree(source, destination, cx)

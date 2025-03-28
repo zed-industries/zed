@@ -1009,7 +1009,7 @@ impl Window {
     pub fn replace_root<E>(
         &mut self,
         cx: &mut App,
-        build_view: impl FnOnce(&mut Window, &mut Context<'_, E>) -> E,
+        build_view: impl FnOnce(&mut Window, &mut Context<E>) -> E,
     ) -> Entity<E>
     where
         E: 'static + Render,
@@ -3824,7 +3824,7 @@ impl<V: 'static + Render> WindowHandle<V> {
     pub fn update<C, R>(
         &self,
         cx: &mut C,
-        update: impl FnOnce(&mut V, &mut Window, &mut Context<'_, V>) -> R,
+        update: impl FnOnce(&mut V, &mut Window, &mut Context<V>) -> R,
     ) -> Result<R>
     where
         C: AppContext,

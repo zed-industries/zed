@@ -550,11 +550,11 @@ impl DapLogView {
         });
         let editor_subscription = cx.subscribe(
             &editor,
-            |_, _, event: &EditorEvent, cx: &mut Context<'_, DapLogView>| cx.emit(event.clone()),
+            |_, _, event: &EditorEvent, cx: &mut Context<DapLogView>| cx.emit(event.clone()),
         );
         let search_subscription = cx.subscribe(
             &editor,
-            |_, _, event: &SearchEvent, cx: &mut Context<'_, DapLogView>| cx.emit(event.clone()),
+            |_, _, event: &SearchEvent, cx: &mut Context<DapLogView>| cx.emit(event.clone()),
         );
         (editor, vec![editor_subscription, search_subscription])
     }
