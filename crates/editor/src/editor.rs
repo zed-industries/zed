@@ -84,13 +84,13 @@ use code_context_menus::{
 use git::blame::GitBlame;
 use gpui::{
     div, impl_actions, point, prelude::*, pulsating_between, px, relative, size, Action, Animation,
-    AnimationExt, AnyElement, App, AppContext, AsyncWindowContext, AvailableSpace, Background,
-    Bounds, ClickEvent, ClipboardEntry, ClipboardItem, Context, DispatchPhase, Edges, Entity,
-    EntityInputHandler, EventEmitter, FocusHandle, FocusOutEvent, Focusable, FontId, FontWeight,
-    Global, HighlightStyle, Hsla, KeyContext, Modifiers, MouseButton, MouseDownEvent, PaintQuad,
-    ParentElement, Pixels, Render, SharedString, Size, Stateful, Styled, StyledText, Subscription,
-    Task, TextStyle, TextStyleRefinement, UTF16Selection, UnderlineStyle, UniformListScrollHandle,
-    WeakEntity, WeakFocusHandle, Window,
+    AnimationExt, AnyElement, AnyWeakEntity, App, AppContext, AsyncWindowContext, AvailableSpace,
+    Background, Bounds, ClickEvent, ClipboardEntry, ClipboardItem, Context, DispatchPhase, Edges,
+    Entity, EntityInputHandler, EventEmitter, FocusHandle, FocusOutEvent, Focusable, FontId,
+    FontWeight, Global, HighlightStyle, Hsla, KeyContext, Modifiers, MouseButton, MouseDownEvent,
+    PaintQuad, ParentElement, Pixels, Render, SharedString, Size, Stateful, Styled, StyledText,
+    Subscription, Task, TextStyle, TextStyleRefinement, UTF16Selection, UnderlineStyle,
+    UniformListScrollHandle, WeakEntity, WeakFocusHandle, Window,
 };
 use highlight_matching_bracket::refresh_matching_bracket_highlights;
 use hover_links::{find_file, HoverLink, HoveredLinkState, InlayHighlight};
@@ -750,7 +750,7 @@ pub struct Editor {
     show_git_blame_gutter: bool,
     show_git_blame_inline: bool,
     show_git_blame_inline_delay_task: Option<Task<()>>,
-    git_blame_inline_tooltip: Option<WeakEntity<crate::commit_tooltip::CommitTooltip>>,
+    git_blame_inline_tooltip: Option<AnyWeakEntity>,
     git_blame_inline_enabled: bool,
     serialize_dirty_buffers: bool,
     show_selection_menu: Option<bool>,

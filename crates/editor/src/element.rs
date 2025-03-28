@@ -5712,7 +5712,7 @@ fn render_inline_blame_entry(
             let tooltip =
                 cx.new(|cx| CommitTooltip::blame_entry(&blame_entry, details, window, cx));
             editor.update(cx, |editor, _| {
-                editor.git_blame_inline_tooltip = Some(tooltip.downgrade())
+                editor.git_blame_inline_tooltip = Some(tooltip.downgrade().into())
             });
             tooltip.into()
         })
