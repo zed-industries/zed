@@ -658,23 +658,22 @@ impl<'a> MutableSelectionsCollection<'a> {
     }
     pub fn reverse_selections(&mut self) {
         let map = &self.display_map();
-        let mut reverse_disjoint: Vec<Selection<Point>> = Vec::new();
+        let mut new_selections: Vec<Selection<Point>> = Vec::new();
         let disjoint = self.disjoint.clone();
-        let rev: Vec<&Selection<Anchor>> = disjoint
+        for selection in disjoint
             .iter()
             .sorted_by(|first, second| Ord::cmp(&second.id, &first.id))
-            .collect();
-        for d in rev {
-            let s = Selection {
+            .collect::<Vec<&Selection<Anchor>>>()
+        {
+            new_selections.push(Selection {
                 id: self.new_selection_id(),
-                start: d.start.to_display_point(map).to_point(map),
-                end: d.end.to_display_point(map).to_point(map),
-                reversed: d.reversed,
-                goal: d.goal,
-            };
-            reverse_disjoint.push(s);
+                start: selection.start.to_display_point(map).to_point(map),
+                end: selection.end.to_display_point(map).to_point(map),
+                reversed: selection.reversed,
+                goal: selection.goal,
+            });
         }
-        self.select(reverse_disjoint);
+        self.select(new_selections);
     }
 
     pub fn move_with(
