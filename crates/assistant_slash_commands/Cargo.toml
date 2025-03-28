@@ -32,7 +32,6 @@ language.workspace = true
 project.workspace = true
 prompt_store.workspace = true
 rope.workspace = true
-semantic_index.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 smol.workspace = true

@@ -10,7 +10,6 @@ use std::sync::Arc;
 
 use assistant_settings::AssistantSettings;
 use assistant_slash_command::SlashCommandRegistry;
-use assistant_slash_commands::SearchSlashCommandFeatureFlag;
 use client::Client;
 use command_palette_hooks::CommandPaletteFilter;
 use feature_flags::FeatureFlagAppExt;
@@ -20,7 +19,6 @@ use language_model::{
     LanguageModelId, LanguageModelProviderId, LanguageModelRegistry, LanguageModelResponseMessage,
 };
 use prompt_store::PromptBuilder;
-use semantic_index::{CloudEmbeddingProvider, SemanticDb};
 use serde::Deserialize;
 use settings::{Settings, SettingsStore};
 
@@ -101,30 +99,6 @@ pub fn init(
     cx.set_global(Assistant::default());
     AssistantSettings::register(cx);
     SlashCommandSettings::register(cx);
-
-    cx.spawn({
-        let client = client.clone();
-        async move |cx| {
-            let is_search_slash_command_enabled = cx
-                .update(|cx| cx.wait_for_flag::<SearchSlashCommandFeatureFlag>())?
-                .await;
-
-            if !is_search_slash_command_enabled {
-                return Ok(());
-            }
-
-            let embedding_provider = CloudEmbeddingProvider::new(client.clone());
-            let semantic_index = SemanticDb::new(
-                paths::embeddings_dir().join("semantic-index-db.0.mdb"),
-                Arc::new(embedding_provider),
-                cx,
-            )
-            .await?;
-
-            cx.update(|cx| cx.set_global(semantic_index))
-        }
-    })
-    .detach();
 
     assistant_context_editor::init(client.clone(), cx);
     prompt_library::init(cx);
@@ -244,17 +218,6 @@ fn register_slash_commands(cx: &mut App) {
     update_slash_commands_from_settings(cx);
     cx.observe_global::<SettingsStore>(update_slash_commands_from_settings)
         .detach();
-
-    cx.observe_flag::<assistant_slash_commands::SearchSlashCommandFeatureFlag, _>({
-        let slash_command_registry = slash_command_registry.clone();
-        move |is_enabled, _cx| {
-            if is_enabled {
-                slash_command_registry
-                    .register_command(assistant_slash_commands::SearchSlashCommand, true);
-            }
-        }
-    })
-    .detach();
 }
 
 fn update_slash_commands_from_settings(cx: &mut App) {
