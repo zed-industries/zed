@@ -7,7 +7,7 @@ use gpui::{
     prelude::*, AnyElement, AnyView, App, Entity, EventEmitter, FocusHandle, Focusable,
     SharedString, Subscription, Task, WeakEntity, Window,
 };
-use language::{Capability, OffsetRangeExt};
+use language::{Capability, DiskState, OffsetRangeExt};
 use multi_buffer::PathKey;
 use project::{Project, ProjectPath};
 use std::{
@@ -142,25 +142,34 @@ impl AssistantDiff {
                 .map(|diff_hunk| diff_hunk.buffer_range.to_point(&snapshot))
                 .collect::<Vec<_>>();
 
-            let was_empty = self.multibuffer.update(cx, |multibuffer, cx| {
-                let was_empty = multibuffer.is_empty();
-                multibuffer.set_excerpts_for_path(
-                    path_key.clone(),
-                    buffer,
-                    diff_hunk_ranges,
-                    editor::DEFAULT_MULTIBUFFER_CONTEXT,
-                    cx,
-                );
-                multibuffer.add_diff(changed.diff.clone(), cx);
-                was_empty
-            });
+            let (was_empty, is_excerpt_newly_added) =
+                self.multibuffer.update(cx, |multibuffer, cx| {
+                    let was_empty = multibuffer.is_empty();
+                    let is_excerpt_newly_added = multibuffer.set_excerpts_for_path(
+                        path_key.clone(),
+                        buffer.clone(),
+                        diff_hunk_ranges,
+                        editor::DEFAULT_MULTIBUFFER_CONTEXT,
+                        cx,
+                    );
+                    multibuffer.add_diff(changed.diff.clone(), cx);
+                    (was_empty, is_excerpt_newly_added)
+                });
 
             self.editor.update(cx, |editor, cx| {
                 if was_empty {
                     editor.change_selections(None, window, cx, |selections| {
-                        // TODO select the very beginning (possibly inside a deletion)
                         selections.select_ranges([0..0])
                     });
+                }
+
+                if is_excerpt_newly_added
+                    && buffer
+                        .read(cx)
+                        .file()
+                        .map_or(false, |file| file.disk_state() == DiskState::Deleted)
+                {
+                    editor.fold_buffer(snapshot.text.remote_id(), cx)
                 }
             });
         }
