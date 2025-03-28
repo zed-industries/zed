@@ -681,6 +681,7 @@ impl Panel for AssistantPanel {
 impl AssistantPanel {
     fn render_toolbar(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let thread = self.thread.read(cx);
+        let thread_id = thread.thread().read(cx).id().clone();
 
         let title = match self.active_view {
             ActiveView::Thread => {
@@ -763,6 +764,12 @@ impl AssistantPanel {
                                                 .action(
                                                     "New Prompt Editor",
                                                     NewPromptEditor.boxed_clone(),
+                                                )
+                                                .action(
+                                                    "Continue in New Thread",
+                                                    Box::new(NewThread {
+                                                        from_thread_id: Some(thread_id.clone()),
+                                                    }),
                                                 )
                                             },
                                         ))
