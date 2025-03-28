@@ -1,5 +1,4 @@
-use std::rc::Rc;
-use std::{ops::Range, path::Path};
+use std::ops::Range;
 
 use file_icons::FileIcons;
 use gpui::{App, Entity, SharedString};
@@ -85,7 +84,7 @@ pub struct FileContext {
 
 #[derive(Debug)]
 pub struct DirectoryContext {
-    pub path: Rc<Path>,
+    pub path: ProjectPath,
     pub context_buffers: Vec<ContextBuffer>,
     pub snapshot: ContextSnapshot,
 }
@@ -185,17 +184,18 @@ impl FileContext {
 impl DirectoryContext {
     pub fn new(
         id: ContextId,
-        path: &Path,
+        project_path: ProjectPath,
         context_buffers: Vec<ContextBuffer>,
     ) -> DirectoryContext {
-        let full_path: SharedString = path.to_string_lossy().into_owned().into();
+        let full_path: SharedString = project_path.path.to_string_lossy().into_owned().into();
 
-        let name = match path.file_name() {
+        let name = match project_path.path.file_name() {
             Some(name) => name.to_string_lossy().into_owned().into(),
             None => full_path.clone(),
         };
 
-        let parent = path
+        let parent = project_path
+            .path
             .parent()
             .and_then(|p| p.file_name())
             .map(|p| p.to_string_lossy().into_owned().into());
@@ -208,7 +208,7 @@ impl DirectoryContext {
             .into();
 
         DirectoryContext {
-            path: path.into(),
+            path: project_path,
             context_buffers,
             snapshot: ContextSnapshot {
                 id,

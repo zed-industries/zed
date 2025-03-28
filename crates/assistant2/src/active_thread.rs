@@ -1870,7 +1870,16 @@ pub(crate) fn open_context(
                 });
             }
         }
-        AssistantContext::Directory(_) => {}
+        AssistantContext::Directory(directory_context) => {
+            let path = directory_context.path.clone();
+            workspace.update(cx, |workspace, cx| {
+                workspace.project().update(cx, |project, cx| {
+                    if let Some(entry) = project.entry_for_path(&path, cx) {
+                        cx.emit(project::Event::RevealInProjectPanel(entry.id));
+                    }
+                })
+            })
+        }
         AssistantContext::Symbol(symbol_context) => {
             if let Some(project_path) = symbol_context
                 .context_symbol
