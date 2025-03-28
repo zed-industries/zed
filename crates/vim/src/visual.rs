@@ -1227,6 +1227,25 @@ mod test {
     }
 
     #[gpui::test]
+    async fn test_visual_block_issue_2123(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+
+        cx.set_shared_state(indoc! {
+            "The ˇquick brown
+            fox jumps over
+            the lazy dog
+            "
+        })
+        .await;
+        cx.simulate_shared_keystrokes("ctrl-v right down").await;
+        cx.shared_state().await.assert_eq(indoc! {
+            "The «quˇ»ick brown
+            fox «juˇ»mps over
+            the lazy dog
+            "
+        });
+    }
+    #[gpui::test]
     async fn test_visual_block_mode_down_right(cx: &mut gpui::TestAppContext) {
         let mut cx = NeovimBackedTestContext::new(cx).await;
         cx.set_shared_state(indoc! {"
