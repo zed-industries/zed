@@ -13,7 +13,7 @@ use client::DevServerProjectId;
 use db::{define_connection, query, sqlez::connection::Connection, sqlez_macros::sql};
 use gpui::{point, size, Axis, Bounds, WindowBounds, WindowId};
 use itertools::Itertools;
-use project::debugger::breakpoint_store::{BreakpointKind, BreakpointState, SerializedBreakpoint};
+use project::debugger::breakpoint_store::{BreakpointKind, BreakpointState, SourceBreakpoint};
 
 use language::{LanguageName, Toolchain};
 use project::WorktreeId;
@@ -720,10 +720,7 @@ impl WorkspaceDb {
         })
     }
 
-    fn breakpoints(
-        &self,
-        workspace_id: WorkspaceId,
-    ) -> BTreeMap<Arc<Path>, Vec<SerializedBreakpoint>> {
+    fn breakpoints(&self, workspace_id: WorkspaceId) -> BTreeMap<Arc<Path>, Vec<SourceBreakpoint>> {
         let breakpoints: Result<Vec<(PathBuf, Breakpoint)>> = self
             .select_bound(sql! {
                 SELECT path, breakpoint_location, kind, log_message, state
@@ -738,18 +735,16 @@ impl WorkspaceDb {
                     log::debug!("Breakpoints are empty after querying database for them");
                 }
 
-                let mut map: BTreeMap<Arc<Path>, Vec<SerializedBreakpoint>> = Default::default();
+                let mut map: BTreeMap<Arc<Path>, Vec<SourceBreakpoint>> = Default::default();
 
                 for (path, breakpoint) in bp {
                     let path: Arc<Path> = path.into();
-                    map.entry(path.clone())
-                        .or_default()
-                        .push(SerializedBreakpoint {
-                            position: breakpoint.position,
-                            path,
-                            kind: breakpoint.kind,
-                            state: breakpoint.state,
-                        });
+                    map.entry(path.clone()).or_default().push(SourceBreakpoint {
+                        row: breakpoint.position,
+                        path,
+                        kind: breakpoint.kind,
+                        state: breakpoint.state,
+                    });
                 }
 
                 map
@@ -784,7 +779,7 @@ impl WorkspaceDb {
                         ((
                             workspace.id,
                             path.as_ref(),
-                            bp.position,
+                            bp.row,
                             kind,
                             state,
                         )) {
@@ -1482,20 +1477,20 @@ mod tests {
                 map.insert(
                     Arc::from(path),
                     vec![
-                        SerializedBreakpoint {
-                            position: breakpoint.position,
+                        SourceBreakpoint {
+                            row: breakpoint.position,
                             path: Arc::from(path),
                             kind: breakpoint.kind.clone(),
                             state: breakpoint.state,
                         },
-                        SerializedBreakpoint {
-                            position: log_breakpoint.position,
+                        SourceBreakpoint {
+                            row: log_breakpoint.position,
                             path: Arc::from(path),
                             kind: log_breakpoint.kind.clone(),
                             state: log_breakpoint.state,
                         },
-                        SerializedBreakpoint {
-                            position: disable_breakpoint.position,
+                        SourceBreakpoint {
+                            row: disable_breakpoint.position,
                             path: Arc::from(path),
                             kind: disable_breakpoint.kind.clone(),
                             state: disable_breakpoint.state,
@@ -1515,17 +1510,17 @@ mod tests {
 
         assert_eq!(loaded_breakpoints.len(), 3);
 
-        assert_eq!(loaded_breakpoints[0].position, breakpoint.position);
+        assert_eq!(loaded_breakpoints[0].row, breakpoint.position);
         assert_eq!(loaded_breakpoints[0].kind, breakpoint.kind);
         assert_eq!(loaded_breakpoints[0].state, breakpoint.state);
         assert_eq!(loaded_breakpoints[0].path, Arc::from(path));
 
-        assert_eq!(loaded_breakpoints[1].position, log_breakpoint.position);
+        assert_eq!(loaded_breakpoints[1].row, log_breakpoint.position);
         assert_eq!(loaded_breakpoints[1].kind, log_breakpoint.kind);
         assert_eq!(loaded_breakpoints[1].state, log_breakpoint.state);
         assert_eq!(loaded_breakpoints[1].path, Arc::from(path));
 
-        assert_eq!(loaded_breakpoints[2].position, disable_breakpoint.position);
+        assert_eq!(loaded_breakpoints[2].row, disable_breakpoint.position);
         assert_eq!(loaded_breakpoints[2].kind, disable_breakpoint.kind);
         assert_eq!(loaded_breakpoints[2].state, disable_breakpoint.state);
         assert_eq!(loaded_breakpoints[2].path, Arc::from(path));

@@ -32,7 +32,7 @@ use multi_buffer::{IndentGuide, PathKey};
 use parking_lot::Mutex;
 use pretty_assertions::{assert_eq, assert_ne};
 use project::{
-    debugger::breakpoint_store::{BreakpointKind, BreakpointState, SerializedBreakpoint},
+    debugger::breakpoint_store::{BreakpointKind, BreakpointState, SourceBreakpoint},
     project_settings::{LspSettings, ProjectSettings},
     FakeFs,
 };
@@ -17390,7 +17390,7 @@ async fn assert_highlighted_edits(
 
 #[track_caller]
 fn assert_breakpoint(
-    breakpoints: &BTreeMap<Arc<Path>, Vec<SerializedBreakpoint>>,
+    breakpoints: &BTreeMap<Arc<Path>, Vec<SourceBreakpoint>>,
     path: &Arc<Path>,
     expected: Vec<(u32, Breakpoint)>,
 ) {
@@ -17403,7 +17403,7 @@ fn assert_breakpoint(
             .into_iter()
             .map(|breakpoint| {
                 (
-                    breakpoint.position,
+                    breakpoint.row,
                     Breakpoint {
                         kind: breakpoint.kind.clone(),
                         state: breakpoint.state,

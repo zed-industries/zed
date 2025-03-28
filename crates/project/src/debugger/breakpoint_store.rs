@@ -418,7 +418,7 @@ impl BreakpointStore {
         cx.notify();
     }
 
-    pub fn breakpoints_from_path(&self, path: &Arc<Path>, cx: &App) -> Vec<SerializedBreakpoint> {
+    pub fn breakpoints_from_path(&self, path: &Arc<Path>, cx: &App) -> Vec<SourceBreakpoint> {
         self.breakpoints
             .get(path)
             .map(|bp| {
@@ -427,8 +427,8 @@ impl BreakpointStore {
                     .iter()
                     .map(|(position, breakpoint)| {
                         let position = snapshot.summary_for_anchor::<PointUtf16>(position).row;
-                        SerializedBreakpoint {
-                            position,
+                        SourceBreakpoint {
+                            row: position,
                             path: path.clone(),
                             kind: breakpoint.kind.clone(),
                             state: breakpoint.state,
@@ -439,7 +439,7 @@ impl BreakpointStore {
             .unwrap_or_default()
     }
 
-    pub fn all_breakpoints(&self, cx: &App) -> BTreeMap<Arc<Path>, Vec<SerializedBreakpoint>> {
+    pub fn all_breakpoints(&self, cx: &App) -> BTreeMap<Arc<Path>, Vec<SourceBreakpoint>> {
         self.breakpoints
             .iter()
             .map(|(path, bp)| {
@@ -450,8 +450,8 @@ impl BreakpointStore {
                         .iter()
                         .map(|(position, breakpoint)| {
                             let position = snapshot.summary_for_anchor::<PointUtf16>(position).row;
-                            SerializedBreakpoint {
-                                position,
+                            SourceBreakpoint {
+                                row: position,
                                 path: path.clone(),
                                 kind: breakpoint.kind.clone(),
                                 state: breakpoint.state,
@@ -465,7 +465,7 @@ impl BreakpointStore {
 
     pub fn with_serialized_breakpoints(
         &self,
-        breakpoints: BTreeMap<Arc<Path>, Vec<SerializedBreakpoint>>,
+        breakpoints: BTreeMap<Arc<Path>, Vec<SourceBreakpoint>>,
         cx: &mut Context<'_, BreakpointStore>,
     ) -> Task<Result<()>> {
         if let BreakpointStoreMode::Local(mode) = &self.mode {
@@ -502,7 +502,7 @@ impl BreakpointStore {
                         this.update(cx, |_, cx| BreakpointsInFile::new(buffer, cx))?;
 
                     for bp in bps {
-                        let position = snapshot.anchor_before(PointUtf16::new(bp.position, 0));
+                        let position = snapshot.anchor_before(PointUtf16::new(bp.row, 0));
                         breakpoints_for_file.breakpoints.push((
                             position,
                             Breakpoint {
@@ -682,18 +682,19 @@ impl Breakpoint {
     }
 }
 
+/// Breakpoint for location within source code.
 #[derive(Clone, Debug, Hash, PartialEq, Eq)]
-pub struct SerializedBreakpoint {
-    pub position: u32,
+pub struct SourceBreakpoint {
+    pub row: u32,
     pub path: Arc<Path>,
     pub kind: BreakpointKind,
     pub state: BreakpointState,
 }
 
-impl From<SerializedBreakpoint> for dap::SourceBreakpoint {
-    fn from(bp: SerializedBreakpoint) -> Self {
+impl From<SourceBreakpoint> for dap::SourceBreakpoint {
+    fn from(bp: SourceBreakpoint) -> Self {
         Self {
-            line: bp.position as u64 + 1,
+            line: bp.row as u64 + 1,
             column: None,
             condition: None,
             hit_condition: None,
