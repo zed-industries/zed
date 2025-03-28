@@ -108,8 +108,13 @@ impl ActionLog {
         let Some(tracked_buffer) = self.tracked_buffers.get_mut(&buffer) else {
             return;
         };
-        let BufferEvent::Operation { operation, .. } = event else {
-            return;
+        let operation = match event {
+            BufferEvent::Operation { operation, .. } => operation,
+            BufferEvent::FileHandleChanged => {
+                tracked_buffer.schedule_diff_update();
+                return;
+            }
+            _ => return,
         };
         let Operation::Buffer(text::Operation::Edit(operation)) = operation else {
             return;
