@@ -713,9 +713,27 @@ impl EditorElement {
         window: &mut Window,
         cx: &mut Context<Editor>,
     ) {
+        if position_map.gutter_hitbox.is_hovered(window) {
+            let gutter_right_padding = editor.gutter_dimensions.right_padding;
+            let hitbox = &position_map.gutter_hitbox;
+
+            if event.position.x <= hitbox.bounds.right() - gutter_right_padding {
+                let point_for_position = position_map.point_for_position(event.position);
+                editor.set_breakpoint_context_menu(
+                    point_for_position.previous_valid.row(),
+                    None,
+                    event.position,
+                    window,
+                    cx,
+                );
+            }
+            return;
+        }
+
         if !position_map.text_hitbox.is_hovered(window) {
             return;
         }
+
         let point_for_position = position_map.point_for_position(event.position);
         mouse_context_menu::deploy_context_menu(
             editor,

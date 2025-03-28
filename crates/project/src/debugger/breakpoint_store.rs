@@ -268,7 +268,8 @@ impl BreakpointStore {
                         bp.state = BreakpointState::Enabled;
                     }
                 } else {
-                    log::error!("Attempted to invert a breakpoint's state that doesn't exist ");
+                    breakpoint.1.state = BreakpointState::Disabled;
+                    breakpoint_set.breakpoints.push(breakpoint.clone());
                 }
             }
             BreakpointEditAction::EditLogMessage(log_message) => {

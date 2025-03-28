@@ -6279,20 +6279,22 @@ impl Editor {
         cx: &mut Context<Self>,
     ) -> IconButton {
         let (color, icon) = {
+            let icon = match (&breakpoint.kind, breakpoint.is_disabled()) {
+                (BreakpointKind::Standard, false) => ui::IconName::DebugBreakpoint,
+                (BreakpointKind::Log(_), false) => ui::IconName::DebugLogBreakpoint,
+                (BreakpointKind::Standard, true) => ui::IconName::DebugDisabledBreakpoint,
+                (BreakpointKind::Log(_), true) => ui::IconName::DebugDisabledLogBreakpoint,
+            };
+
             let color = if self
                 .gutter_breakpoint_indicator
                 .is_some_and(|point| point.row() == row)
             {
                 Color::Hint
-            } else if breakpoint.is_disabled() {
-                Color::Custom(Color::Debugger.color(cx).opacity(0.5))
             } else {
                 Color::Debugger
             };
-            let icon = match &breakpoint.kind {
-                BreakpointKind::Standard => ui::IconName::DebugBreakpoint,
-                BreakpointKind::Log(_) => ui::IconName::DebugLogBreakpoint,
-            };
+
             (color, icon)
         };
 
@@ -6306,12 +6308,18 @@ impl Editor {
             .on_click(cx.listener({
                 let breakpoint = breakpoint.clone();
 
-                move |editor, _e, window, cx| {
+                move |editor, event: &ClickEvent, window, cx| {
+                    let edit_action = if event.modifiers().platform || breakpoint.is_disabled() {
+                        BreakpointEditAction::InvertState
+                    } else {
+                        BreakpointEditAction::Toggle
+                    };
+
                     window.focus(&editor.focus_handle(cx));
                     editor.edit_breakpoint_at_anchor(
                         position,
                         breakpoint.as_ref().clone(),
-                        BreakpointEditAction::Toggle,
+                        edit_action,
                         cx,
                     );
                 }
