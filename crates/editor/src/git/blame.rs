@@ -17,7 +17,7 @@ use std::{sync::Arc, time::Duration};
 use sum_tree::SumTree;
 use url::Url;
 
-use crate::commit_tooltip::ParsedCommitMessage;
+use crate::{commit_tooltip::ParsedCommitMessage, Editor};
 use workspace::Workspace;
 
 #[derive(Clone, Debug, Default)]
@@ -119,6 +119,17 @@ pub trait BlameRenderer {
         _: Option<ParsedCommitMessage>,
         _: Option<Entity<Repository>>,
         _: WeakEntity<Workspace>,
+        _: &App,
+    ) -> gpui::AnyElement {
+        div.into_any_element()
+    }
+
+    fn render_inline_blame_entry(
+        &self,
+        div: Stateful<Div>,
+        _: BlameEntry,
+        _: Option<ParsedCommitMessage>,
+        _: Entity<Editor>,
         _: &App,
     ) -> gpui::AnyElement {
         div.into_any_element()

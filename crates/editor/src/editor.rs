@@ -757,7 +757,7 @@ pub struct Editor {
     show_git_blame_gutter: bool,
     show_git_blame_inline: bool,
     show_git_blame_inline_delay_task: Option<Task<()>>,
-    git_blame_inline_tooltip: Option<AnyWeakEntity>,
+    pub git_blame_inline_tooltip: Option<AnyWeakEntity>,
     git_blame_inline_enabled: bool,
     serialize_dirty_buffers: bool,
     show_selection_menu: Option<bool>,

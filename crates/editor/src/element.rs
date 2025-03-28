@@ -1,6 +1,6 @@
 use crate::{
     code_context_menus::{CodeActionsMenu, MENU_ASIDE_MAX_WIDTH, MENU_ASIDE_MIN_WIDTH, MENU_GAP},
-    commit_tooltip::{blame_entry_relative_timestamp, CommitTooltip, ParsedCommitMessage},
+    commit_tooltip::{blame_entry_relative_timestamp, ParsedCommitMessage},
     display_map::{
         Block, BlockContext, BlockStyle, DisplaySnapshot, HighlightedChunk, ToDisplayPoint,
     },
@@ -5688,6 +5688,8 @@ fn render_inline_blame_entry(
     style: &EditorStyle,
     cx: &mut App,
 ) -> AnyElement {
+    let renderer = cx.global::<GlobalBlameRenderer>().0.clone();
+
     let relative_timestamp = blame_entry_relative_timestamp(&blame_entry);
 
     let author = blame_entry.author.as_deref().unwrap_or_default();
@@ -5704,7 +5706,7 @@ fn render_inline_blame_entry(
     let blame = blame.clone();
     let blame_entry = blame_entry.clone();
 
-    h_flex()
+    let div = h_flex()
         .id("inline-blame")
         .w_full()
         .font_family(style.text.font().family)
@@ -5712,17 +5714,10 @@ fn render_inline_blame_entry(
         .line_height(style.text.line_height)
         .child(Icon::new(IconName::FileGit).color(Color::Hint))
         .child(text)
-        .gap_2()
-        .hoverable_tooltip(move |window, cx| {
-            let details = blame.read(cx).details_for_entry(&blame_entry);
-            let tooltip =
-                cx.new(|cx| CommitTooltip::blame_entry(&blame_entry, details, window, cx));
-            editor.update(cx, |editor, _| {
-                editor.git_blame_inline_tooltip = Some(tooltip.downgrade().into())
-            });
-            tooltip.into()
-        })
-        .into_any()
+        .gap_2();
+
+    let details = blame.read(cx).details_for_entry(&blame_entry);
+    renderer.render_inline_blame_entry(div, blame_entry, details, editor, cx)
 }
 
 fn render_blame_entry(
