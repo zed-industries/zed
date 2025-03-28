@@ -656,23 +656,13 @@ fn env_priority(kind: Option<PythonEnvironmentKind>) -> usize {
 ///
 /// https://virtualfish.readthedocs.io/en/latest/plugins.html#auto-activation-auto-activation
 fn get_worktree_venv_declaration(worktree_root: &Path) -> Option<String> {
-    let dot_venv = worktree_root.join(".venv");
-
-    if fs::metadata(&dot_venv)
-        .map(|m| m.is_file())
-        .unwrap_or(false)
-    {
-        fs::File::open(&dot_venv)
-            .and_then(|file| {
-                let mut venv_name = String::new();
-                io::BufReader::new(file).read_line(&mut venv_name)?;
-                Ok(venv_name.trim().to_string())
-            })
-            .map_err(|e| log::info!("could not read {:?}: {:?}", dot_venv, e))
-            .ok()
-    } else {
-        None
-    }
+    fs::File::open(worktree_root.join(".venv"))
+        .and_then(|file| {
+            let mut venv_name = String::new();
+            io::BufReader::new(file).read_line(&mut venv_name)?;
+            Ok(venv_name.trim().to_string())
+        })
+        .ok()
 }
 
 #[async_trait]
@@ -708,7 +698,7 @@ impl ToolchainLister for PythonToolchainProvider {
         let wr_venv = get_worktree_venv_declaration(&wr);
         // Sort detected environments by:
         //     environment name matching activation file (<workdir>/.venv)
-        //     environment project dir matching workdir
+        //     environment project dir matching worktree_root
         //     general env priority
         //     environment path matching the CONDA_PREFIX env var
         //     executable path
@@ -718,55 +708,52 @@ impl ToolchainLister for PythonToolchainProvider {
                 wr_venv
                     .as_ref()
                     .map_or(Ordering::Equal, |venv| match (&lhs.name, &rhs.name) {
-                        (Some(l), Some(r)) => match (l == venv, r == venv) {
-                            (true, false) => Ordering::Less,
-                            (false, true) => Ordering::Greater,
-                            _ => Ordering::Equal,
-                        },
+                        (Some(l), Some(r)) => (r == venv).cmp(&(l == venv)),
                         (Some(l), None) if l == venv => Ordering::Less,
                         (None, Some(r)) if r == venv => Ordering::Greater,
                         _ => Ordering::Equal,
                     });
 
             // Compare project paths against worktree root
-            let proj_ordering = match (&lhs.project, &rhs.project) {
-                (Some(l), Some(r)) => match (l == &wr, r == &wr) {
-                    (true, false) => Ordering::Less,
-                    (false, true) => Ordering::Greater,
-                    _ => Ordering::Equal,
-                },
+            let proj_ordering = || match (&lhs.project, &rhs.project) {
+                (Some(l), Some(r)) => (r == &wr).cmp(&(l == &wr)),
                 (Some(l), None) if l == &wr => Ordering::Less,
                 (None, Some(r)) if r == &wr => Ordering::Greater,
                 _ => Ordering::Equal,
             };
 
             // Compare environment priorities
-            let priority_ordering = env_priority(lhs.kind).cmp(&env_priority(rhs.kind));
+            let priority_ordering = || env_priority(lhs.kind).cmp(&env_priority(rhs.kind));
 
             // Compare conda prefixes
-            let conda_ordering = if lhs.kind == Some(PythonEnvironmentKind::Conda) {
-                environment
-                    .get_env_var("CONDA_PREFIX".to_string())
-                    .map(|conda_prefix| {
-                        let is_match = |exe: &Option<PathBuf>| {
-                            exe.as_ref().map_or(false, |e| e.starts_with(&conda_prefix))
-                        };
-                        match (is_match(&lhs.executable), is_match(&rhs.executable)) {
-                            (true, false) => Ordering::Less,
-                            (false, true) => Ordering::Greater,
-                            _ => Ordering::Equal,
-                        }
-                    })
-                    .unwrap_or(Ordering::Equal)
-            } else {
-                Ordering::Equal
+            let conda_ordering = || {
+                if lhs.kind == Some(PythonEnvironmentKind::Conda) {
+                    environment
+                        .get_env_var("CONDA_PREFIX".to_string())
+                        .map(|conda_prefix| {
+                            let is_match = |exe: &Option<PathBuf>| {
+                                exe.as_ref().map_or(false, |e| e.starts_with(&conda_prefix))
+                            };
+                            match (is_match(&lhs.executable), is_match(&rhs.executable)) {
+                                (true, false) => Ordering::Less,
+                                (false, true) => Ordering::Greater,
+                                _ => Ordering::Equal,
+                            }
+                        })
+                        .unwrap_or(Ordering::Equal)
+                } else {
+                    Ordering::Equal
+                }
             };
 
+            // Compare Python executables
+            let exe_ordering = || lhs.executable.cmp(&rhs.executable);
+
             venv_ordering
-                .then(proj_ordering)
-                .then(priority_ordering)
-                .then(conda_ordering)
-                .then_with(|| lhs.executable.cmp(&rhs.executable))
+                .then_with(proj_ordering)
+                .then_with(priority_ordering)
+                .then_with(conda_ordering)
+                .then_with(exe_ordering)
         });
 
         let mut toolchains: Vec<_> = toolchains
