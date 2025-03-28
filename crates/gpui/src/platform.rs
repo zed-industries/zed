@@ -1335,6 +1335,44 @@ impl ClipboardItem {
     }
 }
 
+impl From<ClipboardString> for ClipboardEntry {
+    fn from(value: ClipboardString) -> Self {
+        Self::String(value)
+    }
+}
+
+impl From<String> for ClipboardEntry {
+    fn from(value: String) -> Self {
+        Self::from(ClipboardString::from(value))
+    }
+}
+
+impl From<Image> for ClipboardEntry {
+    fn from(value: Image) -> Self {
+        Self::Image(value)
+    }
+}
+
+impl From<ClipboardEntry> for ClipboardItem {
+    fn from(value: ClipboardEntry) -> Self {
+        Self {
+            entries: vec![value],
+        }
+    }
+}
+
+impl From<String> for ClipboardItem {
+    fn from(value: String) -> Self {
+        Self::from(ClipboardEntry::from(value))
+    }
+}
+
+impl From<Image> for ClipboardItem {
+    fn from(value: Image) -> Self {
+        Self::from(ClipboardEntry::from(value))
+    }
+}
+
 /// One of the editor's supported image formats (e.g. PNG, JPEG) - used when dealing with images in the clipboard
 #[derive(Clone, Copy, Debug, Eq, PartialEq, EnumIter, Hash)]
 pub enum ImageFormat {
@@ -1501,5 +1539,14 @@ impl ClipboardString {
         let mut hasher = SeaHasher::new();
         text.hash(&mut hasher);
         hasher.finish()
+    }
+}
+
+impl From<String> for ClipboardString {
+    fn from(value: String) -> Self {
+        Self {
+            text: value,
+            metadata: None,
+        }
     }
 }
