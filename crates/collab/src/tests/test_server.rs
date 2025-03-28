@@ -47,11 +47,7 @@ use std::{
 use util::path;
 use workspace::{Workspace, WorkspaceStore};
 
-#[cfg(not(target_os = "macos"))]
 use livekit_client::test::TestServer as LivekitTestServer;
-
-#[cfg(target_os = "macos")]
-use livekit_client_macos::TestServer as LivekitTestServer;
 
 pub struct TestServer {
     pub app_state: Arc<AppState>,
@@ -167,6 +163,7 @@ impl TestServer {
         let fs = FakeFs::new(cx.executor());
 
         cx.update(|cx| {
+            gpui_tokio::init(cx);
             if cx.has_global::<SettingsStore>() {
                 panic!("Same cx used to create two test clients")
             }
