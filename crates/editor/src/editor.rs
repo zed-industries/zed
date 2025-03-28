@@ -2328,22 +2328,22 @@ impl Editor {
         if selections.len() == 1 {
             cx.emit(SearchEvent::ActiveMatchChanged)
         }
-        if local
-            && self.is_singleton(cx)
-            && WorkspaceSettings::get(None, cx).restore_on_startup != RestoreOnStartupBehavior::None
-        {
-            if let Some(workspace_id) = self.workspace.as_ref().and_then(|workspace| workspace.1) {
-                let snapshot = self.buffer().read(cx).snapshot(cx);
-                let selections = selections.clone();
+        if local && self.is_singleton(cx) {
+            let inmemory_selections = selections.iter().map(|s| s.range()).collect();
+            self.update_restoration_data(cx, |data| {
+                data.selections = inmemory_selections;
+            });
 
-                let inmemory_selections = selections.iter().map(|s| s.range()).collect();
-                self.update_restoration_data(cx, |data| {
-                    data.selections = inmemory_selections;
-                });
-
-                let background_executor = cx.background_executor().clone();
-                let editor_id = cx.entity().entity_id().as_u64() as ItemId;
-                self.serialize_selections = cx.background_spawn(async move {
+            if WorkspaceSettings::get(None, cx).restore_on_startup != RestoreOnStartupBehavior::None
+            {
+                if let Some(workspace_id) =
+                    self.workspace.as_ref().and_then(|workspace| workspace.1)
+                {
+                    let snapshot = self.buffer().read(cx).snapshot(cx);
+                    let selections = selections.clone();
+                    let background_executor = cx.background_executor().clone();
+                    let editor_id = cx.entity().entity_id().as_u64() as ItemId;
+                    self.serialize_selections = cx.background_spawn(async move {
                     background_executor.timer(SERIALIZATION_THROTTLE_TIME).await;
                     let db_selections = selections
                         .iter()
@@ -2360,6 +2360,7 @@ impl Editor {
                         .with_context(|| format!("persisting editor selections for editor {editor_id}, workspace {workspace_id:?}"))
                         .log_err();
                 });
+                }
             }
         }
 
