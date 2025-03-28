@@ -930,7 +930,7 @@ impl ActiveThread {
                     if !context.is_empty() {
                         parent.child(h_flex().flex_wrap().gap_1().children(
                             context.into_iter().map(|context| {
-                                let context_id = context.id.clone();
+                                let context_id = context.id;
                                 ContextPill::added(context, false, false, None).on_click(Rc::new(
                                     cx.listener({
                                         let workspace = workspace.clone();
