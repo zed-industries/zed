@@ -6,20 +6,21 @@ use crate::thread_store::ThreadStore;
 use crate::tool_use::{PendingToolUseStatus, ToolUse, ToolUseStatus};
 use crate::ui::{ContextPill, ToolReadyPopUp, ToolReadyPopupEvent};
 use crate::AssistantPanel;
-use assistant_settings::AssistantSettings;
+use assistant_settings::{AssistantSettings, NotifyWhenAgentWaiting};
 use collections::HashMap;
 use editor::{Editor, MultiBuffer};
 use gpui::{
     linear_color_stop, linear_gradient, list, percentage, pulsating_between, AbsoluteLength,
     Animation, AnimationExt, AnyElement, App, ClickEvent, DefiniteLength, EdgesRefinement, Empty,
-    Entity, Focusable, Hsla, Length, ListAlignment, ListState, MouseButton, ScrollHandle, Stateful,
-    StyleRefinement, Subscription, Task, TextStyleRefinement, Transformation, UnderlineStyle,
-    WeakEntity, WindowHandle,
+    Entity, Focusable, Hsla, Length, ListAlignment, ListState, MouseButton, PlatformDisplay,
+    ScrollHandle, Stateful, StyleRefinement, Subscription, Task, TextStyleRefinement,
+    Transformation, UnderlineStyle, WeakEntity, WindowHandle,
 };
 use language::{Buffer, LanguageRegistry};
 use language_model::{LanguageModelRegistry, LanguageModelToolUseId, Role};
 use markdown::{Markdown, MarkdownStyle};
 use settings::Settings as _;
+use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Duration;
 use theme::ThemeSettings;
@@ -530,84 +531,102 @@ impl ActiveThread {
         window: &mut Window,
         cx: &mut Context<'_, ActiveThread>,
     ) {
-        if !window.is_window_active()
-            && self.pop_ups.is_empty()
-            && AssistantSettings::get_global(cx).notify_when_agent_waiting
-        {
-            let caption = caption.into();
-
-            for screen in cx.displays() {
-                let options = ToolReadyPopUp::window_options(screen, cx);
-
-                if let Some(screen_window) = cx
-                    .open_window(options, |_, cx| {
-                        cx.new(|_| ToolReadyPopUp::new(caption.clone(), icon, icon_color))
-                    })
-                    .log_err()
-                {
-                    if let Some(pop_up) = screen_window.entity(cx).log_err() {
-                        self.pop_up_subscriptions
-                            .entry(screen_window)
-                            .or_insert_with(Vec::new)
-                            .push(cx.subscribe_in(&pop_up, window, {
-                                |this, _, event, window, cx| match event {
-                                    ToolReadyPopupEvent::Accepted => {
-                                        let handle = window.window_handle();
-                                        cx.activate(true); // Switch back to the Zed application
-
-                                        let workspace_handle = this.workspace.clone();
-
-                                        // If there are multiple Zed windows, activate the correct one.
-                                        cx.defer(move |cx| {
-                                            handle
-                                                .update(cx, |_view, window, _cx| {
-                                                    window.activate_window();
-
-                                                    if let Some(workspace) =
-                                                        workspace_handle.upgrade()
-                                                    {
-                                                        workspace.update(_cx, |workspace, cx| {
-                                                            workspace
-                                                                .focus_panel::<AssistantPanel>(
-                                                                    window, cx,
-                                                                );
-                                                        });
-                                                    }
-                                                })
-                                                .log_err();
-                                        });
-
-                                        this.dismiss_notifications(cx);
-                                    }
-                                    ToolReadyPopupEvent::Dismissed => {
-                                        this.dismiss_notifications(cx);
-                                    }
-                                }
-                            }));
-
-                        self.pop_ups.push(screen_window);
-
-                        // If the user manually refocuses the original window, dismiss the popup.
-                        self.pop_up_subscriptions
-                            .entry(screen_window)
-                            .or_insert_with(Vec::new)
-                            .push({
-                                let pop_up_weak = pop_up.downgrade();
-
-                                cx.observe_window_activation(window, move |_, window, cx| {
-                                    if window.is_window_active() {
-                                        if let Some(pop_up) = pop_up_weak.upgrade() {
-                                            pop_up.update(cx, |_, cx| {
-                                                cx.emit(ToolReadyPopupEvent::Dismissed);
-                                            });
-                                        }
-                                    }
-                                })
-                            });
+        if !window.is_window_active() && self.pop_ups.is_empty() {
+            match AssistantSettings::get_global(cx).notify_when_agent_waiting {
+                NotifyWhenAgentWaiting::PrimaryScreen => {
+                    if let Some(primary) = cx.primary_display() {
+                        self.pop_up(icon, icon_color, caption.into(), window, primary, cx);
                     }
+                }
+                NotifyWhenAgentWaiting::AllScreens => {
+                    let caption = caption.into();
+                    for screen in cx.displays() {
+                        self.pop_up(icon, icon_color, caption.clone(), window, screen, cx);
+                    }
+                }
+                NotifyWhenAgentWaiting::Never => {
+                    // Don't show anything
                 }
             }
         }
+    }
+
+    fn pop_up(
+        &mut self,
+        icon: IconName,
+        icon_color: Color,
+        caption: SharedString,
+        window: &mut Window,
+        screen: Rc<dyn PlatformDisplay>,
+        cx: &mut Context<'_, Self>,
+    ) {
+        let options = ToolReadyPopUp::window_options(screen, cx);
+        let Some(screen_window) = cx
+            .open_window(options, |_, cx| {
+                cx.new(|_| ToolReadyPopUp::new(caption, icon, icon_color))
+            })
+            .log_err()
+        else {
+            return;
+        };
+
+        let Some(pop_up) = screen_window.entity(cx).log_err() else {
+            return;
+        };
+
+        self.pop_up_subscriptions
+            .entry(screen_window)
+            .or_insert_with(Vec::new)
+            .push(cx.subscribe_in(&pop_up, window, {
+                |this, _, event, window, cx| match event {
+                    ToolReadyPopupEvent::Accepted => {
+                        let handle = window.window_handle();
+                        cx.activate(true); // Switch back to the Zed application
+
+                        let workspace_handle = this.workspace.clone();
+
+                        // If there are multiple Zed windows, activate the correct one.
+                        cx.defer(move |cx| {
+                            handle
+                                .update(cx, |_view, window, _cx| {
+                                    window.activate_window();
+
+                                    if let Some(workspace) = workspace_handle.upgrade() {
+                                        workspace.update(_cx, |workspace, cx| {
+                                            workspace.focus_panel::<AssistantPanel>(window, cx);
+                                        });
+                                    }
+                                })
+                                .log_err();
+                        });
+
+                        this.dismiss_notifications(cx);
+                    }
+                    ToolReadyPopupEvent::Dismissed => {
+                        this.dismiss_notifications(cx);
+                    }
+                }
+            }));
+
+        self.pop_ups.push(screen_window);
+
+        // If the user manually refocuses the original window, dismiss the popup.
+        self.pop_up_subscriptions
+            .entry(screen_window)
+            .or_insert_with(Vec::new)
+            .push({
+                let pop_up_weak = pop_up.downgrade();
+
+                cx.observe_window_activation(window, move |_, window, cx| {
+                    if window.is_window_active() {
+                        if let Some(pop_up) = pop_up_weak.upgrade() {
+                            pop_up.update(cx, |_, cx| {
+                                cx.emit(ToolReadyPopupEvent::Dismissed);
+                            });
+                        }
+                    }
+                })
+            });
     }
 
     /// Spawns a task to save the active thread.
