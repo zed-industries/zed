@@ -22,13 +22,12 @@ jobs:
           ## What's New in Zed v0.179.2
 
           This is a test release note for email testing purposes.
-
+          
           ### Improvements
-
+          
           - Improved performance
           - Fixed bugs
           - Enhanced user experience
-          - Something else
           EOF
           jq -n --arg tag "$TAG" --rawfile body release_body.txt '{version: $tag, markdown_body: $body}' \
             > release_data.json
