@@ -336,7 +336,7 @@ impl ContextPickerCompletionProvider {
         label.push_str(" ", None);
         label.push_str(&file_name, comment_id);
 
-        let new_text = format!("@symbol {}", symbol.name);
+        let new_text = format!("@symbol {}:{}", file_name, symbol.name);
         let new_text_len = new_text.len();
         Some(Completion {
             old_range: source_range.clone(),
