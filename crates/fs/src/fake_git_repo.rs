@@ -391,7 +391,7 @@ impl GitRepository for FakeGitRepository {
         _branch: String,
         _remote: String,
         _options: Option<PushOptions>,
-        _askpass: AskPassSession,
+        _askpass: AskPassDelegate,
         _env: HashMap<String, String>,
         _cx: AsyncApp,
     ) -> BoxFuture<Result<git::repository::RemoteCommandOutput>> {
@@ -402,7 +402,7 @@ impl GitRepository for FakeGitRepository {
         &self,
         _branch: String,
         _remote: String,
-        _askpass: AskPassSession,
+        _askpass: AskPassDelegate,
         _env: HashMap<String, String>,
         _cx: AsyncApp,
     ) -> BoxFuture<Result<git::repository::RemoteCommandOutput>> {

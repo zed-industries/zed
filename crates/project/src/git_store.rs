@@ -6,7 +6,7 @@ use crate::{
     ProjectEnvironment, ProjectItem, ProjectPath,
 };
 use anyhow::{anyhow, bail, Context as _, Result};
-use askpass::{AskPassDelegate, AskPassSession};
+use askpass::AskPassDelegate;
 use buffer_diff::{BufferDiff, BufferDiffEvent};
 use client::ProjectId;
 use collections::HashMap;
@@ -3315,7 +3315,6 @@ impl Repository {
         askpass: AskPassDelegate,
         cx: &mut App,
     ) -> oneshot::Receiver<Result<RemoteCommandOutput>> {
-        let executor = cx.background_executor().clone();
         let askpass_delegates = self.askpass_delegates.clone();
         let askpass_id = util::post_inc(&mut self.latest_askpass_id);
         let env = self.worktree_environment(cx);
@@ -3323,7 +3322,6 @@ impl Repository {
         self.send_job(move |git_repo, cx| async move {
             match git_repo {
                 RepositoryState::Local(git_repository) => {
-                    let askpass = AskPassSession::new(&executor, askpass).await?;
                     let env = env.await;
                     git_repository.fetch(askpass, env, cx).await
                 }
@@ -3364,7 +3362,6 @@ impl Repository {
         askpass: AskPassDelegate,
         cx: &mut App,
     ) -> oneshot::Receiver<Result<RemoteCommandOutput>> {
-        let executor = cx.background_executor().clone();
         let askpass_delegates = self.askpass_delegates.clone();
         let askpass_id = util::post_inc(&mut self.latest_askpass_id);
         let env = self.worktree_environment(cx);
@@ -3373,7 +3370,7 @@ impl Repository {
             match git_repo {
                 RepositoryState::Local(git_repository) => {
                     let env = env.await;
-                    let askpass = AskPassSession::new(&executor, askpass).await?;
+                    // let askpass = AskPassSession::new(&executor, askpass).await?;
                     git_repository
                         .push(
                             branch.to_string(),
@@ -3426,7 +3423,6 @@ impl Repository {
         askpass: AskPassDelegate,
         cx: &mut App,
     ) -> oneshot::Receiver<Result<RemoteCommandOutput>> {
-        let executor = cx.background_executor().clone();
         let askpass_delegates = self.askpass_delegates.clone();
         let askpass_id = util::post_inc(&mut self.latest_askpass_id);
         let env = self.worktree_environment(cx);
@@ -3434,7 +3430,6 @@ impl Repository {
         self.send_job(move |git_repo, cx| async move {
             match git_repo {
                 RepositoryState::Local(git_repository) => {
-                    let askpass = AskPassSession::new(&executor, askpass).await?;
                     let env = env.await;
                     git_repository
                         .pull(branch.to_string(), remote.to_string(), askpass, env, cx)

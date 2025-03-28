@@ -1,6 +1,7 @@
 use crate::status::GitStatus;
 use crate::{Oid, SHORT_SHA_LENGTH};
 use anyhow::{anyhow, Context as _, Result};
+use askpass::AskPassDelegate;
 use collections::HashMap;
 use futures::future::BoxFuture;
 use futures::{select_biased, AsyncWriteExt, FutureExt as _};
@@ -255,7 +256,7 @@ pub trait GitRepository: Send + Sync {
         branch_name: String,
         upstream_name: String,
         options: Option<PushOptions>,
-        askpass: AskPassSession,
+        askpass: AskPassDelegate,
         env: HashMap<String, String>,
         // This method takes an AsyncApp to ensure it's invoked on the main thread,
         // otherwise git-credentials-manager won't work.
@@ -266,7 +267,7 @@ pub trait GitRepository: Send + Sync {
         &self,
         branch_name: String,
         upstream_name: String,
-        askpass: AskPassSession,
+        askpass: AskPassDelegate,
         env: HashMap<String, String>,
         // This method takes an AsyncApp to ensure it's invoked on the main thread,
         // otherwise git-credentials-manager won't work.
@@ -275,7 +276,7 @@ pub trait GitRepository: Send + Sync {
 
     fn fetch(
         &self,
-        askpass: AskPassSession,
+        askpass: AskPassDelegate,
         env: HashMap<String, String>,
         // This method takes an AsyncApp to ensure it's invoked on the main thread,
         // otherwise git-credentials-manager won't work.
@@ -966,20 +967,17 @@ impl GitRepository for RealGitRepository {
         branch_name: String,
         remote_name: String,
         options: Option<PushOptions>,
-        ask_pass: AskPassSession,
+        ask_pass: AskPassDelegate,
         env: HashMap<String, String>,
-        _cx: AsyncApp,
+        cx: AsyncApp,
     ) -> BoxFuture<Result<RemoteCommandOutput>> {
         let working_directory = self.working_directory();
+        let executor = cx.background_executor().clone();
         async move {
             let working_directory = working_directory?;
-
             let mut command = new_smol_command("git");
             command
-                .envs(env)
-                .env("GIT_ASKPASS", ask_pass.script_path())
-                .env("SSH_ASKPASS", ask_pass.script_path())
-                .env("SSH_ASKPASS_REQUIRE", "force")
+                .envs(&env)
                 .env("GIT_HTTP_USER_AGENT", "Zed")
                 .current_dir(&working_directory)
                 .args(["push"])
@@ -992,9 +990,8 @@ impl GitRepository for RealGitRepository {
                 .stdin(smol::process::Stdio::null())
                 .stdout(smol::process::Stdio::piped())
                 .stderr(smol::process::Stdio::piped());
-            let git_process = command.spawn()?;
 
-            run_remote_command(ask_pass, git_process).await
+            run_git_command(env, ask_pass, command, &executor).await
         }
         .boxed()
     }
@@ -1003,52 +1000,48 @@ impl GitRepository for RealGitRepository {
         &self,
         branch_name: String,
         remote_name: String,
-        ask_pass: AskPassSession,
+        ask_pass: AskPassDelegate,
         env: HashMap<String, String>,
-        _cx: AsyncApp,
+        cx: AsyncApp,
     ) -> BoxFuture<Result<RemoteCommandOutput>> {
         let working_directory = self.working_directory();
-        async {
+        let executor = cx.background_executor().clone();
+        async move {
             let mut command = new_smol_command("git");
             command
-                .envs(env)
-                .env("GIT_ASKPASS", ask_pass.script_path())
-                .env("SSH_ASKPASS", ask_pass.script_path())
-                .env("SSH_ASKPASS_REQUIRE", "force")
+                .envs(&env)
+                .env("GIT_HTTP_USER_AGENT", "Zed")
                 .current_dir(&working_directory?)
                 .args(["pull"])
                 .arg(remote_name)
                 .arg(branch_name)
                 .stdout(smol::process::Stdio::piped())
                 .stderr(smol::process::Stdio::piped());
-            let git_process = command.spawn()?;
 
-            run_remote_command(ask_pass, git_process).await
+            run_git_command(env, ask_pass, command, &executor).await
         }
         .boxed()
     }
 
     fn fetch(
         &self,
-        ask_pass: AskPassSession,
+        ask_pass: AskPassDelegate,
         env: HashMap<String, String>,
-        _cx: AsyncApp,
+        cx: AsyncApp,
     ) -> BoxFuture<Result<RemoteCommandOutput>> {
         let working_directory = self.working_directory();
-        async {
+        let executor = cx.background_executor().clone();
+        async move {
             let mut command = new_smol_command("git");
             command
-                .envs(env)
-                .env("GIT_ASKPASS", ask_pass.script_path())
-                .env("SSH_ASKPASS", ask_pass.script_path())
-                .env("SSH_ASKPASS_REQUIRE", "force")
+                .envs(&env)
+                .env("GIT_HTTP_USER_AGENT", "Zed")
                 .current_dir(&working_directory?)
                 .args(["fetch", "--all"])
                 .stdout(smol::process::Stdio::piped())
                 .stderr(smol::process::Stdio::piped());
-            let git_process = command.spawn()?;
 
-            run_remote_command(ask_pass, git_process).await
+            run_git_command(env, ask_pass, command, &executor).await
         }
         .boxed()
     }
@@ -1528,7 +1521,37 @@ struct GitBinaryCommandError {
     status: ExitStatus,
 }
 
-async fn run_remote_command(
+async fn run_git_command(
+    env: HashMap<String, String>,
+    ask_pass: AskPassDelegate,
+    mut command: smol::process::Command,
+    executor: &BackgroundExecutor,
+) -> Result<RemoteCommandOutput> {
+    if env.contains_key("GIT_ASKPASS") {
+        let git_process = command.spawn()?;
+        let output = git_process.output().await?;
+        if !output.status.success() {
+            Err(anyhow!("{}", String::from_utf8_lossy(&output.stderr)))
+        } else {
+            Ok(RemoteCommandOutput {
+                stdout: String::from_utf8_lossy(&output.stdout).to_string(),
+                stderr: String::from_utf8_lossy(&output.stderr).to_string(),
+            })
+        }
+    } else {
+        let ask_pass = AskPassSession::new(executor, ask_pass).await?;
+        let mut command = new_smol_command("git");
+        command
+            .env("GIT_ASKPASS", ask_pass.script_path())
+            .env("SSH_ASKPASS", ask_pass.script_path())
+            .env("SSH_ASKPASS_REQUIRE", "force");
+        let git_process = command.spawn()?;
+
+        run_askpass_command(ask_pass, git_process).await
+    }
+}
+
+async fn run_askpass_command(
     mut ask_pass: AskPassSession,
     git_process: smol::process::Child,
 ) -> std::result::Result<RemoteCommandOutput, anyhow::Error> {
