@@ -107,16 +107,14 @@ impl Tool for DeletePathTool {
         .detach();
 
         cx.spawn(async move |cx| {
-            let mut deleted_buffers = Vec::new();
             while let Some(path) = paths_rx.next().await {
                 if let Ok(buffer) = project
                     .update(cx, |project, cx| project.open_buffer(path, cx))?
                     .await
                 {
                     action_log.update(cx, |action_log, cx| {
-                        action_log.buffer_read(buffer.clone(), cx)
+                        action_log.will_delete_buffer(buffer.clone(), cx)
                     })?;
-                    deleted_buffers.push(buffer);
                 }
             }
 
@@ -126,15 +124,7 @@ impl Tool for DeletePathTool {
 
             match delete {
                 Some(deletion_task) => match deletion_task.await {
-                    Ok(()) => {
-                        for buffer in deleted_buffers {
-                            action_log.update(cx, |action_log, cx| {
-                                action_log.buffer_deleted(buffer.clone(), cx)
-                            })?;
-                        }
-
-                        Ok(format!("Deleted {path_str}"))
-                    }
+                    Ok(()) => Ok(format!("Deleted {path_str}")),
                     Err(err) => Err(anyhow!("Failed to delete {path_str}: {err}")),
                 },
                 None => Err(anyhow!(

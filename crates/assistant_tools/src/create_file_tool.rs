@@ -85,12 +85,6 @@ impl Tool for CreateFileTool {
         let destination_path: Arc<str> = input.path.as_str().into();
 
         cx.spawn(async move |cx| {
-            project
-                .update(cx, |project, cx| {
-                    project.create_entry(project_path.clone(), false, cx)
-                })?
-                .await
-                .map_err(|err| anyhow!("Unable to create {destination_path}: {err}"))?;
             let buffer = project
                 .update(cx, |project, cx| {
                     project.open_buffer(project_path.clone(), cx)
@@ -100,7 +94,7 @@ impl Tool for CreateFileTool {
             let edit_id = buffer.update(cx, |buffer, cx| buffer.set_text(contents, cx))?;
 
             action_log.update(cx, |action_log, cx| {
-                action_log.buffer_created(buffer.clone(), edit_id, cx)
+                action_log.will_create_buffer(buffer.clone(), edit_id, cx)
             })?;
 
             project

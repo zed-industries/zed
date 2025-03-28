@@ -63,6 +63,7 @@ impl ActionLog {
             .tracked_buffers
             .entry(buffer.clone())
             .or_insert_with(|| {
+                println!("INSERTING BUFFER");
                 let text_snapshot = buffer.read(cx).text_snapshot();
                 let unreviewed_diff = cx.new(|cx| BufferDiff::new(&text_snapshot, cx));
                 let diff = cx.new(|cx| {
@@ -242,12 +243,13 @@ impl ActionLog {
     }
 
     /// Track a buffer as read, so we can notify the model about user edits.
-    pub fn buffer_created(
+    pub fn will_create_buffer(
         &mut self,
         buffer: Entity<Buffer>,
         edit_id: Option<clock::Lamport>,
         cx: &mut Context<Self>,
     ) {
+        println!("WILL CREATE BUFFER");
         self.track_buffer(buffer.clone(), true, cx);
         self.buffer_edited(buffer, edit_id.into_iter().collect(), cx)
     }
@@ -276,6 +278,7 @@ impl ActionLog {
                 deletion_id,
                 ..
             } => {
+                println!("Turning into edited!");
                 edit_ids.extend(*deletion_id);
                 tracked_buffer.change = Change::Edited {
                     unreviewed_edit_ids: edit_ids.into_iter().collect(),
@@ -288,7 +291,7 @@ impl ActionLog {
         tracked_buffer.schedule_diff_update();
     }
 
-    pub fn buffer_deleted(&mut self, buffer: Entity<Buffer>, cx: &mut Context<Self>) {
+    pub fn will_delete_buffer(&mut self, buffer: Entity<Buffer>, cx: &mut Context<Self>) {
         let tracked_buffer = self.track_buffer(buffer.clone(), false, cx);
         if let Change::Edited {
             initial_content, ..
@@ -579,11 +582,10 @@ mod tests {
     use super::*;
     use buffer_diff::DiffHunkStatusKind;
     use gpui::TestAppContext;
-    use language::{DiskState, Point};
-    use project::{FakeFs, Fs, MTime, Project, RemoveOptions};
+    use language::Point;
+    use project::{FakeFs, Fs, Project, RemoveOptions};
     use serde_json::json;
     use settings::SettingsStore;
-    use text::BufferId;
     use util::path;
 
     #[gpui::test]
@@ -815,41 +817,43 @@ mod tests {
         .await;
 
         let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
-        let file1 = project
+        let file1_path = project
             .read_with(cx, |project, cx| project.find_project_path("dir/file1", cx))
             .unwrap();
-        let file2 = project
+        let file2_path = project
             .read_with(cx, |project, cx| project.find_project_path("dir/file2", cx))
             .unwrap();
 
         let action_log = cx.new(|_| ActionLog::new());
         let buffer1 = project
-            .update(cx, |project, cx| project.open_buffer(file1.clone(), cx))
+            .update(cx, |project, cx| {
+                project.open_buffer(file1_path.clone(), cx)
+            })
             .await
             .unwrap();
         let buffer2 = project
-            .update(cx, |project, cx| project.open_buffer(file2.clone(), cx))
+            .update(cx, |project, cx| {
+                project.open_buffer(file2_path.clone(), cx)
+            })
             .await
             .unwrap();
 
-        action_log.update(cx, |log, cx| log.buffer_read(buffer1.clone(), cx));
-        action_log.update(cx, |log, cx| log.buffer_read(buffer2.clone(), cx));
+        action_log.update(cx, |log, cx| log.will_delete_buffer(buffer1.clone(), cx));
+        action_log.update(cx, |log, cx| log.will_delete_buffer(buffer2.clone(), cx));
         project
             .update(cx, |project, cx| {
-                project.delete_file(file1.clone(), false, cx)
+                project.delete_file(file1_path.clone(), false, cx)
             })
             .unwrap()
             .await
             .unwrap();
         project
             .update(cx, |project, cx| {
-                project.delete_file(file2.clone(), false, cx)
+                project.delete_file(file2_path.clone(), false, cx)
             })
             .unwrap()
             .await
             .unwrap();
-        action_log.update(cx, |log, cx| log.buffer_deleted(buffer1.clone(), cx));
-        action_log.update(cx, |log, cx| log.buffer_deleted(buffer2.clone(), cx));
         cx.run_until_parked();
         assert_eq!(
             unreviewed_hunks(&action_log, cx),
@@ -878,10 +882,15 @@ mod tests {
         // Simulate file1 being recreated externally.
         fs.insert_file(Path::new("/dir/file1"), "LOREM".as_bytes().to_vec())
             .await;
+        let buffer2 = project
+            .update(cx, |project, cx| project.open_buffer(file2_path, cx))
+            .await
+            .unwrap();
+        cx.run_until_parked();
         // Simulate file2 being recreated by a tool.
         let edit_id = buffer2.update(cx, |buffer, cx| buffer.set_text("IPSUM", cx));
         action_log.update(cx, |log, cx| {
-            log.buffer_created(buffer2.clone(), edit_id, cx)
+            log.will_create_buffer(buffer2.clone(), edit_id, cx)
         });
         project
             .update(cx, |project, cx| project.save_buffer(buffer2.clone(), cx))
