@@ -23,22 +23,24 @@ impl RemoteVideoTrackView {
     pub fn new(track: RemoteVideoTrack, window: &mut Window, cx: &mut Context<Self>) -> Self {
         cx.focus_handle();
         let frames = crate::play_remote_video_track(&track);
-        let _window_handle = window.window_handle();
 
         #[cfg(not(target_os = "macos"))]
-        cx.on_release(|this, cx| {
-            if let Some(frame) = _this.previous_rendered_frame.take() {
-                _window_handle
-                    .update(cx, |_, window, _cx| window.drop_image(frame).log_err())
-                    .ok();
-            }
-            if let Some(frame) = _this.current_rendered_frame.take() {
-                _window_handle
-                    .update(cx, |_, window, _cx| window.drop_image(frame).log_err())
-                    .ok();
-            }
-        })
-        .detach();
+        {
+            let window_handle = window.window_handle();
+            cx.on_release(|this, cx| {
+                if let Some(frame) = this.previous_rendered_frame.take() {
+                    window_handle
+                        .update(cx, |_, window, _cx| window.drop_image(frame).log_err())
+                        .ok();
+                }
+                if let Some(frame) = this.current_rendered_frame.take() {
+                    window_handle
+                        .update(cx, |_, window, _cx| window.drop_image(frame).log_err())
+                        .ok();
+                }
+            })
+            .detach();
+        }
 
         Self {
             track,
