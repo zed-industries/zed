@@ -6,7 +6,8 @@ use gpui::{prelude::*, Action, Entity, FocusHandle, Subscription, WeakEntity};
 use indexmap::IndexMap;
 use settings::{update_settings_file, Settings as _, SettingsStore};
 use ui::{
-    prelude::*, ButtonLike, ContextMenu, ContextMenuEntry, PopoverMenu, PopoverMenuHandle, Tooltip,
+    prelude::*, ButtonLike, ContextMenu, ContextMenuEntry, KeyBinding, PopoverMenu,
+    PopoverMenuHandle,
 };
 use util::ResultExt as _;
 
