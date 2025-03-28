@@ -40,8 +40,8 @@ impl ProfileSelector {
         this
     }
 
-    pub fn toggle(&self, window: &mut Window, cx: &mut Context<Self>) {
-        self.menu_handle.toggle(window, cx);
+    pub fn menu_handle(&self) -> PopoverMenuHandle<ContextMenu> {
+        self.menu_handle.clone()
     }
 
     fn refresh_profiles(&mut self, cx: &mut Context<Self>) {

@@ -618,6 +618,7 @@
       "ctrl-n": "assistant2::NewThread",
       "new": "assistant2::NewThread",
       "ctrl-shift-h": "assistant2::OpenHistory",
+      "ctrl-i": "assistant2::ToggleProfileSelector",
       "ctrl-alt-/": "assistant::ToggleModelSelector",
       "ctrl-shift-a": "assistant2::ToggleContextPicker",
       "ctrl-e": "assistant2::ChatMode",
@@ -635,7 +636,8 @@
   {
     "context": "MessageEditor > Editor",
     "bindings": {
-      "enter": "assistant2::Chat"
+      "enter": "assistant2::Chat",
+      "ctrl-i": "assistant2::ToggleProfileSelector"
     }
   },
   {

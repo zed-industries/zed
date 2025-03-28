@@ -289,6 +289,7 @@
     "use_key_equivalents": true,
     "bindings": {
       "enter": "assistant2::Chat",
+      "cmd-i": "assistant2::ToggleProfileSelector",
       "cmd-g d": "git::Diff",
       "shift-escape": "git::ExpandCommitEditor"
     }
