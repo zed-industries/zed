@@ -307,9 +307,27 @@ impl ManageProfilesModal {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
+        let settings = AssistantSettings::get_global(cx);
+
+        let base_profile_name = mode.base_profile_id.as_ref().map(|base_profile_id| {
+            settings
+                .profiles
+                .get(base_profile_id)
+                .map(|profile| profile.name.clone())
+                .unwrap_or_else(|| "Unknown".into())
+        });
+
         v_flex()
             .id("new-profile")
             .track_focus(&self.focus_handle(cx))
+            .child(ProfileModalHeader::new(
+                match base_profile_name {
+                    Some(base_profile) => format!("Fork {base_profile}"),
+                    None => "New Profile".into(),
+                },
+                IconName::Plus,
+            ))
+            .child(ListSeparator)
             .child(h_flex().p_2().child(mode.name_editor.clone()))
     }
 
