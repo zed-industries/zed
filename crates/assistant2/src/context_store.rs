@@ -60,6 +60,10 @@ impl ContextStore {
         &self.context
     }
 
+    pub fn context_for_id(&self, id: ContextId) -> Option<&AssistantContext> {
+        self.context().iter().find(|context| context.id() == id)
+    }
+
     pub fn clear(&mut self) {
         self.context.clear();
         self.files.clear();

@@ -1,3 +1,4 @@
+use crate::context::{AssistantContext, ContextId};
 use crate::thread::{
     LastRestoreCheckpoint, MessageId, MessageSegment, RequestKind, Thread, ThreadError,
     ThreadEvent, ThreadFeedback,
@@ -19,7 +20,9 @@ use gpui::{
 use language::{Buffer, LanguageRegistry};
 use language_model::{LanguageModelRegistry, LanguageModelToolUseId, Role};
 use markdown::{Markdown, MarkdownStyle};
+use project::ProjectItem as _;
 use settings::Settings as _;
+use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Duration;
 use theme::ThemeSettings;
@@ -778,6 +781,9 @@ impl ActiveThread {
             return Empty.into_any();
         };
 
+        let context_store = self.context_store.clone();
+        let workspace = self.workspace.clone();
+
         let thread = self.thread.read(cx);
         // Get all the data we need from thread before we start using it in closures
         let checkpoint = thread.checkpoint_for_message(message_id);
@@ -901,36 +907,53 @@ impl ActiveThread {
                 .into_any_element(),
         };
 
-        let message_content = v_flex()
-            .gap_1p5()
-            .child(
-                if let Some(edit_message_editor) = edit_message_editor.clone() {
-                    div()
-                        .key_context("EditMessageEditor")
-                        .on_action(cx.listener(Self::cancel_editing_message))
-                        .on_action(cx.listener(Self::confirm_editing_message))
-                        .min_h_6()
-                        .child(edit_message_editor)
-                } else {
-                    div()
-                        .min_h_6()
-                        .text_ui(cx)
-                        .child(self.render_message_content(message_id, rendered_message, cx))
-                },
-            )
-            .when_some(context, |parent, context| {
-                if !context.is_empty() {
-                    parent.child(
-                        h_flex().flex_wrap().gap_1().children(
-                            context
-                                .into_iter()
-                                .map(|context| ContextPill::added(context, false, false, None)),
-                        ),
-                    )
-                } else {
-                    parent
-                }
-            });
+        let message_content =
+            v_flex()
+                .gap_1p5()
+                .child(
+                    if let Some(edit_message_editor) = edit_message_editor.clone() {
+                        div()
+                            .key_context("EditMessageEditor")
+                            .on_action(cx.listener(Self::cancel_editing_message))
+                            .on_action(cx.listener(Self::confirm_editing_message))
+                            .min_h_6()
+                            .child(edit_message_editor)
+                    } else {
+                        div()
+                            .min_h_6()
+                            .text_ui(cx)
+                            .child(self.render_message_content(message_id, rendered_message, cx))
+                    },
+                )
+                .when_some(context, |parent, context| {
+                    if !context.is_empty() {
+                        parent.child(h_flex().flex_wrap().gap_1().children(
+                            context.into_iter().map(|context| {
+                                let context_id = context.id.clone();
+                                ContextPill::added(context, false, false, None).on_click(Rc::new(
+                                    cx.listener({
+                                        let workspace = workspace.clone();
+                                        let context_store = context_store.clone();
+                                        move |_, _, window, cx| {
+                                            if let Some(workspace) = workspace.upgrade() {
+                                                open_context(
+                                                    context_id,
+                                                    context_store.clone(),
+                                                    workspace,
+                                                    window,
+                                                    cx,
+                                                );
+                                                cx.notify();
+                                            }
+                                        }
+                                    }),
+                                ))
+                            }),
+                        ))
+                    } else {
+                        parent
+                    }
+                });
 
         let styled_message = match message.role {
             Role::User => v_flex()
@@ -1821,5 +1844,60 @@ impl Render for ActiveThread {
             .child(list(self.list_state.clone()).flex_grow())
             .children(self.render_confirmations(cx))
             .child(self.render_vertical_scrollbar(cx))
+    }
+}
+
+pub(crate) fn open_context(
+    id: ContextId,
+    context_store: Entity<ContextStore>,
+    workspace: Entity<Workspace>,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    let Some(context) = context_store.read(cx).context_for_id(id) else {
+        return;
+    };
+
+    match context {
+        AssistantContext::File(file_context) => {
+            if let Some(project_path) = file_context.context_buffer.buffer.read(cx).project_path(cx)
+            {
+                workspace.update(cx, |workspace, cx| {
+                    workspace
+                        .open_path(project_path, None, true, window, cx)
+                        .detach_and_log_err(cx);
+                });
+            }
+        }
+        AssistantContext::Directory(_) => {}
+        AssistantContext::Symbol(symbol_context) => {
+            if let Some(project_path) = symbol_context
+                .context_symbol
+                .buffer
+                .read(cx)
+                .project_path(cx)
+            {
+                workspace.update(cx, |workspace, cx| {
+                    workspace
+                        .open_path(project_path, None, true, window, cx)
+                        .detach_and_log_err(cx);
+                });
+            }
+        }
+        AssistantContext::FetchedUrl(fetched_url_context) => {
+            cx.open_url(&fetched_url_context.url);
+        }
+        AssistantContext::Thread(thread_context) => {
+            let thread_id = thread_context.thread.read(cx).id().clone();
+            workspace.update(cx, |workspace, cx| {
+                if let Some(panel) = workspace.panel::<AssistantPanel>(cx) {
+                    panel.update(cx, |panel, cx| {
+                        panel
+                            .open_thread(&thread_id, window, cx)
+                            .detach_and_log_err(cx)
+                    });
+                }
+            })
+        }
     }
 }
