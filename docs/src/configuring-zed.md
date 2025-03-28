@@ -556,7 +556,7 @@ List of `string` values
 ## Hide Mouse Cursor Mode
 
 - Description: Determines when the mouse cursor should be hidden in an editor or input box.
-- Setting: `hide_mouse_cursor_mode`
+- Setting: `hide_mouse`
 - Default: `on_typing_and_movement`
 
 **Options**

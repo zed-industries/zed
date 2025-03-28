@@ -62,8 +62,8 @@ use display_map::*;
 pub use display_map::{DisplayPoint, FoldPlaceholder};
 use editor_settings::GoToDefinitionFallback;
 pub use editor_settings::{
-    CurrentLineHighlight, EditorSettings, HideMouseCursorMode, ScrollBeyondLastLine,
-    SearchSettings, ShowScrollbar,
+    CurrentLineHighlight, EditorSettings, HideMouseMode, ScrollBeyondLastLine, SearchSettings,
+    ShowScrollbar,
 };
 pub use editor_settings_controls::*;
 use element::{layout_line, AcceptEditPredictionBinding, LineWithInvisibles, PositionMap};
@@ -797,7 +797,7 @@ pub struct Editor {
     serialize_selections: Task<()>,
     serialize_folds: Task<()>,
     mouse_cursor_hidden: bool,
-    hide_mouse_cursor_mode: HideMouseCursorMode,
+    hide_mouse: HideMouseMode,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Default)]
@@ -1577,8 +1577,8 @@ impl Editor {
             text_style_refinement: None,
             load_diff_task: load_uncommitted_diff,
             mouse_cursor_hidden: false,
-            hide_mouse_cursor_mode: EditorSettings::get_global(cx)
-                .hide_mouse_cursor_mode
+            hide_mouse: EditorSettings::get_global(cx)
+                .hide_mouse
                 .unwrap_or_default(),
         };
         if let Some(breakpoints) = this.breakpoint_store.as_ref() {
@@ -1709,15 +1709,12 @@ impl Editor {
         self.mouse_cursor_hidden = match origin {
             HideMouseCursorOrigin::TypingAction => {
                 matches!(
-                    self.hide_mouse_cursor_mode,
-                    HideMouseCursorMode::OnTyping | HideMouseCursorMode::OnTypingAndMovement
+                    self.hide_mouse,
+                    HideMouseMode::OnTyping | HideMouseMode::OnTypingAndMovement
                 )
             }
             HideMouseCursorOrigin::MovementAction => {
-                matches!(
-                    self.hide_mouse_cursor_mode,
-                    HideMouseCursorMode::OnTypingAndMovement
-                )
+                matches!(self.hide_mouse, HideMouseMode::OnTypingAndMovement)
             }
         };
     }
@@ -16683,8 +16680,7 @@ impl Editor {
             self.scroll_manager.vertical_scroll_margin = editor_settings.vertical_scroll_margin;
             self.show_breadcrumbs = editor_settings.toolbar.breadcrumbs;
             self.cursor_shape = editor_settings.cursor_shape.unwrap_or_default();
-            self.hide_mouse_cursor_mode =
-                editor_settings.hide_mouse_cursor_mode.unwrap_or_default();
+            self.hide_mouse = editor_settings.hide_mouse.unwrap_or_default();
         }
 
         if old_cursor_shape != self.cursor_shape {
