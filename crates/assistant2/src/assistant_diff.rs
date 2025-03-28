@@ -2,7 +2,7 @@ use crate::{Thread, ThreadEvent};
 use anyhow::Result;
 use buffer_diff::DiffHunkStatus;
 use collections::HashSet;
-use editor::{Editor, EditorEvent, MultiBuffer};
+use editor::{Editor, EditorEvent, MultiBuffer, ToPoint};
 use gpui::{
     prelude::*, AnyElement, AnyView, App, Entity, EventEmitter, FocusHandle, Focusable,
     SharedString, Subscription, Task, WeakEntity, Window,
@@ -487,13 +487,13 @@ fn render_diff_hunk_controls(
                     //     }
                     // })
                     .on_click({
-                        let _editor = editor.clone();
-                        move |_event, _window, _cx| {
-                            // editor.update(cx, |editor, cx| {
-                            //     let snapshot = editor.snapshot(window, cx);
-                            //     let point = hunk_range.start.to_point(&snapshot.buffer_snapshot);
-                            //     editor.undo_hunks_in_ranges(vec![point..point], window, cx);
-                            // });
+                        let editor = editor.clone();
+                        move |_event, window, cx| {
+                            editor.update(cx, |editor, cx| {
+                                let snapshot = editor.snapshot(window, cx);
+                                let point = hunk_range.start.to_point(&snapshot.buffer_snapshot);
+                                editor.restore_hunks_in_ranges(vec![point..point], window, cx);
+                            });
                         }
                     })
                     .disabled(is_created_file),
