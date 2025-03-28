@@ -30,6 +30,7 @@ use std::{
     any::TypeId,
     borrow::Cow,
     cmp::{self, Ordering},
+    collections::hash_map,
     iter,
     ops::Range,
     path::Path,
@@ -1252,8 +1253,8 @@ impl SerializableItem for Editor {
 }
 
 #[derive(Debug, Default)]
-pub(super) struct EditorRestorationData {
-    pub entries: HashMap<ProjectEntryId, RestorationData>,
+struct EditorRestorationData {
+    entries: HashMap<ProjectEntryId, RestorationData>,
 }
 
 #[derive(Debug)]
@@ -1313,6 +1314,56 @@ impl ProjectItem for Editor {
 }
 
 impl EventEmitter<SearchEvent> for Editor {}
+
+impl Editor {
+    pub fn update_restoration_data(
+        &self,
+        cx: &mut Context<Self>,
+        write: impl for<'a> FnOnce(&'a mut RestorationData) + 'static,
+    ) {
+        if !WorkspaceSettings::get(None, cx).restore_on_file_reopen {
+            return;
+        }
+
+        let editor = cx.entity();
+        cx.defer(move |cx| {
+            editor.update(cx, |editor, cx| {
+                let kind = Editor::project_item_kind()?;
+                let pane = editor.workspace()?.read(cx).pane_for(&cx.entity())?;
+                let buffer = editor.buffer().read(cx).as_singleton()?;
+                let entry_id = buffer.read(cx).entry_id(cx)?;
+                let buffer_version = buffer.read(cx).version();
+                pane.update(cx, |pane, _| {
+                    let data = pane
+                        .project_item_restoration_data
+                        .entry(kind)
+                        .or_insert_with(|| Box::new(EditorRestorationData::default()) as Box<_>);
+                    let data = match data.downcast_mut::<EditorRestorationData>() {
+                        Some(data) => data,
+                        None => {
+                            *data = Box::new(EditorRestorationData::default());
+                            data.downcast_mut::<EditorRestorationData>()
+                                .expect("just written the type downcasted to")
+                        }
+                    };
+
+                    let data = match data.entries.entry(entry_id) {
+                        hash_map::Entry::Occupied(o) => {
+                            if buffer_version.changed_since(&o.get().buffer_version) {
+                                return None;
+                            }
+                            o.into_mut()
+                        }
+                        hash_map::Entry::Vacant(v) => v.insert(RestorationData::default()),
+                    };
+                    write(data);
+                    data.buffer_version = buffer_version;
+                    Some(())
+                })
+            });
+        });
+    }
+}
 
 pub(crate) enum BufferSearchHighlights {}
 impl SearchableItem for Editor {

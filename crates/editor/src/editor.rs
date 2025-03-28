@@ -100,7 +100,6 @@ use inlay_hint_cache::{InlayHintCache, InlaySplice, InvalidationStrategy};
 pub use inline_completion::Direction;
 use inline_completion::{EditPredictionProvider, InlineCompletionProviderHandle};
 pub use items::MAX_TAB_TITLE_LEN;
-use items::{EditorRestorationData, RestorationData};
 use itertools::Itertools;
 use language::{
     language_settings::{
@@ -127,7 +126,7 @@ pub use proposed_changes_editor::{
     ProposedChangeLocation, ProposedChangesEditor, ProposedChangesEditorToolbar,
 };
 use smallvec::smallvec;
-use std::{cell::OnceCell, collections::hash_map, iter::Peekable};
+use std::{cell::OnceCell, iter::Peekable};
 use task::{ResolvedTask, TaskTemplate, TaskVariables};
 
 pub use lsp::CompletionContext;
@@ -191,7 +190,7 @@ use ui::{
 };
 use util::{maybe, post_inc, RangeExt, ResultExt, TryFutureExt};
 use workspace::{
-    item::{ItemHandle, PreviewTabsSettings, ProjectItem as _},
+    item::{ItemHandle, PreviewTabsSettings},
     notifications::{DetachAndPromptErr, NotificationId, NotifyTaskExt},
     searchable::SearchEvent,
     Item as WorkspaceItem, ItemId, ItemNavHistory, OpenInTerminal, OpenTerminal,
@@ -1602,8 +1601,9 @@ impl Editor {
             .push(cx.subscribe_self(|editor, e: &EditorEvent, cx| {
                 if let EditorEvent::SelectionsChanged { local } = e {
                     if *local {
-                        editor.update_restoration_data(cx, |data| {
-                            data.scroll_anchor = editor.scroll_manager.anchor();
+                        let new_anchor = editor.scroll_manager.anchor();
+                        editor.update_restoration_data(cx, move |data| {
+                            data.scroll_anchor = new_anchor;
                         });
                     }
                 }
@@ -17517,48 +17517,6 @@ impl Editor {
         }
 
         self.read_scroll_position_from_db(item_id, workspace_id, window, cx);
-    }
-
-    pub fn update_restoration_data<T>(
-        &self,
-        cx: &mut Context<Self>,
-        write: impl FnOnce(&mut RestorationData) -> T,
-    ) -> Option<T> {
-        if !WorkspaceSettings::get(None, cx).restore_on_file_reopen {
-            return None;
-        }
-        let kind = Editor::project_item_kind()?;
-        let pane = self.workspace()?.read(cx).pane_for(&cx.entity())?;
-        let buffer = self.buffer().read(cx).as_singleton()?;
-        let entry_id = buffer.read(cx).entry_id(cx)?;
-        let buffer_version = buffer.read(cx).version();
-        pane.update(cx, |pane, _| {
-            let data = pane
-                .project_item_restoration_data
-                .entry(kind)
-                .or_insert_with(|| Box::new(EditorRestorationData::default()) as Box<_>);
-            let data = match data.downcast_mut::<EditorRestorationData>() {
-                Some(data) => data,
-                None => {
-                    *data = Box::new(EditorRestorationData::default());
-                    data.downcast_mut::<EditorRestorationData>()
-                        .expect("just written the type downcasted to")
-                }
-            };
-
-            let data = match data.entries.entry(entry_id) {
-                hash_map::Entry::Occupied(o) => {
-                    if buffer_version.changed_since(&o.get().buffer_version) {
-                        return None;
-                    }
-                    o.into_mut()
-                }
-                hash_map::Entry::Vacant(v) => v.insert(RestorationData::default()),
-            };
-            let return_value = write(data);
-            data.buffer_version = buffer_version;
-            Some(return_value)
-        })
     }
 }
 
