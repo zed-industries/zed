@@ -40,38 +40,33 @@ impl Mode {
         let mut profiles = settings.profiles.clone();
         profiles.sort_unstable_by(|_, a, _, b| a.name.cmp(&b.name));
 
-        let mut profiles = profiles
+        let profiles = profiles
             .into_iter()
-            .map(|(id, profile)| ProfileEntry::Profile {
-                id: id.clone(),
-                name: profile.name.clone(),
+            .map(|(id, profile)| ProfileEntry {
+                id,
+                name: profile.name,
                 navigation: NavigableEntry::focusable(cx),
             })
             .collect::<Vec<_>>();
 
-        profiles.push(ProfileEntry::NewProfile {
-            navigation: NavigableEntry::focusable(cx),
-        });
-
-        Self::ChooseProfile(ChooseProfileMode { profiles })
+        Self::ChooseProfile(ChooseProfileMode {
+            profiles,
+            add_new_profile: NavigableEntry::focusable(cx),
+        })
     }
 }
 
 #[derive(Clone)]
-enum ProfileEntry {
-    Profile {
-        id: Arc<str>,
-        name: SharedString,
-        navigation: NavigableEntry,
-    },
-    NewProfile {
-        navigation: NavigableEntry,
-    },
+struct ProfileEntry {
+    pub id: Arc<str>,
+    pub name: SharedString,
+    pub navigation: NavigableEntry,
 }
 
 #[derive(Clone)]
 pub struct ChooseProfileMode {
     profiles: Vec<ProfileEntry>,
+    add_new_profile: NavigableEntry,
 }
 
 #[derive(Clone)]
@@ -329,81 +324,74 @@ impl ManageProfilesModal {
                         .pb_1()
                         .child(ListSeparator)
                         .children(mode.profiles.iter().map(|profile| {
-                            match profile {
-                                ProfileEntry::Profile {
-                                    id: profile_id,
-                                    name,
-                                    navigation,
-                                } => div()
-                                    .id(SharedString::from(format!("profile-{profile_id}")))
-                                    .track_focus(&navigation.focus_handle)
-                                    .on_action({
-                                        let profile_id = profile_id.clone();
-                                        cx.listener(move |this, _: &menu::Confirm, window, cx| {
-                                            this.view_profile(profile_id.clone(), window, cx);
-                                        })
+                            div()
+                                .id(SharedString::from(format!("profile-{}", profile.id)))
+                                .track_focus(&profile.navigation.focus_handle)
+                                .on_action({
+                                    let profile_id = profile.id.clone();
+                                    cx.listener(move |this, _: &menu::Confirm, window, cx| {
+                                        this.view_profile(profile_id.clone(), window, cx);
                                     })
-                                    .child(
-                                        ListItem::new(SharedString::from(format!(
-                                            "profile-{profile_id}"
-                                        )))
+                                })
+                                .child(
+                                    ListItem::new(SharedString::from(format!(
+                                        "profile-{}",
+                                        profile.id
+                                    )))
+                                    .toggle_state(
+                                        profile
+                                            .navigation
+                                            .focus_handle
+                                            .contains_focused(window, cx),
+                                    )
+                                    .inset(true)
+                                    .spacing(ListItemSpacing::Sparse)
+                                    .child(Label::new(profile.name.clone()))
+                                    .on_click({
+                                        let profile_id = profile.id.clone();
+                                        cx.listener(move |this, _, window, cx| {
+                                            this.new_profile(Some(profile_id.clone()), window, cx);
+                                        })
+                                    }),
+                                )
+                        }))
+                        .child(ListSeparator)
+                        .child(
+                            div()
+                                .id("new-profile")
+                                .track_focus(&mode.add_new_profile.focus_handle)
+                                .on_action(cx.listener(|this, _: &menu::Confirm, window, cx| {
+                                    this.new_profile(None, window, cx);
+                                }))
+                                .child(
+                                    ListItem::new("new-profile")
                                         .toggle_state(
-                                            navigation.focus_handle.contains_focused(window, cx),
+                                            mode.add_new_profile
+                                                .focus_handle
+                                                .contains_focused(window, cx),
                                         )
                                         .inset(true)
                                         .spacing(ListItemSpacing::Sparse)
-                                        .child(Label::new(name))
+                                        .start_slot(Icon::new(IconName::Plus))
+                                        .child(Label::new("Add New Profile"))
                                         .on_click({
-                                            let profile_id = profile_id.clone();
                                             cx.listener(move |this, _, window, cx| {
-                                                this.new_profile(
-                                                    Some(profile_id.clone()),
-                                                    window,
-                                                    cx,
-                                                );
+                                                this.new_profile(None, window, cx);
                                             })
                                         }),
-                                    ),
-                                ProfileEntry::NewProfile { navigation } => div()
-                                    .id("new-profile")
-                                    .track_focus(&navigation.focus_handle)
-                                    .on_action(cx.listener(
-                                        |this, _: &menu::Confirm, window, cx| {
-                                            this.new_profile(None, window, cx);
-                                        },
-                                    ))
-                                    .child(
-                                        ListItem::new("new-profile")
-                                            .toggle_state(
-                                                navigation
-                                                    .focus_handle
-                                                    .contains_focused(window, cx),
-                                            )
-                                            .inset(true)
-                                            .spacing(ListItemSpacing::Sparse)
-                                            .start_slot(Icon::new(IconName::Plus))
-                                            .child(Label::new("Add New Profile"))
-                                            .on_click({
-                                                cx.listener(move |this, _, window, cx| {
-                                                    this.new_profile(None, window, cx);
-                                                })
-                                            }),
-                                    ),
-                            }
-                        })),
+                                ),
+                        ),
                 )
                 .into_any_element(),
         )
         .map(|mut navigable| {
-            for entry in mode.profiles {
-                navigable = navigable.entry(match entry {
-                    ProfileEntry::Profile { navigation, .. } => navigation,
-                    ProfileEntry::NewProfile { navigation } => navigation,
-                })
+            for profile in mode.profiles {
+                navigable = navigable.entry(profile.navigation);
             }
 
             navigable
         })
+        .entry(mode.add_new_profile)
     }
 
     fn render_new_profile(
