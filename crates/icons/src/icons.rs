@@ -146,7 +146,6 @@ pub enum IconName {
     Maximize,
     Menu,
     MessageBubbles,
-    MessageCircle,
     Cloud,
     Mic,
     MicMute,
