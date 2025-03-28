@@ -2,6 +2,7 @@
 #![cfg_attr(windows, allow(dead_code))]
 
 mod app_menu;
+mod keycodes;
 mod keystroke;
 
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
@@ -59,6 +60,7 @@ use strum::EnumIter;
 use uuid::Uuid;
 
 pub use app_menu::*;
+pub use keycodes::*;
 pub use keystroke::*;
 
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
