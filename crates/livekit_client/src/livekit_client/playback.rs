@@ -439,7 +439,16 @@ pub fn play_remote_video_track(
                 pool = create_buffer_pool(frame.buffer.width(), frame.buffer.height()).log_err();
             }
             let pool = pool.clone();
-            async move { video_frame_buffer_from_webrtc(pool?, frame.buffer) }
+            async move {
+                if frame.buffer.width() < 10 && frame.buffer.height() < 10 {
+                    // when the remote stops sharing, we get an 8x8 black image.
+                    // In a lil bit, the unpublish will come through and close the view,
+                    // but until then, don't flash black.
+                    return None;
+                }
+
+                video_frame_buffer_from_webrtc(pool?, frame.buffer)
+            }
         })
     }
     #[cfg(not(target_os = "macos"))]

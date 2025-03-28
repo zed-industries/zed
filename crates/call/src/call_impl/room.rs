@@ -15,7 +15,7 @@ use gpui::{App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, Task, 
 use gpui_tokio::Tokio;
 use language::LanguageRegistry;
 use livekit::{LocalTrackPublication, ParticipantIdentity, RoomEvent};
-use livekit_client as livekit;
+use livekit_client::{self as livekit, TrackSid};
 use postage::{sink::Sink, stream::Stream, watch};
 use project::Project;
 use settings::Settings as _;
@@ -34,6 +34,9 @@ pub enum Event {
     },
     RemoteVideoTracksChanged {
         participant_id: proto::PeerId,
+    },
+    RemoteVideoTrackUnsubscribed {
+        sid: TrackSid,
     },
     RemoteAudioTracksChanged {
         participant_id: proto::PeerId,
@@ -988,6 +991,7 @@ impl Room {
                         cx.emit(Event::RemoteVideoTracksChanged {
                             participant_id: participant.peer_id,
                         });
+                        cx.emit(Event::RemoteVideoTrackUnsubscribed { sid: track.sid() });
                     }
                 }
             }

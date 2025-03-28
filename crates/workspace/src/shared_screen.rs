@@ -2,7 +2,7 @@ use crate::{
     item::{Item, ItemEvent},
     ItemNavHistory, WorkspaceId,
 };
-use call::{RemoteVideoTrack, RemoteVideoTrackView};
+use call::{RemoteVideoTrack, RemoteVideoTrackView, Room};
 use client::{proto::PeerId, User};
 use gpui::{
     div, AppContext as _, Entity, EventEmitter, FocusHandle, Focusable, InteractiveElement,
@@ -28,9 +28,21 @@ impl SharedScreen {
         track: RemoteVideoTrack,
         peer_id: PeerId,
         user: Arc<User>,
+        room: Entity<Room>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
+        let my_sid = track.sid();
+        cx.subscribe(&room, move |_, _, ev, cx| match ev {
+            call::room::Event::RemoteVideoTrackUnsubscribed { sid } => {
+                if sid == &my_sid {
+                    cx.emit(Event::Close)
+                }
+            }
+            _ => {}
+        })
+        .detach();
+
         let view = cx.new(|cx| RemoteVideoTrackView::new(track.clone(), window, cx));
         cx.subscribe(&view, |_, _, ev, cx| match ev {
             call::RemoteVideoTrackViewEvent::Close => cx.emit(Event::Close),
