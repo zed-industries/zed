@@ -7,7 +7,6 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::{path::PathBuf, sync::Arc};
 use ui::IconName;
-use util::ResultExt;
 
 use crate::replace::replace_exact;
 
@@ -199,7 +198,7 @@ impl Tool for FindReplaceFileTool {
 
                 action_log.update(cx, |log, cx| {
                     log.buffer_edited(buffer.clone(), edit_ids, cx)
-                })?.await.log_err();
+                })?;
 
                 project.update(cx, |project, cx| {
                     project.save_buffer(buffer, cx)

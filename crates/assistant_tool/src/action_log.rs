@@ -1,7 +1,7 @@
-use anyhow::{anyhow, Result};
+use anyhow::{Context as _, Result};
 use buffer_diff::BufferDiff;
 use collections::{BTreeMap, HashMap, HashSet};
-use gpui::{App, AppContext, Context, Entity, Subscription, Task};
+use gpui::{App, AppContext, AsyncApp, Context, Entity, Subscription, Task, WeakEntity};
 use language::{Buffer, BufferEvent, OffsetRangeExt, Operation, TextBufferSnapshot, ToOffset};
 use std::{ops::Range, sync::Arc};
 
@@ -67,6 +67,7 @@ impl ActionLog {
                     diff.set_secondary_diff(unreviewed_diff.clone());
                     diff
                 });
+                let (diff_update_tx, diff_update_rx) = async_watch::channel(());
                 TrackedBuffer {
                     buffer: buffer.clone(),
                     change: Change::Edited {
@@ -81,6 +82,15 @@ impl ActionLog {
                     version: buffer.read(cx).version(),
                     diff,
                     secondary_diff: unreviewed_diff,
+                    diff_update: diff_update_tx,
+                    _maintain_diff: cx.spawn({
+                        let buffer = buffer.clone();
+                        async move |this, cx| {
+                            Self::maintain_diff(this, buffer, diff_update_rx, cx)
+                                .await
+                                .ok();
+                        }
+                    }),
                     _subscription: cx.subscribe(&buffer, Self::handle_buffer_event),
                 }
             });
@@ -147,15 +157,30 @@ impl ActionLog {
 
             if overlaps {
                 unreviewed_edit_ids.insert(operation.timestamp);
-                let update = tracked_buffer.update_diff(cx);
-                cx.spawn(async move |this, cx| {
-                    update.await;
-                    this.update(cx, |_this, cx| cx.notify())?;
-                    anyhow::Ok(())
-                })
-                .detach();
+                tracked_buffer.schedule_diff_update();
             }
         }
+    }
+
+    async fn maintain_diff(
+        this: WeakEntity<Self>,
+        buffer: Entity<Buffer>,
+        mut diff_update: async_watch::Receiver<()>,
+        cx: &mut AsyncApp,
+    ) -> Result<()> {
+        while let Some(_) = diff_update.recv().await.ok() {
+            let update = this.update(cx, |this, cx| {
+                let tracked_buffer = this
+                    .tracked_buffers
+                    .get_mut(&buffer)
+                    .context("buffer not tracked")?;
+                anyhow::Ok(tracked_buffer.update_diff(cx))
+            })??;
+            update.await;
+            this.update(cx, |_this, cx| cx.notify())?;
+        }
+
+        Ok(())
     }
 
     /// Track a buffer as read, so we can notify the model about user edits.
@@ -169,7 +194,7 @@ impl ActionLog {
         buffer: Entity<Buffer>,
         edit_id: Option<clock::Lamport>,
         cx: &mut Context<Self>,
-    ) -> Task<Result<()>> {
+    ) {
         self.track_buffer(buffer.clone(), true, cx);
         self.buffer_edited(buffer, edit_id.into_iter().collect(), cx)
     }
@@ -180,7 +205,7 @@ impl ActionLog {
         buffer: Entity<Buffer>,
         mut edit_ids: Vec<clock::Lamport>,
         cx: &mut Context<Self>,
-    ) -> Task<Result<()>> {
+    ) {
         self.edited_since_project_diagnostics_check = true;
         self.stale_buffers_in_context.insert(buffer.clone());
 
@@ -207,19 +232,10 @@ impl ActionLog {
             }
         }
 
-        let update = tracked_buffer.update_diff(cx);
-        cx.spawn(async move |this, cx| {
-            update.await;
-            this.update(cx, |_this, cx| cx.notify())?;
-            Ok(())
-        })
+        tracked_buffer.schedule_diff_update();
     }
 
-    pub fn buffer_deleted(
-        &mut self,
-        buffer: Entity<Buffer>,
-        cx: &mut Context<Self>,
-    ) -> Task<Result<()>> {
+    pub fn buffer_deleted(&mut self, buffer: Entity<Buffer>, cx: &mut Context<Self>) {
         let tracked_buffer = self.track_buffer(buffer.clone(), false, cx);
         if let Change::Edited {
             initial_content, ..
@@ -232,19 +248,11 @@ impl ActionLog {
                     deleted_content: initial_content.clone(),
                     deletion_id,
                 };
-                let update = tracked_buffer.update_diff(cx);
-                cx.spawn(async move |this, cx| {
-                    update.await;
-                    this.update(cx, |_this, cx| cx.notify())?;
-                    Ok(())
-                })
+                tracked_buffer.schedule_diff_update();
             } else {
                 self.tracked_buffers.remove(&buffer);
                 cx.notify();
-                Task::ready(Ok(()))
             }
-        } else {
-            Task::ready(Ok(()))
         }
     }
 
@@ -255,9 +263,9 @@ impl ActionLog {
         buffer_range: Range<T>,
         accept: bool,
         cx: &mut Context<Self>,
-    ) -> Task<Result<()>> {
+    ) {
         let Some(tracked_buffer) = self.tracked_buffers.get_mut(&buffer) else {
-            return Task::ready(Err(anyhow!("buffer not found")));
+            return;
         };
 
         let buffer = buffer.read(cx);
@@ -289,12 +297,7 @@ impl ActionLog {
             }
         }
 
-        let update = tracked_buffer.update_diff(cx);
-        cx.spawn(async move |this, cx| {
-            update.await;
-            this.update(cx, |_this, cx| cx.notify())?;
-            Ok(())
-        })
+        tracked_buffer.schedule_diff_update();
     }
 
     /// Returns the set of buffers that contain changes that haven't been reviewed by the user.
@@ -340,6 +343,8 @@ struct TrackedBuffer {
     version: clock::Global,
     diff: Entity<BufferDiff>,
     secondary_diff: Entity<BufferDiff>,
+    diff_update: async_watch::Sender<()>,
+    _maintain_diff: Task<()>,
     _subscription: Subscription,
 }
 
@@ -366,6 +371,10 @@ impl TrackedBuffer {
             } => !unreviewed_edit_ids.is_empty() || !accepted_edit_ids.is_empty(),
             Change::Deleted { .. } => true,
         }
+    }
+
+    fn schedule_diff_update(&self) {
+        self.diff_update.send(()).ok();
     }
 
     fn update_diff(&mut self, cx: &mut App) -> Task<()> {
@@ -522,12 +531,10 @@ mod tests {
             "abc\ndEf\nghi\njkl\nmnO"
         );
 
-        action_log
-            .update(cx, |log, cx| {
-                log.buffer_edited(buffer.clone(), vec![edit1, edit2], cx)
-            })
-            .await
-            .unwrap();
+        action_log.update(cx, |log, cx| {
+            log.buffer_edited(buffer.clone(), vec![edit1, edit2], cx)
+        });
+        cx.run_until_parked();
         assert_eq!(
             unreviewed_hunks(&action_log, cx),
             vec![(
@@ -537,27 +544,22 @@ mod tests {
                         range: Point::new(1, 0)..Point::new(2, 0),
                         review_status: ReviewStatus::Unreviewed,
                         diff_status: DiffHunkStatusKind::Modified,
+                        old_text: "def\n".into(),
                     },
                     HunkStatus {
                         range: Point::new(4, 0)..Point::new(4, 3),
                         review_status: ReviewStatus::Unreviewed,
                         diff_status: DiffHunkStatusKind::Modified,
+                        old_text: "mno".into(),
                     }
                 ],
             )]
         );
 
-        action_log
-            .update(cx, |log, cx| {
-                log.review_edits_in_range(
-                    buffer.clone(),
-                    Point::new(3, 0)..Point::new(4, 3),
-                    true,
-                    cx,
-                )
-            })
-            .await
-            .unwrap();
+        action_log.update(cx, |log, cx| {
+            log.review_edits_in_range(buffer.clone(), Point::new(3, 0)..Point::new(4, 3), true, cx)
+        });
+        cx.run_until_parked();
         assert_eq!(
             unreviewed_hunks(&action_log, cx),
             vec![(
@@ -567,27 +569,27 @@ mod tests {
                         range: Point::new(1, 0)..Point::new(2, 0),
                         review_status: ReviewStatus::Unreviewed,
                         diff_status: DiffHunkStatusKind::Modified,
+                        old_text: "def\n".into(),
                     },
                     HunkStatus {
                         range: Point::new(4, 0)..Point::new(4, 3),
                         review_status: ReviewStatus::Reviewed,
                         diff_status: DiffHunkStatusKind::Modified,
+                        old_text: "mno".into(),
                     }
                 ],
             )]
         );
 
-        action_log
-            .update(cx, |log, cx| {
-                log.review_edits_in_range(
-                    buffer.clone(),
-                    Point::new(3, 0)..Point::new(4, 3),
-                    false,
-                    cx,
-                )
-            })
-            .await
-            .unwrap();
+        action_log.update(cx, |log, cx| {
+            log.review_edits_in_range(
+                buffer.clone(),
+                Point::new(3, 0)..Point::new(4, 3),
+                false,
+                cx,
+            )
+        });
+        cx.run_until_parked();
         assert_eq!(
             unreviewed_hunks(&action_log, cx),
             vec![(
@@ -597,27 +599,22 @@ mod tests {
                         range: Point::new(1, 0)..Point::new(2, 0),
                         review_status: ReviewStatus::Unreviewed,
                         diff_status: DiffHunkStatusKind::Modified,
+                        old_text: "def\n".into(),
                     },
                     HunkStatus {
                         range: Point::new(4, 0)..Point::new(4, 3),
                         review_status: ReviewStatus::Unreviewed,
                         diff_status: DiffHunkStatusKind::Modified,
+                        old_text: "mno".into(),
                     }
                 ],
             )]
         );
 
-        action_log
-            .update(cx, |log, cx| {
-                log.review_edits_in_range(
-                    buffer.clone(),
-                    Point::new(0, 0)..Point::new(4, 3),
-                    true,
-                    cx,
-                )
-            })
-            .await
-            .unwrap();
+        action_log.update(cx, |log, cx| {
+            log.review_edits_in_range(buffer.clone(), Point::new(0, 0)..Point::new(4, 3), true, cx)
+        });
+        cx.run_until_parked();
         assert_eq!(
             unreviewed_hunks(&action_log, cx),
             vec![(
@@ -627,11 +624,13 @@ mod tests {
                         range: Point::new(1, 0)..Point::new(2, 0),
                         review_status: ReviewStatus::Reviewed,
                         diff_status: DiffHunkStatusKind::Modified,
+                        old_text: "def\n".into(),
                     },
                     HunkStatus {
                         range: Point::new(4, 0)..Point::new(4, 3),
                         review_status: ReviewStatus::Reviewed,
                         diff_status: DiffHunkStatusKind::Modified,
+                        old_text: "mno".into(),
                     }
                 ],
             )]
@@ -657,12 +656,10 @@ mod tests {
             "abC\nDEF\nGHI\njkl\nmno"
         );
 
-        action_log
-            .update(cx, |log, cx| {
-                log.buffer_edited(buffer.clone(), vec![tool_edit], cx)
-            })
-            .await
-            .unwrap();
+        action_log.update(cx, |log, cx| {
+            log.buffer_edited(buffer.clone(), vec![tool_edit], cx)
+        });
+        cx.run_until_parked();
         assert_eq!(
             unreviewed_hunks(&action_log, cx),
             vec![(
@@ -671,6 +668,7 @@ mod tests {
                     range: Point::new(0, 0)..Point::new(3, 0),
                     review_status: ReviewStatus::Unreviewed,
                     diff_status: DiffHunkStatusKind::Modified,
+                    old_text: "abc\ndef\nghi\n".into(),
                 }],
             )]
         );
@@ -679,6 +677,18 @@ mod tests {
             buffer.edit([(Point::new(0, 2)..Point::new(0, 2), "X")], None, cx)
         });
         cx.run_until_parked();
+        assert_eq!(
+            unreviewed_hunks(&action_log, cx),
+            vec![(
+                buffer.clone(),
+                vec![HunkStatus {
+                    range: Point::new(0, 0)..Point::new(3, 0),
+                    review_status: ReviewStatus::Unreviewed,
+                    diff_status: DiffHunkStatusKind::Modified,
+                    old_text: "abc\ndef\nghi\n".into(),
+                }],
+            )]
+        );
     }
 
     #[derive(Debug, Clone, PartialEq, Eq)]
@@ -686,6 +696,7 @@ mod tests {
         range: Range<Point>,
         review_status: ReviewStatus,
         diff_status: DiffHunkStatusKind,
+        old_text: String,
     }
 
     #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -719,6 +730,12 @@ mod tests {
                                 },
                                 diff_status: hunk.status().kind,
                                 range: hunk.range,
+                                old_text: tracked_buffer
+                                    .diff
+                                    .read(cx)
+                                    .base_text()
+                                    .text_for_range(hunk.diff_base_byte_range)
+                                    .collect(),
                             })
                             .collect(),
                     )

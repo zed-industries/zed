@@ -7,7 +7,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use ui::IconName;
-use util::{markdown::MarkdownString, ResultExt};
+use util::markdown::MarkdownString;
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct CreateFileToolInput {
@@ -99,12 +99,9 @@ impl Tool for CreateFileTool {
                 .map_err(|err| anyhow!("Unable to open buffer for {destination_path}: {err}"))?;
             let edit_id = buffer.update(cx, |buffer, cx| buffer.set_text(contents, cx))?;
 
-            action_log
-                .update(cx, |action_log, cx| {
-                    action_log.buffer_created(buffer.clone(), edit_id, cx)
-                })?
-                .await
-                .log_err();
+            action_log.update(cx, |action_log, cx| {
+                action_log.buffer_created(buffer.clone(), edit_id, cx)
+            })?;
 
             project
                 .update(cx, |project, cx| project.save_buffer(buffer, cx))?

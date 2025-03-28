@@ -3,7 +3,6 @@ use anyhow::Result;
 use buffer_diff::DiffHunkStatus;
 use collections::HashSet;
 use editor::{Editor, EditorEvent, MultiBuffer};
-use futures::future;
 use gpui::{
     prelude::*, AnyElement, AnyView, App, Entity, EventEmitter, FocusHandle, Focusable,
     SharedString, Subscription, Task, WeakEntity, Window,
@@ -17,7 +16,6 @@ use std::{
     sync::Arc,
 };
 use ui::{prelude::*, IconButtonShape};
-use util::TryFutureExt;
 use workspace::{
     item::{BreadcrumbText, ItemEvent, TabContentParams},
     searchable::SearchableItemHandle,
@@ -211,7 +209,6 @@ impl AssistantDiff {
         &mut self,
         hunk_ranges: Vec<Range<editor::Anchor>>,
         accept: bool,
-        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         let snapshot = self.multibuffer.read(cx).snapshot(cx);
@@ -221,22 +218,14 @@ impl AssistantDiff {
             .diff_hunks_in_ranges(&hunk_ranges, &snapshot)
             .collect::<Vec<_>>();
 
-        let mut tasks = Vec::new();
         for hunk in diff_hunks_in_ranges {
             let buffer = self.multibuffer.read(cx).buffer(hunk.buffer_id);
             if let Some(buffer) = buffer {
-                let task = self.thread.update(cx, |thread, cx| {
+                self.thread.update(cx, |thread, cx| {
                     thread.review_edits_in_range(buffer, hunk.buffer_range, accept, cx)
                 });
-                tasks.push(task.log_err());
             }
         }
-
-        cx.spawn_in(window, async move |this, cx| {
-            future::join_all(tasks).await;
-            this.update_in(cx, |this, window, cx| this.update_excerpts(window, cx))
-        })
-        .detach_and_log_err(cx);
     }
 }
 
@@ -479,12 +468,11 @@ fn render_diff_hunk_controls(
                     // })
                     .on_click({
                         let assistant_diff = assistant_diff.clone();
-                        move |_event, window, cx| {
+                        move |_event, _window, cx| {
                             assistant_diff.update(cx, |diff, cx| {
                                 diff.review_diff_hunks(
                                     vec![hunk_range.start..hunk_range.start],
                                     true,
-                                    window,
                                     cx,
                                 );
                             });
@@ -528,12 +516,11 @@ fn render_diff_hunk_controls(
                 // })
                 .on_click({
                     let assistant_diff = assistant_diff.clone();
-                    move |_event, window, cx| {
+                    move |_event, _window, cx| {
                         assistant_diff.update(cx, |diff, cx| {
                             diff.review_diff_hunks(
                                 vec![hunk_range.start..hunk_range.start],
                                 false,
-                                window,
                                 cx,
                             );
                         });

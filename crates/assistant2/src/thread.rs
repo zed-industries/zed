@@ -1513,10 +1513,10 @@ impl Thread {
         buffer_range: Range<language::Anchor>,
         accept: bool,
         cx: &mut Context<Self>,
-    ) -> Task<Result<()>> {
+    ) {
         self.action_log.update(cx, |action_log, cx| {
             action_log.review_edits_in_range(buffer, buffer_range, accept, cx)
-        })
+        });
     }
 
     pub fn action_log(&self) -> &Entity<ActionLog> {

@@ -475,12 +475,9 @@ impl EditToolRequest {
 
                 for action in applied {
                     changed_buffers.insert(action.buffer.clone());
-                    self.action_log
-                        .update(cx, |log, cx| {
-                            log.buffer_edited(action.buffer, action.edit_ids, cx)
-                        })?
-                        .await
-                        .log_err();
+                    self.action_log.update(cx, |log, cx| {
+                        log.buffer_edited(action.buffer, action.edit_ids, cx)
+                    })?;
                     write!(&mut output, "\n\n{}", action.source)?;
                 }
 

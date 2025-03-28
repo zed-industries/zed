@@ -129,7 +129,7 @@ impl Tool for DeletePathTool {
                     Ok(()) => {
                         for buffer in deleted_buffers {
                             action_log.update(cx, |action_log, cx| {
-                                action_log.buffer_deleted(buffer.clone(), cx).detach();
+                                action_log.buffer_deleted(buffer.clone(), cx)
                             })?;
                         }
 
