@@ -94,9 +94,21 @@ impl ProfileSelector {
             }
 
             menu = menu.separator();
-            menu = menu.item(ContextMenuEntry::new("Configure Profiles").handler(
+            menu = menu.header("Customize Current Profile");
+            menu = menu.item(ContextMenuEntry::new("Tools…").handler({
+                let profile_id = settings.default_profile.clone();
                 move |window, cx| {
-                    window.dispatch_action(ManageProfiles.boxed_clone(), cx);
+                    window.dispatch_action(
+                        ManageProfiles::customize_tools(profile_id.clone()).boxed_clone(),
+                        cx,
+                    );
+                }
+            }));
+
+            menu = menu.separator();
+            menu = menu.item(ContextMenuEntry::new("Configure Profiles…").handler(
+                move |window, cx| {
+                    window.dispatch_action(ManageProfiles::default().boxed_clone(), cx);
                 },
             ));
 
