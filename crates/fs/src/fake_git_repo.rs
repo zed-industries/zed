@@ -5,7 +5,7 @@ use futures::future::{self, BoxFuture};
 use git::{
     blame::Blame,
     repository::{
-        AskPassSession, Branch, CommitDetails, GitIndex, GitRepository, GitRepositoryCheckpoint,
+        AskPassDelegate, Branch, CommitDetails, GitIndex, GitRepository, GitRepositoryCheckpoint,
         PushOptions, Remote, RepoPath, ResetMode,
     },
     status::{FileStatus, GitStatus, StatusCode, TrackedStatus, UnmergedStatus},
@@ -411,7 +411,7 @@ impl GitRepository for FakeGitRepository {
 
     fn fetch(
         &self,
-        _askpass: AskPassSession,
+        _askpass: AskPassDelegate,
         _env: HashMap<String, String>,
         _cx: AsyncApp,
     ) -> BoxFuture<Result<git::repository::RemoteCommandOutput>> {

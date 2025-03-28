@@ -1,7 +1,6 @@
 use crate::status::GitStatus;
 use crate::{Oid, SHORT_SHA_LENGTH};
 use anyhow::{anyhow, Context as _, Result};
-use askpass::AskPassDelegate;
 use collections::HashMap;
 use futures::future::BoxFuture;
 use futures::{select_biased, AsyncWriteExt, FutureExt as _};
@@ -28,7 +27,7 @@ use util::command::{new_smol_command, new_std_command};
 use util::ResultExt;
 use uuid::Uuid;
 
-pub use askpass::{AskPassResult, AskPassSession};
+pub use askpass::{AskPassDelegate, AskPassResult, AskPassSession};
 
 pub const REMOTE_CANCELLED_BY_USER: &str = "Operation cancelled by user";
 
