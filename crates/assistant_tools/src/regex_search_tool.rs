@@ -12,6 +12,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::{cmp, fmt::Write, sync::Arc};
 use ui::IconName;
+use util::markdown::MarkdownString;
 use util::paths::PathMatcher;
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
@@ -63,14 +64,12 @@ impl Tool for RegexSearchTool {
         match serde_json::from_value::<RegexSearchToolInput>(input.clone()) {
             Ok(input) => {
                 let page = input.page();
+                let regex = MarkdownString::inline_code(&input.regex);
 
                 if page > 1 {
-                    format!(
-                        "Get page {page} of search results for regex “`{}`”",
-                        input.regex
-                    )
+                    format!("Get page {page} of search results for regex “{regex}”")
                 } else {
-                    format!("Search files for regex “`{}`”", input.regex)
+                    format!("Search files for regex “{regex}”")
                 }
             }
             Err(_) => "Search with regex".to_string(),

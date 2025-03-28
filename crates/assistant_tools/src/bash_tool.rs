@@ -5,9 +5,11 @@ use language_model::LanguageModelRequestMessage;
 use project::Project;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use std::path::Path;
 use std::sync::Arc;
 use ui::IconName;
 use util::command::new_smol_command;
+use util::markdown::MarkdownString;
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct BashToolInput {
@@ -43,7 +45,13 @@ impl Tool for BashTool {
 
     fn ui_text(&self, input: &serde_json::Value) -> String {
         match serde_json::from_value::<BashToolInput>(input.clone()) {
-            Ok(input) => format!("`{}`", input.command),
+            Ok(input) => {
+                if input.command.contains('\n') {
+                    MarkdownString::code_block("bash", &input.command).0
+                } else {
+                    MarkdownString::inline_code(&input.command).0
+                }
+            }
             Err(_) => "Run bash command".to_string(),
         }
     }
@@ -61,10 +69,44 @@ impl Tool for BashTool {
             Err(err) => return Task::ready(Err(anyhow!(err))),
         };
 
-        let Some(worktree) = project.read(cx).worktree_for_root_name(&input.cd, cx) else {
-            return Task::ready(Err(anyhow!("Working directory not found in the project")));
+        let project = project.read(cx);
+        let input_path = Path::new(&input.cd);
+        let working_dir = if input.cd == "." {
+            // Accept "." as meaning "the one worktree" if we only have one worktree.
+            let mut worktrees = project.worktrees(cx);
+
+            let only_worktree = match worktrees.next() {
+                Some(worktree) => worktree,
+                None => return Task::ready(Err(anyhow!("No worktrees found in the project"))),
+            };
+
+            if worktrees.next().is_some() {
+                return Task::ready(Err(anyhow!("'.' is ambiguous in multi-root workspaces. Please specify a root directory explicitly.")));
+            }
+
+            only_worktree.read(cx).abs_path()
+        } else if input_path.is_absolute() {
+            // Absolute paths are allowed, but only if they're in one of the project's worktrees.
+            if !project
+                .worktrees(cx)
+                .any(|worktree| input_path.starts_with(&worktree.read(cx).abs_path()))
+            {
+                return Task::ready(Err(anyhow!(
+                    "The absolute path must be within one of the project's worktrees"
+                )));
+            }
+
+            input_path.into()
+        } else {
+            let Some(worktree) = project.worktree_for_root_name(&input.cd, cx) else {
+                return Task::ready(Err(anyhow!(
+                    "`cd` directory {} not found in the project",
+                    &input.cd
+                )));
+            };
+
+            worktree.read(cx).abs_path()
         };
-        let working_directory = worktree.read(cx).abs_path();
 
         cx.spawn(async move |_| {
             // Add 2>&1 to merge stderr into stdout for proper interleaving.
@@ -73,7 +115,7 @@ impl Tool for BashTool {
             let output = new_smol_command("bash")
                 .arg("-c")
                 .arg(&command)
-                .current_dir(working_directory)
+                .current_dir(working_dir)
                 .output()
                 .await
                 .context("Failed to execute bash command")?;

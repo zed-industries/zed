@@ -10,6 +10,7 @@ use project::Project;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use ui::IconName;
+use util::markdown::MarkdownString;
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct ReadFileToolInput {
@@ -64,7 +65,10 @@ impl Tool for ReadFileTool {
 
     fn ui_text(&self, input: &serde_json::Value) -> String {
         match serde_json::from_value::<ReadFileToolInput>(input.clone()) {
-            Ok(input) => format!("Read file `{}`", input.path.display()),
+            Ok(input) => {
+                let path = MarkdownString::inline_code(&input.path.display().to_string());
+                format!("Read file {path}")
+            }
             Err(_) => "Read file".to_string(),
         }
     }

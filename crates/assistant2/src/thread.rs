@@ -286,8 +286,7 @@ impl Thread {
             tool_use,
             action_log: cx.new(|_| ActionLog::new()),
             initial_project_snapshot: Task::ready(serialized.initial_project_snapshot).shared(),
-            // TODO: persist token usage?
-            cumulative_token_usage: TokenUsage::default(),
+            cumulative_token_usage: serialized.cumulative_token_usage,
             feedback: None,
         }
     }
@@ -648,6 +647,7 @@ impl Thread {
                     })
                     .collect(),
                 initial_project_snapshot,
+                cumulative_token_usage: this.cumulative_token_usage.clone(),
             })
         })
     }
@@ -857,6 +857,13 @@ impl Thread {
             request.messages.push(request_message);
         }
 
+        // Set a cache breakpoint at the second-to-last message.
+        // https://docs.anthropic.com/en/docs/build-with-claude/prompt-caching
+        let breakpoint_index = request.messages.len() - 2;
+        for (index, message) in request.messages.iter_mut().enumerate() {
+            message.cache = index == breakpoint_index;
+        }
+
         if !referenced_context_ids.is_empty() {
             let mut context_message = LanguageModelRequestMessage {
                 role: Role::User,
@@ -873,17 +880,23 @@ impl Thread {
             request.messages.push(context_message);
         }
 
-        self.attach_stale_files(&mut request.messages, cx);
+        self.attached_tracked_files_state(&mut request.messages, cx);
 
         request
     }
 
-    fn attach_stale_files(&self, messages: &mut Vec<LanguageModelRequestMessage>, cx: &App) {
+    fn attached_tracked_files_state(
+        &self,
+        messages: &mut Vec<LanguageModelRequestMessage>,
+        cx: &App,
+    ) {
         const STALE_FILES_HEADER: &str = "These files changed since last read:";
 
         let mut stale_message = String::new();
 
-        for stale_file in self.action_log.read(cx).stale_buffers(cx) {
+        let action_log = self.action_log.read(cx);
+
+        for stale_file in action_log.stale_buffers(cx) {
             let Some(file) = stale_file.read(cx).file() else {
                 continue;
             };
@@ -895,10 +908,22 @@ impl Thread {
             writeln!(&mut stale_message, "- {}", file.path().display()).ok();
         }
 
+        let mut content = Vec::with_capacity(2);
+
         if !stale_message.is_empty() {
+            content.push(stale_message.into());
+        }
+
+        if action_log.has_edited_files_since_project_diagnostics_check() {
+            content.push(
+                "When you're done making changes, make sure to check project diagnostics and fix all errors AND warnings you introduced!".into(),
+            );
+        }
+
+        if !content.is_empty() {
             let context_message = LanguageModelRequestMessage {
                 role: Role::User,
-                content: vec![stale_message.into()],
+                content,
                 cache: false,
             };
 
@@ -1392,7 +1417,7 @@ impl Thread {
                     git_store
                         .repositories()
                         .values()
-                        .find(|repo| repo.read(cx).worktree_id == snapshot.id())
+                        .find(|repo| repo.read(cx).worktree_id == Some(snapshot.id()))
                         .and_then(|repo| {
                             let repo = repo.read(cx);
                             Some((repo.branch().cloned(), repo.local_repository()?))
@@ -1411,7 +1436,7 @@ impl Thread {
 
                     // Get diff asynchronously
                     let diff = repo
-                        .diff(git::repository::DiffType::HeadToWorktree, cx.clone())
+                        .diff(git::repository::DiffType::HeadToWorktree)
                         .await
                         .ok();
 

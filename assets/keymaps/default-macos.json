@@ -803,7 +803,10 @@
       "shift-tab": "git_panel::FocusEditor",
       "escape": "git_panel::ToggleFocus",
       "cmd-enter": "git::Commit",
-      "cmd-backspace": "git::RestoreFile"
+      "backspace": ["git::RestoreFile", { "skip_prompt": false }],
+      "delete": ["git::RestoreFile", { "skip_prompt": false }],
+      "cmd-backspace": ["git::RestoreFile", { "skip_prompt": true }],
+      "cmd-delete": ["git::RestoreFile", { "skip_prompt": true }]
     }
   },
   {

@@ -838,15 +838,6 @@ impl ExtensionStore {
             });
 
             fs.remove_dir(
-                &work_dir,
-                RemoveOptions {
-                    recursive: true,
-                    ignore_if_not_exists: true,
-                },
-            )
-            .await?;
-
-            fs.remove_dir(
                 &extension_dir,
                 RemoveOptions {
                     recursive: true,
@@ -855,7 +846,19 @@ impl ExtensionStore {
             )
             .await?;
 
+            // todo(windows)
+            // Stop the server here.
             this.update(cx, |this, cx| this.reload(None, cx))?.await;
+
+            fs.remove_dir(
+                &work_dir,
+                RemoveOptions {
+                    recursive: true,
+                    ignore_if_not_exists: true,
+                },
+            )
+            .await?;
+
             anyhow::Ok(())
         })
         .detach_and_log_err(cx)

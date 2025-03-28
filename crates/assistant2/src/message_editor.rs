@@ -26,9 +26,9 @@ use crate::assistant_model_selector::AssistantModelSelector;
 use crate::context_picker::{ConfirmBehavior, ContextPicker, ContextPickerCompletionProvider};
 use crate::context_store::{refresh_context_store_text, ContextStore};
 use crate::context_strip::{ContextStrip, ContextStripEvent, SuggestContextKind};
+use crate::profile_selector::ProfileSelector;
 use crate::thread::{RequestKind, Thread};
 use crate::thread_store::ThreadStore;
-use crate::tool_selector::ToolSelector;
 use crate::{Chat, ChatMode, RemoveAllContext, ThreadEvent, ToggleContextPicker};
 
 pub struct MessageEditor {
@@ -43,7 +43,7 @@ pub struct MessageEditor {
     inline_context_picker: Entity<ContextPicker>,
     inline_context_picker_menu_handle: PopoverMenuHandle<ContextPicker>,
     model_selector: Entity<AssistantModelSelector>,
-    tool_selector: Entity<ToolSelector>,
+    profile_selector: Entity<ProfileSelector>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -57,7 +57,6 @@ impl MessageEditor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let tools = thread.read(cx).tools().clone();
         let context_picker_menu_handle = PopoverMenuHandle::default();
         let inline_context_picker_menu_handle = PopoverMenuHandle::default();
         let model_selector_menu_handle = PopoverMenuHandle::default();
@@ -129,14 +128,14 @@ impl MessageEditor {
             inline_context_picker_menu_handle,
             model_selector: cx.new(|cx| {
                 AssistantModelSelector::new(
-                    fs,
+                    fs.clone(),
                     model_selector_menu_handle,
                     editor.focus_handle(cx),
                     window,
                     cx,
                 )
             }),
-            tool_selector: cx.new(|cx| ToolSelector::new(tools, cx)),
+            profile_selector: cx.new(|cx| ProfileSelector::new(fs, thread_store, cx)),
             _subscriptions: subscriptions,
         }
     }
@@ -318,7 +317,7 @@ impl Render for MessageEditor {
 
         let project = self.thread.read(cx).project();
         let changed_files = if let Some(repository) = project.read(cx).active_repository(cx) {
-            repository.read(cx).status().count()
+            repository.read(cx).cached_status().count()
         } else {
             0
         };
@@ -624,7 +623,7 @@ impl Render for MessageEditor {
                             .child(
                                 h_flex()
                                     .justify_between()
-                                    .child(h_flex().gap_2().child(self.tool_selector.clone()))
+                                    .child(h_flex().gap_2().child(self.profile_selector.clone()))
                                     .child(
                                         h_flex().gap_1().child(self.model_selector.clone()).child(
                                             ButtonLike::new("submit-message")

@@ -1911,6 +1911,10 @@ impl Terminal {
             }
         }
     }
+
+    pub fn vi_mode_enabled(&self) -> bool {
+        self.vi_mode_enabled
+    }
 }
 
 // Helper function to convert a grid row to a string
@@ -2077,8 +2081,9 @@ pub fn get_color_at_index(index: usize, theme: &Theme) -> Hsla {
             rgba_color(i * step, i * step, i * step) // Map the ANSI-grayscale components to the RGB-grayscale
         }
         // For compatibility with the alacritty::Colors interface
-        256 => colors.text,
-        257 => colors.background,
+        // See: https://github.com/alacritty/alacritty/blob/master/alacritty_terminal/src/term/color.rs
+        256 => colors.terminal_foreground,
+        257 => colors.terminal_background,
         258 => theme.players().local().cursor,
         259 => colors.terminal_ansi_dim_black,
         260 => colors.terminal_ansi_dim_red,

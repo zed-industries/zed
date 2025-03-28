@@ -147,7 +147,7 @@ impl PickerDelegate for SymbolContextPickerDelegate {
             mat.symbol.clone(),
             workspace,
             self.context_store.clone(),
-            &mut cx.to_async(),
+            cx,
         );
         cx.spawn_in(window, async move |this, cx| {
             add_symbol_task.await?;
@@ -196,16 +196,14 @@ pub(crate) fn add_symbol(
     symbol: Symbol,
     workspace: Entity<Workspace>,
     context_store: WeakEntity<ContextStore>,
-    cx: &mut AsyncApp,
+    cx: &mut App,
 ) -> Task<Result<()>> {
-    let Ok(project) = workspace.read_with(cx, |workspace, cx| workspace.project().clone()) else {
-        return Task::ready(Err(anyhow!("Failed to read workspace")));
-    };
+    let project = workspace.read(cx).project().clone();
     let open_buffer_task = project.update(cx, |project, cx| {
         project.open_buffer(symbol.path.clone(), cx)
     });
     cx.spawn(async move |cx| {
-        let buffer = open_buffer_task?.await?;
+        let buffer = open_buffer_task.await?;
         let document_symbols = project
             .update(cx, |project, cx| project.document_symbols(&buffer, cx))?
             .await?;

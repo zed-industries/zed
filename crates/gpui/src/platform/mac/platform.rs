@@ -891,6 +891,11 @@ impl Platform for MacPlatform {
     /// in macOS's [NSCursor](https://developer.apple.com/documentation/appkit/nscursor).
     fn set_cursor_style(&self, style: CursorStyle) {
         unsafe {
+            if style == CursorStyle::None {
+                let _: () = msg_send![class!(NSCursor), setHiddenUntilMouseMoves:YES];
+                return;
+            }
+
             let new_cursor: id = match style {
                 CursorStyle::Arrow => msg_send![class!(NSCursor), arrowCursor],
                 CursorStyle::IBeam => msg_send![class!(NSCursor), IBeamCursor],
@@ -925,6 +930,7 @@ impl Platform for MacPlatform {
                 CursorStyle::DragLink => msg_send![class!(NSCursor), dragLinkCursor],
                 CursorStyle::DragCopy => msg_send![class!(NSCursor), dragCopyCursor],
                 CursorStyle::ContextualMenu => msg_send![class!(NSCursor), contextualMenuCursor],
+                CursorStyle::None => unreachable!(),
             };
 
             let old_cursor: id = msg_send![class!(NSCursor), currentCursor];
