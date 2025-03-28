@@ -109,7 +109,7 @@ impl Render for AgentNotification {
                                 div()
                                     .text_size(px(12.))
                                     .text_color(cx.theme().colors().text_muted)
-                                    .max_w_72()
+                                    .max_w(px(318.))
                                     .truncate()
                                     .child(self.caption.clone())
                                     .relative()
