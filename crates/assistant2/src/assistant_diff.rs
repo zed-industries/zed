@@ -316,7 +316,7 @@ impl Item for AssistantDiff {
     }
 
     fn tab_tooltip_text(&self, _: &App) -> Option<SharedString> {
-        Some("Project Diff".into())
+        Some("Assistant Diff".into())
     }
 
     fn tab_content(&self, params: TabContentParams, _window: &Window, cx: &App) -> AnyElement {
@@ -335,7 +335,7 @@ impl Item for AssistantDiff {
     }
 
     fn telemetry_event_text(&self) -> Option<&'static str> {
-        Some("Project Diff Opened")
+        Some("Assistant Diff Opened")
     }
 
     fn as_searchable(&self, _: &Entity<Self>) -> Option<Box<dyn SearchableItemHandle>> {
