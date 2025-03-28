@@ -40,7 +40,6 @@ use rpc::{
     AnyProtoClient, TypedEnvelope,
 };
 use serde::Deserialize;
-use settings::WorktreeId;
 use std::{
     cmp::Ordering,
     collections::{hash_map, VecDeque},
@@ -153,7 +152,6 @@ pub struct RepositoryId(pub u64);
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RepositorySnapshot {
     pub id: RepositoryId,
-    pub work_directory_id: Option<ProjectEntryId>,
     pub merge_message: Option<SharedString>,
     pub statuses_by_path: SumTree<StatusEntry>,
     pub work_directory_abs_path: Arc<Path>,
@@ -161,6 +159,7 @@ pub struct RepositorySnapshot {
     pub completed_scan_id: usize,
     pub branch: Option<Branch>,
     pub merge_conflicts: TreeSet<RepoPath>,
+    pub work_directory_id: Option<ProjectEntryId>,
 }
 
 #[derive(Clone, Debug)]
@@ -183,7 +182,7 @@ pub struct Repository {
     snapshot: RepositorySnapshot,
     commit_message_buffer: Option<Entity<Buffer>>,
     git_store: WeakEntity<GitStore>,
-    state: RepositoryState,
+    //state: RepositoryState,
     job_sender: mpsc::UnboundedSender<GitJob>,
     askpass_delegates: Arc<Mutex<HashMap<u64, AskPassDelegate>>>,
     latest_askpass_id: u64,
@@ -202,8 +201,6 @@ enum RepositoryState {
     Local {
         backend: Arc<dyn GitRepository>,
         project_environment: WeakEntity<ProjectEnvironment>,
-        // TODO remove
-        _worktree_id: WorktreeId,
     },
     Remote {
         project_id: ProjectId,
@@ -228,8 +225,11 @@ struct GitJob {
 enum GitJobKey {
     WriteIndex(RepoPath),
     BatchReadIndex(ProjectEntryId),
+    Scan,
 }
 
+// FIXME different kinds of events?
+impl EventEmitter<GitEvent> for Repository {}
 impl EventEmitter<GitEvent> for GitStore {}
 
 impl GitStore {
@@ -1054,12 +1054,12 @@ impl GitStore {
                 } = &self.state
                 {
                     self.update_repositories_from_worktrees(
-                        worktree_store.clone(),
                         project_environment.clone(),
                         next_repository_id.clone(),
                         downstream
                             .as_ref()
                             .map(|downstream| downstream.updates_tx.clone()),
+                        changed_repos.clone(),
                         cx,
                     );
                     if let Some(worktree) =
@@ -1067,8 +1067,9 @@ impl GitStore {
                     {
                         self.local_worktree_git_repos_changed(worktree, changed_repos, cx);
                     }
+                    cx.emit(GitEvent::GitStateUpdated);
+                    // FIXME emit active repository changed as well
                 }
-                cx.emit(GitEvent::GitStateUpdated);
             }
             WorktreeStoreEvent::WorktreeAdded(_) => {}
             _ => {
@@ -1077,121 +1078,169 @@ impl GitStore {
         }
     }
 
+    /// Update our list of repositories and schedule git scans in response to a notification from a worktree,
     fn update_repositories_from_worktrees(
         &mut self,
-        worktree_store: Entity<WorktreeStore>,
         project_environment: Entity<ProjectEnvironment>,
         next_repository_id: Arc<AtomicU64>,
         updates_tx: Option<mpsc::UnboundedSender<DownstreamUpdate>>,
+        updated_git_repositories: UpdatedGitRepositoriesSet,
         cx: &mut Context<'_, GitStore>,
     ) {
-        let mut new_repositories = HashMap::default();
-        let git_store = cx.weak_entity();
-
-        worktree_store.update(cx, |worktree_store, cx| {
-            for worktree in worktree_store.worktrees() {
-                worktree.update(cx, |worktree, cx| {
-                    let snapshot = worktree.snapshot();
-                    let Some(local_worktree) = worktree.as_local() else {
-                        return;
-                    };
-                    for repo_entry in snapshot.repositories().iter() {
-                        let Some(local_repo) =
-                            local_worktree.get_local_repo(repo_entry.work_directory_id)
-                        else {
-                            continue;
-                        };
-                        let state = RepositoryState::Local {
-                            _worktree_id: worktree.id(),
-                            backend: local_repo.repo().clone(),
-                            project_environment: project_environment.downgrade(),
-                        };
-                        let merge_message =
-                            local_repo.merge_message.as_ref().map(SharedString::from);
-
-                        let existing_repo = self.repositories.values().find(|repo| {
-                            repo.read(cx).work_directory_id == Some(repo_entry.work_directory_id())
-                        });
-
-                        let (id, repo) = if let Some(existing_repo) = existing_repo {
-                            let existing_repo = existing_repo.clone();
-                            let id = existing_repo.update(cx, |existing_repo, _| {
-                                // TODO need how figure out how to handle work directory renames even after work directory ids are gone
-                                existing_repo.snapshot.work_directory_abs_path =
-                                    repo_entry.work_directory_abs_path.as_path().into();
-                                existing_repo.snapshot.branch = repo_entry.current_branch.clone();
-                                existing_repo.snapshot.completed_scan_id =
-                                    worktree.completed_scan_id();
-                                existing_repo.snapshot.merge_conflicts =
-                                    repo_entry.current_merge_conflicts.clone();
-                                existing_repo.snapshot.merge_message = merge_message;
-                                existing_repo.snapshot.statuses_by_path =
-                                    repo_entry.statuses_by_path.clone();
-                                existing_repo.snapshot.worktree_scan_id = worktree.scan_id();
-                                existing_repo.id
-                            });
-                            (id, existing_repo)
-                        } else {
-                            let id = RepositoryId(
-                                next_repository_id.fetch_add(1, atomic::Ordering::Release),
-                            );
-                            let snapshot = RepositorySnapshot {
-                                id,
-                                branch: repo_entry.current_branch.clone(),
-                                completed_scan_id: worktree.completed_scan_id(),
-                                merge_conflicts: repo_entry.current_merge_conflicts.clone(),
-                                merge_message,
-                                statuses_by_path: repo_entry.statuses_by_path.clone(),
-                                work_directory_abs_path: repo_entry
-                                    .work_directory_abs_path
-                                    .as_path()
-                                    .into(),
-                                work_directory_id: Some(repo_entry.work_directory_id),
-                                worktree_scan_id: worktree.scan_id(),
-                            };
-                            let new_repo = cx.new(|_| Repository {
-                                snapshot,
-                                git_store: git_store.clone(),
-                                askpass_delegates: Default::default(),
-                                latest_askpass_id: 0,
-                                job_sender: self.update_sender.clone(),
-                                commit_message_buffer: None,
-                                state,
-                            });
-                            (id, new_repo)
-                        };
-
-                        new_repositories.insert(id, repo.clone());
-                        self.repositories.remove(&id);
-
-                        // TODO only send out messages for repository snapshots that have changed
-                        let snapshot = repo.read(cx).snapshot.clone();
-                        if let Some(updates_tx) = updates_tx.as_ref() {
-                            updates_tx
-                                .unbounded_send(DownstreamUpdate::UpdateRepository(snapshot))
-                                .ok();
-                        }
-                    }
-                })
+        let mut removed_ids = Vec::new();
+        for update in updated_git_repositories.iter() {
+            if let Some((id, existing)) = self.repositories.iter().find(|(_, repo)| {
+                Some(&repo.read(cx).work_directory_abs_path)
+                    == update.old_work_directory_abs_path.as_ref()
+            }) {
+                if let Some(new_work_directory_abs_path) =
+                    update.new_work_directory_abs_path.clone()
+                {
+                    existing.update(cx, |existing, cx| {
+                        existing.snapshot.work_directory_abs_path = new_work_directory_abs_path;
+                        existing.schedule_scan(updates_tx.clone(), cx);
+                    });
+                } else {
+                    removed_ids.push(*id);
+                }
+            } else if let Some((work_directory_abs_path, dot_git_abs_path)) = update
+                .new_work_directory_abs_path
+                .clone()
+                .zip(update.dot_git_abs_path.clone())
+            {
+                let id = RepositoryId(next_repository_id.fetch_add(1, atomic::Ordering::Release));
+                let git_store = cx.weak_entity();
+                let repo = cx.new(|cx| {
+                    Repository::local(
+                        id,
+                        work_directory_abs_path,
+                        dot_git_abs_path,
+                        updates_tx.clone(),
+                        project_environment.downgrade(),
+                        git_store,
+                        cx,
+                    )
+                });
+                self.repositories.insert(id, repo);
+                cx.emit(GitEvent::GitStateUpdated);
+                self.active_repo_id.get_or_insert_with(|| {
+                    cx.emit(GitEvent::ActiveRepositoryChanged);
+                    id
+                });
             }
-        });
+        }
 
-        if let Some(updates_tx) = updates_tx.as_ref() {
-            for id in self.repositories.keys().cloned() {
+        for id in removed_ids {
+            self.repositories.remove(&id);
+            if let Some(updates_tx) = updates_tx.as_ref() {
                 updates_tx
                     .unbounded_send(DownstreamUpdate::RemoveRepository(id))
                     .ok();
             }
         }
 
-        self.repositories = new_repositories;
-        if let Some(id) = self.active_repo_id.as_ref() {
-            if !self.repositories.contains_key(id) {
-                self.active_repo_id = None;
-            }
-        } else if let Some(&first_id) = self.repositories.keys().next() {
-            self.active_repo_id = Some(first_id);
-        }
+        //worktree_store.update(cx, |worktree_store, cx| {
+        //    for worktree in worktree_store.worktrees() {
+        //        worktree.update(cx, |worktree, cx| {
+        //            let snapshot = worktree.snapshot();
+        //            let Some(local_worktree) = worktree.as_local() else {
+        //                return;
+        //            };
+        //            for repo_entry in snapshot.repositories().iter() {
+        //                let Some(local_repo) =
+        //                    local_worktree.get_local_repo(repo_entry.work_directory_id)
+        //                else {
+        //                    continue;
+        //                };
+        //                let state = RepositoryState::Local {
+        //                    backend: local_repo.repo().clone(),
+        //                    project_environment: project_environment.downgrade(),
+        //                };
+        //                let merge_message =
+        //                    local_repo.merge_message.as_ref().map(SharedString::from);
+
+        //                let existing_repo = self.repositories.values().find(|repo| {
+        //                    repo.read(cx).work_directory_id == Some(repo_entry.work_directory_id())
+        //                });
+
+        //                let (id, repo) = if let Some(existing_repo) = existing_repo {
+        //                    let existing_repo = existing_repo.clone();
+        //                    let id = existing_repo.update(cx, |existing_repo, _| {
+        //                        existing_repo.snapshot.work_directory_abs_path =
+        //                            repo_entry.work_directory_abs_path.as_path().into();
+        //                        existing_repo.snapshot.branch = repo_entry.current_branch.clone();
+        //                        existing_repo.snapshot.completed_scan_id =
+        //                            worktree.completed_scan_id();
+        //                        existing_repo.snapshot.merge_conflicts =
+        //                            repo_entry.current_merge_conflicts.clone();
+        //                        existing_repo.snapshot.merge_message = merge_message;
+        //                        existing_repo.snapshot.statuses_by_path =
+        //                            repo_entry.statuses_by_path.clone();
+        //                        existing_repo.snapshot.worktree_scan_id = worktree.scan_id();
+        //                        existing_repo.id
+        //                    });
+        //                    (id, existing_repo)
+        //                } else {
+        //                    let id = RepositoryId(
+        //                        next_repository_id.fetch_add(1, atomic::Ordering::Release),
+        //                    );
+        //                    let snapshot = RepositorySnapshot {
+        //                        id,
+        //                        branch: repo_entry.current_branch.clone(),
+        //                        completed_scan_id: worktree.completed_scan_id(),
+        //                        merge_conflicts: repo_entry.current_merge_conflicts.clone(),
+        //                        merge_message,
+        //                        statuses_by_path: repo_entry.statuses_by_path.clone(),
+        //                        work_directory_abs_path: repo_entry
+        //                            .work_directory_abs_path
+        //                            .as_path()
+        //                            .into(),
+        //                        work_directory_id: Some(repo_entry.work_directory_id),
+        //                        worktree_scan_id: worktree.scan_id(),
+        //                    };
+        //                    let new_repo = cx.new(|_| Repository {
+        //                        snapshot,
+        //                        git_store: git_store.clone(),
+        //                        askpass_delegates: Default::default(),
+        //                        latest_askpass_id: 0,
+        //                        job_sender: self.update_sender.clone(),
+        //                        commit_message_buffer: None,
+        //                        state,
+        //                    });
+        //                    (id, new_repo)
+        //                };
+
+        //                new_repositories.insert(id, repo.clone());
+        //                self.repositories.remove(&id);
+
+        //                // TODO only send out messages for repository snapshots that have changed
+        //                let snapshot = repo.read(cx).snapshot.clone();
+        //                if let Some(updates_tx) = updates_tx.as_ref() {
+        //                    updates_tx
+        //                        .unbounded_send(DownstreamUpdate::UpdateRepository(snapshot))
+        //                        .ok();
+        //                }
+        //            }
+        //        })
+        //    }
+        //});
+
+        //if let Some(updates_tx) = updates_tx.as_ref() {
+        //    for id in self.repositories.keys().cloned() {
+        //        updates_tx
+        //            .unbounded_send(DownstreamUpdate::RemoveRepository(id))
+        //            .ok();
+        //    }
+        //}
+
+        //self.repositories = new_repositories;
+        //if let Some(id) = self.active_repo_id.as_ref() {
+        //    if !self.repositories.contains_key(id) {
+        //        self.active_repo_id = None;
+        //    }
+        //} else if let Some(&first_id) = self.repositories.keys().next() {
+        //    self.active_repo_id = Some(first_id);
+        //}
     }
 
     fn on_buffer_store_event(
@@ -1317,7 +1366,7 @@ impl GitStore {
             }
             let Some(repo_id) = changed_repos
                 .iter()
-                .map(|(entry, _)| entry.id)
+                .map(|update| update.work_directory_id)
                 .find(|repo_id| {
                     self.repositories()
                         .values()
@@ -1683,30 +1732,15 @@ impl GitStore {
 
             let repo = this.repositories.entry(id).or_insert_with(|| {
                 let git_store = cx.weak_entity();
-
-                let snapshot = RepositorySnapshot {
-                    id,
-                    statuses_by_path: SumTree::new(&()),
-                    work_directory_abs_path: Path::new(&update.abs_path).into(),
-                    work_directory_id: None,
-                    merge_message: None,
-                    worktree_scan_id: 0,
-                    completed_scan_id: 0,
-                    branch: None,
-                    merge_conflicts: TreeSet::default(),
-                };
-
-                cx.new(|_| Repository {
-                    commit_message_buffer: None,
-                    git_store,
-                    snapshot,
-                    state: RepositoryState::Remote {
-                        project_id: ProjectId(update.project_id),
+                cx.new(|cx| {
+                    Repository::remote(
+                        id,
+                        Path::new(&update.abs_path).into(),
+                        ProjectId(update.project_id),
                         client,
-                    },
-                    job_sender: this.update_sender.clone(),
-                    askpass_delegates: Default::default(),
-                    latest_askpass_id: 0,
+                        git_store,
+                        cx,
+                    )
                 })
             });
 
@@ -2738,6 +2772,21 @@ impl RepositoryId {
 }
 
 impl RepositorySnapshot {
+    fn empty(id: RepositoryId, work_directory_abs_path: Arc<Path>) -> Self {
+        Self {
+            id,
+            merge_message: None,
+            statuses_by_path: Default::default(),
+            work_directory_abs_path,
+            worktree_scan_id: 0,
+            completed_scan_id: 0,
+            branch: None,
+            merge_conflicts: Default::default(),
+            // FIXME
+            work_directory_id: None,
+        }
+    }
+
     fn initial_update(&self, project_id: u64) -> proto::UpdateRepository {
         proto::UpdateRepository {
             branch_summary: self.branch.as_ref().map(branch_to_proto),
@@ -2861,6 +2910,51 @@ impl RepositorySnapshot {
 }
 
 impl Repository {
+    fn local(
+        id: RepositoryId,
+        work_directory_abs_path: Arc<Path>,
+        dot_git_abs_path: Arc<Path>,
+        updates_tx: Option<mpsc::UnboundedSender<DownstreamUpdate>>,
+        project_environment: WeakEntity<ProjectEnvironment>,
+        git_store: WeakEntity<GitStore>,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let snapshot = RepositorySnapshot::empty(id, work_directory_abs_path);
+        let this = Repository {
+            git_store,
+            snapshot,
+            commit_message_buffer: None,
+            askpass_delegates: Default::default(),
+            latest_askpass_id: 0,
+            job_sender: Repository::spawn_local_git_worker(
+                dot_git_abs_path,
+                project_environment,
+                cx,
+            ),
+        };
+        this.schedule_scan(updates_tx, cx);
+        this
+    }
+
+    fn remote(
+        id: RepositoryId,
+        work_directory_abs_path: Arc<Path>,
+        project_id: ProjectId,
+        client: AnyProtoClient,
+        git_store: WeakEntity<GitStore>,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let snapshot = RepositorySnapshot::empty(id, work_directory_abs_path);
+        Self {
+            snapshot,
+            commit_message_buffer: None,
+            git_store,
+            job_sender: Self::spawn_remote_git_worker(),
+            askpass_delegates: Default::default(),
+            latest_askpass_id: 0,
+        }
+    }
+
     pub fn git_store(&self) -> Option<Entity<GitStore>> {
         self.git_store.upgrade()
     }
@@ -3792,6 +3886,80 @@ impl Repository {
             }
         })
     }
+
+    fn schedule_scan(
+        &self,
+        updates_tx: Option<mpsc::UnboundedSender<DownstreamUpdate>>,
+        cx: &Context<Self>,
+    ) -> oneshot::Receiver<anyhow::Result<()>> {
+        let this = cx.weak_entity();
+        self.send_job(|state, mut cx| async move {
+            let Some(this) = this.upgrade() else {
+                return Ok(());
+            };
+            let RepositoryState::Local { backend, .. } = state else {
+                bail!("not a local repository")
+            };
+            let snapshot = this
+                .update(&mut cx, |this, _| {
+                    compute_snapshot(this.id, this.work_directory_abs_path.clone(), &*backend)
+                })?
+                .await?;
+            this.update(&mut cx, |this, cx| {
+                this.snapshot = snapshot.clone();
+                cx.emit(GitEvent::GitStateUpdated);
+            })?;
+            if let Some(updates_tx) = updates_tx {
+                updates_tx
+                    .unbounded_send(DownstreamUpdate::UpdateRepository(snapshot))
+                    .ok();
+            }
+            Ok(())
+        })
+    }
+
+    fn spawn_local_git_worker(
+        dot_git_abs_path: Arc<Path>,
+        project_environment: WeakEntity<ProjectEnvironment>,
+        cx: &mut Context<Self>,
+    ) -> mpsc::UnboundedSender<GitJob> {
+        todo!()
+    }
+
+    fn spawn_remote_git_worker() -> mpsc::UnboundedSender<GitJob> {
+        todo!()
+    }
+
+    fn spawn_git_worker(cx: &mut Context<Self>) -> mpsc::UnboundedSender<GitJob> {
+        let (job_tx, mut job_rx) = mpsc::unbounded::<GitJob>();
+
+        cx.spawn(async move |_, cx| {
+            let mut jobs = VecDeque::new();
+            loop {
+                while let Ok(Some(next_job)) = job_rx.try_next() {
+                    jobs.push_back(next_job);
+                }
+
+                if let Some(job) = jobs.pop_front() {
+                    if let Some(current_key) = &job.key {
+                        if jobs
+                            .iter()
+                            .any(|other_job| other_job.key.as_ref() == Some(current_key))
+                        {
+                            continue;
+                        }
+                    }
+                    (job.job)(cx).await;
+                } else if let Some(job) = job_rx.next().await {
+                    jobs.push_back(job);
+                } else {
+                    break;
+                }
+            }
+        })
+        .detach();
+        job_tx
+    }
 }
 
 fn get_permalink_in_rust_registry_src(
@@ -3988,4 +4156,44 @@ fn proto_to_branch(proto: &proto::Branch) -> git::repository::Branch {
             }
         }),
     }
+}
+
+async fn compute_snapshot(
+    id: RepositoryId,
+    work_directory_abs_path: Arc<Path>,
+    backend: &dyn GitRepository,
+) -> Result<RepositorySnapshot> {
+    let branches = backend.branches().await?;
+    let branch = branches.into_iter().find(|branch| branch.is_head);
+    let statuses = backend.status_blocking(&[git::WORK_DIRECTORY_REPO_PATH.clone()])?;
+    // FIXME
+    let merge_message = None;
+    // FIXME merge conflicts should be stateful
+
+    let mut statuses_by_path = SumTree::new(&());
+    let mut merge_conflicts = TreeSet::default();
+    for (repo_path, status) in statuses.entries.iter() {
+        if status.is_conflicted() {
+            merge_conflicts.insert(repo_path.clone());
+        }
+        statuses_by_path.insert_or_replace(
+            StatusEntry {
+                repo_path: repo_path.clone(),
+                status: *status,
+            },
+            &(),
+        );
+    }
+
+    Ok(RepositorySnapshot {
+        id,
+        work_directory_id: None,
+        merge_message,
+        statuses_by_path,
+        work_directory_abs_path,
+        worktree_scan_id: 0,
+        completed_scan_id: 0,
+        branch,
+        merge_conflicts,
+    })
 }

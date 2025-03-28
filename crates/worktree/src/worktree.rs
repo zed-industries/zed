@@ -424,9 +424,11 @@ struct BackgroundScannerState {
 pub struct LocalRepositoryEntry {
     pub(crate) work_directory_id: ProjectEntryId,
     pub(crate) work_directory: WorkDirectory,
+    pub(crate) work_directory_abs_path: Arc<Path>,
     pub(crate) git_dir_scan_id: usize,
     pub(crate) status_scan_id: usize,
     pub(crate) repo_ptr: Arc<dyn GitRepository>,
+    original_dot_git_abs_path: Arc<Path>,
     /// Absolute path to the actual .git folder.
     /// Note: if .git is a file, this points to the folder indicated by the .git file
     pub(crate) dot_git_dir_abs_path: Arc<Path>,
@@ -1418,70 +1420,66 @@ impl LocalWorktree {
                 (Some((new_entry_id, new_repo)), Some((old_entry_id, old_repo))) => {
                     match Ord::cmp(&new_entry_id, &old_entry_id) {
                         Ordering::Less => {
-                            if let Some(entry) = new_snapshot.entry_for_id(new_entry_id) {
-                                changes.push((
-                                    entry.clone(),
-                                    GitRepositoryChange {
-                                        old_repository: None,
-                                    },
-                                ));
-                            }
+                            changes.push(UpdatedGitRepository {
+                                work_directory_id: new_entry_id,
+                                old_work_directory_abs_path: None,
+                                new_work_directory_abs_path: Some(
+                                    new_repo.work_directory_abs_path.clone(),
+                                ),
+                                dot_git_abs_path: Some(new_repo.original_dot_git_abs_path.clone()),
+                            });
                             new_repos.next();
                         }
                         Ordering::Equal => {
+                            // FIXME the status scan ID will go away
                             if new_repo.git_dir_scan_id != old_repo.git_dir_scan_id
                                 || new_repo.status_scan_id != old_repo.status_scan_id
                             {
-                                if let Some(entry) = new_snapshot.entry_for_id(new_entry_id) {
-                                    let old_repo =
-                                        old_snapshot.repository_for_id(old_entry_id).cloned();
-                                    changes.push((
-                                        entry.clone(),
-                                        GitRepositoryChange {
-                                            old_repository: old_repo,
-                                        },
-                                    ));
-                                }
+                                changes.push(UpdatedGitRepository {
+                                    work_directory_id: new_entry_id,
+                                    old_work_directory_abs_path: Some(
+                                        old_repo.work_directory_abs_path.clone(),
+                                    ),
+                                    new_work_directory_abs_path: Some(
+                                        new_repo.work_directory_abs_path.clone(),
+                                    ),
+                                    dot_git_abs_path: Some(
+                                        new_repo.original_dot_git_abs_path.clone(),
+                                    ),
+                                });
                             }
                             new_repos.next();
                             old_repos.next();
                         }
                         Ordering::Greater => {
-                            if let Some(entry) = old_snapshot.entry_for_id(old_entry_id) {
-                                let old_repo =
-                                    old_snapshot.repository_for_id(old_entry_id).cloned();
-                                changes.push((
-                                    entry.clone(),
-                                    GitRepositoryChange {
-                                        old_repository: old_repo,
-                                    },
-                                ));
-                            }
+                            changes.push(UpdatedGitRepository {
+                                work_directory_id: old_entry_id,
+                                old_work_directory_abs_path: Some(
+                                    old_repo.work_directory_abs_path.clone(),
+                                ),
+                                new_work_directory_abs_path: None,
+                                dot_git_abs_path: None,
+                            });
                             old_repos.next();
                         }
                     }
                 }
-                (Some((entry_id, _)), None) => {
-                    if let Some(entry) = new_snapshot.entry_for_id(entry_id) {
-                        changes.push((
-                            entry.clone(),
-                            GitRepositoryChange {
-                                old_repository: None,
-                            },
-                        ));
-                    }
+                (Some((entry_id, repo)), None) => {
+                    changes.push(UpdatedGitRepository {
+                        work_directory_id: entry_id,
+                        old_work_directory_abs_path: None,
+                        new_work_directory_abs_path: Some(repo.work_directory_abs_path.clone()),
+                        dot_git_abs_path: Some(repo.original_dot_git_abs_path.clone()),
+                    });
                     new_repos.next();
                 }
-                (None, Some((entry_id, _))) => {
-                    if let Some(entry) = old_snapshot.entry_for_id(entry_id) {
-                        let old_repo = old_snapshot.repository_for_id(entry_id).cloned();
-                        changes.push((
-                            entry.clone(),
-                            GitRepositoryChange {
-                                old_repository: old_repo,
-                            },
-                        ));
-                    }
+                (None, Some((entry_id, repo))) => {
+                    changes.push(UpdatedGitRepository {
+                        work_directory_id: entry_id,
+                        old_work_directory_abs_path: Some(repo.work_directory_abs_path.clone()),
+                        new_work_directory_abs_path: None,
+                        dot_git_abs_path: Some(repo.original_dot_git_abs_path.clone()),
+                    });
                     old_repos.next();
                 }
                 (None, None) => break,
@@ -3248,11 +3246,12 @@ impl BackgroundScannerState {
             // * `actual_dot_git_dir_abs_path` is the path to the actual .git directory. In git
             // documentation this is called the "commondir".
             watcher.add(&dot_git_abs_path).log_err()?;
-            Some(Arc::from(dot_git_abs_path))
+            Some(Arc::from(dot_git_abs_path.as_path()))
         };
 
         log::trace!("constructed libgit2 repo in {:?}", t0.elapsed());
 
+        // FIXME this should be the responsibility of the gitstore as well
         if let Some(git_hosting_provider_registry) = self.git_hosting_provider_registry.clone() {
             git_hosting_providers::register_additional_providers(
                 git_hosting_provider_registry,
@@ -3261,6 +3260,21 @@ impl BackgroundScannerState {
         }
 
         let work_directory_id = work_dir_entry.id;
+
+        let local_repository = LocalRepositoryEntry {
+            work_directory_id,
+            work_directory,
+            git_dir_scan_id: 0,
+            status_scan_id: 0,
+            repo_ptr: repository.clone(),
+            original_dot_git_abs_path: dot_git_abs_path.as_path().into(),
+            dot_git_dir_abs_path: actual_dot_git_dir_abs_path.into(),
+            work_directory_abs_path: work_directory_abs_path.as_path().into(),
+            dot_git_worktree_abs_path,
+            current_merge_head_shas: Default::default(),
+            merge_message: None,
+        };
+
         self.snapshot.repositories.insert_or_replace(
             RepositoryEntry {
                 work_directory_id,
@@ -3272,18 +3286,6 @@ impl BackgroundScannerState {
             },
             &(),
         );
-
-        let local_repository = LocalRepositoryEntry {
-            work_directory_id,
-            work_directory,
-            git_dir_scan_id: 0,
-            status_scan_id: 0,
-            repo_ptr: repository.clone(),
-            dot_git_dir_abs_path: actual_dot_git_dir_abs_path.into(),
-            dot_git_worktree_abs_path,
-            current_merge_head_shas: Default::default(),
-            merge_message: None,
-        };
 
         self.snapshot
             .git_repositories
@@ -3617,14 +3619,22 @@ pub enum PathChange {
     Loaded,
 }
 
-#[derive(Debug)]
-pub struct GitRepositoryChange {
-    /// The previous state of the repository, if it already existed.
-    pub old_repository: Option<RepositoryEntry>,
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct UpdatedGitRepository {
+    /// ID of the repository's working directory.
+    ///
+    /// For a repo that's above the worktree root, this is the ID of the worktree root, and hence not unique.
+    /// It's included here to aid the GitStore in detecting when a repository's working directory is renamed.
+    pub work_directory_id: ProjectEntryId,
+    pub old_work_directory_abs_path: Option<Arc<Path>>,
+    pub new_work_directory_abs_path: Option<Arc<Path>>,
+    /// For a normal git repository checkout, the absolute path to the .git directory.
+    /// For a worktree, the absolute path to the worktree's subdirectory inside the .git directory.
+    pub dot_git_abs_path: Option<Arc<Path>>,
 }
 
 pub type UpdatedEntriesSet = Arc<[(Arc<Path>, ProjectEntryId, PathChange)]>;
-pub type UpdatedGitRepositoriesSet = Arc<[(Entry, GitRepositoryChange)]>;
+pub type UpdatedGitRepositoriesSet = Arc<[UpdatedGitRepository]>;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct StatusEntry {
@@ -4565,18 +4575,16 @@ impl BackgroundScanner {
             let child_path: Arc<Path> = job.path.join(child_name).into();
 
             if child_name == *DOT_GIT {
-                {
-                    let mut state = self.state.lock();
-                    let repo = state.insert_git_repository(
-                        child_path.clone(),
-                        self.fs.as_ref(),
-                        self.watcher.as_ref(),
-                    );
-                    if let Some(local_repo) = repo {
-                        inc_scans_running(&self.scans_running);
-                        git_status_update_jobs
-                            .push(self.schedule_git_statuses_update(&mut state, local_repo));
-                    }
+                let mut state = self.state.lock();
+                let repo = state.insert_git_repository(
+                    child_path.clone(),
+                    self.fs.as_ref(),
+                    self.watcher.as_ref(),
+                );
+                if let Some(local_repo) = repo {
+                    inc_scans_running(&self.scans_running);
+                    git_status_update_jobs
+                        .push(self.schedule_git_statuses_update(&mut state, local_repo));
                 }
             } else if child_name == *GITIGNORE {
                 match build_gitignore(&child_abs_path, self.fs.as_ref()).await {
