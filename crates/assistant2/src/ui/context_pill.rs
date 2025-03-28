@@ -175,6 +175,7 @@ impl RenderOnce for ContextPill {
             } => base_pill
                 .cursor_pointer()
                 .pr_1()
+                .border_dashed()
                 .border_color(if *focused {
                     color.border_focused
                 } else {
