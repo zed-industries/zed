@@ -29,6 +29,7 @@ pub struct EvalResult {
     pub output_tokens: usize,
     pub total_tokens: usize,
     pub tool_use_counts: usize,
+    pub judge_model_name: String, // Added field for judge model name
 }
 
 pub struct EvalOutput {
@@ -262,6 +263,7 @@ pub async fn read_example_solution(exercise_path: &Path, language: &str) -> Resu
         "php" => "php",
         "bash" => "sh",
         "multi" => "diff",
+        "internal" => "diff",
         _ => return Err(anyhow!("Unsupported language: {}", language)),
     };
     let example_path = exercise_path
@@ -520,6 +522,9 @@ pub async fn run_exercise_eval(
     let tool_use_counts = eval_output.tool_use_counts.values().sum::<u32>();
     let total_tokens = input_tokens + output_tokens;
 
+    // Get judge model name
+    let judge_model_name = judge_model.id().0.to_string();
+
     // Save results to evaluation directory
     let result = EvalResult {
         exercise_name: exercise_name.clone(),
@@ -536,6 +541,7 @@ pub async fn run_exercise_eval(
         output_tokens: output_tokens.try_into().unwrap(),
         total_tokens: total_tokens.try_into().unwrap(),
         tool_use_counts: tool_use_counts.try_into().unwrap(),
+        judge_model_name, // Add judge model name to result
     };
 
     Ok(result)

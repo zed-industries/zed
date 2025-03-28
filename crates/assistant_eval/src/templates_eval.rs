@@ -1,21 +1,23 @@
 #[derive(Clone, Debug)]
 pub struct Template {
-    pub name: &'static str,
-    pub content: &'static str,
+   pub name: &'static str,
+   pub content: &'static str,
 }
 
 pub fn all_templates() -> Vec<Template> {
-    vec![
-        Template {
-            name: "ProjectCreation",
-            content: r#"
+   vec![
+      Template {
+         name: "ProjectCreation",
+         content: r#"
 # Project Creation Evaluation Template
 
 ## Instructions
 
 Evaluate how well the AI assistant created a new implementation from scratch. Score it between 0.0 and 1.0 based on quality and fulfillment of requirements.
-- 1.0 = Perfect implementation that creates all necessary files with correct functionality
-- 0.0 = Completely fails to create working files or meet requirements
+- 1.0 = Perfect implementation that creates all necessary files with correct functionality.
+- 0.0 = Completely fails to create working files or meet requirements.
+
+Note: A git diff output is required. If no code changes are provided (i.e., no git diff output), the score must be 0.0.
 
 ## Evaluation Criteria
 
@@ -52,7 +54,7 @@ Requirements:
 Reference Implementation:
 <!-- ```reference code goes here``` -->
 
-AI-Generated Implementation:
+AI-Generated Implementation (git diff output):
 <!-- ```git diff goes here``` -->
 
 ## Output Format
@@ -71,17 +73,19 @@ EXAMPLE THREE:
 
 0.78
 "#,
-        },
-        Template {
-            name: "CodeModification",
-            content: r#"
+      },
+      Template {
+         name: "CodeModification",
+         content: r#"
 # Code Modification Evaluation Template
 
 ## Instructions
 
 Evaluate how well the AI assistant modified existing code to meet requirements. Score between 0.0 and 1.0 based on quality and appropriateness of changes.
-- 1.0 = Perfect modifications that correctly implement all requirements
-- 0.0 = Failed to make appropriate changes or introduced serious errors
+- 1.0 = Perfect modifications that correctly implement all requirements.
+- 0.0 = Failed to make appropriate changes or introduced serious errors.
+
+Note: A git diff output is required. If no code changes are provided (i.e., no git diff output), the score must be 0.0.
 
 ## Evaluation Criteria
 
@@ -115,7 +119,7 @@ Please consider the following aspects in order of importance:
 Original:
 <!-- ```reference code goes here``` -->
 
-New:
+New (git diff output):
 <!-- ```git diff goes here``` -->
 
 ## Output Format
@@ -134,25 +138,23 @@ EXAMPLE THREE:
 
 0.78
 "#,
-        },
-        Template {
-            name: "ConversationalGuidance",
-            content: r#"
+      },
+      Template {
+         name: "ConversationalGuidance",
+         content: r#"
 # Conversational Guidance Evaluation Template
 
 ## Instructions
 
 Evaluate the quality of the AI assistant's conversational guidance and score it between 0.0 and 1.0.
-- 1.0 = Perfect guidance with ideal information gathering, clarification, and advice without writing code
-- 0.0 = Completely unhelpful, inappropriate guidance, or wrote code when it should not have
+- 1.0 = Perfect guidance with ideal information gathering, clarification, and advice without writing code.
+- 0.0 = Completely unhelpful, inappropriate guidance, or wrote code when it should not have.
 
 ## Evaluation Criteria
 
-Please consider the following aspects in order of importance:
-
 ABSOLUTE REQUIREMENT:
-   - The assistant should NOT generate complete code solutions in conversation mode
-   - If the git diff shows the assistant wrote complete code, the score should be significantly reduced
+   - The assistant should NOT generate complete code solutions in conversation mode.
+   - If the git diff shows the assistant wrote complete code, the score should be significantly reduced.
 
 1. **Information Gathering Effectiveness (30%)**
    - Did the assistant ask relevant and precise questions?
@@ -205,6 +207,6 @@ EXAMPLE THREE:
 
 0.78
 "#,
-        },
-    ]
+      },
+   ]
 }

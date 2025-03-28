@@ -30,10 +30,10 @@ struct Args {
     /// Runs all exercises, causes the exercise_names to be ignored.
     #[arg(long)]
     all: bool,
-    /// Supported language types to evaluate (default: python,go,rust,typescript,javascript,ruby,php,bash)
+    /// Supported language types to evaluate (default: python,go,rust,typescript,javascript,ruby,php,bash,internal)
     #[arg(
         long,
-        default_value = "python,go,rust,typescript,javascript,ruby,php,bash"
+        default_value = "python,go,rust,typescript,javascript,ruby,php,bash,internal"
     )]
     languages: String,
     /// Name of the model (default: "claude-3-7-sonnet-latest")
@@ -193,9 +193,9 @@ fn main() {
 
                         // Run each template sequentially for this exercise
                         for template in templates_clone {
-                            // For "multi" language, only run the CodeModification template
-                            if language == "multi" && template.name != "CodeModification" {
-                                println!("Skipping {} template for multi language", template.name);
+                            // For "multi" or "internal" language, only run the CodeModification template
+                            if (language == "multi" || language == "internal") && template.name != "CodeModification" {
+                                println!("Skipping {} template for {} language", template.name, language);
                                 continue;
                             }
 

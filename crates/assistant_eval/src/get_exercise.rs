@@ -19,7 +19,8 @@ pub fn get_exercise_language(exercise_path: &Path) -> Result<String> {
     for (i, part) in parts.iter().enumerate() {
         if i > 0 && part.as_os_str() == "eval_code" {
             if i + 1 < parts.len() {
-                return Ok(parts[i + 1].as_os_str().to_string_lossy().to_string());
+                let language = parts[i + 1].as_os_str().to_string_lossy().to_string();
+                return Ok(language);
             }
         }
     }
@@ -61,30 +62,41 @@ pub fn find_exercises(
                             let path = entry.path();
 
                             if path.is_dir() {
-                                // Map the language to the file extension
-                                let language_extension = match *language {
-                                    "python" => "py",
-                                    "go" => "go",
-                                    "rust" => "rs",
-                                    "typescript" => "ts",
-                                    "javascript" => "js",
-                                    "ruby" => "rb",
-                                    "php" => "php",
-                                    "bash" => "sh",
-                                    "multi" => "diff",
-                                    _ => continue, // Skip unsupported languages
-                                };
+                                // Special handling for "internal" directory
+                                if *language == "internal" {
+                                    // Check for repo_info.json to validate it's an internal exercise
+                                    let repo_info_path = path.join(".meta").join("repo_info.json");
+                                    let instructions_path = path.join(".docs").join("instructions.md");
+                                    
+                                    if repo_info_path.exists() && instructions_path.exists() {
+                                        exercises.push(path);
+                                    }
+                                } else {
+                                    // Map the language to the file extension - original code
+                                    let language_extension = match *language {
+                                        "python" => "py",
+                                        "go" => "go",
+                                        "rust" => "rs",
+                                        "typescript" => "ts",
+                                        "javascript" => "js",
+                                        "ruby" => "rb",
+                                        "php" => "php",
+                                        "bash" => "sh",
+                                        "multi" => "diff",
+                                        _ => continue, // Skip unsupported languages
+                                    };
 
-                                // Check if this is a valid exercise with instructions and example
-                                let instructions_path = path.join(".docs").join("instructions.md");
-                                let has_instructions = instructions_path.exists();
-                                let example_path = path
-                                    .join(".meta")
-                                    .join(format!("example.{}", language_extension));
-                                let has_example = example_path.exists();
+                                    // Check if this is a valid exercise with instructions and example
+                                    let instructions_path = path.join(".docs").join("instructions.md");
+                                    let has_instructions = instructions_path.exists();
+                                    let example_path = path
+                                        .join(".meta")
+                                        .join(format!("example.{}", language_extension));
+                                    let has_example = example_path.exists();
 
-                                if has_instructions && has_example {
-                                    exercises.push(path);
+                                    if has_instructions && has_example {
+                                        exercises.push(path);
+                                    }
                                 }
                             }
                         }
