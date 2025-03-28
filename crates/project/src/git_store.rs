@@ -3373,7 +3373,7 @@ impl Repository {
             match git_repo {
                 RepositoryState::Local(git_repository) => {
                     let env = env.await;
-                    let askpass = AskPassSession::new(&executor, askpass).await?;
+                    // let askpass = AskPassSession::new(&executor, askpass).await?;
                     git_repository
                         .push(
                             branch.to_string(),
