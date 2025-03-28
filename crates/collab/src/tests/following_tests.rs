@@ -570,7 +570,7 @@ async fn test_following_tab_order(
     client_a
         .fs()
         .insert_tree(
-            "/a",
+            util::path!("/a"),
             json!({
                 "1.txt": "one",
                 "2.txt": "two",
@@ -578,7 +578,7 @@ async fn test_following_tab_order(
             }),
         )
         .await;
-    let (project_a, worktree_id) = client_a.build_local_project("/a", cx_a).await;
+    let (project_a, worktree_id) = client_a.build_local_project(util::path!("/a"), cx_a).await;
     active_call_a
         .update(cx_a, |call, cx| call.set_location(Some(&project_a), cx))
         .await
