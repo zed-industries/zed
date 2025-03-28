@@ -1539,11 +1539,6 @@ impl ActiveThread {
                                 .opacity(0.8)
                                 .hover(|style| style.opacity(1.))
                                 .pr_2()
-                                // .when(!is_open, |this| {
-                                //     this.pb_1()
-                                //         .border_b_1()
-                                //         .border_color(cx.theme().colors().border_variant)
-                                // })
                                 .child(
                                     h_flex()
                                         .id("tool-label-container")
