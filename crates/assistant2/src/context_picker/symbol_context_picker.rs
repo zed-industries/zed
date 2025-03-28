@@ -150,6 +150,7 @@ impl PickerDelegate for SymbolContextPickerDelegate {
         let confirm_behavior = self.confirm_behavior;
         let add_symbol_task = add_symbol(
             mat.symbol.clone(),
+            true,
             workspace,
             self.context_store.clone(),
             cx,
@@ -157,10 +158,10 @@ impl PickerDelegate for SymbolContextPickerDelegate {
 
         let selected_index = self.selected_index;
         cx.spawn_in(window, async move |this, cx| {
-            add_symbol_task.await?;
+            let included = add_symbol_task.await?;
             this.update_in(cx, |this, window, cx| {
                 if let Some(mat) = this.delegate.matches.get_mut(selected_index) {
-                    mat.is_included = true;
+                    mat.is_included = included;
                 }
                 match confirm_behavior {
                     ConfirmBehavior::KeepOpen => {}
@@ -204,10 +205,11 @@ pub(crate) struct SymbolEntry {
 
 pub(crate) fn add_symbol(
     symbol: Symbol,
+    remove_if_exists: bool,
     workspace: Entity<Workspace>,
     context_store: WeakEntity<ContextStore>,
     cx: &mut App,
-) -> Task<Result<()>> {
+) -> Task<Result<bool>> {
     let project = workspace.read(cx).project().clone();
     let open_buffer_task = project.update(cx, |project, cx| {
         project.open_buffer(symbol.path.clone(), cx)
@@ -246,7 +248,14 @@ pub(crate) fn add_symbol(
 
         context_store
             .update(cx, move |context_store, cx| {
-                context_store.add_symbol(buffer, name.into(), range, enclosing_range, cx)
+                context_store.add_symbol(
+                    buffer,
+                    name.into(),
+                    range,
+                    enclosing_range,
+                    remove_if_exists,
+                    cx,
+                )
             })?
             .await
     })

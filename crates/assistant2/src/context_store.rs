@@ -9,7 +9,7 @@ use gpui::{App, AppContext as _, AsyncApp, Context, Entity, SharedString, Task, 
 use language::Buffer;
 use project::{ProjectItem, ProjectPath, Worktree};
 use rope::Rope;
-use text::{Anchor, BufferId};
+use text::{Anchor, BufferId, OffsetRangeExt};
 use util::maybe;
 use workspace::Workspace;
 
@@ -278,8 +278,9 @@ impl ContextStore {
         symbol_name: SharedString,
         symbol_range: Range<Anchor>,
         symbol_enclosing_range: Range<Anchor>,
+        remove_if_exists: bool,
         cx: &mut Context<Self>,
-    ) -> Task<Result<()>> {
+    ) -> Task<Result<bool>> {
         let buffer_ref = buffer.read(cx);
         let Some(file) = buffer_ref.file() else {
             return Task::ready(Err(anyhow!("Buffer has no path.")));
@@ -288,6 +289,26 @@ impl ContextStore {
         let Some(project_path) = buffer_ref.project_path(cx) else {
             return Task::ready(Err(anyhow!("Buffer has no project path.")));
         };
+
+        if let Some(symbols_for_path) = self.symbols_by_path.get(&project_path) {
+            let mut matching_symbol_id = None;
+            for symbol in symbols_for_path {
+                if &symbol.name == &symbol_name {
+                    let snapshot = buffer_ref.snapshot();
+                    if symbol.range.to_offset(&snapshot) == symbol_range.to_offset(&snapshot) {
+                        matching_symbol_id = self.symbols.get(symbol).cloned();
+                        break;
+                    }
+                }
+            }
+
+            if let Some(id) = matching_symbol_id {
+                if remove_if_exists {
+                    self.remove_context(id);
+                }
+                return Task::ready(Ok(false));
+            }
+        }
 
         let (buffer_info, collect_content_task) = collect_buffer_info_and_text(
             file.path().clone(),
@@ -310,17 +331,17 @@ impl ContextStore {
                     content,
                 ))
             })?;
-            anyhow::Ok(())
+            anyhow::Ok(true)
         })
     }
 
     fn insert_symbol(&mut self, context_symbol: ContextSymbol) {
         let id = self.next_context_id.post_inc();
+        self.symbols.insert(context_symbol.id.clone(), id);
         self.symbols_by_path
             .entry(context_symbol.id.path.clone())
             .or_insert_with(Vec::new)
             .push(context_symbol.id.clone());
-
         self.symbol_buffers
             .insert(context_symbol.id.clone(), context_symbol.buffer.clone());
         self.context.push(AssistantContext::Symbol(SymbolContext {
@@ -417,6 +438,7 @@ impl ContextStore {
                             .map_or(false, |context_id| *context_id != id)
                     });
                 }
+                self.symbol_buffers.remove(&symbol.context_symbol.id);
                 self.symbols.retain(|_, context_id| *context_id != id);
             }
             AssistantContext::FetchedUrl(_) => {

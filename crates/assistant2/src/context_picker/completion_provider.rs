@@ -358,6 +358,7 @@ impl ContextPickerCompletionProvider {
                     let workspace = workspace.clone();
                     super::symbol_context_picker::add_symbol(
                         symbol.clone(),
+                        false,
                         workspace.clone(),
                         context_store.downgrade(),
                         cx,
