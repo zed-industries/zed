@@ -109,6 +109,10 @@ unsafe fn build_classes() {
             handle_key_down as extern "C" fn(&Object, Sel, id),
         );
         decl.add_method(
+            sel!(keyUp:),
+            handle_key_up as extern "C" fn(&Object, Sel, id),
+        );
+        decl.add_method(
             sel!(mouseDown:),
             handle_view_event as extern "C" fn(&Object, Sel, id),
         );
@@ -1219,6 +1223,10 @@ extern "C" fn handle_key_down(this: &Object, _: Sel, native_event: id) {
     handle_key_event(this, native_event, false);
 }
 
+extern "C" fn handle_key_up(this: &Object, _: Sel, native_event: id) {
+    handle_key_event(this, native_event, false);
+}
+
 // Things to test if you're modifying this method:
 //  U.S. layout:
 //   - The IME consumes characters like 'j' and 'k', which makes paging through `less` in
@@ -1251,101 +1259,113 @@ extern "C" fn handle_key_event(this: &Object, native_event: id, key_equivalent: 
     let window_height = lock.content_size().height;
     let event = unsafe { PlatformInput::from_native(native_event, Some(window_height)) };
 
-    let Some(PlatformInput::KeyDown(mut event)) = event else {
+    let Some(event) = event else {
         return NO;
     };
-    // For certain keystrokes, macOS will first dispatch a "key equivalent" event.
-    // If that event isn't handled, it will then dispatch a "key down" event. GPUI
-    // makes no distinction between these two types of events, so we need to ignore
-    // the "key down" event if we've already just processed its "key equivalent" version.
-    if key_equivalent {
-        lock.last_key_equivalent = Some(event.clone());
-    } else if lock.last_key_equivalent.take().as_ref() == Some(&event) {
-        return NO;
-    }
 
-    drop(lock);
-
-    let is_composing = with_input_handler(this, |input_handler| input_handler.marked_text_range())
-        .flatten()
-        .is_some();
-
-    // If we're composing, send the key to the input handler first;
-    // otherwise we only send to the input handler if we don't have a matching binding.
-    // The input handler may call `do_command_by_selector` if it doesn't know how to handle
-    // a key. If it does so, it will return YES so we won't send the key twice.
-    // We also do this for non-printing keys (like arrow keys and escape) as the IME menu
-    // may need them even if there is no marked text;
-    // however we skip keys with control or the input handler adds control-characters to the buffer.
-    // and keys with function, as the input handler swallows them.
-    if is_composing
-        || (event.keystroke.key_char.is_none()
-            && !event.keystroke.modifiers.control
-            && !event.keystroke.modifiers.function)
-    {
-        {
-            let mut lock = window_state.as_ref().lock();
-            lock.keystroke_for_do_command = Some(event.keystroke.clone());
-            lock.do_command_handled.take();
-            drop(lock);
-        }
-
-        let handled: BOOL = unsafe {
-            let input_context: id = msg_send![this, inputContext];
-            msg_send![input_context, handleEvent: native_event]
-        };
-        window_state.as_ref().lock().keystroke_for_do_command.take();
-        if let Some(handled) = window_state.as_ref().lock().do_command_handled.take() {
-            return handled as BOOL;
-        } else if handled == YES {
-            return YES;
-        }
-
+    let run_callback = |event: PlatformInput| -> BOOL {
         let mut callback = window_state.as_ref().lock().event_callback.take();
         let handled: BOOL = if let Some(callback) = callback.as_mut() {
-            !callback(PlatformInput::KeyDown(event)).propagate as BOOL
+            !callback(event).propagate as BOOL
         } else {
             NO
         };
         window_state.as_ref().lock().event_callback = callback;
-        return handled as BOOL;
-    }
-
-    let mut callback = window_state.as_ref().lock().event_callback.take();
-    let handled = if let Some(callback) = callback.as_mut() {
-        !callback(PlatformInput::KeyDown(event.clone())).propagate as BOOL
-    } else {
-        NO
+        handled
     };
-    window_state.as_ref().lock().event_callback = callback;
-    if handled == YES {
-        return YES;
-    }
 
-    if event.is_held {
-        if let Some(key_char) = event.keystroke.key_char.as_ref() {
-            let handled = with_input_handler(&this, |input_handler| {
-                if !input_handler.apple_press_and_hold_enabled() {
-                    input_handler.replace_text_in_range(None, &key_char);
+    match event {
+        PlatformInput::KeyDown(mut key_down_event) => {
+            // For certain keystrokes, macOS will first dispatch a "key equivalent" event.
+            // If that event isn't handled, it will then dispatch a "key down" event. GPUI
+            // makes no distinction between these two types of events, so we need to ignore
+            // the "key down" event if we've already just processed its "key equivalent" version.
+            if key_equivalent {
+                lock.last_key_equivalent = Some(key_down_event.clone());
+            } else if lock.last_key_equivalent.take().as_ref() == Some(&key_down_event) {
+                return NO;
+            }
+
+            drop(lock);
+
+            let is_composing =
+                with_input_handler(this, |input_handler| input_handler.marked_text_range())
+                    .flatten()
+                    .is_some();
+
+            // If we're composing, send the key to the input handler first;
+            // otherwise we only send to the input handler if we don't have a matching binding.
+            // The input handler may call `do_command_by_selector` if it doesn't know how to handle
+            // a key. If it does so, it will return YES so we won't send the key twice.
+            // We also do this for non-printing keys (like arrow keys and escape) as the IME menu
+            // may need them even if there is no marked text;
+            // however we skip keys with control or the input handler adds control-characters to the buffer.
+            // and keys with function, as the input handler swallows them.
+            if is_composing
+                || (key_down_event.keystroke.key_char.is_none()
+                    && !key_down_event.keystroke.modifiers.control
+                    && !key_down_event.keystroke.modifiers.function)
+            {
+                {
+                    let mut lock = window_state.as_ref().lock();
+                    lock.keystroke_for_do_command = Some(key_down_event.keystroke.clone());
+                    lock.do_command_handled.take();
+                    drop(lock);
+                }
+
+                let handled: BOOL = unsafe {
+                    let input_context: id = msg_send![this, inputContext];
+                    msg_send![input_context, handleEvent: native_event]
+                };
+                window_state.as_ref().lock().keystroke_for_do_command.take();
+                if let Some(handled) = window_state.as_ref().lock().do_command_handled.take() {
+                    return handled as BOOL;
+                } else if handled == YES {
                     return YES;
                 }
-                NO
-            });
-            if handled == Some(YES) {
+
+                let handled = run_callback(PlatformInput::KeyDown(key_down_event));
+                return handled;
+            }
+
+            let handled = run_callback(PlatformInput::KeyDown(key_down_event.clone()));
+            if handled == YES {
                 return YES;
             }
+
+            if key_down_event.is_held {
+                if let Some(key_char) = key_down_event.keystroke.key_char.as_ref() {
+                    let handled = with_input_handler(&this, |input_handler| {
+                        if !input_handler.apple_press_and_hold_enabled() {
+                            input_handler.replace_text_in_range(None, &key_char);
+                            return YES;
+                        }
+                        NO
+                    });
+                    if handled == Some(YES) {
+                        return YES;
+                    }
+                }
+            }
+
+            // Don't send key equivalents to the input handler,
+            // or macOS shortcuts like cmd-` will stop working.
+            if key_equivalent {
+                return NO;
+            }
+
+            unsafe {
+                let input_context: id = msg_send![this, inputContext];
+                msg_send![input_context, handleEvent: native_event]
+            }
         }
-    }
 
-    // Don't send key equivalents to the input handler,
-    // or macOS shortcuts like cmd-` will stop working.
-    if key_equivalent {
-        return NO;
-    }
+        PlatformInput::KeyUp(_) => {
+            drop(lock);
+            run_callback(event)
+        }
 
-    unsafe {
-        let input_context: id = msg_send![this, inputContext];
-        msg_send![input_context, handleEvent: native_event]
+        _ => NO,
     }
 }
 
