@@ -3884,7 +3884,7 @@ async fn test_buffer_is_dirty(cx: &mut gpui::TestAppContext) {
         ]
     );
 
-    // When a file is deleted, the buffer is considered dirty.
+    // When a file is deleted, it is not considered dirty.
     let events = Arc::new(Mutex::new(Vec::new()));
     let buffer2 = project
         .update(cx, |p, cx| p.open_local_buffer(path!("/dir/file2"), cx))
@@ -3893,7 +3893,10 @@ async fn test_buffer_is_dirty(cx: &mut gpui::TestAppContext) {
     buffer2.update(cx, |_, cx| {
         cx.subscribe(&buffer2, {
             let events = events.clone();
-            move |_, _, event, _| events.lock().push(event.clone())
+            move |_, _, event, _| match event {
+                BufferEvent::Operation { .. } => {}
+                _ => events.lock().push(event.clone()),
+            }
         })
         .detach();
     });
@@ -3902,12 +3905,37 @@ async fn test_buffer_is_dirty(cx: &mut gpui::TestAppContext) {
         .await
         .unwrap();
     cx.executor().run_until_parked();
-    buffer2.update(cx, |buffer, _| assert!(buffer.is_dirty()));
+    buffer2.update(cx, |buffer, _| assert!(!buffer.is_dirty()));
+    assert_eq!(
+        mem::take(&mut *events.lock()),
+        &[language::BufferEvent::FileHandleChanged]
+    );
+
+    // Buffer becomes dirty when edited.
+    buffer2.update(cx, |buffer, cx| {
+        buffer.edit([(2..3, "")], None, cx);
+        assert_eq!(buffer.is_dirty(), true);
+    });
+    assert_eq!(
+        mem::take(&mut *events.lock()),
+        &[
+            language::BufferEvent::Edited,
+            language::BufferEvent::DirtyChanged
+        ]
+    );
+
+    // Buffer becomes clean again when all of its content is removed, because
+    // the file was deleted.
+    buffer2.update(cx, |buffer, cx| {
+        buffer.edit([(0..2, "")], None, cx);
+        assert_eq!(buffer.is_empty(), true);
+        assert_eq!(buffer.is_dirty(), false);
+    });
     assert_eq!(
         *events.lock(),
         &[
-            language::BufferEvent::DirtyChanged,
-            language::BufferEvent::FileHandleChanged
+            language::BufferEvent::Edited,
+            language::BufferEvent::DirtyChanged
         ]
     );
 
@@ -3920,7 +3948,10 @@ async fn test_buffer_is_dirty(cx: &mut gpui::TestAppContext) {
     buffer3.update(cx, |_, cx| {
         cx.subscribe(&buffer3, {
             let events = events.clone();
-            move |_, _, event, _| events.lock().push(event.clone())
+            move |_, _, event, _| match event {
+                BufferEvent::Operation { .. } => {}
+                _ => events.lock().push(event.clone()),
+            }
         })
         .detach();
     });
