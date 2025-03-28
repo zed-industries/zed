@@ -304,10 +304,10 @@ impl ActionLog {
     }
 
     /// Returns the set of buffers that contain changes that haven't been reviewed by the user.
-    pub fn changed_buffers(&self) -> BTreeMap<Entity<Buffer>, ChangedBuffer> {
+    pub fn changed_buffers(&self, cx: &App) -> BTreeMap<Entity<Buffer>, ChangedBuffer> {
         self.tracked_buffers
             .iter()
-            .filter(|(_, tracked)| tracked.has_changes())
+            .filter(|(_, tracked)| tracked.has_changes(cx))
             .map(|(buffer, tracked)| {
                 (
                     buffer.clone(),
@@ -365,15 +365,12 @@ enum Change {
 }
 
 impl TrackedBuffer {
-    fn has_changes(&self) -> bool {
-        match &self.change {
-            Change::Edited {
-                unreviewed_edit_ids,
-                accepted_edit_ids,
-                ..
-            } => !unreviewed_edit_ids.is_empty() || !accepted_edit_ids.is_empty(),
-            Change::Deleted { .. } => true,
-        }
+    fn has_changes(&self, cx: &App) -> bool {
+        self.diff
+            .read(cx)
+            .hunks(&self.buffer.read(cx), cx)
+            .next()
+            .is_some()
     }
 
     fn schedule_diff_update(&self) {
@@ -715,7 +712,7 @@ mod tests {
         cx.read(|cx| {
             action_log
                 .read(cx)
-                .changed_buffers()
+                .changed_buffers(cx)
                 .into_iter()
                 .map(|(buffer, tracked_buffer)| {
                     let snapshot = buffer.read(cx).snapshot();

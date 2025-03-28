@@ -120,7 +120,7 @@ impl AssistantDiff {
 
     fn update_excerpts(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let thread = self.thread.read(cx);
-        let changed_buffers = thread.action_log().read(cx).changed_buffers();
+        let changed_buffers = thread.action_log().read(cx).changed_buffers(cx);
         let mut paths_to_delete = self.multibuffer.read(cx).paths().collect::<HashSet<_>>();
 
         for (buffer, changed) in changed_buffers {

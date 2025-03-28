@@ -322,7 +322,7 @@ impl Render for MessageEditor {
         };
 
         let action_log = self.thread.read(cx).action_log();
-        let changed_buffers = action_log.read(cx).changed_buffers();
+        let changed_buffers = action_log.read(cx).changed_buffers(cx);
         let changed_buffers_count = changed_buffers.len();
         let editor_bg_color = cx.theme().colors().editor_background;
 
