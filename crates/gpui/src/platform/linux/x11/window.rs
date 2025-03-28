@@ -28,7 +28,6 @@ use x11rb::{
 
 use std::{
     cell::RefCell, ffi::c_void, fmt::Display, num::NonZeroU32, ops::Div, ptr::NonNull, rc::Rc,
-    sync::Arc,
 };
 
 use super::{X11Display, XINPUT_ALL_DEVICES, XINPUT_ALL_DEVICE_GROUPS};
@@ -1386,7 +1385,7 @@ impl PlatformWindow for X11Window {
         inner.renderer.draw(scene);
     }
 
-    fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas> {
+    fn sprite_atlas(&self) -> Rc<dyn PlatformAtlas> {
         let inner = self.0.state.borrow();
         inner.renderer.sprite_atlas().clone()
     }

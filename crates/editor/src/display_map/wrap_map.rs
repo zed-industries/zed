@@ -169,10 +169,9 @@ impl WrapMap {
         if let Some(wrap_width) = self.wrap_width {
             let mut new_snapshot = self.snapshot.clone();
 
-            let text_system = cx.text_system().clone();
-            let (font, font_size) = self.font_with_size.clone();
+            let (font, font_size) = &self.font_with_size;
+            let mut line_wrapper = cx.text_system().line_wrapper(font, *font_size);
             let task = cx.background_spawn(async move {
-                let mut line_wrapper = text_system.line_wrapper(font, font_size);
                 let tab_snapshot = new_snapshot.tab_snapshot.clone();
                 let range = TabPoint::zero()..tab_snapshot.max_point();
                 let edits = new_snapshot
@@ -253,11 +252,10 @@ impl WrapMap {
             if self.background_task.is_none() {
                 let pending_edits = self.pending_edits.clone();
                 let mut snapshot = self.snapshot.clone();
-                let text_system = cx.text_system().clone();
-                let (font, font_size) = self.font_with_size.clone();
+                let (font, font_size) = &self.font_with_size;
+                let mut line_wrapper = cx.text_system().line_wrapper(font, *font_size);
                 let update_task = cx.background_spawn(async move {
                     let mut edits = Patch::default();
-                    let mut line_wrapper = text_system.line_wrapper(font, font_size);
                     for (tab_snapshot, tab_edits) in pending_edits {
                         let wrap_edits = snapshot
                             .update(tab_snapshot, &tab_edits, wrap_width, &mut line_wrapper)
@@ -1227,7 +1225,7 @@ mod tests {
         let tabs_snapshot = tab_map.set_max_expansion_column(32);
         log::info!("TabMap text: {:?}", tabs_snapshot.text());
 
-        let mut line_wrapper = text_system.line_wrapper(font.clone(), font_size);
+        let mut line_wrapper = text_system.line_wrapper(&font.clone(), font_size);
         let unwrapped_text = tabs_snapshot.text();
         let expected_text = wrap_text(&unwrapped_text, wrap_width, &mut line_wrapper);
 

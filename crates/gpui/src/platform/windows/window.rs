@@ -6,7 +6,7 @@ use std::{
     path::PathBuf,
     rc::{Rc, Weak},
     str::FromStr,
-    sync::{Arc, Once},
+    sync::Once,
     time::{Duration, Instant},
 };
 
@@ -782,7 +782,7 @@ impl PlatformWindow for WindowsWindow {
         self.0.state.borrow_mut().renderer.draw(scene)
     }
 
-    fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas> {
+    fn sprite_atlas(&self) -> Rc<dyn PlatformAtlas> {
         self.0.state.borrow().renderer.sprite_atlas().clone()
     }
 

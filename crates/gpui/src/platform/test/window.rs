@@ -7,10 +7,7 @@ use crate::{
 use collections::HashMap;
 use parking_lot::Mutex;
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
-use std::{
-    rc::{Rc, Weak},
-    sync::{self, Arc},
-};
+use std::rc::{Rc, Weak};
 
 pub(crate) struct TestWindowState {
     pub(crate) bounds: Bounds<Pixels>,
@@ -19,7 +16,7 @@ pub(crate) struct TestWindowState {
     pub(crate) title: Option<String>,
     pub(crate) edited: bool,
     platform: Weak<TestPlatform>,
-    sprite_atlas: Arc<dyn PlatformAtlas>,
+    sprite_atlas: Rc<dyn PlatformAtlas>,
     pub(crate) should_close_handler: Option<Box<dyn FnMut() -> bool>>,
     input_callback: Option<Box<dyn FnMut(PlatformInput) -> DispatchEventResult>>,
     active_status_change_callback: Option<Box<dyn FnMut(bool)>>,
@@ -61,7 +58,7 @@ impl TestWindow {
             display,
             platform,
             handle,
-            sprite_atlas: Arc::new(TestAtlas::new()),
+            sprite_atlas: Rc::new(TestAtlas::new()),
             title: Default::default(),
             edited: false,
             should_close_handler: None,
@@ -253,7 +250,7 @@ impl PlatformWindow for TestWindow {
 
     fn draw(&self, _scene: &crate::Scene) {}
 
-    fn sprite_atlas(&self) -> sync::Arc<dyn crate::PlatformAtlas> {
+    fn sprite_atlas(&self) -> Rc<dyn crate::PlatformAtlas> {
         self.0.lock().sprite_atlas.clone()
     }
 

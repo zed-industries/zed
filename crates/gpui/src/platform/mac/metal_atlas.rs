@@ -7,14 +7,13 @@ use collections::FxHashMap;
 use derive_more::{Deref, DerefMut};
 use etagere::BucketedAtlasAllocator;
 use metal::Device;
-use parking_lot::Mutex;
-use std::borrow::Cow;
+use std::{borrow::Cow, cell::RefCell};
 
-pub(crate) struct MetalAtlas(Mutex<MetalAtlasState>);
+pub(crate) struct MetalAtlas(RefCell<MetalAtlasState>);
 
 impl MetalAtlas {
     pub(crate) fn new(device: Device, path_sample_count: u32) -> Self {
-        MetalAtlas(Mutex::new(MetalAtlasState {
+        MetalAtlas(RefCell::new(MetalAtlasState {
             device: AssertSend(device),
             monochrome_textures: Default::default(),
             polychrome_textures: Default::default(),
@@ -25,11 +24,11 @@ impl MetalAtlas {
     }
 
     pub(crate) fn metal_texture(&self, id: AtlasTextureId) -> metal::Texture {
-        self.0.lock().texture(id).metal_texture.clone()
+        self.0.borrow().texture(id).metal_texture.clone()
     }
 
     pub(crate) fn msaa_texture(&self, id: AtlasTextureId) -> Option<metal::Texture> {
-        self.0.lock().texture(id).msaa_texture.clone()
+        self.0.borrow().texture(id).msaa_texture.clone()
     }
 
     pub(crate) fn allocate(
@@ -37,15 +36,15 @@ impl MetalAtlas {
         size: Size<DevicePixels>,
         texture_kind: AtlasTextureKind,
     ) -> Option<AtlasTile> {
-        self.0.lock().allocate(size, texture_kind)
+        self.0.borrow_mut().allocate(size, texture_kind)
     }
 
     pub(crate) fn clear_textures(&self, texture_kind: AtlasTextureKind) {
-        let mut lock = self.0.lock();
+        let mut inner = self.0.borrow_mut();
         let textures = match texture_kind {
-            AtlasTextureKind::Monochrome => &mut lock.monochrome_textures,
-            AtlasTextureKind::Polychrome => &mut lock.polychrome_textures,
-            AtlasTextureKind::Path => &mut lock.path_textures,
+            AtlasTextureKind::Monochrome => &mut inner.monochrome_textures,
+            AtlasTextureKind::Polychrome => &mut inner.polychrome_textures,
+            AtlasTextureKind::Path => &mut inner.path_textures,
         };
         for texture in textures.iter_mut() {
             texture.clear();
@@ -68,33 +67,33 @@ impl PlatformAtlas for MetalAtlas {
         key: &AtlasKey,
         build: &mut dyn FnMut() -> Result<Option<(Size<DevicePixels>, Cow<'a, [u8]>)>>,
     ) -> Result<Option<AtlasTile>> {
-        let mut lock = self.0.lock();
-        if let Some(tile) = lock.tiles_by_key.get(key) {
+        let mut inner = self.0.borrow_mut();
+        if let Some(tile) = inner.tiles_by_key.get(key) {
             Ok(Some(tile.clone()))
         } else {
             let Some((size, bytes)) = build()? else {
                 return Ok(None);
             };
-            let tile = lock
+            let tile = inner
                 .allocate(size, key.texture_kind())
                 .ok_or_else(|| anyhow!("failed to allocate"))?;
-            let texture = lock.texture(tile.texture_id);
+            let texture = inner.texture(tile.texture_id);
             texture.upload(tile.bounds, &bytes);
-            lock.tiles_by_key.insert(key.clone(), tile.clone());
+            inner.tiles_by_key.insert(key.clone(), tile.clone());
             Ok(Some(tile))
         }
     }
 
     fn remove(&self, key: &AtlasKey) {
-        let mut lock = self.0.lock();
-        let Some(id) = lock.tiles_by_key.get(key).map(|v| v.texture_id) else {
+        let mut inner = self.0.borrow_mut();
+        let Some(id) = inner.tiles_by_key.get(key).map(|v| v.texture_id) else {
             return;
         };
 
         let textures = match id.kind {
-            AtlasTextureKind::Monochrome => &mut lock.monochrome_textures,
-            AtlasTextureKind::Polychrome => &mut lock.polychrome_textures,
-            AtlasTextureKind::Path => &mut lock.polychrome_textures,
+            AtlasTextureKind::Monochrome => &mut inner.monochrome_textures,
+            AtlasTextureKind::Polychrome => &mut inner.polychrome_textures,
+            AtlasTextureKind::Path => &mut inner.polychrome_textures,
         };
 
         let Some(texture_slot) = textures
@@ -110,7 +109,7 @@ impl PlatformAtlas for MetalAtlas {
 
             if texture.is_unreferenced() {
                 textures.free_list.push(id.index as usize);
-                lock.tiles_by_key.remove(key);
+                inner.tiles_by_key.remove(key);
             } else {
                 *texture_slot = Some(texture);
             }

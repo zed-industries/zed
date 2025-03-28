@@ -13,7 +13,7 @@ use bytemuck::{Pod, Zeroable};
 use collections::HashMap;
 #[cfg(target_os = "macos")]
 use media::core_video::CVMetalTextureCache;
-use std::{mem, sync::Arc};
+use std::{mem, rc::Rc, sync::Arc};
 
 const MAX_FRAME_TIME_MS: u32 = 10000;
 // Use 4x MSAA, all devices support it.
@@ -318,7 +318,7 @@ pub struct BladeRenderer {
     pipelines: BladePipelines,
     instance_belt: BufferBelt,
     path_tiles: HashMap<PathId, AtlasTile>,
-    atlas: Arc<BladeAtlas>,
+    atlas: Rc<BladeAtlas>,
     atlas_sampler: gpu::Sampler,
     #[cfg(target_os = "macos")]
     core_video_texture_cache: CVMetalTextureCache,
@@ -359,7 +359,7 @@ impl BladeRenderer {
             min_chunk_size: 0x1000,
             alignment: 0x40, // Vulkan `minStorageBufferOffsetAlignment` on Intel Xe
         });
-        let atlas = Arc::new(BladeAtlas::new(&context.gpu, path_sample_count));
+        let atlas = Rc::new(BladeAtlas::new(&context.gpu, path_sample_count));
         let atlas_sampler = context.gpu.create_sampler(gpu::SamplerDesc {
             name: "atlas",
             mag_filter: gpu::FilterMode::Linear,
@@ -454,7 +454,7 @@ impl BladeRenderer {
         self.surface_config.size
     }
 
-    pub fn sprite_atlas(&self) -> &Arc<BladeAtlas> {
+    pub fn sprite_atlas(&self) -> &Rc<BladeAtlas> {
         &self.atlas
     }
 

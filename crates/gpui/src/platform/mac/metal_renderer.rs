@@ -19,7 +19,7 @@ use metal::{CAMetalLayer, CommandQueue, MTLPixelFormat, MTLResourceOptions, NSRa
 use objc::{self, msg_send, sel, sel_impl};
 use parking_lot::Mutex;
 use smallvec::SmallVec;
-use std::{cell::Cell, ffi::c_void, mem, ptr, sync::Arc};
+use std::{cell::Cell, ffi::c_void, mem, ptr, rc::Rc, sync::Arc};
 
 // Exported to metal
 pub(crate) type PointF = crate::Point<f32>;
@@ -106,7 +106,7 @@ pub(crate) struct MetalRenderer {
     unit_vertices: metal::Buffer,
     #[allow(clippy::arc_with_non_send_sync)]
     instance_buffer_pool: Arc<Mutex<InstanceBufferPool>>,
-    sprite_atlas: Arc<MetalAtlas>,
+    sprite_atlas: Rc<MetalAtlas>,
     core_video_texture_cache: CVMetalTextureCache,
 }
 
@@ -233,7 +233,7 @@ impl MetalRenderer {
         );
 
         let command_queue = device.new_command_queue();
-        let sprite_atlas = Arc::new(MetalAtlas::new(device.clone(), PATH_SAMPLE_COUNT));
+        let sprite_atlas = Rc::new(MetalAtlas::new(device.clone(), PATH_SAMPLE_COUNT));
         let core_video_texture_cache =
             unsafe { CVMetalTextureCache::new(device.as_ptr()).unwrap() };
 
@@ -265,7 +265,7 @@ impl MetalRenderer {
         self.layer.as_ptr()
     }
 
-    pub fn sprite_atlas(&self) -> &Arc<MetalAtlas> {
+    pub fn sprite_atlas(&self) -> &Rc<MetalAtlas> {
         &self.sprite_atlas
     }
 
