@@ -1126,6 +1126,9 @@ impl GitStore {
         }
 
         for id in removed_ids {
+            if self.active_repo_id == Some(id) {
+                self.active_repo_id = None;
+            }
             self.repositories.remove(&id);
             if let Some(updates_tx) = updates_tx.as_ref() {
                 updates_tx
