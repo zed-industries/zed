@@ -113,52 +113,54 @@ impl ActionLog {
         let Operation::Buffer(text::Operation::Edit(operation)) = operation else {
             return;
         };
-
-        if let Change::Edited {
+        let Change::Edited {
             unreviewed_edit_ids,
             accepted_edit_ids,
             ..
         } = &mut tracked_buffer.change
+        else {
+            return;
+        };
+
+        if unreviewed_edit_ids.contains(&operation.timestamp)
+            || accepted_edit_ids.contains(&operation.timestamp)
         {
-            if unreviewed_edit_ids.contains(&operation.timestamp)
-                || accepted_edit_ids.contains(&operation.timestamp)
-            {
-                return;
-            }
+            return;
+        }
 
-            let buffer = buffer.read(cx);
-            let operation_edit_ranges = buffer
-                .edited_ranges_for_edit_ids::<usize>([&operation.timestamp])
-                .peekable();
-            let tracked_edit_ranges = buffer
-                .edited_ranges_for_edit_ids::<usize>(
-                    unreviewed_edit_ids.iter().chain(accepted_edit_ids.iter()),
-                )
-                .peekable();
-            let mut operation_edit_ranges_iter = operation_edit_ranges.peekable();
-            let mut tracked_edit_ranges_iter = tracked_edit_ranges.peekable();
+        // If the buffer operation overlaps with any tracked edits, mark it as unreviewed.
+        let buffer = buffer.read(cx);
+        let operation_edit_ranges = buffer
+            .edited_ranges_for_edit_ids::<usize>([&operation.timestamp])
+            .peekable();
+        let tracked_edit_ranges = buffer
+            .edited_ranges_for_edit_ids::<usize>(
+                unreviewed_edit_ids.iter().chain(accepted_edit_ids.iter()),
+            )
+            .peekable();
+        let mut operation_edit_ranges_iter = operation_edit_ranges.peekable();
+        let mut tracked_edit_ranges_iter = tracked_edit_ranges.peekable();
 
-            let mut overlaps = false;
-            while let (Some(op_range), Some(tracked_range)) = (
-                operation_edit_ranges_iter.peek(),
-                tracked_edit_ranges_iter.peek(),
-            ) {
-                if op_range.end < tracked_range.start {
-                    operation_edit_ranges_iter.next();
-                } else if tracked_range.end < op_range.start {
-                    tracked_edit_ranges_iter.next();
-                } else {
-                    overlaps = true;
-                    break;
-                }
+        let mut overlaps = false;
+        while let (Some(op_range), Some(tracked_range)) = (
+            operation_edit_ranges_iter.peek(),
+            tracked_edit_ranges_iter.peek(),
+        ) {
+            if op_range.end < tracked_range.start {
+                operation_edit_ranges_iter.next();
+            } else if tracked_range.end < op_range.start {
+                tracked_edit_ranges_iter.next();
+            } else {
+                overlaps = true;
+                break;
             }
-            drop(operation_edit_ranges_iter);
-            drop(tracked_edit_ranges_iter);
+        }
+        drop(operation_edit_ranges_iter);
+        drop(tracked_edit_ranges_iter);
 
-            if overlaps {
-                unreviewed_edit_ids.insert(operation.timestamp);
-                tracked_buffer.schedule_diff_update();
-            }
+        if overlaps {
+            unreviewed_edit_ids.insert(operation.timestamp);
+            tracked_buffer.schedule_diff_update();
         }
     }
 
