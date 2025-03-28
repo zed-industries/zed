@@ -26,8 +26,10 @@ impl RemoteVideoTrackView {
 
         #[cfg(not(target_os = "macos"))]
         {
+            use util::ResultExt;
+
             let window_handle = window.window_handle();
-            cx.on_release(|this, cx| {
+            cx.on_release(move |this, cx| {
                 if let Some(frame) = this.previous_rendered_frame.take() {
                     window_handle
                         .update(cx, |_, window, _cx| window.drop_image(frame).log_err())
