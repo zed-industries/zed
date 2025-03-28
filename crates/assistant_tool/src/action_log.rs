@@ -33,6 +33,7 @@ impl ActionLog {
                     accepted_edit_ids, ..
                 } => {
                     accepted_edit_ids.clear();
+                    tracked_buffer.schedule_diff_update();
                     true
                 }
                 Change::Deleted { reviewed, .. } => !*reviewed,
