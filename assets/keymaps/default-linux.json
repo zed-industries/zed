@@ -148,7 +148,6 @@
   },
   {
     "context": "AssistantDiff",
-    "use_key_equivalents": true,
     "bindings": {
       "ctrl-y": "assistant2::ToggleAccept",
       "ctrl-k ctrl-r": "assistant2::Undo"
