@@ -1,6 +1,7 @@
 use gpui::{
-    point, App, Context, EventEmitter, IntoElement, PlatformDisplay, Size, Window,
-    WindowBackgroundAppearance, WindowBounds, WindowDecorations, WindowKind, WindowOptions,
+    linear_color_stop, linear_gradient, point, App, Context, EventEmitter, IntoElement,
+    PlatformDisplay, Size, Window, WindowBackgroundAppearance, WindowBounds, WindowDecorations,
+    WindowKind, WindowOptions,
 };
 use release_channel::ReleaseChannel;
 use std::rc::Rc;
@@ -68,6 +69,8 @@ impl Render for AgentNotification {
         let ui_font = theme::setup_ui_font(window, cx);
         let line_height = window.line_height();
 
+        let bg = cx.theme().colors().elevated_surface_background;
+
         h_flex()
             .id("agent-notification")
             .size_full()
@@ -108,7 +111,17 @@ impl Render for AgentNotification {
                                     .text_color(cx.theme().colors().text_muted)
                                     .max_w_72()
                                     .truncate()
-                                    .child(self.caption.clone()),
+                                    .child(self.caption.clone())
+                                    .relative()
+                                    .child(
+                                        div().h_full().absolute().w_8().bottom_0().right_0().bg(
+                                            linear_gradient(
+                                                90.,
+                                                linear_color_stop(bg, 1.),
+                                                linear_color_stop(bg.opacity(0.2), 0.),
+                                            ),
+                                        ),
+                                    ),
                             ),
                     ),
             )
