@@ -1467,17 +1467,17 @@ mod tests {
         assert_eq!(loaded_breakpoints.len(), 3);
 
         assert_eq!(loaded_breakpoints[0].row, breakpoint.position);
-        assert_eq!(loaded_breakpoints[0].kind, breakpoint.kind);
+        assert_eq!(loaded_breakpoints[0].message, breakpoint.message);
         assert_eq!(loaded_breakpoints[0].state, breakpoint.state);
         assert_eq!(loaded_breakpoints[0].path, Arc::from(path));
 
         assert_eq!(loaded_breakpoints[1].row, log_breakpoint.position);
-        assert_eq!(loaded_breakpoints[1].kind, log_breakpoint.kind);
+        assert_eq!(loaded_breakpoints[1].message, log_breakpoint.message);
         assert_eq!(loaded_breakpoints[1].state, log_breakpoint.state);
         assert_eq!(loaded_breakpoints[1].path, Arc::from(path));
 
         assert_eq!(loaded_breakpoints[2].row, disable_breakpoint.position);
-        assert_eq!(loaded_breakpoints[2].kind, disable_breakpoint.kind);
+        assert_eq!(loaded_breakpoints[2].message, disable_breakpoint.message);
         assert_eq!(loaded_breakpoints[2].state, disable_breakpoint.state);
         assert_eq!(loaded_breakpoints[2].path, Arc::from(path));
     }
