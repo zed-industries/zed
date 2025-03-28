@@ -7,6 +7,7 @@ use crate::thread_store::ThreadStore;
 use crate::tool_use::{PendingToolUseStatus, ToolUse, ToolUseStatus};
 use crate::ui::{AgentNotification, AgentNotificationEvent, ContextPill};
 use crate::AssistantPanel;
+use anyhow::Context;
 use assistant_settings::AssistantSettings;
 use collections::HashMap;
 use editor::{Editor, MultiBuffer};
@@ -25,6 +26,7 @@ use settings::Settings as _;
 use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Duration;
+use text::ToPoint;
 use theme::ThemeSettings;
 use ui::{prelude::*, Disclosure, IconButton, KeyBinding, Scrollbar, ScrollbarState, Tooltip};
 use util::ResultExt as _;
@@ -1877,11 +1879,37 @@ pub(crate) fn open_context(
                 .read(cx)
                 .project_path(cx)
             {
-                workspace.update(cx, |workspace, cx| {
-                    workspace
-                        .open_path(project_path, None, true, window, cx)
-                        .detach_and_log_err(cx);
+                let snapshot = symbol_context.context_symbol.buffer.read(cx).snapshot();
+                let target_position = symbol_context
+                    .context_symbol
+                    .id
+                    .range
+                    .start
+                    .to_point(&snapshot);
+
+                let open_task = workspace.update(cx, |workspace, cx| {
+                    workspace.open_path(project_path, None, true, window, cx)
                 });
+                window
+                    .spawn(cx, async move |cx| {
+                        if let Some(active_editor) = open_task
+                            .await
+                            .log_err()
+                            .and_then(|item| item.downcast::<Editor>())
+                        {
+                            active_editor
+                                .downgrade()
+                                .update_in(cx, |editor, window, cx| {
+                                    editor.go_to_singleton_buffer_point(
+                                        target_position,
+                                        window,
+                                        cx,
+                                    );
+                                })
+                                .log_err();
+                        }
+                    })
+                    .detach();
             }
         }
         AssistantContext::FetchedUrl(fetched_url_context) => {
