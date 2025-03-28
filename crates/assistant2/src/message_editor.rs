@@ -29,7 +29,9 @@ use crate::context_strip::{ContextStrip, ContextStripEvent, SuggestContextKind};
 use crate::profile_selector::ProfileSelector;
 use crate::thread::{RequestKind, Thread};
 use crate::thread_store::ThreadStore;
-use crate::{Chat, ChatMode, RemoveAllContext, ThreadEvent, ToggleContextPicker};
+use crate::{
+    Chat, ChatMode, RemoveAllContext, ThreadEvent, ToggleContextPicker, ToggleProfileSelector,
+};
 
 pub struct MessageEditor {
     thread: Entity<Thread>,
@@ -561,6 +563,10 @@ impl Render for MessageEditor {
                 v_flex()
                     .key_context("MessageEditor")
                     .on_action(cx.listener(Self::chat))
+                    .on_action(cx.listener(|this, _: &ToggleProfileSelector, window, cx| {
+                        this.profile_selector
+                            .update(cx, |profile_selector, cx| profile_selector.toggle(window, cx));
+                    }))
                     .on_action(cx.listener(|this, _: &ToggleModelSelector, window, cx| {
                         this.model_selector
                             .update(cx, |model_selector, cx| model_selector.toggle(window, cx));

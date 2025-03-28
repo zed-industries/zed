@@ -5,7 +5,7 @@ use fs::Fs;
 use gpui::{prelude::*, Action, Entity, Subscription, WeakEntity};
 use indexmap::IndexMap;
 use settings::{update_settings_file, Settings as _, SettingsStore};
-use ui::{prelude::*, ContextMenu, ContextMenuEntry, PopoverMenu, Tooltip};
+use ui::{prelude::*, ContextMenu, ContextMenuEntry, PopoverMenu, PopoverMenuHandle, Tooltip};
 use util::ResultExt as _;
 
 use crate::{ManageProfiles, ThreadStore};
@@ -14,6 +14,7 @@ pub struct ProfileSelector {
     profiles: IndexMap<Arc<str>, AgentProfile>,
     fs: Arc<dyn Fs>,
     thread_store: WeakEntity<ThreadStore>,
+    menu_handle: PopoverMenuHandle<ContextMenu>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -31,11 +32,16 @@ impl ProfileSelector {
             profiles: IndexMap::default(),
             fs,
             thread_store,
+            menu_handle: PopoverMenuHandle::default(),
             _subscriptions: vec![settings_subscription],
         };
         this.refresh_profiles(cx);
 
         this
+    }
+
+    pub fn toggle(&self, window: &mut Window, cx: &mut Context<Self>) {
+        self.menu_handle.toggle(window, cx);
     }
 
     fn refresh_profiles(&mut self, cx: &mut Context<Self>) {
@@ -106,7 +112,7 @@ impl Render for ProfileSelector {
             .unwrap_or_else(|| "Unknown".into());
 
         let this = cx.entity().clone();
-        PopoverMenu::new("tool-selector")
+        PopoverMenu::new("profile-selector")
             .menu(move |window, cx| {
                 Some(this.update(cx, |this, cx| this.build_context_menu(window, cx)))
             })
@@ -117,5 +123,6 @@ impl Render for ProfileSelector {
                 Tooltip::text("Change Profile"),
             )
             .anchor(gpui::Corner::BottomLeft)
+            .with_handle(self.menu_handle.clone())
     }
 }
