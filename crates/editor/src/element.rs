@@ -6858,7 +6858,7 @@ impl Element for EditorElement {
                                 .or_insert_with(|| {
                                     let position = snapshot.display_point_to_anchor(
                                         gutter_breakpoint_point,
-                                        Bias::Left,
+                                        Bias::Right,
                                     );
                                     let breakpoint = Breakpoint::new_standard();
 

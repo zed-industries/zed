@@ -8620,7 +8620,7 @@ impl Editor {
                     .snapshot(window, cx)
                     .display_snapshot
                     .buffer_snapshot
-                    .anchor_before(Point::new(cursor_position.row, 0));
+                    .anchor_after(Point::new(cursor_position.row, 0));
 
                 (
                     breakpoint_position,
@@ -8687,7 +8687,7 @@ impl Editor {
                 .snapshot(window, cx)
                 .display_snapshot
                 .buffer_snapshot
-                .anchor_before(Point::new(cursor_position.row, 0));
+                .anchor_after(Point::new(cursor_position.row, 0));
 
             self.edit_breakpoint_at_anchor(
                 breakpoint_position,

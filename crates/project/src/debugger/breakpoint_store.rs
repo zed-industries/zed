@@ -17,7 +17,7 @@ use std::{
     path::Path,
     sync::Arc,
 };
-use text::PointUtf16;
+use text::{Point, PointUtf16};
 
 use crate::{buffer_store::BufferStore, worktree_store::WorktreeStore, Project, ProjectPath};
 
@@ -503,7 +503,7 @@ impl BreakpointStore {
                         this.update(cx, |_, cx| BreakpointsInFile::new(buffer, cx))?;
 
                     for bp in bps {
-                        let position = snapshot.anchor_before(PointUtf16::new(bp.position, 0));
+                        let position = snapshot.anchor_after(Point::new(bp.position, 0));
                         breakpoints_for_file.breakpoints.push((
                             position,
                             Breakpoint {
