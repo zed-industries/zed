@@ -9,9 +9,11 @@ use fs::Fs;
 use fuzzy::{match_strings, StringMatch, StringMatchCandidate};
 use gpui::{App, Context, DismissEvent, Entity, EventEmitter, Focusable, Task, WeakEntity, Window};
 use picker::{Picker, PickerDelegate};
-use settings::update_settings_file;
+use settings::{update_settings_file, Settings as _};
 use ui::{prelude::*, HighlightedLabel, ListItem, ListItemSpacing};
 use util::ResultExt as _;
+
+use crate::ThreadStore;
 
 pub struct ToolPicker {
     picker: Entity<Picker<ToolPickerDelegate>>,
@@ -46,6 +48,7 @@ pub struct ToolEntry {
 
 pub struct ToolPickerDelegate {
     tool_picker: WeakEntity<ToolPicker>,
+    thread_store: WeakEntity<ThreadStore>,
     fs: Arc<dyn Fs>,
     tools: Vec<ToolEntry>,
     profile_id: Arc<str>,
@@ -58,6 +61,7 @@ impl ToolPickerDelegate {
     pub fn new(
         fs: Arc<dyn Fs>,
         tool_set: Arc<ToolWorkingSet>,
+        thread_store: WeakEntity<ThreadStore>,
         profile_id: Arc<str>,
         profile: AgentProfile,
         cx: &mut Context<ToolPicker>,
@@ -73,6 +77,7 @@ impl ToolPickerDelegate {
 
         Self {
             tool_picker: cx.entity().downgrade(),
+            thread_store,
             fs,
             tools: tool_entries,
             profile_id,
@@ -182,6 +187,15 @@ impl PickerDelegate for ToolPickerDelegate {
                 *is_enabled
             }
         };
+
+        let active_profile_id = &AssistantSettings::get_global(cx).default_profile;
+        if active_profile_id == &self.profile_id {
+            self.thread_store
+                .update(cx, |this, _cx| {
+                    this.load_profile(&self.profile);
+                })
+                .log_err();
+        }
 
         update_settings_file::<AssistantSettings>(self.fs.clone(), cx, {
             let profile_id = self.profile_id.clone();
