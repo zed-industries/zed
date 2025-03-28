@@ -3,6 +3,7 @@ use std::sync::Arc;
 
 use anyhow::{anyhow, bail, Result};
 use collections::{BTreeMap, HashMap, HashSet};
+use futures::future::join_all;
 use futures::{self, future, Future, FutureExt};
 use gpui::{App, AppContext as _, AsyncApp, Context, Entity, SharedString, Task, WeakEntity};
 use language::Buffer;
@@ -274,11 +275,32 @@ impl ContextStore {
             }
         } else {
             thread.update(cx, |thread, cx| {
-                thread.detailed_summarize(cx);
+                thread.generate_detailed_summary(cx);
             });
 
             self.insert_thread(thread, cx);
         }
+    }
+
+    pub fn wait_for_summaries(&self, cx: &App) -> Task<()> {
+        let tasks: Vec<_> = self
+            .context
+            .iter()
+            .filter_map(|context| {
+                if let AssistantContext::Thread(thread_context) = context {
+                    thread_context
+                        .thread
+                        .read(cx)
+                        .generating_detailed_summary_task()
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        cx.spawn(async move |_cx| {
+            join_all(tasks).await;
+        })
     }
 
     fn insert_thread(&mut self, thread: Entity<Thread>, cx: &App) {

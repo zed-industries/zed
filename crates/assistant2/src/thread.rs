@@ -173,7 +173,7 @@ impl LastRestoreCheckpoint {
 pub enum DetailedSummaryState {
     NotGenerated,
     Generating {
-        _task: Task<Option<()>>,
+        task: Shared<Task<()>>,
         message_id: MessageId,
     },
     Generated {
@@ -1188,7 +1188,7 @@ impl Thread {
         });
     }
 
-    pub fn detailed_summarize(&mut self, cx: &mut Context<Self>) {
+    pub fn generate_detailed_summary(&mut self, cx: &mut Context<Self>) {
         let Some(last_message_id) = self.messages.last().map(|message| message.id) else {
             return;
         };
@@ -1232,35 +1232,48 @@ impl Thread {
         });
 
         let task = cx.spawn(async move |this, cx| {
-            async move {
-                let stream = model.stream_completion_text(request, &cx);
-                let mut messages = stream.await?;
+            let stream = model.stream_completion_text(request, &cx);
+            let Some(mut messages) = stream.await.log_err() else {
+                this.update(cx, |this, _cx| {
+                    this.detailed_summary_state = DetailedSummaryState::NotGenerated;
+                })
+                .log_err();
 
-                let mut new_detailed_summary = String::new();
+                return;
+            };
 
-                while let Some(chunk) = messages.stream.next().await {
-                    new_detailed_summary.push_str(&chunk?);
+            let mut new_detailed_summary = String::new();
+
+            while let Some(chunk) = messages.stream.next().await {
+                if let Some(chunk) = chunk.log_err() {
+                    new_detailed_summary.push_str(&chunk);
                 }
-
-                this.update(cx, |this, cx| {
-                    this.detailed_summary_state = DetailedSummaryState::Generated {
-                        text: new_detailed_summary.into(),
-                        message_id: last_message_id,
-                    };
-
-                    cx.emit(ThreadEvent::DetailedSummaryChanged);
-                })?;
-
-                anyhow::Ok(())
             }
-            .log_err()
-            .await
+
+            this.update(cx, |this, cx| {
+                this.detailed_summary_state = DetailedSummaryState::Generated {
+                    text: new_detailed_summary.into(),
+                    message_id: last_message_id,
+                };
+
+                cx.emit(ThreadEvent::DetailedSummaryChanged);
+            })
+            .log_err();
+
+            ()
         });
 
         self.detailed_summary_state = DetailedSummaryState::Generating {
             message_id: last_message_id,
-            _task: task,
+            task: task.shared(),
         };
+    }
+
+    pub fn generating_detailed_summary_task(&self) -> Option<Shared<Task<()>>> {
+        match &self.detailed_summary_state {
+            DetailedSummaryState::Generating { task, .. } => Some(task.clone()),
+            _ => None,
+        }
     }
 
     pub fn use_pending_tools(

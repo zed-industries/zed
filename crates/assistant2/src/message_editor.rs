@@ -19,6 +19,7 @@ use theme::ThemeSettings;
 use ui::{
     prelude::*, ButtonLike, KeyBinding, PlatformStyle, PopoverMenu, PopoverMenuHandle, Tooltip,
 };
+use util::ResultExt as _;
 use vim_mode_setting::VimModeSetting;
 use workspace::Workspace;
 
@@ -232,6 +233,14 @@ impl MessageEditor {
                     }
                 })
                 .ok();
+
+            if let Some(task) = context_store
+                .read_with(cx, |context_store, cx| context_store.wait_for_summaries(cx))
+                .log_err()
+            {
+                task.await;
+            }
+
             thread
                 .update(cx, |thread, cx| {
                     let context = context_store.read(cx).snapshot(cx).collect::<Vec<_>>();
