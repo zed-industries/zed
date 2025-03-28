@@ -13,6 +13,7 @@ use project::Project;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use ui::IconName;
+use util::markdown::MarkdownString;
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy)]
 enum ContentType {
@@ -133,7 +134,7 @@ impl Tool for FetchTool {
 
     fn ui_text(&self, input: &serde_json::Value) -> String {
         match serde_json::from_value::<FetchToolInput>(input.clone()) {
-            Ok(input) => format!("Fetch `{}`", input.url),
+            Ok(input) => format!("Fetch {}", MarkdownString::escape(&input.url)),
             Err(_) => "Fetch URL".to_string(),
         }
     }

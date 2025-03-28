@@ -6,7 +6,8 @@ use buffer_diff::{
 };
 use fs::FakeFs;
 use futures::{future, StreamExt};
-use gpui::{App, SemanticVersion, UpdateGlobal};
+use git::repository::RepoPath;
+use gpui::{App, BackgroundExecutor, SemanticVersion, UpdateGlobal};
 use http_client::Url;
 use language::{
     language_settings::{language_settings, AllLanguageSettings, LanguageSettingsContent},
@@ -34,6 +35,7 @@ use util::{
     test::{marked_text_offsets, TempTree},
     uri, TryFutureExt as _,
 };
+use worktree::WorktreeModelHandle as _;
 
 #[gpui::test]
 async fn test_block_via_channel(cx: &mut gpui::TestAppContext) {
@@ -97,7 +99,12 @@ async fn test_symlinks(cx: &mut gpui::TestAppContext) {
     )
     .unwrap();
 
-    let project = Project::test(Arc::new(RealFs::default()), [root_link_path.as_ref()], cx).await;
+    let project = Project::test(
+        Arc::new(RealFs::new(None, cx.executor())),
+        [root_link_path.as_ref()],
+        cx,
+    )
+    .await;
 
     project.update(cx, |project, cx| {
         let tree = project.worktrees(cx).next().unwrap().read(cx);
@@ -2770,6 +2777,210 @@ async fn test_definition(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_completions_with_text_edit(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/dir"),
+        json!({
+            "a.ts": "",
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs, [path!("/dir").as_ref()], cx).await;
+
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(typescript_lang());
+    let mut fake_language_servers = language_registry.register_fake_lsp(
+        "TypeScript",
+        FakeLspAdapter {
+            capabilities: lsp::ServerCapabilities {
+                completion_provider: Some(lsp::CompletionOptions {
+                    trigger_characters: Some(vec![".".to_string()]),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+    );
+
+    let (buffer, _handle) = project
+        .update(cx, |p, cx| {
+            p.open_local_buffer_with_lsp(path!("/dir/a.ts"), cx)
+        })
+        .await
+        .unwrap();
+
+    let fake_server = fake_language_servers.next().await.unwrap();
+
+    // When text_edit exists, it takes precedence over insert_text and label
+    let text = "let a = obj.fqn";
+    buffer.update(cx, |buffer, cx| buffer.set_text(text, cx));
+    let completions = project.update(cx, |project, cx| {
+        project.completions(&buffer, text.len(), DEFAULT_COMPLETION_CONTEXT, cx)
+    });
+
+    fake_server
+        .set_request_handler::<lsp::request::Completion, _, _>(|_, _| async {
+            Ok(Some(lsp::CompletionResponse::Array(vec![
+                lsp::CompletionItem {
+                    label: "labelText".into(),
+                    insert_text: Some("insertText".into()),
+                    text_edit: Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
+                        range: lsp::Range::new(
+                            lsp::Position::new(0, text.len() as u32 - 3),
+                            lsp::Position::new(0, text.len() as u32),
+                        ),
+                        new_text: "textEditText".into(),
+                    })),
+                    ..Default::default()
+                },
+            ])))
+        })
+        .next()
+        .await;
+
+    let completions = completions.await.unwrap().unwrap();
+    let snapshot = buffer.update(cx, |buffer, _| buffer.snapshot());
+
+    assert_eq!(completions.len(), 1);
+    assert_eq!(completions[0].new_text, "textEditText");
+    assert_eq!(
+        completions[0].old_range.to_offset(&snapshot),
+        text.len() - 3..text.len()
+    );
+}
+
+#[gpui::test]
+async fn test_completions_with_edit_ranges(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/dir"),
+        json!({
+            "a.ts": "",
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs, [path!("/dir").as_ref()], cx).await;
+
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(typescript_lang());
+    let mut fake_language_servers = language_registry.register_fake_lsp(
+        "TypeScript",
+        FakeLspAdapter {
+            capabilities: lsp::ServerCapabilities {
+                completion_provider: Some(lsp::CompletionOptions {
+                    trigger_characters: Some(vec![".".to_string()]),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+    );
+
+    let (buffer, _handle) = project
+        .update(cx, |p, cx| {
+            p.open_local_buffer_with_lsp(path!("/dir/a.ts"), cx)
+        })
+        .await
+        .unwrap();
+
+    let fake_server = fake_language_servers.next().await.unwrap();
+    let text = "let a = obj.fqn";
+
+    // Test 1: When text_edit is None but insert_text exists with default edit_range
+    {
+        buffer.update(cx, |buffer, cx| buffer.set_text(text, cx));
+        let completions = project.update(cx, |project, cx| {
+            project.completions(&buffer, text.len(), DEFAULT_COMPLETION_CONTEXT, cx)
+        });
+
+        fake_server
+            .set_request_handler::<lsp::request::Completion, _, _>(|_, _| async {
+                Ok(Some(lsp::CompletionResponse::List(lsp::CompletionList {
+                    is_incomplete: false,
+                    item_defaults: Some(lsp::CompletionListItemDefaults {
+                        edit_range: Some(lsp::CompletionListItemDefaultsEditRange::Range(
+                            lsp::Range::new(
+                                lsp::Position::new(0, text.len() as u32 - 3),
+                                lsp::Position::new(0, text.len() as u32),
+                            ),
+                        )),
+                        ..Default::default()
+                    }),
+                    items: vec![lsp::CompletionItem {
+                        label: "labelText".into(),
+                        insert_text: Some("insertText".into()),
+                        text_edit: None,
+                        ..Default::default()
+                    }],
+                })))
+            })
+            .next()
+            .await;
+
+        let completions = completions.await.unwrap().unwrap();
+        let snapshot = buffer.update(cx, |buffer, _| buffer.snapshot());
+
+        assert_eq!(completions.len(), 1);
+        assert_eq!(completions[0].new_text, "insertText");
+        assert_eq!(
+            completions[0].old_range.to_offset(&snapshot),
+            text.len() - 3..text.len()
+        );
+    }
+
+    // Test 2: When both text_edit and insert_text are None with default edit_range
+    {
+        buffer.update(cx, |buffer, cx| buffer.set_text(text, cx));
+        let completions = project.update(cx, |project, cx| {
+            project.completions(&buffer, text.len(), DEFAULT_COMPLETION_CONTEXT, cx)
+        });
+
+        fake_server
+            .set_request_handler::<lsp::request::Completion, _, _>(|_, _| async {
+                Ok(Some(lsp::CompletionResponse::List(lsp::CompletionList {
+                    is_incomplete: false,
+                    item_defaults: Some(lsp::CompletionListItemDefaults {
+                        edit_range: Some(lsp::CompletionListItemDefaultsEditRange::Range(
+                            lsp::Range::new(
+                                lsp::Position::new(0, text.len() as u32 - 3),
+                                lsp::Position::new(0, text.len() as u32),
+                            ),
+                        )),
+                        ..Default::default()
+                    }),
+                    items: vec![lsp::CompletionItem {
+                        label: "labelText".into(),
+                        insert_text: None,
+                        text_edit: None,
+                        ..Default::default()
+                    }],
+                })))
+            })
+            .next()
+            .await;
+
+        let completions = completions.await.unwrap().unwrap();
+        let snapshot = buffer.update(cx, |buffer, _| buffer.snapshot());
+
+        assert_eq!(completions.len(), 1);
+        assert_eq!(completions[0].new_text, "labelText");
+        assert_eq!(
+            completions[0].old_range.to_offset(&snapshot),
+            text.len() - 3..text.len()
+        );
+    }
+}
+
+#[gpui::test]
 async fn test_completions_without_edit_ranges(cx: &mut gpui::TestAppContext) {
     init_test(cx);
 
@@ -2809,6 +3020,7 @@ async fn test_completions_without_edit_ranges(cx: &mut gpui::TestAppContext) {
 
     let fake_server = fake_language_servers.next().await.unwrap();
 
+    // Test 1: When text_edit is None but insert_text exists (no edit_range in defaults)
     let text = "let a = b.fqn";
     buffer.update(cx, |buffer, cx| buffer.set_text(text, cx));
     let completions = project.update(cx, |project, cx| {
@@ -2836,6 +3048,7 @@ async fn test_completions_without_edit_ranges(cx: &mut gpui::TestAppContext) {
         text.len() - 3..text.len()
     );
 
+    // Test 2: When both text_edit and insert_text are None (no edit_range in defaults)
     let text = "let a = \"atoms/cmp\"";
     buffer.update(cx, |buffer, cx| buffer.set_text(text, cx));
     let completions = project.update(cx, |project, cx| {
@@ -3330,7 +3543,7 @@ async fn test_rescan_and_remote_updates(cx: &mut gpui::TestAppContext) {
         }
     }));
 
-    let project = Project::test(Arc::new(RealFs::default()), [dir.path()], cx).await;
+    let project = Project::test(Arc::new(RealFs::new(None, cx.executor())), [dir.path()], cx).await;
 
     let buffer_for_path = |path: &'static str, cx: &mut gpui::TestAppContext| {
         let buffer = project.update(cx, |p, cx| p.open_local_buffer(dir.path().join(path), cx));
@@ -6765,6 +6978,158 @@ async fn test_single_file_diffs(cx: &mut gpui::TestAppContext) {
                     secondary: DiffHunkSecondaryStatus::HasSecondaryHunk,
                 },
             )],
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_repository_and_path_for_project_path(
+    background_executor: BackgroundExecutor,
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx);
+    let fs = FakeFs::new(background_executor);
+    fs.insert_tree(
+        path!("/root"),
+        json!({
+            "c.txt": "",
+            "dir1": {
+                ".git": {},
+                "deps": {
+                    "dep1": {
+                        ".git": {},
+                        "src": {
+                            "a.txt": ""
+                        }
+                    }
+                },
+                "src": {
+                    "b.txt": ""
+                }
+            },
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+    let tree = project.read_with(cx, |project, cx| project.worktrees(cx).next().unwrap());
+    let tree_id = tree.read_with(cx, |tree, _| tree.id());
+    tree.read_with(cx, |tree, _| tree.as_local().unwrap().scan_complete())
+        .await;
+    tree.flush_fs_events(cx).await;
+
+    project.read_with(cx, |project, cx| {
+        let git_store = project.git_store().read(cx);
+        let pairs = [
+            ("c.txt", None),
+            ("dir1/src/b.txt", Some((path!("/root/dir1"), "src/b.txt"))),
+            (
+                "dir1/deps/dep1/src/a.txt",
+                Some((path!("/root/dir1/deps/dep1"), "src/a.txt")),
+            ),
+        ];
+        let expected = pairs
+            .iter()
+            .map(|(path, result)| {
+                (
+                    path,
+                    result.map(|(repo, repo_path)| {
+                        (Path::new(repo).to_owned(), RepoPath::from(repo_path))
+                    }),
+                )
+            })
+            .collect::<Vec<_>>();
+        let actual = pairs
+            .iter()
+            .map(|(path, _)| {
+                let project_path = (tree_id, Path::new(path)).into();
+                let result = maybe!({
+                    let (repo, repo_path) =
+                        git_store.repository_and_path_for_project_path(&project_path, cx)?;
+                    Some((
+                        repo.read(cx)
+                            .repository_entry
+                            .work_directory_abs_path
+                            .clone(),
+                        repo_path,
+                    ))
+                });
+                (path, result)
+            })
+            .collect::<Vec<_>>();
+        pretty_assertions::assert_eq!(expected, actual);
+    });
+
+    fs.remove_dir(path!("/root/dir1/.git").as_ref(), RemoveOptions::default())
+        .await
+        .unwrap();
+    tree.flush_fs_events(cx).await;
+
+    project.read_with(cx, |project, cx| {
+        let git_store = project.git_store().read(cx);
+        assert_eq!(
+            git_store.repository_and_path_for_project_path(
+                &(tree_id, Path::new("dir1/src/b.txt")).into(),
+                cx
+            ),
+            None
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_home_dir_as_git_repository(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree(
+        path!("/root"),
+        json!({
+            "home": {
+                ".git": {},
+                "project": {
+                    "a.txt": "A"
+                },
+            },
+        }),
+    )
+    .await;
+    fs.set_home_dir(Path::new(path!("/root/home")).to_owned());
+
+    let project = Project::test(fs.clone(), [path!("/root/home/project").as_ref()], cx).await;
+    let tree = project.read_with(cx, |project, cx| project.worktrees(cx).next().unwrap());
+    let tree_id = tree.read_with(cx, |tree, _| tree.id());
+    tree.read_with(cx, |tree, _| tree.as_local().unwrap().scan_complete())
+        .await;
+    tree.flush_fs_events(cx).await;
+
+    project.read_with(cx, |project, cx| {
+        let containing = project
+            .git_store()
+            .read(cx)
+            .repository_and_path_for_project_path(&(tree_id, "a.txt").into(), cx);
+        assert!(containing.is_none());
+    });
+
+    let project = Project::test(fs.clone(), [path!("/root/home").as_ref()], cx).await;
+    let tree = project.read_with(cx, |project, cx| project.worktrees(cx).next().unwrap());
+    let tree_id = tree.read_with(cx, |tree, _| tree.id());
+    tree.read_with(cx, |tree, _| tree.as_local().unwrap().scan_complete())
+        .await;
+    tree.flush_fs_events(cx).await;
+
+    project.read_with(cx, |project, cx| {
+        let containing = project
+            .git_store()
+            .read(cx)
+            .repository_and_path_for_project_path(&(tree_id, "project/a.txt").into(), cx);
+        assert_eq!(
+            containing
+                .unwrap()
+                .0
+                .read(cx)
+                .repository_entry
+                .work_directory_abs_path,
+            Path::new(path!("/root/home"))
         );
     });
 }

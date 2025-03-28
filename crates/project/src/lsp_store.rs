@@ -1228,7 +1228,7 @@ impl LocalLspStore {
                         .await;
                     buffer.handle.update(cx, |buffer, cx| {
                         buffer.start_transaction();
-                        buffer.apply_diff(diff, cx);
+                        buffer.apply_diff(diff, true, cx);
                         transaction_id_format =
                             transaction_id_format.or(buffer.end_transaction(cx));
                         if let Some(transaction_id) = transaction_id_format {
@@ -1362,7 +1362,7 @@ impl LocalLspStore {
                         zlog::trace!(logger => "Applying changes");
                         buffer.handle.update(cx, |buffer, cx| {
                             buffer.start_transaction();
-                            buffer.apply_diff(diff, cx);
+                            buffer.apply_diff(diff, true, cx);
                             transaction_id_format =
                                 transaction_id_format.or(buffer.end_transaction(cx));
                             if let Some(transaction_id) = transaction_id_format {
@@ -1405,7 +1405,7 @@ impl LocalLspStore {
                         zlog::trace!(logger => "Applying changes");
                         buffer.handle.update(cx, |buffer, cx| {
                             buffer.start_transaction();
-                            buffer.apply_diff(diff, cx);
+                            buffer.apply_diff(diff, true, cx);
                             transaction_id_format =
                                 transaction_id_format.or(buffer.end_transaction(cx));
                             if let Some(transaction_id) = transaction_id_format {
@@ -2960,7 +2960,7 @@ impl LocalLspStore {
     fn remove_worktree(
         &mut self,
         id_to_remove: WorktreeId,
-        cx: &mut Context<'_, LspStore>,
+        cx: &mut Context<LspStore>,
     ) -> Vec<LanguageServerId> {
         self.diagnostics.remove(&id_to_remove);
         self.prettier_store.update(cx, |prettier_store, cx| {
@@ -3432,6 +3432,7 @@ impl LspStore {
         client.add_entity_request_handler(Self::handle_lsp_command::<GetDeclaration>);
         client.add_entity_request_handler(Self::handle_lsp_command::<GetTypeDefinition>);
         client.add_entity_request_handler(Self::handle_lsp_command::<GetDocumentHighlights>);
+        client.add_entity_request_handler(Self::handle_lsp_command::<GetDocumentSymbols>);
         client.add_entity_request_handler(Self::handle_lsp_command::<GetReferences>);
         client.add_entity_request_handler(Self::handle_lsp_command::<PrepareRename>);
         client.add_entity_request_handler(Self::handle_lsp_command::<PerformRename>);
@@ -3566,7 +3567,7 @@ impl LspStore {
         client: AnyProtoClient,
         upstream_project_id: u64,
         request: R,
-        cx: &mut Context<'_, LspStore>,
+        cx: &mut Context<LspStore>,
     ) -> Task<anyhow::Result<<R as LspCommand>::Response>> {
         let message = request.to_proto(upstream_project_id, buffer.read(cx));
         cx.spawn(async move |this, cx| {
@@ -3890,7 +3891,7 @@ impl LspStore {
                 *refcount += 1;
             }
 
-            if !ignore_refcounts || *refcount == 1 {
+            if ignore_refcounts || *refcount == 1 {
                 local.register_buffer_with_language_servers(buffer, cx);
             }
             if !ignore_refcounts {
@@ -4296,7 +4297,7 @@ impl LspStore {
         cx.notify();
     }
 
-    fn refresh_server_tree(&mut self, cx: &mut Context<'_, Self>) {
+    fn refresh_server_tree(&mut self, cx: &mut Context<Self>) {
         let buffer_store = self.buffer_store.clone();
         if let Some(local) = self.as_local_mut() {
             let mut adapters = BTreeMap::default();
@@ -5790,48 +5791,57 @@ impl LspStore {
 
                         _ => continue 'next_server,
                     };
+                    let supports_workspace_symbol_request =
+                        match server.capabilities().workspace_symbol_provider {
+                            Some(OneOf::Left(supported)) => supported,
+                            Some(OneOf::Right(_)) => true,
+                            None => false,
+                        };
+                    if !supports_workspace_symbol_request {
+                        continue 'next_server;
+                    }
                     let worktree_abs_path = worktree.abs_path().clone();
                     let worktree_handle = worktree_handle.clone();
                     let server_id = server.server_id();
                     requests.push(
-                            server
-                                .request::<lsp::request::WorkspaceSymbolRequest>(
-                                    lsp::WorkspaceSymbolParams {
-                                        query: query.to_string(),
-                                        ..Default::default()
-                                    },
-                                )
-                                .log_err()
-                                .map(move |response| {
-                                    let lsp_symbols = response.flatten().map(|symbol_response| match symbol_response {
-                                        lsp::WorkspaceSymbolResponse::Flat(flat_responses) => {
-                                            flat_responses.into_iter().map(|lsp_symbol| {
-                                            (lsp_symbol.name, lsp_symbol.kind, lsp_symbol.location)
-                                            }).collect::<Vec<_>>()
-                                        }
-                                        lsp::WorkspaceSymbolResponse::Nested(nested_responses) => {
-                                            nested_responses.into_iter().filter_map(|lsp_symbol| {
-                                                let location = match lsp_symbol.location {
-                                                    OneOf::Left(location) => location,
-                                                    OneOf::Right(_) => {
-                                                        log::error!("Unexpected: client capabilities forbid symbol resolutions in workspace.symbol.resolveSupport");
-                                                        return None
-                                                    }
-                                                };
-                                                Some((lsp_symbol.name, lsp_symbol.kind, location))
-                                            }).collect::<Vec<_>>()
-                                        }
-                                    }).unwrap_or_default();
-
-                                    WorkspaceSymbolsResult {
-                                        server_id,
-                                        lsp_adapter,
-                                        worktree: worktree_handle.downgrade(),
-                                        worktree_abs_path,
-                                        lsp_symbols,
+                        server
+                            .request::<lsp::request::WorkspaceSymbolRequest>(
+                                lsp::WorkspaceSymbolParams {
+                                    query: query.to_string(),
+                                    ..Default::default()
+                                },
+                            )
+                            .log_err()
+                            .map(move |response| {
+                                let lsp_symbols = response.flatten().map(|symbol_response| match symbol_response {
+                                    lsp::WorkspaceSymbolResponse::Flat(flat_responses) => {
+                                        flat_responses.into_iter().map(|lsp_symbol| {
+                                        (lsp_symbol.name, lsp_symbol.kind, lsp_symbol.location)
+                                        }).collect::<Vec<_>>()
                                     }
-                                }),
-                        );
+                                    lsp::WorkspaceSymbolResponse::Nested(nested_responses) => {
+                                        nested_responses.into_iter().filter_map(|lsp_symbol| {
+                                            let location = match lsp_symbol.location {
+                                                OneOf::Left(location) => location,
+                                                OneOf::Right(_) => {
+                                                    log::error!("Unexpected: client capabilities forbid symbol resolutions in workspace.symbol.resolveSupport");
+                                                    return None
+                                                }
+                                            };
+                                            Some((lsp_symbol.name, lsp_symbol.kind, location))
+                                        }).collect::<Vec<_>>()
+                                    }
+                                }).unwrap_or_default();
+
+                                WorkspaceSymbolsResult {
+                                    server_id,
+                                    lsp_adapter,
+                                    worktree: worktree_handle.downgrade(),
+                                    worktree_abs_path,
+                                    lsp_symbols,
+                                }
+                            }),
+                    );
                 }
                 requested_servers.append(&mut servers_to_query);
             }
@@ -6633,7 +6643,7 @@ impl LspStore {
         buffer: &Entity<Buffer>,
         position: Option<P>,
         request: R,
-        cx: &mut Context<'_, Self>,
+        cx: &mut Context<Self>,
     ) -> Task<Vec<R::Response>>
     where
         P: ToOffset,

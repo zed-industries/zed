@@ -147,10 +147,6 @@
       "ctrl-shift-v": ["editor::MovePageUp", { "center_cursor": true }],
       "ctrl-cmd-space": "editor::ShowCharacterPalette",
       "cmd-;": "editor::ToggleLineNumbers",
-      "cmd-alt-z": "git::Restore",
-      "cmd-alt-y": "git::ToggleStaged",
-      "cmd-y": "git::StageAndNext",
-      "cmd-shift-y": "git::UnstageAndNext",
       "cmd-'": "editor::ToggleSelectedDiffHunks",
       "cmd-\"": "editor::ExpandAllDiffHunks",
       "cmd-alt-g b": "editor::ToggleGitBlame",
@@ -232,6 +228,24 @@
     }
   },
   {
+    "context": "Editor && !assistant_diff",
+    "use_key_equivalents": true,
+    "bindings": {
+      "cmd-alt-z": "git::Restore",
+      "cmd-alt-y": "git::ToggleStaged",
+      "cmd-y": "git::StageAndNext",
+      "cmd-shift-y": "git::UnstageAndNext"
+    }
+  },
+  {
+    "context": "AssistantDiff",
+    "use_key_equivalents": true,
+    "bindings": {
+      "cmd-y": "assistant2::ToggleKeep",
+      "cmd-alt-z": "assistant2::Reject"
+    }
+  },
+  {
     "context": "AssistantPanel",
     "use_key_equivalents": true,
     "bindings": {
@@ -269,6 +283,7 @@
       "cmd-n": "assistant2::NewThread",
       "cmd-alt-p": "assistant2::NewPromptEditor",
       "cmd-shift-h": "assistant2::OpenHistory",
+      "cmd-i": "assistant2::ToggleProfileSelector",
       "cmd-alt-/": "assistant::ToggleModelSelector",
       "cmd-shift-a": "assistant2::ToggleContextPicker",
       "cmd-e": "assistant2::ChatMode",
@@ -288,6 +303,7 @@
     "use_key_equivalents": true,
     "bindings": {
       "enter": "assistant2::Chat",
+      "cmd-i": "assistant2::ToggleProfileSelector",
       "cmd-g d": "git::Diff",
       "shift-escape": "git::ExpandCommitEditor"
     }
@@ -803,7 +819,10 @@
       "shift-tab": "git_panel::FocusEditor",
       "escape": "git_panel::ToggleFocus",
       "cmd-enter": "git::Commit",
-      "cmd-backspace": "git::RestoreFile"
+      "backspace": ["git::RestoreFile", { "skip_prompt": false }],
+      "delete": ["git::RestoreFile", { "skip_prompt": false }],
+      "cmd-backspace": ["git::RestoreFile", { "skip_prompt": true }],
+      "cmd-delete": ["git::RestoreFile", { "skip_prompt": true }]
     }
   },
   {

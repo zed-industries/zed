@@ -5,7 +5,7 @@ use language_model::LanguageModelRequestMessage;
 use project::Project;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use std::{collections::HashSet, path::PathBuf, sync::Arc};
+use std::{path::PathBuf, sync::Arc};
 use ui::IconName;
 
 use crate::replace::replace_exact;
@@ -33,10 +33,10 @@ pub struct FindReplaceFileToolInput {
     /// </example>
     pub path: PathBuf,
 
-    /// A user-friendly description of what's being replaced. This will be shown in the UI.
+    /// A user-friendly markdown description of what's being replaced. This will be shown in the UI.
     ///
     /// <example>Fix API endpoint URLs</example>
-    /// <example>Update copyright year</example>
+    /// <example>Update copyright year in `page_footer`</example>
     pub display_description: String,
 
     /// The unique string to find in the file. This string cannot be empty;
@@ -189,19 +189,20 @@ impl Tool for FindReplaceFileTool {
                 .await;
 
             if let Some(diff) = result {
-                buffer.update(cx, |buffer, cx| {
-                    let _ = buffer.apply_diff(diff, cx);
+                let edit_ids = buffer.update(cx, |buffer, cx| {
+                    buffer.finalize_last_transaction();
+                    buffer.apply_diff(diff, false, cx);
+                    let transaction = buffer.finalize_last_transaction();
+                    transaction.map_or(Vec::new(), |transaction| transaction.edit_ids.clone())
+                })?;
+
+                action_log.update(cx, |log, cx| {
+                    log.buffer_edited(buffer.clone(), edit_ids, cx)
                 })?;
 
                 project.update(cx, |project, cx| {
-                    project.save_buffer(buffer.clone(), cx)
+                    project.save_buffer(buffer, cx)
                 })?.await?;
-
-                action_log.update(cx, |log, cx| {
-                    let mut buffers = HashSet::default();
-                    buffers.insert(buffer);
-                    log.buffer_edited(buffers, cx);
-                })?;
 
                 Ok(format!("Edited {}", input.path.display()))
             } else {

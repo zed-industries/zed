@@ -6,7 +6,6 @@ mod starting;
 use std::time::Duration;
 
 use dap::client::SessionId;
-use dap::DebugAdapterConfig;
 use failed::FailedState;
 use gpui::{
     percentage, Animation, AnimationExt, AnyElement, App, Entity, EventEmitter, FocusHandle,
@@ -19,7 +18,8 @@ use project::Project;
 use rpc::proto::{self, PeerId};
 use running::RunningState;
 use starting::{StartingEvent, StartingState};
-use ui::prelude::*;
+use task::DebugTaskDefinition;
+use ui::{prelude::*, Indicator};
 use util::ResultExt;
 use workspace::{
     item::{self, Item},
@@ -73,7 +73,7 @@ impl DebugSession {
         project: Entity<Project>,
         workspace: WeakEntity<Workspace>,
         debug_panel: WeakEntity<DebugPanel>,
-        config: Option<DebugAdapterConfig>,
+        config: Option<DebugTaskDefinition>,
         window: &mut Window,
         cx: &mut App,
     ) -> Entity<Self> {
@@ -154,7 +154,7 @@ impl DebugSession {
         _: &Entity<InertState>,
         event: &InertEvent,
         window: &mut Window,
-        cx: &mut Context<'_, Self>,
+        cx: &mut Context<Self>,
     ) {
         let dap_store = self.dap_store.clone();
         let InertEvent::Spawned { config } = event;
@@ -171,7 +171,7 @@ impl DebugSession {
             .flatten()
             .expect("worktree-less project");
         let Ok((new_session_id, task)) = dap_store.update(cx, |store, cx| {
-            store.new_session(config, &worktree, None, cx)
+            store.new_session(config.into(), &worktree, None, cx)
         }) else {
             return;
         };
@@ -186,7 +186,7 @@ impl DebugSession {
         _: &Entity<StartingState>,
         event: &StartingEvent,
         window: &mut Window,
-        cx: &mut Context<'_, Self>,
+        cx: &mut Context<Self>,
     ) {
         if let StartingEvent::Finished(session) = event {
             let mode =
@@ -214,23 +214,48 @@ impl Focusable for DebugSession {
 impl Item for DebugSession {
     type Event = DebugPanelItemEvent;
     fn tab_content(&self, _: item::TabContentParams, _: &Window, cx: &App) -> AnyElement {
-        let (label, color) = match &self.mode {
-            DebugSessionState::Inert(_) => ("New Session", Color::Default),
-            DebugSessionState::Starting(_) => ("Starting", Color::Default),
-            DebugSessionState::Failed(_) => ("Failed", Color::Error),
-            DebugSessionState::Running(state) => (
-                state
-                    .read_with(cx, |state, cx| state.thread_status(cx))
-                    .map(|status| status.label())
-                    .unwrap_or("Running"),
-                Color::Default,
+        let (icon, label, color) = match &self.mode {
+            DebugSessionState::Inert(_) => (None, "New Session", Color::Default),
+            DebugSessionState::Starting(_) => (None, "Starting", Color::Default),
+            DebugSessionState::Failed(_) => (
+                Some(Indicator::dot().color(Color::Error)),
+                "Failed",
+                Color::Error,
             ),
+            DebugSessionState::Running(state) => {
+                if state.read(cx).session().read(cx).is_terminated() {
+                    (
+                        Some(Indicator::dot().color(Color::Error)),
+                        "Terminated",
+                        Color::Error,
+                    )
+                } else {
+                    match state.read(cx).thread_status(cx).unwrap_or_default() {
+                        project::debugger::session::ThreadStatus::Stopped => (
+                            Some(Indicator::dot().color(Color::Conflict)),
+                            state
+                                .read_with(cx, |state, cx| state.thread_status(cx))
+                                .map(|status| status.label())
+                                .unwrap_or("Stopped"),
+                            Color::Conflict,
+                        ),
+                        _ => (
+                            Some(Indicator::dot().color(Color::Success)),
+                            state
+                                .read_with(cx, |state, cx| state.thread_status(cx))
+                                .map(|status| status.label())
+                                .unwrap_or("Running"),
+                            Color::Success,
+                        ),
+                    }
+                }
+            }
         };
 
         let is_starting = matches!(self.mode, DebugSessionState::Starting(_));
 
         h_flex()
-            .gap_1()
+            .gap_2()
             .children(is_starting.then(|| {
                 Icon::new(IconName::ArrowCircle).with_animation(
                     "starting-debug-session",
@@ -238,6 +263,8 @@ impl Item for DebugSession {
                     |this, delta| this.transform(Transformation::rotate(percentage(delta))),
                 )
             }))
+            .when_some(icon, |this, indicator| this.child(indicator))
+            .justify_between()
             .child(Label::new(label).color(color))
             .into_any_element()
     }
@@ -310,7 +337,7 @@ impl FollowableItem for DebugSession {
 }
 
 impl Render for DebugSession {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         match &self.mode {
             DebugSessionState::Inert(inert_state) => {
                 inert_state.update(cx, |this, cx| this.render(window, cx).into_any_element())

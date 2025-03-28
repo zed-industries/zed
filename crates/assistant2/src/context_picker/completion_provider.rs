@@ -1,6 +1,6 @@
 use std::cell::RefCell;
 use std::ops::Range;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::rc::Rc;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
@@ -12,7 +12,7 @@ use gpui::{App, Entity, Task, WeakEntity};
 use http_client::HttpClientWithUrl;
 use language::{Buffer, CodeLabel, HighlightId};
 use lsp::CompletionContext;
-use project::{Completion, CompletionIntent, ProjectPath, WorktreeId};
+use project::{Completion, CompletionIntent, ProjectPath, Symbol, WorktreeId};
 use rope::Point;
 use text::{Anchor, ToPoint};
 use ui::prelude::*;
@@ -70,18 +70,18 @@ impl ContextPickerCompletionProvider {
             .filter_map(|entry| match entry {
                 super::RecentEntry::File {
                     project_path,
-                    path_prefix: _,
-                } => Self::completion_for_path(
+                    path_prefix,
+                } => Some(Self::completion_for_path(
                     project_path.clone(),
+                    path_prefix,
                     true,
                     false,
                     excerpt_id,
                     source_range.clone(),
                     editor.clone(),
                     context_store.clone(),
-                    workspace.clone(),
                     cx,
-                ),
+                )),
                 super::RecentEntry::Thread(thread_context_entry) => {
                     let thread_store = thread_store
                         .as_ref()
@@ -120,56 +120,24 @@ impl ContextPickerCompletionProvider {
         completions
     }
 
-    fn full_path_for_entry(
-        worktree_id: WorktreeId,
-        path: &Path,
-        workspace: Entity<Workspace>,
-        cx: &App,
-    ) -> Option<PathBuf> {
-        let worktree = workspace
-            .read(cx)
-            .project()
-            .read(cx)
-            .worktree_for_id(worktree_id, cx)?
-            .read(cx);
-
-        let mut full_path = PathBuf::from(worktree.root_name());
-        full_path.push(path);
-        Some(full_path)
-    }
-
     fn build_code_label_for_full_path(
-        worktree_id: WorktreeId,
-        path: &Path,
-        workspace: Entity<Workspace>,
+        file_name: &str,
+        directory: Option<&str>,
         cx: &App,
-    ) -> Option<CodeLabel> {
+    ) -> CodeLabel {
         let comment_id = cx.theme().syntax().highlight_id("comment").map(HighlightId);
         let mut label = CodeLabel::default();
-        let worktree = workspace
-            .read(cx)
-            .project()
-            .read(cx)
-            .worktree_for_id(worktree_id, cx)?;
 
-        let entry = worktree.read(cx).entry_for_path(&path)?;
-        let file_name = path.file_name()?.to_string_lossy();
         label.push_str(&file_name, None);
-        if entry.is_dir() {
-            label.push_str("/ ", None);
-        } else {
-            label.push_str(" ", None);
-        };
+        label.push_str(" ", None);
 
-        let mut path_hint = PathBuf::from(worktree.read(cx).root_name());
-        if let Some(path_to_entry) = path.parent() {
-            path_hint.push(path_to_entry);
+        if let Some(directory) = directory {
+            label.push_str(&directory, comment_id);
         }
-        label.push_str(&path_hint.to_string_lossy(), comment_id);
 
         label.filter_range = 0..label.text().len();
 
-        Some(label)
+        label
     }
 
     fn completion_for_thread(
@@ -274,32 +242,36 @@ impl ContextPickerCompletionProvider {
 
     fn completion_for_path(
         project_path: ProjectPath,
+        path_prefix: &str,
         is_recent: bool,
         is_directory: bool,
         excerpt_id: ExcerptId,
         source_range: Range<Anchor>,
         editor: Entity<Editor>,
         context_store: Entity<ContextStore>,
-        workspace: Entity<Workspace>,
         cx: &App,
-    ) -> Option<Completion> {
+    ) -> Completion {
+        let (file_name, directory) = super::file_context_picker::extract_file_name_and_directory(
+            &project_path.path,
+            path_prefix,
+        );
+
         let label = Self::build_code_label_for_full_path(
-            project_path.worktree_id,
-            &project_path.path,
-            workspace.clone(),
+            &file_name,
+            directory.as_ref().map(|s| s.as_ref()),
             cx,
-        )?;
-        let full_path = Self::full_path_for_entry(
-            project_path.worktree_id,
-            &project_path.path,
-            workspace.clone(),
-            cx,
-        )?;
+        );
+        let full_path = if let Some(directory) = directory {
+            format!("{}{}", directory, file_name)
+        } else {
+            file_name.to_string()
+        };
 
         let crease_icon_path = if is_directory {
             FileIcons::get_folder_icon(false, cx).unwrap_or_else(|| IconName::Folder.path().into())
         } else {
-            FileIcons::get_icon(&full_path, cx).unwrap_or_else(|| IconName::File.path().into())
+            FileIcons::get_icon(Path::new(&full_path), cx)
+                .unwrap_or_else(|| IconName::File.path().into())
         };
         let completion_icon_path = if is_recent {
             IconName::HistoryRerun.path().into()
@@ -307,15 +279,9 @@ impl ContextPickerCompletionProvider {
             crease_icon_path.clone()
         };
 
-        let crease_name = project_path
-            .path
-            .file_name()
-            .map(|file_name| file_name.to_string_lossy().to_string())
-            .unwrap_or_else(|| "untitled".to_string());
-
-        let new_text = format!("@file {}", full_path.to_string_lossy());
+        let new_text = format!("@file {}", full_path);
         let new_text_len = new_text.len();
-        Some(Completion {
+        Completion {
             old_range: source_range.clone(),
             new_text,
             label,
@@ -324,7 +290,7 @@ impl ContextPickerCompletionProvider {
             icon_path: Some(completion_icon_path),
             confirm: Some(confirm_completion_callback(
                 crease_icon_path,
-                crease_name.into(),
+                file_name,
                 excerpt_id,
                 source_range.start,
                 new_text_len,
@@ -338,6 +304,66 @@ impl ContextPickerCompletionProvider {
                         };
                         task.detach_and_log_err(cx);
                     })
+                },
+            )),
+        }
+    }
+
+    fn completion_for_symbol(
+        symbol: Symbol,
+        excerpt_id: ExcerptId,
+        source_range: Range<Anchor>,
+        editor: Entity<Editor>,
+        context_store: Entity<ContextStore>,
+        workspace: Entity<Workspace>,
+        cx: &mut App,
+    ) -> Option<Completion> {
+        let path_prefix = workspace
+            .read(cx)
+            .project()
+            .read(cx)
+            .worktree_for_id(symbol.path.worktree_id, cx)?
+            .read(cx)
+            .root_name();
+
+        let (file_name, _) = super::file_context_picker::extract_file_name_and_directory(
+            &symbol.path.path,
+            path_prefix,
+        );
+
+        let comment_id = cx.theme().syntax().highlight_id("comment").map(HighlightId);
+        let mut label = CodeLabel::plain(symbol.name.clone(), None);
+        label.push_str(" ", None);
+        label.push_str(&file_name, comment_id);
+
+        let new_text = format!("@symbol {}:{}", file_name, symbol.name);
+        let new_text_len = new_text.len();
+        Some(Completion {
+            old_range: source_range.clone(),
+            new_text,
+            label,
+            documentation: None,
+            source: project::CompletionSource::Custom,
+            icon_path: Some(IconName::Code.path().into()),
+            confirm: Some(confirm_completion_callback(
+                IconName::Code.path().into(),
+                symbol.name.clone().into(),
+                excerpt_id,
+                source_range.start,
+                new_text_len,
+                editor.clone(),
+                move |cx| {
+                    let symbol = symbol.clone();
+                    let context_store = context_store.clone();
+                    let workspace = workspace.clone();
+                    super::symbol_context_picker::add_symbol(
+                        symbol.clone(),
+                        false,
+                        workspace.clone(),
+                        context_store.downgrade(),
+                        cx,
+                    )
+                    .detach_and_log_err(cx);
                 },
             )),
         })
@@ -384,46 +410,72 @@ impl CompletionProvider for ContextPickerCompletionProvider {
         cx.spawn(async move |_, cx| {
             let mut completions = Vec::new();
 
-            let MentionCompletion {
-                mode: category,
-                argument,
-                ..
-            } = state;
+            let MentionCompletion { mode, argument, .. } = state;
 
             let query = argument.unwrap_or_else(|| "".to_string());
-            match category {
+            match mode {
                 Some(ContextPickerMode::File) => {
                     let path_matches = cx
                         .update(|cx| {
                             super::file_context_picker::search_paths(
                                 query,
-                                Arc::new(AtomicBool::default()),
+                                Arc::<AtomicBool>::default(),
                                 &workspace,
                                 cx,
                             )
                         })?
                         .await;
 
-                    completions.reserve(path_matches.len());
-                    cx.update(|cx| {
-                        completions.extend(path_matches.iter().filter_map(|mat| {
-                            let editor = editor.upgrade()?;
-                            Self::completion_for_path(
-                                ProjectPath {
-                                    worktree_id: WorktreeId::from_usize(mat.worktree_id),
-                                    path: mat.path.clone(),
+                    if let Some(editor) = editor.upgrade() {
+                        completions.reserve(path_matches.len());
+                        cx.update(|cx| {
+                            completions.extend(path_matches.iter().map(|mat| {
+                                Self::completion_for_path(
+                                    ProjectPath {
+                                        worktree_id: WorktreeId::from_usize(mat.worktree_id),
+                                        path: mat.path.clone(),
+                                    },
+                                    &mat.path_prefix,
+                                    false,
+                                    mat.is_dir,
+                                    excerpt_id,
+                                    source_range.clone(),
+                                    editor.clone(),
+                                    context_store.clone(),
+                                    cx,
+                                )
+                            }));
+                        })?;
+                    }
+                }
+                Some(ContextPickerMode::Symbol) => {
+                    if let Some(editor) = editor.upgrade() {
+                        let symbol_matches = cx
+                            .update(|cx| {
+                                super::symbol_context_picker::search_symbols(
+                                    query,
+                                    Arc::new(AtomicBool::default()),
+                                    &workspace,
+                                    cx,
+                                )
+                            })?
+                            .await?;
+                        cx.update(|cx| {
+                            completions.extend(symbol_matches.into_iter().filter_map(
+                                |(_, symbol)| {
+                                    Self::completion_for_symbol(
+                                        symbol,
+                                        excerpt_id,
+                                        source_range.clone(),
+                                        editor.clone(),
+                                        context_store.clone(),
+                                        workspace.clone(),
+                                        cx,
+                                    )
                                 },
-                                false,
-                                mat.is_dir,
-                                excerpt_id,
-                                source_range.clone(),
-                                editor.clone(),
-                                context_store.clone(),
-                                workspace.clone(),
-                                cx,
-                            )
-                        }));
-                    })?;
+                            ));
+                        })?;
+                    }
                 }
                 Some(ContextPickerMode::Fetch) => {
                     if let Some(editor) = editor.upgrade() {
@@ -542,6 +594,10 @@ impl CompletionProvider for ContextPickerCompletionProvider {
     }
 
     fn sort_completions(&self) -> bool {
+        false
+    }
+
+    fn filter_completions(&self) -> bool {
         false
     }
 }
@@ -767,7 +823,6 @@ mod tests {
                 .unwrap();
         }
 
-        //TODO: Construct the editor without an actual buffer that points to a file
         let item = workspace
             .update_in(&mut cx, |workspace, window, cx| {
                 workspace.open_path(
@@ -817,11 +872,12 @@ mod tests {
             assert_eq!(
                 current_completion_labels(editor),
                 &[
-                    format!("seven.txt {}", separator!("dir/b")).as_str(),
-                    format!("six.txt {}", separator!("dir/b")).as_str(),
-                    format!("five.txt {}", separator!("dir/b")).as_str(),
-                    format!("four.txt {}", separator!("dir/a")).as_str(),
+                    "seven.txt dir/b/",
+                    "six.txt dir/b/",
+                    "five.txt dir/b/",
+                    "four.txt dir/a/",
                     "Files & Directories",
+                    "Symbols",
                     "Fetch"
                 ]
             );
@@ -849,10 +905,7 @@ mod tests {
         editor.update(&mut cx, |editor, cx| {
             assert_eq!(editor.text(cx), "Lorem @file one");
             assert!(editor.has_visible_completions_menu());
-            assert_eq!(
-                current_completion_labels(editor),
-                vec![format!("one.txt {}", separator!("dir/a")).as_str(),]
-            );
+            assert_eq!(current_completion_labels(editor), vec!["one.txt dir/a/"]);
         });
 
         editor.update_in(&mut cx, |editor, window, cx| {
@@ -861,10 +914,7 @@ mod tests {
         });
 
         editor.update(&mut cx, |editor, cx| {
-            assert_eq!(
-                editor.text(cx),
-                format!("Lorem @file {}", separator!("dir/a/one.txt"))
-            );
+            assert_eq!(editor.text(cx), "Lorem @file dir/a/one.txt",);
             assert!(!editor.has_visible_completions_menu());
             assert_eq!(
                 crease_ranges(editor, cx),
@@ -875,10 +925,7 @@ mod tests {
         cx.simulate_input(" ");
 
         editor.update(&mut cx, |editor, cx| {
-            assert_eq!(
-                editor.text(cx),
-                format!("Lorem @file {} ", separator!("dir/a/one.txt"))
-            );
+            assert_eq!(editor.text(cx), "Lorem @file dir/a/one.txt ",);
             assert!(!editor.has_visible_completions_menu());
             assert_eq!(
                 crease_ranges(editor, cx),
@@ -889,10 +936,7 @@ mod tests {
         cx.simulate_input("Ipsum ");
 
         editor.update(&mut cx, |editor, cx| {
-            assert_eq!(
-                editor.text(cx),
-                format!("Lorem @file {} Ipsum ", separator!("dir/a/one.txt"))
-            );
+            assert_eq!(editor.text(cx), "Lorem @file dir/a/one.txt Ipsum ",);
             assert!(!editor.has_visible_completions_menu());
             assert_eq!(
                 crease_ranges(editor, cx),
@@ -903,10 +947,7 @@ mod tests {
         cx.simulate_input("@file ");
 
         editor.update(&mut cx, |editor, cx| {
-            assert_eq!(
-                editor.text(cx),
-                format!("Lorem @file {} Ipsum @file ", separator!("dir/a/one.txt"))
-            );
+            assert_eq!(editor.text(cx), "Lorem @file dir/a/one.txt Ipsum @file ",);
             assert!(editor.has_visible_completions_menu());
             assert_eq!(
                 crease_ranges(editor, cx),
@@ -923,11 +964,7 @@ mod tests {
         editor.update(&mut cx, |editor, cx| {
             assert_eq!(
                 editor.text(cx),
-                format!(
-                    "Lorem @file {} Ipsum @file {}",
-                    separator!("dir/a/one.txt"),
-                    separator!("dir/b/seven.txt")
-                )
+                "Lorem @file dir/a/one.txt Ipsum @file dir/b/seven.txt"
             );
             assert!(!editor.has_visible_completions_menu());
             assert_eq!(
@@ -944,11 +981,7 @@ mod tests {
         editor.update(&mut cx, |editor, cx| {
             assert_eq!(
                 editor.text(cx),
-                format!(
-                    "Lorem @file {} Ipsum @file {}\n@",
-                    separator!("dir/a/one.txt"),
-                    separator!("dir/b/seven.txt")
-                )
+                "Lorem @file dir/a/one.txt Ipsum @file dir/b/seven.txt\n@"
             );
             assert!(editor.has_visible_completions_menu());
             assert_eq!(
@@ -969,12 +1002,7 @@ mod tests {
         editor.update(&mut cx, |editor, cx| {
             assert_eq!(
                 editor.text(cx),
-                format!(
-                    "Lorem @file {} Ipsum @file {}\n@file {}",
-                    separator!("dir/a/one.txt"),
-                    separator!("dir/b/seven.txt"),
-                    separator!("dir/b/six.txt"),
-                )
+                "Lorem @file dir/a/one.txt Ipsum @file dir/b/seven.txt\n@file dir/b/six.txt"
             );
             assert!(!editor.has_visible_completions_menu());
             assert_eq!(

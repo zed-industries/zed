@@ -17,11 +17,11 @@ use crate::{
 };
 use anyhow::{anyhow, Context as _, Result};
 use collections::{FxHashMap, FxHashSet};
+#[cfg(target_os = "macos")]
+use core_video::pixel_buffer::CVPixelBuffer;
 use derive_more::{Deref, DerefMut};
 use futures::channel::oneshot;
 use futures::FutureExt;
-#[cfg(target_os = "macos")]
-use media::core_video::CVImageBuffer;
 use parking_lot::RwLock;
 use raw_window_handle::{HandleError, HasWindowHandle};
 use refineable::Refineable;
@@ -407,7 +407,7 @@ pub(crate) type AnyMouseListener =
 
 #[derive(Clone)]
 pub(crate) struct CursorStyleRequest {
-    pub(crate) hitbox_id: HitboxId,
+    pub(crate) hitbox_id: Option<HitboxId>, // None represents whole window
     pub(crate) style: CursorStyle,
 }
 
@@ -1009,7 +1009,7 @@ impl Window {
     pub fn replace_root<E>(
         &mut self,
         cx: &mut App,
-        build_view: impl FnOnce(&mut Window, &mut Context<'_, E>) -> E,
+        build_view: impl FnOnce(&mut Window, &mut Context<E>) -> E,
     ) -> Entity<E>
     where
         E: 'static + Render,
@@ -1928,10 +1928,10 @@ impl Window {
 
     /// Updates the cursor style at the platform level. This method should only be called
     /// during the prepaint phase of element drawing.
-    pub fn set_cursor_style(&mut self, style: CursorStyle, hitbox: &Hitbox) {
+    pub fn set_cursor_style(&mut self, style: CursorStyle, hitbox: Option<&Hitbox>) {
         self.invalidator.debug_assert_paint();
         self.next_frame.cursor_styles.push(CursorStyleRequest {
-            hitbox_id: hitbox.id,
+            hitbox_id: hitbox.map(|hitbox| hitbox.id),
             style,
         });
     }
@@ -2327,25 +2327,23 @@ impl Window {
     /// see [`fill`](crate::fill), [`outline`](crate::outline), and [`quad`](crate::quad) to construct this type.
     ///
     /// This method should only be called as part of the paint phase of element drawing.
+    ///
+    /// Note that the `quad.corner_radii` are allowed to exceed the bounds, creating sharp corners
+    /// where the circular arcs meet. This will not display well when combined with dashed borders.
+    /// Use `Corners::clamp_radii_for_quad_size` if the radii should fit within the bounds.
     pub fn paint_quad(&mut self, quad: PaintQuad) {
         self.invalidator.debug_assert_paint();
 
         let scale_factor = self.scale_factor();
         let content_mask = self.content_mask();
         let opacity = self.element_opacity();
-
-        let bounds = quad.bounds.scale(scale_factor);
-        let corner_radii = quad
-            .corner_radii
-            .scale(scale_factor)
-            .clamp_radii_for_quad_size(bounds.size);
         self.next_frame.scene.insert_primitive(Quad {
             order: 0,
-            bounds,
+            bounds: quad.bounds.scale(scale_factor),
             content_mask: content_mask.scale(scale_factor),
             background: quad.background.opacity(opacity),
             border_color: quad.border_color.opacity(opacity),
-            corner_radii,
+            corner_radii: quad.corner_radii.scale(scale_factor),
             border_widths: quad.border_widths.scale(scale_factor),
             border_style: quad.border_style,
         });
@@ -2660,7 +2658,7 @@ impl Window {
     ///
     /// This method should only be called as part of the paint phase of element drawing.
     #[cfg(target_os = "macos")]
-    pub fn paint_surface(&mut self, bounds: Bounds<Pixels>, image_buffer: CVImageBuffer) {
+    pub fn paint_surface(&mut self, bounds: Bounds<Pixels>, image_buffer: CVPixelBuffer) {
         use crate::PaintSurface;
 
         self.invalidator.debug_assert_paint();
@@ -2986,7 +2984,11 @@ impl Window {
                 .cursor_styles
                 .iter()
                 .rev()
-                .find(|request| request.hitbox_id.is_hovered(self))
+                .find(|request| {
+                    request
+                        .hitbox_id
+                        .map_or(true, |hitbox_id| hitbox_id.is_hovered(self))
+                })
                 .map(|request| request.style)
                 .unwrap_or(CursorStyle::Arrow);
             cx.platform.set_cursor_style(style);
@@ -3243,6 +3245,7 @@ impl Window {
             keystroke,
             &dispatch_path,
         );
+
         if !match_result.to_replay.is_empty() {
             self.replay_pending_input(match_result.to_replay, cx)
         }
@@ -3821,7 +3824,7 @@ impl<V: 'static + Render> WindowHandle<V> {
     pub fn update<C, R>(
         &self,
         cx: &mut C,
-        update: impl FnOnce(&mut V, &mut Window, &mut Context<'_, V>) -> R,
+        update: impl FnOnce(&mut V, &mut Window, &mut Context<V>) -> R,
     ) -> Result<R>
     where
         C: AppContext,

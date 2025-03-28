@@ -1,5 +1,6 @@
 use std::fmt::Write as _;
 use std::io::Write;
+use std::ops::Range;
 use std::sync::Arc;
 
 use anyhow::{Context as _, Result};
@@ -286,8 +287,7 @@ impl Thread {
             tool_use,
             action_log: cx.new(|_| ActionLog::new()),
             initial_project_snapshot: Task::ready(serialized.initial_project_snapshot).shared(),
-            // TODO: persist token usage?
-            cumulative_token_usage: TokenUsage::default(),
+            cumulative_token_usage: serialized.cumulative_token_usage,
             feedback: None,
         }
     }
@@ -648,6 +648,7 @@ impl Thread {
                     })
                     .collect(),
                 initial_project_snapshot,
+                cumulative_token_usage: this.cumulative_token_usage.clone(),
             })
         })
     }
@@ -786,6 +787,18 @@ impl Thread {
         self.stream_completion(request, model, cx);
     }
 
+    pub fn used_tools_since_last_user_message(&self) -> bool {
+        for message in self.messages.iter().rev() {
+            if self.tool_use.message_has_tool_results(message.id) {
+                return true;
+            } else if message.role == Role::User {
+                return false;
+            }
+        }
+
+        false
+    }
+
     pub fn to_completion_request(
         &self,
         request_kind: RequestKind,
@@ -835,6 +848,9 @@ impl Thread {
                 }
                 RequestKind::Summarize => {
                     // We don't care about tool use during summarization.
+                    if self.tool_use.message_has_tool_results(message.id) {
+                        continue;
+                    }
                 }
             }
 
@@ -857,6 +873,13 @@ impl Thread {
             request.messages.push(request_message);
         }
 
+        // Set a cache breakpoint at the second-to-last message.
+        // https://docs.anthropic.com/en/docs/build-with-claude/prompt-caching
+        let breakpoint_index = request.messages.len() - 2;
+        for (index, message) in request.messages.iter_mut().enumerate() {
+            message.cache = index == breakpoint_index;
+        }
+
         if !referenced_context_ids.is_empty() {
             let mut context_message = LanguageModelRequestMessage {
                 role: Role::User,
@@ -873,17 +896,23 @@ impl Thread {
             request.messages.push(context_message);
         }
 
-        self.attach_stale_files(&mut request.messages, cx);
+        self.attached_tracked_files_state(&mut request.messages, cx);
 
         request
     }
 
-    fn attach_stale_files(&self, messages: &mut Vec<LanguageModelRequestMessage>, cx: &App) {
+    fn attached_tracked_files_state(
+        &self,
+        messages: &mut Vec<LanguageModelRequestMessage>,
+        cx: &App,
+    ) {
         const STALE_FILES_HEADER: &str = "These files changed since last read:";
 
         let mut stale_message = String::new();
 
-        for stale_file in self.action_log.read(cx).stale_buffers(cx) {
+        let action_log = self.action_log.read(cx);
+
+        for stale_file in action_log.stale_buffers(cx) {
             let Some(file) = stale_file.read(cx).file() else {
                 continue;
             };
@@ -895,10 +924,22 @@ impl Thread {
             writeln!(&mut stale_message, "- {}", file.path().display()).ok();
         }
 
+        let mut content = Vec::with_capacity(2);
+
         if !stale_message.is_empty() {
+            content.push(stale_message.into());
+        }
+
+        if action_log.has_edited_files_since_project_diagnostics_check() {
+            content.push(
+                "When you're done making changes, make sure to check project diagnostics and fix all errors AND warnings you introduced!".into(),
+            );
+        }
+
+        if !content.is_empty() {
             let context_message = LanguageModelRequestMessage {
                 role: Role::User,
-                content: vec![stale_message.into()],
+                content,
                 cache: false,
             };
 
@@ -1101,7 +1142,10 @@ impl Thread {
         request.messages.push(LanguageModelRequestMessage {
             role: Role::User,
             content: vec![
-                "Generate a concise 3-7 word title for this conversation, omitting punctuation. Go straight to the title, without any preamble and prefix like `Here's a concise suggestion:...` or `Title:`"
+                "Generate a concise 3-7 word title for this conversation, omitting punctuation. \
+                 Go straight to the title, without any preamble and prefix like `Here's a concise suggestion:...` or `Title:`. \
+                 If the conversation is about a specific subject, include it in the title. \
+                 Be descriptive. DO NOT speak in the first person."
                     .into(),
             ],
             cache: false,
@@ -1198,7 +1242,7 @@ impl Thread {
         input: serde_json::Value,
         messages: &[LanguageModelRequestMessage],
         tool: Arc<dyn Tool>,
-        cx: &mut Context<'_, Thread>,
+        cx: &mut Context<Thread>,
     ) {
         let task = self.spawn_tool_use(tool_use_id.clone(), messages, input, tool, cx);
         self.tool_use
@@ -1392,7 +1436,7 @@ impl Thread {
                     git_store
                         .repositories()
                         .values()
-                        .find(|repo| repo.read(cx).worktree_id == snapshot.id())
+                        .find(|repo| repo.read(cx).worktree_id == Some(snapshot.id()))
                         .and_then(|repo| {
                             let repo = repo.read(cx);
                             Some((repo.branch().cloned(), repo.local_repository()?))
@@ -1411,7 +1455,7 @@ impl Thread {
 
                     // Get diff asynchronously
                     let diff = repo
-                        .diff(git::repository::DiffType::HeadToWorktree, cx.clone())
+                        .diff(git::repository::DiffType::HeadToWorktree)
                         .await
                         .ok();
 
@@ -1484,6 +1528,18 @@ impl Thread {
         }
 
         Ok(String::from_utf8_lossy(&markdown).to_string())
+    }
+
+    pub fn review_edits_in_range(
+        &mut self,
+        buffer: Entity<language::Buffer>,
+        buffer_range: Range<language::Anchor>,
+        accept: bool,
+        cx: &mut Context<Self>,
+    ) {
+        self.action_log.update(cx, |action_log, cx| {
+            action_log.review_edits_in_range(buffer, buffer_range, accept, cx)
+        });
     }
 
     pub fn action_log(&self) -> &Entity<ActionLog> {

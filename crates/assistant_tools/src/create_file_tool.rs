@@ -7,6 +7,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use ui::IconName;
+use util::markdown::MarkdownString;
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct CreateFileToolInput {
@@ -46,7 +47,7 @@ impl Tool for CreateFileTool {
     }
 
     fn icon(&self) -> IconName {
-        IconName::File
+        IconName::FileCreate
     }
 
     fn input_schema(&self) -> serde_json::Value {
@@ -57,8 +58,8 @@ impl Tool for CreateFileTool {
     fn ui_text(&self, input: &serde_json::Value) -> String {
         match serde_json::from_value::<CreateFileToolInput>(input.clone()) {
             Ok(input) => {
-                let path = input.path.as_str();
-                format!("Create file `{path}`")
+                let path = MarkdownString::inline_code(&input.path);
+                format!("Create file {path}")
             }
             Err(_) => "Create file".to_string(),
         }
@@ -69,7 +70,7 @@ impl Tool for CreateFileTool {
         input: serde_json::Value,
         _messages: &[LanguageModelRequestMessage],
         project: Entity<Project>,
-        _action_log: Entity<ActionLog>,
+        action_log: Entity<ActionLog>,
         cx: &mut App,
     ) -> Task<Result<String>> {
         let input = match serde_json::from_value::<CreateFileToolInput>(input) {
@@ -84,24 +85,20 @@ impl Tool for CreateFileTool {
         let destination_path: Arc<str> = input.path.as_str().into();
 
         cx.spawn(async move |cx| {
-            project
-                .update(cx, |project, cx| {
-                    project.create_entry(project_path.clone(), false, cx)
-                })?
-                .await
-                .map_err(|err| anyhow!("Unable to create {destination_path}: {err}"))?;
             let buffer = project
                 .update(cx, |project, cx| {
                     project.open_buffer(project_path.clone(), cx)
                 })?
                 .await
                 .map_err(|err| anyhow!("Unable to open buffer for {destination_path}: {err}"))?;
-            buffer.update(cx, |buffer, cx| {
-                buffer.set_text(contents, cx);
+            let edit_id = buffer.update(cx, |buffer, cx| buffer.set_text(contents, cx))?;
+
+            action_log.update(cx, |action_log, cx| {
+                action_log.will_create_buffer(buffer.clone(), edit_id, cx)
             })?;
 
             project
-                .update(cx, |project, cx| project.save_buffer(buffer.clone(), cx))?
+                .update(cx, |project, cx| project.save_buffer(buffer, cx))?
                 .await
                 .map_err(|err| anyhow!("Unable to save buffer for {destination_path}: {err}"))?;
 

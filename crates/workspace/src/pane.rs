@@ -3315,13 +3315,28 @@ impl Render for Pane {
                     })
                     .map(|div| {
                         if let Some(item) = self.active_item() {
-                            div.v_flex()
+                            div.id("pane_placeholder")
+                                .v_flex()
                                 .size_full()
                                 .overflow_hidden()
                                 .child(self.toolbar.clone())
                                 .child(item.to_any())
                         } else {
-                            let placeholder = div.h_flex().size_full().justify_center();
+                            let placeholder = div
+                                .id("pane_placeholder")
+                                .h_flex()
+                                .size_full()
+                                .justify_center()
+                                .on_click(cx.listener(
+                                    move |this, event: &ClickEvent, window, cx| {
+                                        if event.up.click_count == 2 {
+                                            window.dispatch_action(
+                                                this.double_click_dispatch_action.boxed_clone(),
+                                                cx,
+                                            );
+                                        }
+                                    },
+                                ));
                             if has_worktrees {
                                 placeholder
                             } else {

@@ -1,5 +1,6 @@
 use crate::{
-    AssistantPanel, AssistantPanelEvent, CycleNextInlineAssist, CyclePreviousInlineAssist,
+    Assistant, AssistantPanel, AssistantPanelEvent, CycleNextInlineAssist,
+    CyclePreviousInlineAssist,
 };
 use anyhow::{anyhow, Context as _, Result};
 use assistant_context_editor::{humanize_token_count, RequestType};
@@ -3555,7 +3556,7 @@ impl CodeActionProvider for AssistantCodeActionProvider {
         _: &mut Window,
         cx: &mut App,
     ) -> Task<Result<Vec<CodeAction>>> {
-        if !AssistantSettings::get_global(cx).enabled {
+        if !Assistant::enabled(cx) {
             return Task::ready(Ok(Vec::new()));
         }
 
@@ -3712,7 +3713,7 @@ mod tests {
         language_settings, tree_sitter_rust, Buffer, Language, LanguageConfig, LanguageMatcher,
         Point,
     };
-    use language_model::LanguageModelRegistry;
+    use language_model::{LanguageModelRegistry, TokenUsage};
     use rand::prelude::*;
     use serde::Serialize;
     use settings::SettingsStore;
@@ -4091,6 +4092,7 @@ mod tests {
                 future::ready(Ok(LanguageModelTextStream {
                     message_id: None,
                     stream: chunks_rx.map(Ok).boxed(),
+                    last_token_usage: Arc::new(Mutex::new(TokenUsage::default())),
                 })),
                 cx,
             );
