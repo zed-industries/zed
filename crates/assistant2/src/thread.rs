@@ -167,13 +167,24 @@ impl LastRestoreCheckpoint {
 }
 
 /// A thread of conversation with the LLM.
+pub enum DetailedSummaryState {
+    NotGenerated,
+    Generating {
+        task: Task<Option<()>>,
+        message_id: MessageId,
+    },
+    Generated {
+        text: SharedString,
+        message_id: MessageId,
+    },
+}
+
 pub struct Thread {
     id: ThreadId,
     updated_at: DateTime<Utc>,
     summary: Option<SharedString>,
     pending_summary: Task<Option<()>>,
-    detailed_summary: Option<SharedString>,
-    pending_detailed_summary: Task<Option<()>>,
+    detailed_summary_state: DetailedSummaryState,
     messages: Vec<Message>,
     next_message_id: MessageId,
     context: BTreeMap<ContextId, ContextSnapshot>,
@@ -206,8 +217,7 @@ impl Thread {
             updated_at: Utc::now(),
             summary: None,
             pending_summary: Task::ready(None),
-            detailed_summary: None,
-            pending_detailed_summary: Task::ready(None),
+            detailed_summary_state: DetailedSummaryState::NotGenerated,
             messages: Vec::new(),
             next_message_id: MessageId(0),
             context: BTreeMap::default(),
@@ -257,8 +267,7 @@ impl Thread {
             updated_at: serialized.updated_at,
             summary: Some(serialized.summary),
             pending_summary: Task::ready(None),
-            detailed_summary: None,
-            pending_detailed_summary: Task::ready(None),
+            detailed_summary_state: DetailedSummaryState::NotGenerated,
             messages: serialized
                 .messages
                 .into_iter()
@@ -328,12 +337,15 @@ impl Thread {
     }
 
     pub fn detailed_summary(&self) -> Option<SharedString> {
-        self.detailed_summary.clone()
+        if let DetailedSummaryState::Generated { text, .. } = &self.detailed_summary_state {
+            Some(text.clone())
+        } else {
+            None
+        }
     }
 
     pub fn detailed_summary_or_text(&self) -> SharedString {
-        self.detailed_summary
-            .clone()
+        self.detailed_summary()
             .unwrap_or_else(|| self.text().into())
     }
 
@@ -1173,12 +1185,25 @@ impl Thread {
         });
     }
 
-    /// Generates a detailed summary of the thread conversation, including bullet points of facts found
-    /// and outcomes. This is more comprehensive than the regular summary.
     pub fn detailed_summarize(&mut self, cx: &mut Context<Self>) {
+        let Some(last_message_id) = self.messages.last().map(|message| message.id) else {
+            return;
+        };
+
+        match &self.detailed_summary_state {
+            DetailedSummaryState::Generating { message_id, .. }
+            | DetailedSummaryState::Generated { message_id, .. }
+                if *message_id == last_message_id =>
+            {
+                return;
+            }
+            _ => {}
+        }
+
         let Some(provider) = LanguageModelRegistry::read_global(cx).active_provider() else {
             return;
         };
+
         let Some(model) = LanguageModelRegistry::read_global(cx).active_model() else {
             return;
         };
@@ -1188,34 +1213,37 @@ impl Thread {
         }
 
         let mut request = self.to_completion_request(RequestKind::Summarize, cx);
+
         request.messages.push(LanguageModelRequestMessage {
             role: Role::User,
             content: vec![
                 "Generate a detailed summary of this conversation. Include:\n\
                 1. A brief overview of what was discussed\n\
-                2. A bulleted list of key facts or information discovered\n\
-                3. A bulleted list of outcomes or conclusions reached\n\
+                2. Key facts or information discovered\n\
+                3. Outcomes or conclusions reached\n\
+                4. Any action items or next steps if any\n\
                 Format it in Markdown with headings and bullet points."
                     .into(),
             ],
             cache: false,
         });
 
-        self.pending_detailed_summary = cx.spawn(async move |this, cx| {
+        let task = cx.spawn(async move |this, cx| {
             async move {
                 let stream = model.stream_completion_text(request, &cx);
                 let mut messages = stream.await?;
 
                 let mut new_detailed_summary = String::new();
-                while let Some(message) = messages.stream.next().await {
-                    let text = message?;
-                    new_detailed_summary.push_str(&text);
+
+                while let Some(chunk) = messages.stream.next().await {
+                    new_detailed_summary.push_str(&chunk?);
                 }
 
                 this.update(cx, |this, cx| {
-                    if !new_detailed_summary.is_empty() {
-                        this.detailed_summary = Some(new_detailed_summary.into());
-                    }
+                    this.detailed_summary_state = DetailedSummaryState::Generated {
+                        text: new_detailed_summary.into(),
+                        message_id: last_message_id,
+                    };
 
                     cx.emit(ThreadEvent::DetailedSummaryChanged);
                 })?;
@@ -1225,6 +1253,11 @@ impl Thread {
             .log_err()
             .await
         });
+
+        self.detailed_summary_state = DetailedSummaryState::Generating {
+            message_id: last_message_id,
+            task,
+        };
     }
 
     pub fn use_pending_tools(
