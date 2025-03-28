@@ -172,6 +172,8 @@ pub struct Thread {
     updated_at: DateTime<Utc>,
     summary: Option<SharedString>,
     pending_summary: Task<Option<()>>,
+    detailed_summary: Option<SharedString>,
+    pending_detailed_summary: Task<Option<()>>,
     messages: Vec<Message>,
     next_message_id: MessageId,
     context: BTreeMap<ContextId, ContextSnapshot>,
@@ -204,6 +206,8 @@ impl Thread {
             updated_at: Utc::now(),
             summary: None,
             pending_summary: Task::ready(None),
+            detailed_summary: None,
+            pending_detailed_summary: Task::ready(None),
             messages: Vec::new(),
             next_message_id: MessageId(0),
             context: BTreeMap::default(),
@@ -253,6 +257,8 @@ impl Thread {
             updated_at: serialized.updated_at,
             summary: Some(serialized.summary),
             pending_summary: Task::ready(None),
+            detailed_summary: None,
+            pending_detailed_summary: Task::ready(None),
             messages: serialized
                 .messages
                 .into_iter()
@@ -319,6 +325,16 @@ impl Thread {
     pub fn set_summary(&mut self, summary: impl Into<SharedString>, cx: &mut Context<Self>) {
         self.summary = Some(summary.into());
         cx.emit(ThreadEvent::SummaryChanged);
+    }
+
+    pub fn detailed_summary(&self) -> Option<SharedString> {
+        self.detailed_summary.clone()
+    }
+
+    pub fn detailed_summary_or_text(&self) -> SharedString {
+        self.detailed_summary
+            .clone()
+            .unwrap_or_else(|| self.text().into())
     }
 
     pub fn message(&self, id: MessageId) -> Option<&Message> {
@@ -1157,6 +1173,60 @@ impl Thread {
         });
     }
 
+    /// Generates a detailed summary of the thread conversation, including bullet points of facts found
+    /// and outcomes. This is more comprehensive than the regular summary.
+    pub fn detailed_summarize(&mut self, cx: &mut Context<Self>) {
+        let Some(provider) = LanguageModelRegistry::read_global(cx).active_provider() else {
+            return;
+        };
+        let Some(model) = LanguageModelRegistry::read_global(cx).active_model() else {
+            return;
+        };
+
+        if !provider.is_authenticated(cx) {
+            return;
+        }
+
+        let mut request = self.to_completion_request(RequestKind::Summarize, cx);
+        request.messages.push(LanguageModelRequestMessage {
+            role: Role::User,
+            content: vec![
+                "Generate a detailed summary of this conversation. Include:\n\
+                1. A brief overview of what was discussed\n\
+                2. A bulleted list of key facts or information discovered\n\
+                3. A bulleted list of outcomes or conclusions reached\n\
+                Format it in Markdown with headings and bullet points."
+                    .into(),
+            ],
+            cache: false,
+        });
+
+        self.pending_detailed_summary = cx.spawn(async move |this, cx| {
+            async move {
+                let stream = model.stream_completion_text(request, &cx);
+                let mut messages = stream.await?;
+
+                let mut new_detailed_summary = String::new();
+                while let Some(message) = messages.stream.next().await {
+                    let text = message?;
+                    new_detailed_summary.push_str(&text);
+                }
+
+                this.update(cx, |this, cx| {
+                    if !new_detailed_summary.is_empty() {
+                        this.detailed_summary = Some(new_detailed_summary.into());
+                    }
+
+                    cx.emit(ThreadEvent::DetailedSummaryChanged);
+                })?;
+
+                anyhow::Ok(())
+            }
+            .log_err()
+            .await
+        });
+    }
+
     pub fn use_pending_tools(
         &mut self,
         cx: &mut Context<Self>,
@@ -1574,6 +1644,7 @@ pub enum ThreadEvent {
     MessageEdited(MessageId),
     MessageDeleted(MessageId),
     SummaryChanged,
+    DetailedSummaryChanged,
     UsePendingTools,
     ToolFinished {
         #[allow(unused)]

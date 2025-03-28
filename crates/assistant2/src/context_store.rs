@@ -279,7 +279,7 @@ impl ContextStore {
 
     fn insert_thread(&mut self, thread: Entity<Thread>, cx: &App) {
         let id = self.next_context_id.post_inc();
-        let text = thread.read(cx).text().into();
+        let text = thread.read(cx).detailed_summary_or_text().into();
 
         self.threads.insert(thread.read(cx).id().clone(), id);
         self.context
@@ -670,7 +670,7 @@ fn refresh_thread_text(
     cx.spawn(async move |cx| {
         context_store
             .update(cx, |context_store, cx| {
-                let text = thread.read(cx).text().into();
+                let text = thread.read(cx).detailed_summary_or_text().into();
                 context_store.replace_context(AssistantContext::Thread(ThreadContext {
                     id,
                     thread,
