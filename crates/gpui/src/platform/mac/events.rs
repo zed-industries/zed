@@ -1,7 +1,7 @@
 use crate::{
-    KeyDownEvent, KeyUpEvent, Keystroke, Modifiers, ModifiersChangedEvent, MouseButton,
-    MouseDownEvent, MouseExitEvent, MouseMoveEvent, MouseUpEvent, NavigationDirection, Pixels,
-    PlatformInput, ScrollDelta, ScrollWheelEvent, TouchPhase,
+    KeyCode, KeyDownEvent, KeyUpEvent, Keystroke, Modifiers, ModifiersChangedEvent,
+    MouseButton, MouseDownEvent, MouseExitEvent, MouseMoveEvent, MouseUpEvent, NavigationDirection,
+    Pixels, PlatformInput, ScrollDelta, ScrollWheelEvent, TouchPhase,
     platform::mac::{
         LMGetKbdType, NSStringExt, TISCopyCurrentKeyboardLayoutInputSource,
         TISGetInputSourceProperty, UCKeyTranslate, kTISPropertyUnicodeKeyLayoutData,
@@ -292,6 +292,7 @@ unsafe fn parse_keystroke(native_event: id) -> Keystroke {
     unsafe {
         use cocoa::appkit::*;
 
+    let code = native_event.keyCode();
         let mut characters = native_event
             .charactersIgnoringModifiers()
             .to_str()
@@ -308,6 +309,10 @@ unsafe fn parse_keystroke(native_event: id) -> Keystroke {
             && first_char.map_or(true, |ch| {
                 !(NSUpArrowFunctionKey..=NSModeSwitchFunctionKey).contains(&ch)
             });
+    println!(
+        "characters: {}, code {}, {:?}",
+        characters, code, first_char
+    );
 
         #[allow(non_upper_case_globals)]
         let key = match first_char {
@@ -389,11 +394,13 @@ unsafe fn parse_keystroke(native_event: id) -> Keystroke {
                 let mut chars_with_shift =
                     chars_for_modified_key(native_event.keyCode(), SHIFT_MOD);
                 let always_use_cmd_layout = always_use_command_layout();
+            println!("always_use_cmd_layout: {}", always_use_cmd_layout);
 
                 // Handle Dvorak+QWERTY / Russian / Armenian
                 if command || always_use_cmd_layout {
                     let chars_with_cmd = chars_for_modified_key(native_event.keyCode(), CMD_MOD);
-                    let chars_with_both =
+                    println!("chars_with_cmd: {}", chars_with_cmd);
+                let chars_with_both =
                         chars_for_modified_key(native_event.keyCode(), CMD_MOD | SHIFT_MOD);
 
                     // We don't do this in the case that the shifted command key generates
@@ -446,7 +453,8 @@ unsafe fn parse_keystroke(native_event: id) -> Keystroke {
                 platform: command,
                 function,
             },
-            key,
+            code: KeyCode::Unknown,
+        face: key,
             key_char,
         }
     }

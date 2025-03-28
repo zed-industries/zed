@@ -350,7 +350,7 @@ impl MacPlatform {
                                 .initWithTitle_action_keyEquivalent_(
                                     ns_string(&name),
                                     selector,
-                                    ns_string(key_to_native(&keystroke.key).as_ref()),
+                                    ns_string(key_to_native(&keystroke.face).as_ref()),
                                 )
                                 .autorelease();
                             if MacPlatform::os_version().unwrap() >= SemanticVersion::new(12, 0, 0)
