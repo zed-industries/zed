@@ -1,9 +1,7 @@
 use super::RemoteVideoTrack;
-use anyhow::Result;
 use futures::StreamExt as _;
 use gpui::{
-    AppContext as _, Context, Empty, Entity, EventEmitter, IntoElement, Render, Subscription, Task,
-    Window,
+    AppContext as _, Context, Empty, Entity, EventEmitter, IntoElement, Render, Task, Window,
 };
 
 pub struct RemoteVideoTrackView {
@@ -51,7 +49,8 @@ impl RemoteVideoTrackView {
                     this.update(cx, |this, cx| {
                         this.latest_frame = Some(frame);
                         cx.notify();
-                    })?;
+                    })
+                    .ok();
                 }
                 this.update(cx, |_this, cx| cx.emit(RemoteVideoTrackViewEvent::Close))
                     .ok();
