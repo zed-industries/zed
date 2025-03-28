@@ -289,10 +289,7 @@ impl Element for Img {
                             if let Some(asset_id) = self.source.asset_id() {
                                 // Log asset_id and source to frame, to help window draw to
                                 // remove unused assets cache in frame.
-                                window
-                                    .next_frame
-                                    .asset_sources
-                                    .insert(asset_id, data.clone());
+                                window.next_frame.asset_sources.insert(asset_id);
                             }
 
                             if let Some(state) = &mut state {

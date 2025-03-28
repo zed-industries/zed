@@ -500,7 +500,7 @@ pub(crate) struct Frame {
     pub(crate) input_handlers: Vec<Option<PlatformInputHandler>>,
     pub(crate) tooltip_requests: Vec<Option<TooltipRequest>>,
     pub(crate) cursor_styles: Vec<CursorStyleRequest>,
-    pub(crate) asset_sources: FxHashMap<(TypeId, u64), Arc<RenderImage>>,
+    pub(crate) asset_sources: FxHashSet<(TypeId, u64)>,
     #[cfg(any(test, feature = "test-support"))]
     pub(crate) debug_bounds: FxHashMap<String, Bounds<Pixels>>,
 }
@@ -540,7 +540,7 @@ impl Frame {
             input_handlers: Vec::new(),
             tooltip_requests: Vec::new(),
             cursor_styles: Vec::new(),
-            asset_sources: FxHashMap::default(),
+            asset_sources: FxHashSet::default(),
 
             #[cfg(any(test, feature = "test-support"))]
             debug_bounds: FxHashMap::default(),
@@ -1601,10 +1601,9 @@ impl Window {
         let rendered_sources = mem::take(&mut self.rendered_frame.asset_sources);
         let current_sources = self.next_frame.asset_sources.clone();
 
-        for (id, data) in rendered_sources {
-            if !current_sources.contains_key(&id) {
+        for id in rendered_sources {
+            if !current_sources.get(&id).is_none() {
                 cx.loading_assets.remove(&id);
-                _ = self.drop_image(data);
             }
         }
     }
