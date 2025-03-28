@@ -1,5 +1,6 @@
 use std::fmt::Write as _;
 use std::io::Write;
+use std::ops::Range;
 use std::sync::Arc;
 
 use anyhow::{Context as _, Result};
@@ -786,6 +787,18 @@ impl Thread {
         self.stream_completion(request, model, cx);
     }
 
+    pub fn used_tools_since_last_user_message(&self) -> bool {
+        for message in self.messages.iter().rev() {
+            if self.tool_use.message_has_tool_results(message.id) {
+                return true;
+            } else if message.role == Role::User {
+                return false;
+            }
+        }
+
+        false
+    }
+
     pub fn to_completion_request(
         &self,
         request_kind: RequestKind,
@@ -835,6 +848,9 @@ impl Thread {
                 }
                 RequestKind::Summarize => {
                     // We don't care about tool use during summarization.
+                    if self.tool_use.message_has_tool_results(message.id) {
+                        continue;
+                    }
                 }
             }
 
@@ -1126,7 +1142,10 @@ impl Thread {
         request.messages.push(LanguageModelRequestMessage {
             role: Role::User,
             content: vec![
-                "Generate a concise 3-7 word title for this conversation, omitting punctuation. Go straight to the title, without any preamble and prefix like `Here's a concise suggestion:...` or `Title:`"
+                "Generate a concise 3-7 word title for this conversation, omitting punctuation. \
+                 Go straight to the title, without any preamble and prefix like `Here's a concise suggestion:...` or `Title:`. \
+                 If the conversation is about a specific subject, include it in the title. \
+                 Be descriptive. DO NOT speak in the first person."
                     .into(),
             ],
             cache: false,
@@ -1223,7 +1242,7 @@ impl Thread {
         input: serde_json::Value,
         messages: &[LanguageModelRequestMessage],
         tool: Arc<dyn Tool>,
-        cx: &mut Context<'_, Thread>,
+        cx: &mut Context<Thread>,
     ) {
         let task = self.spawn_tool_use(tool_use_id.clone(), messages, input, tool, cx);
         self.tool_use
@@ -1509,6 +1528,18 @@ impl Thread {
         }
 
         Ok(String::from_utf8_lossy(&markdown).to_string())
+    }
+
+    pub fn review_edits_in_range(
+        &mut self,
+        buffer: Entity<language::Buffer>,
+        buffer_range: Range<language::Anchor>,
+        accept: bool,
+        cx: &mut Context<Self>,
+    ) {
+        self.action_log.update(cx, |action_log, cx| {
+            action_log.review_edits_in_range(buffer, buffer_range, accept, cx)
+        });
     }
 
     pub fn action_log(&self) -> &Entity<ActionLog> {

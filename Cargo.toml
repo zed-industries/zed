@@ -87,7 +87,6 @@ members = [
     "crates/languages",
     "crates/livekit_api",
     "crates/livekit_client",
-    "crates/livekit_client_macos",
     "crates/lmstudio",
     "crates/lsp",
     "crates/markdown",
@@ -292,7 +291,6 @@ language_tools = { path = "crates/language_tools" }
 languages = { path = "crates/languages" }
 livekit_api = { path = "crates/livekit_api" }
 livekit_client = { path = "crates/livekit_client" }
-livekit_client_macos = { path = "crates/livekit_client_macos" }
 lmstudio = { path = "crates/lmstudio" }
 lsp = { path = "crates/lsp" }
 markdown = { path = "crates/markdown" }
@@ -413,15 +411,16 @@ blade-util = { git = "https://github.com/kvark/blade", rev = "b16f5c7bd873c7126f
 naga = { version = "23.1.0", features = ["wgsl-in"] }
 blake3 = "1.5.3"
 bytes = "1.0"
-cargo_metadata = "0.19"
+cargo_metadata = { git = "https://github.com/zed-industries/cargo_metadata", rev = "ce8171bad673923d61a77b6761d0dc4aff63398a"}
 cargo_toml = "0.21"
 chrono = { version = "0.4", features = ["serde"] }
 circular-buffer = "1.0"
 clap = { version = "4.4", features = ["derive"] }
 cocoa = "0.26"
 cocoa-foundation = "0.2.0"
+core-video = { version = "0.4.3", features = ["metal"] }
 convert_case = "0.8.0"
-core-foundation = "0.9.3"
+core-foundation = "0.10.0"
 core-foundation-sys = "0.8.6"
 ctor = "0.4.0"
 dashmap = "6.0"
@@ -459,11 +458,6 @@ libc = "0.2"
 libsqlite3-sys = { version = "0.30.1", features = ["bundled"] }
 linkify = "0.10.0"
 linkme = "0.3.31"
-livekit = { git = "https://github.com/zed-industries/livekit-rust-sdks", rev = "811ceae29fabee455f110c56cd66b3f49a7e5003", features = [
-    "dispatcher",
-    "services-dispatcher",
-    "rustls-tls-native-roots",
-], default-features = false }
 log = { version = "0.4.16", features = ["kv_unstable_serde", "serde"] }
 markup5ever_rcdom = "0.3.0"
 mlua = { version = "0.10", features = ["lua54", "vendored", "async", "send"] }
@@ -552,6 +546,7 @@ time = { version = "0.3", features = [
 tiny_http = "0.8"
 toml = "0.8"
 tokio = { version = "1" }
+tokio-tungstenite = { version = "0.26", features = ["__rustls-tls"]}
 tower-http = "0.4.4"
 tree-sitter = { version = "0.25.3", features = ["wasm"] }
 tree-sitter-bash = "0.23"
@@ -597,7 +592,7 @@ which = "6.0.0"
 wit-component = "0.221"
 zed_llm_client = "0.4"
 zstd = "0.11"
-metal = "0.31"
+metal = "0.29"
 
 [workspace.dependencies.async-stripe]
 git = "https://github.com/zed-industries/async-stripe"

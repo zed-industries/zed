@@ -358,7 +358,7 @@ impl NotificationStore {
         &mut self,
         notifications: impl IntoIterator<Item = (u64, Option<NotificationEntry>)>,
         is_new: bool,
-        cx: &mut Context<'_, NotificationStore>,
+        cx: &mut Context<NotificationStore>,
     ) {
         let mut cursor = self.notifications.cursor::<(NotificationId, Count)>(&());
         let mut new_notifications = SumTree::default();

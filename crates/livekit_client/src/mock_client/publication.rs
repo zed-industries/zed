@@ -1,54 +1,30 @@
-use super::*;
+use gpui::App;
 
-#[derive(Clone, Debug)]
-pub enum TrackPublication {
-    Local(LocalTrackPublication),
-    Remote(RemoteTrackPublication),
-}
+use crate::{test::WeakRoom, RemoteTrack, TrackSid};
 
 #[derive(Clone, Debug)]
 pub struct LocalTrackPublication {
-    #[cfg(not(all(target_os = "windows", target_env = "gnu")))]
     pub(crate) sid: TrackSid,
     pub(crate) room: WeakRoom,
 }
 
 #[derive(Clone, Debug)]
 pub struct RemoteTrackPublication {
-    #[cfg(not(all(target_os = "windows", target_env = "gnu")))]
     pub(crate) sid: TrackSid,
     pub(crate) room: WeakRoom,
     pub(crate) track: RemoteTrack,
 }
 
-#[cfg(not(all(target_os = "windows", target_env = "gnu")))]
-impl TrackPublication {
-    pub fn sid(&self) -> TrackSid {
-        match self {
-            TrackPublication::Local(track) => track.sid(),
-            TrackPublication::Remote(track) => track.sid(),
-        }
-    }
-
-    pub fn is_muted(&self) -> bool {
-        match self {
-            TrackPublication::Local(track) => track.is_muted(),
-            TrackPublication::Remote(track) => track.is_muted(),
-        }
-    }
-}
-
-#[cfg(not(all(target_os = "windows", target_env = "gnu")))]
 impl LocalTrackPublication {
     pub fn sid(&self) -> TrackSid {
         self.sid.clone()
     }
 
-    pub fn mute(&self) {
+    pub fn mute(&self, _cx: &App) {
         self.set_mute(true)
     }
 
-    pub fn unmute(&self) {
+    pub fn unmute(&self, _cx: &App) {
         self.set_mute(false)
     }
 
@@ -71,7 +47,6 @@ impl LocalTrackPublication {
     }
 }
 
-#[cfg(not(all(target_os = "windows", target_env = "gnu")))]
 impl RemoteTrackPublication {
     pub fn sid(&self) -> TrackSid {
         self.sid.clone()
@@ -81,8 +56,8 @@ impl RemoteTrackPublication {
         Some(self.track.clone())
     }
 
-    pub fn kind(&self) -> TrackKind {
-        self.track.kind()
+    pub fn is_audio(&self) -> bool {
+        matches!(self.track, RemoteTrack::Audio(_))
     }
 
     pub fn is_muted(&self) -> bool {
@@ -103,7 +78,7 @@ impl RemoteTrackPublication {
         }
     }
 
-    pub fn set_enabled(&self, enabled: bool) {
+    pub fn set_enabled(&self, enabled: bool, _cx: &App) {
         if let Some(room) = self.room.upgrade() {
             let paused_audio_tracks = &mut room.0.lock().paused_audio_tracks;
             if enabled {
@@ -111,6 +86,15 @@ impl RemoteTrackPublication {
             } else {
                 paused_audio_tracks.insert(self.sid.clone());
             }
+        }
+    }
+}
+
+impl RemoteTrack {
+    pub fn set_enabled(&self, enabled: bool, _cx: &App) {
+        match self {
+            RemoteTrack::Audio(remote_audio_track) => remote_audio_track.set_enabled(enabled),
+            RemoteTrack::Video(remote_video_track) => remote_video_track.set_enabled(enabled),
         }
     }
 }

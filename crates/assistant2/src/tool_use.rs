@@ -209,7 +209,7 @@ impl ToolUseState {
         if let Some(tool) = self.tools.tool(tool_name, cx) {
             tool.ui_text(input).into()
         } else {
-            "Unknown tool".into()
+            format!("Unknown tool {tool_name:?}").into()
         }
     }
 

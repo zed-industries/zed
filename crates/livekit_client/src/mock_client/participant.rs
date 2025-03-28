@@ -1,26 +1,24 @@
-use super::*;
-
-#[derive(Clone, Debug)]
-pub enum Participant {
-    Local(LocalParticipant),
-    Remote(RemoteParticipant),
-}
+use crate::{
+    test::{Room, WeakRoom},
+    AudioStream, LocalAudioTrack, LocalTrackPublication, LocalVideoTrack, Participant,
+    ParticipantIdentity, RemoteTrack, RemoteTrackPublication, TrackSid,
+};
+use anyhow::Result;
+use collections::HashMap;
+use gpui::{AsyncApp, ScreenCaptureSource, ScreenCaptureStream};
 
 #[derive(Clone, Debug)]
 pub struct LocalParticipant {
-    #[cfg(not(all(target_os = "windows", target_env = "gnu")))]
-    pub(super) identity: ParticipantIdentity,
-    pub(super) room: Room,
+    pub(crate) identity: ParticipantIdentity,
+    pub(crate) room: Room,
 }
 
 #[derive(Clone, Debug)]
 pub struct RemoteParticipant {
-    #[cfg(not(all(target_os = "windows", target_env = "gnu")))]
-    pub(super) identity: ParticipantIdentity,
-    pub(super) room: WeakRoom,
+    pub(crate) identity: ParticipantIdentity,
+    pub(crate) room: WeakRoom,
 }
 
-#[cfg(not(all(target_os = "windows", target_env = "gnu")))]
 impl Participant {
     pub fn identity(&self) -> ParticipantIdentity {
         match self {
@@ -30,41 +28,53 @@ impl Participant {
     }
 }
 
-#[cfg(not(all(target_os = "windows", target_env = "gnu")))]
 impl LocalParticipant {
-    pub async fn unpublish_track(&self, track: &TrackSid) -> Result<()> {
+    pub async fn unpublish_track(&self, track: TrackSid, _cx: &AsyncApp) -> Result<()> {
         self.room
             .test_server()
-            .unpublish_track(self.room.token(), track)
+            .unpublish_track(self.room.token(), &track)
             .await
     }
 
-    pub async fn publish_track(
+    pub(crate) async fn publish_microphone_track(
         &self,
-        track: LocalTrack,
-        _options: TrackPublishOptions,
-    ) -> Result<LocalTrackPublication> {
+        _cx: &AsyncApp,
+    ) -> Result<(LocalTrackPublication, AudioStream)> {
         let this = self.clone();
-        let track = track.clone();
         let server = this.room.test_server();
-        let sid = match track {
-            LocalTrack::Video(track) => {
-                server.publish_video_track(this.room.token(), track).await?
-            }
-            LocalTrack::Audio(track) => {
-                server
-                    .publish_audio_track(this.room.token(), &track)
-                    .await?
-            }
-        };
-        Ok(LocalTrackPublication {
-            room: self.room.downgrade(),
-            sid,
-        })
+        let sid = server
+            .publish_audio_track(this.room.token(), &LocalAudioTrack {})
+            .await?;
+
+        Ok((
+            LocalTrackPublication {
+                room: self.room.downgrade(),
+                sid,
+            },
+            AudioStream {},
+        ))
+    }
+
+    pub async fn publish_screenshare_track(
+        &self,
+        _source: &dyn ScreenCaptureSource,
+        _cx: &mut AsyncApp,
+    ) -> Result<(LocalTrackPublication, Box<dyn ScreenCaptureStream>)> {
+        let this = self.clone();
+        let server = this.room.test_server();
+        let sid = server
+            .publish_video_track(this.room.token(), LocalVideoTrack {})
+            .await?;
+        Ok((
+            LocalTrackPublication {
+                room: self.room.downgrade(),
+                sid,
+            },
+            Box::new(TestScreenCaptureStream {}),
+        ))
     }
 }
 
-#[cfg(not(all(target_os = "windows", target_env = "gnu")))]
 impl RemoteParticipant {
     pub fn track_publications(&self) -> HashMap<TrackSid, RemoteTrackPublication> {
         if let Some(room) = self.room.upgrade() {
@@ -109,3 +119,7 @@ impl RemoteParticipant {
         self.identity.clone()
     }
 }
+
+struct TestScreenCaptureStream;
+
+impl gpui::ScreenCaptureStream for TestScreenCaptureStream {}

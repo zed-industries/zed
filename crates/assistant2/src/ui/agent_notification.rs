@@ -1,24 +1,29 @@
 use gpui::{
-    point, App, Context, EventEmitter, IntoElement, PlatformDisplay, Size, Window,
-    WindowBackgroundAppearance, WindowBounds, WindowDecorations, WindowKind, WindowOptions,
+    linear_color_stop, linear_gradient, point, App, Context, EventEmitter, IntoElement,
+    PlatformDisplay, Size, Window, WindowBackgroundAppearance, WindowBounds, WindowDecorations,
+    WindowKind, WindowOptions,
 };
 use release_channel::ReleaseChannel;
 use std::rc::Rc;
 use theme;
 use ui::{prelude::*, Render};
 
-pub struct ToolReadyPopUp {
+pub struct AgentNotification {
+    title: SharedString,
     caption: SharedString,
     icon: IconName,
-    icon_color: Color,
 }
 
-impl ToolReadyPopUp {
-    pub fn new(caption: impl Into<SharedString>, icon: IconName, icon_color: Color) -> Self {
+impl AgentNotification {
+    pub fn new(
+        title: impl Into<SharedString>,
+        caption: impl Into<SharedString>,
+        icon: IconName,
+    ) -> Self {
         Self {
+            title: title.into(),
             caption: caption.into(),
             icon,
-            icon_color,
         }
     }
 
@@ -58,19 +63,22 @@ impl ToolReadyPopUp {
     }
 }
 
-pub enum ToolReadyPopupEvent {
+pub enum AgentNotificationEvent {
     Accepted,
     Dismissed,
 }
 
-impl EventEmitter<ToolReadyPopupEvent> for ToolReadyPopUp {}
+impl EventEmitter<AgentNotificationEvent> for AgentNotification {}
 
-impl Render for ToolReadyPopUp {
+impl Render for AgentNotification {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let ui_font = theme::setup_ui_font(window, cx);
         let line_height = window.line_height();
 
+        let bg = cx.theme().colors().elevated_surface_background;
+
         h_flex()
+            .id("agent-notification")
             .size_full()
             .p_3()
             .gap_4()
@@ -80,14 +88,18 @@ impl Render for ToolReadyPopUp {
             .font(ui_font)
             .border_color(cx.theme().colors().border)
             .rounded_xl()
+            .on_click(cx.listener(|_, _, _, cx| {
+                cx.emit(AgentNotificationEvent::Accepted);
+            }))
             .child(
                 h_flex()
                     .items_start()
                     .gap_2()
+                    .flex_1()
                     .child(
                         h_flex().h(line_height).justify_center().child(
                             Icon::new(self.icon)
-                                .color(self.icon_color)
+                                .color(Color::Muted)
                                 .size(IconSize::Small),
                         ),
                     )
@@ -95,33 +107,47 @@ impl Render for ToolReadyPopUp {
                         v_flex()
                             .child(
                                 div()
-                                    .text_size(px(16.))
+                                    .text_size(px(14.))
                                     .text_color(cx.theme().colors().text)
-                                    .child("Agent Panel"),
+                                    .child(self.title.clone()),
                             )
                             .child(
                                 div()
-                                    .text_size(px(14.))
+                                    .text_size(px(12.))
                                     .text_color(cx.theme().colors().text_muted)
-                                    .child(self.caption.clone()),
+                                    .max_w(px(340.))
+                                    .truncate()
+                                    .child(self.caption.clone())
+                                    .relative()
+                                    .child(
+                                        div().h_full().absolute().w_8().bottom_0().right_0().bg(
+                                            linear_gradient(
+                                                90.,
+                                                linear_color_stop(bg, 1.),
+                                                linear_color_stop(bg.opacity(0.2), 0.),
+                                            ),
+                                        ),
+                                    ),
                             ),
                     ),
             )
             .child(
-                h_flex()
-                    .gap_0p5()
+                v_flex()
+                    .gap_1()
+                    .items_center()
                     .child(
                         Button::new("open", "View Panel")
                             .style(ButtonStyle::Tinted(ui::TintColor::Accent))
+                            .full_width()
                             .on_click({
                                 cx.listener(move |_this, _event, _, cx| {
-                                    cx.emit(ToolReadyPopupEvent::Accepted);
+                                    cx.emit(AgentNotificationEvent::Accepted);
                                 })
                             }),
                     )
-                    .child(Button::new("dismiss", "Dismiss").on_click({
+                    .child(Button::new("dismiss", "Dismiss").full_width().on_click({
                         cx.listener(move |_, _event, _, cx| {
-                            cx.emit(ToolReadyPopupEvent::Dismissed);
+                            cx.emit(AgentNotificationEvent::Dismissed);
                         })
                     })),
             )

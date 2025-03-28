@@ -1859,7 +1859,7 @@ impl Terminal {
         Task::ready(())
     }
 
-    fn register_task_finished(&mut self, error_code: Option<i32>, cx: &mut Context<'_, Terminal>) {
+    fn register_task_finished(&mut self, error_code: Option<i32>, cx: &mut Context<Terminal>) {
         self.completion_tx.try_send(()).ok();
         let task = match &mut self.task {
             Some(task) => task,
