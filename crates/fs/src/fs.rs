@@ -203,6 +203,11 @@ pub struct Metadata {
 pub struct MTime(SystemTime);
 
 impl MTime {
+    /// Returns the current time.
+    pub fn now() -> Self {
+        MTime(SystemTime::now())
+    }
+
     /// Conversion intended for persistence and testing.
     pub fn from_seconds_and_nanos(secs: u64, nanos: u32) -> Self {
         MTime(UNIX_EPOCH + Duration::new(secs, nanos))

@@ -2,7 +2,9 @@ use anyhow::{Context as _, Result};
 use buffer_diff::BufferDiff;
 use collections::{BTreeMap, HashMap, HashSet};
 use gpui::{App, AppContext, AsyncApp, Context, Entity, Subscription, Task, WeakEntity};
-use language::{Buffer, BufferEvent, OffsetRangeExt, Operation, TextBufferSnapshot, ToOffset};
+use language::{
+    Buffer, BufferEvent, DiskState, OffsetRangeExt, Operation, TextBufferSnapshot, ToOffset,
+};
 use std::{ops::Range, sync::Arc};
 
 /// Tracks actions performed by tools in a thread
@@ -105,16 +107,25 @@ impl ActionLog {
         event: &BufferEvent,
         cx: &mut Context<Self>,
     ) {
+        match event {
+            BufferEvent::Operation { operation, .. } => {
+                self.handle_buffer_operation(buffer, operation, cx)
+            }
+            BufferEvent::FileHandleChanged => {
+                self.handle_buffer_file_changed(buffer, cx);
+            }
+            _ => {}
+        };
+    }
+
+    fn handle_buffer_operation(
+        &mut self,
+        buffer: Entity<Buffer>,
+        operation: &Operation,
+        cx: &mut Context<Self>,
+    ) {
         let Some(tracked_buffer) = self.tracked_buffers.get_mut(&buffer) else {
             return;
-        };
-        let operation = match event {
-            BufferEvent::Operation { operation, .. } => operation,
-            BufferEvent::FileHandleChanged => {
-                tracked_buffer.schedule_diff_update();
-                return;
-            }
-            _ => return,
         };
         let Operation::Buffer(text::Operation::Edit(operation)) = operation else {
             return;
@@ -134,13 +145,10 @@ impl ActionLog {
             return;
         }
 
-        // If the buffer operation overlaps with any tracked edits, mark it as unreviewed.
-        // If it intersects an already-accepted id, mark that edit as unreviewed again.
         let buffer = buffer.read(cx);
         let operation_edit_ranges = buffer
             .edited_ranges_for_edit_ids::<usize>([&operation.timestamp])
             .collect::<Vec<_>>();
-
         let intersects_unreviewed_edits = ranges_intersect(
             operation_edit_ranges.iter().cloned(),
             buffer.edited_ranges_for_edit_ids::<usize>(unreviewed_edit_ids.iter()),
@@ -156,6 +164,8 @@ impl ActionLog {
             }
         }
 
+        // If the buffer operation overlaps with any tracked edits, mark it as unreviewed.
+        // If it intersects an already-accepted id, mark that edit as unreviewed again.
         if intersects_unreviewed_edits || !intersected_accepted_edits.is_empty() {
             unreviewed_edit_ids.insert(operation.timestamp);
             for accepted_edit_id in intersected_accepted_edits {
@@ -163,6 +173,45 @@ impl ActionLog {
                 accepted_edit_ids.remove(&accepted_edit_id);
             }
             tracked_buffer.schedule_diff_update();
+        }
+    }
+
+    fn handle_buffer_file_changed(&mut self, buffer: Entity<Buffer>, cx: &mut Context<Self>) {
+        let Some(tracked_buffer) = self.tracked_buffers.get_mut(&buffer) else {
+            return;
+        };
+
+        match tracked_buffer.change {
+            Change::Deleted { .. } => {
+                if buffer
+                    .read(cx)
+                    .file()
+                    .map_or(false, |file| file.disk_state() != DiskState::Deleted)
+                {
+                    // If the buffer had been deleted by a tool, but it got
+                    // resurrected externally, we want to clear the changes we
+                    // were tracking and reset the buffer's state.
+                    tracked_buffer.change = Change::Edited {
+                        unreviewed_edit_ids: HashSet::default(),
+                        accepted_edit_ids: HashSet::default(),
+                        initial_content: Some(buffer.read(cx).text_snapshot()),
+                    };
+                }
+                tracked_buffer.schedule_diff_update();
+            }
+            Change::Edited { .. } => {
+                if buffer
+                    .read(cx)
+                    .file()
+                    .map_or(false, |file| file.disk_state() == DiskState::Deleted)
+                {
+                    // If the buffer had been edited by a tool, but it got
+                    // deleted externally, we want to stop tracking it.
+                    self.tracked_buffers.remove(&buffer);
+                } else {
+                    tracked_buffer.schedule_diff_update();
+                }
+            }
         }
     }
 
@@ -525,10 +574,17 @@ pub struct ChangedBuffer {
 
 #[cfg(test)]
 mod tests {
+    use std::path::Path;
+
     use super::*;
     use buffer_diff::DiffHunkStatusKind;
     use gpui::TestAppContext;
-    use language::Point;
+    use language::{DiskState, Point};
+    use project::{FakeFs, Fs, MTime, Project, RemoveOptions};
+    use serde_json::json;
+    use settings::SettingsStore;
+    use text::BufferId;
+    use util::path;
 
     #[gpui::test]
     async fn test_edit_review(cx: &mut TestAppContext) {
@@ -740,6 +796,117 @@ mod tests {
                 }],
             )]
         );
+    }
+
+    #[gpui::test]
+    async fn test_deletion(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+            language::init(cx);
+            Project::init_settings(cx);
+        });
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/dir"),
+            json!({"file1": "lorem\n", "file2": "ipsum\n"}),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+        let file1 = project
+            .read_with(cx, |project, cx| project.find_project_path("dir/file1", cx))
+            .unwrap();
+        let file2 = project
+            .read_with(cx, |project, cx| project.find_project_path("dir/file2", cx))
+            .unwrap();
+
+        let action_log = cx.new(|_| ActionLog::new());
+        let buffer1 = project
+            .update(cx, |project, cx| project.open_buffer(file1.clone(), cx))
+            .await
+            .unwrap();
+        let buffer2 = project
+            .update(cx, |project, cx| project.open_buffer(file2.clone(), cx))
+            .await
+            .unwrap();
+
+        action_log.update(cx, |log, cx| log.buffer_read(buffer1.clone(), cx));
+        action_log.update(cx, |log, cx| log.buffer_read(buffer2.clone(), cx));
+        project
+            .update(cx, |project, cx| {
+                project.delete_file(file1.clone(), false, cx)
+            })
+            .unwrap()
+            .await
+            .unwrap();
+        project
+            .update(cx, |project, cx| {
+                project.delete_file(file2.clone(), false, cx)
+            })
+            .unwrap()
+            .await
+            .unwrap();
+        action_log.update(cx, |log, cx| log.buffer_deleted(buffer1.clone(), cx));
+        action_log.update(cx, |log, cx| log.buffer_deleted(buffer2.clone(), cx));
+        cx.run_until_parked();
+        assert_eq!(
+            unreviewed_hunks(&action_log, cx),
+            vec![
+                (
+                    buffer1.clone(),
+                    vec![HunkStatus {
+                        range: Point::new(0, 0)..Point::new(0, 0),
+                        review_status: ReviewStatus::Unreviewed,
+                        diff_status: DiffHunkStatusKind::Deleted,
+                        old_text: "lorem\n".into(),
+                    }]
+                ),
+                (
+                    buffer2.clone(),
+                    vec![HunkStatus {
+                        range: Point::new(0, 0)..Point::new(0, 0),
+                        review_status: ReviewStatus::Unreviewed,
+                        diff_status: DiffHunkStatusKind::Deleted,
+                        old_text: "ipsum\n".into(),
+                    }],
+                )
+            ]
+        );
+
+        // Simulate file1 being recreated externally.
+        fs.insert_file(Path::new("/dir/file1"), "LOREM".as_bytes().to_vec())
+            .await;
+        // Simulate file2 being recreated by a tool.
+        let edit_id = buffer2.update(cx, |buffer, cx| buffer.set_text("IPSUM", cx));
+        action_log.update(cx, |log, cx| {
+            log.buffer_created(buffer2.clone(), edit_id, cx)
+        });
+        project
+            .update(cx, |project, cx| project.save_buffer(buffer2.clone(), cx))
+            .await
+            .unwrap();
+        cx.run_until_parked();
+        assert_eq!(
+            unreviewed_hunks(&action_log, cx),
+            vec![(
+                buffer2.clone(),
+                vec![HunkStatus {
+                    range: Point::new(0, 0)..Point::new(0, 5),
+                    review_status: ReviewStatus::Unreviewed,
+                    diff_status: DiffHunkStatusKind::Modified,
+                    old_text: "ipsum\n".into(),
+                }],
+            )]
+        );
+
+        // Simulate file2 being deleted externally.
+        fs.remove_file(Path::new("/dir/file2"), RemoveOptions::default())
+            .await
+            .unwrap();
+        cx.run_until_parked();
+        assert_eq!(unreviewed_hunks(&action_log, cx), vec![]);
     }
 
     #[derive(Debug, Clone, PartialEq, Eq)]

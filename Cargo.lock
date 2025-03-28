@@ -709,7 +709,9 @@ dependencies = [
  "project",
  "serde",
  "serde_json",
+ "settings",
  "text",
+ "util",
 ]
 
 [[package]]
