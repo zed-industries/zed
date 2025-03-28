@@ -45,15 +45,16 @@ impl KeyBinding {
             .map(Keystroke::parse)
             .collect::<std::result::Result<_, _>>()?;
 
-        if let Some(equivalents) = key_equivalents {
-            for keystroke in keystrokes.iter_mut() {
-                if keystroke.key.chars().count() == 1 {
-                    if let Some(key) = equivalents.get(&keystroke.key.chars().next().unwrap()) {
-                        keystroke.key = key.to_string();
-                    }
-                }
-            }
-        }
+        // todo(zjk)
+        // if let Some(equivalents) = key_equivalents {
+        //     for keystroke in keystrokes.iter_mut() {
+        //         if keystroke.key.chars().count() == 1 {
+        //             if let Some(key) = equivalents.get(&keystroke.key.chars().next().unwrap()) {
+        //                 keystroke.key = key.to_string();
+        //             }
+        //         }
+        //     }
+        // }
 
         Ok(Self {
             keystrokes,
