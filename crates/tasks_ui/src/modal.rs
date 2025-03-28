@@ -15,9 +15,9 @@ use task::{
 use ui::{
     div, h_flex, v_flex, ActiveTheme, Button, ButtonCommon, ButtonSize, Clickable, Color,
     FluentBuilder as _, Icon, IconButton, IconButtonShape, IconName, IconSize, IntoElement,
-    KeyBinding, LabelSize, ListItem, ListItemSpacing, RenderOnce, Toggleable, Tooltip,
+    KeyBinding, Label, LabelSize, ListItem, ListItemSpacing, RenderOnce, Toggleable, Tooltip,
 };
-use util::ResultExt;
+use util::{truncate_and_trailoff, ResultExt};
 use workspace::{tasks::schedule_resolved_task, ModalView, Workspace};
 pub use zed_actions::{Rerun, Spawn};
 
@@ -185,6 +185,8 @@ impl Focusable for TasksModal {
 }
 
 impl ModalView for TasksModal {}
+
+const MAX_TAG_LEN: usize = 10;
 
 impl PickerDelegate for TasksModalDelegate {
     type ListItem = ListItem;
@@ -434,7 +436,25 @@ impl PickerDelegate for TasksModalDelegate {
             ListItem::new(SharedString::from(format!("tasks-modal-{ix}")))
                 .inset(true)
                 .start_slot::<Icon>(icon)
-                .end_slot::<AnyElement>(history_run_icon)
+                .end_slot::<AnyElement>(
+                    h_flex()
+                        .gap_1()
+                        .children(
+                            template
+                                .tags
+                                .iter()
+                                .map(|tag| {
+                                    Label::new(format!(
+                                        "#{}",
+                                        truncate_and_trailoff(tag, MAX_TAG_LEN)
+                                    ))
+                                })
+                                .collect::<Vec<_>>(),
+                        )
+                        .flex_none()
+                        .child(history_run_icon.unwrap())
+                        .into_any_element(),
+                )
                 .spacing(ListItemSpacing::Sparse)
                 .when_some(tooltip_label, |list_item, item_label| {
                     list_item.tooltip(move |_, _| item_label.clone())
