@@ -236,6 +236,9 @@ impl MessageEditor {
             thread
                 .update(cx, |thread, cx| {
                     let context = context_store.read(cx).snapshot(cx).collect::<Vec<_>>();
+                    thread.action_log().update(cx, |action_log, cx| {
+                        action_log.clear_reviewed_changes(cx);
+                    });
                     thread.insert_user_message(user_message, context, checkpoint, cx);
                     thread.send_to_model(model, request_kind, cx);
                 })
