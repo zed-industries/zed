@@ -689,7 +689,7 @@ impl AssistantPanel {
                 })
                 .unwrap_or_else(|| SharedString::from("Loading Summary…")),
             ActiveView::History => "History".into(),
-            ActiveView::Configuration => "Assistant Settings".into(),
+            ActiveView::Configuration => "Settings".into(),
         };
 
         h_flex()
