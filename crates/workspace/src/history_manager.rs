@@ -10,10 +10,10 @@ use crate::{SerializedWorkspaceLocation, WorkspaceId, WORKSPACE_DB};
 pub fn init(cx: &mut App) {
     let manager = cx.new(|_| HistoryManager::new());
     HistoryManager::set_global(manager.clone(), cx);
-    cx.subscribe(&manager, |this, event, cx| match event {
-        HistoryManagerEvent::Update => perform_update(this, cx),
-    })
-    .detach();
+    // cx.subscribe(&manager, |this, event, cx| match event {
+    //     HistoryManagerEvent::Update => perform_update(this, cx),
+    // })
+    // .detach();
     HistoryManager::init(manager, cx);
 }
 
@@ -96,6 +96,7 @@ impl HistoryManager {
                 .collect::<Vec<_>>();
             this.update(cx, |this, cx| {
                 this.history = recent_folders;
+                this.update_jump_list(cx);
             })
         })
         .detach();
@@ -110,33 +111,48 @@ impl HistoryManager {
         cx.set_global(GlobalHistoryManager(history_manager));
     }
 
-    pub fn update_history(&mut self, id: WorkspaceId, location: &SerializedWorkspaceLocation) {
+    pub fn update_history(
+        &mut self,
+        id: WorkspaceId,
+        location: &SerializedWorkspaceLocation,
+    ) -> bool {
         let entry = HistoryManagerEntry::new(id, location);
         if let Some(pos) = self.history.iter().position(|e| e.id == id) {
+            if pos == 0 {
+                return false;
+            }
             self.history.remove(pos);
         }
         self.history.insert(0, entry);
+        true
     }
 
-    pub fn update_jump_list(&self, cx: &mut App) {
+    pub fn delete_history(&mut self, id: WorkspaceId, cx: &App) {
+        let Some(pos) = self.history.iter().position(|e| e.id == id) else {
+            return;
+        };
+        self.history.remove(pos);
+        self.update_jump_list(cx);
+    }
+
+    pub fn update_jump_list(&mut self, cx: &App) {
+        println!("=> update_jump_list: {:#?}", self.history);
         let entries = self
             .history
             .iter()
             .map(|entry| &entry.path)
             .collect::<Vec<_>>();
         let user_removed = cx.update_jump_list(entries.as_slice());
-        let deleted_ids = self
-            .history
-            .iter()
-            .filter_map(|entry| {
+        let mut deleted_ids = Vec::new();
+        for idx in (0..self.history.len()).rev() {
+            if let Some(entry) = self.history.get(idx) {
                 if user_removed.contains(&entry.path) {
-                    Some(entry.id)
-                } else {
-                    None
+                    deleted_ids.push(entry.id);
+                    self.history.remove(idx);
                 }
-            })
-            .collect::<Vec<_>>();
-        cx.spawn(async move |cx| {
+            }
+        }
+        cx.spawn(async move |_| {
             for id in deleted_ids.iter() {
                 WORKSPACE_DB.delete_workspace_by_id(*id).await.log_err();
             }
