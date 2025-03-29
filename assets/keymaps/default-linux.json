@@ -629,7 +629,9 @@
     "bindings": {
       "ctrl-n": "assistant2::NewThread",
       "new": "assistant2::NewThread",
+      "ctrl-alt-n": "assistant2::NewPromptEditor",
       "ctrl-shift-h": "assistant2::OpenHistory",
+      "ctrl-alt-c": "assistant2::OpenConfiguration",
       "ctrl-i": "assistant2::ToggleProfileSelector",
       "ctrl-alt-/": "assistant::ToggleModelSelector",
       "ctrl-shift-a": "assistant2::ToggleContextPicker",

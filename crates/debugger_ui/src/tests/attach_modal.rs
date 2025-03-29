@@ -89,6 +89,8 @@ async fn test_show_attach_modal_and_select_process(
                         label: "attach example".into(),
                         initialize_args: None,
                         tcp_connection: Some(TCPHost::default()),
+                        locator: None,
+                        args: Default::default(),
                     },
                     vec![
                         Candidate {

@@ -165,6 +165,7 @@ pub struct Project {
     languages: Arc<LanguageRegistry>,
     debug_adapters: Arc<DapRegistry>,
     dap_store: Entity<DapStore>,
+
     breakpoint_store: Entity<BreakpointStore>,
     client: Arc<client::Client>,
     join_project_response_message_id: u32,
@@ -952,6 +953,7 @@ impl Project {
                 ssh_client: None,
                 breakpoint_store,
                 dap_store,
+
                 buffers_needing_diff: Default::default(),
                 git_diff_debouncer: DebouncedDelay::new(),
                 terminals: Terminals {
@@ -1450,6 +1452,12 @@ impl Project {
         }
     }
 
+    pub fn queue_debug_session(&mut self, config: DebugAdapterConfig, cx: &mut Context<Self>) {
+        if config.locator.is_none() {
+            self.start_debug_session(config, cx).detach_and_log_err(cx);
+        }
+    }
+
     pub fn start_debug_session(
         &mut self,
         config: DebugAdapterConfig,
@@ -1490,6 +1498,8 @@ impl Project {
             request: DebugRequestDisposition::UserConfigured(request),
             initialize_args: None,
             tcp_connection: None,
+            locator: None,
+            args: Default::default(),
         };
         let caps = caps.unwrap_or(Capabilities {
             supports_step_back: Some(false),

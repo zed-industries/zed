@@ -353,6 +353,28 @@ impl ActionLog {
         tracked_buffer.schedule_diff_update();
     }
 
+    /// Keep all edits across all buffers.
+    /// This is a more performant alternative to calling review_edits_in_range for each buffer.
+    pub fn keep_all_edits(&mut self) {
+        // Process all tracked buffers
+        for (_, tracked_buffer) in self.tracked_buffers.iter_mut() {
+            match &mut tracked_buffer.change {
+                Change::Deleted { reviewed, .. } => {
+                    *reviewed = true;
+                }
+                Change::Edited {
+                    unreviewed_edit_ids,
+                    accepted_edit_ids,
+                    ..
+                } => {
+                    accepted_edit_ids.extend(unreviewed_edit_ids.drain());
+                }
+            }
+
+            tracked_buffer.schedule_diff_update();
+        }
+    }
+
     /// Returns the set of buffers that contain changes that haven't been reviewed by the user.
     pub fn changed_buffers(&self, cx: &App) -> BTreeMap<Entity<Buffer>, ChangedBuffer> {
         self.tracked_buffers

@@ -39,17 +39,17 @@ tokio-tungstenite.workspace = true
 util.workspace = true
 
 [target.'cfg(not(all(target_os = "windows", target_env = "gnu")))'.dependencies]
-livekit = { rev = "102ebbb1ccfbdbcb7332d86dc30b1b1c8c01e4f8", git = "https://github.com/zed-industries/livekit-rust-sdks", features = ["__rustls-tls"]}
-libwebrtc = { rev = "102ebbb1ccfbdbcb7332d86dc30b1b1c8c01e4f8", git = "https://github.com/zed-industries/livekit-rust-sdks"}
+libwebrtc = { rev = "102ebbb1ccfbdbcb7332d86dc30b1b1c8c01e4f8", git = "https://github.com/zed-industries/livekit-rust-sdks" }
+livekit = { rev = "102ebbb1ccfbdbcb7332d86dc30b1b1c8c01e4f8", git = "https://github.com/zed-industries/livekit-rust-sdks", features = ["__rustls-tls"] }
 
 [target.'cfg(not(target_os = "macos"))'.dependencies]
 scap.workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]
 core-foundation.workspace = true
+core-video.workspace = true
 coreaudio-rs = "0.12.1"
 objc = "0.2"
-core-video.workspace = true
 
 [dev-dependencies]
 collections = { workspace = true, features = ["test-support"] }

@@ -1366,7 +1366,6 @@ async fn run_git_command(
         }
     } else {
         let ask_pass = AskPassSession::new(executor, ask_pass).await?;
-        let mut command = new_smol_command("git");
         command
             .env("GIT_ASKPASS", ask_pass.script_path())
             .env("SSH_ASKPASS", ask_pass.script_path())

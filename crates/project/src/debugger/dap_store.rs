@@ -1,11 +1,6 @@
 use super::{
     breakpoint_store::BreakpointStore,
-    // Will need to uncomment this once we implement rpc message handler again
-    // dap_command::{
-    //     ContinueCommand, DapCommand, DisconnectCommand, NextCommand, PauseCommand, RestartCommand,
-    //     RestartStackFrameCommand, StepBackCommand, StepCommand, StepInCommand, StepOutCommand,
-    //     TerminateCommand, TerminateThreadsCommand, VariablesCommand,
-    // },
+    locator_store::LocatorStore,
     session::{self, Session},
 };
 use crate::{debugger, worktree_store::WorktreeStore, ProjectEnvironment};
@@ -16,13 +11,10 @@ use dap::{
     adapters::{DapStatus, DebugAdapterName},
     client::SessionId,
     messages::Message,
-    requests::{
-        Completions, Evaluate, Request as _, RunInTerminal, SetExpression, SetVariable,
-        StartDebugging,
-    },
+    requests::{Completions, Evaluate, Request as _, RunInTerminal, StartDebugging},
     Capabilities, CompletionItem, CompletionsArguments, DapRegistry, ErrorResponse,
     EvaluateArguments, EvaluateArgumentsContext, EvaluateResponse, RunInTerminalRequestArguments,
-    SetExpressionArguments, SetVariableArguments, Source, StartDebuggingRequestArguments,
+    Source, StartDebuggingRequestArguments,
 };
 use fs::Fs;
 use futures::{
@@ -90,6 +82,7 @@ pub struct LocalDapStore {
     language_registry: Arc<LanguageRegistry>,
     debug_adapters: Arc<DapRegistry>,
     toolchain_store: Arc<dyn LanguageToolchainStore>,
+    locator_store: Arc<LocatorStore>,
     start_debugging_tx: futures::channel::mpsc::UnboundedSender<(SessionId, Message)>,
     _start_debugging_task: Task<()>,
 }
@@ -182,6 +175,7 @@ impl DapStore {
                 debug_adapters,
                 start_debugging_tx,
                 _start_debugging_task,
+                locator_store: Arc::from(LocatorStore::new()),
                 next_session_id: Default::default(),
             }),
             downstream_client: None,
@@ -327,7 +321,7 @@ impl DapStore {
 
     pub fn new_session(
         &mut self,
-        config: DebugAdapterConfig,
+        mut config: DebugAdapterConfig,
         worktree: &Entity<Worktree>,
         parent_session: Option<Entity<Session>>,
         cx: &mut Context<Self>,
@@ -357,22 +351,39 @@ impl DapStore {
         }
 
         let (initialized_tx, initialized_rx) = oneshot::channel();
+        let locator_store = local_store.locator_store.clone();
+        let debug_adapters = local_store.debug_adapters.clone();
 
-        let start_client_task = Session::local(
-            self.breakpoint_store.clone(),
-            session_id,
-            parent_session,
-            delegate,
-            config,
-            local_store.start_debugging_tx.clone(),
-            initialized_tx,
-            local_store.debug_adapters.clone(),
-            cx,
-        );
+        let start_debugging_tx = local_store.start_debugging_tx.clone();
 
-        let task = create_new_session(session_id, initialized_rx, start_client_task, cx);
+        let task = cx.spawn(async move |this, cx| {
+            if config.locator.is_some() {
+                locator_store.resolve_debug_config(&mut config).await?;
+            }
+
+            let start_client_task = this.update(cx, |this, cx| {
+                Session::local(
+                    this.breakpoint_store.clone(),
+                    session_id,
+                    parent_session,
+                    delegate,
+                    config,
+                    start_debugging_tx.clone(),
+                    initialized_tx,
+                    debug_adapters,
+                    cx,
+                )
+            })?;
+
+            this.update(cx, |_, cx| {
+                create_new_session(session_id, initialized_rx, start_client_task, cx)
+            })?
+            .await
+        });
+
         (session_id, task)
     }
+
     #[cfg(any(test, feature = "test-support"))]
     pub fn new_fake_session(
         &mut self,
@@ -459,7 +470,10 @@ impl DapStore {
             request: DebugRequestDisposition::ReverseRequest(args),
             initialize_args: config.initialize_args.clone(),
             tcp_connection: config.tcp_connection.clone(),
+            locator: None,
+            args: Default::default(),
         };
+
         #[cfg(any(test, feature = "test-support"))]
         let new_session_task = {
             let caps = parent_session.read(cx).capabilities.clone();
@@ -709,59 +723,6 @@ impl DapStore {
                 .targets)
         })
     }
-
-    #[allow(clippy::too_many_arguments)]
-    pub fn set_variable_value(
-        &self,
-        session_id: &SessionId,
-        stack_frame_id: u64,
-        variables_reference: u64,
-        name: String,
-        value: String,
-        evaluate_name: Option<String>,
-        cx: &mut Context<Self>,
-    ) -> Task<Result<()>> {
-        let Some(client) = self
-            .session_by_id(session_id)
-            .and_then(|client| client.read(cx).adapter_client())
-        else {
-            return Task::ready(Err(anyhow!("Could not find client: {:?}", session_id)));
-        };
-
-        let supports_set_expression = self
-            .capabilities_by_id(session_id, cx)
-            .and_then(|caps| caps.supports_set_expression)
-            .unwrap_or_default();
-
-        cx.background_executor().spawn(async move {
-            if let Some(evaluate_name) = supports_set_expression.then(|| evaluate_name).flatten() {
-                client
-                    .request::<SetExpression>(SetExpressionArguments {
-                        expression: evaluate_name,
-                        value,
-                        frame_id: Some(stack_frame_id),
-                        format: None,
-                    })
-                    .await?;
-            } else {
-                client
-                    .request::<SetVariable>(SetVariableArguments {
-                        variables_reference,
-                        name,
-                        value,
-                        format: None,
-                    })
-                    .await?;
-            }
-
-            Ok(())
-        })
-    }
-
-    // .. get the client and what not
-    // let _ = client.modules(); // This can fire a request to a dap adapter or be a cheap getter.
-    // client.wait_for_request(request::Modules); // This ensures that the request that we've fired off runs to completions
-    // let returned_value = client.modules(); // this is a cheap getter.
 
     pub fn shutdown_sessions(&mut self, cx: &mut Context<Self>) -> Task<()> {
         let mut tasks = vec![];
