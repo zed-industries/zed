@@ -903,9 +903,10 @@ impl Workspace {
 
                 project::Event::WorktreeRemoved(_) | project::Event::WorktreeAdded(_) => {
                     this.update_window_title(window, cx);
+                    // todo(zjk)
                     // Set `update` to `true` so that the history is updated.
                     // This event could be triggered by `AddFolderToProject` or `RemoveFromProject`.
-                    this.serialize_workspace(true, window, cx);
+                    this.serialize_workspace(window, cx);
                 }
 
                 project::Event::DisconnectedFromHost => {
@@ -976,7 +977,7 @@ impl Workspace {
             |workspace, _, event, window, cx| match event {
                 BreakpointStoreEvent::BreakpointsUpdated(_, _)
                 | BreakpointStoreEvent::BreakpointsCleared(_) => {
-                    workspace.serialize_workspace(false, window, cx);
+                    workspace.serialize_workspace(window, cx);
                 }
                 BreakpointStoreEvent::ActiveDebugLineChanged => {}
             },
@@ -1340,10 +1341,11 @@ impl Workspace {
                 .update(cx, |workspace, window, cx| {
                     window.activate_window();
                     if is_new_workspace {
+                        // todo(zjk)
                         // If opened a new workspace, the workspace will be serialized and notified here.
                         // If opened an existing workspace, the workspace will be serialized and notified in the
                         // above `open_items` call.
-                        workspace.serialize_workspace(true, window, cx);
+                        workspace.serialize_workspace(window, cx);
                     }
                 })
                 .log_err();
@@ -2582,7 +2584,7 @@ impl Workspace {
         }
 
         cx.notify();
-        self.serialize_workspace(false, window, cx);
+        self.serialize_workspace(window, cx);
     }
 
     pub fn close_all_docks(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -2594,7 +2596,7 @@ impl Workspace {
 
         cx.focus_self(window);
         cx.notify();
-        self.serialize_workspace(false, window, cx);
+        self.serialize_workspace(window, cx);
     }
 
     /// Transfer focus to the panel of the given type.
@@ -2635,7 +2637,7 @@ impl Workspace {
 
         if panel.is_some() {
             cx.notify();
-            self.serialize_workspace(false, window, cx);
+            self.serialize_workspace(window, cx);
         }
 
         panel
@@ -2680,7 +2682,7 @@ impl Workspace {
         }
 
         if serialize {
-            self.serialize_workspace(false, window, cx);
+            self.serialize_workspace(window, cx);
         }
 
         cx.notify();
@@ -3524,7 +3526,7 @@ impl Workspace {
         }
 
         if serialize_workspace {
-            self.serialize_workspace(false, window, cx);
+            self.serialize_workspace(window, cx);
         }
     }
 
@@ -4543,7 +4545,7 @@ impl Workspace {
 
     fn remove_from_session(&mut self, window: &mut Window, cx: &mut App) -> Task<()> {
         self.session_id.take();
-        self.serialize_workspace_internal(false, window, cx)
+        self.serialize_workspace_internal(window, cx)
     }
 
     fn force_remove_pane(
@@ -4575,15 +4577,14 @@ impl Workspace {
     /// 1. A brand new workspace is opened, or an existing workspace has been deleted.
     /// 2. An existing workspace is loaded, this will change the order of the workspaces in the history.
     /// 3. `AddFolderToProject` or `RemoveFromProject` action is triggered.
-    fn serialize_workspace(&mut self, update: bool, window: &mut Window, cx: &mut Context<Self>) {
+    fn serialize_workspace(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self._schedule_serialize.is_none() {
             self._schedule_serialize = Some(cx.spawn_in(window, async move |this, cx| {
                 cx.background_executor()
                     .timer(Duration::from_millis(100))
                     .await;
                 this.update_in(cx, |this, window, cx| {
-                    this.serialize_workspace_internal(update, window, cx)
-                        .detach();
+                    this.serialize_workspace_internal(window, cx).detach();
                     this._schedule_serialize.take();
                 })
                 .log_err();
@@ -4598,7 +4599,7 @@ impl Workspace {
     /// 3. `AddFolderToProject` or `RemoveFromProject` action is triggered.
     fn serialize_workspace_internal(
         &self,
-        update: bool,
+        // update: bool,
         window: &mut Window,
         cx: &mut App,
     ) -> Task<()> {
@@ -4730,6 +4731,7 @@ impl Workspace {
             let breakpoints = self.project.update(cx, |project, cx| {
                 project.breakpoint_store().read(cx).all_breakpoints(cx)
             });
+            let history_manager_location = location.clone();
 
             let center_group = build_serialized_pane_group(&self.center.root, window, cx);
             let docks = build_serialized_docks(self, window, cx);
@@ -4761,7 +4763,11 @@ impl Workspace {
                 persistence::DB.save_workspace(serialized_workspace).await;
                 if let Some(manager) = manager {
                     manager
-                        .update(cx, |_, cx| cx.emit(HistoryManagerEvent::Update))
+                        .update(cx, |this, cx| {
+                            if this.update_history(database_id, &history_manager_location) {
+                                this.update_jump_list(cx);
+                            }
+                        })
                         .log_err();
                 }
             });
@@ -4933,11 +4939,10 @@ impl Workspace {
 
             workspace
                 .update_in(cx, |workspace, window, cx| {
+                    // todo(zjk)
                     // Serialize ourself to make sure our timestamps and any pane / item changes are replicated
                     // Set `update` to `true` so that the history is updated, newly opened workspaces are moved to the top
-                    workspace
-                        .serialize_workspace_internal(true, window, cx)
-                        .detach();
+                    workspace.serialize_workspace_internal(window, cx).detach();
 
                     // Ensure that we mark the window as edited if we did load dirty items
                     workspace.update_window_edited(window, cx);
@@ -5579,7 +5584,7 @@ impl Render for Workspace {
                                                         );
                                                     }
                                                 };
-                                                workspace.serialize_workspace(false, window, cx);
+                                                workspace.serialize_workspace(window, cx);
                                             }
                                         },
                                     ))

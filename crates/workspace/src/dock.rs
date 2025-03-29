@@ -412,7 +412,7 @@ impl Dock {
 
         self.workspace
             .update(cx, |workspace, cx| {
-                workspace.serialize_workspace(false, window, cx);
+                workspace.serialize_workspace(window, cx);
             })
             .ok();
         cx.notify();
@@ -738,7 +738,7 @@ impl Render for Dock {
                                 dock.resize_active_panel(None, window, cx);
                                 dock.workspace
                                     .update(cx, |workspace, cx| {
-                                        workspace.serialize_workspace(false, window, cx);
+                                        workspace.serialize_workspace(window, cx);
                                     })
                                     .ok();
                                 cx.stop_propagation();
