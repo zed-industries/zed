@@ -2627,8 +2627,8 @@ impl ProjectPanel {
         let hide_root = hide_root_setting && visible_worktrees.len() == 1;
 
         for worktree in visible_worktrees {
-            let snapshot = worktree.read(cx).snapshot();
-            let worktree_id = snapshot.id();
+            let worktree_snapshot = worktree.read(cx).snapshot();
+            let worktree_id = worktree_snapshot.id();
 
             let expanded_dir_ids = match self.expanded_dir_ids.entry(worktree_id) {
                 hash_map::Entry::Occupied(e) => e.into_mut(),
