@@ -1236,10 +1236,8 @@ name = "auto_update_helper"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "futures 0.3.31",
  "log",
  "simplelog",
- "smol",
  "windows 0.61.1",
  "winresource",
 ]
