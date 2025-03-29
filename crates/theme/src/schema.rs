@@ -92,6 +92,14 @@ pub struct ThemeStyleContent {
     /// The styles for syntax nodes.
     #[serde(default)]
     pub syntax: IndexMap<String, HighlightStyleContent>,
+
+    /// The styles for semantic token nodes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tokens: Option<IndexMap<String, HighlightStyleContent>>,
+
+    /// The styles for semantic modifiers nodes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub modifiers: Option<IndexMap<String, HighlightStyleContent>>,
 }
 
 impl ThemeStyleContent {

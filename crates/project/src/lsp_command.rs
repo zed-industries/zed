@@ -1,3 +1,4 @@
+mod semantic_tokens;
 mod signature_help;
 
 use crate::{
@@ -14,6 +15,7 @@ use clock::Global;
 use collections::HashSet;
 use futures::future;
 use gpui::{App, AsyncApp, Entity};
+use itertools::Itertools;
 use language::{
     language_settings::{language_settings, InlayHintKind, LanguageSettings},
     point_from_lsp, point_to_lsp,
@@ -31,6 +33,7 @@ use signature_help::{lsp_to_proto_signature, proto_to_lsp_signature};
 use std::{cmp::Reverse, mem, ops::Range, path::Path, sync::Arc};
 use text::{BufferId, LineEnding};
 
+pub use semantic_tokens::SemanticTokensFull;
 pub use signature_help::SignatureHelp;
 
 pub fn lsp_formatting_options(settings: &LanguageSettings) -> lsp::FormattingOptions {

@@ -14,7 +14,8 @@ use crate::{
     worktree_store::{WorktreeStore, WorktreeStoreEvent},
     yarn::YarnPathStore,
     CodeAction, Completion, CompletionSource, CoreCompletion, Hover, InlayHint, LspAction,
-    ProjectItem, ProjectPath, ProjectTransaction, ResolveState, Symbol, ToolchainStore,
+    ProjectItem, ProjectPath, ProjectTransaction, ResolveState, SemanticToken, Symbol,
+    ToolchainStore,
 };
 use anyhow::{anyhow, Context as _, Result};
 use async_trait::async_trait;
@@ -792,6 +793,28 @@ impl LocalLspStore {
                             &mut cx,
                         )
                         .await
+                    }
+                }
+            })
+            .detach();
+
+        language_server
+            .on_request::<lsp::request::SemanticTokensRefresh, _, _>({
+                let this = this.clone();
+                move |(), cx| {
+                    let this = this.clone();
+                    let mut cx = cx.clone();
+                    async move {
+                        this.update(&mut cx, |this, cx| {
+                            cx.emit(LspStoreEvent::RefreshSemanticTokens);
+                            this.downstream_client.as_ref().map(|(client, project_id)| {
+                                client.send(proto::RefreshSemanticTokens {
+                                    project_id: *project_id,
+                                })
+                            })
+                        })?
+                        .transpose()?;
+                        Ok(())
                     }
                 }
             })
@@ -3363,6 +3386,7 @@ pub enum LspStoreEvent {
         new_language: Option<Arc<Language>>,
     },
     Notification(String),
+    RefreshSemanticTokens,
     RefreshInlayHints,
     RefreshCodeLens,
     DiagnosticsUpdated {
@@ -5530,6 +5554,69 @@ impl LspStore {
         }
     }
 
+    pub fn semantic_tokens(
+        &mut self,
+        buffer_handle: Entity<Buffer>,
+        cx: &mut Context<Self>,
+    ) -> Task<anyhow::Result<Vec<SemanticToken>>> {
+        if let Some((client, project_id)) = self.upstream_client() {
+            let buffer = buffer_handle.read(cx);
+            let request = proto::SemanticTokensFullRequest {
+                project_id,
+                buffer_id: buffer.remote_id().to_proto(),
+                version: serialize_version(&buffer.version()),
+            };
+            cx.spawn(async move |project, cx| {
+                let response = client
+                    .request(request)
+                    .await
+                    .context("semantic tokens proto request")?;
+                LspCommand::response_from_proto(
+                    SemanticTokensFull,
+                    response,
+                    project.upgrade().ok_or_else(|| anyhow!("No project"))?,
+                    buffer_handle.clone(),
+                    cx.clone(),
+                )
+                .await
+                .context("semantic tokens proto response conversion")
+            })
+        } else {
+            let Some(local) = self.as_local() else {
+                return Task::ready(Ok(vec![]));
+            };
+            let server_ids = buffer_handle.update(cx, |buffer, cx| {
+                local
+                    .language_servers_for_buffer(buffer, cx)
+                    .filter_map(|(_, server)| {
+                        if SemanticTokensFull
+                            .check_capabilities(server.adapter_server_capabilities())
+                        {
+                            Some(server.server_id())
+                        } else {
+                            None
+                        }
+                    })
+                    .collect_vec()
+            });
+            let requests = server_ids
+                .into_iter()
+                .map(|id| {
+                    let lsp = LanguageServerToQuery::Other(id);
+                    self.request_lsp(buffer_handle.clone(), lsp, SemanticTokensFull, cx)
+                })
+                .collect_vec();
+            cx.spawn(async move |_, _| {
+                let mut output = vec![];
+                for request in requests {
+                    let tokens = request.await?;
+                    output.extend(tokens);
+                }
+                Ok(output)
+            })
+        }
+    }
+
     pub fn inlay_hints(
         &mut self,
         buffer_handle: Entity<Buffer>,
@@ -7616,6 +7703,7 @@ impl LspStore {
         if let Some(status) = self.language_server_statuses.get_mut(&language_server_id) {
             if let Some(work) = status.pending_work.remove(&token) {
                 if !work.is_disk_based_diagnostics_progress {
+                    cx.emit(LspStoreEvent::RefreshSemanticTokens);
                     cx.emit(LspStoreEvent::RefreshInlayHints);
                 }
             }

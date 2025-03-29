@@ -3,9 +3,9 @@ use std::sync::Arc;
 use gpui::{hsla, FontStyle, FontWeight, HighlightStyle, Hsla, WindowBackgroundAppearance};
 
 use crate::{
-    default_color_scales, AccentColors, Appearance, PlayerColors, StatusColors,
+    default_color_scales, AccentColors, Appearance, PlayerColors, SemanticTheme, StatusColors,
     StatusColorsRefinement, SyntaxTheme, SystemColors, Theme, ThemeColors, ThemeFamily,
-    ThemeStyles,
+    ThemeStyles, DEFAULT_SEMANTIC_MODIFIERS, DEFAULT_SEMANTIC_TOKENS,
 };
 
 /// The default theme family for Zed.
@@ -74,6 +74,71 @@ pub(crate) fn zed_default_dark() -> Theme {
         l: 0.65,
         a: 1.0,
     };
+
+    let syntax = Arc::new(SyntaxTheme {
+        highlights: vec![
+            ("attribute".into(), purple.into()),
+            ("boolean".into(), orange.into()),
+            ("comment".into(), gray.into()),
+            ("comment.doc".into(), gray.into()),
+            ("constant".into(), yellow.into()),
+            ("constructor".into(), blue.into()),
+            ("embedded".into(), HighlightStyle::default()),
+            (
+                "emphasis".into(),
+                HighlightStyle {
+                    font_style: Some(FontStyle::Italic),
+                    ..HighlightStyle::default()
+                },
+            ),
+            (
+                "emphasis.strong".into(),
+                HighlightStyle {
+                    font_weight: Some(FontWeight::BOLD),
+                    ..HighlightStyle::default()
+                },
+            ),
+            ("enum".into(), HighlightStyle::default()),
+            ("function".into(), blue.into()),
+            ("function.method".into(), blue.into()),
+            ("function.definition".into(), blue.into()),
+            ("hint".into(), blue.into()),
+            ("keyword".into(), purple.into()),
+            ("label".into(), HighlightStyle::default()),
+            ("link_text".into(), blue.into()),
+            (
+                "link_uri".into(),
+                HighlightStyle {
+                    color: Some(teal),
+                    font_style: Some(FontStyle::Italic),
+                    ..HighlightStyle::default()
+                },
+            ),
+            ("number".into(), orange.into()),
+            ("operator".into(), HighlightStyle::default()),
+            ("predictive".into(), HighlightStyle::default()),
+            ("preproc".into(), HighlightStyle::default()),
+            ("primary".into(), HighlightStyle::default()),
+            ("property".into(), red.into()),
+            ("punctuation".into(), HighlightStyle::default()),
+            ("punctuation.bracket".into(), HighlightStyle::default()),
+            ("punctuation.delimiter".into(), HighlightStyle::default()),
+            ("punctuation.list_marker".into(), HighlightStyle::default()),
+            ("punctuation.special".into(), HighlightStyle::default()),
+            ("string".into(), green.into()),
+            ("string.escape".into(), HighlightStyle::default()),
+            ("string.regex".into(), red.into()),
+            ("string.special".into(), HighlightStyle::default()),
+            ("string.special.symbol".into(), HighlightStyle::default()),
+            ("tag".into(), HighlightStyle::default()),
+            ("text.literal".into(), HighlightStyle::default()),
+            ("title".into(), HighlightStyle::default()),
+            ("type".into(), teal.into()),
+            ("variable".into(), HighlightStyle::default()),
+            ("variable.special".into(), red.into()),
+            ("variant".into(), HighlightStyle::default()),
+        ],
+    });
 
     Theme {
         id: "one_dark".to_string(),
@@ -248,70 +313,17 @@ pub(crate) fn zed_default_dark() -> Theme {
                 warning_border: yellow,
             },
             player: PlayerColors::dark(),
-            syntax: Arc::new(SyntaxTheme {
-                highlights: vec![
-                    ("attribute".into(), purple.into()),
-                    ("boolean".into(), orange.into()),
-                    ("comment".into(), gray.into()),
-                    ("comment.doc".into(), gray.into()),
-                    ("constant".into(), yellow.into()),
-                    ("constructor".into(), blue.into()),
-                    ("embedded".into(), HighlightStyle::default()),
-                    (
-                        "emphasis".into(),
-                        HighlightStyle {
-                            font_style: Some(FontStyle::Italic),
-                            ..HighlightStyle::default()
-                        },
-                    ),
-                    (
-                        "emphasis.strong".into(),
-                        HighlightStyle {
-                            font_weight: Some(FontWeight::BOLD),
-                            ..HighlightStyle::default()
-                        },
-                    ),
-                    ("enum".into(), HighlightStyle::default()),
-                    ("function".into(), blue.into()),
-                    ("function.method".into(), blue.into()),
-                    ("function.definition".into(), blue.into()),
-                    ("hint".into(), blue.into()),
-                    ("keyword".into(), purple.into()),
-                    ("label".into(), HighlightStyle::default()),
-                    ("link_text".into(), blue.into()),
-                    (
-                        "link_uri".into(),
-                        HighlightStyle {
-                            color: Some(teal),
-                            font_style: Some(FontStyle::Italic),
-                            ..HighlightStyle::default()
-                        },
-                    ),
-                    ("number".into(), orange.into()),
-                    ("operator".into(), HighlightStyle::default()),
-                    ("predictive".into(), HighlightStyle::default()),
-                    ("preproc".into(), HighlightStyle::default()),
-                    ("primary".into(), HighlightStyle::default()),
-                    ("property".into(), red.into()),
-                    ("punctuation".into(), HighlightStyle::default()),
-                    ("punctuation.bracket".into(), HighlightStyle::default()),
-                    ("punctuation.delimiter".into(), HighlightStyle::default()),
-                    ("punctuation.list_marker".into(), HighlightStyle::default()),
-                    ("punctuation.special".into(), HighlightStyle::default()),
-                    ("string".into(), green.into()),
-                    ("string.escape".into(), HighlightStyle::default()),
-                    ("string.regex".into(), red.into()),
-                    ("string.special".into(), HighlightStyle::default()),
-                    ("string.special.symbol".into(), HighlightStyle::default()),
-                    ("tag".into(), HighlightStyle::default()),
-                    ("text.literal".into(), HighlightStyle::default()),
-                    ("title".into(), HighlightStyle::default()),
-                    ("type".into(), teal.into()),
-                    ("variable".into(), HighlightStyle::default()),
-                    ("variable.special".into(), red.into()),
-                    ("variant".into(), HighlightStyle::default()),
-                ],
-            }),
+            tokens: Arc::new(SemanticTheme::new(
+                DEFAULT_SEMANTIC_TOKENS,
+                syntax.clone(),
+                &[],
+            )),
+            modifiers: Arc::new(SemanticTheme::new(
+                DEFAULT_SEMANTIC_MODIFIERS,
+                syntax.clone(),
+                &[],
+            )),
+            syntax,
         },
     }
 }
