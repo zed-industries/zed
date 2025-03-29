@@ -45,7 +45,7 @@ use gpui::{
     InteractiveElement, IntoElement, Keystroke, Length, ModifiersChangedEvent, MouseButton,
     MouseDownEvent, MouseMoveEvent, MouseUpEvent, PaintQuad, ParentElement, Pixels, ScrollDelta,
     ScrollWheelEvent, ShapedLine, SharedString, Size, StatefulInteractiveElement, Style, Styled,
-    Subscription, TextRun, TextStyleRefinement, Window,
+    Subscription, TextRun, TextStyleRefinement, WeakEntity, Window,
 };
 use inline_completion::Direction;
 use itertools::Itertools;
@@ -1716,14 +1716,21 @@ impl EditorElement {
             padding * em_width
         };
 
+        let workspace = editor.workspace()?.downgrade();
         let blame_entry = blame
             .update(cx, |blame, cx| {
                 blame.blame_for_rows(&[*row_info], cx).next()
             })
             .flatten()?;
 
-        let mut element =
-            render_inline_blame_entry(self.editor.clone(), &blame, blame_entry, &self.style, cx);
+        let mut element = render_inline_blame_entry(
+            self.editor.clone(),
+            workspace,
+            &blame,
+            blame_entry,
+            &self.style,
+            cx,
+        );
 
         let start_y = content_origin.y
             + line_height * (display_row.as_f32() - scroll_pixel_position.y / line_height);
@@ -5686,6 +5693,7 @@ fn prepaint_gutter_button(
 
 fn render_inline_blame_entry(
     editor: Entity<Editor>,
+    workspace: WeakEntity<Workspace>,
     blame: &Entity<GitBlame>,
     blame_entry: BlameEntry,
     style: &EditorStyle,
@@ -5720,7 +5728,20 @@ fn render_inline_blame_entry(
         .gap_2();
 
     let details = blame.read(cx).details_for_entry(&blame_entry);
-    renderer.render_inline_blame_entry(div, blame_entry, details, editor, cx)
+    let repository = blame.read(cx).repository(cx).clone();
+    if let Some(repository) = repository {
+        renderer.render_inline_blame_entry(
+            div,
+            blame_entry,
+            details,
+            repository,
+            workspace,
+            editor,
+            cx,
+        )
+    } else {
+        div.into_any_element()
+    }
 }
 
 fn render_blame_entry(
@@ -5789,14 +5810,19 @@ fn render_blame_entry(
                 );
             }
         });
-    renderer.render_blame_entry(
-        div,
-        blame_entry,
-        details,
-        blame.read(cx).repository(cx),
-        workspace.downgrade(),
-        cx,
-    )
+
+    if let Some(repository) = blame.read(cx).repository(cx) {
+        renderer.render_blame_entry(
+            div,
+            blame_entry,
+            details,
+            repository,
+            workspace.downgrade(),
+            cx,
+        )
+    } else {
+        div.into_any_element()
+    }
 }
 
 fn blame_entry_timestamp(blame_entry: &BlameEntry, format: time_format::TimestampFormat) -> String {
@@ -6937,6 +6963,7 @@ impl Element for EditorElement {
                                 .flatten()?;
                             let mut element = render_inline_blame_entry(
                                 self.editor.clone(),
+                                editor.workspace()?.downgrade(),
                                 blame,
                                 blame_entry,
                                 &style,

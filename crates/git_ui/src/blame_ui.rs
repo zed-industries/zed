@@ -10,7 +10,7 @@ use gpui::{
     Styled as _, WeakEntity,
 };
 use project::git_store::Repository;
-use ui::{Element as _, FluentBuilder};
+use ui::Element as _;
 use workspace::Workspace;
 
 pub struct GitBlameRenderer;
@@ -21,14 +21,16 @@ impl BlameRenderer for GitBlameRenderer {
         div: Stateful<Div>,
         blame_entry: BlameEntry,
         details: Option<ParsedCommitMessage>,
-        repository: Option<Entity<Repository>>,
+        repository: Entity<Repository>,
         workspace: WeakEntity<Workspace>,
         _cx: &App,
     ) -> AnyElement {
-        div.when_some(repository, {
-            let blame_entry = blame_entry.clone();
-            move |this, repository| {
-                this.cursor_pointer().on_click(move |_, window, cx| {
+        div.cursor_pointer()
+            .on_click({
+                let blame_entry = blame_entry.clone();
+                let repository = repository.clone();
+                let workspace = workspace.clone();
+                move |_, window, cx| {
                     CommitView::open(
                         CommitSummary {
                             sha: blame_entry.sha.to_string().into(),
@@ -41,14 +43,22 @@ impl BlameRenderer for GitBlameRenderer {
                         window,
                         cx,
                     )
+                }
+            })
+            .hoverable_tooltip(move |window, cx| {
+                cx.new(|cx| {
+                    CommitTooltip::blame_entry(
+                        &blame_entry,
+                        details.clone(),
+                        repository.clone(),
+                        workspace.clone(),
+                        window,
+                        cx,
+                    )
                 })
-            }
-        })
-        .hoverable_tooltip(move |window, cx| {
-            cx.new(|cx| CommitTooltip::blame_entry(&blame_entry, details.clone(), window, cx))
                 .into()
-        })
-        .into_any()
+            })
+            .into_any()
     }
 
     fn render_inline_blame_entry(
@@ -56,12 +66,22 @@ impl BlameRenderer for GitBlameRenderer {
         div: Stateful<Div>,
         blame_entry: BlameEntry,
         details: Option<ParsedCommitMessage>,
+        repository: Entity<Repository>,
+        workspace: WeakEntity<Workspace>,
         editor: Entity<Editor>,
         _: &App,
     ) -> gpui::AnyElement {
         div.hoverable_tooltip(move |window, cx| {
-            let tooltip =
-                cx.new(|cx| CommitTooltip::blame_entry(&blame_entry, details.clone(), window, cx));
+            let tooltip = cx.new(|cx| {
+                CommitTooltip::blame_entry(
+                    &blame_entry,
+                    details.clone(),
+                    repository.clone(),
+                    workspace.clone(),
+                    window,
+                    cx,
+                )
+            });
             editor.update(cx, |editor, _| {
                 editor.git_blame_inline_tooltip = Some(tooltip.downgrade().into())
             });

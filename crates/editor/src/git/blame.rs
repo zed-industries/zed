@@ -80,7 +80,7 @@ pub trait BlameRenderer {
         div: Stateful<Div>,
         _: BlameEntry,
         _: Option<ParsedCommitMessage>,
-        _: Option<Entity<Repository>>,
+        _: Entity<Repository>,
         _: WeakEntity<Workspace>,
         _: &App,
     ) -> gpui::AnyElement {
@@ -92,6 +92,8 @@ pub trait BlameRenderer {
         div: Stateful<Div>,
         _: BlameEntry,
         _: Option<ParsedCommitMessage>,
+        _: Entity<Repository>,
+        _: WeakEntity<Workspace>,
         _: Entity<Editor>,
         _: &App,
     ) -> gpui::AnyElement {
@@ -105,7 +107,7 @@ impl BlameRenderer for () {
         div: Stateful<Div>,
         _: BlameEntry,
         _: Option<ParsedCommitMessage>,
-        _: Option<Entity<Repository>>,
+        _: Entity<Repository>,
         _: WeakEntity<Workspace>,
         _: &App,
     ) -> gpui::AnyElement {
