@@ -503,6 +503,21 @@ pub fn into_anthropic(
     let mut new_messages: Vec<anthropic::Message> = Vec::new();
     let mut system_message = String::new();
 
+    // First, count the total number of cacheable content blocks
+    const MAX_CACHE_BLOCKS: usize = 4; // Anthropic's limit
+
+    // Count total cacheable content blocks across all messages
+    let total_cacheable_blocks: usize = request.messages.iter()
+        .filter(|msg| msg.cache && !msg.contents_empty())
+        .map(|msg| msg.content.len())
+        .sum();
+
+    // Calculate how many blocks to skip (we'll only cache the last MAX_CACHE_BLOCKS)
+    let blocks_to_skip = total_cacheable_blocks.saturating_sub(MAX_CACHE_BLOCKS);
+
+    // Track how many cacheable blocks we've processed so far
+    let mut processed_cacheable_blocks = 0;
+
     for message in request.messages {
         if message.contents_empty() {
             continue;
@@ -510,50 +525,72 @@ pub fn into_anthropic(
 
         match message.role {
             Role::User | Role::Assistant => {
-                let cache_control = if message.cache {
-                    Some(anthropic::CacheControl {
-                        cache_type: anthropic::CacheControlType::Ephemeral,
-                    })
-                } else {
-                    None
-                };
-                let anthropic_message_content: Vec<anthropic::RequestContent> = message
+                // Check if message only contains images and no text
+                // We still need this to handle image-only messages for Anthropic's API requirements
+                let contains_image = message.content.iter().any(|content| matches!(content, MessageContent::Image(_)));
+                let contains_text = message.content.iter().any(|content| matches!(content, MessageContent::Text(text) if !text.is_empty()));
+
+                // Create a flag to determine if we need to add placeholder text at the end
+                let needs_placeholder = contains_image && !contains_text;
+
+                let mut anthropic_message_content: Vec<anthropic::RequestContent> = message
                     .content
                     .into_iter()
-                    .filter_map(|content| match content {
-                        MessageContent::Text(text) => {
-                            if !text.is_empty() {
-                                Some(anthropic::RequestContent::Text {
-                                    text,
-                                    cache_control,
+                    .filter_map(|content| {
+                        // Only consider cache_control if message.cache is true
+                        let cache_control = if message.cache {
+                            // Increment our counter for this cacheable block
+                            processed_cacheable_blocks += 1;
+
+                            // Only add cache_control if this block is among the last MAX_CACHE_BLOCKS
+                            if processed_cacheable_blocks > blocks_to_skip {
+                                Some(anthropic::CacheControl {
+                                    cache_type: anthropic::CacheControlType::Ephemeral,
                                 })
                             } else {
                                 None
                             }
-                        }
-                        MessageContent::Image(image) => Some(anthropic::RequestContent::Image {
-                            source: anthropic::ImageSource {
-                                source_type: "base64".to_string(),
-                                media_type: "image/png".to_string(),
-                                data: image.source.to_string(),
-                            },
-                            cache_control,
-                        }),
-                        MessageContent::ToolUse(tool_use) => {
-                            Some(anthropic::RequestContent::ToolUse {
-                                id: tool_use.id.to_string(),
-                                name: tool_use.name.to_string(),
-                                input: tool_use.input,
-                                cache_control,
-                            })
-                        }
-                        MessageContent::ToolResult(tool_result) => {
-                            Some(anthropic::RequestContent::ToolResult {
-                                tool_use_id: tool_result.tool_use_id.to_string(),
-                                is_error: tool_result.is_error,
-                                content: tool_result.content.to_string(),
-                                cache_control,
-                            })
+                        } else {
+                            None
+                        };
+
+                        match content {
+                            MessageContent::Text(text) => {
+                                if !text.is_empty() {
+                                    Some(anthropic::RequestContent::Text {
+                                        text,
+                                        cache_control,
+                                    })
+                                } else {
+                                    None
+                                }
+                            }
+                            MessageContent::Image(image) => {
+                                Some(anthropic::RequestContent::Image {
+                                    source: anthropic::ImageSource {
+                                        source_type: "base64".to_string(),
+                                        media_type: "image/png".to_string(),
+                                        data: image.source.to_string(),
+                                    },
+                                    cache_control,
+                                })
+                            }
+                            MessageContent::ToolUse(tool_use) => {
+                                Some(anthropic::RequestContent::ToolUse {
+                                    id: tool_use.id.to_string(),
+                                    name: tool_use.name.to_string(),
+                                    input: tool_use.input,
+                                    cache_control,
+                                })
+                            }
+                            MessageContent::ToolResult(tool_result) => {
+                                Some(anthropic::RequestContent::ToolResult {
+                                    tool_use_id: tool_result.tool_use_id.to_string(),
+                                    is_error: tool_result.is_error,
+                                    content: tool_result.content.to_string(),
+                                    cache_control,
+                                })
+                            }
                         }
                     })
                     .collect();
@@ -562,6 +599,23 @@ pub fn into_anthropic(
                     Role::Assistant => anthropic::Role::Assistant,
                     Role::System => unreachable!("System role should never occur here"),
                 };
+                // If we have images without text, add a non-empty placeholder text at the end
+                // to avoid Anthropic's "trailing whitespace" error
+                if needs_placeholder {
+                    let cache_control = if message.cache && processed_cacheable_blocks > blocks_to_skip {
+                        Some(anthropic::CacheControl {
+                            cache_type: anthropic::CacheControlType::Ephemeral,
+                        })
+                    } else {
+                        None
+                    };
+
+                    anthropic_message_content.push(anthropic::RequestContent::Text {
+                        text: "Image:" .to_string(),
+                        cache_control,
+                    });
+                }
+
                 if let Some(last_message) = new_messages.last_mut() {
                     if last_message.role == anthropic_role {
                         last_message.content.extend(anthropic_message_content);
