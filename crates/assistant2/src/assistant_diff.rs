@@ -18,7 +18,7 @@ use std::{
     ops::Range,
     sync::Arc,
 };
-use ui::{prelude::*, IconButtonShape, Tooltip};
+use ui::{prelude::*, IconButtonShape, KeyBinding, Tooltip};
 use workspace::{
     item::{BreadcrumbText, ItemEvent, TabContentParams},
     searchable::SearchableItemHandle,
@@ -78,6 +78,7 @@ impl AssistantDiff {
                   is_created_file,
                   line_height,
                   _editor: &Entity<Editor>,
+                  window: &mut Window,
                   cx: &mut App| {
                 render_diff_hunk_controls(
                     row,
@@ -86,6 +87,7 @@ impl AssistantDiff {
                     is_created_file,
                     line_height,
                     &assistant_diff,
+                    window,
                     cx,
                 )
             }
@@ -482,6 +484,7 @@ fn render_diff_hunk_controls(
     is_created_file: bool,
     line_height: Pixels,
     assistant_diff: &Entity<AssistantDiff>,
+    window: &mut Window,
     cx: &mut App,
 ) -> AnyElement {
     let editor = assistant_diff.read(cx).editor.clone();
@@ -501,7 +504,43 @@ fn render_diff_hunk_controls(
         .shadow_md()
         .children(if status.has_secondary_hunk() {
             vec![
+                Button::new("reject", "Reject")
+                    .key_binding(KeyBinding::for_action_in(
+                        &crate::Reject,
+                        &editor.read(cx).focus_handle(cx),
+                        window,
+                        cx,
+                    ))
+                    .tooltip({
+                        let focus_handle = editor.focus_handle(cx);
+                        move |window, cx| {
+                            Tooltip::for_action_in(
+                                "Reject Hunk",
+                                &crate::Reject,
+                                &focus_handle,
+                                window,
+                                cx,
+                            )
+                        }
+                    })
+                    .on_click({
+                        let editor = editor.clone();
+                        move |_event, window, cx| {
+                            editor.update(cx, |editor, cx| {
+                                let snapshot = editor.snapshot(window, cx);
+                                let point = hunk_range.start.to_point(&snapshot.buffer_snapshot);
+                                editor.restore_hunks_in_ranges(vec![point..point], window, cx);
+                            });
+                        }
+                    })
+                    .disabled(is_created_file),
                 Button::new(("keep", row as u64), "Keep")
+                    .key_binding(KeyBinding::for_action_in(
+                        &crate::ToggleKeep,
+                        &editor.read(cx).focus_handle(cx),
+                        window,
+                        cx,
+                    ))
                     .tooltip({
                         let focus_handle = editor.focus_handle(cx);
                         move |window, cx| {
@@ -526,30 +565,6 @@ fn render_diff_hunk_controls(
                             });
                         }
                     }),
-                Button::new("reject", "Reject")
-                    .tooltip({
-                        let focus_handle = editor.focus_handle(cx);
-                        move |window, cx| {
-                            Tooltip::for_action_in(
-                                "Reject Hunk",
-                                &crate::Reject,
-                                &focus_handle,
-                                window,
-                                cx,
-                            )
-                        }
-                    })
-                    .on_click({
-                        let editor = editor.clone();
-                        move |_event, window, cx| {
-                            editor.update(cx, |editor, cx| {
-                                let snapshot = editor.snapshot(window, cx);
-                                let point = hunk_range.start.to_point(&snapshot.buffer_snapshot);
-                                editor.restore_hunks_in_ranges(vec![point..point], window, cx);
-                            });
-                        }
-                    })
-                    .disabled(is_created_file),
             ]
         } else {
             vec![Button::new(("review", row as u64), "Review")

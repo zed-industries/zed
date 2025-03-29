@@ -228,6 +228,7 @@ pub type RenderDiffHunkControlsFn = Arc<
         bool,
         Pixels,
         &Entity<Editor>,
+        &mut Window,
         &mut App,
     ) -> AnyElement,
 >;
@@ -20011,6 +20012,7 @@ fn render_diff_hunk_controls(
     is_created_file: bool,
     line_height: Pixels,
     editor: &Entity<Editor>,
+    _window: &mut Window,
     cx: &mut App,
 ) -> AnyElement {
     h_flex()
