@@ -805,6 +805,21 @@ impl PlatformWindow for MacWindow {
         self.0.as_ref().lock().content_size()
     }
 
+    fn resize(&mut self, size: Size<Pixels>) {
+        let this = self.0.lock();
+        let window = this.native_window;
+        this.executor
+            .spawn(async move {
+                unsafe {
+                    window.setContentSize_(NSSize {
+                        width: size.width.0 as f64,
+                        height: size.height.0 as f64,
+                    });
+                }
+            })
+            .detach();
+    }
+
     fn scale_factor(&self) -> f32 {
         self.0.as_ref().lock().scale_factor()
     }

@@ -1320,6 +1320,11 @@ impl Window {
         self.platform_window.bounds()
     }
 
+    /// Set the content size of the window.
+    pub fn resize(&mut self, size: Size<Pixels>) {
+        self.platform_window.resize(size);
+    }
+
     /// Returns whether or not the window is currently fullscreen
     pub fn is_fullscreen(&self) -> bool {
         self.platform_window.is_fullscreen()
