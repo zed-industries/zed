@@ -1,5 +1,4 @@
 pub mod dock;
-pub mod history_manager;
 pub mod item;
 mod modal_layer;
 pub mod notifications;
@@ -44,7 +43,6 @@ use gpui::{
     Point, PromptLevel, Render, ResizeEdge, Size, Stateful, Subscription, Task, Tiling, WeakEntity,
     WindowBounds, WindowHandle, WindowId, WindowOptions,
 };
-pub use history_manager::*;
 pub use item::{
     FollowableItem, FollowableItemHandle, Item, ItemHandle, ItemSettings, PreviewTabsSettings,
     ProjectItem, SerializableItem, SerializableItemHandle, WeakItemHandle,
@@ -927,7 +925,7 @@ impl Workspace {
                     // todo(zjk)
                     // Set `update` to `true` so that the history is updated.
                     // This event could be triggered by `AddFolderToProject` or `RemoveFromProject`.
-                    this.serialize_workspace(window, cx);
+                    this.serialize_workspace_with_update(window, cx);
                 }
 
                 project::Event::DisconnectedFromHost => {
@@ -1364,7 +1362,7 @@ impl Workspace {
                         // If opened a new workspace, the workspace will be serialized and notified here.
                         // If opened an existing workspace, the workspace will be serialized and notified in the
                         // above `open_items` call.
-                        workspace.serialize_workspace(window, cx);
+                        workspace.serialize_workspace_with_update(window, cx);
                     }
                 })
                 .log_err();
@@ -4559,7 +4557,7 @@ impl Workspace {
 
     fn remove_from_session(&mut self, window: &mut Window, cx: &mut App) -> Task<()> {
         self.session_id.take();
-        self.serialize_workspace_internal(window, cx)
+        self.serialize_workspace_internal(false, window, cx)
     }
 
     fn force_remove_pane(
@@ -4586,19 +4584,38 @@ impl Workspace {
         cx.notify();
     }
 
+    fn serialize_workspace(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.serialize_workspace_with_update_internal(false, window, cx);
+    }
+
     /// Set the parameter `update` to `true` if the action changes the history of the workspace.
     /// Typically, there are three cases that change the history:
     /// 1. A brand new workspace is opened, or an existing workspace has been deleted.
     /// 2. An existing workspace is loaded, this will change the order of the workspaces in the history.
     /// 3. `AddFolderToProject` or `RemoveFromProject` action is triggered.
-    fn serialize_workspace(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    fn serialize_workspace_with_update(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.serialize_workspace_with_update_internal(true, window, cx);
+    }
+
+    /// Set the parameter `update` to `true` if the action changes the history of the workspace.
+    /// Typically, there are three cases that change the history:
+    /// 1. A brand new workspace is opened, or an existing workspace has been deleted.
+    /// 2. An existing workspace is loaded, this will change the order of the workspaces in the history.
+    /// 3. `AddFolderToProject` or `RemoveFromProject` action is triggered.
+    fn serialize_workspace_with_update_internal(
+        &mut self,
+        update: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if self._schedule_serialize.is_none() {
             self._schedule_serialize = Some(cx.spawn_in(window, async move |this, cx| {
                 cx.background_executor()
                     .timer(Duration::from_millis(100))
                     .await;
                 this.update_in(cx, |this, window, cx| {
-                    this.serialize_workspace_internal(window, cx).detach();
+                    this.serialize_workspace_internal(update, window, cx)
+                        .detach();
                     this._schedule_serialize.take();
                 })
                 .log_err();
@@ -4613,7 +4630,7 @@ impl Workspace {
     /// 3. `AddFolderToProject` or `RemoveFromProject` action is triggered.
     fn serialize_workspace_internal(
         &self,
-        // update: bool,
+        update: bool,
         window: &mut Window,
         cx: &mut App,
     ) -> Task<()> {
@@ -4763,18 +4780,10 @@ impl Workspace {
                 window_id: Some(window.window_handle().window_id().as_u64()),
             };
 
-            // let manager = HistoryManager::global(cx);
             return window.spawn(cx, async move |cx| {
                 persistence::DB
-                    .save_workspace(serialized_workspace, cx)
+                    .save_workspace(serialized_workspace, update, cx)
                     .await;
-                // if let Some(manager) = manager {
-                //     manager
-                //         .update(cx, |this, cx| {
-                //             this.update_history(database_id, entry, cx);
-                //         })
-                //         .log_err();
-                // }
             });
         }
         Task::ready(())
@@ -4947,7 +4956,9 @@ impl Workspace {
                     // todo(zjk)
                     // Serialize ourself to make sure our timestamps and any pane / item changes are replicated
                     // Set `update` to `true` so that the history is updated, newly opened workspaces are moved to the top
-                    workspace.serialize_workspace_internal(window, cx).detach();
+                    workspace
+                        .serialize_workspace_internal(true, window, cx)
+                        .detach();
 
                     // Ensure that we mark the window as edited if we did load dirty items
                     workspace.update_window_edited(window, cx);

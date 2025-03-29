@@ -716,11 +716,18 @@ impl WorkspaceDb {
 
     /// Saves a workspace using the worktree roots. Will garbage collect any workspaces
     /// that used this workspace previously
-    pub(crate) async fn save_workspace(&self, workspace: SerializedWorkspace, cx: &AsyncApp) {
+    pub(crate) async fn save_workspace(
+        &self,
+        workspace: SerializedWorkspace,
+        update: bool,
+        cx: &AsyncApp,
+    ) {
         let id = workspace.id;
         let entry = HistoryTrackerEntry::new(id, &workspace.location);
         self.save_workspace_internal(workspace).await;
-        HISTORY_TRACKER.lock().update_history(id, entry, cx);
+        if update {
+            HISTORY_TRACKER.lock().update_history(id, entry, cx);
+        }
     }
 
     /// Saves a workspace using the worktree roots. Will garbage collect any workspaces
@@ -1568,7 +1575,7 @@ mod tests {
             window_id: None,
         };
 
-        db.save_workspace(workspace.clone()).await;
+        db.save_workspace_internal(workspace.clone()).await;
 
         let loaded = db.workspace_for_roots(&["/tmp"]).unwrap();
         let loaded_breakpoints = loaded.breakpoints.get(&Arc::from(path)).unwrap();
@@ -1687,7 +1694,7 @@ mod tests {
             window_id: None,
         };
 
-        db.save_workspace(workspace_1.clone()).await;
+        db.save_workspace_internal(workspace_1.clone()).await;
 
         db.write(|conn| {
             conn.exec_bound(sql!(INSERT INTO test_table(text, workspace_id) VALUES (?, ?)))
@@ -1696,7 +1703,7 @@ mod tests {
         })
         .await;
 
-        db.save_workspace(workspace_2.clone()).await;
+        db.save_workspace_internal(workspace_2.clone()).await;
 
         db.write(|conn| {
             conn.exec_bound(sql!(INSERT INTO test_table(text, workspace_id) VALUES (?, ?)))
@@ -1706,9 +1713,9 @@ mod tests {
         .await;
 
         workspace_1.location = SerializedWorkspaceLocation::from_local_paths(["/tmp", "/tmp3"]);
-        db.save_workspace(workspace_1.clone()).await;
-        db.save_workspace(workspace_1).await;
-        db.save_workspace(workspace_2).await;
+        db.save_workspace_internal(workspace_1.clone()).await;
+        db.save_workspace_internal(workspace_1).await;
+        db.save_workspace_internal(workspace_2).await;
 
         let test_text_2 = db
             .select_row_bound::<_, String>(sql!(SELECT text FROM test_table WHERE workspace_id = ?))
@@ -1795,14 +1802,14 @@ mod tests {
             window_id: Some(999),
         };
 
-        db.save_workspace(workspace.clone()).await;
+        db.save_workspace_internal(workspace.clone()).await;
 
         let round_trip_workspace = db.workspace_for_roots(&["/tmp2", "/tmp"]);
         assert_eq!(workspace, round_trip_workspace.unwrap());
 
         // Test guaranteed duplicate IDs
-        db.save_workspace(workspace.clone()).await;
-        db.save_workspace(workspace.clone()).await;
+        db.save_workspace_internal(workspace.clone()).await;
+        db.save_workspace_internal(workspace.clone()).await;
 
         let round_trip_workspace = db.workspace_for_roots(&["/tmp", "/tmp2"]);
         assert_eq!(workspace, round_trip_workspace.unwrap());
@@ -1843,8 +1850,8 @@ mod tests {
             window_id: Some(2),
         };
 
-        db.save_workspace(workspace_1.clone()).await;
-        db.save_workspace(workspace_2.clone()).await;
+        db.save_workspace_internal(workspace_1.clone()).await;
+        db.save_workspace_internal(workspace_2.clone()).await;
 
         // Test that paths are treated as a set
         assert_eq!(
@@ -1863,7 +1870,7 @@ mod tests {
         // Test 'mutate' case of updating a pre-existing id
         workspace_2.location = SerializedWorkspaceLocation::from_local_paths(["/tmp", "/tmp2"]);
 
-        db.save_workspace(workspace_2.clone()).await;
+        db.save_workspace_internal(workspace_2.clone()).await;
         assert_eq!(
             db.workspace_for_roots(&["/tmp", "/tmp2"]).unwrap(),
             workspace_2
@@ -1886,7 +1893,7 @@ mod tests {
             window_id: Some(3),
         };
 
-        db.save_workspace(workspace_3.clone()).await;
+        db.save_workspace_internal(workspace_3.clone()).await;
         assert_eq!(
             db.workspace_for_roots(&["/tmp", "/tmp2"]).unwrap(),
             workspace_3
@@ -1895,7 +1902,7 @@ mod tests {
         // Make sure that updating paths differently also works
         workspace_3.location =
             SerializedWorkspaceLocation::from_local_paths(["/tmp3", "/tmp4", "/tmp2"]);
-        db.save_workspace(workspace_3.clone()).await;
+        db.save_workspace_internal(workspace_3.clone()).await;
         assert_eq!(db.workspace_for_roots(&["/tmp2", "tmp"]), None);
         assert_eq!(
             db.workspace_for_roots(&["/tmp2", "/tmp3", "/tmp4"])
@@ -1996,14 +2003,14 @@ mod tests {
             window_id: Some(60),
         };
 
-        db.save_workspace(workspace_1.clone()).await;
+        db.save_workspace_internal(workspace_1.clone()).await;
         thread::sleep(Duration::from_millis(1000)); // Force timestamps to increment
-        db.save_workspace(workspace_2.clone()).await;
-        db.save_workspace(workspace_3.clone()).await;
+        db.save_workspace_internal(workspace_2.clone()).await;
+        db.save_workspace_internal(workspace_3.clone()).await;
         thread::sleep(Duration::from_millis(1000)); // Force timestamps to increment
-        db.save_workspace(workspace_4.clone()).await;
-        db.save_workspace(workspace_5.clone()).await;
-        db.save_workspace(workspace_6.clone()).await;
+        db.save_workspace_internal(workspace_4.clone()).await;
+        db.save_workspace_internal(workspace_5.clone()).await;
+        db.save_workspace_internal(workspace_6.clone()).await;
 
         let locations = db.session_workspaces("session-id-1".to_owned()).unwrap();
         assert_eq!(locations.len(), 2);
@@ -2100,7 +2107,7 @@ mod tests {
         .collect::<Vec<_>>();
 
         for workspace in workspaces.iter() {
-            db.save_workspace(workspace.clone()).await;
+            db.save_workspace_internal(workspace.clone()).await;
         }
 
         let stack = Some(Vec::from([
@@ -2192,7 +2199,7 @@ mod tests {
         .collect::<Vec<_>>();
 
         for workspace in workspaces.iter() {
-            db.save_workspace(workspace.clone()).await;
+            db.save_workspace_internal(workspace.clone()).await;
         }
 
         let stack = Some(Vec::from([
@@ -2388,7 +2395,7 @@ mod tests {
 
         let workspace = default_workspace(&["/tmp"], &center_pane);
 
-        db.save_workspace(workspace.clone()).await;
+        db.save_workspace_internal(workspace.clone()).await;
 
         let new_workspace = db.workspace_for_roots(&["/tmp"]).unwrap();
 
@@ -2440,7 +2447,7 @@ mod tests {
 
         let mut workspace = default_workspace(id, &center_pane);
 
-        db.save_workspace(workspace.clone()).await;
+        db.save_workspace_internal(workspace.clone()).await;
 
         workspace.center_group = group(
             Axis::Vertical,
@@ -2464,7 +2471,7 @@ mod tests {
             ],
         );
 
-        db.save_workspace(workspace.clone()).await;
+        db.save_workspace_internal(workspace.clone()).await;
 
         let new_workspace = db.workspace_for_roots(id).unwrap();
 
