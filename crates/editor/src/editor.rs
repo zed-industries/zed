@@ -4850,6 +4850,7 @@ impl Editor {
             } else {
                 return None;
             };
+
         let action_ix = action.item_ix.unwrap_or(actions_menu.selected_item);
         let action = actions_menu.actions.get(action_ix)?;
         let title = action.label();
@@ -4858,17 +4859,48 @@ impl Editor {
 
         match action {
             CodeActionsItem::Task(task_source_kind, resolved_task) => {
-                workspace.update(cx, |workspace, cx| {
-                    workspace::tasks::schedule_resolved_task(
-                        workspace,
-                        task_source_kind,
-                        resolved_task,
-                        false,
-                        cx,
-                    );
+                match resolved_task.task_type() {
+                    task::TaskType::Script => workspace.update(cx, |workspace, cx| {
+                        workspace::tasks::schedule_resolved_task(
+                            workspace,
+                            task_source_kind,
+                            resolved_task,
+                            false,
+                            cx,
+                        );
 
-                    Some(Task::ready(Ok(())))
-                })
+                        Some(Task::ready(Ok(())))
+                    }),
+                    task::TaskType::Debug(debug_args) => {
+                        if debug_args.locator.is_some() {
+                            workspace.update(cx, |workspace, cx| {
+                                workspace::tasks::schedule_resolved_task(
+                                    workspace,
+                                    task_source_kind,
+                                    resolved_task,
+                                    false,
+                                    cx,
+                                );
+                            });
+
+                            return Some(Task::ready(Ok(())));
+                        }
+
+                        if let Some(project) = self.project.as_ref() {
+                            project
+                                .update(cx, |project, cx| {
+                                    project.start_debug_session(
+                                        resolved_task.resolved_debug_adapter_config().unwrap(),
+                                        cx,
+                                    )
+                                })
+                                .detach_and_log_err(cx);
+                            Some(Task::ready(Ok(())))
+                        } else {
+                            Some(Task::ready(Ok(())))
+                        }
+                    }
+                }
             }
             CodeActionsItem::CodeAction {
                 excerpt_id,
@@ -8600,7 +8632,7 @@ impl Editor {
         let line_len = snapshot.buffer_snapshot.line_len(MultiBufferRow(row));
         let anchor_end = snapshot
             .buffer_snapshot
-            .anchor_before(Point::new(row, line_len));
+            .anchor_after(Point::new(row, line_len));
 
         let bp = self
             .breakpoint_store

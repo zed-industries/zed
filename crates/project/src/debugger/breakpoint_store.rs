@@ -12,7 +12,7 @@ use rpc::{
     AnyProtoClient, TypedEnvelope,
 };
 use std::{hash::Hash, ops::Range, path::Path, sync::Arc};
-use text::{Point, PointUtf16};
+use text::PointUtf16;
 
 use crate::{buffer_store::BufferStore, worktree_store::WorktreeStore, Project, ProjectPath};
 
@@ -494,7 +494,7 @@ impl BreakpointStore {
                         this.update(cx, |_, cx| BreakpointsInFile::new(buffer, cx))?;
 
                     for bp in bps {
-                        let position = snapshot.anchor_after(Point::new(bp.row, 0));
+                        let position = snapshot.anchor_after(PointUtf16::new(bp.row, 0));
                         breakpoints_for_file.breakpoints.push((
                             position,
                             Breakpoint {
