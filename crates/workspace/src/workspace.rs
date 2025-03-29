@@ -4731,7 +4731,7 @@ impl Workspace {
             let breakpoints = self.project.update(cx, |project, cx| {
                 project.breakpoint_store().read(cx).all_breakpoints(cx)
             });
-            let history_manager_location = location.clone();
+            let entry = HistoryManagerEntry::new(database_id, &location);
 
             let center_group = build_serialized_pane_group(&self.center.root, window, cx);
             let docks = build_serialized_docks(self, window, cx);
@@ -4748,25 +4748,14 @@ impl Workspace {
                 breakpoints,
                 window_id: Some(window.window_handle().window_id().as_u64()),
             };
-            // if update {
-            //     if let Some(manager) = HistoryManager::global(cx) {
-            //         return window.spawn(cx, async move |cx| {
-            //             persistence::DB.save_workspace(serialized_workspace).await;
-            //             manager
-            //                 .update(cx, |_, cx| cx.emit(HistoryManagerEvent::Update))
-            //                 .log_err();
-            //         });
-            //     }
-            // }
+
             let manager = HistoryManager::global(cx);
             return window.spawn(cx, async move |cx| {
                 persistence::DB.save_workspace(serialized_workspace).await;
                 if let Some(manager) = manager {
                     manager
                         .update(cx, |this, cx| {
-                            if this.update_history(database_id, &history_manager_location) {
-                                this.update_jump_list(cx);
-                            }
+                            this.update_history(database_id, entry, cx);
                         })
                         .log_err();
                 }
