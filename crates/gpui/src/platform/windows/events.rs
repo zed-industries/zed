@@ -361,7 +361,7 @@ fn handle_keydown_msg(
     lparam: LPARAM,
     state_ptr: Rc<WindowsWindowStatePtr>,
 ) -> Option<isize> {
-    let Some(keystroke_or_modifier) = parse_keydown_msg_keystroke(wparam) else {
+    let Some(keystroke_or_modifier) = parse_keystroke_from_vkey(wparam, false) else {
         return Some(1);
     };
     let mut lock = state_ptr.state.borrow_mut();
@@ -391,7 +391,7 @@ fn handle_keydown_msg(
 }
 
 fn handle_keyup_msg(wparam: WPARAM, state_ptr: Rc<WindowsWindowStatePtr>) -> Option<isize> {
-    let Some(keystroke_or_modifier) = parse_keydown_msg_keystroke(wparam) else {
+    let Some(keystroke_or_modifier) = parse_keystroke_from_vkey(wparam, true) else {
         return Some(1);
     };
     let mut lock = state_ptr.state.borrow_mut();
@@ -1288,7 +1288,7 @@ enum KeystrokeOrModifier {
     Modifier(Modifiers),
 }
 
-fn parse_keydown_msg_keystroke(wparam: WPARAM) -> Option<KeystrokeOrModifier> {
+fn parse_keystroke_from_vkey(wparam: WPARAM, is_keyup: bool) -> Option<KeystrokeOrModifier> {
     let vk_code = wparam.loword();
 
     let modifiers = current_modifiers();
@@ -1316,7 +1316,7 @@ fn parse_keydown_msg_keystroke(wparam: WPARAM) -> Option<KeystrokeOrModifier> {
                 return Some(KeystrokeOrModifier::Modifier(modifiers));
             }
 
-            if modifiers.control || modifiers.alt {
+            if modifiers.control || modifiers.alt || is_keyup {
                 let basic_key = basic_vkcode_to_string(vk_code, modifiers);
                 if let Some(basic_key) = basic_key {
                     return Some(KeystrokeOrModifier::Keystroke(basic_key));

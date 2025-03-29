@@ -14,6 +14,7 @@ path = "src/assistant_tools.rs"
 [dependencies]
 anyhow.workspace = true
 assistant_tool.workspace = true
+clock.workspace = true
 chrono.workspace = true
 collections.workspace = true
 feature_flags.workspace = true
@@ -35,8 +36,10 @@ ui.workspace = true
 util.workspace = true
 workspace.workspace = true
 worktree.workspace = true
+open = { workspace = true }
 
 [dev-dependencies]
+clock = { workspace = true, features = ["test-support"] }
 collections = { workspace = true, features = ["test-support"] }
 gpui = { workspace = true, features = ["test-support"] }
 language = { workspace = true, features = ["test-support"] }

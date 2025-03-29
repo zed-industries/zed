@@ -17,7 +17,7 @@ use project::{Project, ProjectEntryId, ProjectPath};
 use ui::{prelude::*, Tooltip};
 use workspace::item::{ItemEvent, TabContentParams};
 use workspace::searchable::SearchableItemHandle;
-use workspace::{Item, ItemHandle, ProjectItem, ToolbarItemLocation};
+use workspace::{Item, ItemHandle, Pane, ProjectItem, ToolbarItemLocation};
 use workspace::{ToolbarItemEvent, ToolbarItemView};
 
 use super::{Cell, CellPosition, RenderableCell};
@@ -825,6 +825,7 @@ impl ProjectItem for NotebookEditor {
 
     fn for_project_item(
         project: Entity<Project>,
+        _: &Pane,
         item: Entity<Self::Item>,
         window: &mut Window,
         cx: &mut Context<Self>,

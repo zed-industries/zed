@@ -1,7 +1,6 @@
 use std::collections::HashMap;
 use std::path::Path;
 
-use ::settings::Settings;
 use editor::Editor;
 use feature_flags::{Debugger, FeatureFlagViewExt};
 use gpui::{App, AppContext as _, Context, Entity, Task, Window};
@@ -12,12 +11,10 @@ use workspace::tasks::schedule_task;
 use workspace::{tasks::schedule_resolved_task, Start, Workspace};
 
 mod modal;
-mod settings;
 
 pub use modal::{Rerun, Spawn};
 
 pub fn init(cx: &mut App) {
-    settings::TaskSettings::register(cx);
     cx.observe_new(
         |workspace: &mut Workspace, window: Option<&mut Window>, cx: &mut Context<Workspace>| {
             workspace

@@ -11,6 +11,7 @@ pub(crate) mod windows_only_instance;
 use anyhow::Context as _;
 pub use app_menus::*;
 use assets::Assets;
+use assistant2::AssistantDiffToolbar;
 use assistant_context_editor::AssistantPanelDelegate;
 use breadcrumbs::Breadcrumbs;
 use client::{zed_urls, ZED_URL_SCHEME};
@@ -939,6 +940,8 @@ fn initialize_pane(
             toolbar.add_item(migration_banner, window, cx);
             let project_diff_toolbar = cx.new(|cx| ProjectDiffToolbar::new(workspace, cx));
             toolbar.add_item(project_diff_toolbar, window, cx);
+            let assistant_diff_toolbar = cx.new(|cx| AssistantDiffToolbar::new(workspace, cx));
+            toolbar.add_item(assistant_diff_toolbar, window, cx);
         })
     });
 }

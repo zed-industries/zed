@@ -20,7 +20,7 @@ impl Focusable for FailedState {
     }
 }
 impl Render for FailedState {
-    fn render(&mut self, _: &mut Window, _: &mut Context<'_, Self>) -> impl IntoElement {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
         h_flex()
             .size_full()
             .items_center()

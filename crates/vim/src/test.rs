@@ -1349,12 +1349,12 @@ async fn test_sneak(cx: &mut gpui::TestAppContext) {
                 Some("vim_mode == normal"),
             ),
             KeyBinding::new(
-                "S",
+                "shift-s",
                 PushSneakBackward { first_char: None },
                 Some("vim_mode == normal"),
             ),
             KeyBinding::new(
-                "S",
+                "shift-s",
                 PushSneakBackward { first_char: None },
                 Some("vim_mode == visual"),
             ),

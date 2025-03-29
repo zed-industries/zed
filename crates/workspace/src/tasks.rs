@@ -46,7 +46,15 @@ pub fn schedule_resolved_task(
     omit_history: bool,
     cx: &mut Context<Workspace>,
 ) {
+    let debug_config = resolved_task.resolved_debug_adapter_config();
+
     if let Some(spawn_in_terminal) = resolved_task.resolved.take() {
+        if let Some(debug_config) = debug_config {
+            workspace
+                .debug_task_queue
+                .insert(resolved_task.id.clone(), debug_config);
+        }
+
         if !omit_history {
             resolved_task.resolved = Some(spawn_in_terminal.clone());
             workspace.project().update(cx, |project, cx| {

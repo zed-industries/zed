@@ -258,7 +258,7 @@
       "u": "vim::ConvertToLowerCase",
       "shift-u": "vim::ConvertToUpperCase",
       "shift-o": "vim::OtherEnd",
-      "o": "vim::OtherEnd",
+      "o": "vim::OtherEndRowAware",
       "d": "vim::VisualDelete",
       "x": "vim::VisualDelete",
       "shift-d": "vim::VisualDeleteLine",

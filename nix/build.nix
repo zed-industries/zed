@@ -197,12 +197,6 @@ craneLib.buildPackage (
   lib.recursiveUpdate commonArgs {
     inherit cargoArtifacts;
 
-    patches = lib.optionals stdenv.hostPlatform.isDarwin [
-      # Livekit requires Swift 6
-      # We need this until livekit-rust sdk is used
-      ../script/patches/use-cross-platform-livekit.patch
-    ];
-
     dontUseCmakeConfigure = true;
 
     # without the env var generate-licenses fails due to crane's fetchCargoVendor, see:

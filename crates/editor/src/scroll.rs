@@ -38,7 +38,7 @@ pub struct ScrollAnchor {
 }
 
 impl ScrollAnchor {
-    fn new() -> Self {
+    pub(super) fn new() -> Self {
         Self {
             offset: gpui::Point::default(),
             anchor: Anchor::min(),

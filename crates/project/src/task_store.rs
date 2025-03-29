@@ -162,7 +162,7 @@ impl TaskStore {
         worktree_store: Entity<WorktreeStore>,
         toolchain_store: Arc<dyn LanguageToolchainStore>,
         environment: Entity<ProjectEnvironment>,
-        cx: &mut Context<'_, Self>,
+        cx: &mut Context<Self>,
     ) -> Self {
         Self::Functional(StoreState {
             mode: StoreMode::Local {
@@ -182,7 +182,7 @@ impl TaskStore {
         toolchain_store: Arc<dyn LanguageToolchainStore>,
         upstream_client: AnyProtoClient,
         project_id: u64,
-        cx: &mut Context<'_, Self>,
+        cx: &mut Context<Self>,
     ) -> Self {
         Self::Functional(StoreState {
             mode: StoreMode::Remote {
@@ -265,7 +265,7 @@ impl TaskStore {
         location: TaskSettingsLocation<'_>,
         raw_tasks_json: Option<&str>,
         task_type: TaskKind,
-        cx: &mut Context<'_, Self>,
+        cx: &mut Context<Self>,
     ) -> Result<(), InvalidSettingsError> {
         let task_inventory = match self {
             TaskStore::Functional(state) => &state.task_inventory,

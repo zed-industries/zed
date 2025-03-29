@@ -1,24 +1,24 @@
-use std::sync::{Arc, LazyLock};
+use std::sync::Arc;
 
-use anyhow::Result;
 use assistant_settings::{AgentProfile, AssistantSettings};
-use editor::scroll::Autoscroll;
-use editor::Editor;
 use fs::Fs;
-use gpui::{prelude::*, AsyncWindowContext, Entity, Subscription, WeakEntity};
+use gpui::{prelude::*, Action, Entity, FocusHandle, Subscription, WeakEntity};
 use indexmap::IndexMap;
-use regex::Regex;
 use settings::{update_settings_file, Settings as _, SettingsStore};
-use ui::{prelude::*, ContextMenu, ContextMenuEntry, PopoverMenu, Tooltip};
+use ui::{
+    prelude::*, ButtonLike, ContextMenu, ContextMenuEntry, KeyBinding, PopoverMenu,
+    PopoverMenuHandle,
+};
 use util::ResultExt as _;
-use workspace::{create_and_open_local_file, Workspace};
 
-use crate::ThreadStore;
+use crate::{ManageProfiles, ThreadStore, ToggleProfileSelector};
 
 pub struct ProfileSelector {
     profiles: IndexMap<Arc<str>, AgentProfile>,
     fs: Arc<dyn Fs>,
     thread_store: WeakEntity<ThreadStore>,
+    focus_handle: FocusHandle,
+    menu_handle: PopoverMenuHandle<ContextMenu>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -26,6 +26,7 @@ impl ProfileSelector {
     pub fn new(
         fs: Arc<dyn Fs>,
         thread_store: WeakEntity<ThreadStore>,
+        focus_handle: FocusHandle,
         cx: &mut Context<Self>,
     ) -> Self {
         let settings_subscription = cx.observe_global::<SettingsStore>(move |this, cx| {
@@ -36,11 +37,17 @@ impl ProfileSelector {
             profiles: IndexMap::default(),
             fs,
             thread_store,
+            focus_handle,
+            menu_handle: PopoverMenuHandle::default(),
             _subscriptions: vec![settings_subscription],
         };
         this.refresh_profiles(cx);
 
         this
+    }
+
+    pub fn menu_handle(&self) -> PopoverMenuHandle<ContextMenu> {
+        self.menu_handle.clone()
     }
 
     fn refresh_profiles(&mut self, cx: &mut Context<Self>) {
@@ -56,7 +63,7 @@ impl ProfileSelector {
     ) -> Entity<ContextMenu> {
         ContextMenu::build(window, cx, |mut menu, _window, cx| {
             let settings = AssistantSettings::get_global(cx);
-            let icon_position = IconPosition::Start;
+            let icon_position = IconPosition::End;
 
             menu = menu.header("Profiles");
             for (profile_id, profile) in self.profiles.clone() {
@@ -87,116 +94,79 @@ impl ProfileSelector {
             }
 
             menu = menu.separator();
-            menu = menu.item(
-                ContextMenuEntry::new("Configure Profiles")
-                    .icon(IconName::Pencil)
-                    .icon_color(Color::Muted)
-                    .handler(move |window, cx| {
-                        if let Some(workspace) = window.root().flatten() {
-                            let workspace = workspace.downgrade();
-                            window
-                                .spawn(cx, async |cx| {
-                                    Self::open_profiles_setting_in_editor(workspace, cx).await
-                                })
-                                .detach_and_log_err(cx);
-                        }
-                    }),
-            );
+            menu = menu.header("Customize Current Profile");
+            menu = menu.item(ContextMenuEntry::new("Tools…").handler({
+                let profile_id = settings.default_profile.clone();
+                move |window, cx| {
+                    window.dispatch_action(
+                        ManageProfiles::customize_tools(profile_id.clone()).boxed_clone(),
+                        cx,
+                    );
+                }
+            }));
+
+            menu = menu.separator();
+            menu = menu.item(ContextMenuEntry::new("Configure Profiles…").handler(
+                move |window, cx| {
+                    window.dispatch_action(ManageProfiles::default().boxed_clone(), cx);
+                },
+            ));
 
             menu
         })
     }
-
-    async fn open_profiles_setting_in_editor(
-        workspace: WeakEntity<Workspace>,
-        cx: &mut AsyncWindowContext,
-    ) -> Result<()> {
-        let settings_editor = workspace
-            .update_in(cx, |_, window, cx| {
-                create_and_open_local_file(paths::settings_file(), window, cx, || {
-                    settings::initial_user_settings_content().as_ref().into()
-                })
-            })?
-            .await?
-            .downcast::<Editor>()
-            .unwrap();
-
-        settings_editor
-            .downgrade()
-            .update_in(cx, |editor, window, cx| {
-                let text = editor.buffer().read(cx).snapshot(cx).text();
-
-                let settings = cx.global::<SettingsStore>();
-
-                let edits =
-                    settings.edits_for_update::<AssistantSettings>(
-                        &text,
-                        |settings| match settings {
-                            assistant_settings::AssistantSettingsContent::Versioned(settings) => {
-                                match settings {
-                                    assistant_settings::VersionedAssistantSettingsContent::V2(
-                                        settings,
-                                    ) => {
-                                        settings.profiles.get_or_insert_with(IndexMap::default);
-                                    }
-                                    assistant_settings::VersionedAssistantSettingsContent::V1(
-                                        _,
-                                    ) => {}
-                                }
-                            }
-                            assistant_settings::AssistantSettingsContent::Legacy(_) => {}
-                        },
-                    );
-
-                if !edits.is_empty() {
-                    editor.edit(edits.iter().cloned(), cx);
-                }
-
-                let text = editor.buffer().read(cx).snapshot(cx).text();
-
-                static PROFILES_REGEX: LazyLock<Regex> =
-                    LazyLock::new(|| Regex::new(r#"(?P<key>"profiles":)\s*\{"#).unwrap());
-                let range = PROFILES_REGEX.captures(&text).and_then(|captures| {
-                    captures
-                        .name("key")
-                        .map(|inner_match| inner_match.start()..inner_match.end())
-                });
-                if let Some(range) = range {
-                    editor.change_selections(
-                        Some(Autoscroll::newest()),
-                        window,
-                        cx,
-                        |selections| {
-                            selections.select_ranges(vec![range]);
-                        },
-                    );
-                }
-            })?;
-
-        anyhow::Ok(())
-    }
 }
 
 impl Render for ProfileSelector {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let settings = AssistantSettings::get_global(cx);
-        let profile = settings
-            .profiles
-            .get(&settings.default_profile)
+        let profile_id = &settings.default_profile;
+        let profile = settings.profiles.get(profile_id);
+
+        let selected_profile = profile
             .map(|profile| profile.name.clone())
             .unwrap_or_else(|| "Unknown".into());
 
+        let icon = match profile_id.as_ref() {
+            "write" => IconName::Pencil,
+            "ask" => IconName::MessageBubbles,
+            _ => IconName::UserRoundPen,
+        };
+
         let this = cx.entity().clone();
-        PopoverMenu::new("tool-selector")
+        let focus_handle = self.focus_handle.clone();
+        PopoverMenu::new("profile-selector")
             .menu(move |window, cx| {
                 Some(this.update(cx, |this, cx| this.build_context_menu(window, cx)))
             })
-            .trigger_with_tooltip(
-                Button::new("profile-selector-button", profile)
-                    .style(ButtonStyle::Filled)
-                    .label_size(LabelSize::Small),
-                Tooltip::text("Change Profile"),
+            .trigger(
+                ButtonLike::new("profile-selector-button").child(
+                    h_flex()
+                        .gap_1()
+                        .child(Icon::new(icon).size(IconSize::XSmall).color(Color::Muted))
+                        .child(
+                            Label::new(selected_profile)
+                                .size(LabelSize::Small)
+                                .color(Color::Muted),
+                        )
+                        .child(
+                            Icon::new(IconName::ChevronDown)
+                                .size(IconSize::XSmall)
+                                .color(Color::Muted),
+                        )
+                        .child(div().opacity(0.5).children({
+                            let focus_handle = focus_handle.clone();
+                            KeyBinding::for_action_in(
+                                &ToggleProfileSelector,
+                                &focus_handle,
+                                window,
+                                cx,
+                            )
+                            .map(|kb| kb.size(rems_from_px(10.)))
+                        })),
+                ),
             )
             .anchor(gpui::Corner::BottomLeft)
+            .with_handle(self.menu_handle.clone())
     }
 }

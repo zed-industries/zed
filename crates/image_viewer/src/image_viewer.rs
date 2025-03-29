@@ -19,7 +19,7 @@ use ui::prelude::*;
 use util::paths::PathExt;
 use workspace::{
     item::{BreadcrumbText, Item, ProjectItem, SerializableItem, TabContentParams},
-    ItemId, ItemSettings, ToolbarItemLocation, Workspace, WorkspaceId,
+    ItemId, ItemSettings, Pane, ToolbarItemLocation, Workspace, WorkspaceId,
 };
 
 pub use crate::image_info::*;
@@ -357,6 +357,7 @@ impl ProjectItem for ImageView {
 
     fn for_project_item(
         project: Entity<Project>,
+        _: &Pane,
         item: Entity<Self::Item>,
         _: &mut Window,
         cx: &mut Context<Self>,

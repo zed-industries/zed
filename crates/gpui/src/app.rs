@@ -1609,10 +1609,7 @@ impl AppContext for App {
     ///
     /// The given function will be invoked with a [`Context`] and must return an object representing the entity. An
     /// [`Entity`] handle will be returned, which can be used to access the entity in a context.
-    fn new<T: 'static>(
-        &mut self,
-        build_entity: impl FnOnce(&mut Context<'_, T>) -> T,
-    ) -> Entity<T> {
+    fn new<T: 'static>(&mut self, build_entity: impl FnOnce(&mut Context<T>) -> T) -> Entity<T> {
         self.update(|cx| {
             let slot = cx.entities.reserve();
             let handle = slot.clone();
@@ -1636,7 +1633,7 @@ impl AppContext for App {
     fn insert_entity<T: 'static>(
         &mut self,
         reservation: Reservation<T>,
-        build_entity: impl FnOnce(&mut Context<'_, T>) -> T,
+        build_entity: impl FnOnce(&mut Context<T>) -> T,
     ) -> Self::Result<Entity<T>> {
         self.update(|cx| {
             let slot = reservation.0;
@@ -1650,7 +1647,7 @@ impl AppContext for App {
     fn update_entity<T: 'static, R>(
         &mut self,
         handle: &Entity<T>,
-        update: impl FnOnce(&mut T, &mut Context<'_, T>) -> R,
+        update: impl FnOnce(&mut T, &mut Context<T>) -> R,
     ) -> R {
         self.update(|cx| {
             let mut entity = cx.entities.lease(handle);

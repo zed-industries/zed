@@ -442,7 +442,7 @@ pub struct AgentProfileContent {
     pub context_servers: IndexMap<Arc<str>, ContextServerPresetContent>,
 }
 
-#[derive(Debug, PartialEq, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, PartialEq, Clone, Default, Serialize, Deserialize, JsonSchema)]
 pub struct ContextServerPresetContent {
     pub tools: IndexMap<Arc<str>, bool>,
 }

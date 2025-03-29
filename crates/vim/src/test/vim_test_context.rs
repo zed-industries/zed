@@ -24,6 +24,7 @@ impl VimTestContext {
             git_ui::init(cx);
             crate::init(cx);
             search::init(cx);
+            workspace::init_settings(cx);
             language::init(cx);
             editor::init_settings(cx);
             project::Project::init_settings(cx);

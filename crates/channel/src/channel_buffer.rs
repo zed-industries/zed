@@ -201,7 +201,7 @@ impl ChannelBuffer {
         }
     }
 
-    pub fn acknowledge_buffer_version(&mut self, cx: &mut Context<'_, ChannelBuffer>) {
+    pub fn acknowledge_buffer_version(&mut self, cx: &mut Context<ChannelBuffer>) {
         let buffer = self.buffer.read(cx);
         let version = buffer.version();
         let buffer_id = buffer.remote_id().into();

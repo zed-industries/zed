@@ -16,7 +16,7 @@ use gpui::{
 };
 use heed::types::SerdeBincode;
 use heed::Database;
-use language_model::{LanguageModelToolUseId, Role};
+use language_model::{LanguageModelToolUseId, Role, TokenUsage};
 use project::Project;
 use prompt_store::PromptBuilder;
 use serde::{Deserialize, Serialize};
@@ -308,6 +308,8 @@ pub struct SerializedThread {
     pub messages: Vec<SerializedMessage>,
     #[serde(default)]
     pub initial_project_snapshot: Option<Arc<ProjectSnapshot>>,
+    #[serde(default)]
+    pub cumulative_token_usage: TokenUsage,
 }
 
 impl SerializedThread {
@@ -390,6 +392,7 @@ impl LegacySerializedThread {
             updated_at: self.updated_at,
             messages: self.messages.into_iter().map(|msg| msg.upgrade()).collect(),
             initial_project_snapshot: self.initial_project_snapshot,
+            cumulative_token_usage: TokenUsage::default(),
         }
     }
 }

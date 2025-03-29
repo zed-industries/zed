@@ -74,7 +74,7 @@ pub trait StyledExt: Styled + Sized {
     /// Sets `bg()`, `rounded_lg()`, `border()`, `border_color()`, `shadow()`
     ///
     /// Examples: Settings Modal, Channel Management, Wizards/Setup UI, Dialogs
-    fn elevation_3(self, cx: &mut App) -> Self {
+    fn elevation_3(self, cx: &App) -> Self {
         elevated(self, cx, ElevationIndex::ModalSurface)
     }
 

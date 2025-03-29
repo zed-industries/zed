@@ -150,7 +150,7 @@ impl GitBlame {
                         this.generate(cx);
                     }
                 }
-                project::Event::WorktreeUpdatedGitRepositories(_) => {
+                project::Event::GitStateUpdated => {
                     log::debug!("Status of git repositories updated. Regenerating blame data...",);
                     this.generate(cx);
                 }

@@ -37,7 +37,6 @@ client.workspace = true
 clock.workspace = true
 collections.workspace = true
 dap.workspace = true
-dap_adapters.workspace = true
 extension.workspace = true
 fancy-regex.workspace = true
 fs.workspace = true

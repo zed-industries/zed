@@ -9,6 +9,10 @@ use cocoa::{
     foundation::NSArray,
 };
 use core_foundation::base::TCFType;
+use core_graphics::display::{
+    CGDirectDisplayID, CGDisplayCopyDisplayMode, CGDisplayModeGetPixelHeight,
+    CGDisplayModeGetPixelWidth, CGDisplayModeRelease,
+};
 use ctor::ctor;
 use futures::channel::oneshot;
 use media::core_media::{CMSampleBuffer, CMSampleBufferRef};
@@ -45,8 +49,12 @@ const SCStreamOutputTypeScreen: NSInteger = 0;
 impl ScreenCaptureSource for MacScreenCaptureSource {
     fn resolution(&self) -> Result<Size<Pixels>> {
         unsafe {
-            let width: i64 = msg_send![self.sc_display, width];
-            let height: i64 = msg_send![self.sc_display, height];
+            let display_id: CGDirectDisplayID = msg_send![self.sc_display, displayID];
+            let display_mode_ref = CGDisplayCopyDisplayMode(display_id);
+            let width = CGDisplayModeGetPixelWidth(display_mode_ref);
+            let height = CGDisplayModeGetPixelHeight(display_mode_ref);
+            CGDisplayModeRelease(display_mode_ref);
+
             Ok(size(px(width as f32), px(height as f32)))
         }
     }
@@ -65,6 +73,10 @@ impl ScreenCaptureSource for MacScreenCaptureSource {
             let excluded_windows = NSArray::array(nil);
             let filter: id = msg_send![filter, initWithDisplay:self.sc_display excludingWindows:excluded_windows];
             let configuration: id = msg_send![configuration, init];
+            let _: id = msg_send![configuration, setScalesToFit: true];
+            let _: id = msg_send![configuration, setPixelFormat: 0x42475241];
+            // let _: id = msg_send![configuration, setShowsCursor: false];
+            // let _: id = msg_send![configuration, setCaptureResolution: 3];
             let delegate: id = msg_send![delegate, init];
             let output: id = msg_send![output, init];
 
@@ -73,6 +85,9 @@ impl ScreenCaptureSource for MacScreenCaptureSource {
                 Box::into_raw(Box::new(frame_callback)) as *mut c_void,
             );
 
+            let resolution = self.resolution().unwrap();
+            let _: id = msg_send![configuration, setWidth: resolution.width.0 as i64];
+            let _: id = msg_send![configuration, setHeight: resolution.height.0 as i64];
             let stream: id = msg_send![stream, initWithFilter:filter configuration:configuration delegate:delegate];
 
             let (mut tx, rx) = oneshot::channel();

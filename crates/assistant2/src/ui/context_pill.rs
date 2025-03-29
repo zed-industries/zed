@@ -162,7 +162,9 @@ impl RenderOnce for ContextPill {
                 })
                 .when_some(on_click.as_ref(), |element, on_click| {
                     let on_click = on_click.clone();
-                    element.on_click(move |event, window, cx| on_click(event, window, cx))
+                    element
+                        .cursor_pointer()
+                        .on_click(move |event, window, cx| on_click(event, window, cx))
                 }),
             ContextPill::Suggested {
                 name,
@@ -173,10 +175,14 @@ impl RenderOnce for ContextPill {
             } => base_pill
                 .cursor_pointer()
                 .pr_1()
+                .when(*focused, |this| {
+                    this.bg(color.element_background.opacity(0.5))
+                })
+                .border_dashed()
                 .border_color(if *focused {
                     color.border_focused
                 } else {
-                    color.border_variant.opacity(0.5)
+                    color.border
                 })
                 .hover(|style| style.bg(color.element_hover.opacity(0.5)))
                 .child(
@@ -190,9 +196,10 @@ impl RenderOnce for ContextPill {
                 .child(
                     Label::new(match kind {
                         ContextKind::File => "Active Tab",
-                        ContextKind::Thread | ContextKind::Directory | ContextKind::FetchedUrl => {
-                            "Active"
-                        }
+                        ContextKind::Thread
+                        | ContextKind::Directory
+                        | ContextKind::FetchedUrl
+                        | ContextKind::Symbol => "Active",
                     })
                     .size(LabelSize::XSmall)
                     .color(Color::Muted),

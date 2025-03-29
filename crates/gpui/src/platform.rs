@@ -74,6 +74,11 @@ pub(crate) use windows::*;
 #[cfg(any(test, feature = "test-support"))]
 pub use test::TestScreenCaptureSource;
 
+/// Returns a background executor for the current platform.
+pub fn background_executor() -> BackgroundExecutor {
+    current_platform(true).background_executor()
+}
+
 #[cfg(target_os = "macos")]
 pub(crate) fn current_platform(headless: bool) -> Rc<dyn Platform> {
     Rc::new(MacPlatform::new(headless))
@@ -378,6 +383,7 @@ pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn is_maximized(&self) -> bool;
     fn window_bounds(&self) -> WindowBounds;
     fn content_size(&self) -> Size<Pixels>;
+    fn resize(&mut self, size: Size<Pixels>);
     fn scale_factor(&self) -> f32;
     fn appearance(&self) -> WindowAppearance;
     fn display(&self) -> Option<Rc<dyn PlatformDisplay>>;
@@ -1330,6 +1336,44 @@ impl ClipboardItem {
     }
 }
 
+impl From<ClipboardString> for ClipboardEntry {
+    fn from(value: ClipboardString) -> Self {
+        Self::String(value)
+    }
+}
+
+impl From<String> for ClipboardEntry {
+    fn from(value: String) -> Self {
+        Self::from(ClipboardString::from(value))
+    }
+}
+
+impl From<Image> for ClipboardEntry {
+    fn from(value: Image) -> Self {
+        Self::Image(value)
+    }
+}
+
+impl From<ClipboardEntry> for ClipboardItem {
+    fn from(value: ClipboardEntry) -> Self {
+        Self {
+            entries: vec![value],
+        }
+    }
+}
+
+impl From<String> for ClipboardItem {
+    fn from(value: String) -> Self {
+        Self::from(ClipboardEntry::from(value))
+    }
+}
+
+impl From<Image> for ClipboardItem {
+    fn from(value: Image) -> Self {
+        Self::from(ClipboardEntry::from(value))
+    }
+}
+
 /// One of the editor's supported image formats (e.g. PNG, JPEG) - used when dealing with images in the clipboard
 #[derive(Clone, Copy, Debug, Eq, PartialEq, EnumIter, Hash)]
 pub enum ImageFormat {
@@ -1496,5 +1540,14 @@ impl ClipboardString {
         let mut hasher = SeaHasher::new();
         text.hash(&mut hasher);
         hasher.finish()
+    }
+}
+
+impl From<String> for ClipboardString {
+    fn from(value: String) -> Self {
+        Self {
+            text: value,
+            metadata: None,
+        }
     }
 }

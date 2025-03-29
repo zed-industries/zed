@@ -1,2 +1,0 @@
-[livekit_client_test]
-rustflags = ["-C", "link-args=-ObjC"]

@@ -12,7 +12,7 @@ pub struct AgentProfile {
     pub context_servers: IndexMap<Arc<str>, ContextServerPreset>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct ContextServerPreset {
     pub tools: IndexMap<Arc<str>, bool>,
 }
