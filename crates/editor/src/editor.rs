@@ -147,7 +147,7 @@ use multi_buffer::{
 };
 use parking_lot::Mutex;
 use project::{
-    debugger::breakpoint_store::{Breakpoint, BreakpointKind},
+    debugger::breakpoint_store::Breakpoint,
     lsp_store::{CompletionDocumentation, FormatTrigger, LspFormatTarget, OpenLspBufferHandle},
     project_settings::{GitGutterSetting, ProjectSettings},
     CodeAction, Completion, CompletionIntent, CompletionSource, DocumentHighlight, InlayHint,
@@ -785,11 +785,11 @@ pub struct Editor {
     expect_bounds_change: Option<Bounds<Pixels>>,
     tasks: BTreeMap<(BufferId, BufferRow), RunnableTasks>,
     tasks_update_task: Option<Task<()>>,
-    pub breakpoint_store: Option<Entity<BreakpointStore>>,
+    breakpoint_store: Option<Entity<BreakpointStore>>,
     /// Allow's a user to create a breakpoint by selecting this indicator
     /// It should be None while a user is not hovering over the gutter
     /// Otherwise it represents the point that the breakpoint will be shown
-    pub gutter_breakpoint_indicator: Option<DisplayPoint>,
+    gutter_breakpoint_indicator: (Option<(DisplayPoint, bool)>, Option<Task<()>>),
     in_project_search: bool,
     previous_search_ranges: Option<Arc<[Range<Anchor>]>>,
     breadcrumb_header: Option<String>,
@@ -1549,7 +1549,7 @@ impl Editor {
             tasks: Default::default(),
 
             breakpoint_store,
-            gutter_breakpoint_indicator: None,
+            gutter_breakpoint_indicator: (None, None),
             _subscriptions: vec![
                 cx.observe(&buffer, Self::on_buffer_changed),
                 cx.subscribe_in(&buffer, window, Self::on_buffer_event),
@@ -1597,6 +1597,17 @@ impl Editor {
         }
         this.tasks_update_task = Some(this.refresh_runnables(window, cx));
         this._subscriptions.extend(project_subscriptions);
+        this._subscriptions
+            .push(cx.subscribe_self(|editor, e: &EditorEvent, cx| {
+                if let EditorEvent::SelectionsChanged { local } = e {
+                    if *local {
+                        let new_anchor = editor.scroll_manager.anchor();
+                        editor.update_restoration_data(cx, move |data| {
+                            data.scroll_anchor = new_anchor;
+                        });
+                    }
+                }
+            }));
 
         this.end_selection(window, cx);
         this.scroll_manager.show_scrollbars(window, cx);
@@ -2317,18 +2328,24 @@ impl Editor {
         if selections.len() == 1 {
             cx.emit(SearchEvent::ActiveMatchChanged)
         }
-        if local
-            && self.is_singleton(cx)
-            && WorkspaceSettings::get(None, cx).restore_on_startup != RestoreOnStartupBehavior::None
-        {
-            if let Some(workspace_id) = self.workspace.as_ref().and_then(|workspace| workspace.1) {
-                let background_executor = cx.background_executor().clone();
-                let editor_id = cx.entity().entity_id().as_u64() as ItemId;
-                let snapshot = self.buffer().read(cx).snapshot(cx);
-                let selections = selections.clone();
-                self.serialize_selections = cx.background_spawn(async move {
+        if local && self.is_singleton(cx) {
+            let inmemory_selections = selections.iter().map(|s| s.range()).collect();
+            self.update_restoration_data(cx, |data| {
+                data.selections = inmemory_selections;
+            });
+
+            if WorkspaceSettings::get(None, cx).restore_on_startup != RestoreOnStartupBehavior::None
+            {
+                if let Some(workspace_id) =
+                    self.workspace.as_ref().and_then(|workspace| workspace.1)
+                {
+                    let snapshot = self.buffer().read(cx).snapshot(cx);
+                    let selections = selections.clone();
+                    let background_executor = cx.background_executor().clone();
+                    let editor_id = cx.entity().entity_id().as_u64() as ItemId;
+                    self.serialize_selections = cx.background_spawn(async move {
                     background_executor.timer(SERIALIZATION_THROTTLE_TIME).await;
-                    let selections = selections
+                    let db_selections = selections
                         .iter()
                         .map(|selection| {
                             (
@@ -2338,11 +2355,12 @@ impl Editor {
                         })
                         .collect();
 
-                    DB.save_editor_selections(editor_id, workspace_id, selections)
+                    DB.save_editor_selections(editor_id, workspace_id, db_selections)
                         .await
                         .with_context(|| format!("persisting editor selections for editor {editor_id}, workspace {workspace_id:?}"))
                         .log_err();
                 });
+                }
             }
         }
 
@@ -2356,13 +2374,24 @@ impl Editor {
             return;
         }
 
+        let snapshot = self.buffer().read(cx).snapshot(cx);
+        let inmemory_folds = self.display_map.update(cx, |display_map, cx| {
+            display_map
+                .snapshot(cx)
+                .folds_in_range(0..snapshot.len())
+                .map(|fold| fold.range.deref().clone())
+                .collect()
+        });
+        self.update_restoration_data(cx, |data| {
+            data.folds = inmemory_folds;
+        });
+
         let Some(workspace_id) = self.workspace.as_ref().and_then(|workspace| workspace.1) else {
             return;
         };
         let background_executor = cx.background_executor().clone();
         let editor_id = cx.entity().entity_id().as_u64() as ItemId;
-        let snapshot = self.buffer().read(cx).snapshot(cx);
-        let folds = self.display_map.update(cx, |display_map, cx| {
+        let db_folds = self.display_map.update(cx, |display_map, cx| {
             display_map
                 .snapshot(cx)
                 .folds_in_range(0..snapshot.len())
@@ -2376,7 +2405,7 @@ impl Editor {
         });
         self.serialize_folds = cx.background_spawn(async move {
             background_executor.timer(SERIALIZATION_THROTTLE_TIME).await;
-            DB.save_editor_folds(editor_id, workspace_id, folds)
+            DB.save_editor_folds(editor_id, workspace_id, db_folds)
                 .await
                 .with_context(|| format!("persisting editor folds for editor {editor_id}, workspace {workspace_id:?}"))
                 .log_err();
@@ -6229,10 +6258,7 @@ impl Editor {
             .breakpoint_at_row(row, window, cx)
             .map(|(_, bp)| Arc::from(bp));
 
-        let log_breakpoint_msg = if breakpoint
-            .as_ref()
-            .is_some_and(|bp| bp.kind.log_message().is_some())
-        {
+        let log_breakpoint_msg = if breakpoint.as_ref().is_some_and(|bp| bp.message.is_some()) {
             "Edit Log Breakpoint"
         } else {
             "Set Log Breakpoint"
@@ -6252,7 +6278,7 @@ impl Editor {
         let breakpoint = breakpoint.unwrap_or_else(|| {
             Arc::new(Breakpoint {
                 state: BreakpointState::Enabled,
-                kind: BreakpointKind::Standard,
+                message: None,
             })
         });
 
@@ -6311,16 +6337,17 @@ impl Editor {
         cx: &mut Context<Self>,
     ) -> IconButton {
         let (color, icon) = {
-            let icon = match (&breakpoint.kind, breakpoint.is_disabled()) {
-                (BreakpointKind::Standard, false) => ui::IconName::DebugBreakpoint,
-                (BreakpointKind::Log(_), false) => ui::IconName::DebugLogBreakpoint,
-                (BreakpointKind::Standard, true) => ui::IconName::DebugDisabledBreakpoint,
-                (BreakpointKind::Log(_), true) => ui::IconName::DebugDisabledLogBreakpoint,
+            let icon = match (&breakpoint.message.is_some(), breakpoint.is_disabled()) {
+                (false, false) => ui::IconName::DebugBreakpoint,
+                (true, false) => ui::IconName::DebugLogBreakpoint,
+                (false, true) => ui::IconName::DebugDisabledBreakpoint,
+                (true, true) => ui::IconName::DebugDisabledLogBreakpoint,
             };
 
             let color = if self
                 .gutter_breakpoint_indicator
-                .is_some_and(|point| point.row() == row)
+                .0
+                .is_some_and(|(point, is_visible)| is_visible && point.row() == row)
             {
                 Color::Hint
             } else {
@@ -8657,7 +8684,7 @@ impl Editor {
                 (
                     breakpoint_position,
                     Breakpoint {
-                        kind: BreakpointKind::Standard,
+                        message: None,
                         state: BreakpointState::Enabled,
                     },
                 )
@@ -17486,19 +17513,6 @@ impl Editor {
         {
             let buffer_snapshot = OnceCell::new();
 
-            if let Some(selections) = DB.get_editor_selections(item_id, workspace_id).log_err() {
-                if !selections.is_empty() {
-                    let snapshot =
-                        buffer_snapshot.get_or_init(|| self.buffer.read(cx).snapshot(cx));
-                    self.change_selections(None, window, cx, |s| {
-                        s.select_ranges(selections.into_iter().map(|(start, end)| {
-                            snapshot.clip_offset(start, Bias::Left)
-                                ..snapshot.clip_offset(end, Bias::Right)
-                        }));
-                    });
-                }
-            };
-
             if let Some(folds) = DB.get_editor_folds(item_id, workspace_id).log_err() {
                 if !folds.is_empty() {
                     let snapshot =
@@ -17517,6 +17531,19 @@ impl Editor {
                     );
                 }
             }
+
+            if let Some(selections) = DB.get_editor_selections(item_id, workspace_id).log_err() {
+                if !selections.is_empty() {
+                    let snapshot =
+                        buffer_snapshot.get_or_init(|| self.buffer.read(cx).snapshot(cx));
+                    self.change_selections(None, window, cx, |s| {
+                        s.select_ranges(selections.into_iter().map(|(start, end)| {
+                            snapshot.clip_offset(start, Bias::Left)
+                                ..snapshot.clip_offset(end, Bias::Right)
+                        }));
+                    });
+                }
+            };
         }
 
         self.read_scroll_position_from_db(item_id, workspace_id, window, cx);
@@ -19761,8 +19788,8 @@ impl BreakpointPromptEditor {
         let buffer = cx.new(|cx| {
             Buffer::local(
                 breakpoint
-                    .kind
-                    .log_message()
+                    .message
+                    .as_ref()
                     .map(|msg| msg.to_string())
                     .unwrap_or_default(),
                 cx,

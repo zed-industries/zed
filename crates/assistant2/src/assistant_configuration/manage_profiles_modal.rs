@@ -98,14 +98,20 @@ impl ManageProfilesModal {
         _window: Option<&mut Window>,
         _cx: &mut Context<Workspace>,
     ) {
-        workspace.register_action(|workspace, _: &ManageProfiles, window, cx| {
+        workspace.register_action(|workspace, action: &ManageProfiles, window, cx| {
             if let Some(panel) = workspace.panel::<AssistantPanel>(cx) {
                 let fs = workspace.app_state().fs.clone();
                 let thread_store = panel.read(cx).thread_store();
                 let tools = thread_store.read(cx).tools();
                 let thread_store = thread_store.downgrade();
                 workspace.toggle_modal(window, cx, |window, cx| {
-                    Self::new(fs, tools, thread_store, window, cx)
+                    let mut this = Self::new(fs, tools, thread_store, window, cx);
+
+                    if let Some(profile_id) = action.customize_tools.clone() {
+                        this.configure_tools(profile_id, window, cx);
+                    }
+
+                    this
                 })
             }
         });
@@ -363,7 +369,7 @@ impl ManageProfilesModal {
                                     .on_click({
                                         let profile_id = profile.id.clone();
                                         cx.listener(move |this, _, window, cx| {
-                                            this.new_profile(Some(profile_id.clone()), window, cx);
+                                            this.view_profile(profile_id.clone(), window, cx);
                                         })
                                     }),
                                 )

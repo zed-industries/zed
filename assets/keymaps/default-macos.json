@@ -281,8 +281,9 @@
     "use_key_equivalents": true,
     "bindings": {
       "cmd-n": "assistant2::NewThread",
-      "cmd-alt-p": "assistant2::NewPromptEditor",
+      "cmd-alt-n": "assistant2::NewPromptEditor",
       "cmd-shift-h": "assistant2::OpenHistory",
+      "cmd-alt-c": "assistant2::OpenConfiguration",
       "cmd-i": "assistant2::ToggleProfileSelector",
       "cmd-alt-/": "assistant::ToggleModelSelector",
       "cmd-shift-a": "assistant2::ToggleContextPicker",
