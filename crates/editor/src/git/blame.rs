@@ -6,7 +6,7 @@ use git::{
     parse_git_remote_url, GitHostingProviderRegistry, GitRemote, Oid,
 };
 use gpui::{
-    App, AppContext as _, Context, Div, Entity, IntoElement as _, Stateful, Subscription, Task,
+    AnyElement, App, AppContext as _, Context, Entity, Hsla, Subscription, Task, TextStyle,
     WeakEntity,
 };
 use language::{Bias, Buffer, BufferSnapshot, Edit};
@@ -75,43 +75,64 @@ pub struct GitBlame {
 }
 
 pub trait BlameRenderer {
+    fn max_author_length(&self) -> usize;
+
     fn render_blame_entry(
         &self,
-        div: Stateful<Div>,
-        _: BlameEntry,
-        _: Option<ParsedCommitMessage>,
-        _: Entity<Repository>,
-        _: WeakEntity<Workspace>,
-        _: &App,
-    ) -> gpui::AnyElement {
-        div.into_any_element()
-    }
-
-    fn render_inline_blame_entry(
-        &self,
-        div: Stateful<Div>,
+        _: &TextStyle,
         _: BlameEntry,
         _: Option<ParsedCommitMessage>,
         _: Entity<Repository>,
         _: WeakEntity<Workspace>,
         _: Entity<Editor>,
-        _: &App,
-    ) -> gpui::AnyElement {
-        div.into_any_element()
-    }
-}
+        _: usize,
+        _: Hsla,
+        _: &mut App,
+    ) -> Option<AnyElement>;
 
-impl BlameRenderer for () {
-    fn render_blame_entry(
+    fn render_inline_blame_entry(
         &self,
-        div: Stateful<Div>,
+        _: &TextStyle,
         _: BlameEntry,
         _: Option<ParsedCommitMessage>,
         _: Entity<Repository>,
         _: WeakEntity<Workspace>,
-        _: &App,
-    ) -> gpui::AnyElement {
-        div.into_any_element()
+        _: Entity<Editor>,
+        _: &mut App,
+    ) -> Option<AnyElement>;
+}
+
+impl BlameRenderer for () {
+    fn max_author_length(&self) -> usize {
+        0
+    }
+
+    fn render_blame_entry(
+        &self,
+        _: &TextStyle,
+        _: BlameEntry,
+        _: Option<ParsedCommitMessage>,
+        _: Entity<Repository>,
+        _: WeakEntity<Workspace>,
+        _: Entity<Editor>,
+        _: usize,
+        _: Hsla,
+        _: &mut App,
+    ) -> Option<AnyElement> {
+        None
+    }
+
+    fn render_inline_blame_entry(
+        &self,
+        _: &TextStyle,
+        _: BlameEntry,
+        _: Option<ParsedCommitMessage>,
+        _: Entity<Repository>,
+        _: WeakEntity<Workspace>,
+        _: Entity<Editor>,
+        _: &mut App,
+    ) -> Option<AnyElement> {
+        None
     }
 }
 

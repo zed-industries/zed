@@ -13,7 +13,7 @@ use crate::{
     },
     inlay_hint_settings,
     items::BufferSearchHighlights,
-    mouse_context_menu::{self, MenuPosition, MouseContextMenu},
+    mouse_context_menu::{self, MenuPosition},
     scroll::scroll_amount::ScrollAmount,
     BlameRenderer, BlockId, ChunkReplacement, ContextMenuPlacement, CursorShape, CustomBlockId,
     DisplayDiffHunk, DisplayPoint, DisplayRow, DocumentHighlightRead, DocumentHighlightWrite,
@@ -22,30 +22,25 @@ use crate::{
     HoveredCursor, InlayHintRefreshReason, InlineCompletion, JumpData, LineDown, LineHighlight,
     LineUp, OpenExcerpts, PageDown, PageUp, Point, RowExt, RowRangeExt, SelectPhase,
     SelectedTextHighlight, Selection, SoftWrap, StickyHeaderExcerpt, ToPoint, ToggleFold,
-    COLUMNAR_SELECTION_MODIFIERS, CURSORS_VISIBLE_FOR, FILE_HEADER_HEIGHT,
-    GIT_BLAME_MAX_AUTHOR_CHARS_DISPLAYED, MAX_LINE_LEN, MIN_LINE_NUMBER_DIGITS,
-    MULTI_BUFFER_EXCERPT_HEADER_HEIGHT,
+    COLUMNAR_SELECTION_MODIFIERS, CURSORS_VISIBLE_FOR, FILE_HEADER_HEIGHT, MAX_LINE_LEN,
+    MIN_LINE_NUMBER_DIGITS, MULTI_BUFFER_EXCERPT_HEADER_HEIGHT,
 };
 use buffer_diff::{DiffHunkStatus, DiffHunkStatusKind};
 use client::ParticipantIndex;
 use collections::{BTreeMap, HashMap, HashSet};
 use feature_flags::{Debugger, FeatureFlagAppExt};
 use file_icons::FileIcons;
-use git::{
-    blame::{BlameEntry, ParsedCommitMessage},
-    status::FileStatus,
-    Oid,
-};
+use git::{blame::BlameEntry, status::FileStatus, Oid};
 use gpui::{
     anchored, deferred, div, fill, linear_color_stop, linear_gradient, outline, point, px, quad,
     relative, size, solid_background, transparent_black, Action, Along, AnyElement, App,
-    AvailableSpace, Axis as ScrollbarAxis, BorderStyle, Bounds, ClickEvent, ClipboardItem,
-    ContentMask, Context, Corner, Corners, CursorStyle, DispatchPhase, Edges, Element,
-    ElementInputHandler, Entity, Focusable as _, FontId, GlobalElementId, Hitbox, Hsla,
-    InteractiveElement, IntoElement, Keystroke, Length, ModifiersChangedEvent, MouseButton,
-    MouseDownEvent, MouseMoveEvent, MouseUpEvent, PaintQuad, ParentElement, Pixels, ScrollDelta,
-    ScrollWheelEvent, ShapedLine, SharedString, Size, StatefulInteractiveElement, Style, Styled,
-    Subscription, TextRun, TextStyleRefinement, WeakEntity, Window,
+    AvailableSpace, Axis as ScrollbarAxis, BorderStyle, Bounds, ClickEvent, ContentMask, Context,
+    Corner, Corners, CursorStyle, DispatchPhase, Edges, Element, ElementInputHandler, Entity,
+    Focusable as _, FontId, GlobalElementId, Hitbox, Hsla, InteractiveElement, IntoElement,
+    Keystroke, Length, ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent,
+    MouseUpEvent, PaintQuad, ParentElement, Pixels, ScrollDelta, ScrollWheelEvent, ShapedLine,
+    SharedString, Size, StatefulInteractiveElement, Style, Styled, TextRun, TextStyleRefinement,
+    WeakEntity, Window,
 };
 use inline_completion::Direction;
 use itertools::Itertools;
@@ -80,10 +75,7 @@ use std::{
 use sum_tree::Bias;
 use text::BufferId;
 use theme::{ActiveTheme, Appearance, BufferLineHeight, PlayerColor};
-use ui::{
-    h_flex, prelude::*, ButtonLike, ContextMenu, IconButtonShape, KeyBinding, Tooltip,
-    POPOVER_Y_PADDING,
-};
+use ui::{h_flex, prelude::*, ButtonLike, IconButtonShape, KeyBinding, Tooltip, POPOVER_Y_PADDING};
 use unicode_segmentation::UnicodeSegmentation;
 use util::{debug_panic, RangeExt, ResultExt};
 use workspace::{item::Item, notifications::NotifyTaskExt, Workspace};
@@ -1730,7 +1722,7 @@ impl EditorElement {
             blame_entry,
             &self.style,
             cx,
-        );
+        )?;
 
         let start_y = content_origin.y
             + line_height * (display_row.as_f32() - scroll_pixel_position.y / line_height);
@@ -1794,40 +1786,35 @@ impl EditorElement {
         let start_x = em_width;
 
         let mut last_used_color: Option<(PlayerColor, Oid)> = None;
-
-        let renderer = cx.global::<GlobalBlameRenderer>().0.clone();
+        let blame_renderer = cx.global::<GlobalBlameRenderer>().0.clone();
 
         let shaped_lines = blamed_rows
             .into_iter()
             .enumerate()
             .flat_map(|(ix, blame_entry)| {
-                if let Some(blame_entry) = blame_entry {
-                    let mut element = render_blame_entry(
-                        ix,
-                        &blame,
-                        blame_entry,
-                        &self.style,
-                        &mut last_used_color,
-                        self.editor.clone(),
-                        workspace.clone(),
-                        renderer.clone(),
-                        cx,
-                    );
+                let mut element = render_blame_entry(
+                    ix,
+                    &blame,
+                    blame_entry?,
+                    &self.style,
+                    &mut last_used_color,
+                    self.editor.clone(),
+                    workspace.clone(),
+                    blame_renderer.clone(),
+                    cx,
+                )?;
 
-                    let start_y = ix as f32 * line_height - (scroll_top % line_height);
-                    let absolute_offset = gutter_hitbox.origin + point(start_x, start_y);
+                let start_y = ix as f32 * line_height - (scroll_top % line_height);
+                let absolute_offset = gutter_hitbox.origin + point(start_x, start_y);
 
-                    element.prepaint_as_root(
-                        absolute_offset,
-                        size(width, AvailableSpace::MinContent),
-                        window,
-                        cx,
-                    );
+                element.prepaint_as_root(
+                    absolute_offset,
+                    size(width, AvailableSpace::MinContent),
+                    window,
+                    cx,
+                );
 
-                    Some(element)
-                } else {
-                    None
-                }
+                Some(element)
             })
             .collect();
 
@@ -5698,50 +5685,20 @@ fn render_inline_blame_entry(
     blame_entry: BlameEntry,
     style: &EditorStyle,
     cx: &mut App,
-) -> AnyElement {
+) -> Option<AnyElement> {
     let renderer = cx.global::<GlobalBlameRenderer>().0.clone();
-
-    let relative_timestamp = blame_entry_relative_timestamp(&blame_entry);
-
-    let author = blame_entry.author.as_deref().unwrap_or_default();
-    let summary_enabled = ProjectSettings::get_global(cx)
-        .git
-        .show_inline_commit_summary();
-
-    let text = match blame_entry.summary.as_ref() {
-        Some(summary) if summary_enabled => {
-            format!("{}, {} - {}", author, relative_timestamp, summary)
-        }
-        _ => format!("{}, {}", author, relative_timestamp),
-    };
-    let blame = blame.clone();
-    let blame_entry = blame_entry.clone();
-
-    let div = h_flex()
-        .id("inline-blame")
-        .w_full()
-        .font_family(style.text.font().family)
-        .text_color(cx.theme().status().hint)
-        .line_height(style.text.line_height)
-        .child(Icon::new(IconName::FileGit).color(Color::Hint))
-        .child(text)
-        .gap_2();
-
-    let details = blame.read(cx).details_for_entry(&blame_entry);
-    let repository = blame.read(cx).repository(cx).clone();
-    if let Some(repository) = repository {
-        renderer.render_inline_blame_entry(
-            div,
-            blame_entry,
-            details,
-            repository,
-            workspace,
-            editor,
-            cx,
-        )
-    } else {
-        div.into_any_element()
-    }
+    let blame = blame.read(cx);
+    let details = blame.details_for_entry(&blame_entry);
+    let repository = blame.repository(cx)?.clone();
+    renderer.render_inline_blame_entry(
+        &style.text,
+        blame_entry,
+        details,
+        repository,
+        workspace,
+        editor,
+        cx,
+    )
 }
 
 fn render_blame_entry(
@@ -5754,11 +5711,12 @@ fn render_blame_entry(
     workspace: Entity<Workspace>,
     renderer: Arc<dyn BlameRenderer>,
     cx: &mut App,
-) -> AnyElement {
+) -> Option<AnyElement> {
     let mut sha_color = cx
         .theme()
         .players()
         .color_for_participant(blame_entry.sha.into());
+
     // If the last color we used is the same as the one we get for this line, but
     // the commit SHAs are different, then we try again to get a different color.
     match *last_used_color {
@@ -5770,113 +5728,20 @@ fn render_blame_entry(
     };
     last_used_color.replace((sha_color, blame_entry.sha));
 
-    let relative_timestamp = blame_entry_relative_timestamp(&blame_entry);
-
-    let short_commit_id = blame_entry.sha.display_short();
-
-    let author_name = blame_entry.author.as_deref().unwrap_or("<no name>");
-    let name = util::truncate_and_trailoff(author_name, GIT_BLAME_MAX_AUTHOR_CHARS_DISPLAYED);
-    let details = blame.read(cx).details_for_entry(&blame_entry);
-
-    let div = h_flex()
-        .w_full()
-        .justify_between()
-        .font_family(style.text.font().family)
-        .line_height(style.text.line_height)
-        .id(("blame", ix))
-        .text_color(cx.theme().status().hint)
-        .pr_2()
-        .gap_2()
-        .child(
-            h_flex()
-                .items_center()
-                .gap_2()
-                .child(div().text_color(sha_color.cursor).child(short_commit_id))
-                .child(name),
-        )
-        .child(relative_timestamp)
-        .hover(|style| style.bg(cx.theme().colors().element_hover))
-        .on_mouse_down(MouseButton::Right, {
-            let blame_entry = blame_entry.clone();
-            let details = details.clone();
-            move |event, window, cx| {
-                deploy_blame_entry_context_menu(
-                    &blame_entry,
-                    details.as_ref(),
-                    editor.clone(),
-                    event.position,
-                    window,
-                    cx,
-                );
-            }
-        });
-
-    if let Some(repository) = blame.read(cx).repository(cx) {
-        renderer.render_blame_entry(
-            div,
-            blame_entry,
-            details,
-            repository,
-            workspace.downgrade(),
-            cx,
-        )
-    } else {
-        div.into_any_element()
-    }
-}
-
-fn blame_entry_timestamp(blame_entry: &BlameEntry, format: time_format::TimestampFormat) -> String {
-    match blame_entry.author_offset_date_time() {
-        Ok(timestamp) => {
-            let local = chrono::Local::now().offset().local_minus_utc();
-            time_format::format_localized_timestamp(
-                timestamp,
-                time::OffsetDateTime::now_utc(),
-                time::UtcOffset::from_whole_seconds(local).unwrap(),
-                format,
-            )
-        }
-        Err(_) => "Error parsing date".to_string(),
-    }
-}
-
-pub fn blame_entry_relative_timestamp(blame_entry: &BlameEntry) -> String {
-    blame_entry_timestamp(blame_entry, time_format::TimestampFormat::Relative)
-}
-
-fn deploy_blame_entry_context_menu(
-    blame_entry: &BlameEntry,
-    details: Option<&ParsedCommitMessage>,
-    editor: Entity<Editor>,
-    position: gpui::Point<Pixels>,
-    window: &mut Window,
-    cx: &mut App,
-) {
-    let context_menu = ContextMenu::build(window, cx, move |menu, _, _| {
-        let sha = format!("{}", blame_entry.sha);
-        menu.on_blur_subscription(Subscription::new(|| {}))
-            .entry("Copy commit SHA", None, move |_, cx| {
-                cx.write_to_clipboard(ClipboardItem::new_string(sha.clone()));
-            })
-            .when_some(
-                details.and_then(|details| details.permalink.clone()),
-                |this, url| {
-                    this.entry("Open permalink", None, move |_, cx| {
-                        cx.open_url(url.as_str())
-                    })
-                },
-            )
-    });
-
-    editor.update(cx, move |editor, cx| {
-        editor.mouse_context_menu = Some(MouseContextMenu::new(
-            MenuPosition::PinnedToScreen(position),
-            context_menu,
-            window,
-            cx,
-        ));
-        cx.notify();
-    });
+    let blame = blame.read(cx);
+    let details = blame.details_for_entry(&blame_entry);
+    let repository = blame.repository(cx)?;
+    renderer.render_blame_entry(
+        &style.text,
+        blame_entry,
+        details,
+        repository,
+        workspace.downgrade(),
+        editor,
+        ix,
+        sha_color.cursor,
+        cx,
+    )
 }
 
 #[derive(Debug)]
@@ -6968,7 +6833,7 @@ impl Element for EditorElement {
                                 blame_entry,
                                 &style,
                                 cx,
-                            );
+                            )?;
                             let inline_blame_padding = INLINE_BLAME_PADDING_EM_WIDTHS * em_advance;
                             Some(
                                 element
