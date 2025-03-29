@@ -1030,6 +1030,7 @@ fn scroll_debounce_ms() -> u64 {
 pub struct LanguageTaskConfig {
     /// Extra task variables to set for a particular language.
     pub variables: HashMap<String, String>,
+    // TODO kb allow to disable tree-sitter-backed tasks
 }
 
 impl InlayHintSettings {
