@@ -28,13 +28,13 @@ struct GlobalHistoryManager(Entity<HistoryManager>);
 impl Global for GlobalHistoryManager {}
 
 impl HistoryManager {
-    pub fn new() -> Self {
+    fn new() -> Self {
         Self {
             history: Vec::new(),
         }
     }
 
-    pub fn init(this: Entity<HistoryManager>, cx: &App) {
+    fn init(this: Entity<HistoryManager>, cx: &App) {
         cx.spawn(async move |cx| {
             let recent_folders = WORKSPACE_DB
                 .recent_workspaces_on_disk()
@@ -56,7 +56,7 @@ impl HistoryManager {
             .map(|model| model.0.clone())
     }
 
-    pub fn set_global(history_manager: Entity<Self>, cx: &mut App) {
+    fn set_global(history_manager: Entity<Self>, cx: &mut App) {
         cx.set_global(GlobalHistoryManager(history_manager));
     }
 
@@ -79,7 +79,7 @@ impl HistoryManager {
         self.update_jump_list(cx);
     }
 
-    pub fn update_jump_list(&mut self, cx: &App) {
+    fn update_jump_list(&mut self, cx: &App) {
         let entries = self
             .history
             .iter()
