@@ -25,6 +25,7 @@ use collections::{FxHashMap, FxHashSet, HashMap, VecDeque};
 pub use context::*;
 pub use entity_map::*;
 use http_client::HttpClient;
+use smallvec::SmallVec;
 #[cfg(any(test, feature = "test-support"))]
 pub use test_context::*;
 use util::ResultExt;
@@ -1442,7 +1443,10 @@ impl App {
     }
 
     /// Updates the jump list with the updated list of recent paths for the application, only used on Windows for now.
-    pub fn update_jump_list(&self, entries: &[&Vec<PathBuf>]) -> Vec<Vec<PathBuf>> {
+    pub fn update_jump_list(
+        &self,
+        entries: &[&SmallVec<[PathBuf; 2]>],
+    ) -> Vec<SmallVec<[PathBuf; 2]>> {
         self.platform.update_jump_list(entries)
     }
 

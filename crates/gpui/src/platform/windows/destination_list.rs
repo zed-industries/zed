@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 
 use itertools::Itertools;
+use smallvec::SmallVec;
 use windows::{
     core::{Interface, GUID, HSTRING},
     Win32::{
@@ -45,9 +46,9 @@ impl DockMenuItem {
 // This code is based on the example from Microsoft:
 // https://github.com/microsoft/Windows-classic-samples/blob/main/Samples/Win7Samples/winui/shell/appshellintegration/RecipePropertyHandler/RecipePropertyHandler.cpp
 pub(crate) fn update_jump_list(
-    entries: &[&Vec<PathBuf>],
+    entries: &[&SmallVec<[PathBuf; 2]>],
     dock_menus: &[DockMenuItem],
-) -> anyhow::Result<Vec<Vec<PathBuf>>> {
+) -> anyhow::Result<Vec<SmallVec<[PathBuf; 2]>>> {
     let (list, removed) = create_destination_list()?;
     add_recent_folders(&list, entries, removed.as_ref())?;
     add_dock_menu(&list, dock_menus)?;
@@ -69,7 +70,8 @@ const PKEY_LINK_ARGS: PROPERTYKEY = PROPERTYKEY {
     pid: 100,
 };
 
-fn create_destination_list() -> anyhow::Result<(ICustomDestinationList, Vec<Vec<PathBuf>>)> {
+fn create_destination_list() -> anyhow::Result<(ICustomDestinationList, Vec<SmallVec<[PathBuf; 2]>>)>
+{
     let list: ICustomDestinationList =
         unsafe { CoCreateInstance(&DestinationList, None, CLSCTX_INPROC_SERVER) }?;
 
@@ -90,7 +92,7 @@ fn create_destination_list() -> anyhow::Result<(ICustomDestinationList, Vec<Vec<
             .to_string()
             .split_whitespace()
             .map(|s| PathBuf::from(s.trim_matches('"')))
-            .collect_vec();
+            .collect();
 
         removed.push(args);
     }
@@ -116,8 +118,8 @@ fn add_dock_menu(list: &ICustomDestinationList, dock_menus: &[DockMenuItem]) -> 
 
 fn add_recent_folders(
     list: &ICustomDestinationList,
-    entries: &[&Vec<PathBuf>],
-    removed: &Vec<Vec<PathBuf>>,
+    entries: &[&SmallVec<[PathBuf; 2]>],
+    removed: &Vec<SmallVec<[PathBuf; 2]>>,
 ) -> anyhow::Result<()> {
     unsafe {
         let tasks: IObjectCollection =
@@ -168,7 +170,7 @@ fn add_recent_folders(
 }
 
 #[inline]
-fn is_item_in_array(item: &Vec<PathBuf>, removed: &Vec<Vec<PathBuf>>) -> bool {
+fn is_item_in_array(item: &SmallVec<[PathBuf; 2]>, removed: &Vec<SmallVec<[PathBuf; 2]>>) -> bool {
     removed.iter().any(|removed_item| removed_item == item)
 }
 

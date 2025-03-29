@@ -14,7 +14,6 @@ pub fn init(cx: &mut App) {
         HistoryManagerEvent::Update => perform_update(this, cx),
     })
     .detach();
-    // perform_update(cx);
     HistoryManager::init(manager, cx);
 }
 
@@ -30,20 +29,11 @@ fn perform_update(manager: Entity<HistoryManager>, cx: &mut App) {
             .await
             .unwrap_or_default()
             .into_iter()
-            .map(|(id, location)| {
-                (
-                    location
-                        .sorted_paths()
-                        .iter()
-                        .map(|path| path.compact())
-                        .collect::<Vec<_>>(),
-                    id,
-                )
-            })
+            .map(|(id, location)| HistoryManagerEntry::new(id, location))
             .collect::<Vec<_>>();
         let entries = recent_folders
             .iter()
-            .map(|(query, _)| query)
+            .map(|entry| &entry.path)
             .collect::<Vec<_>>();
         if let Some(user_removed) = cx
             .update(|cx| cx.update_jump_list(entries.as_slice()))
@@ -51,9 +41,9 @@ fn perform_update(manager: Entity<HistoryManager>, cx: &mut App) {
         {
             let deleted_ids = recent_folders
                 .into_iter()
-                .filter_map(|(query, id)| {
-                    if user_removed.contains(&query) {
-                        Some(id)
+                .filter_map(|entry| {
+                    if user_removed.contains(&entry.path) {
+                        Some(entry.id)
                     } else {
                         None
                     }
@@ -104,7 +94,7 @@ impl HistoryManager {
                 .into_iter()
                 .map(|(id, location)| HistoryManagerEntry::new(id, location))
                 .collect::<Vec<_>>();
-            this.update(cx, |this, _| {
+            this.update(cx, |this, cx| {
                 this.history = recent_folders;
             })
         })
@@ -118,6 +108,32 @@ impl HistoryManager {
 
     pub fn set_global(history_manager: Entity<Self>, cx: &mut App) {
         cx.set_global(GlobalHistoryManager(history_manager));
+    }
+
+    pub fn update_jump_list(&self, cx: &mut App) {
+        let entries = self
+            .history
+            .iter()
+            .map(|entry| &entry.path)
+            .collect::<Vec<_>>();
+        let user_removed = cx.update_jump_list(entries.as_slice());
+        let deleted_ids = self
+            .history
+            .iter()
+            .filter_map(|entry| {
+                if user_removed.contains(&entry.path) {
+                    Some(entry.id)
+                } else {
+                    None
+                }
+            })
+            .collect::<Vec<_>>();
+        cx.spawn(async move |cx| {
+            for id in deleted_ids.iter() {
+                WORKSPACE_DB.delete_workspace_by_id(*id).await.log_err();
+            }
+        })
+        .detach();
     }
 }
 
