@@ -731,6 +731,7 @@ dependencies = [
  "project",
  "rand 0.8.5",
  "release_channel",
+ "rope",
  "schemars",
  "serde",
  "serde_json",
