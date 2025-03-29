@@ -147,7 +147,7 @@ use multi_buffer::{
 };
 use parking_lot::Mutex;
 use project::{
-    debugger::breakpoint_store::{Breakpoint, BreakpointKind},
+    debugger::breakpoint_store::Breakpoint,
     lsp_store::{CompletionDocumentation, FormatTrigger, LspFormatTarget, OpenLspBufferHandle},
     project_settings::{GitGutterSetting, ProjectSettings},
     CodeAction, Completion, CompletionIntent, CompletionSource, DocumentHighlight, InlayHint,
@@ -785,11 +785,11 @@ pub struct Editor {
     expect_bounds_change: Option<Bounds<Pixels>>,
     tasks: BTreeMap<(BufferId, BufferRow), RunnableTasks>,
     tasks_update_task: Option<Task<()>>,
-    pub breakpoint_store: Option<Entity<BreakpointStore>>,
+    breakpoint_store: Option<Entity<BreakpointStore>>,
     /// Allow's a user to create a breakpoint by selecting this indicator
     /// It should be None while a user is not hovering over the gutter
     /// Otherwise it represents the point that the breakpoint will be shown
-    pub gutter_breakpoint_indicator: Option<DisplayPoint>,
+    gutter_breakpoint_indicator: (Option<(DisplayPoint, bool)>, Option<Task<()>>),
     in_project_search: bool,
     previous_search_ranges: Option<Arc<[Range<Anchor>]>>,
     breadcrumb_header: Option<String>,
@@ -1549,7 +1549,7 @@ impl Editor {
             tasks: Default::default(),
 
             breakpoint_store,
-            gutter_breakpoint_indicator: None,
+            gutter_breakpoint_indicator: (None, None),
             _subscriptions: vec![
                 cx.observe(&buffer, Self::on_buffer_changed),
                 cx.subscribe_in(&buffer, window, Self::on_buffer_event),
@@ -6226,10 +6226,7 @@ impl Editor {
             .breakpoint_at_row(row, window, cx)
             .map(|(_, bp)| Arc::from(bp));
 
-        let log_breakpoint_msg = if breakpoint
-            .as_ref()
-            .is_some_and(|bp| bp.kind.log_message().is_some())
-        {
+        let log_breakpoint_msg = if breakpoint.as_ref().is_some_and(|bp| bp.message.is_some()) {
             "Edit Log Breakpoint"
         } else {
             "Set Log Breakpoint"
@@ -6249,7 +6246,7 @@ impl Editor {
         let breakpoint = breakpoint.unwrap_or_else(|| {
             Arc::new(Breakpoint {
                 state: BreakpointState::Enabled,
-                kind: BreakpointKind::Standard,
+                message: None,
             })
         });
 
@@ -6308,16 +6305,17 @@ impl Editor {
         cx: &mut Context<Self>,
     ) -> IconButton {
         let (color, icon) = {
-            let icon = match (&breakpoint.kind, breakpoint.is_disabled()) {
-                (BreakpointKind::Standard, false) => ui::IconName::DebugBreakpoint,
-                (BreakpointKind::Log(_), false) => ui::IconName::DebugLogBreakpoint,
-                (BreakpointKind::Standard, true) => ui::IconName::DebugDisabledBreakpoint,
-                (BreakpointKind::Log(_), true) => ui::IconName::DebugDisabledLogBreakpoint,
+            let icon = match (&breakpoint.message.is_some(), breakpoint.is_disabled()) {
+                (false, false) => ui::IconName::DebugBreakpoint,
+                (true, false) => ui::IconName::DebugLogBreakpoint,
+                (false, true) => ui::IconName::DebugDisabledBreakpoint,
+                (true, true) => ui::IconName::DebugDisabledLogBreakpoint,
             };
 
             let color = if self
                 .gutter_breakpoint_indicator
-                .is_some_and(|point| point.row() == row)
+                .0
+                .is_some_and(|(point, is_visible)| is_visible && point.row() == row)
             {
                 Color::Hint
             } else {
@@ -8654,7 +8652,7 @@ impl Editor {
                 (
                     breakpoint_position,
                     Breakpoint {
-                        kind: BreakpointKind::Standard,
+                        message: None,
                         state: BreakpointState::Enabled,
                     },
                 )
@@ -19758,8 +19756,8 @@ impl BreakpointPromptEditor {
         let buffer = cx.new(|cx| {
             Buffer::local(
                 breakpoint
-                    .kind
-                    .log_message()
+                    .message
+                    .as_ref()
                     .map(|msg| msg.to_string())
                     .unwrap_or_default(),
                 cx,

@@ -71,6 +71,7 @@ use std::{
     ops::{Deref, Range},
     rc::Rc,
     sync::Arc,
+    time::Duration,
 };
 use sum_tree::Bias;
 use text::BufferId;
@@ -907,7 +908,6 @@ impl EditorElement {
         let modifiers = event.modifiers;
         let gutter_hovered = gutter_hitbox.is_hovered(window);
         editor.set_gutter_hovered(gutter_hovered, cx);
-        editor.gutter_breakpoint_indicator = None;
         editor.mouse_cursor_hidden = false;
 
         if gutter_hovered {
@@ -924,8 +924,38 @@ impl EditorElement {
                 .buffer_for_excerpt(buffer_anchor.excerpt_id)
                 .is_some_and(|buffer| buffer.file().is_some())
             {
-                editor.gutter_breakpoint_indicator = Some(new_point);
+                let was_hovered = editor.gutter_breakpoint_indicator.0.is_some();
+                let is_visible = editor
+                    .gutter_breakpoint_indicator
+                    .0
+                    .map_or(false, |(_, is_active)| is_active);
+                editor.gutter_breakpoint_indicator.0 = Some((new_point, is_visible));
+
+                editor.gutter_breakpoint_indicator.1.get_or_insert_with(|| {
+                    cx.spawn(async move |this, cx| {
+                        if !was_hovered {
+                            cx.background_executor()
+                                .timer(Duration::from_millis(200))
+                                .await;
+                        }
+
+                        this.update(cx, |this, cx| {
+                            if let Some((_, is_active)) =
+                                this.gutter_breakpoint_indicator.0.as_mut()
+                            {
+                                *is_active = true;
+                            }
+
+                            cx.notify();
+                        })
+                        .ok();
+                    })
+                });
+            } else {
+                editor.gutter_breakpoint_indicator = (None, None);
             }
+        } else {
+            editor.gutter_breakpoint_indicator = (None, None);
         }
 
         cx.notify();
@@ -6851,8 +6881,10 @@ impl Element for EditorElement {
                     // has their mouse over that line when a breakpoint isn't there
                     if cx.has_flag::<Debugger>() {
                         let gutter_breakpoint_indicator =
-                            self.editor.read(cx).gutter_breakpoint_indicator;
-                        if let Some(gutter_breakpoint_point) = gutter_breakpoint_indicator {
+                            self.editor.read(cx).gutter_breakpoint_indicator.0;
+                        if let Some((gutter_breakpoint_point, _)) =
+                            gutter_breakpoint_indicator.filter(|(_, is_active)| *is_active)
+                        {
                             breakpoint_rows
                                 .entry(gutter_breakpoint_point.row())
                                 .or_insert_with(|| {

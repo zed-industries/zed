@@ -32,7 +32,7 @@ use multi_buffer::{IndentGuide, PathKey};
 use parking_lot::Mutex;
 use pretty_assertions::{assert_eq, assert_ne};
 use project::{
-    debugger::breakpoint_store::{BreakpointKind, BreakpointState, SerializedBreakpoint},
+    debugger::breakpoint_store::{BreakpointState, SourceBreakpoint},
     project_settings::{LspSettings, ProjectSettings},
     FakeFs,
 };
@@ -17390,12 +17390,12 @@ async fn assert_highlighted_edits(
 
 #[track_caller]
 fn assert_breakpoint(
-    breakpoints: &BTreeMap<Arc<Path>, Vec<SerializedBreakpoint>>,
+    breakpoints: &BTreeMap<Arc<Path>, Vec<SourceBreakpoint>>,
     path: &Arc<Path>,
     expected: Vec<(u32, Breakpoint)>,
 ) {
     if expected.len() == 0usize {
-        assert!(!breakpoints.contains_key(path));
+        assert!(!breakpoints.contains_key(path), "{}", path.display());
     } else {
         let mut breakpoint = breakpoints
             .get(path)
@@ -17403,9 +17403,9 @@ fn assert_breakpoint(
             .into_iter()
             .map(|breakpoint| {
                 (
-                    breakpoint.position,
+                    breakpoint.row,
                     Breakpoint {
-                        kind: breakpoint.kind.clone(),
+                        message: breakpoint.message.clone(),
                         state: breakpoint.state,
                     },
                 )
@@ -17435,12 +17435,10 @@ fn add_log_breakpoint_at_cursor(
                 .buffer_snapshot
                 .anchor_before(Point::new(cursor_position.row, 0));
 
-            let kind = BreakpointKind::Log(Arc::from(log_message));
-
             (
                 breakpoint_position,
                 Breakpoint {
-                    kind,
+                    message: Some(Arc::from(log_message)),
                     state: BreakpointState::Enabled,
                 },
             )
@@ -17738,7 +17736,7 @@ async fn test_log_breakpoint_editing(cx: &mut TestAppContext) {
         &abs_path,
         vec![
             (0, Breakpoint::new_standard()),
-            (3, Breakpoint::new_log("hello Earth !!")),
+            (3, Breakpoint::new_log("hello Earth!!")),
         ],
     );
 }

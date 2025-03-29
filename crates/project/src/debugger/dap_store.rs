@@ -16,13 +16,10 @@ use dap::{
     adapters::{DapStatus, DebugAdapterName},
     client::SessionId,
     messages::Message,
-    requests::{
-        Completions, Evaluate, Request as _, RunInTerminal, SetExpression, SetVariable,
-        StartDebugging,
-    },
+    requests::{Completions, Evaluate, Request as _, RunInTerminal, StartDebugging},
     Capabilities, CompletionItem, CompletionsArguments, DapRegistry, ErrorResponse,
     EvaluateArguments, EvaluateArgumentsContext, EvaluateResponse, RunInTerminalRequestArguments,
-    SetExpressionArguments, SetVariableArguments, Source, StartDebuggingRequestArguments,
+    Source, StartDebuggingRequestArguments,
 };
 use fs::Fs;
 use futures::{
@@ -709,59 +706,6 @@ impl DapStore {
                 .targets)
         })
     }
-
-    #[allow(clippy::too_many_arguments)]
-    pub fn set_variable_value(
-        &self,
-        session_id: &SessionId,
-        stack_frame_id: u64,
-        variables_reference: u64,
-        name: String,
-        value: String,
-        evaluate_name: Option<String>,
-        cx: &mut Context<Self>,
-    ) -> Task<Result<()>> {
-        let Some(client) = self
-            .session_by_id(session_id)
-            .and_then(|client| client.read(cx).adapter_client())
-        else {
-            return Task::ready(Err(anyhow!("Could not find client: {:?}", session_id)));
-        };
-
-        let supports_set_expression = self
-            .capabilities_by_id(session_id, cx)
-            .and_then(|caps| caps.supports_set_expression)
-            .unwrap_or_default();
-
-        cx.background_executor().spawn(async move {
-            if let Some(evaluate_name) = supports_set_expression.then(|| evaluate_name).flatten() {
-                client
-                    .request::<SetExpression>(SetExpressionArguments {
-                        expression: evaluate_name,
-                        value,
-                        frame_id: Some(stack_frame_id),
-                        format: None,
-                    })
-                    .await?;
-            } else {
-                client
-                    .request::<SetVariable>(SetVariableArguments {
-                        variables_reference,
-                        name,
-                        value,
-                        format: None,
-                    })
-                    .await?;
-            }
-
-            Ok(())
-        })
-    }
-
-    // .. get the client and what not
-    // let _ = client.modules(); // This can fire a request to a dap adapter or be a cheap getter.
-    // client.wait_for_request(request::Modules); // This ensures that the request that we've fired off runs to completions
-    // let returned_value = client.modules(); // this is a cheap getter.
 
     pub fn shutdown_sessions(&mut self, cx: &mut Context<Self>) -> Task<()> {
         let mut tasks = vec![];
