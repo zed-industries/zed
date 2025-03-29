@@ -721,7 +721,7 @@ impl WorkspaceDb {
                 conn.exec_bound(sql!(
                     DELETE FROM pane_groups WHERE workspace_id = ?1;
                     DELETE FROM panes WHERE workspace_id = ?1;))?(workspace.id)
-                .context("Clearing old panes")?;
+                    .context("Clearing old panes")?;
                 for (path, breakpoints) in workspace.breakpoints {
                     conn.exec_bound(sql!(DELETE FROM breakpoints WHERE workspace_id = ?1 AND path = ?2))?((workspace.id, path.as_ref()))
                     .context("Clearing old breakpoints")?;
