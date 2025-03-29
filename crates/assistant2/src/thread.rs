@@ -1542,6 +1542,13 @@ impl Thread {
         });
     }
 
+    /// Keeps all edits across all buffers at once.
+    /// This provides a more performant alternative to calling review_edits_in_range for each buffer.
+    pub fn keep_all_edits(&mut self, cx: &mut Context<Self>) {
+        self.action_log
+            .update(cx, |action_log, _cx| action_log.keep_all_edits());
+    }
+
     pub fn action_log(&self) -> &Entity<ActionLog> {
         &self.action_log
     }

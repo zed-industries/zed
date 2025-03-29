@@ -4013,6 +4013,7 @@ impl EditorElement {
                         *is_created_file,
                         line_height,
                         &editor,
+                        window,
                         cx,
                     );
                     let size =
