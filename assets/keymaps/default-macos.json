@@ -241,7 +241,7 @@
     "context": "AssistantDiff",
     "use_key_equivalents": true,
     "bindings": {
-      "cmd-y": "assistant2::ToggleKeep",
+      "cmd-y": "assistant2::Keep",
       "cmd-alt-z": "assistant2::Reject"
     }
   },

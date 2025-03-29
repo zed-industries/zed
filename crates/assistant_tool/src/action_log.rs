@@ -28,21 +28,6 @@ impl ActionLog {
         }
     }
 
-    pub fn clear_reviewed_changes(&mut self, cx: &mut Context<Self>) {
-        self.tracked_buffers
-            .retain(|_buffer, tracked_buffer| match &mut tracked_buffer.change {
-                Change::Edited {
-                    accepted_edit_ids, ..
-                } => {
-                    accepted_edit_ids.clear();
-                    tracked_buffer.schedule_diff_update();
-                    true
-                }
-                Change::Deleted { reviewed, .. } => !*reviewed,
-            });
-        cx.notify();
-    }
-
     /// Notifies a diagnostics check
     pub fn checked_project_diagnostics(&mut self) {
         self.edited_since_project_diagnostics_check = false;
@@ -74,8 +59,7 @@ impl ActionLog {
                 TrackedBuffer {
                     buffer: buffer.clone(),
                     change: Change::Edited {
-                        unreviewed_edit_ids: HashSet::default(),
-                        accepted_edit_ids: HashSet::default(),
+                        edit_ids: HashSet::default(),
                         initial_content: if created {
                             None
                         } else {
@@ -84,7 +68,6 @@ impl ActionLog {
                     },
                     version: buffer.read(cx).version(),
                     diff,
-                    secondary_diff: unreviewed_diff,
                     diff_update: diff_update_tx,
                     _maintain_diff: cx.spawn({
                         let buffer = buffer.clone();
@@ -130,48 +113,21 @@ impl ActionLog {
         let Operation::Buffer(text::Operation::Edit(operation)) = operation else {
             return;
         };
-        let Change::Edited {
-            unreviewed_edit_ids,
-            accepted_edit_ids,
-            ..
-        } = &mut tracked_buffer.change
-        else {
+        let Change::Edited { edit_ids, .. } = &mut tracked_buffer.change else {
             return;
         };
-
-        if unreviewed_edit_ids.contains(&operation.timestamp)
-            || accepted_edit_ids.contains(&operation.timestamp)
-        {
+        if edit_ids.contains(&operation.timestamp) {
             return;
         }
 
+        // If the buffer operation overlaps with any tracked edits, mark it as unreviewed.
         let buffer = buffer.read(cx);
         let operation_edit_ranges = buffer
             .edited_ranges_for_edit_ids::<usize>([&operation.timestamp])
             .collect::<Vec<_>>();
-        let intersects_unreviewed_edits = ranges_intersect(
-            operation_edit_ranges.iter().cloned(),
-            buffer.edited_ranges_for_edit_ids::<usize>(unreviewed_edit_ids.iter()),
-        );
-        let mut intersected_accepted_edits = HashSet::default();
-        for accepted_edit_id in accepted_edit_ids.iter() {
-            let intersects_accepted_edit = ranges_intersect(
-                operation_edit_ranges.iter().cloned(),
-                buffer.edited_ranges_for_edit_ids::<usize>([accepted_edit_id]),
-            );
-            if intersects_accepted_edit {
-                intersected_accepted_edits.insert(*accepted_edit_id);
-            }
-        }
-
-        // If the buffer operation overlaps with any tracked edits, mark it as unreviewed.
-        // If it intersects an already-accepted id, mark that edit as unreviewed again.
-        if intersects_unreviewed_edits || !intersected_accepted_edits.is_empty() {
-            unreviewed_edit_ids.insert(operation.timestamp);
-            for accepted_edit_id in intersected_accepted_edits {
-                unreviewed_edit_ids.insert(accepted_edit_id);
-                accepted_edit_ids.remove(&accepted_edit_id);
-            }
+        let tracked_edit_ranges = buffer.edited_ranges_for_edit_ids::<usize>(edit_ids.iter());
+        if ranges_intersect(operation_edit_ranges, tracked_edit_ranges) {
+            edit_ids.insert(operation.timestamp);
             tracked_buffer.schedule_diff_update();
         }
     }
@@ -192,8 +148,7 @@ impl ActionLog {
                     // resurrected externally, we want to clear the changes we
                     // were tracking and reset the buffer's state.
                     tracked_buffer.change = Change::Edited {
-                        unreviewed_edit_ids: HashSet::default(),
-                        accepted_edit_ids: HashSet::default(),
+                        edit_ids: HashSet::default(),
                         initial_content: Some(buffer.read(cx).text_snapshot()),
                     };
                 }
@@ -266,10 +221,10 @@ impl ActionLog {
 
         match &mut tracked_buffer.change {
             Change::Edited {
-                unreviewed_edit_ids,
+                edit_ids: existing_edit_ids,
                 ..
             } => {
-                unreviewed_edit_ids.extend(edit_ids.iter().copied());
+                existing_edit_ids.extend(edit_ids);
             }
             Change::Deleted {
                 deleted_content,
@@ -278,8 +233,7 @@ impl ActionLog {
             } => {
                 edit_ids.extend(*deletion_id);
                 tracked_buffer.change = Change::Edited {
-                    unreviewed_edit_ids: edit_ids.into_iter().collect(),
-                    accepted_edit_ids: HashSet::default(),
+                    edit_ids: edit_ids.into_iter().collect(),
                     initial_content: Some(deleted_content.clone()),
                 };
             }
@@ -297,7 +251,6 @@ impl ActionLog {
             if let Some(initial_content) = initial_content {
                 let deletion_id = buffer.update(cx, |buffer, cx| buffer.set_text("", cx));
                 tracked_buffer.change = Change::Deleted {
-                    reviewed: false,
                     deleted_content: initial_content.clone(),
                     deletion_id,
                 };
@@ -309,92 +262,48 @@ impl ActionLog {
         }
     }
 
-    /// Accepts edits in a given range within a buffer.
-    pub fn review_edits_in_range<T: ToOffset>(
+    pub fn keep_edits_in_range<T: ToOffset>(
         &mut self,
-        buffer: Entity<Buffer>,
+        buffer_handle: Entity<Buffer>,
         buffer_range: Range<T>,
-        accept: bool,
         cx: &mut Context<Self>,
     ) {
-        let Some(tracked_buffer) = self.tracked_buffers.get_mut(&buffer) else {
+        let Some(tracked_buffer) = self.tracked_buffers.get_mut(&buffer_handle) else {
             return;
         };
 
-        let buffer = buffer.read(cx);
+        let buffer = buffer_handle.read(cx);
         let buffer_range = buffer_range.to_offset(buffer);
 
         match &mut tracked_buffer.change {
-            Change::Deleted { reviewed, .. } => {
-                *reviewed = accept;
+            Change::Deleted { .. } => {
+                self.tracked_buffers.remove(&buffer_handle);
+                cx.notify();
             }
-            Change::Edited {
-                unreviewed_edit_ids,
-                accepted_edit_ids,
-                ..
-            } => {
-                let (source, destination) = if accept {
-                    (unreviewed_edit_ids, accepted_edit_ids)
-                } else {
-                    (accepted_edit_ids, unreviewed_edit_ids)
-                };
-                source.retain(|edit_id| {
+            Change::Edited { edit_ids, .. } => {
+                edit_ids.retain(|edit_id| {
                     for range in buffer.edited_ranges_for_edit_ids::<usize>([edit_id]) {
                         if buffer_range.end >= range.start && buffer_range.start <= range.end {
-                            destination.insert(*edit_id);
                             return false;
                         }
                     }
                     true
                 });
+                tracked_buffer.schedule_diff_update();
             }
         }
-
-        tracked_buffer.schedule_diff_update();
     }
 
-    /// Keep all edits across all buffers.
-    /// This is a more performant alternative to calling review_edits_in_range for each buffer.
     pub fn keep_all_edits(&mut self) {
-        // Process all tracked buffers
-        for (_, tracked_buffer) in self.tracked_buffers.iter_mut() {
-            match &mut tracked_buffer.change {
-                Change::Deleted { reviewed, .. } => {
-                    *reviewed = true;
-                }
-                Change::Edited {
-                    unreviewed_edit_ids,
-                    accepted_edit_ids,
-                    ..
-                } => {
-                    accepted_edit_ids.extend(unreviewed_edit_ids.drain());
-                }
-            }
-
-            tracked_buffer.schedule_diff_update();
-        }
+        todo!();
     }
 
     /// Returns the set of buffers that contain changes that haven't been reviewed by the user.
-    pub fn changed_buffers(&self, cx: &App) -> BTreeMap<Entity<Buffer>, ChangedBuffer> {
+    pub fn changed_buffers(&self, cx: &App) -> BTreeMap<Entity<Buffer>, Entity<BufferDiff>> {
         self.tracked_buffers
             .iter()
             .filter(|(_, tracked)| tracked.has_changes(cx))
-            .map(|(buffer, tracked)| {
-                (
-                    buffer.clone(),
-                    ChangedBuffer {
-                        diff: tracked.diff.clone(),
-                        needs_review: match &tracked.change {
-                            Change::Edited {
-                                unreviewed_edit_ids,
-                                ..
-                            } => !unreviewed_edit_ids.is_empty(),
-                            Change::Deleted { reviewed, .. } => !reviewed,
-                        },
-                    },
-                )
-            })
+            .map(|(buffer, tracked)| (buffer.clone(), tracked.diff.clone()))
             .collect()
     }
 
@@ -435,7 +344,6 @@ struct TrackedBuffer {
     change: Change,
     version: clock::Global,
     diff: Entity<BufferDiff>,
-    secondary_diff: Entity<BufferDiff>,
     diff_update: async_watch::Sender<()>,
     _maintain_diff: Task<()>,
     _subscription: Subscription,
@@ -443,12 +351,10 @@ struct TrackedBuffer {
 
 enum Change {
     Edited {
-        unreviewed_edit_ids: HashSet<clock::Lamport>,
-        accepted_edit_ids: HashSet<clock::Lamport>,
+        edit_ids: HashSet<clock::Lamport>,
         initial_content: Option<TextBufferSnapshot>,
     },
     Deleted {
-        reviewed: bool,
         deleted_content: TextBufferSnapshot,
         deletion_id: Option<clock::Lamport>,
     },
@@ -469,20 +375,15 @@ impl TrackedBuffer {
 
     fn update_diff(&mut self, cx: &mut App) -> Task<()> {
         match &self.change {
-            Change::Edited {
-                unreviewed_edit_ids,
-                accepted_edit_ids,
-                ..
-            } => {
-                let edits_to_undo = unreviewed_edit_ids
+            Change::Edited { edit_ids, .. } => {
+                let edits_to_undo = edit_ids
                     .iter()
-                    .chain(accepted_edit_ids)
                     .map(|edit_id| (*edit_id, u32::MAX))
                     .collect::<HashMap<_, _>>();
                 let buffer_without_edits = self.buffer.update(cx, |buffer, cx| buffer.branch(cx));
                 buffer_without_edits
                     .update(cx, |buffer, cx| buffer.undo_operations(edits_to_undo, cx));
-                let primary_diff_update = self.diff.update(cx, |diff, cx| {
+                let diff_update = self.diff.update(cx, |diff, cx| {
                     diff.set_base_text(
                         buffer_without_edits,
                         self.buffer.read(cx).text_snapshot(),
@@ -490,38 +391,16 @@ impl TrackedBuffer {
                     )
                 });
 
-                let unreviewed_edits_to_undo = unreviewed_edit_ids
-                    .iter()
-                    .map(|edit_id| (*edit_id, u32::MAX))
-                    .collect::<HashMap<_, _>>();
-                let buffer_without_unreviewed_edits =
-                    self.buffer.update(cx, |buffer, cx| buffer.branch(cx));
-                buffer_without_unreviewed_edits.update(cx, |buffer, cx| {
-                    buffer.undo_operations(unreviewed_edits_to_undo, cx)
-                });
-                let secondary_diff_update = self.secondary_diff.update(cx, |diff, cx| {
-                    diff.set_base_text(
-                        buffer_without_unreviewed_edits.clone(),
-                        self.buffer.read(cx).text_snapshot(),
-                        cx,
-                    )
-                });
-
                 cx.background_spawn(async move {
-                    _ = primary_diff_update.await;
-                    _ = secondary_diff_update.await;
+                    _ = diff_update.await;
                 })
             }
             Change::Deleted {
-                reviewed,
-                deleted_content,
-                ..
+                deleted_content, ..
             } => {
-                let reviewed = *reviewed;
                 let deleted_content = deleted_content.clone();
 
-                let primary_diff = self.diff.clone();
-                let secondary_diff = self.secondary_diff.clone();
+                let diff = self.diff.clone();
                 let buffer_snapshot = self.buffer.read(cx).text_snapshot();
                 let language = self.buffer.read(cx).language().cloned();
                 let language_registry = self.buffer.read(cx).language_registry().clone();
@@ -529,8 +408,8 @@ impl TrackedBuffer {
                 cx.spawn(async move |cx| {
                     let base_text = Arc::new(deleted_content.text());
 
-                    let primary_diff_snapshot = BufferDiff::update_diff(
-                        primary_diff.clone(),
+                    let diff_snapshot = BufferDiff::update_diff(
+                        diff.clone(),
                         buffer_snapshot.clone(),
                         Some(base_text.clone()),
                         true,
@@ -540,48 +419,11 @@ impl TrackedBuffer {
                         cx,
                     )
                     .await;
-                    let secondary_diff_snapshot = BufferDiff::update_diff(
-                        secondary_diff.clone(),
-                        buffer_snapshot.clone(),
-                        if reviewed {
-                            None
-                        } else {
-                            Some(base_text.clone())
-                        },
-                        true,
-                        false,
-                        language.clone(),
-                        language_registry.clone(),
-                        cx,
-                    )
-                    .await;
-
-                    if let Ok(primary_diff_snapshot) = primary_diff_snapshot {
-                        primary_diff
-                            .update(cx, |diff, cx| {
-                                diff.set_snapshot(
-                                    &buffer_snapshot,
-                                    primary_diff_snapshot,
-                                    false,
-                                    None,
-                                    cx,
-                                )
-                            })
-                            .ok();
-                    }
-
-                    if let Ok(secondary_diff_snapshot) = secondary_diff_snapshot {
-                        secondary_diff
-                            .update(cx, |diff, cx| {
-                                diff.set_snapshot(
-                                    &buffer_snapshot,
-                                    secondary_diff_snapshot,
-                                    false,
-                                    None,
-                                    cx,
-                                )
-                            })
-                            .ok();
+                    if let Ok(diff_snapshot) = diff_snapshot {
+                        diff.update(cx, |diff, cx| {
+                            diff.set_snapshot(&buffer_snapshot, diff_snapshot, false, None, cx)
+                        })
+                        .ok();
                     }
                 })
             }
@@ -591,7 +433,6 @@ impl TrackedBuffer {
 
 pub struct ChangedBuffer {
     pub diff: Entity<BufferDiff>,
-    pub needs_review: bool,
 }
 
 #[cfg(test)]
@@ -636,13 +477,11 @@ mod tests {
                 vec![
                     HunkStatus {
                         range: Point::new(1, 0)..Point::new(2, 0),
-                        review_status: ReviewStatus::Unreviewed,
                         diff_status: DiffHunkStatusKind::Modified,
                         old_text: "def\n".into(),
                     },
                     HunkStatus {
                         range: Point::new(4, 0)..Point::new(4, 3),
-                        review_status: ReviewStatus::Unreviewed,
                         diff_status: DiffHunkStatusKind::Modified,
                         old_text: "mno".into(),
                     }
@@ -651,83 +490,28 @@ mod tests {
         );
 
         action_log.update(cx, |log, cx| {
-            log.review_edits_in_range(buffer.clone(), Point::new(3, 0)..Point::new(4, 3), true, cx)
+            log.keep_edits_in_range(buffer.clone(), Point::new(3, 0)..Point::new(4, 3), cx)
         });
         cx.run_until_parked();
         assert_eq!(
             unreviewed_hunks(&action_log, cx),
             vec![(
                 buffer.clone(),
-                vec![
-                    HunkStatus {
-                        range: Point::new(1, 0)..Point::new(2, 0),
-                        review_status: ReviewStatus::Unreviewed,
-                        diff_status: DiffHunkStatusKind::Modified,
-                        old_text: "def\n".into(),
-                    },
-                    HunkStatus {
-                        range: Point::new(4, 0)..Point::new(4, 3),
-                        review_status: ReviewStatus::Reviewed,
-                        diff_status: DiffHunkStatusKind::Modified,
-                        old_text: "mno".into(),
-                    }
-                ],
+                vec![HunkStatus {
+                    range: Point::new(1, 0)..Point::new(2, 0),
+                    diff_status: DiffHunkStatusKind::Modified,
+                    old_text: "def\n".into(),
+                }],
             )]
         );
 
         action_log.update(cx, |log, cx| {
-            log.review_edits_in_range(
-                buffer.clone(),
-                Point::new(3, 0)..Point::new(4, 3),
-                false,
-                cx,
-            )
+            log.keep_edits_in_range(buffer.clone(), Point::new(0, 0)..Point::new(4, 3), cx)
         });
         cx.run_until_parked();
         assert_eq!(
             unreviewed_hunks(&action_log, cx),
-            vec![(
-                buffer.clone(),
-                vec![
-                    HunkStatus {
-                        range: Point::new(1, 0)..Point::new(2, 0),
-                        review_status: ReviewStatus::Unreviewed,
-                        diff_status: DiffHunkStatusKind::Modified,
-                        old_text: "def\n".into(),
-                    },
-                    HunkStatus {
-                        range: Point::new(4, 0)..Point::new(4, 3),
-                        review_status: ReviewStatus::Unreviewed,
-                        diff_status: DiffHunkStatusKind::Modified,
-                        old_text: "mno".into(),
-                    }
-                ],
-            )]
-        );
-
-        action_log.update(cx, |log, cx| {
-            log.review_edits_in_range(buffer.clone(), Point::new(0, 0)..Point::new(4, 3), true, cx)
-        });
-        cx.run_until_parked();
-        assert_eq!(
-            unreviewed_hunks(&action_log, cx),
-            vec![(
-                buffer.clone(),
-                vec![
-                    HunkStatus {
-                        range: Point::new(1, 0)..Point::new(2, 0),
-                        review_status: ReviewStatus::Reviewed,
-                        diff_status: DiffHunkStatusKind::Modified,
-                        old_text: "def\n".into(),
-                    },
-                    HunkStatus {
-                        range: Point::new(4, 0)..Point::new(4, 3),
-                        review_status: ReviewStatus::Reviewed,
-                        diff_status: DiffHunkStatusKind::Modified,
-                        old_text: "mno".into(),
-                    }
-                ],
-            )]
+            vec![(buffer.clone(), vec![])]
         );
     }
 
@@ -760,24 +544,6 @@ mod tests {
                 buffer.clone(),
                 vec![HunkStatus {
                     range: Point::new(0, 0)..Point::new(3, 0),
-                    review_status: ReviewStatus::Unreviewed,
-                    diff_status: DiffHunkStatusKind::Modified,
-                    old_text: "abc\ndef\nghi\n".into(),
-                }],
-            )]
-        );
-
-        action_log.update(cx, |log, cx| {
-            log.review_edits_in_range(buffer.clone(), Point::new(0, 0)..Point::new(1, 0), true, cx)
-        });
-        cx.run_until_parked();
-        assert_eq!(
-            unreviewed_hunks(&action_log, cx),
-            vec![(
-                buffer.clone(),
-                vec![HunkStatus {
-                    range: Point::new(0, 0)..Point::new(3, 0),
-                    review_status: ReviewStatus::Reviewed,
                     diff_status: DiffHunkStatusKind::Modified,
                     old_text: "abc\ndef\nghi\n".into(),
                 }],
@@ -794,27 +560,17 @@ mod tests {
                 buffer.clone(),
                 vec![HunkStatus {
                     range: Point::new(0, 0)..Point::new(3, 0),
-                    review_status: ReviewStatus::Unreviewed,
                     diff_status: DiffHunkStatusKind::Modified,
-                    old_text: "abc\ndef\nghi\n".into(),
+                    old_text: "abXc\ndef\nghi\n".into(),
                 }],
             )]
         );
 
-        action_log.update(cx, |log, cx| log.clear_reviewed_changes(cx));
+        action_log.update(cx, |log, cx| {
+            log.keep_edits_in_range(buffer.clone(), Point::new(0, 0)..Point::new(1, 0), cx)
+        });
         cx.run_until_parked();
-        assert_eq!(
-            unreviewed_hunks(&action_log, cx),
-            vec![(
-                buffer.clone(),
-                vec![HunkStatus {
-                    range: Point::new(0, 0)..Point::new(3, 0),
-                    review_status: ReviewStatus::Unreviewed,
-                    diff_status: DiffHunkStatusKind::Modified,
-                    old_text: "abc\ndef\nghi\n".into(),
-                }],
-            )]
-        );
+        assert_eq!(unreviewed_hunks(&action_log, cx), vec![]);
     }
 
     #[gpui::test(iterations = 10)]
@@ -879,7 +635,6 @@ mod tests {
                     buffer1.clone(),
                     vec![HunkStatus {
                         range: Point::new(0, 0)..Point::new(0, 0),
-                        review_status: ReviewStatus::Unreviewed,
                         diff_status: DiffHunkStatusKind::Deleted,
                         old_text: "lorem\n".into(),
                     }]
@@ -888,7 +643,6 @@ mod tests {
                     buffer2.clone(),
                     vec![HunkStatus {
                         range: Point::new(0, 0)..Point::new(0, 0),
-                        review_status: ReviewStatus::Unreviewed,
                         diff_status: DiffHunkStatusKind::Deleted,
                         old_text: "ipsum\n".into(),
                     }],
@@ -920,7 +674,6 @@ mod tests {
                 buffer2.clone(),
                 vec![HunkStatus {
                     range: Point::new(0, 0)..Point::new(0, 5),
-                    review_status: ReviewStatus::Unreviewed,
                     diff_status: DiffHunkStatusKind::Modified,
                     old_text: "ipsum\n".into(),
                 }],
@@ -938,15 +691,8 @@ mod tests {
     #[derive(Debug, Clone, PartialEq, Eq)]
     struct HunkStatus {
         range: Range<Point>,
-        review_status: ReviewStatus,
         diff_status: DiffHunkStatusKind,
         old_text: String,
-    }
-
-    #[derive(Copy, Clone, Debug, PartialEq, Eq)]
-    enum ReviewStatus {
-        Unreviewed,
-        Reviewed,
     }
 
     fn unreviewed_hunks(
@@ -958,24 +704,16 @@ mod tests {
                 .read(cx)
                 .changed_buffers(cx)
                 .into_iter()
-                .map(|(buffer, tracked_buffer)| {
+                .map(|(buffer, diff)| {
                     let snapshot = buffer.read(cx).snapshot();
                     (
                         buffer,
-                        tracked_buffer
-                            .diff
-                            .read(cx)
+                        diff.read(cx)
                             .hunks(&snapshot, cx)
                             .map(|hunk| HunkStatus {
-                                review_status: if hunk.status().has_secondary_hunk() {
-                                    ReviewStatus::Unreviewed
-                                } else {
-                                    ReviewStatus::Reviewed
-                                },
                                 diff_status: hunk.status().kind,
                                 range: hunk.range,
-                                old_text: tracked_buffer
-                                    .diff
+                                old_text: diff
                                     .read(cx)
                                     .base_text()
                                     .text_for_range(hunk.diff_base_byte_range)

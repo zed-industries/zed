@@ -65,7 +65,7 @@ actions!(
         RemoveFocusedContext,
         AcceptSuggestedContext,
         OpenActiveThreadAsMarkdown,
-        ToggleKeep,
+        Keep,
         Reject,
         RejectAll,
         KeepAll

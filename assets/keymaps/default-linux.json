@@ -149,7 +149,7 @@
   {
     "context": "AssistantDiff",
     "bindings": {
-      "ctrl-y": "assistant2::ToggleKeep",
+      "ctrl-y": "assistant2::Keep",
       "ctrl-k ctrl-r": "assistant2::Reject"
     }
   },
