@@ -1403,19 +1403,21 @@ impl EditorElement {
         &self,
         window: &mut Window,
         cx: &mut App,
+        snapshot: &EditorSnapshot,
         num_lines: f32,
-        minimap_visible: bool,
         minimap_settings: &Minimap,
         bounds: Bounds<Pixels>,
-        scrollbar_layout: Option<&EditorScrollbars>,
+        scrollbars_layout: Option<&EditorScrollbars>,
         line_height: Pixels,
         visible_range: Range<DisplayRow>,
     ) -> Option<MinimapLayout> {
+        let minimap_visible =
+            Self::is_minimap_visible(snapshot, minimap_settings, scrollbars_layout);
         if !minimap_visible {
             return None;
         }
 
-        let top_right_anchor = scrollbar_layout
+        let top_right_anchor = scrollbars_layout
             .and_then(|layout| layout.vertical.as_ref())
             .map(|vertical_scrollbar| vertical_scrollbar.hitbox.origin)
             .unwrap_or_else(|| bounds.top_right());
@@ -1502,13 +1504,13 @@ impl EditorElement {
     fn is_minimap_visible(
         snapshot: &EditorSnapshot,
         minimap_settings: &Minimap,
-        scrollbar_width: Pixels,
+        scrollbar_layout: Option<&EditorScrollbars>,
     ) -> bool {
         snapshot.mode == EditorMode::Full
             && match minimap_settings.show {
                 ShowMinimap::Always => true,
                 ShowMinimap::Never => false,
-                ShowMinimap::Auto => scrollbar_width > Pixels::ZERO,
+                ShowMinimap::Auto => scrollbar_layout.is_some_and(|layout| layout.visible),
             }
     }
 
@@ -6810,16 +6812,7 @@ impl Element for EditorElement {
                     let em_advance = window.text_system().em_advance(font_id, font_size).unwrap();
 
                     let minimap_settings = EditorSettings::get_global(cx).minimap;
-                    let minimap_visible = Self::is_minimap_visible(
-                        &snapshot,
-                        &minimap_settings,
-                        style.scrollbar_width,
-                    );
-                    let minimap_width = if minimap_visible {
-                        px(minimap_settings.width)
-                    } else {
-                        Pixels::ZERO
-                    };
+                    let minimap_width = px(minimap_settings.width);
 
                     let glyph_grid_cell = size(em_width, line_height);
 
@@ -6831,7 +6824,7 @@ impl Element for EditorElement {
                             cx,
                         )
                         .unwrap_or_default();
-                    let text_width = bounds.size.width - gutter_dimensions.width - minimap_width;
+                    let text_width = bounds.size.width - gutter_dimensions.width;
 
                     let editor_width =
                         text_width - gutter_dimensions.margin - em_width - style.scrollbar_width;
@@ -7679,8 +7672,8 @@ impl Element for EditorElement {
                         self.layout_minimap(
                             window,
                             cx,
+                            &snapshot,
                             max_row.as_f32(),
-                            minimap_visible,
                             &minimap_settings,
                             bounds,
                             scrollbars_layout.as_ref(),
