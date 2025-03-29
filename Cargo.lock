@@ -4117,7 +4117,7 @@ dependencies = [
  "serde",
  "serde_json",
  "settings",
- "sysinfo 0.31.4",
+ "sysinfo",
  "task",
  "terminal_view",
  "theme",
@@ -5029,7 +5029,7 @@ dependencies = [
  "menu",
  "release_channel",
  "serde",
- "sysinfo 0.31.4",
+ "sysinfo",
  "ui",
  "urlencoding",
  "util",
@@ -11590,7 +11590,7 @@ dependencies = [
  "settings",
  "shellexpand 2.1.2",
  "smol",
- "sysinfo 0.31.4",
+ "sysinfo",
  "telemetry_events",
  "toml 0.8.20",
  "unindent",
@@ -12285,7 +12285,7 @@ dependencies = [
 [[package]]
 name = "scap"
 version = "0.0.8"
-source = "git+https://github.com/zed-industries/scap?rev=658702cdc56d130f676444cd1599e2f35cd2dbc2#658702cdc56d130f676444cd1599e2f35cd2dbc2"
+source = "git+https://github.com/zed-industries/scap?rev=f81ce0476c27c8931e71b039f9f94a0307328bd9#f81ce0476c27c8931e71b039f9f94a0307328bd9"
 dependencies = [
  "cocoa 0.25.0",
  "core-graphics-helmer-fork",
@@ -12295,9 +12295,9 @@ dependencies = [
  "rand 0.8.5",
  "screencapturekit",
  "screencapturekit-sys",
- "sysinfo 0.30.13",
+ "sysinfo",
  "tao-core-video-sys",
- "windows 0.58.0",
+ "windows 0.61.1",
  "windows-capture",
  "x11",
  "xcb",
@@ -13816,21 +13816,6 @@ dependencies = [
 
 [[package]]
 name = "sysinfo"
-version = "0.30.13"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0a5b4ddaee55fb2bea2bf0e5000747e5f5c0de765e5a5ff87f4cd106439f4bb3"
-dependencies = [
- "cfg-if",
- "core-foundation-sys",
- "libc",
- "ntapi",
- "once_cell",
- "rayon",
- "windows 0.52.0",
-]
-
-[[package]]
-name = "sysinfo"
 version = "0.31.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "355dbe4f8799b304b05e1b0f05fc59b2a18d36645cf169607da45bde2f69a1be"
@@ -14108,7 +14093,7 @@ dependencies = [
  "serde_derive",
  "settings",
  "smol",
- "sysinfo 0.31.4",
+ "sysinfo",
  "task",
  "theme",
  "thiserror 2.0.12",
@@ -16514,16 +16499,6 @@ dependencies = [
 
 [[package]]
 name = "windows"
-version = "0.52.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e48a53791691ab099e5e2ad123536d0fff50652600abaf43bbf952894110d0be"
-dependencies = [
- "windows-core 0.52.0",
- "windows-targets 0.52.6",
-]
-
-[[package]]
-name = "windows"
 version = "0.54.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9252e5725dbed82865af151df558e754e4a3c2c30818359eb17465f1346a1b49"
@@ -17724,7 +17699,7 @@ dependencies = [
  "snippet_provider",
  "snippets_ui",
  "supermaven",
- "sysinfo 0.31.4",
+ "sysinfo",
  "tab_switcher",
  "task",
  "tasks_ui",
