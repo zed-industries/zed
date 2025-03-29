@@ -267,26 +267,30 @@ impl BreakpointStore {
                 }
             }
             BreakpointEditAction::EditLogMessage(log_message) => {
-                let found_bp =
-                    breakpoint_set
-                        .breakpoints
-                        .iter_mut()
-                        .find_map(|(other_pos, other_bp)| {
-                            if breakpoint.0 == *other_pos {
-                                Some(other_bp)
-                            } else {
-                                None
-                            }
-                        });
+                if !log_message.is_empty() {
+                    let found_bp =
+                        breakpoint_set
+                            .breakpoints
+                            .iter_mut()
+                            .find_map(|(other_pos, other_bp)| {
+                                if breakpoint.0 == *other_pos {
+                                    Some(other_bp)
+                                } else {
+                                    None
+                                }
+                            });
 
-                if let Some(found_bp) = found_bp {
-                    found_bp.message =
-                        Some(log_message.clone()).filter(|message| !message.is_empty());
-                } else {
-                    breakpoint.1.message =
-                        Some(log_message.clone()).filter(|message| !message.is_empty());
-                    // We did not remove any breakpoint, hence let's toggle one.
-                    breakpoint_set.breakpoints.push(breakpoint.clone());
+                    if let Some(found_bp) = found_bp {
+                        found_bp.message = Some(log_message.clone());
+                    } else {
+                        breakpoint.1.message = Some(log_message.clone());
+                        // We did not remove any breakpoint, hence let's toggle one.
+                        breakpoint_set.breakpoints.push(breakpoint.clone());
+                    }
+                } else if breakpoint.1.message.is_some() {
+                    breakpoint_set.breakpoints.retain(|(other_pos, other)| {
+                        &breakpoint.0 != other_pos && other.message.is_none()
+                    })
                 }
             }
         }

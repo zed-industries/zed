@@ -17395,7 +17395,7 @@ fn assert_breakpoint(
     expected: Vec<(u32, Breakpoint)>,
 ) {
     if expected.len() == 0usize {
-        assert!(!breakpoints.contains_key(path));
+        assert!(!breakpoints.contains_key(path), "{}", path.display());
     } else {
         let mut breakpoint = breakpoints
             .get(path)
@@ -17736,7 +17736,7 @@ async fn test_log_breakpoint_editing(cx: &mut TestAppContext) {
         &abs_path,
         vec![
             (0, Breakpoint::new_standard()),
-            (3, Breakpoint::new_log("hello Earth !!")),
+            (3, Breakpoint::new_log("hello Earth!!")),
         ],
     );
 }
