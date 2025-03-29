@@ -139,7 +139,7 @@ impl Tool for OutlineTool {
     }
 }
 
-fn to_outline_string<'a>(outline: Outline<Anchor>, snapshot: &BufferSnapshot) -> String {
+fn to_outline_string(outline: Outline<Anchor>, snapshot: &BufferSnapshot) -> String {
     let mut buf = String::new();
 
     for item in outline.items.iter() {
