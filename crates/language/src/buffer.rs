@@ -392,18 +392,13 @@ pub trait LocalFile: File {
 }
 
 /// The source/context of an editing operation.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub enum EditSource {
     /// Edit comes from direct user input
     UserInput,
     /// Edit comes from other programmatic sources
+    #[default]
     Other,
-}
-
-impl Default for EditSource {
-    fn default() -> Self {
-        EditSource::Other
-    }
 }
 
 /// The auto-indent behavior associated with an editing operation.
