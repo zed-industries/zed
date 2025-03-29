@@ -5,6 +5,7 @@ use crate::{LanguageToolchainStore, Location, Runnable};
 use anyhow::Result;
 use collections::HashMap;
 use gpui::{App, Task};
+use lsp::LanguageServer;
 use task::{TaskTemplates, TaskVariables};
 use text::BufferId;
 
@@ -39,5 +40,15 @@ pub trait ContextProvider: Send + Sync {
         _cx: &App,
     ) -> Option<TaskTemplates> {
         None
+    }
+
+    /// TODO kb docs
+    fn lsp_tasks(
+        &self,
+        _file: &dyn crate::File,
+        _server: &LanguageServer,
+        _cx: &App,
+    ) -> Task<Result<Vec<()>>> {
+        Task::ready(Ok(Vec::new()))
     }
 }
