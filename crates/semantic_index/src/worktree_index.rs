@@ -3,7 +3,6 @@ use crate::embedding_index::EmbeddingIndex;
 use crate::indexing::IndexingEntrySet;
 use crate::summary_index::SummaryIndex;
 use anyhow::Result;
-use feature_flags::{AutoCommand, FeatureFlagAppExt};
 use fs::Fs;
 use futures::future::Shared;
 use gpui::{App, AppContext as _, AsyncApp, Context, Entity, Subscription, Task, WeakEntity};
@@ -170,30 +169,21 @@ impl WorktreeIndex {
         updated_entries: channel::Receiver<UpdatedEntriesSet>,
         cx: &mut AsyncApp,
     ) -> Result<()> {
-        let is_auto_available = cx.update(|cx| cx.wait_for_flag::<AutoCommand>())?.await;
         let index = this.update(cx, |this, cx| {
             futures::future::try_join(
                 this.embedding_index.index_entries_changed_on_disk(cx),
-                this.summary_index
-                    .index_entries_changed_on_disk(is_auto_available, cx),
+                this.summary_index.index_entries_changed_on_disk(false, cx),
             )
         })?;
         index.await.log_err();
 
         while let Ok(updated_entries) = updated_entries.recv().await {
-            let is_auto_available = cx
-                .update(|cx| cx.has_flag::<AutoCommand>())
-                .unwrap_or(false);
-
             let index = this.update(cx, |this, cx| {
                 futures::future::try_join(
                     this.embedding_index
                         .index_updated_entries(updated_entries.clone(), cx),
-                    this.summary_index.index_updated_entries(
-                        updated_entries,
-                        is_auto_available,
-                        cx,
-                    ),
+                    this.summary_index
+                        .index_updated_entries(updated_entries, false, cx),
                 )
             })?;
             index.await.log_err();

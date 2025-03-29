@@ -7,7 +7,7 @@ mod task_template;
 mod vscode_format;
 
 use collections::{hash_map, HashMap, HashSet};
-use gpui::{prelude::FluentBuilder, SharedString};
+use gpui::SharedString;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::borrow::Cow;
@@ -15,11 +15,12 @@ use std::path::PathBuf;
 use std::str::FromStr;
 
 pub use debug_format::{
-    AttachConfig, CustomArgs, DebugAdapterConfig, DebugAdapterKind, DebugConnectionType,
-    DebugRequestType, DebugTaskDefinition, DebugTaskFile, TCPHost,
+    AttachConfig, DebugAdapterConfig, DebugConnectionType, DebugRequestDisposition,
+    DebugRequestType, DebugTaskDefinition, DebugTaskFile, LaunchConfig, TCPHost,
 };
 pub use task_template::{
-    DebugArgs, HideStrategy, RevealStrategy, TaskModal, TaskTemplate, TaskTemplates, TaskType,
+    DebugArgs, DebugArgsRequest, HideStrategy, RevealStrategy, TaskModal, TaskTemplate,
+    TaskTemplates, TaskType,
 };
 pub use vscode_format::VsCodeTaskFile;
 pub use zed_actions::RevealTarget;
@@ -127,19 +128,21 @@ impl ResolvedTask {
 
                 Some(DebugAdapterConfig {
                     label: resolved.label.clone(),
-                    kind: debug_args.kind.clone(),
-                    request: debug_args.request.clone(),
-                    program: resolved.command.clone().map(|program| {
-                        if program.is_empty() {
-                            None
-                        } else {
-                            Some(program)
+                    adapter: debug_args.adapter.clone(),
+                    request: DebugRequestDisposition::UserConfigured(match debug_args.request {
+                        crate::task_template::DebugArgsRequest::Launch => {
+                            DebugRequestType::Launch(LaunchConfig {
+                                program: resolved.command.clone(),
+                                cwd: resolved.cwd.clone(),
+                            })
+                        }
+                        crate::task_template::DebugArgsRequest::Attach(attach_config) => {
+                            DebugRequestType::Attach(attach_config)
                         }
                     }),
-                    cwd: resolved.cwd.clone().take_if(|p| p.exists()),
                     initialize_args: debug_args.initialize_args,
+                    tcp_connection: debug_args.tcp_connection,
                     args,
-                    supports_attach: debug_args.supports_attach,
                     locator: debug_args.locator.clone(),
                 })
             }

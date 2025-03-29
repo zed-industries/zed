@@ -74,6 +74,11 @@ pub(crate) use windows::*;
 #[cfg(any(test, feature = "test-support"))]
 pub use test::TestScreenCaptureSource;
 
+/// Returns a background executor for the current platform.
+pub fn background_executor() -> BackgroundExecutor {
+    current_platform(true).background_executor()
+}
+
 #[cfg(target_os = "macos")]
 pub(crate) fn current_platform(headless: bool) -> Rc<dyn Platform> {
     Rc::new(MacPlatform::new(headless))

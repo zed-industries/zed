@@ -1,12 +1,12 @@
-use std::path::Path;
-use std::rc::Rc;
+use std::ops::Range;
 
 use file_icons::FileIcons;
 use gpui::{App, Entity, SharedString};
 use language::Buffer;
 use language_model::{LanguageModelRequestMessage, MessageContent};
+use project::ProjectPath;
 use serde::{Deserialize, Serialize};
-use text::BufferId;
+use text::{Anchor, BufferId};
 use ui::IconName;
 use util::post_inc;
 
@@ -38,6 +38,7 @@ pub struct ContextSnapshot {
 pub enum ContextKind {
     File,
     Directory,
+    Symbol,
     FetchedUrl,
     Thread,
 }
@@ -47,6 +48,7 @@ impl ContextKind {
         match self {
             ContextKind::File => IconName::File,
             ContextKind::Directory => IconName::Folder,
+            ContextKind::Symbol => IconName::Code,
             ContextKind::FetchedUrl => IconName::Globe,
             ContextKind::Thread => IconName::MessageCircle,
         }
@@ -57,6 +59,7 @@ impl ContextKind {
 pub enum AssistantContext {
     File(FileContext),
     Directory(DirectoryContext),
+    Symbol(SymbolContext),
     FetchedUrl(FetchedUrlContext),
     Thread(ThreadContext),
 }
@@ -66,6 +69,7 @@ impl AssistantContext {
         match self {
             Self::File(file) => file.id,
             Self::Directory(directory) => directory.snapshot.id,
+            Self::Symbol(symbol) => symbol.id,
             Self::FetchedUrl(url) => url.id,
             Self::Thread(thread) => thread.id,
         }
@@ -80,9 +84,15 @@ pub struct FileContext {
 
 #[derive(Debug)]
 pub struct DirectoryContext {
-    pub path: Rc<Path>,
+    pub path: ProjectPath,
     pub context_buffers: Vec<ContextBuffer>,
     pub snapshot: ContextSnapshot,
+}
+
+#[derive(Debug)]
+pub struct SymbolContext {
+    pub id: ContextId,
+    pub context_symbol: ContextSymbol,
 }
 
 #[derive(Debug)]
@@ -113,11 +123,30 @@ pub struct ContextBuffer {
     pub text: SharedString,
 }
 
+#[derive(Debug, Clone)]
+pub struct ContextSymbol {
+    pub id: ContextSymbolId,
+    pub buffer: Entity<Buffer>,
+    pub buffer_version: clock::Global,
+    /// The range that the symbol encloses, e.g. for function symbol, this will
+    /// include not only the signature, but also the body
+    pub enclosing_range: Range<Anchor>,
+    pub text: SharedString,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct ContextSymbolId {
+    pub path: ProjectPath,
+    pub name: SharedString,
+    pub range: Range<Anchor>,
+}
+
 impl AssistantContext {
     pub fn snapshot(&self, cx: &App) -> Option<ContextSnapshot> {
         match &self {
             Self::File(file_context) => file_context.snapshot(cx),
             Self::Directory(directory_context) => Some(directory_context.snapshot()),
+            Self::Symbol(symbol_context) => symbol_context.snapshot(cx),
             Self::FetchedUrl(fetched_url_context) => Some(fetched_url_context.snapshot()),
             Self::Thread(thread_context) => Some(thread_context.snapshot(cx)),
         }
@@ -155,17 +184,18 @@ impl FileContext {
 impl DirectoryContext {
     pub fn new(
         id: ContextId,
-        path: &Path,
+        project_path: ProjectPath,
         context_buffers: Vec<ContextBuffer>,
     ) -> DirectoryContext {
-        let full_path: SharedString = path.to_string_lossy().into_owned().into();
+        let full_path: SharedString = project_path.path.to_string_lossy().into_owned().into();
 
-        let name = match path.file_name() {
+        let name = match project_path.path.file_name() {
             Some(name) => name.to_string_lossy().into_owned().into(),
             None => full_path.clone(),
         };
 
-        let parent = path
+        let parent = project_path
+            .path
             .parent()
             .and_then(|p| p.file_name())
             .map(|p| p.to_string_lossy().into_owned().into());
@@ -178,7 +208,7 @@ impl DirectoryContext {
             .into();
 
         DirectoryContext {
-            path: path.into(),
+            path: project_path,
             context_buffers,
             snapshot: ContextSnapshot {
                 id,
@@ -194,6 +224,27 @@ impl DirectoryContext {
 
     pub fn snapshot(&self) -> ContextSnapshot {
         self.snapshot.clone()
+    }
+}
+
+impl SymbolContext {
+    pub fn snapshot(&self, cx: &App) -> Option<ContextSnapshot> {
+        let buffer = self.context_symbol.buffer.read(cx);
+        let name = self.context_symbol.id.name.clone();
+        let path = buffer_path_log_err(buffer)?
+            .to_string_lossy()
+            .into_owned()
+            .into();
+
+        Some(ContextSnapshot {
+            id: self.id,
+            name,
+            parent: Some(path),
+            tooltip: None,
+            icon_path: None,
+            kind: ContextKind::Symbol,
+            text: Box::new([self.context_symbol.text.clone()]),
+        })
     }
 }
 
@@ -232,6 +283,7 @@ pub fn attach_context_to_message(
 ) {
     let mut file_context = Vec::new();
     let mut directory_context = Vec::new();
+    let mut symbol_context = Vec::new();
     let mut fetch_context = Vec::new();
     let mut thread_context = Vec::new();
 
@@ -241,6 +293,7 @@ pub fn attach_context_to_message(
         match context.kind {
             ContextKind::File => file_context.push(context),
             ContextKind::Directory => directory_context.push(context),
+            ContextKind::Symbol => symbol_context.push(context),
             ContextKind::FetchedUrl => fetch_context.push(context),
             ContextKind::Thread => thread_context.push(context),
         }
@@ -249,6 +302,9 @@ pub fn attach_context_to_message(
         capacity += 1;
     }
     if !directory_context.is_empty() {
+        capacity += 1;
+    }
+    if !symbol_context.is_empty() {
         capacity += 1;
     }
     if !fetch_context.is_empty() {
@@ -275,6 +331,15 @@ pub fn attach_context_to_message(
     if !directory_context.is_empty() {
         context_chunks.push("The following directories are available:\n");
         for context in &directory_context {
+            for chunk in &context.text {
+                context_chunks.push(&chunk);
+            }
+        }
+    }
+
+    if !symbol_context.is_empty() {
+        context_chunks.push("The following symbols are available:\n");
+        for context in &symbol_context {
             for chunk in &context.text {
                 context_chunks.push(&chunk);
             }

@@ -16,5 +16,3 @@ pub mod dap_command;
 pub mod dap_store;
 mod locator_store;
 pub mod session;
-
-pub use dap_adapters::attach_processes;

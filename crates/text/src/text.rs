@@ -1498,9 +1498,9 @@ impl Buffer {
             .flat_map(|transaction| self.edited_ranges_for_transaction(transaction))
     }
 
-    pub fn edited_ranges_for_transaction<'a, D>(
+    pub fn edited_ranges_for_edit_ids<'a, D>(
         &'a self,
-        transaction: &'a Transaction,
+        edit_ids: impl IntoIterator<Item = &'a clock::Lamport>,
     ) -> impl 'a + Iterator<Item = Range<D>>
     where
         D: TextDimension,
@@ -1508,7 +1508,7 @@ impl Buffer {
         // get fragment ranges
         let mut cursor = self.fragments.cursor::<(Option<&Locator>, usize)>(&None);
         let offset_ranges = self
-            .fragment_ids_for_edits(transaction.edit_ids.iter())
+            .fragment_ids_for_edits(edit_ids.into_iter())
             .into_iter()
             .filter_map(move |fragment_id| {
                 cursor.seek_forward(&Some(fragment_id), Bias::Left, &None);
@@ -1545,6 +1545,16 @@ impl Buffer {
             let end = position;
             start..end
         })
+    }
+
+    pub fn edited_ranges_for_transaction<'a, D>(
+        &'a self,
+        transaction: &'a Transaction,
+    ) -> impl 'a + Iterator<Item = Range<D>>
+    where
+        D: TextDimension,
+    {
+        self.edited_ranges_for_edit_ids(&transaction.edit_ids)
     }
 
     pub fn subscribe(&mut self) -> Subscription {

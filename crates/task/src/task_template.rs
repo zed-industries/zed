@@ -9,8 +9,8 @@ use sha2::{Digest, Sha256};
 use util::{truncate_and_remove_front, ResultExt};
 
 use crate::{
-    DebugAdapterKind, DebugRequestType, ResolvedTask, RevealTarget, Shell, SpawnInTerminal,
-    TaskContext, TaskId, VariableName, ZED_VARIABLE_NAME_PREFIX,
+    AttachConfig, ResolvedTask, RevealTarget, Shell, SpawnInTerminal, TCPHost, TaskContext, TaskId,
+    VariableName, ZED_VARIABLE_NAME_PREFIX,
 };
 
 /// A template definition of a Zed task to run.
@@ -75,74 +75,39 @@ pub struct TaskTemplate {
     pub show_command: bool,
 }
 
-#[derive(Deserialize, Serialize, Eq, PartialEq, JsonSchema, Clone, Debug)]
+#[derive(Deserialize, Eq, PartialEq, Clone, Debug)]
+/// Use to represent debug request type
+pub enum DebugArgsRequest {
+    /// launch (program, cwd) are stored in TaskTemplate as (command, cwd)
+    Launch,
+    /// Attach
+    Attach(AttachConfig),
+}
+
+#[derive(Deserialize, Eq, PartialEq, Clone, Debug)]
 /// This represents the arguments for the debug task.
 pub struct DebugArgs {
-    #[serde(default)]
     /// The launch type
-    pub request: DebugRequestType,
-    #[serde(flatten)]
+    pub request: DebugArgsRequest,
     /// Adapter choice
-    pub kind: DebugAdapterKind,
-    /// da
+    pub adapter: String,
+    /// TCP connection to make with debug adapter
+    pub tcp_connection: Option<TCPHost>,
+    /// Args to send to debug adapter
     pub initialize_args: Option<serde_json::value::Value>,
-    /// supports attach
-    pub supports_attach: bool,
     /// the locator to use
     pub locator: Option<String>,
 }
 
 /// Represents the type of task that is being ran
-#[derive(Default, Deserialize, Serialize, Eq, PartialEq, JsonSchema, Clone, Debug)]
-#[serde(rename_all = "snake_case", tag = "type")]
-#[expect(clippy::large_enum_variant)]
+#[derive(Default, Eq, PartialEq, Clone, Debug)]
+#[allow(clippy::large_enum_variant)]
 pub enum TaskType {
     /// Act like a typically task that runs commands
     #[default]
     Script,
     /// This task starts the debugger for a language
     Debug(DebugArgs),
-}
-
-#[cfg(test)]
-mod deserialization_tests {
-    use crate::{DebugAdapterKind, TCPHost};
-
-    use super::*;
-    use serde_json::json;
-
-    #[test]
-    fn deserialize_task_type_script() {
-        let json = json!({"type": "script"});
-
-        let task_type: TaskType =
-            serde_json::from_value(json).expect("Failed to deserialize TaskType::Script");
-        assert_eq!(task_type, TaskType::Script);
-    }
-
-    #[test]
-    fn deserialize_task_type_debug() {
-        let debug_args = DebugArgs {
-            kind: DebugAdapterKind::Python(TCPHost::default()),
-            request: crate::DebugRequestType::Launch,
-            supports_attach: false,
-            initialize_args: None,
-            locator: None,
-        };
-        let json = json!({
-            "type": "debug",
-            "adapter": "python",
-            "supports_attach": false,
-        });
-
-        let task_type: TaskType =
-            serde_json::from_value(json).expect("Failed to deserialize TaskType::Debug");
-        if let TaskType::Debug(config) = task_type {
-            assert_eq!(config, debug_args);
-        } else {
-            panic!("Expected TaskType::Debug");
-        }
-    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

@@ -10,7 +10,8 @@ use gpui::{
 use picker::{highlighted_match_with_paths::HighlightedMatch, Picker, PickerDelegate};
 use project::{task_store::TaskStore, TaskSourceKind};
 use task::{
-    DebugRequestType, ResolvedTask, RevealTarget, TaskContext, TaskModal, TaskTemplate, TaskType,
+    DebugRequestType, DebugTaskDefinition, ResolvedTask, RevealTarget, TaskContext, TaskModal,
+    TaskTemplate, TaskType,
 };
 use ui::{
     div, h_flex, v_flex, ActiveTheme, Button, ButtonCommon, ButtonSize, Clickable, Color,
@@ -328,7 +329,10 @@ impl PickerDelegate for TasksModalDelegate {
                         cx,
                     ),
                     TaskType::Debug(_) => {
-                        let Some(config) = task.resolved_debug_adapter_config() else {
+                        let Some(config): Option<DebugTaskDefinition> = task
+                            .resolved_debug_adapter_config()
+                            .and_then(|config| config.try_into().ok())
+                        else {
                             return;
                         };
                         let project = workspace.project().clone();
@@ -349,7 +353,7 @@ impl PickerDelegate for TasksModalDelegate {
                             _ => {
                                 project.update(cx, |project, cx| {
                                     project
-                                        .start_debug_session(config, cx)
+                                        .start_debug_session(config.into(), cx)
                                         .detach_and_log_err(cx);
                                 });
                             }
@@ -538,7 +542,7 @@ impl PickerDelegate for TasksModalDelegate {
                                 project
                                     .start_debug_session(debug_config, cx)
                                     .detach_and_log_err(cx);
-                            })
+                            });
                         }
                     }
                 };

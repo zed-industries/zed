@@ -344,7 +344,7 @@ pub(crate) fn commit_message_editor(
     project: Entity<Project>,
     in_panel: bool,
     window: &mut Window,
-    cx: &mut Context<'_, Editor>,
+    cx: &mut Context<Editor>,
 ) -> Editor {
     let buffer = cx.new(|cx| MultiBuffer::singleton(commit_message_buffer, cx));
     let max_lines = if in_panel { MAX_PANEL_EDITOR_LINES } else { 18 };
@@ -2259,7 +2259,7 @@ impl GitPanel {
 
         let repo = repo.read(cx);
 
-        for entry in repo.status() {
+        for entry in repo.cached_status() {
             let is_conflict = repo.has_conflict(&entry.repo_path);
             let is_new = entry.status.is_created();
             let staging = entry.status.staging();
@@ -3951,8 +3951,8 @@ impl GitPanelMessageTooltip {
 
                 let commit_details = editor::commit_tooltip::CommitDetails {
                     sha: details.sha.clone(),
-                    committer_name: details.committer_name.clone(),
-                    committer_email: details.committer_email.clone(),
+                    author_name: details.committer_name.clone(),
+                    author_email: details.committer_email.clone(),
                     commit_time: OffsetDateTime::from_unix_timestamp(details.commit_timestamp)?,
                     message: Some(editor::commit_tooltip::ParsedCommitMessage {
                         message: details.message.clone(),
@@ -3976,7 +3976,7 @@ impl GitPanelMessageTooltip {
 }
 
 impl Render for GitPanelMessageTooltip {
-    fn render(&mut self, _window: &mut Window, _cx: &mut Context<'_, Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
         if let Some(commit_tooltip) = &self.commit_tooltip {
             commit_tooltip.clone().into_any_element()
         } else {

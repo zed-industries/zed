@@ -50,10 +50,25 @@ impl DapLocator for CargoLocator {
             process::{Command, Stdio},
         };
 
+        let Some(launch_config) = (match &mut debug_config.request {
+            task::DebugRequestDisposition::UserConfigured(task::DebugRequestType::Launch(
+                launch_config,
+            )) => Some(launch_config),
+            _ => None,
+        }) else {
+            return Err(anyhow!("Couldn't get launch config in locator"));
+        };
+
+        let Some(cwd) = launch_config.cwd.clone() else {
+            return Err(anyhow!(
+                "Couldn't get cwd from debug config which is needed for locators"
+            ));
+        };
+
         let mut child = Command::new("cargo")
             .args(&debug_config.args)
             .arg("--message-format=json")
-            .current_dir(debug_config.cwd.as_ref().unwrap())
+            .current_dir(cwd)
             .stdout(Stdio::piped())
             .spawn()?;
 
@@ -67,7 +82,7 @@ impl DapLocator for CargoLocator {
             return Err(anyhow::anyhow!("Cargo command failed"));
         }
 
-        let executable = output
+        let Some(executable) = output
             .lines()
             .filter(|line| !line.trim().is_empty())
             .filter_map(|line| serde_json::from_str(line).ok())
@@ -75,9 +90,12 @@ impl DapLocator for CargoLocator {
                 json.get("executable")
                     .and_then(Value::as_str)
                     .map(String::from)
-            });
+            })
+        else {
+            return Err(anyhow!("Couldn't get executable in cargo locator"));
+        };
 
-        debug_config.program = executable;
+        launch_config.program = executable;
         debug_config.args.clear();
         Ok(())
     }

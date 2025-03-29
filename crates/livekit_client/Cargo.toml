@@ -10,46 +10,47 @@ license = "GPL-3.0-or-later"
 workspace = true
 
 [lib]
-path = "src/livekit_client.rs"
+path = "src/lib.rs"
 doctest = false
 
 [[example]]
 name = "test_app"
 
 [features]
-no-webrtc = []
-test-support = ["collections/test-support", "gpui/test-support", "nanoid"]
+test-support = ["collections/test-support", "gpui/test-support"]
 
 [dependencies]
+gpui_tokio.workspace = true
 anyhow.workspace = true
 async-trait.workspace = true
 collections.workspace = true
 cpal = "0.15"
 futures.workspace = true
 gpui.workspace = true
-http_2 = { package = "http", version = "0.2.1" }
 livekit_api.workspace = true
 log.workspace = true
-media.workspace = true
-nanoid = { workspace = true, optional = true }
+nanoid.workspace = true
 parking_lot.workspace = true
 postage.workspace = true
 util.workspace = true
-http_client.workspace = true
 smallvec.workspace = true
 image.workspace = true
+tokio-tungstenite.workspace = true
+http_client_tls.workspace = true
 
 [target.'cfg(not(all(target_os = "windows", target_env = "gnu")))'.dependencies]
-livekit.workspace = true
+livekit = { rev = "102ebbb1ccfbdbcb7332d86dc30b1b1c8c01e4f8", git = "https://github.com/zed-industries/livekit-rust-sdks", features = ["__rustls-tls"]}
+libwebrtc = { rev = "102ebbb1ccfbdbcb7332d86dc30b1b1c8c01e4f8", git = "https://github.com/zed-industries/livekit-rust-sdks"}
 
 [target.'cfg(target_os = "macos")'.dependencies]
 core-foundation.workspace = true
 coreaudio-rs = "0.12.1"
+objc = "0.2"
+core-video.workspace = true
 
 [dev-dependencies]
 collections = { workspace = true, features = ["test-support"] }
 gpui = { workspace = true, features = ["test-support"] }
-nanoid.workspace = true
 sha2.workspace = true
 simplelog.workspace = true
 

@@ -1,25 +1,15 @@
-use dap::transport::TcpTransport;
+use anyhow::bail;
 use gpui::AsyncApp;
-use std::{ffi::OsStr, net::Ipv4Addr, path::PathBuf};
+use std::{ffi::OsStr, path::PathBuf};
+use task::DebugTaskDefinition;
 
 use crate::*;
 
-pub(crate) struct GoDebugAdapter {
-    port: u16,
-    host: Ipv4Addr,
-    timeout: Option<u64>,
-}
+#[derive(Default, Debug)]
+pub(crate) struct GoDebugAdapter;
 
 impl GoDebugAdapter {
-    const ADAPTER_NAME: &'static str = "delve";
-
-    pub(crate) async fn new(host: &TCPHost) -> Result<Self> {
-        Ok(GoDebugAdapter {
-            port: TcpTransport::port(host).await?,
-            host: host.host(),
-            timeout: host.timeout,
-        })
-    }
+    const ADAPTER_NAME: &'static str = "Delve";
 }
 
 #[async_trait(?Send)]
@@ -73,28 +63,39 @@ impl DebugAdapter for GoDebugAdapter {
             .and_then(|p| p.to_str().map(|p| p.to_string()))
             .ok_or(anyhow!("Dlv not found in path"))?;
 
+        let Some(tcp_connection) = config.tcp_connection.clone() else {
+            bail!("Go Debug Adapter expects tcp connection arguments to be provided");
+        };
+        let (host, port, timeout) = crate::configure_tcp_connection(tcp_connection).await?;
+
         Ok(DebugAdapterBinary {
             command: delve_path,
             arguments: Some(vec![
                 "dap".into(),
                 "--listen".into(),
-                format!("{}:{}", self.host, self.port).into(),
+                format!("{}:{}", host, port).into(),
             ]),
-            cwd: config.cwd.clone(),
+            cwd: None,
             envs: None,
             connection: Some(adapters::TcpArguments {
-                host: self.host,
-                port: self.port,
-                timeout: self.timeout,
+                host,
+                port,
+                timeout,
             }),
         })
     }
 
-    fn request_args(&self, config: &DebugAdapterConfig) -> Value {
-        json!({
-            "program": config.program,
-            "cwd": config.cwd,
-            "subProcess": true,
-        })
+    fn request_args(&self, config: &DebugTaskDefinition) -> Value {
+        match &config.request {
+            dap::DebugRequestType::Attach(attach_config) => {
+                json!({
+                    "processId": attach_config.process_id
+                })
+            }
+            dap::DebugRequestType::Launch(launch_config) => json!({
+                "program": launch_config.program,
+                "cwd": launch_config.cwd,
+            }),
+        }
     }
 }

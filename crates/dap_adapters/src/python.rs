@@ -1,26 +1,18 @@
 use crate::*;
-use dap::transport::TcpTransport;
+use anyhow::bail;
+use dap::DebugRequestType;
 use gpui::AsyncApp;
-use std::{ffi::OsStr, net::Ipv4Addr, path::PathBuf};
+use std::{ffi::OsStr, path::PathBuf};
+use task::DebugTaskDefinition;
 
-pub(crate) struct PythonDebugAdapter {
-    port: u16,
-    host: Ipv4Addr,
-    timeout: Option<u64>,
-}
+#[derive(Default)]
+pub(crate) struct PythonDebugAdapter;
 
 impl PythonDebugAdapter {
-    const ADAPTER_NAME: &'static str = "debugpy";
+    const ADAPTER_NAME: &'static str = "Debugpy";
+    const ADAPTER_PACKAGE_NAME: &'static str = "debugpy";
     const ADAPTER_PATH: &'static str = "src/debugpy/adapter";
     const LANGUAGE_NAME: &'static str = "Python";
-
-    pub(crate) async fn new(host: &TCPHost) -> Result<Self> {
-        Ok(PythonDebugAdapter {
-            port: TcpTransport::port(host).await?,
-            host: host.host(),
-            timeout: host.timeout,
-        })
-    }
 }
 
 #[async_trait(?Send)]
@@ -34,7 +26,7 @@ impl DebugAdapter for PythonDebugAdapter {
         delegate: &dyn DapDelegate,
     ) -> Result<AdapterVersion> {
         let github_repo = GithubRepo {
-            repo_name: Self::ADAPTER_NAME.into(),
+            repo_name: Self::ADAPTER_PACKAGE_NAME.into(),
             repo_owner: "microsoft".into(),
         };
 
@@ -78,12 +70,16 @@ impl DebugAdapter for PythonDebugAdapter {
         cx: &mut AsyncApp,
     ) -> Result<DebugAdapterBinary> {
         const BINARY_NAMES: [&str; 3] = ["python3", "python", "py"];
+        let Some(tcp_connection) = config.tcp_connection.clone() else {
+            bail!("Python Debug Adapter expects tcp connection arguments to be provided");
+        };
+        let (host, port, timeout) = crate::configure_tcp_connection(tcp_connection).await?;
 
         let debugpy_dir = if let Some(user_installed_path) = user_installed_path {
             user_installed_path
         } else {
-            let adapter_path = paths::debug_adapters_dir().join(self.name());
-            let file_name_prefix = format!("{}_", self.name());
+            let adapter_path = paths::debug_adapters_dir().join(self.name().as_ref());
+            let file_name_prefix = format!("{}_", Self::ADAPTER_PACKAGE_NAME);
 
             util::fs::find_file_name_in_dir(adapter_path.as_path(), |file_name| {
                 file_name.starts_with(&file_name_prefix)
@@ -118,25 +114,36 @@ impl DebugAdapter for PythonDebugAdapter {
             command: python_path.ok_or(anyhow!("failed to find binary path for python"))?,
             arguments: Some(vec![
                 debugpy_dir.join(Self::ADAPTER_PATH).into(),
-                format!("--port={}", self.port).into(),
-                format!("--host={}", self.host).into(),
+                format!("--port={}", port).into(),
+                format!("--host={}", host).into(),
             ]),
             connection: Some(adapters::TcpArguments {
-                host: self.host,
-                port: self.port,
-                timeout: self.timeout,
+                host,
+                port,
+                timeout,
             }),
-            cwd: config.cwd.clone(),
+            cwd: None,
             envs: None,
         })
     }
 
-    fn request_args(&self, config: &DebugAdapterConfig) -> Value {
-        json!({
-            "program": config.program,
-            "subProcess": true,
-            "cwd": config.cwd,
-            "redirectOutput": true,
-        })
+    fn request_args(&self, config: &DebugTaskDefinition) -> Value {
+        match &config.request {
+            DebugRequestType::Launch(launch_config) => {
+                json!({
+                    "program": launch_config.program,
+                    "subProcess": true,
+                    "cwd": launch_config.cwd,
+                    "redirectOutput": true,
+                })
+            }
+            dap::DebugRequestType::Attach(attach_config) => {
+                json!({
+                    "subProcess": true,
+                    "redirectOutput": true,
+                    "processId": attach_config.process_id
+                })
+            }
+        }
     }
 }
