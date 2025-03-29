@@ -12,7 +12,7 @@ use gpui::{App, Entity, Task, WeakEntity};
 use http_client::HttpClientWithUrl;
 use language::{Buffer, CodeLabel, HighlightId};
 use lsp::CompletionContext;
-use project::{Completion, CompletionIntent, ProjectPath, WorktreeId};
+use project::{Completion, CompletionIntent, ProjectPath, Symbol, WorktreeId};
 use rope::Point;
 use text::{Anchor, ToPoint};
 use ui::prelude::*;
@@ -152,7 +152,7 @@ impl ContextPickerCompletionProvider {
         let icon_for_completion = if recent {
             IconName::HistoryRerun
         } else {
-            IconName::MessageCircle
+            IconName::MessageBubbles
         };
         let new_text = format!("@thread {}", thread_entry.summary);
         let new_text_len = new_text.len();
@@ -164,7 +164,7 @@ impl ContextPickerCompletionProvider {
             source: project::CompletionSource::Custom,
             icon_path: Some(icon_for_completion.path().into()),
             confirm: Some(confirm_completion_callback(
-                IconName::MessageCircle.path().into(),
+                IconName::MessageBubbles.path().into(),
                 thread_entry.summary.clone(),
                 excerpt_id,
                 source_range.start,
@@ -308,6 +308,66 @@ impl ContextPickerCompletionProvider {
             )),
         }
     }
+
+    fn completion_for_symbol(
+        symbol: Symbol,
+        excerpt_id: ExcerptId,
+        source_range: Range<Anchor>,
+        editor: Entity<Editor>,
+        context_store: Entity<ContextStore>,
+        workspace: Entity<Workspace>,
+        cx: &mut App,
+    ) -> Option<Completion> {
+        let path_prefix = workspace
+            .read(cx)
+            .project()
+            .read(cx)
+            .worktree_for_id(symbol.path.worktree_id, cx)?
+            .read(cx)
+            .root_name();
+
+        let (file_name, _) = super::file_context_picker::extract_file_name_and_directory(
+            &symbol.path.path,
+            path_prefix,
+        );
+
+        let comment_id = cx.theme().syntax().highlight_id("comment").map(HighlightId);
+        let mut label = CodeLabel::plain(symbol.name.clone(), None);
+        label.push_str(" ", None);
+        label.push_str(&file_name, comment_id);
+
+        let new_text = format!("@symbol {}:{}", file_name, symbol.name);
+        let new_text_len = new_text.len();
+        Some(Completion {
+            old_range: source_range.clone(),
+            new_text,
+            label,
+            documentation: None,
+            source: project::CompletionSource::Custom,
+            icon_path: Some(IconName::Code.path().into()),
+            confirm: Some(confirm_completion_callback(
+                IconName::Code.path().into(),
+                symbol.name.clone().into(),
+                excerpt_id,
+                source_range.start,
+                new_text_len,
+                editor.clone(),
+                move |cx| {
+                    let symbol = symbol.clone();
+                    let context_store = context_store.clone();
+                    let workspace = workspace.clone();
+                    super::symbol_context_picker::add_symbol(
+                        symbol.clone(),
+                        false,
+                        workspace.clone(),
+                        context_store.downgrade(),
+                        cx,
+                    )
+                    .detach_and_log_err(cx);
+                },
+            )),
+        })
+    }
 }
 
 impl CompletionProvider for ContextPickerCompletionProvider {
@@ -350,14 +410,10 @@ impl CompletionProvider for ContextPickerCompletionProvider {
         cx.spawn(async move |_, cx| {
             let mut completions = Vec::new();
 
-            let MentionCompletion {
-                mode: category,
-                argument,
-                ..
-            } = state;
+            let MentionCompletion { mode, argument, .. } = state;
 
             let query = argument.unwrap_or_else(|| "".to_string());
-            match category {
+            match mode {
                 Some(ContextPickerMode::File) => {
                     let path_matches = cx
                         .update(|cx| {
@@ -389,6 +445,35 @@ impl CompletionProvider for ContextPickerCompletionProvider {
                                     cx,
                                 )
                             }));
+                        })?;
+                    }
+                }
+                Some(ContextPickerMode::Symbol) => {
+                    if let Some(editor) = editor.upgrade() {
+                        let symbol_matches = cx
+                            .update(|cx| {
+                                super::symbol_context_picker::search_symbols(
+                                    query,
+                                    Arc::new(AtomicBool::default()),
+                                    &workspace,
+                                    cx,
+                                )
+                            })?
+                            .await?;
+                        cx.update(|cx| {
+                            completions.extend(symbol_matches.into_iter().filter_map(
+                                |(_, symbol)| {
+                                    Self::completion_for_symbol(
+                                        symbol,
+                                        excerpt_id,
+                                        source_range.clone(),
+                                        editor.clone(),
+                                        context_store.clone(),
+                                        workspace.clone(),
+                                        cx,
+                                    )
+                                },
+                            ));
                         })?;
                     }
                 }
@@ -792,6 +877,7 @@ mod tests {
                     "five.txt dir/b/",
                     "four.txt dir/a/",
                     "Files & Directories",
+                    "Symbols",
                     "Fetch"
                 ]
             );

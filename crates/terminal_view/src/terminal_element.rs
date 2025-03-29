@@ -998,7 +998,7 @@ impl InputHandler for TerminalInputHandler {
     }
 
     fn marked_text_range(&mut self, _: &mut Window, _: &mut App) -> Option<std::ops::Range<usize>> {
-        None
+        Some(0..0)
     }
 
     fn text_for_range(

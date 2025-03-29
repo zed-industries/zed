@@ -244,60 +244,56 @@ async fn test_basic_calls(
         }
     );
 
-    // TODO: Re-enable this test once we can replace our swift Livekit SDK with the rust SDK
-    #[cfg(not(target_os = "macos"))]
-    {
-        // User A shares their screen
-        let display = gpui::TestScreenCaptureSource::new();
-        let events_b = active_call_events(cx_b);
-        let events_c = active_call_events(cx_c);
-        cx_a.set_screen_capture_sources(vec![display]);
-        active_call_a
-            .update(cx_a, |call, cx| {
-                call.room()
-                    .unwrap()
-                    .update(cx, |room, cx| room.share_screen(cx))
-            })
-            .await
-            .unwrap();
+    // User A shares their screen
+    let display = gpui::TestScreenCaptureSource::new();
+    let events_b = active_call_events(cx_b);
+    let events_c = active_call_events(cx_c);
+    cx_a.set_screen_capture_sources(vec![display]);
+    active_call_a
+        .update(cx_a, |call, cx| {
+            call.room()
+                .unwrap()
+                .update(cx, |room, cx| room.share_screen(cx))
+        })
+        .await
+        .unwrap();
 
-        executor.run_until_parked();
+    executor.run_until_parked();
 
-        // User B observes the remote screen sharing track.
-        assert_eq!(events_b.borrow().len(), 1);
-        let event_b = events_b.borrow().first().unwrap().clone();
-        if let call::room::Event::RemoteVideoTracksChanged { participant_id } = event_b {
-            assert_eq!(participant_id, client_a.peer_id().unwrap());
+    // User B observes the remote screen sharing track.
+    assert_eq!(events_b.borrow().len(), 1);
+    let event_b = events_b.borrow().first().unwrap().clone();
+    if let call::room::Event::RemoteVideoTracksChanged { participant_id } = event_b {
+        assert_eq!(participant_id, client_a.peer_id().unwrap());
 
-            room_b.read_with(cx_b, |room, _| {
-                assert_eq!(
-                    room.remote_participants()[&client_a.user_id().unwrap()]
-                        .video_tracks
-                        .len(),
-                    1
-                );
-            });
-        } else {
-            panic!("unexpected event")
-        }
+        room_b.read_with(cx_b, |room, _| {
+            assert_eq!(
+                room.remote_participants()[&client_a.user_id().unwrap()]
+                    .video_tracks
+                    .len(),
+                1
+            );
+        });
+    } else {
+        panic!("unexpected event")
+    }
 
-        // User C observes the remote screen sharing track.
-        assert_eq!(events_c.borrow().len(), 1);
-        let event_c = events_c.borrow().first().unwrap().clone();
-        if let call::room::Event::RemoteVideoTracksChanged { participant_id } = event_c {
-            assert_eq!(participant_id, client_a.peer_id().unwrap());
+    // User C observes the remote screen sharing track.
+    assert_eq!(events_c.borrow().len(), 1);
+    let event_c = events_c.borrow().first().unwrap().clone();
+    if let call::room::Event::RemoteVideoTracksChanged { participant_id } = event_c {
+        assert_eq!(participant_id, client_a.peer_id().unwrap());
 
-            room_c.read_with(cx_c, |room, _| {
-                assert_eq!(
-                    room.remote_participants()[&client_a.user_id().unwrap()]
-                        .video_tracks
-                        .len(),
-                    1
-                );
-            });
-        } else {
-            panic!("unexpected event")
-        }
+        room_c.read_with(cx_c, |room, _| {
+            assert_eq!(
+                room.remote_participants()[&client_a.user_id().unwrap()]
+                    .video_tracks
+                    .len(),
+                1
+            );
+        });
+    } else {
+        panic!("unexpected event")
     }
 
     // User A leaves the room.
@@ -2091,17 +2087,7 @@ async fn test_mute_deafen(
                     audio_tracks_playing: participant
                         .audio_tracks
                         .values()
-                        .map({
-                            #[cfg(target_os = "macos")]
-                            {
-                                |track| track.is_playing()
-                            }
-
-                            #[cfg(not(target_os = "macos"))]
-                            {
-                                |(track, _)| track.rtc_track().enabled()
-                            }
-                        })
+                        .map(|(track, _)| track.enabled())
                         .collect(),
                 })
                 .collect::<Vec<_>>()
@@ -6238,8 +6224,6 @@ async fn test_contact_requests(
     }
 }
 
-// TODO: Re-enable this test once we can replace our swift Livekit SDK with the rust SDK
-#[cfg(not(target_os = "macos"))]
 #[gpui::test(iterations = 10)]
 async fn test_join_call_after_screen_was_shared(
     executor: BackgroundExecutor,

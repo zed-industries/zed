@@ -76,7 +76,7 @@ impl BlinkManager {
         }
     }
 
-    pub fn show_cursor(&mut self, cx: &mut Context<'_, BlinkManager>) {
+    pub fn show_cursor(&mut self, cx: &mut Context<BlinkManager>) {
         if !self.visible {
             self.visible = true;
             cx.notify();

@@ -6,7 +6,8 @@ use crate::{
     MultiBuffer, MultiBufferSnapshot, NavigationData, SearchWithinRange, ToPoint as _,
 };
 use anyhow::{anyhow, Context as _, Result};
-use collections::HashSet;
+use clock::Global;
+use collections::{HashMap, HashSet};
 use file_icons::FileIcons;
 use futures::future::try_join_all;
 use git::status::GitSummary;
@@ -21,7 +22,7 @@ use language::{
 use lsp::DiagnosticSeverity;
 use project::{
     lsp_store::FormatTrigger, project_settings::ProjectSettings, search::SearchQuery, Project,
-    ProjectItem as _, ProjectPath,
+    ProjectEntryId, ProjectItem as _, ProjectPath,
 };
 use rpc::proto::{self, update_view, PeerId};
 use settings::Settings;
@@ -29,6 +30,7 @@ use std::{
     any::TypeId,
     borrow::Cow,
     cmp::{self, Ordering},
+    collections::hash_map,
     iter,
     ops::Range,
     path::Path,
@@ -39,9 +41,9 @@ use theme::{Theme, ThemeSettings};
 use ui::{prelude::*, IconDecorationKind};
 use util::{paths::PathExt, ResultExt, TryFutureExt};
 use workspace::{
-    item::{BreadcrumbText, FollowEvent},
+    item::{BreadcrumbText, FollowEvent, ProjectItemKind},
     searchable::SearchOptions,
-    OpenVisible,
+    OpenVisible, Pane, WorkspaceSettings,
 };
 use workspace::{
     item::{Dedup, ItemSettings, SerializableItem, TabContentParams},
@@ -1250,20 +1252,118 @@ impl SerializableItem for Editor {
     }
 }
 
+#[derive(Debug, Default)]
+struct EditorRestorationData {
+    entries: HashMap<ProjectEntryId, RestorationData>,
+}
+
+#[derive(Debug)]
+pub struct RestorationData {
+    pub scroll_anchor: ScrollAnchor,
+    pub folds: Vec<Range<Anchor>>,
+    pub selections: Vec<Range<Anchor>>,
+    pub buffer_version: Global,
+}
+
+impl Default for RestorationData {
+    fn default() -> Self {
+        Self {
+            scroll_anchor: ScrollAnchor::new(),
+            folds: Vec::new(),
+            selections: Vec::new(),
+            buffer_version: Global::default(),
+        }
+    }
+}
+
 impl ProjectItem for Editor {
     type Item = Buffer;
 
+    fn project_item_kind() -> Option<ProjectItemKind> {
+        Some(ProjectItemKind("Editor"))
+    }
+
     fn for_project_item(
         project: Entity<Project>,
+        pane: &Pane,
         buffer: Entity<Buffer>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        Self::for_buffer(buffer, Some(project), window, cx)
+        let mut editor = Self::for_buffer(buffer.clone(), Some(project), window, cx);
+
+        if WorkspaceSettings::get(None, cx).restore_on_file_reopen {
+            if let Some(restoration_data) = Self::project_item_kind()
+                .and_then(|kind| pane.project_item_restoration_data.get(&kind))
+                .and_then(|data| data.downcast_ref::<EditorRestorationData>())
+                .and_then(|data| data.entries.get(&buffer.read(cx).entry_id(cx)?))
+                .filter(|data| !buffer.read(cx).version.changed_since(&data.buffer_version))
+            {
+                editor.fold_ranges(restoration_data.folds.clone(), false, window, cx);
+                if !restoration_data.selections.is_empty() {
+                    editor.change_selections(None, window, cx, |s| {
+                        s.select_ranges(restoration_data.selections.clone());
+                    });
+                }
+                editor.set_scroll_anchor(restoration_data.scroll_anchor, window, cx);
+            }
+        }
+
+        editor
     }
 }
 
 impl EventEmitter<SearchEvent> for Editor {}
+
+impl Editor {
+    pub fn update_restoration_data(
+        &self,
+        cx: &mut Context<Self>,
+        write: impl for<'a> FnOnce(&'a mut RestorationData) + 'static,
+    ) {
+        if !WorkspaceSettings::get(None, cx).restore_on_file_reopen {
+            return;
+        }
+
+        let editor = cx.entity();
+        cx.defer(move |cx| {
+            editor.update(cx, |editor, cx| {
+                let kind = Editor::project_item_kind()?;
+                let pane = editor.workspace()?.read(cx).pane_for(&cx.entity())?;
+                let buffer = editor.buffer().read(cx).as_singleton()?;
+                let entry_id = buffer.read(cx).entry_id(cx)?;
+                let buffer_version = buffer.read(cx).version();
+                pane.update(cx, |pane, _| {
+                    let data = pane
+                        .project_item_restoration_data
+                        .entry(kind)
+                        .or_insert_with(|| Box::new(EditorRestorationData::default()) as Box<_>);
+                    let data = match data.downcast_mut::<EditorRestorationData>() {
+                        Some(data) => data,
+                        None => {
+                            *data = Box::new(EditorRestorationData::default());
+                            data.downcast_mut::<EditorRestorationData>()
+                                .expect("just written the type downcasted to")
+                        }
+                    };
+
+                    let data = match data.entries.entry(entry_id) {
+                        hash_map::Entry::Occupied(o) => {
+                            if buffer_version.changed_since(&o.get().buffer_version) {
+                                return None;
+                            }
+                            o.into_mut()
+                        }
+                        hash_map::Entry::Vacant(v) => v.insert(RestorationData::default()),
+                    };
+                    write(data);
+                    data.buffer_version = buffer_version;
+                    Some(())
+                })
+            });
+        });
+    }
+}
 
 pub(crate) enum BufferSearchHighlights {}
 impl SearchableItem for Editor {

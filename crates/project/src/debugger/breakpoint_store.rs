@@ -12,7 +12,7 @@ use rpc::{
     AnyProtoClient, TypedEnvelope,
 };
 use std::{hash::Hash, ops::Range, path::Path, sync::Arc};
-use text::PointUtf16;
+use text::{Point, PointUtf16};
 
 use crate::{buffer_store::BufferStore, worktree_store::WorktreeStore, Project, ProjectPath};
 
@@ -263,7 +263,8 @@ impl BreakpointStore {
                         bp.state = BreakpointState::Enabled;
                     }
                 } else {
-                    log::error!("Attempted to invert a breakpoint's state that doesn't exist ");
+                    breakpoint.1.state = BreakpointState::Disabled;
+                    breakpoint_set.breakpoints.push(breakpoint.clone());
                 }
             }
             BreakpointEditAction::EditLogMessage(log_message) => {
@@ -457,7 +458,7 @@ impl BreakpointStore {
     pub fn with_serialized_breakpoints(
         &self,
         breakpoints: BTreeMap<Arc<Path>, Vec<SourceBreakpoint>>,
-        cx: &mut Context<'_, BreakpointStore>,
+        cx: &mut Context<BreakpointStore>,
     ) -> Task<Result<()>> {
         if let BreakpointStoreMode::Local(mode) = &self.mode {
             let mode = mode.clone();
@@ -493,7 +494,7 @@ impl BreakpointStore {
                         this.update(cx, |_, cx| BreakpointsInFile::new(buffer, cx))?;
 
                     for bp in bps {
-                        let position = snapshot.anchor_before(PointUtf16::new(bp.row, 0));
+                        let position = snapshot.anchor_after(Point::new(bp.row, 0));
                         breakpoints_for_file.breakpoints.push((
                             position,
                             Breakpoint {

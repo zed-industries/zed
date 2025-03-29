@@ -25,6 +25,7 @@ assistant_settings.workspace = true
 assistant_slash_command.workspace = true
 assistant_tool.workspace = true
 async-watch.workspace = true
+buffer_diff.workspace = true
 chrono.workspace = true
 client.workspace = true
 clock.workspace = true
@@ -40,7 +41,6 @@ fs.workspace = true
 futures.workspace = true
 fuzzy.workspace = true
 git.workspace = true
-git_ui.workspace = true
 gpui.workspace = true
 heed.workspace = true
 html_to_markdown.workspace = true
@@ -55,6 +55,7 @@ lsp.workspace = true
 markdown.workspace = true
 menu.workspace = true
 multi_buffer.workspace = true
+ordered-float.workspace = true
 parking_lot.workspace = true
 paths.workspace = true
 picker.workspace = true
@@ -64,10 +65,10 @@ prompt_store.workspace = true
 proto.workspace = true
 release_channel.workspace = true
 rope.workspace = true
+schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 settings.workspace = true
-smallvec.workspace = true
 smol.workspace = true
 streaming_diff.workspace = true
 telemetry.workspace = true
@@ -86,6 +87,7 @@ workspace.workspace = true
 zed_actions.workspace = true
 
 [dev-dependencies]
+buffer_diff = { workspace = true, features = ["test-support"] }
 editor = { workspace = true, features = ["test-support"] }
 gpui = { workspace = true, "features" = ["test-support"] }
 indoc.workspace = true

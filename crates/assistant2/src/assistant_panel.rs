@@ -65,6 +65,12 @@ pub fn init(cx: &mut App) {
                         panel.update(cx, |panel, cx| panel.open_history(window, cx));
                     }
                 })
+                .register_action(|workspace, _: &OpenConfiguration, window, cx| {
+                    if let Some(panel) = workspace.panel::<AssistantPanel>(cx) {
+                        workspace.focus_panel::<AssistantPanel>(window, cx);
+                        panel.update(cx, |panel, cx| panel.open_configuration(window, cx));
+                    }
+                })
                 .register_action(|workspace, _: &NewPromptEditor, window, cx| {
                     if let Some(panel) = workspace.panel::<AssistantPanel>(cx) {
                         workspace.focus_panel::<AssistantPanel>(window, cx);
@@ -113,7 +119,7 @@ pub struct AssistantPanel {
     active_view: ActiveView,
     history_store: Entity<HistoryStore>,
     history: Entity<ThreadHistory>,
-    new_item_context_menu_handle: PopoverMenuHandle<ContextMenu>,
+    assistant_dropdown_menu_handle: PopoverMenuHandle<ContextMenu>,
     width: Option<Pixels>,
     height: Option<Pixels>,
 }
@@ -213,7 +219,7 @@ impl AssistantPanel {
             .unwrap(),
             history_store: history_store.clone(),
             history: cx.new(|cx| ThreadHistory::new(weak_self, history_store, cx)),
-            new_item_context_menu_handle: PopoverMenuHandle::default(),
+            assistant_dropdown_menu_handle: PopoverMenuHandle::default(),
             width: None,
             height: None,
         }
@@ -659,8 +665,9 @@ impl Panel for AssistantPanel {
 }
 
 impl AssistantPanel {
-    fn render_toolbar(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_toolbar(&self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let thread = self.thread.read(cx);
+        let focus_handle = self.focus_handle(cx);
 
         let title = match self.active_view {
             ActiveView::Thread => {
@@ -680,7 +687,7 @@ impl AssistantPanel {
                 })
                 .unwrap_or_else(|| SharedString::from("Loading Summary…")),
             ActiveView::History => "History".into(),
-            ActiveView::Configuration => "Assistant Settings".into(),
+            ActiveView::Configuration => "Settings".into(),
         };
 
         h_flex()
@@ -720,56 +727,46 @@ impl AssistantPanel {
                             .border_color(cx.theme().colors().border)
                             .gap(DynamicSpacing::Base02.rems(cx))
                             .child(
-                                PopoverMenu::new("assistant-toolbar-new-popover-menu")
+                                IconButton::new("new", IconName::Plus)
+                                    .icon_size(IconSize::Small)
+                                    .style(ButtonStyle::Subtle)
+                                    .tooltip(move |window, cx| {
+                                        Tooltip::for_action_in(
+                                            "New Thread",
+                                            &NewThread,
+                                            &focus_handle,
+                                            window,
+                                            cx,
+                                        )
+                                    })
+                                    .on_click(move |_event, window, cx| {
+                                        window.dispatch_action(NewThread.boxed_clone(), cx);
+                                    }),
+                            )
+                            .child(
+                                PopoverMenu::new("assistant-menu")
                                     .trigger_with_tooltip(
-                                        IconButton::new("new", IconName::Plus)
+                                        IconButton::new("new", IconName::Ellipsis)
                                             .icon_size(IconSize::Small)
                                             .style(ButtonStyle::Subtle),
-                                        Tooltip::text("New…"),
+                                        Tooltip::text("Toggle Assistant Menu"),
                                     )
                                     .anchor(Corner::TopRight)
-                                    .with_handle(self.new_item_context_menu_handle.clone())
+                                    .with_handle(self.assistant_dropdown_menu_handle.clone())
                                     .menu(move |window, cx| {
                                         Some(ContextMenu::build(
                                             window,
                                             cx,
                                             |menu, _window, _cx| {
-                                                menu.action("New Thread", NewThread.boxed_clone())
-                                                    .action(
-                                                        "New Prompt Editor",
-                                                        NewPromptEditor.boxed_clone(),
-                                                    )
+                                                menu.action(
+                                                    "New Prompt Editor",
+                                                    NewPromptEditor.boxed_clone(),
+                                                )
+                                                .separator()
+                                                .action("History", OpenHistory.boxed_clone())
+                                                .action("Settings", OpenConfiguration.boxed_clone())
                                             },
                                         ))
-                                    }),
-                            )
-                            .child(
-                                IconButton::new("open-history", IconName::HistoryRerun)
-                                    .icon_size(IconSize::Small)
-                                    .style(ButtonStyle::Subtle)
-                                    .tooltip({
-                                        let focus_handle = self.focus_handle(cx);
-                                        move |window, cx| {
-                                            Tooltip::for_action_in(
-                                                "History",
-                                                &OpenHistory,
-                                                &focus_handle,
-                                                window,
-                                                cx,
-                                            )
-                                        }
-                                    })
-                                    .on_click(move |_event, window, cx| {
-                                        window.dispatch_action(OpenHistory.boxed_clone(), cx);
-                                    }),
-                            )
-                            .child(
-                                IconButton::new("configure-assistant", IconName::Settings)
-                                    .icon_size(IconSize::Small)
-                                    .style(ButtonStyle::Subtle)
-                                    .tooltip(Tooltip::text("Assistant Settings"))
-                                    .on_click(move |_event, window, cx| {
-                                        window.dispatch_action(OpenConfiguration.boxed_clone(), cx);
                                     }),
                             ),
                     ),
@@ -1103,9 +1100,12 @@ impl Render for AssistantPanel {
             .on_action(cx.listener(|this, _: &OpenHistory, window, cx| {
                 this.open_history(window, cx);
             }))
+            .on_action(cx.listener(|this, _: &OpenConfiguration, window, cx| {
+                this.open_configuration(window, cx);
+            }))
             .on_action(cx.listener(Self::open_active_thread_as_markdown))
             .on_action(cx.listener(Self::deploy_prompt_library))
-            .child(self.render_toolbar(cx))
+            .child(self.render_toolbar(window, cx))
             .map(|parent| match self.active_view {
                 ActiveView::Thread => parent
                     .child(self.render_active_thread_or_empty_state(window, cx))
