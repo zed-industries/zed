@@ -412,9 +412,9 @@ impl ContextMenu {
             action: Some(action.boxed_clone()),
             handler: Rc::new(move |_, window, cx| window.dispatch_action(action.boxed_clone(), cx)),
             icon: Some(IconName::ArrowUpRight),
-            icon_size: IconSize::XSmall,
+            icon_size: IconSize::Indicator,
             icon_position: IconPosition::End,
-            icon_color: None,
+            icon_color: Some(Color::Muted),
             disabled: false,
             documentation_aside: None,
         }));
