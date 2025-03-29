@@ -553,7 +553,7 @@ List of `string` values
 "cursor_shape": "hollow"
 ```
 
-## Hide Mouse Cursor Mode
+## Hide Mouse
 
 - Description: Determines when the mouse cursor should be hidden in an editor or input box.
 - Setting: `hide_mouse`
