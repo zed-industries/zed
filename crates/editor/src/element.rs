@@ -185,8 +185,14 @@ impl EditorElement {
             }
         });
 
-        crate::rust_analyzer_ext::apply_related_actions(editor, window, cx);
-        crate::clangd_ext::apply_related_actions(editor, window, cx);
+        let rust_analyzer_ext_task =
+            crate::rust_analyzer_ext::apply_related_actions(editor, window, cx);
+        let clangd_ext_task = crate::clangd_ext::apply_related_actions(editor, window, cx);
+        cx.background_spawn(async move {
+            let _ = futures::future::join(rust_analyzer_ext_task, clangd_ext_task).await;
+        })
+        .detach();
+
         register_action(editor, window, Editor::open_context_menu);
         register_action(editor, window, Editor::move_left);
         register_action(editor, window, Editor::move_right);

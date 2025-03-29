@@ -1,7 +1,7 @@
 use std::{fs, path::Path};
 
 use anyhow::Context as _;
-use gpui::{App, AppContext as _, Context, Entity, Window};
+use gpui::{App, AppContext as _, Context, Entity, Task, Window};
 use language::{Capability, Language};
 use multi_buffer::MultiBuffer;
 use project::lsp_store::{lsp_ext_command::ExpandMacro, rust_analyzer_ext::RUST_ANALYZER_NAME};
@@ -16,16 +16,25 @@ fn is_rust_language(language: &Language) -> bool {
     language.name() == "Rust".into()
 }
 
-pub fn apply_related_actions(editor: &Entity<Editor>, window: &mut Window, cx: &mut App) {
-    if editor
-        .update(cx, |e, cx| {
-            find_specific_language_server_in_selection(e, cx, is_rust_language, RUST_ANALYZER_NAME)
-        })
-        .is_some()
-    {
-        register_action(editor, window, expand_macro_recursively);
-        register_action(editor, window, open_docs);
-    }
+pub fn apply_related_actions(
+    editor: &Entity<Editor>,
+    window: &mut Window,
+    cx: &mut App,
+) -> Task<()> {
+    let task = editor.update(cx, |editor, cx| {
+        find_specific_language_server_in_selection(editor, cx, is_rust_language, RUST_ANALYZER_NAME)
+    });
+
+    let editor = editor.clone();
+    window.spawn(cx, async move |cx| {
+        if task.await.is_some() {
+            cx.update(|window, _| {
+                register_action(&editor, window, expand_macro_recursively);
+                register_action(&editor, window, open_docs);
+            })
+            .ok();
+        }
+    })
 }
 
 pub fn expand_macro_recursively(
@@ -44,29 +53,30 @@ pub fn expand_macro_recursively(
         return;
     };
 
-    let Some((trigger_anchor, rust_language, server_to_query, buffer)) =
-        find_specific_language_server_in_selection(
-            editor,
-            cx,
-            is_rust_language,
-            RUST_ANALYZER_NAME,
-        )
-    else {
-        return;
-    };
+    let server_lookup = find_specific_language_server_in_selection(
+        editor,
+        cx,
+        is_rust_language,
+        RUST_ANALYZER_NAME,
+    );
 
     let project = project.clone();
-    let buffer_snapshot = buffer.read(cx).snapshot();
-    let position = trigger_anchor.text_anchor.to_point_utf16(&buffer_snapshot);
-    let expand_macro_task = project.update(cx, |project, cx| {
-        project.request_lsp(
-            buffer,
-            project::LanguageServerToQuery::Other(server_to_query),
-            ExpandMacro { position },
-            cx,
-        )
-    });
     cx.spawn_in(window, async move |_editor, cx| {
+        let Some((trigger_anchor, rust_language, server_to_query, buffer)) = server_lookup.await
+        else {
+            return Ok(());
+        };
+        let buffer_snapshot = buffer.update(cx, |buffer, _| buffer.snapshot())?;
+        let position = trigger_anchor.text_anchor.to_point_utf16(&buffer_snapshot);
+        let expand_macro_task = project.update(cx, |project, cx| {
+            project.request_lsp(
+                buffer,
+                project::LanguageServerToQuery::Other(server_to_query),
+                ExpandMacro { position },
+                cx,
+            )
+        })?;
+
         let macro_expansion = expand_macro_task.await.context("expand macro")?;
         if macro_expansion.is_empty() {
             log::info!("Empty macro expansion for position {position:?}");
@@ -111,31 +121,31 @@ pub fn open_docs(editor: &mut Editor, _: &OpenDocs, window: &mut Window, cx: &mu
         return;
     };
 
-    let Some((trigger_anchor, _rust_language, server_to_query, buffer)) =
-        find_specific_language_server_in_selection(
-            editor,
-            cx,
-            is_rust_language,
-            RUST_ANALYZER_NAME,
-        )
-    else {
-        return;
-    };
+    let server_lookup = find_specific_language_server_in_selection(
+        editor,
+        cx,
+        is_rust_language,
+        RUST_ANALYZER_NAME,
+    );
 
     let project = project.clone();
-    let buffer_snapshot = buffer.read(cx).snapshot();
-    let position = trigger_anchor.text_anchor.to_point_utf16(&buffer_snapshot);
-    let open_docs_task = project.update(cx, |project, cx| {
-        project.request_lsp(
-            buffer,
-            project::LanguageServerToQuery::Other(server_to_query),
-            project::lsp_store::lsp_ext_command::OpenDocs { position },
-            cx,
-        )
-    });
-
     cx.spawn_in(window, async move |_editor, cx| {
-        let docs_urls = open_docs_task.await.context("open docs")?;
+        let Some((trigger_anchor, _, server_to_query, buffer)) = server_lookup.await else {
+            return Ok(());
+        };
+        let buffer_snapshot = buffer.update(cx, |buffer, _| buffer.snapshot())?;
+        let position = trigger_anchor.text_anchor.to_point_utf16(&buffer_snapshot);
+        let docs_urls = project
+            .update(cx, |project, cx| {
+                project.request_lsp(
+                    buffer,
+                    project::LanguageServerToQuery::Other(server_to_query),
+                    project::lsp_store::lsp_ext_command::OpenDocs { position },
+                    cx,
+                )
+            })?
+            .await
+            .context("open docs")?;
         if docs_urls.is_empty() {
             log::debug!("Empty docs urls for position {position:?}");
             return Ok(());
