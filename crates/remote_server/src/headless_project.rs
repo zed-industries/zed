@@ -528,7 +528,12 @@ impl HeadlessProject {
         let buffer_id = cx.update(|cx| {
             if buffer.read(cx).is_empty() {
                 buffer.update(cx, |buffer, cx| {
-                    buffer.edit([(0..0, initial_server_settings_content())], None, cx)
+                    buffer.edit(
+                        [(0..0, initial_server_settings_content())],
+                        Default::default(),
+                        None,
+                        cx,
+                    )
                 });
             }
 

@@ -1510,7 +1510,7 @@ impl LocalLspStore {
                         zlog::trace!(logger => "Applying changes");
                         buffer.handle.update(cx, |buffer, cx| {
                             buffer.start_transaction();
-                            buffer.edit(edits, None, cx);
+                            buffer.edit(edits, Default::default(), None, cx);
                             transaction_id_format =
                                 transaction_id_format.or(buffer.end_transaction(cx));
                             if let Some(transaction_id) = transaction_id_format {
@@ -1768,7 +1768,7 @@ impl LocalLspStore {
                             zlog::info!(logger => "Applying changes");
                             buffer.handle.update(cx, |buffer, cx| {
                                 buffer.start_transaction();
-                                buffer.edit(edits, None, cx);
+                                buffer.edit(edits, Default::default(), None, cx);
                                 transaction_id_format =
                                     transaction_id_format.or(buffer.end_transaction(cx));
                                 if let Some(transaction_id) = transaction_id_format {
@@ -2596,7 +2596,7 @@ impl LocalLspStore {
             buffer.finalize_last_transaction();
             buffer.start_transaction();
             for (range, text) in edits {
-                buffer.edit([(range, text)], None, cx);
+                buffer.edit([(range, text)], Default::default(), None, cx);
             }
 
             if buffer.end_transaction(cx).is_some() {
@@ -2895,7 +2895,7 @@ impl LocalLspStore {
                         buffer.finalize_last_transaction();
                         buffer.start_transaction();
                         for (range, text) in edits {
-                            buffer.edit([(range, text)], None, cx);
+                            buffer.edit([(range, text)], Default::default(), None, cx);
                         }
                         let transaction = if buffer.end_transaction(cx).is_some() {
                             let transaction = buffer.finalize_last_transaction().unwrap().clone();
@@ -5508,7 +5508,7 @@ impl LspStore {
                             //Skip additional edits which overlap with the primary completion edit
                             //https://github.com/zed-industries/zed/pull/1871
                             if !start_within && !end_within {
-                                buffer.edit([(range, text)], None, cx);
+                                buffer.edit([(range, text)], Default::default(), None, cx);
                             }
                         }
 

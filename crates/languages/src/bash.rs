@@ -45,7 +45,7 @@ mod tests {
 
             let expect_indents_to =
                 |buffer: &mut Buffer, cx: &mut Context<Buffer>, input: &str, expected: &str| {
-                    buffer.edit( [(0..buffer.len(), input)], Some(AutoindentMode::EachLine), cx, );
+                    buffer.edit( [(0..buffer.len(), input)], Default::default(), Some(AutoindentMode::EachLine), cx, );
                     assert_eq!(buffer.text(), expected);
                 };
 
@@ -124,14 +124,16 @@ mod tests {
                 .unindent(),
             );
 
-            buffer.edit([(0..buffer.len(), input)], None, cx);
+            buffer.edit([(0..buffer.len(), input)], Default::default(), None, cx);
             buffer.edit(
                 [(offsets[0]..offsets[0], "\n")],
+                Default::default(),
                 Some(AutoindentMode::EachLine),
                 cx,
             );
             buffer.edit(
                 [(offsets[0] + 3..offsets[0] + 3, "elif")],
+                Default::default(),
                 Some(AutoindentMode::EachLine),
                 cx,
             );

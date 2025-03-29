@@ -844,7 +844,7 @@ async fn test_collaborating_with_renames(cx_a: &mut TestAppContext, cx_b: &mut T
                 "Rename that was triggered from zero selection caret, should propose the whole word."
             );
             rename_editor.buffer().update(cx, |rename_buffer, cx| {
-                rename_buffer.edit([(0..3, "THREE")], None, cx);
+                rename_buffer.edit([(0..3, "THREE")], Default::default(), None, cx);
             });
         });
     });
@@ -889,7 +889,7 @@ async fn test_collaborating_with_renames(cx_a: &mut TestAppContext, cx_b: &mut T
                 "Rename that was triggered from a selection, should have the same selection range in the rename proposal"
             );
             rename_editor.buffer().update(cx, |rename_buffer, cx| {
-                rename_buffer.edit([(0..lsp_rename_end - lsp_rename_start, "THREE")], None, cx);
+                rename_buffer.edit([(0..lsp_rename_end - lsp_rename_start, "THREE")], Default::default(), None, cx);
             });
         });
     });

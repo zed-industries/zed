@@ -668,6 +668,9 @@ pub struct LanguageConfig {
     /// the indentation level for a new line.
     #[serde(default = "auto_indent_using_last_non_empty_line_default")]
     pub auto_indent_using_last_non_empty_line: bool,
+    // Whether indentation should be automatically adjusted when typing.
+    #[serde(default)]
+    pub auto_indent_on_input: Option<bool>,
     // Whether indentation of pasted content should be adjusted based on the context.
     #[serde(default)]
     pub auto_indent_on_paste: Option<bool>,
@@ -838,6 +841,7 @@ impl Default for LanguageConfig {
             matcher: LanguageMatcher::default(),
             brackets: Default::default(),
             auto_indent_using_last_non_empty_line: auto_indent_using_last_non_empty_line_default(),
+            auto_indent_on_input: None,
             auto_indent_on_paste: None,
             increase_indent_pattern: Default::default(),
             decrease_indent_pattern: Default::default(),

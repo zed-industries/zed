@@ -3266,7 +3266,7 @@ impl CodegenAlternative {
             // Avoid grouping assistant edits with user edits.
             buffer.finalize_last_transaction(cx);
             buffer.start_transaction(cx);
-            buffer.edit(edits, None, cx);
+            buffer.edit(edits, Default::default(), None, cx);
             buffer.end_transaction(cx)
         });
 

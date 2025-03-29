@@ -139,6 +139,7 @@ impl ResolvedPatch {
         buffer.update(cx, |buffer, cx| {
             buffer.edit(
                 edits,
+                Default::default(),
                 Some(AutoindentMode::Block {
                     original_indent_columns: Vec::new(),
                 }),

@@ -1139,7 +1139,12 @@ mod tests {
             let mut buffer = Buffer::local("", cx).with_language(language, cx);
             let append = |buffer: &mut Buffer, text: &str, cx: &mut Context<Buffer>| {
                 let ix = buffer.len();
-                buffer.edit([(ix..ix, text)], Some(AutoindentMode::EachLine), cx);
+                buffer.edit(
+                    [(ix..ix, text)],
+                    Default::default(),
+                    Some(AutoindentMode::EachLine),
+                    cx,
+                );
             };
 
             // indent after "def():"
@@ -1185,6 +1190,7 @@ mod tests {
             let argument_ix = buffer.text().find('1').unwrap();
             buffer.edit(
                 [(argument_ix..argument_ix + 1, "")],
+                Default::default(),
                 Some(AutoindentMode::EachLine),
                 cx,
             );
@@ -1204,6 +1210,7 @@ mod tests {
             let end_whitespace_ix = buffer.len() - 4;
             buffer.edit(
                 [(end_whitespace_ix..buffer.len(), "")],
+                Default::default(),
                 Some(AutoindentMode::EachLine),
                 cx,
             );
@@ -1220,7 +1227,12 @@ mod tests {
             );
 
             // reset to a simple if statement
-            buffer.edit([(0..buffer.len(), "if a:\n  b(\n  )")], None, cx);
+            buffer.edit(
+                [(0..buffer.len(), "if a:\n  b(\n  )")],
+                Default::default(),
+                None,
+                cx,
+            );
 
             // dedent "else" on the line after a closing paren
             append(&mut buffer, "\n  else:\n", cx);

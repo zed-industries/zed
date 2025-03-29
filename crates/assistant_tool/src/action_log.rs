@@ -612,12 +612,22 @@ mod tests {
 
         let edit1 = buffer.update(cx, |buffer, cx| {
             buffer
-                .edit([(Point::new(1, 1)..Point::new(1, 2), "E")], None, cx)
+                .edit(
+                    [(Point::new(1, 1)..Point::new(1, 2), "E")],
+                    Default::default(),
+                    None,
+                    cx,
+                )
                 .unwrap()
         });
         let edit2 = buffer.update(cx, |buffer, cx| {
             buffer
-                .edit([(Point::new(4, 2)..Point::new(4, 3), "O")], None, cx)
+                .edit(
+                    [(Point::new(4, 2)..Point::new(4, 3), "O")],
+                    Default::default(),
+                    None,
+                    cx,
+                )
                 .unwrap()
         });
         assert_eq!(
@@ -740,6 +750,7 @@ mod tests {
             buffer
                 .edit(
                     [(Point::new(0, 2)..Point::new(2, 3), "C\nDEF\nGHI")],
+                    Default::default(),
                     None,
                     cx,
                 )
@@ -785,7 +796,12 @@ mod tests {
         );
 
         buffer.update(cx, |buffer, cx| {
-            buffer.edit([(Point::new(0, 2)..Point::new(0, 2), "X")], None, cx)
+            buffer.edit(
+                [(Point::new(0, 2)..Point::new(0, 2), "X")],
+                Default::default(),
+                None,
+                cx,
+            )
         });
         cx.run_until_parked();
         assert_eq!(

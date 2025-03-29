@@ -99,7 +99,7 @@ async fn test_basic_remote_editing(cx: &mut TestAppContext, server_cx: &mut Test
     buffer.update(cx, |buffer, cx| {
         assert_eq!(buffer.text(), "fn one() -> usize { 1 }");
         let ix = buffer.text().find('1').unwrap();
-        buffer.edit([(ix..ix + 1, "100")], None, cx);
+        buffer.edit([(ix..ix + 1, "100")], Default::default(), None, cx);
     });
 
     // The user saves the buffer. The new contents are written to the
@@ -757,7 +757,7 @@ async fn test_remote_reload(cx: &mut TestAppContext, server_cx: &mut TestAppCont
 
     buffer.update(cx, |buffer, cx| {
         assert_eq!(buffer.text(), "bangles");
-        buffer.edit([(0..0, "a")], None, cx);
+        buffer.edit([(0..0, "a")], Default::default(), None, cx);
     });
 
     fs.save(
@@ -1102,7 +1102,7 @@ async fn test_reconnect(cx: &mut TestAppContext, server_cx: &mut TestAppContext)
     buffer.update(cx, |buffer, cx| {
         assert_eq!(buffer.text(), "fn one() -> usize { 1 }");
         let ix = buffer.text().find('1').unwrap();
-        buffer.edit([(ix..ix + 1, "100")], None, cx);
+        buffer.edit([(ix..ix + 1, "100")], Default::default(), None, cx);
     });
 
     let client = cx.read(|cx| project.read(cx).ssh_client().unwrap());

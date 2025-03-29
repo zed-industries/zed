@@ -218,8 +218,8 @@ fn test_undo_redo_with_selection_restoration(cx: &mut TestAppContext) {
         // Simulate an edit in another editor
         buffer.update(cx, |buffer, cx| {
             buffer.start_transaction_at(now, cx);
-            buffer.edit([(0..1, "a")], None, cx);
-            buffer.edit([(1..1, "b")], None, cx);
+            buffer.edit([(0..1, "a")], Default::default(), None, cx);
+            buffer.edit([(1..1, "b")], Default::default(), None, cx);
             buffer.end_transaction_at(now, cx);
         });
 
@@ -1251,6 +1251,7 @@ fn test_move_cursor(cx: &mut TestAppContext) {
                 (Point::new(1, 0)..Point::new(1, 0), "\t"),
                 (Point::new(1, 1)..Point::new(1, 1), "\t"),
             ],
+            Default::default(),
             None,
             cx,
         );
@@ -2607,6 +2608,7 @@ fn test_newline_with_old_selections(cx: &mut TestAppContext) {
                     (Point::new(1, 2)..Point::new(3, 0), ""),
                     (Point::new(4, 2)..Point::new(6, 0), ""),
                 ],
+                Default::default(),
                 None,
                 cx,
             );
@@ -2814,7 +2816,12 @@ fn test_insert_with_old_selections(cx: &mut TestAppContext) {
     _ = editor.update(cx, |editor, window, cx| {
         // Edit the buffer directly, deleting ranges surrounding the editor's selections
         editor.buffer.update(cx, |buffer, cx| {
-            buffer.edit([(2..5, ""), (10..13, ""), (18..21, "")], None, cx);
+            buffer.edit(
+                [(2..5, ""), (10..13, ""), (18..21, "")],
+                Default::default(),
+                None,
+                cx,
+            );
             assert_eq!(buffer.read(cx).text(), "a(), b(), c()".unindent());
         });
         assert_eq!(editor.selections.ranges(cx), &[2..2, 7..7, 12..12],);
@@ -3433,6 +3440,7 @@ fn test_join_lines_with_single_selection(cx: &mut TestAppContext) {
                     (Point::new(1, 0)..Point::new(1, 2), "  "),
                     (Point::new(2, 0)..Point::new(2, 3), "  \n\td"),
                 ],
+                Default::default(),
                 None,
                 cx,
             )

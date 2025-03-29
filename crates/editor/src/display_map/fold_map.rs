@@ -1429,6 +1429,7 @@ mod tests {
                     (Point::new(0, 0)..Point::new(0, 1), "123"),
                     (Point::new(2, 3)..Point::new(2, 3), "123"),
                 ],
+                Default::default(),
                 None,
                 cx,
             );
@@ -1454,7 +1455,12 @@ mod tests {
         );
 
         let buffer_snapshot = buffer.update(cx, |buffer, cx| {
-            buffer.edit([(Point::new(2, 6)..Point::new(4, 3), "456")], None, cx);
+            buffer.edit(
+                [(Point::new(2, 6)..Point::new(4, 3), "456")],
+                Default::default(),
+                None,
+                cx,
+            );
             buffer.snapshot(cx)
         });
         let (inlay_snapshot, inlay_edits) =
@@ -1522,7 +1528,7 @@ mod tests {
 
             // Edit within one of the folds.
             let buffer_snapshot = buffer.update(cx, |buffer, cx| {
-                buffer.edit([(0..1, "12345")], None, cx);
+                buffer.edit([(0..1, "12345")], Default::default(), None, cx);
                 buffer.snapshot(cx)
             });
             let (inlay_snapshot, inlay_edits) =
@@ -1567,7 +1573,12 @@ mod tests {
         assert_eq!(snapshot.text(), "aa⋯cccc\nd⋯eeeee");
 
         let buffer_snapshot = buffer.update(cx, |buffer, cx| {
-            buffer.edit([(Point::new(2, 2)..Point::new(3, 1), "")], None, cx);
+            buffer.edit(
+                [(Point::new(2, 2)..Point::new(3, 1), "")],
+                Default::default(),
+                None,
+                cx,
+            );
             buffer.snapshot(cx)
         });
         let (inlay_snapshot, inlay_edits) =

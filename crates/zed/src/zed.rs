@@ -1593,7 +1593,12 @@ fn open_local_file(
                     if let Some(buffer) = editor.buffer().read(cx).as_singleton() {
                         if buffer.read(cx).is_empty() {
                             buffer.update(cx, |buffer, cx| {
-                                buffer.edit([(0..0, initial_contents)], None, cx)
+                                buffer.edit(
+                                    [(0..0, initial_contents)],
+                                    Default::default(),
+                                    None,
+                                    cx,
+                                )
                             });
                         }
                     }
