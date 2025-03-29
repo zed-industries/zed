@@ -4759,18 +4759,24 @@ impl Workspace {
                 breakpoints,
                 window_id: Some(window.window_handle().window_id().as_u64()),
             };
-            if update {
-                if let Some(manager) = HistoryManager::global(cx) {
-                    return window.spawn(cx, async move |cx| {
-                        persistence::DB.save_workspace(serialized_workspace).await;
-                        manager
-                            .update(cx, |_, cx| cx.emit(HistoryManagerEvent::Update))
-                            .log_err();
-                    });
+            // if update {
+            //     if let Some(manager) = HistoryManager::global(cx) {
+            //         return window.spawn(cx, async move |cx| {
+            //             persistence::DB.save_workspace(serialized_workspace).await;
+            //             manager
+            //                 .update(cx, |_, cx| cx.emit(HistoryManagerEvent::Update))
+            //                 .log_err();
+            //         });
+            //     }
+            // }
+            let manager = HistoryManager::global(cx);
+            return window.spawn(cx, async move |cx| {
+                persistence::DB.save_workspace(serialized_workspace).await;
+                if let Some(manager) = manager {
+                    manager
+                        .update(cx, |_, cx| cx.emit(HistoryManagerEvent::Update))
+                        .log_err();
                 }
-            }
-            return window.spawn(cx, async move |_| {
-                persistence::DB.save_workspace(serialized_workspace).await
             });
         }
         Task::ready(())
