@@ -809,15 +809,15 @@ impl ContextProvider for RustContextProvider {
         if server.name() != SERVER_NAME {
             return Task::ready(Ok(Vec::new()));
         }
-        let Some(url) = file
+        let url = file
             .as_local()
             .map(|f| f.abs_path(cx))
             .and_then(|abs_path| {
                 lsp::Url::from_file_path(&abs_path)
                     .map_err(|_| anyhow!("failed to convert abs path {abs_path:?} to uri"))
                     .log_err()
-            })
-        else {
+            });
+        let Some(url) = dbg!(url) else {
             return Task::ready(Ok(Vec::new()));
         };
         let request =

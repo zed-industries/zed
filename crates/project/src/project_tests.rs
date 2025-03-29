@@ -8381,7 +8381,7 @@ fn get_all_tasks(
             .task_inventory()
             .unwrap()
             .read(cx)
-            .used_and_current_resolved_tasks(task_contexts, cx)
+            .used_and_current_resolved_tasks(task_contexts, None, cx)
     });
     old.extend(new);
     old

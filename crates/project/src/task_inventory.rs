@@ -13,6 +13,7 @@ use collections::{HashMap, HashSet, VecDeque};
 use gpui::{App, AppContext as _, Entity, SharedString, Task};
 use itertools::Itertools;
 use language::{ContextProvider, File, Language, LanguageToolchainStore, Location};
+use lsp::LanguageServer;
 use settings::{InvalidSettingsError, TaskKind, parse_json_with_comments};
 use task::{
     DebugTaskDefinition, ResolvedTask, TaskContext, TaskId, TaskTemplate, TaskTemplates,
@@ -171,10 +172,11 @@ impl Inventory {
     /// Joins the new resolutions with the resolved tasks that were used (spawned) before,
     /// orders them so that the most recently used come first, all equally used ones are ordered so that the most specific tasks come first.
     /// Deduplicates the tasks by their labels and context and splits the ordered list into two: used tasks and the rest, newly resolved tasks.
-    pub fn used_and_current_resolved_tasks(
-        &self,
-        task_contexts: &TaskContexts,
-        cx: &App,
+    pub fn used_and_current_resolved_tasks<'a>(
+        &'a self,
+        task_contexts: &'a TaskContexts,
+        language_servers: impl IntoIterator<Item = &'a LanguageServer> + 'a,
+        cx: &'a App,
     ) -> (
         Vec<(TaskSourceKind, ResolvedTask)>,
         Vec<(TaskSourceKind, ResolvedTask)>,
@@ -227,6 +229,20 @@ impl Inventory {
 
         let not_used_score = post_inc(&mut lru_score);
         let global_tasks = self.global_templates_from_settings();
+
+        if let Some((provider, file)) = language
+            .as_ref()
+            .and_then(|l| l.context_provider())
+            .zip(file.as_deref())
+        {
+            let lsp_tasks = language_servers
+                .into_iter()
+                .map(|server| provider.lsp_tasks(file, server, cx))
+                .collect::<Vec<_>>();
+            let aaa = smol::block_on(futures::future::join_all(lsp_tasks));
+            dbg!(aaa);
+        }
+
         let language_tasks = language
             .and_then(|language| language.context_provider()?.associated_tasks(file, cx))
             .into_iter()
@@ -996,7 +1012,7 @@ mod tests {
             let mut task_contexts = TaskContexts::default();
             task_contexts.active_worktree_context =
                 worktree.map(|worktree| (worktree, TaskContext::default()));
-            inventory.used_and_current_resolved_tasks(&task_contexts, cx)
+            inventory.used_and_current_resolved_tasks(&task_contexts, None, cx)
         });
         used.into_iter()
             .chain(current)
@@ -1028,7 +1044,7 @@ mod tests {
             let mut task_contexts = TaskContexts::default();
             task_contexts.active_worktree_context =
                 worktree.map(|worktree| (worktree, TaskContext::default()));
-            inventory.used_and_current_resolved_tasks(&task_contexts, cx)
+            inventory.used_and_current_resolved_tasks(&task_contexts, None, cx)
         });
         let mut all = used;
         all.extend(current);
