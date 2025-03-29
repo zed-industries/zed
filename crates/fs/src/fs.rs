@@ -453,7 +453,12 @@ impl Fs for RealFs {
         let file = smol::fs::File::open(path).await?;
         match trash::trash_file(&file.as_fd()).await {
             Ok(_) => Ok(()),
-            Err(err) => Err(anyhow::Error::new(err)),
+            Err(err) => {
+                log::error!("Failed to trash file: {}", err);
+                // Trashing files can fail if you don't have a trashing dbus service configured.
+                // In that case, delete the file directly instead.
+                return self.remove_file(path, RemoveOptions::default()).await;
+            }
         }
     }
 

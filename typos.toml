@@ -41,8 +41,6 @@ extend-exclude = [
     "docs/theme/css/",
     # Spellcheck triggers on `|Fixe[sd]|` regex part.
     "script/danger/dangerfile.ts",
-    # Hashes are not typos
-    "script/patches/use-cross-platform-livekit.patch"
 ]
 
 [default]

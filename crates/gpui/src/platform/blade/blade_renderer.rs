@@ -725,8 +725,8 @@ impl BladeRenderer {
                                     use std::ptr;
 
                                     assert_eq!(
-                                        surface.image_buffer.pixel_format_type(),
-                                        media::core_video::kCVPixelFormatType_420YpCbCr8BiPlanarFullRange
+                                        surface.image_buffer.get_pixel_format(),
+                                        core_video::pixel_buffer::kCVPixelFormatType_420YpCbCr8BiPlanarFullRange
                                     );
 
                                     let y_texture = self
@@ -735,8 +735,8 @@ impl BladeRenderer {
                                             surface.image_buffer.as_concrete_TypeRef(),
                                             ptr::null(),
                                             metal::MTLPixelFormat::R8Unorm,
-                                            surface.image_buffer.plane_width(0),
-                                            surface.image_buffer.plane_height(0),
+                                            surface.image_buffer.get_width_of_plane(0),
+                                            surface.image_buffer.get_height_of_plane(0),
                                             0,
                                         )
                                         .unwrap();
@@ -746,8 +746,8 @@ impl BladeRenderer {
                                             surface.image_buffer.as_concrete_TypeRef(),
                                             ptr::null(),
                                             metal::MTLPixelFormat::RG8Unorm,
-                                            surface.image_buffer.plane_width(1),
-                                            surface.image_buffer.plane_height(1),
+                                            surface.image_buffer.get_width_of_plane(1),
+                                            surface.image_buffer.get_height_of_plane(1),
                                             1,
                                         )
                                         .unwrap();

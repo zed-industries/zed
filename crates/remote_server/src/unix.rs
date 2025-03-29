@@ -3,6 +3,7 @@ use crate::HeadlessProject;
 use anyhow::{anyhow, Context as _, Result};
 use chrono::Utc;
 use client::{telemetry, ProxySettings};
+use dap::DapRegistry;
 use extension::ExtensionHostProxy;
 use fs::{Fs, RealFs};
 use futures::channel::mpsc;
@@ -471,6 +472,7 @@ pub fn execute_run(
             let mut languages = LanguageRegistry::new(cx.background_executor().clone());
             languages.set_language_server_download_dir(paths::languages_dir().clone());
             let languages = Arc::new(languages);
+            let debug_adapters = DapRegistry::default().into();
 
             HeadlessProject::new(
                 HeadlessAppState {
@@ -479,6 +481,7 @@ pub fn execute_run(
                     http_client,
                     node_runtime,
                     languages,
+                    debug_adapters,
                     extension_host_proxy,
                 },
                 cx,
@@ -845,7 +848,7 @@ pub fn handle_settings_file_changes(
     .detach();
 }
 
-fn read_proxy_settings(cx: &mut Context<'_, HeadlessProject>) -> Option<Uri> {
+fn read_proxy_settings(cx: &mut Context<HeadlessProject>) -> Option<Uri> {
     let proxy_str = ProxySettings::get_global(cx).proxy.to_owned();
     let proxy_url = proxy_str
         .as_ref()

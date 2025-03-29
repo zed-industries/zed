@@ -1,5 +1,6 @@
 use ::proto::{FromProto, ToProto};
 use anyhow::{anyhow, Result};
+use dap::DapRegistry;
 use extension::ExtensionHostProxy;
 use extension_host::headless_host::HeadlessExtensionStore;
 use fs::Fs;
@@ -52,6 +53,7 @@ pub struct HeadlessAppState {
     pub http_client: Arc<dyn HttpClient>,
     pub node_runtime: NodeRuntime,
     pub languages: Arc<LanguageRegistry>,
+    pub debug_adapters: Arc<DapRegistry>,
     pub extension_host_proxy: Arc<ExtensionHostProxy>,
 }
 
@@ -69,6 +71,7 @@ impl HeadlessProject {
             http_client,
             node_runtime,
             languages,
+            debug_adapters,
             extension_host_proxy: proxy,
         }: HeadlessAppState,
         cx: &mut Context<Self>,
@@ -108,6 +111,7 @@ impl HeadlessProject {
                 node_runtime.clone(),
                 fs.clone(),
                 languages.clone(),
+                debug_adapters.clone(),
                 environment.clone(),
                 toolchain_store.read(cx).as_language_toolchain_store(),
                 breakpoint_store.clone(),

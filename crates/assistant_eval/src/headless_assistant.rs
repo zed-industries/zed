@@ -3,6 +3,7 @@ use assistant2::{RequestKind, Thread, ThreadEvent, ThreadStore};
 use assistant_tool::ToolWorkingSet;
 use client::{Client, UserStore};
 use collections::HashMap;
+use dap::DapRegistry;
 use futures::StreamExt;
 use gpui::{prelude::*, App, AsyncApp, Entity, SemanticVersion, Subscription, Task};
 use language::LanguageRegistry;
@@ -50,6 +51,7 @@ impl HeadlessAssistant {
             app_state.node_runtime.clone(),
             app_state.user_store.clone(),
             app_state.languages.clone(),
+            Arc::new(DapRegistry::default()),
             app_state.fs.clone(),
             env,
             cx,

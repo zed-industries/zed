@@ -436,9 +436,6 @@ async fn test_basic_following(
         editor_a1.item_id()
     );
 
-    // TODO: Re-enable this test once we can replace our swift Livekit SDK with the rust SDK
-    // todo(windows)
-    // Fix this on Windows
     #[cfg(all(not(target_os = "macos"), not(target_os = "windows")))]
     {
         use crate::rpc::RECONNECT_TIMEOUT;
@@ -463,8 +460,9 @@ async fn test_basic_following(
                     .update(cx, |room, cx| room.share_screen(cx))
             })
             .await
-            .unwrap(); // This is what breaks
+            .unwrap();
         executor.run_until_parked();
+
         let shared_screen = workspace_a.update(cx_a, |workspace, cx| {
             workspace
                 .active_item(cx)
@@ -573,7 +571,7 @@ async fn test_following_tab_order(
     client_a
         .fs()
         .insert_tree(
-            "/a",
+            path!("/a"),
             json!({
                 "1.txt": "one",
                 "2.txt": "two",
@@ -581,7 +579,7 @@ async fn test_following_tab_order(
             }),
         )
         .await;
-    let (project_a, worktree_id) = client_a.build_local_project("/a", cx_a).await;
+    let (project_a, worktree_id) = client_a.build_local_project(path!("/a"), cx_a).await;
     active_call_a
         .update(cx_a, |call, cx| call.set_location(Some(&project_a), cx))
         .await

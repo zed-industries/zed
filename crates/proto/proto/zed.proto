@@ -2660,21 +2660,15 @@ message RefreshLlmToken {}
 
 // Remote debugging
 
-enum BreakpointKind {
-    Standard = 0;
-    Log = 1;
-}
-
 enum BreakpointState {
     Enabled = 0;
     Disabled = 1;
 }
 
-
 message Breakpoint {
     Anchor position = 1;
     BreakpointState state = 2;
-    BreakpointKind kind = 3;
+    reserved 3;
     optional string message = 4;
 }
 

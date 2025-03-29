@@ -110,6 +110,7 @@ pub enum Event {
     SelectionsChanged,
     NewNavigationTarget(Option<MaybeNavigationTarget>),
     Open(MaybeNavigationTarget),
+    TaskLocatorReady { task_id: TaskId, success: bool },
 }
 
 #[derive(Clone, Debug)]
@@ -1859,7 +1860,7 @@ impl Terminal {
         Task::ready(())
     }
 
-    fn register_task_finished(&mut self, error_code: Option<i32>, cx: &mut Context<'_, Terminal>) {
+    fn register_task_finished(&mut self, error_code: Option<i32>, cx: &mut Context<Terminal>) {
         self.completion_tx.try_send(()).ok();
         let task = match &mut self.task {
             Some(task) => task,
@@ -1898,6 +1899,11 @@ impl Terminal {
             // After the task summary is output once, no more text is appended to the terminal.
             unsafe { append_text_to_term(&mut self.term.lock(), &lines_to_show) };
         }
+
+        cx.emit(Event::TaskLocatorReady {
+            task_id: task.id.clone(),
+            success: finished_successfully,
+        });
 
         match task.hide {
             HideStrategy::Never => {}
@@ -2081,8 +2087,9 @@ pub fn get_color_at_index(index: usize, theme: &Theme) -> Hsla {
             rgba_color(i * step, i * step, i * step) // Map the ANSI-grayscale components to the RGB-grayscale
         }
         // For compatibility with the alacritty::Colors interface
-        256 => colors.text,
-        257 => colors.background,
+        // See: https://github.com/alacritty/alacritty/blob/master/alacritty_terminal/src/term/color.rs
+        256 => colors.terminal_foreground,
+        257 => colors.terminal_background,
         258 => theme.players().local().cursor,
         259 => colors.terminal_ansi_dim_black,
         260 => colors.terminal_ansi_dim_red,

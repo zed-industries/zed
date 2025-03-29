@@ -1,6 +1,5 @@
 mod add_context_server_modal;
 mod manage_profiles_modal;
-mod profile_picker;
 mod tool_picker;
 
 use std::sync::Arc;
