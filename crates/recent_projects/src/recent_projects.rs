@@ -24,8 +24,8 @@ use std::{
 use ui::{prelude::*, tooltip_container, KeyBinding, ListItem, ListItemSpacing, Tooltip};
 use util::{paths::PathExt, ResultExt};
 use workspace::{
-    CloseIntent, HistoryManager, HistoryManagerEvent, ModalView, OpenOptions,
-    SerializedWorkspaceLocation, Workspace, WorkspaceId, WORKSPACE_DB,
+    CloseIntent, HistoryManager, ModalView, OpenOptions, SerializedWorkspaceLocation, Workspace,
+    WorkspaceId, WORKSPACE_DB,
 };
 use zed_actions::{OpenRecent, OpenRemote};
 

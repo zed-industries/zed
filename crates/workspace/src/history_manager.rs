@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use gpui::{AppContext, Entity, EventEmitter, Global};
+use gpui::{AppContext, Entity, Global};
 use smallvec::SmallVec;
 use ui::App;
 use util::{paths::PathExt, ResultExt};
@@ -10,51 +10,7 @@ use crate::{SerializedWorkspaceLocation, WorkspaceId, WORKSPACE_DB};
 pub fn init(cx: &mut App) {
     let manager = cx.new(|_| HistoryManager::new());
     HistoryManager::set_global(manager.clone(), cx);
-    // cx.subscribe(&manager, |this, event, cx| match event {
-    //     HistoryManagerEvent::Update => perform_update(this, cx),
-    // })
-    // .detach();
     HistoryManager::init(manager, cx);
-}
-
-fn perform_update(manager: Entity<HistoryManager>, cx: &mut App) {
-    cx.spawn(async move |cx| {
-        manager
-            .update(cx, |this, cx| {
-                println!("History: {:#?}", this.history);
-            })
-            .log_err();
-        // let recent_folders = WORKSPACE_DB
-        //     .recent_workspaces_on_disk()
-        //     .await
-        //     .unwrap_or_default()
-        //     .into_iter()
-        //     .map(|(id, location)| HistoryManagerEntry::new(id, &location))
-        //     .collect::<Vec<_>>();
-        // let entries = recent_folders
-        //     .iter()
-        //     .map(|entry| &entry.path)
-        //     .collect::<Vec<_>>();
-        // if let Some(user_removed) = cx
-        //     .update(|cx| cx.update_jump_list(entries.as_slice()))
-        //     .log_err()
-        // {
-        //     let deleted_ids = recent_folders
-        //         .into_iter()
-        //         .filter_map(|entry| {
-        //             if user_removed.contains(&entry.path) {
-        //                 Some(entry.id)
-        //             } else {
-        //                 None
-        //             }
-        //         })
-        //         .collect::<Vec<_>>();
-        //     for id in deleted_ids.iter() {
-        //         WORKSPACE_DB.delete_workspace_by_id(*id).await.log_err();
-        //     }
-        // }
-    })
-    .detach()
 }
 
 pub struct HistoryManager {
@@ -70,13 +26,6 @@ pub struct HistoryManagerEntry {
 struct GlobalHistoryManager(Entity<HistoryManager>);
 
 impl Global for GlobalHistoryManager {}
-
-#[derive(Debug, Clone, Copy)]
-pub enum HistoryManagerEvent {
-    Update,
-}
-
-impl EventEmitter<HistoryManagerEvent> for HistoryManager {}
 
 impl HistoryManager {
     pub fn new() -> Self {
@@ -111,20 +60,15 @@ impl HistoryManager {
         cx.set_global(GlobalHistoryManager(history_manager));
     }
 
-    pub fn update_history(
-        &mut self,
-        id: WorkspaceId,
-        location: &SerializedWorkspaceLocation,
-    ) -> bool {
-        let entry = HistoryManagerEntry::new(id, location);
+    pub fn update_history(&mut self, id: WorkspaceId, entry: HistoryManagerEntry, cx: &App) {
         if let Some(pos) = self.history.iter().position(|e| e.id == id) {
             if pos == 0 {
-                return false;
+                return;
             }
             self.history.remove(pos);
         }
         self.history.insert(0, entry);
-        true
+        self.update_jump_list(cx);
     }
 
     pub fn delete_history(&mut self, id: WorkspaceId, cx: &App) {
@@ -136,7 +80,6 @@ impl HistoryManager {
     }
 
     pub fn update_jump_list(&mut self, cx: &App) {
-        println!("=> update_jump_list: {:#?}", self.history);
         let entries = self
             .history
             .iter()
