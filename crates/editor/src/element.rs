@@ -19,13 +19,12 @@ use crate::{
     BlockId, ChunkReplacement, ContextMenuPlacement, CursorShape, CustomBlockId, DisplayDiffHunk,
     DisplayPoint, DisplayRow, DocumentHighlightRead, DocumentHighlightWrite, EditDisplayMode,
     Editor, EditorMode, EditorSettings, EditorSnapshot, EditorStyle, FocusedBlock, GoToHunk,
-    GoToPreviousHunk, GutterDimensions, HalfPageDown, HalfPageUp, HandleInput,
-    HideMouseCursorOrigin, HoveredCursor, InlayHintRefreshReason, InlineCompletion, JumpData,
-    LineDown, LineHighlight, LineUp, OpenExcerpts, PageDown, PageUp, Point, RowExt, RowRangeExt,
-    SelectPhase, SelectedTextHighlight, Selection, SoftWrap, StickyHeaderExcerpt, ToPoint,
-    ToggleFold, COLUMNAR_SELECTION_MODIFIERS, CURSORS_VISIBLE_FOR, FILE_HEADER_HEIGHT,
-    GIT_BLAME_MAX_AUTHOR_CHARS_DISPLAYED, MAX_LINE_LEN, MIN_LINE_NUMBER_DIGITS,
-    MULTI_BUFFER_EXCERPT_HEADER_HEIGHT,
+    GoToPreviousHunk, GutterDimensions, HalfPageDown, HalfPageUp, HandleInput, HoveredCursor,
+    InlayHintRefreshReason, InlineCompletion, JumpData, LineDown, LineHighlight, LineUp,
+    OpenExcerpts, PageDown, PageUp, Point, RowExt, RowRangeExt, SelectPhase, SelectedTextHighlight,
+    Selection, SoftWrap, StickyHeaderExcerpt, ToPoint, ToggleFold, COLUMNAR_SELECTION_MODIFIERS,
+    CURSORS_VISIBLE_FOR, FILE_HEADER_HEIGHT, GIT_BLAME_MAX_AUTHOR_CHARS_DISPLAYED, MAX_LINE_LEN,
+    MIN_LINE_NUMBER_DIGITS, MULTI_BUFFER_EXCERPT_HEADER_HEIGHT,
 };
 use buffer_diff::{DiffHunkStatus, DiffHunkStatusKind};
 use client::ParticipantIndex;
