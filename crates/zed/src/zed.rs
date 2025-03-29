@@ -23,6 +23,7 @@ use feature_flags::{Debugger, FeatureFlagAppExt, FeatureFlagViewExt};
 use futures::{channel::mpsc, select_biased, StreamExt};
 use git_ui::git_panel::GitPanel;
 use git_ui::project_diff::ProjectDiffToolbar;
+use assistant2::AssistantDiffToolbar;
 use gpui::{
     actions, point, px, Action, App, AppContext as _, AsyncApp, AsyncWindowContext, Context,
     DismissEvent, Element, Entity, Focusable, KeyBinding, MenuItem, ParentElement,
@@ -939,6 +940,8 @@ fn initialize_pane(
             toolbar.add_item(migration_banner, window, cx);
             let project_diff_toolbar = cx.new(|cx| ProjectDiffToolbar::new(workspace, cx));
             toolbar.add_item(project_diff_toolbar, window, cx);
+            let assistant_diff_toolbar = cx.new(|cx| AssistantDiffToolbar::new(workspace, cx));
+            toolbar.add_item(assistant_diff_toolbar, window, cx);
         })
     });
 }

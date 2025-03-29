@@ -7,10 +7,10 @@ use editor::{
     Direction, Editor, EditorEvent, MultiBuffer, ToPoint,
 };
 use gpui::{
-    prelude::*, AnyElement, AnyView, App, Entity, EventEmitter, FocusHandle, Focusable,
+    prelude::*, Action, AnyElement, AnyView, App, Entity, EventEmitter, FocusHandle, Focusable,
     SharedString, Subscription, Task, WeakEntity, Window,
 };
-use language::{Capability, DiskState, OffsetRangeExt};
+use language::{Capability, DiskState, OffsetRangeExt, Point};
 use multi_buffer::PathKey;
 use project::{Project, ProjectPath};
 use std::{
@@ -22,7 +22,8 @@ use ui::{prelude::*, IconButtonShape, KeyBinding, Tooltip};
 use workspace::{
     item::{BreadcrumbText, ItemEvent, TabContentParams},
     searchable::SearchableItemHandle,
-    Item, ItemHandle, ItemNavHistory, ToolbarItemLocation, Workspace,
+    Item, ItemHandle, ItemNavHistory, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView,
+    Workspace,
 };
 
 pub struct AssistantDiff {
@@ -255,6 +256,18 @@ impl AssistantDiff {
         })
     }
 
+    fn reject_all(&mut self, _: &crate::RejectAll, window: &mut Window, cx: &mut Context<Self>) {
+        self.editor.update(cx, |editor, cx| {
+            let max_point = editor.buffer().read(cx).read(cx).max_point();
+            editor.restore_hunks_in_ranges(vec![Point::zero()..max_point], window, cx)
+        })
+    }
+
+    fn keep_all(&mut self, _: &crate::KeepAll, _window: &mut Window, cx: &mut Context<Self>) {
+        self.thread
+            .update(cx, |thread, cx| thread.keep_all_edits(cx));
+    }
+
     fn review_diff_hunks(
         &mut self,
         hunk_ranges: Vec<Range<editor::Anchor>>,
@@ -467,6 +480,8 @@ impl Render for AssistantDiff {
             })
             .on_action(cx.listener(Self::toggle_keep))
             .on_action(cx.listener(Self::reject))
+            .on_action(cx.listener(Self::reject_all))
+            .on_action(cx.listener(Self::keep_all))
             .bg(cx.theme().colors().editor_background)
             .flex()
             .items_center()
@@ -676,5 +691,91 @@ impl editor::Addon for AssistantDiffAddon {
 
     fn extend_key_context(&self, key_context: &mut gpui::KeyContext, _: &App) {
         key_context.add("assistant_diff");
+    }
+}
+
+pub struct AssistantDiffToolbar {
+    assistant_diff: Option<WeakEntity<AssistantDiff>>,
+    _workspace: WeakEntity<Workspace>,
+}
+
+impl AssistantDiffToolbar {
+    pub fn new(workspace: &Workspace, _: &mut Context<Self>) -> Self {
+        Self {
+            assistant_diff: None,
+            _workspace: workspace.weak_handle(),
+        }
+    }
+
+    fn assistant_diff(&self, _: &App) -> Option<Entity<AssistantDiff>> {
+        self.assistant_diff.as_ref()?.upgrade()
+    }
+
+    fn dispatch_action(&self, action: &dyn Action, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(assistant_diff) = self.assistant_diff(cx) {
+            assistant_diff.focus_handle(cx).focus(window);
+        }
+        let action = action.boxed_clone();
+        cx.defer(move |cx| {
+            cx.dispatch_action(action.as_ref());
+        })
+    }
+}
+
+impl EventEmitter<ToolbarItemEvent> for AssistantDiffToolbar {}
+
+impl ToolbarItemView for AssistantDiffToolbar {
+    fn set_active_pane_item(
+        &mut self,
+        active_pane_item: Option<&dyn ItemHandle>,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> ToolbarItemLocation {
+        self.assistant_diff = active_pane_item
+            .and_then(|item| item.act_as::<AssistantDiff>(cx))
+            .map(|entity| entity.downgrade());
+        if self.assistant_diff.is_some() {
+            ToolbarItemLocation::PrimaryRight
+        } else {
+            ToolbarItemLocation::Hidden
+        }
+    }
+
+    fn pane_focus_update(
+        &mut self,
+        _pane_focused: bool,
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
+    ) {
+    }
+}
+
+impl Render for AssistantDiffToolbar {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if self.assistant_diff(cx).is_none() {
+            return div();
+        }
+
+        h_group_xl()
+            .my_neg_1()
+            .items_center()
+            .py_1()
+            .pl_2()
+            .pr_1()
+            .flex_wrap()
+            .justify_between()
+            .child(
+                h_group_sm()
+                    .child(
+                        Button::new("reject-all", "Reject All").on_click(cx.listener(
+                            |this, _, window, cx| {
+                                this.dispatch_action(&crate::RejectAll, window, cx)
+                            },
+                        )),
+                    )
+                    .child(Button::new("keep-all", "Keep All").on_click(cx.listener(
+                        |this, _, window, cx| this.dispatch_action(&crate::KeepAll, window, cx),
+                    ))),
+            )
     }
 }

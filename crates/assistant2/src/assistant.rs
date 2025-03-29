@@ -40,7 +40,7 @@ pub use crate::assistant_panel::{AssistantPanel, ConcreteAssistantPanelDelegate}
 pub use crate::inline_assistant::InlineAssistant;
 pub use crate::thread::{Message, RequestKind, Thread, ThreadEvent};
 pub use crate::thread_store::ThreadStore;
-pub use assistant_diff::AssistantDiff;
+pub use assistant_diff::{AssistantDiff, AssistantDiffToolbar};
 
 actions!(
     assistant2,
@@ -66,7 +66,9 @@ actions!(
         AcceptSuggestedContext,
         OpenActiveThreadAsMarkdown,
         ToggleKeep,
-        Reject
+        Reject,
+        RejectAll,
+        KeepAll
     ]
 );
 
