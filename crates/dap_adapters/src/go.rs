@@ -1,4 +1,3 @@
-use anyhow::bail;
 use gpui::AsyncApp;
 use std::{ffi::OsStr, path::PathBuf};
 use task::DebugTaskDefinition;
@@ -63,9 +62,7 @@ impl DebugAdapter for GoDebugAdapter {
             .and_then(|p| p.to_str().map(|p| p.to_string()))
             .ok_or(anyhow!("Dlv not found in path"))?;
 
-        let Some(tcp_connection) = config.tcp_connection.clone() else {
-            bail!("Go Debug Adapter expects tcp connection arguments to be provided");
-        };
+        let tcp_connection = config.tcp_connection.clone().unwrap_or_default();
         let (host, port, timeout) = crate::configure_tcp_connection(tcp_connection).await?;
 
         Ok(DebugAdapterBinary {

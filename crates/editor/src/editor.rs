@@ -8605,7 +8605,7 @@ impl Editor {
         let line_len = snapshot.buffer_snapshot.line_len(MultiBufferRow(row));
         let anchor_end = snapshot
             .buffer_snapshot
-            .anchor_before(Point::new(row, line_len));
+            .anchor_after(Point::new(row, line_len));
 
         let bp = self
             .breakpoint_store

@@ -321,14 +321,7 @@ impl PickerDelegate for TasksModalDelegate {
         self.workspace
             .update(cx, |workspace, cx| {
                 match task.task_type() {
-                    TaskType::Script => schedule_resolved_task(
-                        workspace,
-                        task_source_kind,
-                        task,
-                        omit_history_entry,
-                        cx,
-                    ),
-                    TaskType::Debug(_) => {
+                    TaskType::Debug(config) if config.locator.is_none() => {
                         let Some(config): Option<DebugTaskDefinition> = task
                             .resolved_debug_adapter_config()
                             .and_then(|config| config.try_into().ok())
@@ -359,6 +352,13 @@ impl PickerDelegate for TasksModalDelegate {
                             }
                         }
                     }
+                    _ => schedule_resolved_task(
+                        workspace,
+                        task_source_kind,
+                        task,
+                        omit_history_entry,
+                        cx,
+                    ),
                 };
             })
             .ok();
