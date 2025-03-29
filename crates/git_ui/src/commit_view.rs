@@ -3,8 +3,8 @@ use buffer_diff::{BufferDiff, BufferDiffSnapshot};
 use editor::{Editor, EditorEvent, MultiBuffer};
 use git::repository::{CommitDiff, CommitSummary, RepoPath};
 use gpui::{
-    AnyElement, App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, FocusHandle,
-    Focusable, IntoElement, Render, WeakEntity, Window,
+    AnyElement, AnyView, App, AppContext as _, AsyncApp, Context, Entity, EventEmitter,
+    FocusHandle, Focusable, IntoElement, Render, WeakEntity, Window,
 };
 use language::{
     Anchor, Buffer, Capability, DiskState, File, LanguageRegistry, LineEnding, OffsetRangeExt as _,
@@ -13,14 +13,18 @@ use language::{
 use multi_buffer::PathKey;
 use project::{git_store::Repository, Project, WorktreeId};
 use std::{
-    any::Any,
+    any::{Any, TypeId},
     ffi::OsStr,
     path::{Path, PathBuf},
     sync::Arc,
 };
 use ui::{Color, Icon, IconName, Label, LabelCommon as _};
 use util::ResultExt;
-use workspace::{item::TabContentParams, Item, Workspace};
+use workspace::{
+    item::{BreadcrumbText, ItemEvent, TabContentParams},
+    searchable::SearchableItemHandle,
+    Item, ItemHandle as _, ItemNavHistory, ToolbarItemLocation, Workspace,
+};
 
 pub struct CommitView {
     commit: CommitSummary,
@@ -284,9 +288,59 @@ impl Item for CommitView {
             .into_any_element()
     }
 
+    fn to_item_events(event: &EditorEvent, f: impl FnMut(ItemEvent)) {
+        Editor::to_item_events(event, f)
+    }
+
+    fn telemetry_event_text(&self) -> Option<&'static str> {
+        Some("Commit View Opened")
+    }
+
     fn deactivated(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.editor
             .update(cx, |editor, cx| editor.deactivated(window, cx));
+    }
+
+    fn is_singleton(&self, _: &App) -> bool {
+        false
+    }
+
+    fn act_as_type<'a>(
+        &'a self,
+        type_id: TypeId,
+        self_handle: &'a Entity<Self>,
+        _: &'a App,
+    ) -> Option<AnyView> {
+        if type_id == TypeId::of::<Self>() {
+            Some(self_handle.to_any())
+        } else if type_id == TypeId::of::<Editor>() {
+            Some(self.editor.to_any())
+        } else {
+            None
+        }
+    }
+
+    fn as_searchable(&self, _: &Entity<Self>) -> Option<Box<dyn SearchableItemHandle>> {
+        Some(Box::new(self.editor.clone()))
+    }
+
+    fn for_each_project_item(
+        &self,
+        cx: &App,
+        f: &mut dyn FnMut(gpui::EntityId, &dyn project::ProjectItem),
+    ) {
+        self.editor.for_each_project_item(cx, f)
+    }
+
+    fn set_nav_history(
+        &mut self,
+        nav_history: ItemNavHistory,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.editor.update(cx, |editor, _| {
+            editor.set_nav_history(Some(nav_history));
+        });
     }
 
     fn navigate(
@@ -297,6 +351,25 @@ impl Item for CommitView {
     ) -> bool {
         self.editor
             .update(cx, |editor, cx| editor.navigate(data, window, cx))
+    }
+
+    fn breadcrumb_location(&self, _: &App) -> ToolbarItemLocation {
+        ToolbarItemLocation::PrimaryLeft
+    }
+
+    fn breadcrumbs(&self, theme: &theme::Theme, cx: &App) -> Option<Vec<BreadcrumbText>> {
+        self.editor.breadcrumbs(theme, cx)
+    }
+
+    fn added_to_workspace(
+        &mut self,
+        workspace: &mut Workspace,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.editor.update(cx, |editor, cx| {
+            editor.added_to_workspace(workspace, window, cx)
+        });
     }
 }
 
