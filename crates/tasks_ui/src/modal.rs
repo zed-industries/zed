@@ -221,6 +221,12 @@ impl PickerDelegate for TasksModalDelegate {
         cx: &mut Context<picker::Picker<Self>>,
     ) -> Task<()> {
         let task_type = self.task_modal_type.clone();
+        let workspace = self.workspace.upgrade();
+        let buffer = self
+            .task_contexts
+            .location()
+            .map(|location| &location.buffer)
+            .cloned();
         cx.spawn_in(window, async move |picker, cx| {
             let Some(candidates) = picker
                 .update(cx, |picker, cx| match &mut picker.delegate.candidates {
@@ -236,9 +242,32 @@ impl PickerDelegate for TasksModalDelegate {
                             return Vec::new();
                         };
 
-                        let (used, current) = task_inventory
-                            .read(cx)
-                            .used_and_current_resolved_tasks(&picker.delegate.task_contexts, cx);
+                        let language_servers = buffer
+                            .and_then(|buffer| {
+                                workspace
+                                    .map(|workspace| {
+                                        workspace.read(cx).project().read(cx).lsp_store()
+                                    })
+                                    .map(|lsp_store| {
+                                        lsp_store.update(cx, |lsp_store, cx| {
+                                            buffer.update(cx, |buffer, cx| {
+                                                // TODO kb won't work on remote clients :(
+                                                lsp_store
+                                                    .language_servers_for_local_buffer(buffer, cx)
+                                                    .map(|(_, server)| server.clone())
+                                                    .collect::<Vec<_>>()
+                                            })
+                                        })
+                                    })
+                            })
+                            .unwrap_or_default();
+
+                        let (used, current) =
+                            task_inventory.read(cx).used_and_current_resolved_tasks(
+                                &picker.delegate.task_contexts,
+                                language_servers.iter().map(|s| s.as_ref()),
+                                cx,
+                            );
                         picker.delegate.last_used_candidate_index = if used.is_empty() {
                             None
                         } else {
