@@ -5346,7 +5346,6 @@ impl BackgroundScanner {
                             &local_repository.work_directory_id,
                             |entry| {
                                 entry.git_dir_scan_id = scan_id;
-                                entry.status_scan_id = scan_id;
                             },
                         );
                         if let Some(repo_entry) = state
