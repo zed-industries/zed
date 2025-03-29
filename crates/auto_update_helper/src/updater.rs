@@ -1,5 +1,5 @@
-#![cfg_attr(test, allow(unused_macros))]
-#![cfg_attr(test, allow(dead_code))]
+// #![cfg_attr(test, allow(unused_macros))]
+// #![cfg_attr(test, allow(dead_code))]
 
 use std::{
     path::Path,
@@ -7,7 +7,6 @@ use std::{
 };
 
 use anyhow::Result;
-use futures::FutureExt;
 use windows::Win32::{
     Foundation::{HWND, LPARAM, WPARAM},
     UI::WindowsAndMessaging::PostMessageW,
@@ -15,42 +14,9 @@ use windows::Win32::{
 
 use crate::windows_impl::WM_JOB_UPDATED;
 
-// static JOBS: LazyLock<Vec<Box<dyn Fn(&Path) -> std::io::Result<()> + Send + Sync>>> =
-//     LazyLock::new(|| {
-//         vec![Box::new(|app_dir: &Path| {
-//             std::fs::remove_file(app_dir.join("Zed.exe"))
-//         })]
-//     });
-
-// static JOBS: [Jobs; 6] = [
-//     Jobs::Remove("Zed.exe"),
-//     Jobs::Remove("bin\\zed.exe"),
-//     Jobs::Copy(CopyDetails {
-//         from: "install\\Zed.exe",
-//         to: "Zed.exe",
-//     }),
-//     Jobs::Copy(CopyDetails {
-//         from: "install\\bin\\zed.exe",
-//         to: "bin\\zed.exe",
-//     }),
-//     Jobs::Cleanup("updates"),
-//     Jobs::Cleanup("install"),
-// ];
-
+// The number here equals the number of calls to `retry_loop` in `perform_update`.
+// So if you add or remove a call to `retry_loop`, make sure to update this number too.
 pub(crate) const JOBS_COUNT: usize = 6;
-
-#[derive(Debug)]
-enum Jobs<'a> {
-    Remove(&'a str),
-    Copy(CopyDetails<'a>),
-    Cleanup(&'a str),
-}
-
-#[derive(Debug)]
-struct CopyDetails<'a> {
-    from: &'a str,
-    to: &'a str,
-}
 
 macro_rules! log_err {
     ($e:expr, $s:literal) => {
@@ -60,10 +26,11 @@ macro_rules! log_err {
     };
 }
 
-pub(crate) async fn perform_update(app_dir: &Path, hwnd: Option<isize>) -> Result<()> {
+pub(crate) fn perform_update(app_dir: &Path, hwnd: Option<isize>) -> Result<()> {
     let hwnd = hwnd.map(|ptr| HWND(ptr as _));
 
-    retry_loop(|| {
+    // Delete old files
+    retry_loop(hwnd, || {
         let path = app_dir.join("Zed.exe");
         if path.exists() {
             log::info!("Removing old file: {}", path.display());
@@ -73,118 +40,80 @@ pub(crate) async fn perform_update(app_dir: &Path, hwnd: Option<isize>) -> Resul
             Ok(())
         }
     })?;
-
-    #[cfg(not(test))]
-    let work = async {
-        let mut index = 0;
-        loop {
-            let Some(job) = JOBS.get(index) else {
-                break;
-            };
-            let ret = match job {
-                Jobs::Remove(relative_path) => {
-                    let path = app_dir.join(relative_path);
-                    if path.exists() {
-                        log::info!("Removing old file: {}", path.display());
-                        log_err!(
-                            smol::fs::remove_file(path).await,
-                            "Failed to remove old file"
-                        )
-                    } else {
-                        log::warn!("Old file not found: {}", path.display());
-                        None
-                    }
-                }
-                Jobs::Copy(details) => {
-                    let from_path = app_dir.join(details.from);
-                    let to_path = app_dir.join(details.to);
-                    if from_path.exists() {
-                        log::info!(
-                            "Copying new file {} to {}",
-                            from_path.display(),
-                            to_path.display()
-                        );
-                        log_err!(
-                            smol::fs::copy(from_path, to_path).await,
-                            "Failed to copy new file"
-                        )
-                    } else {
-                        log::warn!("New file not found: {}", from_path.display());
-                        None
-                    }
-                }
-                Jobs::Cleanup(relative_path) => {
-                    let path = app_dir.join(relative_path);
-                    if path.exists() {
-                        log::info!("Cleaning up: {}", path.display());
-                        log_err!(
-                            smol::fs::remove_dir_all(path).await,
-                            "Failed to remove directory"
-                        )
-                    } else {
-                        log::warn!("Directory not found: {}", path.display());
-                        None
-                    }
-                }
-            };
-
-            if ret.is_some() {
-                index += 1;
-                unsafe { PostMessageW(hwnd, WM_JOB_UPDATED, WPARAM(0), LPARAM(0))? };
-            }
-        }
-        Ok::<(), anyhow::Error>(())
-    }
-    .fuse();
-    #[cfg(test)]
-    let work = async {
-        let mut index = 0;
-        loop {
-            if JOBS.get(index).is_none() {
-                break;
-            }
-            let ret = {
-                smol::Timer::after(std::time::Duration::from_secs(1)).await;
-                if let Ok(setting) = std::env::var("ZED_AUTO_UPDATE") {
-                    match setting.as_str() {
-                        "inf" => None,
-                        "err" => Err(anyhow::anyhow!("Test error"))?,
-                        _ => {
-                            panic!("ZED_AUTO_UPDATE is set to {}, aborting test", setting);
-                        }
-                    }
-                } else {
-                    Some(())
-                }
-            };
-            if ret.is_some() {
-                index += 1;
-                unsafe { PostMessageW(hwnd, WM_JOB_UPDATED, WPARAM(0), LPARAM(0))? };
-            }
-        }
-        Ok::<(), anyhow::Error>(())
-    }
-    .fuse();
-    futures::pin_mut!(work);
-
-    futures::select_biased! {
-        result = work => {
-            result?;
-            let _ = smol::process::Command::new(app_dir.join("Zed.exe")).spawn();
-            log::info!("Update completed successfully");
+    retry_loop(hwnd, || {
+        let path = app_dir.join("bin\\zed.exe");
+        if path.exists() {
+            log::info!("Removing old file: {}", path.display());
+            log_err!(std::fs::remove_file(path), "Failed to remove old file")
+        } else {
+            log::warn!("Old file not found: {}", path.display());
             Ok(())
         }
-        _ = FutureExt::fuse(smol::Timer::after(std::time::Duration::from_secs(10))) => {
-            Err(anyhow::anyhow!("Update timed out"))
+    })?;
+
+    // Copy new files
+    retry_loop(hwnd, || {
+        let from_path = app_dir.join("install\\Zed.exe");
+        let to_path = app_dir.join("Zed.exe");
+        if from_path.exists() {
+            log::info!(
+                "Copying new file {} to {}",
+                from_path.display(),
+                to_path.display()
+            );
+            log_err!(std::fs::copy(from_path, to_path), "Failed to copy new file")
+        } else {
+            log::warn!("New file not found: {}", from_path.display());
+            Ok(0)
         }
-    }
+    })?;
+    retry_loop(hwnd, || {
+        let from_path = app_dir.join("install\\bin\\zed.exe");
+        let to_path = app_dir.join("bin\\zed.exe");
+        if from_path.exists() {
+            log::info!(
+                "Copying new file {} to {}",
+                from_path.display(),
+                to_path.display()
+            );
+            log_err!(std::fs::copy(from_path, to_path), "Failed to copy new file")
+        } else {
+            log::warn!("New file not found: {}", from_path.display());
+            Ok(0)
+        }
+    })?;
+
+    // Post cleanup jobs
+    retry_loop(hwnd, || {
+        let path = app_dir.join("updates");
+        if path.exists() {
+            log::info!("Cleaning up: {}", path.display());
+            log_err!(std::fs::remove_dir_all(path), "Failed to remove directory")
+        } else {
+            log::warn!("Directory not found: {}", path.display());
+            Ok(())
+        }
+    })?;
+    retry_loop(hwnd, || {
+        let path = app_dir.join("install");
+        if path.exists() {
+            log::info!("Cleaning up: {}", path.display());
+            log_err!(std::fs::remove_dir_all(path), "Failed to remove directory")
+        } else {
+            log::warn!("Directory not found: {}", path.display());
+            Ok(())
+        }
+    })?;
+
+    Ok(())
 }
 
-fn retry_loop<R>(f: impl Fn() -> std::io::Result<R>) -> Result<R> {
+fn retry_loop<R>(hwnd: Option<HWND>, f: impl Fn() -> std::io::Result<R>) -> Result<R> {
     let start = Instant::now();
     while start.elapsed().as_secs() <= 1 {
         let result = f();
         if result.is_ok() {
+            unsafe { PostMessageW(hwnd, WM_JOB_UPDATED, WPARAM(0), LPARAM(0))? };
             return Ok(result?);
         }
         std::thread::sleep(Duration::from_millis(10));
