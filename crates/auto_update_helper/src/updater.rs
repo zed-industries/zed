@@ -1,7 +1,10 @@
 #![cfg_attr(test, allow(unused_macros))]
 #![cfg_attr(test, allow(dead_code))]
 
-use std::path::Path;
+use std::{
+    path::Path,
+    time::{Duration, Instant},
+};
 
 use anyhow::Result;
 use futures::FutureExt;
@@ -12,22 +15,29 @@ use windows::Win32::{
 
 use crate::windows_impl::WM_JOB_UPDATED;
 
-static JOBS: [Jobs; 6] = [
-    Jobs::Remove("Zed.exe"),
-    Jobs::Remove("bin\\zed.exe"),
-    Jobs::Copy(CopyDetails {
-        from: "install\\Zed.exe",
-        to: "Zed.exe",
-    }),
-    Jobs::Copy(CopyDetails {
-        from: "install\\bin\\zed.exe",
-        to: "bin\\zed.exe",
-    }),
-    Jobs::Cleanup("updates"),
-    Jobs::Cleanup("install"),
-];
+// static JOBS: LazyLock<Vec<Box<dyn Fn(&Path) -> std::io::Result<()> + Send + Sync>>> =
+//     LazyLock::new(|| {
+//         vec![Box::new(|app_dir: &Path| {
+//             std::fs::remove_file(app_dir.join("Zed.exe"))
+//         })]
+//     });
 
-pub(crate) const JOBS_COUNT: usize = JOBS.len();
+// static JOBS: [Jobs; 6] = [
+//     Jobs::Remove("Zed.exe"),
+//     Jobs::Remove("bin\\zed.exe"),
+//     Jobs::Copy(CopyDetails {
+//         from: "install\\Zed.exe",
+//         to: "Zed.exe",
+//     }),
+//     Jobs::Copy(CopyDetails {
+//         from: "install\\bin\\zed.exe",
+//         to: "bin\\zed.exe",
+//     }),
+//     Jobs::Cleanup("updates"),
+//     Jobs::Cleanup("install"),
+// ];
+
+pub(crate) const JOBS_COUNT: usize = 6;
 
 #[derive(Debug)]
 enum Jobs<'a> {
@@ -44,18 +54,25 @@ struct CopyDetails<'a> {
 
 macro_rules! log_err {
     ($e:expr, $s:literal) => {
-        match $e {
-            Ok(_) => Some(()),
-            Err(err) => {
-                log::error!("{}: {:?}", $s, err);
-                None
-            }
-        }
+        $e.inspect_err(|e| {
+            log::error!("{}: {}", $s, e);
+        })
     };
 }
 
 pub(crate) async fn perform_update(app_dir: &Path, hwnd: Option<isize>) -> Result<()> {
     let hwnd = hwnd.map(|ptr| HWND(ptr as _));
+
+    retry_loop(|| {
+        let path = app_dir.join("Zed.exe");
+        if path.exists() {
+            log::info!("Removing old file: {}", path.display());
+            log_err!(std::fs::remove_file(path), "Failed to remove old file")
+        } else {
+            log::warn!("Old file not found: {}", path.display());
+            Ok(())
+        }
+    })?;
 
     #[cfg(not(test))]
     let work = async {
@@ -161,6 +178,18 @@ pub(crate) async fn perform_update(app_dir: &Path, hwnd: Option<isize>) -> Resul
             Err(anyhow::anyhow!("Update timed out"))
         }
     }
+}
+
+fn retry_loop<R>(f: impl Fn() -> std::io::Result<R>) -> Result<R> {
+    let start = Instant::now();
+    while start.elapsed().as_secs() <= 1 {
+        let result = f();
+        if result.is_ok() {
+            return Ok(result?);
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    Err(anyhow::anyhow!("Timed out"))
 }
 
 #[cfg(test)]
