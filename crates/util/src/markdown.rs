@@ -11,7 +11,9 @@ impl Display for MarkdownString {
 }
 
 impl MarkdownString {
-    /// Escapes markdown special characters.
+    /// Escapes markdown special characters in markdown text blocks. Markdown code blocks follow
+    /// different rules and `MarkdownString::inline_code` or `MarkdownString::code_block` should be
+    /// used in that case.
     ///
     /// Also escapes the following markdown extensions:
     ///
@@ -133,6 +135,12 @@ impl MarkdownString {
             };
             Self(format!("{backticks}{space}{text}{space}{backticks}"))
         }
+    }
+
+    /// Returns markdown for code blocks, wrapped in 3 or more backticks as needed.
+    pub fn code_block(tag: &str, text: &str) -> Self {
+        let backticks = "`".repeat(3.max(count_max_consecutive_chars(text, '`') + 1));
+        Self(format!("{backticks}{tag}\n{text}\n{backticks}\n"))
     }
 }
 

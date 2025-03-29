@@ -1,5 +1,6 @@
 mod active_thread;
 mod assistant_configuration;
+mod assistant_diff;
 mod assistant_model_selector;
 mod assistant_panel;
 mod buffer_codegen;
@@ -11,12 +12,12 @@ mod history_store;
 mod inline_assistant;
 mod inline_prompt_editor;
 mod message_editor;
+mod profile_selector;
 mod terminal_codegen;
 mod terminal_inline_assistant;
 mod thread;
 mod thread_history;
 mod thread_store;
-mod tool_selector;
 mod tool_use;
 mod ui;
 
@@ -27,16 +28,19 @@ use client::Client;
 use command_palette_hooks::CommandPaletteFilter;
 use feature_flags::{Assistant2FeatureFlag, FeatureFlagAppExt};
 use fs::Fs;
-use gpui::{actions, App};
+use gpui::{actions, impl_actions, App};
 use prompt_store::PromptBuilder;
+use schemars::JsonSchema;
+use serde::Deserialize;
 use settings::Settings as _;
 
 pub use crate::active_thread::ActiveThread;
-use crate::assistant_configuration::AddContextServerModal;
+use crate::assistant_configuration::{AddContextServerModal, ManageProfilesModal};
 pub use crate::assistant_panel::{AssistantPanel, ConcreteAssistantPanelDelegate};
 pub use crate::inline_assistant::InlineAssistant;
 pub use crate::thread::{Message, RequestKind, Thread, ThreadEvent};
 pub use crate::thread_store::ThreadStore;
+pub use assistant_diff::{AssistantDiff, AssistantDiffToolbar};
 
 actions!(
     assistant2,
@@ -44,6 +48,7 @@ actions!(
         NewThread,
         NewPromptEditor,
         ToggleContextPicker,
+        ToggleProfileSelector,
         RemoveAllContext,
         OpenHistory,
         OpenConfiguration,
@@ -59,9 +64,29 @@ actions!(
         FocusRight,
         RemoveFocusedContext,
         AcceptSuggestedContext,
-        OpenActiveThreadAsMarkdown
+        OpenActiveThreadAsMarkdown,
+        ToggleKeep,
+        Reject,
+        RejectAll,
+        KeepAll
     ]
 );
+
+#[derive(PartialEq, Clone, Default, Debug, Deserialize, JsonSchema)]
+pub struct ManageProfiles {
+    #[serde(default)]
+    pub customize_tools: Option<Arc<str>>,
+}
+
+impl ManageProfiles {
+    pub fn customize_tools(profile_id: Arc<str>) -> Self {
+        Self {
+            customize_tools: Some(profile_id),
+        }
+    }
+}
+
+impl_actions!(assistant, [ManageProfiles]);
 
 const NAMESPACE: &str = "assistant2";
 
@@ -89,6 +114,7 @@ pub fn init(
         cx,
     );
     cx.observe_new(AddContextServerModal::register).detach();
+    cx.observe_new(ManageProfilesModal::register).detach();
 
     feature_gate_assistant2_actions(cx);
 }

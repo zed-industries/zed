@@ -40,6 +40,7 @@ pub struct EditorSettings {
     #[serde(default)]
     pub go_to_definition_fallback: GoToDefinitionFallback,
     pub jupyter: Jupyter,
+    pub hide_mouse: Option<HideMouseMode>,
 }
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
@@ -262,6 +263,21 @@ pub enum GoToDefinitionFallback {
     FindAllReferences,
 }
 
+/// Determines when the mouse cursor should be hidden in an editor or input box.
+///
+/// Default: on_typing_and_movement
+#[derive(Copy, Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum HideMouseMode {
+    /// Never hide the mouse cursor
+    Never,
+    /// Hide only when typing
+    OnTyping,
+    /// Hide on both typing and cursor movement
+    #[default]
+    OnTypingAndMovement,
+}
+
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
 pub struct EditorSettingsContent {
     /// Whether the cursor blinks in the editor.
@@ -273,6 +289,10 @@ pub struct EditorSettingsContent {
     ///
     /// Default: None
     pub cursor_shape: Option<CursorShape>,
+    /// Determines when the mouse cursor should be hidden in an editor or input box.
+    ///
+    /// Default: on_typing_and_movement
+    pub hide_mouse: Option<HideMouseMode>,
     /// How to highlight the current line in the editor.
     ///
     /// Default: all

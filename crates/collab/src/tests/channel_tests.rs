@@ -387,7 +387,7 @@ async fn test_channel_room(
     executor.run_until_parked();
     let room_a =
         cx_a.read(|cx| active_call_a.read_with(cx, |call, _| call.room().unwrap().clone()));
-    cx_a.read(|cx| room_a.read_with(cx, |room, _| assert!(room.is_connected())));
+    cx_a.read(|cx| room_a.read_with(cx, |room, cx| assert!(room.is_connected(cx))));
 
     cx_a.read(|cx| {
         client_a.channel_store().read_with(cx, |channels, _| {
@@ -461,7 +461,7 @@ async fn test_channel_room(
 
     let room_a =
         cx_a.read(|cx| active_call_a.read_with(cx, |call, _| call.room().unwrap().clone()));
-    cx_a.read(|cx| room_a.read_with(cx, |room, _| assert!(room.is_connected())));
+    cx_a.read(|cx| room_a.read_with(cx, |room, cx| assert!(room.is_connected(cx))));
     assert_eq!(
         room_participants(&room_a, cx_a),
         RoomParticipants {
@@ -472,7 +472,7 @@ async fn test_channel_room(
 
     let room_b =
         cx_b.read(|cx| active_call_b.read_with(cx, |call, _| call.room().unwrap().clone()));
-    cx_b.read(|cx| room_b.read_with(cx, |room, _| assert!(room.is_connected())));
+    cx_b.read(|cx| room_b.read_with(cx, |room, cx| assert!(room.is_connected(cx))));
     assert_eq!(
         room_participants(&room_b, cx_b),
         RoomParticipants {
@@ -556,7 +556,7 @@ async fn test_channel_room(
 
     let room_a =
         cx_a.read(|cx| active_call_a.read_with(cx, |call, _| call.room().unwrap().clone()));
-    cx_a.read(|cx| room_a.read_with(cx, |room, _| assert!(room.is_connected())));
+    cx_a.read(|cx| room_a.read_with(cx, |room, cx| assert!(room.is_connected(cx))));
     assert_eq!(
         room_participants(&room_a, cx_a),
         RoomParticipants {
@@ -567,7 +567,7 @@ async fn test_channel_room(
 
     let room_b =
         cx_b.read(|cx| active_call_b.read_with(cx, |call, _| call.room().unwrap().clone()));
-    cx_b.read(|cx| room_b.read_with(cx, |room, _| assert!(room.is_connected())));
+    cx_b.read(|cx| room_b.read_with(cx, |room, cx| assert!(room.is_connected(cx))));
     assert_eq!(
         room_participants(&room_b, cx_b),
         RoomParticipants {
