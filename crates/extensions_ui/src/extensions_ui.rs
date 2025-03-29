@@ -804,7 +804,9 @@ impl ExtensionsPage {
                 .entry("Copy Extension Url", None, {
                     let repository_url = repository_url.clone();
                     move |_, cx| {
-                        cx.write_to_clipboard(ClipboardItem::new_string(repository_url.to_string()));
+                        cx.write_to_clipboard(ClipboardItem::new_string(
+                            repository_url.to_string(),
+                        ));
                     }
                 })
         });
