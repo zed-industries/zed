@@ -1902,3 +1902,19 @@ async fn test_folded_multibuffer_excerpts(cx: &mut gpui::TestAppContext) {
         "
     });
 }
+
+#[gpui::test]
+async fn test_delete_paragraph(cx: &mut gpui::TestAppContext) {
+    let mut cx = NeovimBackedTestContext::new(cx).await;
+
+    cx.set_shared_state(indoc! {
+        "ˇhello world.
+
+        hello world.
+        "
+    })
+    .await;
+    cx.simulate_shared_keystrokes("y } d }").await;
+    cx.shared_clipboard().await.assert_eq("hello world.\n");
+    cx.shared_state().await.assert_eq("ˇ\nhello world.");
+}
