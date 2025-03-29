@@ -759,6 +759,7 @@ impl ExtensionsPage {
                                         &this,
                                         extension_id.clone(),
                                         authors.clone(),
+                                        repository_url.clone(),
                                         window,
                                         cx,
                                     ))
@@ -772,6 +773,7 @@ impl ExtensionsPage {
         this: &Entity<Self>,
         extension_id: Arc<str>,
         authors: Vec<String>,
+        repository_url: String,
         window: &mut Window,
         cx: &mut App,
     ) -> Entity<ContextMenu> {
@@ -797,6 +799,12 @@ impl ExtensionsPage {
                     let authors = authors.clone();
                     move |_, cx| {
                         cx.write_to_clipboard(ClipboardItem::new_string(authors.join(", ")));
+                    }
+                })
+                .entry("Copy Extension Url", None, {
+                    let repository_url = repository_url.clone();
+                    move |_, cx| {
+                        cx.write_to_clipboard(ClipboardItem::new_string(repository_url.to_string()));
                     }
                 })
         });
