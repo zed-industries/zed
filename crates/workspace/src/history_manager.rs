@@ -24,35 +24,35 @@ fn perform_update(manager: Entity<HistoryManager>, cx: &mut App) {
                 println!("History: {:#?}", this.history);
             })
             .log_err();
-        let recent_folders = WORKSPACE_DB
-            .recent_workspaces_on_disk()
-            .await
-            .unwrap_or_default()
-            .into_iter()
-            .map(|(id, location)| HistoryManagerEntry::new(id, location))
-            .collect::<Vec<_>>();
-        let entries = recent_folders
-            .iter()
-            .map(|entry| &entry.path)
-            .collect::<Vec<_>>();
-        if let Some(user_removed) = cx
-            .update(|cx| cx.update_jump_list(entries.as_slice()))
-            .log_err()
-        {
-            let deleted_ids = recent_folders
-                .into_iter()
-                .filter_map(|entry| {
-                    if user_removed.contains(&entry.path) {
-                        Some(entry.id)
-                    } else {
-                        None
-                    }
-                })
-                .collect::<Vec<_>>();
-            for id in deleted_ids.iter() {
-                WORKSPACE_DB.delete_workspace_by_id(*id).await.log_err();
-            }
-        }
+        // let recent_folders = WORKSPACE_DB
+        //     .recent_workspaces_on_disk()
+        //     .await
+        //     .unwrap_or_default()
+        //     .into_iter()
+        //     .map(|(id, location)| HistoryManagerEntry::new(id, &location))
+        //     .collect::<Vec<_>>();
+        // let entries = recent_folders
+        //     .iter()
+        //     .map(|entry| &entry.path)
+        //     .collect::<Vec<_>>();
+        // if let Some(user_removed) = cx
+        //     .update(|cx| cx.update_jump_list(entries.as_slice()))
+        //     .log_err()
+        // {
+        //     let deleted_ids = recent_folders
+        //         .into_iter()
+        //         .filter_map(|entry| {
+        //             if user_removed.contains(&entry.path) {
+        //                 Some(entry.id)
+        //             } else {
+        //                 None
+        //             }
+        //         })
+        //         .collect::<Vec<_>>();
+        //     for id in deleted_ids.iter() {
+        //         WORKSPACE_DB.delete_workspace_by_id(*id).await.log_err();
+        //     }
+        // }
     })
     .detach()
 }
@@ -92,7 +92,7 @@ impl HistoryManager {
                 .await
                 .unwrap_or_default()
                 .into_iter()
-                .map(|(id, location)| HistoryManagerEntry::new(id, location))
+                .map(|(id, location)| HistoryManagerEntry::new(id, &location))
                 .collect::<Vec<_>>();
             this.update(cx, |this, cx| {
                 this.history = recent_folders;
@@ -108,6 +108,14 @@ impl HistoryManager {
 
     pub fn set_global(history_manager: Entity<Self>, cx: &mut App) {
         cx.set_global(GlobalHistoryManager(history_manager));
+    }
+
+    pub fn update_history(&mut self, id: WorkspaceId, location: &SerializedWorkspaceLocation) {
+        let entry = HistoryManagerEntry::new(id, location);
+        if let Some(pos) = self.history.iter().position(|e| e.id == id) {
+            self.history.remove(pos);
+        }
+        self.history.insert(0, entry);
     }
 
     pub fn update_jump_list(&self, cx: &mut App) {
@@ -138,7 +146,7 @@ impl HistoryManager {
 }
 
 impl HistoryManagerEntry {
-    pub fn new(id: WorkspaceId, location: SerializedWorkspaceLocation) -> Self {
+    pub fn new(id: WorkspaceId, location: &SerializedWorkspaceLocation) -> Self {
         let path = location
             .sorted_paths()
             .iter()
