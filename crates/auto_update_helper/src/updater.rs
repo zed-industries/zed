@@ -108,6 +108,7 @@ pub(crate) fn perform_update(app_dir: &Path, hwnd: Option<isize>) -> Result<()> 
     Ok(())
 }
 
+#[cfg(not(test))]
 fn retry_loop<R>(hwnd: Option<HWND>, f: impl Fn() -> std::io::Result<R>) -> Result<R> {
     let start = Instant::now();
     while start.elapsed().as_secs() <= 1 {
@@ -122,22 +123,47 @@ fn retry_loop<R>(hwnd: Option<HWND>, f: impl Fn() -> std::io::Result<R>) -> Resu
 }
 
 #[cfg(test)]
+fn retry_loop<R>(hwnd: Option<HWND>, _: impl Fn() -> std::io::Result<R>) -> Result<()> {
+    let start = Instant::now();
+    while start.elapsed().as_secs() <= 1 {
+        let result = if let Ok(config) = std::env::var("ZED_AUTO_UPDATE") {
+            match config.as_str() {
+                "inf" => {
+                    std::thread::sleep(Duration::from_millis(500));
+                    Err(anyhow::anyhow!("Simulated timeout"))
+                }
+                "err" => return Err(anyhow::anyhow!("Test error")),
+                _ => panic!("Unknown ZED_AUTO_UPDATE value: {}", config),
+            }
+        } else {
+            Ok(())
+        };
+        if result.is_ok() {
+            unsafe { PostMessageW(hwnd, WM_JOB_UPDATED, WPARAM(0), LPARAM(0))? };
+            return Ok(result?);
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    Err(anyhow::anyhow!("Update timed out"))
+}
+
+#[cfg(test)]
 mod test {
     use super::perform_update;
 
     #[test]
     fn test_perform_update() {
         let app_dir = std::path::Path::new("C:/");
-        assert!(smol::block_on(perform_update(app_dir, None)).is_ok());
+        assert!(perform_update(app_dir, None).is_ok());
 
         // Simulate a timeout
         std::env::set_var("ZED_AUTO_UPDATE", "inf");
-        let ret = smol::block_on(perform_update(app_dir, None));
+        let ret = perform_update(app_dir, None);
         assert!(ret.is_err_and(|e| e.to_string().as_str() == "Update timed out"));
 
         // Simulate a test error
         std::env::set_var("ZED_AUTO_UPDATE", "err");
-        let ret = smol::block_on(perform_update(app_dir, None));
+        let ret = perform_update(app_dir, None);
         assert!(ret.is_err_and(|e| e.to_string().as_str() == "Test error"));
     }
 }
