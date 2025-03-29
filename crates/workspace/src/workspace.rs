@@ -922,7 +922,6 @@ impl Workspace {
 
                 project::Event::WorktreeRemoved(_) | project::Event::WorktreeAdded(_) => {
                     this.update_window_title(window, cx);
-                    // todo(zjk)
                     // Set `update` to `true` so that the history is updated.
                     // This event could be triggered by `AddFolderToProject` or `RemoveFromProject`.
                     this.serialize_workspace_with_update(window, cx);
@@ -1358,7 +1357,6 @@ impl Workspace {
                 .update(cx, |workspace, window, cx| {
                     window.activate_window();
                     if is_new_workspace {
-                        // todo(zjk)
                         // If opened a new workspace, the workspace will be serialized and notified here.
                         // If opened an existing workspace, the workspace will be serialized and notified in the
                         // above `open_items` call.
@@ -4953,7 +4951,6 @@ impl Workspace {
 
             workspace
                 .update_in(cx, |workspace, window, cx| {
-                    // todo(zjk)
                     // Serialize ourself to make sure our timestamps and any pane / item changes are replicated
                     // Set `update` to `true` so that the history is updated, newly opened workspaces are moved to the top
                     workspace
