@@ -5492,7 +5492,7 @@ impl EditorElement {
                 });
             });
 
-            window.set_cursor_style(CursorStyle::Arrow, &minimap_hitbox);
+            window.set_cursor_style(CursorStyle::Arrow, Some(&minimap_hitbox));
 
             window.on_mouse_event({
                 let editor = self.editor.clone();
