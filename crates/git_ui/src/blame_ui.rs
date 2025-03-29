@@ -1,15 +1,14 @@
-use crate::commit_tooltip::CommitTooltip;
-use crate::commit_view::CommitView;
+use crate::{commit_tooltip::CommitTooltip, commit_view::CommitView};
 use editor::{BlameRenderer, Editor};
 use git::{
     blame::{BlameEntry, ParsedCommitMessage},
     repository::CommitSummary,
 };
 use gpui::{
-    div, AnyElement, App, AppContext as _, ClipboardItem, Entity, Hsla, MouseButton,
-    StatefulInteractiveElement as _, Styled as _, Subscription, TextStyle, WeakEntity,
+    div, AnyElement, App, AppContext as _, ClipboardItem, Element as _, Entity, Hsla,
+    InteractiveElement as _, MouseButton, Pixels, StatefulInteractiveElement as _, Styled as _,
+    Subscription, TextStyle, WeakEntity, Window,
 };
-use gpui::{Element as _, InteractiveElement as _, Pixels, Window};
 use project::{git_store::Repository, project_settings::ProjectSettings};
 use settings::Settings as _;
 use ui::{
@@ -43,27 +42,26 @@ impl BlameRenderer for GitBlameRenderer {
         let author_name = blame_entry.author.as_deref().unwrap_or("<no name>");
         let name = util::truncate_and_trailoff(author_name, GIT_BLAME_MAX_AUTHOR_CHARS_DISPLAYED);
 
-        let div = h_flex()
-            .w_full()
-            .justify_between()
-            .font_family(style.font().family)
-            .line_height(style.line_height)
-            .id(("blame", ix))
-            .text_color(cx.theme().status().hint)
-            .pr_2()
-            .gap_2()
-            .child(
-                h_flex()
-                    .items_center()
-                    .gap_2()
-                    .child(div().text_color(sha_color).child(short_commit_id))
-                    .child(name),
-            )
-            .child(relative_timestamp)
-            .hover(|style| style.bg(cx.theme().colors().element_hover));
-
         Some(
-            div.cursor_pointer()
+            h_flex()
+                .w_full()
+                .justify_between()
+                .font_family(style.font().family)
+                .line_height(style.line_height)
+                .id(("blame", ix))
+                .text_color(cx.theme().status().hint)
+                .pr_2()
+                .gap_2()
+                .child(
+                    h_flex()
+                        .items_center()
+                        .gap_2()
+                        .child(div().text_color(sha_color).child(short_commit_id))
+                        .child(name),
+                )
+                .child(relative_timestamp)
+                .hover(|style| style.bg(cx.theme().colors().element_hover))
+                .cursor_pointer()
                 .on_mouse_down(MouseButton::Right, {
                     let blame_entry = blame_entry.clone();
                     let details = details.clone();
@@ -125,7 +123,6 @@ impl BlameRenderer for GitBlameRenderer {
         cx: &mut App,
     ) -> Option<AnyElement> {
         let relative_timestamp = blame_entry_relative_timestamp(&blame_entry);
-
         let author = blame_entry.author.as_deref().unwrap_or_default();
         let summary_enabled = ProjectSettings::get_global(cx)
             .git
@@ -138,34 +135,33 @@ impl BlameRenderer for GitBlameRenderer {
             _ => format!("{}, {}", author, relative_timestamp),
         };
 
-        let div = h_flex()
-            .id("inline-blame")
-            .w_full()
-            .font_family(style.font().family)
-            .text_color(cx.theme().status().hint)
-            .line_height(style.line_height)
-            .child(Icon::new(IconName::FileGit).color(Color::Hint))
-            .child(text)
-            .gap_2();
-
         Some(
-            div.hoverable_tooltip(move |window, cx| {
-                let tooltip = cx.new(|cx| {
-                    CommitTooltip::blame_entry(
-                        &blame_entry,
-                        details.clone(),
-                        repository.clone(),
-                        workspace.clone(),
-                        window,
-                        cx,
-                    )
-                });
-                editor.update(cx, |editor, _| {
-                    editor.git_blame_inline_tooltip = Some(tooltip.downgrade().into())
-                });
-                tooltip.into()
-            })
-            .into_any(),
+            h_flex()
+                .id("inline-blame")
+                .w_full()
+                .font_family(style.font().family)
+                .text_color(cx.theme().status().hint)
+                .line_height(style.line_height)
+                .child(Icon::new(IconName::FileGit).color(Color::Hint))
+                .child(text)
+                .gap_2()
+                .hoverable_tooltip(move |window, cx| {
+                    let tooltip = cx.new(|cx| {
+                        CommitTooltip::blame_entry(
+                            &blame_entry,
+                            details.clone(),
+                            repository.clone(),
+                            workspace.clone(),
+                            window,
+                            cx,
+                        )
+                    });
+                    editor.update(cx, |editor, _| {
+                        editor.git_blame_inline_tooltip = Some(tooltip.downgrade().into())
+                    });
+                    tooltip.into()
+                })
+                .into_any(),
         )
     }
 }
@@ -200,7 +196,7 @@ fn deploy_blame_entry_context_menu(
     });
 }
 
-fn blame_entry_timestamp(blame_entry: &BlameEntry, format: time_format::TimestampFormat) -> String {
+fn blame_entry_relative_timestamp(blame_entry: &BlameEntry) -> String {
     match blame_entry.author_offset_date_time() {
         Ok(timestamp) => {
             let local = chrono::Local::now().offset().local_minus_utc();
@@ -208,13 +204,9 @@ fn blame_entry_timestamp(blame_entry: &BlameEntry, format: time_format::Timestam
                 timestamp,
                 time::OffsetDateTime::now_utc(),
                 time::UtcOffset::from_whole_seconds(local).unwrap(),
-                format,
+                time_format::TimestampFormat::Relative,
             )
         }
         Err(_) => "Error parsing date".to_string(),
     }
-}
-
-pub fn blame_entry_relative_timestamp(blame_entry: &BlameEntry) -> String {
-    blame_entry_timestamp(blame_entry, time_format::TimestampFormat::Relative)
 }
