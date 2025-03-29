@@ -279,11 +279,13 @@ impl LivekitWindow {
             let participant = self.room.local_participant();
             let sources = cx.screen_capture_sources();
             cx.spawn_in(window, async move |this, cx| {
-                // let sources = sources.await.unwrap()?;
-                // let source = sources.into_iter().next().unwrap();
+                let sources = sources.await.unwrap()?;
+                let source = sources.into_iter().next().unwrap();
 
-                let (publication, stream) =
-                    participant.publish_screenshare_track(cx).await.unwrap();
+                let (publication, stream) = participant
+                    .publish_screenshare_track(&*source, cx)
+                    .await
+                    .unwrap();
                 this.update(cx, |this, cx| {
                     this.screen_share_track = Some(publication);
                     this.screen_share_stream = Some(stream);

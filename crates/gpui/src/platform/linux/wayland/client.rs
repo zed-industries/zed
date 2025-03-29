@@ -7,6 +7,7 @@ use std::{
     time::{Duration, Instant},
 };
 
+use anyhow::anyhow;
 use calloop::{
     timer::{TimeoutAction, Timer},
     EventLoop, LoopHandle,
@@ -14,7 +15,7 @@ use calloop::{
 use calloop_wayland_source::WaylandSource;
 use collections::HashMap;
 use filedescriptor::Pipe;
-
+use futures::channel::oneshot;
 use http_client::Url;
 use smallvec::SmallVec;
 use util::ResultExt;
@@ -69,19 +70,22 @@ use xkbcommon::xkb::{self, Keycode, KEYMAP_COMPILE_NO_FLAGS};
 use super::display::WaylandDisplay;
 use super::window::{ImeInput, WaylandWindowStatePtr};
 
-use crate::platform::linux::{
-    get_xkb_compose_state, is_within_click_distance, open_uri_internal, read_fd,
-    reveal_path_internal,
-    wayland::{
-        clipboard::{Clipboard, DataOffer, FILE_LIST_MIME_TYPE, TEXT_MIME_TYPE},
-        cursor::Cursor,
-        serial::{SerialKind, SerialTracker},
-        window::WaylandWindow,
-    },
-    xdg_desktop_portal::{Event as XDPEvent, XDPEventSource},
-    LinuxClient,
-};
 use crate::platform::{blade::BladeContext, PlatformWindow};
+use crate::{
+    platform::linux::{
+        get_xkb_compose_state, is_within_click_distance, open_uri_internal, read_fd,
+        reveal_path_internal,
+        wayland::{
+            clipboard::{Clipboard, DataOffer, FILE_LIST_MIME_TYPE, TEXT_MIME_TYPE},
+            cursor::Cursor,
+            serial::{SerialKind, SerialTracker},
+            window::WaylandWindow,
+        },
+        xdg_desktop_portal::{Event as XDPEvent, XDPEventSource},
+        LinuxClient,
+    },
+    ScreenCaptureSource,
+};
 use crate::{
     point, px, size, AnyWindowHandle, Bounds, CursorStyle, DevicePixels, DisplayId, FileDropEvent,
     ForegroundExecutor, KeyDownEvent, KeyUpEvent, Keystroke, LinuxCommon, Modifiers,
@@ -634,6 +638,14 @@ impl LinuxClient for WaylandClient {
 
     fn primary_display(&self) -> Option<Rc<dyn PlatformDisplay>> {
         None
+    }
+
+    fn screen_capture_sources(
+        &self,
+    ) -> oneshot::Receiver<anyhow::Result<Vec<Box<dyn ScreenCaptureSource>>>> {
+        let (mut tx, rx) = oneshot::channel();
+        tx.send(Err(anyhow!("screen capture not implemented"))).ok();
+        rx
     }
 
     fn open_window(

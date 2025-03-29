@@ -26,6 +26,9 @@ mod test;
 #[cfg(target_os = "windows")]
 mod windows;
 
+#[cfg(not(target_os = "macos"))]
+mod scap_screen_capture;
+
 use crate::{
     point, Action, AnyWindowHandle, App, AsyncWindowContext, BackgroundExecutor, Bounds,
     DevicePixels, DispatchEventResult, Font, FontId, FontMetrics, FontRun, ForegroundExecutor,
@@ -73,6 +76,9 @@ pub(crate) use windows::*;
 
 #[cfg(any(test, feature = "test-support"))]
 pub use test::TestScreenCaptureSource;
+
+#[cfg(not(target_os = "macos"))]
+pub(crate) use scap_screen_capture::scap_screen_sources;
 
 /// Returns a background executor for the current platform.
 pub fn background_executor() -> BackgroundExecutor {
@@ -244,9 +250,9 @@ pub trait PlatformDisplay: Send + Sync + Debug {
 }
 
 /// A source of on-screen video content that can be captured.
-pub trait ScreenCaptureSource {
+pub trait ScreenCaptureSource: Send {
     /// Returns the video resolution of this source.
-    fn resolution(&self) -> Result<Size<Pixels>>;
+    fn resolution(&self) -> Result<Size<DevicePixels>>;
 
     /// Start capture video from this source, invoking the given callback
     /// with each frame.
@@ -257,7 +263,7 @@ pub trait ScreenCaptureSource {
 }
 
 /// A video stream captured from a screen.
-pub trait ScreenCaptureStream {}
+pub trait ScreenCaptureStream: Send {}
 
 /// A frame of video captured from a screen.
 pub struct ScreenCaptureFrame(pub PlatformScreenCaptureFrame);
