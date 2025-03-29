@@ -24,8 +24,8 @@ use std::{
 use ui::{prelude::*, tooltip_container, KeyBinding, ListItem, ListItemSpacing, Tooltip};
 use util::{paths::PathExt, ResultExt};
 use workspace::{
-    CloseIntent, HistoryManager, ModalView, OpenOptions, SerializedWorkspaceLocation, Workspace,
-    WorkspaceId, WORKSPACE_DB,
+    CloseIntent, ModalView, OpenOptions, SerializedWorkspaceLocation, Workspace, WorkspaceId,
+    WORKSPACE_DB,
 };
 use zed_actions::{OpenRecent, OpenRemote};
 
@@ -542,7 +542,7 @@ impl RecentProjectsDelegate {
         if let Some(selected_match) = self.matches.get(ix) {
             let (workspace_id, _) = self.workspaces[selected_match.candidate_id];
             cx.spawn_in(window, async move |this, cx| {
-                let _ = WORKSPACE_DB.delete_workspace_by_id(workspace_id).await;
+                let _ = WORKSPACE_DB.delete_workspace_by_id(workspace_id, cx).await;
                 let workspaces = WORKSPACE_DB
                     .recent_workspaces_on_disk()
                     .await
@@ -556,10 +556,10 @@ impl RecentProjectsDelegate {
                     picker.update_matches(picker.query(cx), window, cx);
                     // After deleting a project, we want to update the history manager to reflect the change.
                     // But we do not emit a update event when user opens a project, because it's handled in `workspace::load_workspace`.
-                    if let Some(history_manager) = HistoryManager::global(cx) {
-                        history_manager
-                            .update(cx, |this, cx| this.delete_history(workspace_id, cx));
-                    }
+                    // if let Some(history_manager) = HistoryManager::global(cx) {
+                    //     history_manager
+                    //         .update(cx, |this, cx| this.delete_history(workspace_id, cx));
+                    // }
                 })
             })
             .detach();

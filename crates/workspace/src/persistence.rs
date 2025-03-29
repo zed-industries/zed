@@ -5,26 +5,28 @@ use std::{
     collections::BTreeMap,
     path::{Path, PathBuf},
     str::FromStr,
-    sync::Arc,
+    sync::{Arc, LazyLock},
 };
 
 use anyhow::{anyhow, bail, Context, Result};
 use client::DevServerProjectId;
 use db::{define_connection, query, sqlez::connection::Connection, sqlez_macros::sql};
-use gpui::{point, size, Axis, Bounds, WindowBounds, WindowId};
+use gpui::{point, size, AsyncApp, Axis, Bounds, WindowBounds, WindowId};
 use itertools::Itertools;
+use parking_lot::Mutex;
 use project::debugger::breakpoint_store::{BreakpointState, SourceBreakpoint};
 
 use language::{LanguageName, Toolchain};
 use project::WorktreeId;
 use remote::ssh_session::SshProjectId;
+use smallvec::SmallVec;
 use sqlez::{
     bindable::{Bind, Column, StaticColumnCount},
     statement::{SqlType, Statement},
 };
 
-use ui::px;
-use util::{maybe, ResultExt};
+use ui::{px, App};
+use util::{maybe, paths::PathExt, ResultExt};
 use uuid::Uuid;
 
 use crate::WorkspaceId;
@@ -714,7 +716,16 @@ impl WorkspaceDb {
 
     /// Saves a workspace using the worktree roots. Will garbage collect any workspaces
     /// that used this workspace previously
-    pub(crate) async fn save_workspace(&self, workspace: SerializedWorkspace) {
+    pub(crate) async fn save_workspace(&self, workspace: SerializedWorkspace, cx: &AsyncApp) {
+        let id = workspace.id;
+        let entry = HistoryTrackerEntry::new(id, &workspace.location);
+        self.save_workspace_internal(workspace).await;
+        HISTORY_TRACKER.lock().update_history(id, entry, cx);
+    }
+
+    /// Saves a workspace using the worktree roots. Will garbage collect any workspaces
+    /// that used this workspace previously
+    pub(crate) async fn save_workspace_internal(&self, workspace: SerializedWorkspace) {
         self.write(move |conn| {
             conn.with_savepoint("update_worktrees", || {
                 // Clear out panes and pane_groups
@@ -982,11 +993,18 @@ impl WorkspaceDb {
     }
 
     query! {
-        pub async fn delete_workspace_by_id(id: WorkspaceId) -> Result<()> {
+        pub async fn delete_workspace_by_id_internal(id: WorkspaceId) -> Result<()> {
             DELETE FROM toolchains WHERE workspace_id = ?1;
             DELETE FROM workspaces
             WHERE workspace_id IS ?
         }
+    }
+
+    pub async fn delete_workspace_by_id(&self, id: WorkspaceId, cx: &AsyncApp) -> Result<()> {
+        self.delete_workspace_by_id_internal(id).await?;
+        cx.update(|cx| HISTORY_TRACKER.lock().delete_history(id, cx))
+            .log_err();
+        Ok(())
     }
 
     pub async fn delete_workspace_by_dev_server_project_id(
@@ -1020,7 +1038,7 @@ impl WorkspaceDb {
                 if let Some(ssh_project) = ssh_projects.iter().find(|rp| rp.id == ssh_project_id) {
                     result.push((id, SerializedWorkspaceLocation::Ssh(ssh_project.clone())));
                 } else {
-                    delete_tasks.push(self.delete_workspace_by_id(id));
+                    delete_tasks.push(self.delete_workspace_by_id_internal(id));
                 }
                 continue;
             }
@@ -1030,7 +1048,7 @@ impl WorkspaceDb {
             {
                 result.push((id, SerializedWorkspaceLocation::Local(location, order)));
             } else {
-                delete_tasks.push(self.delete_workspace_by_id(id));
+                delete_tasks.push(self.delete_workspace_by_id_internal(id));
             }
         }
 
@@ -1379,6 +1397,97 @@ impl WorkspaceDb {
 
             Ok(())
         }).await
+    }
+}
+
+pub static HISTORY_TRACKER: LazyLock<Mutex<HistoryTracker>> = LazyLock::new(|| {
+    Mutex::new(HistoryTracker {
+        history: Vec::new(),
+    })
+});
+
+pub struct HistoryTracker {
+    history: Vec<HistoryTrackerEntry>,
+}
+
+#[derive(Debug)]
+struct HistoryTrackerEntry {
+    id: WorkspaceId,
+    path: SmallVec<[PathBuf; 2]>,
+}
+
+impl HistoryTracker {
+    pub fn init(cx: &App) {
+        cx.spawn(async move |cx| {
+            let recent_folders = DB
+                .recent_workspaces_on_disk()
+                .await
+                .unwrap_or_default()
+                .into_iter()
+                .map(|(id, location)| HistoryTrackerEntry::new(id, &location))
+                .collect::<Vec<_>>();
+            let mut lock = HISTORY_TRACKER.lock();
+            lock.history = recent_folders;
+            cx.update(|cx| lock.update_jump_list(cx)).log_err();
+        })
+        .detach();
+    }
+
+    fn update_history(&mut self, id: WorkspaceId, entry: HistoryTrackerEntry, cx: &AsyncApp) {
+        if let Some(pos) = self.history.iter().position(|e| e.id == id) {
+            if pos == 0 {
+                return;
+            }
+            self.history.remove(pos);
+        }
+        self.history.insert(0, entry);
+        cx.update(|cx| {
+            self.update_jump_list(cx);
+        })
+        .log_err();
+    }
+
+    fn delete_history(&mut self, id: WorkspaceId, cx: &App) {
+        let Some(pos) = self.history.iter().position(|e| e.id == id) else {
+            return;
+        };
+        self.history.remove(pos);
+        self.update_jump_list(cx);
+    }
+
+    fn update_jump_list(&mut self, cx: &App) {
+        let entries = self
+            .history
+            .iter()
+            .map(|entry| &entry.path)
+            .collect::<Vec<_>>();
+        let user_removed = cx.update_jump_list(entries.as_slice());
+        let mut deleted_ids = Vec::new();
+        for idx in (0..self.history.len()).rev() {
+            if let Some(entry) = self.history.get(idx) {
+                if user_removed.contains(&entry.path) {
+                    deleted_ids.push(entry.id);
+                    self.history.remove(idx);
+                }
+            }
+        }
+        cx.spawn(async move |_| {
+            for id in deleted_ids.iter() {
+                DB.delete_workspace_by_id_internal(*id).await.log_err();
+            }
+        })
+        .detach();
+    }
+}
+
+impl HistoryTrackerEntry {
+    pub fn new(id: WorkspaceId, location: &SerializedWorkspaceLocation) -> Self {
+        let path = location
+            .sorted_paths()
+            .iter()
+            .map(|path| path.compact())
+            .collect::<SmallVec<[PathBuf; 2]>>();
+        Self { id, path }
     }
 }
 
