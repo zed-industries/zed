@@ -11,6 +11,7 @@ pub(crate) mod windows_only_instance;
 use anyhow::Context as _;
 pub use app_menus::*;
 use assets::Assets;
+use assistant2::AssistantDiffToolbar;
 use assistant_context_editor::AssistantPanelDelegate;
 use breadcrumbs::Breadcrumbs;
 use client::{zed_urls, ZED_URL_SCHEME};
@@ -23,7 +24,6 @@ use feature_flags::{Debugger, FeatureFlagAppExt, FeatureFlagViewExt};
 use futures::{channel::mpsc, select_biased, StreamExt};
 use git_ui::git_panel::GitPanel;
 use git_ui::project_diff::ProjectDiffToolbar;
-use assistant2::AssistantDiffToolbar;
 use gpui::{
     actions, point, px, Action, App, AppContext as _, AsyncApp, AsyncWindowContext, Context,
     DismissEvent, Element, Entity, Focusable, KeyBinding, MenuItem, ParentElement,
