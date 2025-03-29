@@ -47,7 +47,7 @@
       "shift-escape": "workspace::ToggleZoom",
       "cmd-o": "workspace::Open",
       "cmd-=": ["zed::IncreaseBufferFontSize", { "persist": false }],
-      "cmd-+": ["zed::IncreaseBufferFontSize", { "persist": false }],
+      "cmd-shift-=": ["zed::IncreaseBufferFontSize", { "persist": false }],
       "cmd--": ["zed::DecreaseBufferFontSize", { "persist": false }],
       "cmd-0": ["zed::ResetBufferFontSize", { "persist": false }],
       "cmd-,": "zed::OpenSettings",
@@ -109,9 +109,18 @@
       "ctrl-l": "editor::ScrollCursorCenter",
       "alt-left": "editor::MoveToPreviousWordStart",
       "alt-right": "editor::MoveToNextWordEnd",
-      "cmd-left": ["editor::MoveToBeginningOfLine", { "stop_at_soft_wraps": true, "stop_at_indent": true }],
-      "ctrl-a": ["editor::MoveToBeginningOfLine", { "stop_at_soft_wraps": false, "stop_at_indent": true }],
-      "home": ["editor::MoveToBeginningOfLine", { "stop_at_soft_wraps": true, "stop_at_indent": true }],
+      "cmd-left": [
+        "editor::MoveToBeginningOfLine",
+        { "stop_at_soft_wraps": true, "stop_at_indent": true }
+      ],
+      "ctrl-a": [
+        "editor::MoveToBeginningOfLine",
+        { "stop_at_soft_wraps": false, "stop_at_indent": true }
+      ],
+      "home": [
+        "editor::MoveToBeginningOfLine",
+        { "stop_at_soft_wraps": true, "stop_at_indent": true }
+      ],
       "cmd-right": ["editor::MoveToEndOfLine", { "stop_at_soft_wraps": true }],
       "ctrl-e": ["editor::MoveToEndOfLine", { "stop_at_soft_wraps": false }],
       "end": ["editor::MoveToEndOfLine", { "stop_at_soft_wraps": true }],
@@ -137,12 +146,30 @@
       "cmd-l": "editor::SelectLine",
       "cmd-shift-i": "editor::Format",
       "alt-shift-o": "editor::OrganizeImports",
-      "cmd-shift-left": ["editor::SelectToBeginningOfLine", { "stop_at_soft_wraps": true, "stop_at_indent": true }],
-      "shift-home": ["editor::SelectToBeginningOfLine", { "stop_at_soft_wraps": true, "stop_at_indent": true }],
-      "ctrl-shift-a": ["editor::SelectToBeginningOfLine", { "stop_at_soft_wraps": true, "stop_at_indent": true }],
-      "cmd-shift-right": ["editor::SelectToEndOfLine", { "stop_at_soft_wraps": true }],
-      "shift-end": ["editor::SelectToEndOfLine", { "stop_at_soft_wraps": true }],
-      "ctrl-shift-e": ["editor::SelectToEndOfLine", { "stop_at_soft_wraps": true }],
+      "cmd-shift-left": [
+        "editor::SelectToBeginningOfLine",
+        { "stop_at_soft_wraps": true, "stop_at_indent": true }
+      ],
+      "shift-home": [
+        "editor::SelectToBeginningOfLine",
+        { "stop_at_soft_wraps": true, "stop_at_indent": true }
+      ],
+      "ctrl-shift-a": [
+        "editor::SelectToBeginningOfLine",
+        { "stop_at_soft_wraps": true, "stop_at_indent": true }
+      ],
+      "cmd-shift-right": [
+        "editor::SelectToEndOfLine",
+        { "stop_at_soft_wraps": true }
+      ],
+      "shift-end": [
+        "editor::SelectToEndOfLine",
+        { "stop_at_soft_wraps": true }
+      ],
+      "ctrl-shift-e": [
+        "editor::SelectToEndOfLine",
+        { "stop_at_soft_wraps": true }
+      ],
       "ctrl-v": ["editor::MovePageDown", { "center_cursor": true }],
       "ctrl-shift-v": ["editor::MovePageUp", { "center_cursor": true }],
       "ctrl-cmd-space": "editor::ShowCharacterPalette",
@@ -169,10 +196,13 @@
       "cmd-k z": "editor::ToggleSoftWrap",
       "cmd-f": "buffer_search::Deploy",
       "cmd-alt-f": "buffer_search::DeployReplace",
-      "cmd-alt-l": ["buffer_search::Deploy", { "selection_search_enabled": true }],
+      "cmd-alt-l": [
+        "buffer_search::Deploy",
+        { "selection_search_enabled": true }
+      ],
       "cmd-e": ["buffer_search::Deploy", { "focus": false }],
-      "cmd->": "assistant::QuoteSelection",
-      "cmd-<": "assistant::InsertIntoEditor",
+      "cmd-shift-.": "assistant::QuoteSelection",
+      "cmd-shift-,": "assistant::InsertIntoEditor",
       "cmd-alt-e": "editor::SelectEnclosingSymbol",
       "alt-enter": "editor::OpenSelectionsInMultibuffer"
     }
@@ -267,8 +297,8 @@
       "cmd-enter": "assistant::Assist",
       "cmd-shift-enter": "assistant::Edit",
       "cmd-s": "workspace::Save",
-      "cmd->": "assistant::QuoteSelection",
-      "cmd-<": "assistant::InsertIntoEditor",
+      "cmd-shift-.": "assistant::QuoteSelection",
+      "cmd-shift-,": "assistant::InsertIntoEditor",
       "cmd-alt-/": "assistant::ToggleModelSelector",
       "shift-enter": "assistant::Split",
       "ctrl-r": "assistant::CycleMessageRole",
@@ -445,9 +475,9 @@
     "use_key_equivalents": true,
     "bindings": {
       "alt-cmd-left": "pane::ActivatePreviousItem",
-      "cmd-{": "pane::ActivatePreviousItem",
+      "cmd-shift-[": "pane::ActivatePreviousItem",
       "alt-cmd-right": "pane::ActivateNextItem",
-      "cmd-}": "pane::ActivateNextItem",
+      "cmd-shift-]": "pane::ActivateNextItem",
       "ctrl-shift-pageup": "pane::SwapItemLeft",
       "ctrl-shift-pagedown": "pane::SwapItemRight",
       "cmd-w": ["pane::CloseActiveItem", { "close_pinned": false }],
@@ -494,7 +524,10 @@
       "cmd-f2": "editor::SelectAllMatches", // Select all occurrences of current word
       "ctrl-cmd-d": ["editor::SelectPrevious", { "replace_newest": false }],
       "cmd-k cmd-d": ["editor::SelectNext", { "replace_newest": true }],
-      "cmd-k ctrl-cmd-d": ["editor::SelectPrevious", { "replace_newest": true }],
+      "cmd-k ctrl-cmd-d": [
+        "editor::SelectPrevious",
+        { "replace_newest": true }
+      ],
       "cmd-k cmd-i": "editor::Hover",
       "cmd-/": ["editor::ToggleComments", { "advance_downwards": false }],
       "cmd-u": "editor::UndoSelection",
@@ -508,7 +541,7 @@
       "shift-f12": "editor::GoToImplementation",
       "alt-cmd-f12": "editor::GoToTypeDefinitionSplit",
       "alt-shift-f12": "editor::FindAllReferences",
-      "cmd-|": "editor::MoveToEnclosingBracket",
+      "cmd-shift-\\": "editor::MoveToEnclosingBracket",
       "ctrl-m": "editor::MoveToEnclosingBracket",
       "alt-cmd-[": "editor::Fold",
       "alt-cmd-]": "editor::UnfoldLines",
@@ -562,7 +595,7 @@
       "ctrl-9": ["pane::ActivateItem", 8],
       "ctrl-0": "pane::ActivateLastItem",
       "ctrl--": "pane::GoBack",
-      "ctrl-_": "pane::GoForward",
+      "ctrl-shift--": "pane::GoForward",
       "cmd-shift-f": "pane::DeploySearch"
     }
   },
@@ -575,7 +608,7 @@
       "alt-cmd-o": "projects::OpenRecent",
       "ctrl-cmd-o": "projects::OpenRemote",
       "alt-cmd-b": "branches::OpenRecent",
-      "ctrl-~": "workspace::NewTerminal",
+      "ctrl-shift-`": "workspace::NewTerminal",
       "cmd-s": "workspace::Save",
       "cmd-k s": "workspace::SaveWithoutFormat",
       "alt-shift-enter": "toast::RunAction",
@@ -609,7 +642,7 @@
       "cmd-shift-e": "project_panel::ToggleFocus",
       "cmd-shift-b": "outline_panel::ToggleFocus",
       "ctrl-shift-g": "git_panel::ToggleFocus",
-      "cmd-?": "assistant::ToggleFocus",
+      "cmd-shift-/": "assistant::ToggleFocus",
       "cmd-alt-s": "workspace::SaveAll",
       "cmd-k m": "language_selector::Toggle",
       "escape": "workspace::Unfollow",
@@ -740,7 +773,7 @@
       "cmd-f8": "editor::GoToHunk",
       "cmd-shift-f8": "editor::GoToPreviousHunk",
       "ctrl-enter": "assistant::InlineAssist",
-      "ctrl-:": "editor::ToggleInlayHints"
+      "ctrl-shift-;": "editor::ToggleInlayHints"
     }
   },
   {
@@ -976,7 +1009,7 @@
       "cmd-k": "terminal::Clear",
       "cmd-n": "workspace::NewTerminal",
       "ctrl-enter": "assistant::InlineAssist",
-      "ctrl-_": null, // emacs undo
+      "ctrl-shift--": null, // emacs undo
       // Some nice conveniences
       "cmd-backspace": ["terminal::SendText", "\u0015"],
       "cmd-right": ["terminal::SendText", "\u0005"],

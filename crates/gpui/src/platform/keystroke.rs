@@ -192,7 +192,7 @@ impl Keystroke {
         })?;
         let code = KeyCode::parse(&key).unwrap_or_default();
 
-        Ok(Keystroke {
+        let ret = Ok(Keystroke {
             modifiers: Modifiers {
                 control,
                 alt,
@@ -203,7 +203,11 @@ impl Keystroke {
             code,
             face: key,
             key_char,
-        })
+        });
+        if code == KeyCode::Unknown {
+            println!("parse key stroke: {}, {:#?}", source, ret);
+        }
+        ret
     }
 
     /// Produces a representation of this key that Parse can understand.
