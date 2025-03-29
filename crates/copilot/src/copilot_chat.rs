@@ -1,4 +1,5 @@
 use std::path::PathBuf;
+use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::OnceLock;
 
@@ -6,6 +7,7 @@ use anyhow::{anyhow, Result};
 use chrono::DateTime;
 use collections::HashSet;
 use fs::Fs;
+use futures::Stream;
 use futures::{io::BufReader, stream::BoxStream, AsyncBufReadExt, AsyncReadExt, StreamExt};
 use gpui::{prelude::*, App, AsyncApp, Global};
 use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest};
@@ -131,6 +133,32 @@ pub struct Request {
     pub temperature: f32,
     pub model: Model,
     pub messages: Vec<ChatMessage>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tools: Vec<ToolWrapper>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_choice: Option<ToolChoice>,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct Tool {
+    pub name: String,
+    pub description: String,
+    pub parameters: serde_json::Value,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct ToolWrapper {
+    pub function: Tool,
+    #[serde(rename = "type")]
+    pub tool_type: String,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "lowercase")]
+pub enum ToolChoice {
+    Auto,
+    Any,
+    Tool { name: String },
 }
 
 impl Request {
@@ -142,6 +170,8 @@ impl Request {
             temperature: 0.1,
             model,
             messages,
+            tools: Vec::new(),
+            tool_choice: None,
         }
     }
 }
@@ -152,26 +182,48 @@ pub struct ChatMessage {
     pub content: String,
 }
 
-#[derive(Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub struct ResponseEvent {
     pub choices: Vec<ResponseChoice>,
     pub created: u64,
     pub id: String,
+    pub model: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Serialize, Deserialize, Debug)]
 pub struct ResponseChoice {
     pub index: usize,
     pub finish_reason: Option<String>,
-    pub delta: Option<ResponseDelta>,
+    // pub delta: Option<ResponseDelta>,
+    pub delta: ResponseDelta,
     pub message: Option<ResponseDelta>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Serialize, Deserialize, Debug)]
 pub struct ResponseDelta {
     pub content: Option<String>,
     pub role: Option<Role>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_calls: Option<Vec<ToolCallChunk>>,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct ToolCallChunk {
+    pub index: usize,
+    pub id: Option<String>,
+    pub function: Option<FunctionChunk>,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct FunctionChunk {
+    pub name: Option<String>,
+    pub arguments: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+pub struct ToolCallFunction {
+    pub name: String,
 }
 
 #[derive(Deserialize)]
