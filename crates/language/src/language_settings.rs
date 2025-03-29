@@ -279,12 +279,24 @@ pub enum EditPredictionsMode {
     Eager,
 }
 
+/// The provider that supplies edit predictions.
+#[derive(Copy, Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "kebab-case")]
+pub enum CopilotPredictionModel {
+    None,
+    #[default]
+    CopilotCodex,
+    #[serde(rename = "gpt-4o-copilot")]
+    Gpt4oCopilot,
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct CopilotSettings {
     /// HTTP/HTTPS proxy to use for Copilot.
     pub proxy: Option<String>,
     /// Disable certificate verification for proxy (not recommended).
     pub proxy_no_verify: Option<bool>,
+    pub prediction_model: CopilotPredictionModel,
 }
 
 /// The settings for all languages.
@@ -575,6 +587,11 @@ pub struct CopilotSettingsContent {
     /// Default: false
     #[serde(default)]
     pub proxy_no_verify: Option<bool>,
+    /// Inline completion model.
+    ///
+    /// Default: CopilotCodex
+    #[serde(default)]
+    pub prediction_model: CopilotPredictionModel,
 }
 
 /// The settings for enabling/disabling features.
@@ -1065,6 +1082,11 @@ impl AllLanguageSettings {
     pub fn edit_predictions_mode(&self) -> EditPredictionsMode {
         self.edit_predictions.mode
     }
+
+    /// Returns the edit predictions selected model
+    pub fn edit_prediction_model(&self) -> CopilotPredictionModel {
+        self.edit_predictions.copilot.clone().prediction_model
+    }
 }
 
 fn merge_with_editorconfig(settings: &mut LanguageSettings, cfg: &EditorconfigProperties) {
@@ -1181,6 +1203,7 @@ impl settings::Settings for AllLanguageSettings {
             .map(|copilot| CopilotSettings {
                 proxy: copilot.proxy,
                 proxy_no_verify: copilot.proxy_no_verify,
+                prediction_model: copilot.prediction_model,
             })
             .unwrap_or_default();
 
@@ -1234,6 +1257,14 @@ impl settings::Settings for AllLanguageSettings {
                 .and_then(|settings| settings.copilot.proxy_no_verify)
             {
                 copilot_settings.proxy_no_verify = Some(proxy_no_verify);
+            }
+
+            if let Some(prediction_model) = user_settings
+                .edit_predictions
+                .as_ref()
+                .and_then(|settings| Some(settings.copilot.prediction_model.clone()))
+            {
+                copilot_settings.prediction_model = prediction_model;
             }
 
             // A user's global settings override the default global settings and
