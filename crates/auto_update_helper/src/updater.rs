@@ -109,15 +109,12 @@ pub(crate) fn perform_update(app_dir: &Path, hwnd: Option<isize>) -> Result<()> 
 }
 
 #[cfg(not(test))]
-fn retry_loop<R>(hwnd: Option<HWND>, f: impl Fn() -> std::io::Result<R>) -> Result<R> {
+fn retry_loop<R>(hwnd: Option<HWND>, f: impl Fn() -> std::io::Result<R>) -> Result<()> {
     let start = Instant::now();
     while start.elapsed().as_secs() <= 1 {
-        match f() {
-            Ok(result) => {
-                unsafe { PostMessageW(hwnd, WM_JOB_UPDATED, WPARAM(0), LPARAM(0))? };
-                return Ok(result);
-            }
-            Err(_) => {}
+        if f().is_ok() {
+            unsafe { PostMessageW(hwnd, WM_JOB_UPDATED, WPARAM(0), LPARAM(0))? };
+            return Ok(());
         }
         std::thread::sleep(Duration::from_millis(10));
     }
@@ -125,7 +122,7 @@ fn retry_loop<R>(hwnd: Option<HWND>, f: impl Fn() -> std::io::Result<R>) -> Resu
 }
 
 #[cfg(test)]
-fn retry_loop<R: Default>(hwnd: Option<HWND>, _: impl Fn() -> std::io::Result<R>) -> Result<R> {
+fn retry_loop<R>(hwnd: Option<HWND>, _: impl Fn() -> std::io::Result<R>) -> Result<()> {
     let start = Instant::now();
     while start.elapsed().as_secs() <= 1 {
         let result = if let Ok(config) = std::env::var("ZED_AUTO_UPDATE") {
@@ -138,14 +135,11 @@ fn retry_loop<R: Default>(hwnd: Option<HWND>, _: impl Fn() -> std::io::Result<R>
                 _ => panic!("Unknown ZED_AUTO_UPDATE value: {}", config),
             }
         } else {
-            Ok(R::default())
+            Ok(())
         };
-        match result {
-            Ok(result) => {
-                unsafe { PostMessageW(hwnd, WM_JOB_UPDATED, WPARAM(0), LPARAM(0))? };
-                return Ok(result);
-            }
-            Err(_) => {}
+        if result.is_ok() {
+            unsafe { PostMessageW(hwnd, WM_JOB_UPDATED, WPARAM(0), LPARAM(0))? };
+            return Ok(());
         }
         std::thread::sleep(Duration::from_millis(10));
     }
