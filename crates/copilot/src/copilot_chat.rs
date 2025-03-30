@@ -15,6 +15,7 @@ use paths::home_dir;
 use serde::{Deserialize, Serialize};
 use settings::watch_config_dir;
 use strum::EnumIter;
+use thiserror::Error;
 
 pub const COPILOT_CHAT_COMPLETION_URL: &str = "https://api.githubcopilot.com/chat/completions";
 pub const COPILOT_CHAT_AUTH_URL: &str = "https://api.github.com/copilot_internal/v2/token";
@@ -460,14 +461,14 @@ async fn stream_completion(
                     Ok(line) => {
                         let line = line.strip_prefix("data: ")?;
                         if line.starts_with("[DONE]") {
+                            log::error!("Received [DONE], ending stream");
                             return None;
                         }
 
                         match serde_json::from_str::<ResponseEvent>(line) {
                             Ok(response) => {
-                                if response.choices.is_empty()
-                                    || response.choices.first().unwrap().finish_reason.is_some()
-                                {
+                                if response.choices.is_empty() {
+                                    log::error!("Received empty choices, ending stream");
                                     None
                                 } else {
                                     Some(Ok(response))
@@ -488,4 +489,19 @@ async fn stream_completion(
 
         Ok(futures::stream::once(async move { Ok(response) }).boxed())
     }
+}
+
+#[derive(Error, Debug)]
+pub enum CopilotChatError {
+    #[error("an error occurred while interacting with the Anthropic API: {error_type}: {message}", error_type = .0.error_type, message = .0.message)]
+    ApiError(ApiError),
+    #[error("{0}")]
+    Other(#[from] anyhow::Error),
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ApiError {
+    #[serde(rename = "type")]
+    pub error_type: String,
+    pub message: String,
 }

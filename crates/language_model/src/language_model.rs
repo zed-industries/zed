@@ -277,6 +277,7 @@ impl dyn LanguageModel {
     ) -> impl 'static + Future<Output = Result<T>> {
         let schema = schemars::schema_for!(T);
         let schema_json = serde_json::to_value(&schema).unwrap();
+        log::error!("Using tool: {}", T::name());
         let stream = self.use_any_tool(request, T::name(), T::description(), schema_json, cx);
         async move {
             let stream = stream.await?;
@@ -292,6 +293,7 @@ impl dyn LanguageModel {
     ) -> BoxFuture<'static, Result<BoxStream<'static, Result<String>>>> {
         let schema = schemars::schema_for!(T);
         let schema_json = serde_json::to_value(&schema).unwrap();
+        log::error!("Using tool: {}", T::name());
         self.use_any_tool(request, T::name(), T::description(), schema_json, cx)
     }
 }

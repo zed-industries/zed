@@ -438,7 +438,9 @@ impl LanguageModel for AnthropicModel {
         );
         let request = self.stream_completion(request, cx);
         let future = self.request_limiter.stream(async move {
-            let response = request.await.map_err(|err| anyhow!(err))?;
+            let response: Pin<
+                Box<dyn Stream<Item = std::result::Result<Event, AnthropicError>> + Send>,
+            > = request.await.map_err(|err| anyhow!(err))?;
             Ok(map_to_language_model_completion_events(response))
         });
         async move { Ok(future.await?.boxed()) }.boxed()
@@ -777,6 +779,10 @@ pub fn map_to_language_model_completion_events(
         },
     )
     .flat_map(futures::stream::iter)
+    .inspect(|event_result| match event_result {
+        Ok(event) => log::error!("LanguageModelCompletionEvent: {:?}", event),
+        Err(err) => log::error!("LanguageModelCompletionEvent error: {:?}", err),
+    })
 }
 
 /// Updates usage data by preferring counts from `new`.

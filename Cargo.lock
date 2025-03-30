@@ -3275,6 +3275,7 @@ dependencies = [
  "strum",
  "task",
  "theme",
+ "thiserror 2.0.12",
  "ui",
  "util",
  "workspace",
