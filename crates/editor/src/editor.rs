@@ -17772,7 +17772,9 @@ fn get_uncommitted_diff_for_buffer(
     let mut tasks = Vec::new();
     project.update(cx, |project, cx| {
         for buffer in buffers {
-            tasks.push(project.open_uncommitted_diff(buffer.clone(), cx))
+            if project::File::from_dyn(buffer.read(cx).file()).is_some() {
+                tasks.push(project.open_uncommitted_diff(buffer.clone(), cx))
+            }
         }
     });
     cx.spawn(async move |cx| {

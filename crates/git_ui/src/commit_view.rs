@@ -1,14 +1,14 @@
 use anyhow::{anyhow, Result};
 use buffer_diff::{BufferDiff, BufferDiffSnapshot};
 use editor::{Editor, EditorEvent, MultiBuffer};
-use git::repository::{CommitDiff, CommitSummary, RepoPath};
+use git::repository::{CommitDetails, CommitDiff, CommitSummary, RepoPath};
 use gpui::{
     AnyElement, AnyView, App, AppContext as _, AsyncApp, Context, Entity, EventEmitter,
     FocusHandle, Focusable, IntoElement, Render, WeakEntity, Window,
 };
 use language::{
     Anchor, Buffer, Capability, DiskState, File, LanguageRegistry, LineEnding, OffsetRangeExt as _,
-    Rope, TextBuffer,
+    Point, Rope, TextBuffer,
 };
 use multi_buffer::PathKey;
 use project::{git_store::Repository, Project, WorktreeId};
@@ -19,7 +19,7 @@ use std::{
     sync::Arc,
 };
 use ui::{Color, Icon, IconName, Label, LabelCommon as _};
-use util::ResultExt;
+use util::{truncate_and_trailoff, ResultExt};
 use workspace::{
     item::{BreadcrumbText, ItemEvent, TabContentParams},
     searchable::SearchableItemHandle,
@@ -27,7 +27,7 @@ use workspace::{
 };
 
 pub struct CommitView {
-    commit: CommitSummary,
+    commit: CommitDetails,
     editor: Entity<Editor>,
     multibuffer: Entity<MultiBuffer>,
 }
@@ -37,6 +37,14 @@ struct GitBlob {
     worktree_id: WorktreeId,
     is_deleted: bool,
 }
+
+struct CommitMetadataFile {
+    title: Arc<Path>,
+    worktree_id: WorktreeId,
+}
+
+const COMMIT_METADATA_NAMESPACE: &'static str = "0";
+const FILE_NAMESPACE: &'static str = "1";
 
 impl CommitView {
     pub fn open(
@@ -49,16 +57,29 @@ impl CommitView {
         let commit_diff = repo
             .update(cx, |repo, _| repo.load_commit_diff(commit.sha.to_string()))
             .ok();
+        let commit_details = repo
+            .update(cx, |repo, _| repo.show(commit.sha.to_string()))
+            .ok();
 
         window
             .spawn(cx, async move |cx| {
-                let commit_diff = commit_diff?.await.ok()?.log_err()?;
+                let (commit_diff, commit_details) = futures::join!(commit_diff?, commit_details?);
+                let commit_diff = commit_diff.log_err()?.log_err()?;
+                let commit_details = commit_details.log_err()?.log_err()?;
+
                 workspace
                     .update_in(cx, |workspace, window, cx| {
                         let repo = repo.upgrade().ok_or_else(|| anyhow!("repo removed"))?;
                         let project = workspace.project();
                         let commit_view = cx.new(|cx| {
-                            CommitView::new(commit, commit_diff, repo, project.clone(), window, cx)
+                            CommitView::new(
+                                commit_details,
+                                commit_diff,
+                                repo,
+                                project.clone(),
+                                window,
+                                cx,
+                            )
                         });
                         workspace.add_item_to_center(Box::new(commit_view), window, cx);
                         anyhow::Ok(())
@@ -68,8 +89,8 @@ impl CommitView {
             .detach();
     }
 
-    pub fn new(
-        commit: CommitSummary,
+    fn new(
+        commit: CommitDetails,
         commit_diff: CommitDiff,
         repository: Entity<Repository>,
         project: Entity<Project>,
@@ -91,6 +112,38 @@ impl CommitView {
             .worktrees(cx)
             .next()
             .map(|worktree| worktree.read(cx).id());
+
+        let mut metadata_buffer_id = None;
+        if let Some(worktree_id) = first_worktree_id {
+            let file = Arc::new(CommitMetadataFile {
+                title: PathBuf::from(format!("commit {}", commit.sha)).into(),
+                worktree_id,
+            });
+            let buffer = cx.new(|cx| {
+                let buffer = TextBuffer::new_normalized(
+                    0,
+                    cx.entity_id().as_non_zero_u64().into(),
+                    LineEnding::default(),
+                    commit.message.as_ref().into(),
+                );
+                metadata_buffer_id = Some(buffer.remote_id());
+                Buffer::build(buffer, Some(file.clone()), Capability::ReadWrite)
+            });
+            multibuffer.update(cx, |multibuffer, cx| {
+                multibuffer.set_excerpts_for_path(
+                    PathKey::namespaced(COMMIT_METADATA_NAMESPACE, file.title.clone()),
+                    buffer.clone(),
+                    vec![Point::zero()..buffer.read(cx).max_point()],
+                    0,
+                    cx,
+                );
+            });
+            editor.update(cx, |editor, cx| {
+                editor.change_selections(None, window, cx, |selections| {
+                    selections.select_ranges(vec![0..0]);
+                });
+            });
+        }
 
         cx.spawn(async move |this, mut cx| {
             for file in commit_diff.files {
@@ -125,7 +178,7 @@ impl CommitView {
                             .collect::<Vec<_>>();
                         let path = snapshot.file().unwrap().path().clone();
                         let _is_newly_added = multibuffer.set_excerpts_for_path(
-                            PathKey::namespaced("", path),
+                            PathKey::namespaced(FILE_NAMESPACE, path),
                             buffer,
                             diff_hunk_ranges,
                             editor::DEFAULT_MULTIBUFFER_CONTEXT,
@@ -181,6 +234,44 @@ impl language::File for GitBlob {
     }
 
     fn to_proto(&self, _cx: &App) -> language::proto::File {
+        unimplemented!()
+    }
+
+    fn is_private(&self) -> bool {
+        false
+    }
+}
+
+impl language::File for CommitMetadataFile {
+    fn as_local(&self) -> Option<&dyn language::LocalFile> {
+        None
+    }
+
+    fn disk_state(&self) -> DiskState {
+        DiskState::New
+    }
+
+    fn path(&self) -> &Arc<Path> {
+        &self.title
+    }
+
+    fn full_path(&self, _: &App) -> PathBuf {
+        self.title.as_ref().into()
+    }
+
+    fn file_name<'a>(&'a self, _: &'a App) -> &'a OsStr {
+        self.title.file_name().unwrap()
+    }
+
+    fn worktree_id(&self, _: &App) -> WorktreeId {
+        self.worktree_id
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    fn to_proto(&self, _: &App) -> language::proto::File {
         unimplemented!()
     }
 
@@ -279,7 +370,9 @@ impl Item for CommitView {
     }
 
     fn tab_content(&self, params: TabContentParams, _window: &Window, _: &App) -> AnyElement {
-        Label::new(format!("Commit '{}'", self.commit.subject))
+        let short_sha = self.commit.sha.get(0..8).unwrap_or(&*self.commit.sha);
+        let subject = truncate_and_trailoff(self.commit.message.split('\n').next().unwrap(), 40);
+        Label::new(format!("{short_sha} - {subject}",))
             .color(if params.selected {
                 Color::Default
             } else {
