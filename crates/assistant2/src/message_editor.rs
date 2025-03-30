@@ -446,8 +446,17 @@ impl Render for MessageEditor {
                                         ),
                                 )
                                 .child(
-                                    Button::new("review", "Review")
-                                        .label_size(LabelSize::XSmall)
+                                    Button::new("review", "Review Changes")
+                                        .label_size(LabelSize::Small)
+                                        .key_binding(
+                                            KeyBinding::for_action_in(
+                                                &OpenAssistantDiff,
+                                                &focus_handle,
+                                                window,
+                                                cx,
+                                            )
+                                            .map(|kb| kb.size(rems_from_px(12.))),
+                                        )
                                         .on_click(cx.listener(|this, _, window, cx| {
                                             this.handle_review_click(window, cx)
                                         })),
