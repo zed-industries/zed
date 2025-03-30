@@ -471,6 +471,7 @@ impl Item for AssistantDiff {
 impl Render for AssistantDiff {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let is_empty = self.multibuffer.read(cx).is_empty();
+
         div()
             .track_focus(&self.focus_handle)
             .key_context(if is_empty {
@@ -735,7 +736,14 @@ impl ToolbarItemView for AssistantDiffToolbar {
 
 impl Render for AssistantDiffToolbar {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        if self.assistant_diff(cx).is_none() {
+        let assistant_diff = match self.assistant_diff(cx) {
+            Some(ad) => ad,
+            None => return div(),
+        };
+
+        let is_empty = assistant_diff.read(cx).multibuffer.read(cx).is_empty();
+
+        if is_empty {
             return div();
         }
 
