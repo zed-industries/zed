@@ -5061,11 +5061,10 @@ impl BackgroundScanner {
                     );
 
                     if let Some(work_directory_id) = work_directory_id {
-                        let scan_id = state.snapshot.scan_id;
                         state.snapshot.git_repositories.update(
                             &work_directory_id,
                             |local_repository_entry| {
-                                local_repository_entry.status_scan_id = scan_id;
+                                local_repository_entry.status_scan_id += 1;
                             },
                         );
                     }
