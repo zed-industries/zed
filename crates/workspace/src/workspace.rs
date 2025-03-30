@@ -907,6 +907,7 @@ impl Workspace {
                     // Set `update` to `true` so that the history is updated.
                     // This event could be triggered by `AddFolderToProject` or `RemoveFromProject`.
                     this.serialize_workspace(window, cx);
+                    this.update_history(cx);
                 }
 
                 project::Event::DisconnectedFromHost => {
@@ -1345,7 +1346,8 @@ impl Workspace {
                         // If opened a new workspace, the workspace will be serialized and notified here.
                         // If opened an existing workspace, the workspace will be serialized and notified in the
                         // above `open_items` call.
-                        workspace.serialize_workspace(window, cx);
+                        // workspace.serialize_workspace(window, cx);
+                        workspace.update_history(cx);
                     }
                 })
                 .log_err();
@@ -4715,19 +4717,7 @@ impl Workspace {
             }
         }
 
-        let location = if let Some(ssh_project) = &self.serialized_ssh_project {
-            Some(SerializedWorkspaceLocation::Ssh(ssh_project.clone()))
-        } else if let Some(local_paths) = self.local_paths(cx) {
-            if !local_paths.is_empty() {
-                Some(SerializedWorkspaceLocation::from_local_paths(local_paths))
-            } else {
-                None
-            }
-        } else {
-            None
-        };
-
-        if let Some(location) = location {
+        if let Some(location) = self.serialize_workspace_localtion(cx) {
             let breakpoints = self.project.update(cx, |project, cx| {
                 project.breakpoint_store().read(cx).all_breakpoints(cx)
             });
@@ -4752,16 +4742,44 @@ impl Workspace {
             let manager = HistoryManager::global(cx);
             return window.spawn(cx, async move |cx| {
                 persistence::DB.save_workspace(serialized_workspace).await;
-                if let Some(manager) = manager {
-                    manager
-                        .update(cx, |this, cx| {
-                            this.update_history(database_id, entry, cx);
-                        })
-                        .log_err();
-                }
+                // if let Some(manager) = manager {
+                //     manager
+                //         .update(cx, |this, cx| {
+                //             this.update_history(database_id, entry, cx);
+                //         })
+                //         .log_err();
+                // }
             });
         }
         Task::ready(())
+    }
+
+    fn serialize_workspace_localtion(&self, cx: &App) -> Option<SerializedWorkspaceLocation> {
+        if let Some(ssh_project) = &self.serialized_ssh_project {
+            Some(SerializedWorkspaceLocation::Ssh(ssh_project.clone()))
+        } else if let Some(local_paths) = self.local_paths(cx) {
+            if !local_paths.is_empty() {
+                Some(SerializedWorkspaceLocation::from_local_paths(local_paths))
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+    }
+
+    fn update_history(&self, cx: &mut App) {
+        let Some(id) = self.database_id() else {
+            return;
+        };
+        let Some(location) = self.serialize_workspace_localtion(cx) else {
+            return;
+        };
+        if let Some(manager) = HistoryManager::global(cx) {
+            manager.update(cx, |this, cx| {
+                this.update_history(id, HistoryManagerEntry::new(id, &location), cx);
+            });
+        }
     }
 
     async fn serialize_items(
@@ -4932,6 +4950,7 @@ impl Workspace {
                     // Serialize ourself to make sure our timestamps and any pane / item changes are replicated
                     // Set `update` to `true` so that the history is updated, newly opened workspaces are moved to the top
                     workspace.serialize_workspace_internal(window, cx).detach();
+                    workspace.update_history(cx);
 
                     // Ensure that we mark the window as edited if we did load dirty items
                     workspace.update_window_edited(window, cx);
