@@ -1,4 +1,3 @@
-use std::cmp;
 use std::fmt::{self, Write};
 use std::sync::Arc;
 
@@ -63,7 +62,7 @@ impl CodeSymbolsInput {
     }
 }
 
-const RESULTS_PER_PAGE: u32 = 2000;
+const RESULTS_PER_PAGE: u32 = 1000;
 
 pub struct CodeSymbolsTool;
 
@@ -336,37 +335,73 @@ async fn render_outline(
         None => None,
     };
     let offset = input.offset.unwrap_or(0);
-    let entries = CodeSymbolIterator::new(symbols, None)
+    const RESULTS_PER_PAGE_USIZE: usize = RESULTS_PER_PAGE as usize;
+    let entries = CodeSymbolIterator::new(symbols, regex.clone())
         .skip(offset as usize)
         // Get 1 more than RESULTS_PER_PAGE so we can tell if there are more results.
-        .take((RESULTS_PER_PAGE as usize).saturating_add(1));
-    let labels = match language.and_then(|lang| registry.lsp_adapters(&lang.name()).first()) {
-        Some(lsp_adapter) => lsp_adapter
-            .labels_for_symbols(entries.clone(), lang)
-            .await
-            .ok(),
+        .take(RESULTS_PER_PAGE_USIZE.saturating_add(1))
+        .collect::<Vec<Entry>>();
+    let has_more = entries.len() > RESULTS_PER_PAGE_USIZE;
+
+    // Get language-specific labels, if available
+    let labels = match &language {
+        Some(lang) => {
+            let entries_for_labels: Vec<(String, SymbolKind)> = entries
+                .iter()
+                .take(RESULTS_PER_PAGE_USIZE)
+                .map(|entry| (entry.name.clone(), entry.kind))
+                .collect();
+
+            let lang_name = lang.name();
+            if let Some(lsp_adapter) = registry.lsp_adapters(&lang_name).first().cloned() {
+                lsp_adapter
+                    .labels_for_symbols(&entries_for_labels, lang)
+                    .await
+                    .ok()
+            } else {
+                None
+            }
+        }
         None => None,
     };
 
     let mut output = String::new();
-    let mut has_more = match labels {
-        Some(labels) => render_entries(&mut output, entries.zip(labels.iter())),
-        None => render_entries(&mut output, entries.map(|entry| (entry, None))),
+
+    let entries_rendered = match &labels {
+        Some(label_list) => render_entries(
+            &mut output,
+            entries
+                .into_iter()
+                .take(RESULTS_PER_PAGE_USIZE)
+                .zip(label_list.iter())
+                .map(|(entry, label)| (entry, label.as_ref())),
+        ),
+        None => render_entries(
+            &mut output,
+            entries
+                .into_iter()
+                .take(RESULTS_PER_PAGE_USIZE)
+                .map(|entry| (entry, None)),
+        ),
     };
 
+    // Calculate pagination information
+    let page_start = offset + 1;
+    let page_end = offset + entries_rendered;
+    let total_symbols = if has_more {
+        format!("more than {}", page_end)
+    } else {
+        page_end.to_string()
+    };
+
+    // Add pagination information
     if has_more {
-        writeln!(&mut output, "\nShowing symbols {}-{} (there were more symbols found; use offset: {} to see next page)",
-            offset + 1,
-            page_end,
-            page_end
+        writeln!(&mut output, "\nShowing symbols {page_start}-{page_end} (there were more symbols found; use offset: {page_end} to see next page)",
         )
     } else {
         writeln!(
             &mut output,
-            "\nShowing symbols {}-{} (total symbols: {})",
-            offset + 1,
-            page_end,
-            total_symbols
+            "\nShowing symbols {page_start}-{page_end} (total symbols: {total_symbols})",
         )
     }
     .ok();
@@ -374,18 +409,47 @@ async fn render_outline(
     Ok(output)
 }
 
-fn gather_symbols(
-    symbols: impl IntoIterator<Item = DocumentSymbol>,
-    predicate: impl Clone + Fn(&DocumentSymbol) -> bool,
-    all_symbols: &mut Vec<DocumentSymbol>,
-) {
-    for symbol in symbols.into_iter().filter(|symbol| predicate(&symbol)) {
-        all_symbols.push(symbol);
+fn render_entries<'a>(
+    output: &mut String,
+    entries: impl IntoIterator<Item = (Entry, Option<&'a CodeLabel>)>,
+) -> u32 {
+    let mut entries_rendered = 0;
+
+    for (entry, label) in entries {
+        // Indent based on depth ("" for level 0, "  " for level 1, etc.)
+        for _ in 0..entry.depth {
+            output.push_str("  ");
+        }
+
+        match label {
+            Some(label) => {
+                output.push_str(label.text());
+            }
+            None => {
+                write_symbol_kind(output, entry.kind).ok();
+                output.push_str(&entry.name);
+            }
+        }
+
+        // Add position information - convert to 1-based line numbers for display
+        let start_line = entry.start_line + 1;
+        let end_line = entry.end_line + 1;
+
+        if start_line == end_line {
+            writeln!(output, " [L{}]", start_line).ok();
+        } else {
+            writeln!(output, " [L{}-{}]", start_line, end_line).ok();
+        }
+        entries_rendered += 1;
     }
+
+    entries_rendered
 }
 
-// If we don't know the symbol kind,
-fn write_symbol_kind(buf: &mut String, kind: lsp::SymbolKind) -> Result<(), fmt::Error> {
+// We may not have a language server adapter to have language-specific
+// ways to translate SymbolKnd into a string. In that situation,
+// fall back on some reasonable default strings to render.
+fn write_symbol_kind(buf: &mut String, kind: SymbolKind) -> Result<(), fmt::Error> {
     match kind {
         SymbolKind::FILE => write!(buf, "file "),
         SymbolKind::MODULE => write!(buf, "module "),
@@ -415,41 +479,4 @@ fn write_symbol_kind(buf: &mut String, kind: lsp::SymbolKind) -> Result<(), fmt:
         SymbolKind::TYPE_PARAMETER => write!(buf, "type parameter "),
         _ => Ok(()),
     }
-}
-
-/// Only renders at most RESULTS_PER_PAGE entries, and returns whether the iterator
-/// had more entries left to render afterwards.
-fn render_entries(entries: impl IntoIterator<(Entry, Option<&CodeLabel>)>, output: &mut String) {
-    let mut entries_rendered = 0;
-
-    for (entry, code_label) in entries {
-        if entries_rendered >= RESULTS_PER_PAGE {
-            // We were about to render more than a page; instead, stop here
-            // and return that there were more entries to render.
-            return true;
-        }
-        // Add heading based on depth (# for level 1, ## for level 2, etc.)
-        write!(output, "{} ", "#".repeat(entry.depth)).ok();
-
-        if let Some(code_label) = code_label {
-            output.push_str(code_label.text());
-        } else {
-            write_symbol_kind(output, entry.kind).ok();
-            output.push_str(entry.name.as_str());
-        }
-
-        // Convert to 1-based line numbers for display
-        let start_line = entry.range.start.0.row as usize + 1;
-        let end_line = entry.range.end.0.row as usize + 1;
-
-        if start_line == end_line {
-            writeln!(output, " [L{}]", start_line).ok();
-        } else {
-            writeln!(output, " [L{}-{}]", start_line, end_line).ok();
-        }
-
-        entries_rendered += 1;
-    }
-
-    false
 }

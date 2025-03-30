@@ -6,6 +6,8 @@ pub struct Entry {
     pub name: String,
     pub kind: lsp::SymbolKind,
     pub depth: u32,
+    pub start_line: usize,
+    pub end_line: usize,
 }
 
 /// An iterator that filters document symbols based on a regex pattern.
@@ -27,7 +29,7 @@ impl<'a> CodeSymbolIterator<'a> {
             regex,
             pending_symbols: Vec::new(),
             current_index: 0,
-            current_depth: 1,
+            current_depth: 0,
         }
     }
 }
@@ -48,6 +50,8 @@ impl<'a> Iterator for CodeSymbolIterator<'a> {
                 name: symbol.name.clone(),
                 kind: symbol.kind,
                 depth,
+                start_line: symbol.range.start.0.row as usize,
+                end_line: symbol.range.end.0.row as usize,
             });
         }
 
@@ -74,6 +78,8 @@ impl<'a> Iterator for CodeSymbolIterator<'a> {
                     name: symbol.name.clone(),
                     kind: symbol.kind,
                     depth: self.current_depth,
+                    start_line: symbol.range.start.0.row as usize,
+                    end_line: symbol.range.end.0.row as usize,
                 });
             } else {
                 // Even if the parent doesn't match, push children to check them
