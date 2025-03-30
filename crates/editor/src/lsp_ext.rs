@@ -8,6 +8,7 @@ use language::Language;
 use lsp::LanguageServerId;
 use multi_buffer::Anchor;
 
+// TODO kb how frequently is this called?
 pub(crate) fn find_specific_language_server_in_selection<F>(
     editor: &Editor,
     cx: &mut App,
