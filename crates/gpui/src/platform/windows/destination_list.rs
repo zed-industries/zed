@@ -6,12 +6,16 @@ use windows::{
     core::{Interface, GUID, HSTRING},
     Win32::{
         Foundation::PROPERTYKEY,
+        Globalization::u_strlen,
         System::Com::{CoCreateInstance, StructuredStorage::PROPVARIANT, CLSCTX_INPROC_SERVER},
-        UI::Shell::{
-            Common::{IObjectArray, IObjectCollection},
-            DestinationList, EnumerableObjectCollection, ICustomDestinationList, IShellLinkW,
-            PropertiesSystem::IPropertyStore,
-            ShellLink,
+        UI::{
+            Controls::INFOTIPSIZE,
+            Shell::{
+                Common::{IObjectArray, IObjectCollection},
+                DestinationList, EnumerableObjectCollection, ICustomDestinationList, IShellLinkW,
+                PropertiesSystem::IPropertyStore,
+                ShellLink,
+            },
         },
     },
 };
@@ -63,13 +67,6 @@ const PKEY_TITLE: PROPERTYKEY = PROPERTYKEY {
     pid: 2,
 };
 
-// Copied from:
-// https://github.com/microsoft/windows-rs/blob/0fc3c2e5a13d4316d242bdeb0a52af611eba8bd4/crates/libs/windows/src/Windows/Win32/Storage/EnhancedStorage/mod.rs#L1525
-const PKEY_LINK_ARGS: PROPERTYKEY = PROPERTYKEY {
-    fmtid: GUID::from_u128(0x436f2667_14e2_4feb_b30a_146c53b5b674),
-    pid: 100,
-};
-
 fn create_destination_list() -> anyhow::Result<(ICustomDestinationList, Vec<SmallVec<[PathBuf; 2]>>)>
 {
     let list: ICustomDestinationList =
@@ -86,13 +83,15 @@ fn create_destination_list() -> anyhow::Result<(ICustomDestinationList, Vec<Smal
     let mut removed = Vec::with_capacity(count as usize);
     for i in 0..count {
         let shell_link: IShellLinkW = unsafe { user_removed.GetAt(i)? };
-        let store: IPropertyStore = shell_link.cast()?;
-        let argument = unsafe { store.GetValue(&PKEY_LINK_ARGS)? };
-        let args = argument
-            .to_string()
-            .split_whitespace()
-            .map(|s| PathBuf::from(s.trim_matches('"')))
-            .collect();
+        let description = {
+            // INFOTIPSIZE is the maximum size of the buffer
+            // see https://learn.microsoft.com/en-us/windows/win32/api/shobjidl_core/nf-shobjidl_core-ishelllinkw-getdescription
+            let mut buffer = [0u16; INFOTIPSIZE as usize];
+            unsafe { shell_link.GetDescription(&mut buffer)? };
+            let len = unsafe { u_strlen(buffer.as_ptr()) };
+            String::from_utf16_lossy(&buffer[..len as usize])
+        };
+        let args = description.split('\n').map(PathBuf::from).collect();
 
         removed.push(args);
     }
