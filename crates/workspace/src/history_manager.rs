@@ -62,9 +62,6 @@ impl HistoryManager {
 
     pub fn update_history(&mut self, id: WorkspaceId, entry: HistoryManagerEntry, cx: &App) {
         if let Some(pos) = self.history.iter().position(|e| e.id == id) {
-            if pos == 0 {
-                return;
-            }
             self.history.remove(pos);
         }
         self.history.insert(0, entry);
