@@ -1268,7 +1268,7 @@ impl ActiveThread {
 
         let editor_bg = cx.theme().colors().editor_background;
 
-        div().py_2().child(
+        div().pt_0p5().pb_2().child(
             v_flex()
                 .rounded_lg()
                 .border_1()
