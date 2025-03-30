@@ -1660,7 +1660,8 @@ mod tests {
                     snapshot_edits.extend(map.randomly_mutate(&mut rng));
                 }
                 40..=59 => {
-                    let (_, edits) = inlay_map.randomly_mutate(&mut next_inlay_id, &mut rng);
+                    let (_, edits) =
+                        inlay_map.randomly_mutate(&mut token_map, &mut next_inlay_id, &mut rng);
                     inlay_edits = edits;
                 }
                 _ => buffer.update(cx, |buffer, cx| {

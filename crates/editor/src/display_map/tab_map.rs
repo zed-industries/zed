@@ -753,14 +753,14 @@ mod tests {
         let buffer_snapshot = buffer.read(cx).snapshot(cx);
         log::info!("Buffer text: {:?}", buffer_snapshot.text());
 
-        let (_, token_snapshot) = TokenMap::new(buffer_snapshot.clone());
+        let (mut token_map, token_snapshot) = TokenMap::new(buffer_snapshot.clone());
         let (mut inlay_map, inlay_snapshot) = InlayMap::new(token_snapshot);
         log::info!("InlayMap text: {:?}", inlay_snapshot.text());
         let (mut fold_map, _) = FoldMap::new(inlay_snapshot.clone());
         fold_map.randomly_mutate(&mut rng);
         let (fold_snapshot, _) = fold_map.read(inlay_snapshot, vec![]);
         log::info!("FoldMap text: {:?}", fold_snapshot.text());
-        let (inlay_snapshot, _) = inlay_map.randomly_mutate(&mut 0, &mut rng);
+        let (inlay_snapshot, _) = inlay_map.randomly_mutate(&mut token_map, &mut 0, &mut rng);
         log::info!("InlayMap text: {:?}", inlay_snapshot.text());
 
         let (mut tab_map, _) = TabMap::new(fold_snapshot.clone(), tab_size);

@@ -1285,7 +1285,7 @@ mod tests {
                 }
                 40..=59 => {
                     let (inlay_snapshot, inlay_edits) =
-                        inlay_map.randomly_mutate(token_map, &mut next_inlay_id, &mut rng);
+                        inlay_map.randomly_mutate(&mut token_map, &mut next_inlay_id, &mut rng);
                     let (fold_snapshot, fold_edits) = fold_map.read(inlay_snapshot, inlay_edits);
                     let (tabs_snapshot, tab_edits) =
                         tab_map.sync(fold_snapshot, fold_edits, tab_size);

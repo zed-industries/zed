@@ -560,7 +560,7 @@ impl InlayMap {
 
     pub fn splice(
         &mut self,
-        mut token_map: TokenMap,
+        token_map: &mut TokenMap,
         to_remove: &[InlayId],
         to_insert: Vec<Inlay>,
     ) -> (InlaySnapshot, Vec<InlayEdit>) {
@@ -1208,13 +1208,13 @@ mod tests {
     fn test_basic_inlays(cx: &mut App) {
         let buffer = MultiBuffer::build_simple("abcdefghi", cx);
         let buffer_edits = buffer.update(cx, |buffer, _| buffer.subscribe());
-        let (token_map, token_snapshot) = TokenMap::new(buffer.read(cx).snapshot(cx));
+        let (mut token_map, token_snapshot) = TokenMap::new(buffer.read(cx).snapshot(cx));
         let (mut inlay_map, inlay_snapshot) = InlayMap::new(token_snapshot);
         assert_eq!(inlay_snapshot.text(), "abcdefghi");
         let mut next_inlay_id = 0;
 
         let (inlay_snapshot, _) = inlay_map.splice(
-            token_map,
+            &mut token_map,
             &[],
             vec![Inlay {
                 id: InlayId::Hint(post_inc(&mut next_inlay_id)),
@@ -1276,21 +1276,24 @@ mod tests {
         buffer.update(cx, |buffer, cx| {
             buffer.edit([(2..3, "x"), (3..3, "y"), (4..4, "z")], None, cx)
         });
-        let (inlay_snapshot, _) = inlay_map.sync(
+        let (token_snapshot, token_edits) = token_map.sync(
             buffer.read(cx).snapshot(cx),
             buffer_edits.consume().into_inner(),
         );
+        let (inlay_snapshot, _) = inlay_map.sync(token_snapshot, token_edits);
         assert_eq!(inlay_snapshot.text(), "abxy|123|dzefghi");
 
         // An edit surrounding the inlay should invalidate it.
         buffer.update(cx, |buffer, cx| buffer.edit([(4..5, "D")], None, cx));
-        let (inlay_snapshot, _) = inlay_map.sync(
+        let (token_snapshot, token_edits) = token_map.sync(
             buffer.read(cx).snapshot(cx),
             buffer_edits.consume().into_inner(),
         );
+        let (inlay_snapshot, _) = inlay_map.sync(token_snapshot, token_edits);
         assert_eq!(inlay_snapshot.text(), "abxyDzefghi");
 
         let (inlay_snapshot, _) = inlay_map.splice(
+            &mut token_map,
             &[],
             vec![
                 Inlay {
@@ -1309,10 +1312,11 @@ mod tests {
 
         // Edits ending where the inlay starts should not move it if it has a left bias.
         buffer.update(cx, |buffer, cx| buffer.edit([(3..3, "JKL")], None, cx));
-        let (inlay_snapshot, _) = inlay_map.sync(
+        let (token_snapshot, token_edits) = token_map.sync(
             buffer.read(cx).snapshot(cx),
             buffer_edits.consume().into_inner(),
         );
+        let (inlay_snapshot, _) = inlay_map.sync(token_snapshot, token_edits);
         assert_eq!(inlay_snapshot.text(), "abx|123|JKL|456|yDzefghi");
 
         assert_eq!(
@@ -1488,6 +1492,7 @@ mod tests {
 
         // The inlays can be manually removed.
         let (inlay_snapshot, _) = inlay_map.splice(
+            &mut token_map,
             &inlay_map
                 .inlays
                 .iter()
@@ -1501,12 +1506,13 @@ mod tests {
     #[gpui::test]
     fn test_inlay_buffer_rows(cx: &mut App) {
         let buffer = MultiBuffer::build_simple("abc\ndef\nghi", cx);
-        let (_, token_snapshot) = TokenMap::new(buffer.read(cx).snapshot(cx));
+        let (mut token_map, token_snapshot) = TokenMap::new(buffer.read(cx).snapshot(cx));
         let (mut inlay_map, inlay_snapshot) = InlayMap::new(token_snapshot);
         assert_eq!(inlay_snapshot.text(), "abc\ndef\nghi");
         let mut next_inlay_id = 0;
 
         let (inlay_snapshot, _) = inlay_map.splice(
+            &mut token_map,
             &[],
             vec![
                 Inlay {
@@ -1556,7 +1562,7 @@ mod tests {
         let mut buffer_snapshot = buffer.read(cx).snapshot(cx);
         let mut next_inlay_id = 0;
         log::info!("buffer text: {:?}", buffer_snapshot.text());
-        let (_, token_snapshot) = TokenMap::new(buffer.read(cx).snapshot(cx));
+        let (mut token_map, token_snapshot) = TokenMap::new(buffer.read(cx).snapshot(cx));
         let (mut inlay_map, mut inlay_snapshot) = InlayMap::new(token_snapshot);
         for _ in 0..operations {
             let mut inlay_edits = Patch::default();
@@ -1565,7 +1571,8 @@ mod tests {
             let mut buffer_edits = Vec::new();
             match rng.gen_range(0..=100) {
                 0..=50 => {
-                    let (snapshot, edits) = inlay_map.randomly_mutate(&mut next_inlay_id, &mut rng);
+                    let (snapshot, edits) =
+                        inlay_map.randomly_mutate(&mut token_map, &mut next_inlay_id, &mut rng);
                     log::info!("mutated text: {:?}", snapshot.text());
                     inlay_edits = Patch::new(edits);
                 }
@@ -1580,8 +1587,10 @@ mod tests {
                 }),
             };
 
+            let (new_token_snapshot, new_token_edits) =
+                token_map.sync(buffer_snapshot.clone(), buffer_edits);
             let (new_inlay_snapshot, new_inlay_edits) =
-                inlay_map.sync(buffer_snapshot.clone(), buffer_edits);
+                inlay_map.sync(new_token_snapshot, new_token_edits);
             inlay_snapshot = new_inlay_snapshot;
             inlay_edits = inlay_edits.compose(new_inlay_edits);
 
