@@ -1,5 +1,6 @@
 use ::proto::{FromProto, ToProto};
 use anyhow::{anyhow, Result};
+use dap::DapRegistry;
 use extension::ExtensionHostProxy;
 use extension_host::headless_host::HeadlessExtensionStore;
 use fs::Fs;
@@ -10,7 +11,7 @@ use node_runtime::NodeRuntime;
 use project::{
     buffer_store::{BufferStore, BufferStoreEvent},
     debugger::{breakpoint_store::BreakpointStore, dap_store::DapStore},
-    git::GitStore,
+    git_store::GitStore,
     project_settings::SettingsObserver,
     search::SearchQuery,
     task_store::TaskStore,
@@ -52,6 +53,7 @@ pub struct HeadlessAppState {
     pub http_client: Arc<dyn HttpClient>,
     pub node_runtime: NodeRuntime,
     pub languages: Arc<LanguageRegistry>,
+    pub debug_adapters: Arc<DapRegistry>,
     pub extension_host_proxy: Arc<ExtensionHostProxy>,
 }
 
@@ -69,6 +71,7 @@ impl HeadlessProject {
             http_client,
             node_runtime,
             languages,
+            debug_adapters,
             extension_host_proxy: proxy,
         }: HeadlessAppState,
         cx: &mut Context<Self>,
@@ -108,6 +111,7 @@ impl HeadlessProject {
                 node_runtime.clone(),
                 fs.clone(),
                 languages.clone(),
+                debug_adapters.clone(),
                 environment.clone(),
                 toolchain_store.read(cx).as_language_toolchain_store(),
                 breakpoint_store.clone(),
@@ -140,7 +144,6 @@ impl HeadlessProject {
 
         let task_store = cx.new(|cx| {
             let mut task_store = TaskStore::local(
-                fs.clone(),
                 buffer_store.downgrade(),
                 worktree_store.clone(),
                 toolchain_store.read(cx).as_language_toolchain_store(),

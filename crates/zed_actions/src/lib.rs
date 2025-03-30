@@ -188,7 +188,7 @@ pub mod assistant {
     use schemars::JsonSchema;
     use serde::Deserialize;
 
-    actions!(assistant, [ToggleFocus, DeployPromptLibrary]);
+    actions!(assistant, [ToggleFocus, OpenPromptLibrary]);
 
     #[derive(Clone, Default, Deserialize, PartialEq, JsonSchema)]
     #[serde(deny_unknown_fields)]

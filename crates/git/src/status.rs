@@ -1,7 +1,7 @@
 use crate::repository::RepoPath;
 use anyhow::{anyhow, Result};
 use serde::{Deserialize, Serialize};
-use std::{path::Path, process::Stdio, sync::Arc};
+use std::{path::Path, str::FromStr, sync::Arc};
 use util::ResultExt;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -438,50 +438,16 @@ impl std::ops::Sub for GitSummary {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct GitStatus {
     pub entries: Arc<[(RepoPath, FileStatus)]>,
 }
 
-impl GitStatus {
-    pub(crate) fn new(
-        git_binary: &Path,
-        working_directory: &Path,
-        path_prefixes: &[RepoPath],
-    ) -> Result<Self> {
-        let child = util::command::new_std_command(git_binary)
-            .current_dir(working_directory)
-            .args([
-                "--no-optional-locks",
-                "status",
-                "--porcelain=v1",
-                "--untracked-files=all",
-                "--no-renames",
-                "-z",
-            ])
-            .args(path_prefixes.iter().map(|path_prefix| {
-                if path_prefix.0.as_ref() == Path::new("") {
-                    Path::new(".")
-                } else {
-                    path_prefix
-                }
-            }))
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .map_err(|e| anyhow!("Failed to start git status process: {e}"))?;
+impl FromStr for GitStatus {
+    type Err = anyhow::Error;
 
-        let output = child
-            .wait_with_output()
-            .map_err(|e| anyhow!("Failed to read git status output: {e}"))?;
-
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(anyhow!("git status process failed: {stderr}"));
-        }
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        let mut entries = stdout
+    fn from_str(s: &str) -> Result<Self> {
+        let mut entries = s
             .split('\0')
             .filter_map(|entry| {
                 let sep = entry.get(2..3)?;

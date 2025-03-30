@@ -447,7 +447,7 @@ impl<T: 'static> Entity<T> {
     pub fn update<C, R>(
         &self,
         cx: &mut C,
-        update: impl FnOnce(&mut T, &mut Context<'_, T>) -> R,
+        update: impl FnOnce(&mut T, &mut Context<T>) -> R,
     ) -> C::Result<R>
     where
         C: AppContext,
@@ -461,7 +461,7 @@ impl<T: 'static> Entity<T> {
     pub fn update_in<C, R>(
         &self,
         cx: &mut C,
-        update: impl FnOnce(&mut T, &mut Window, &mut Context<'_, T>) -> R,
+        update: impl FnOnce(&mut T, &mut Window, &mut Context<T>) -> R,
     ) -> C::Result<R>
     where
         C: VisualContext,
@@ -679,7 +679,7 @@ impl<T: 'static> WeakEntity<T> {
     pub fn update<C, R>(
         &self,
         cx: &mut C,
-        update: impl FnOnce(&mut T, &mut Context<'_, T>) -> R,
+        update: impl FnOnce(&mut T, &mut Context<T>) -> R,
     ) -> Result<R>
     where
         C: AppContext,
@@ -698,7 +698,7 @@ impl<T: 'static> WeakEntity<T> {
     pub fn update_in<C, R>(
         &self,
         cx: &mut C,
-        update: impl FnOnce(&mut T, &mut Window, &mut Context<'_, T>) -> R,
+        update: impl FnOnce(&mut T, &mut Window, &mut Context<T>) -> R,
     ) -> Result<R>
     where
         C: VisualContext,

@@ -704,7 +704,7 @@ pub(super) async fn format_with_prettier(
     prettier_store: &WeakEntity<PrettierStore>,
     buffer: &Entity<Buffer>,
     cx: &mut AsyncApp,
-) -> Option<Result<crate::lsp_store::FormatOperation>> {
+) -> Option<Result<language::Diff>> {
     let prettier_instance = prettier_store
         .update(cx, |prettier_store, cx| {
             prettier_store.prettier_instance_for_buffer(buffer, cx)
@@ -738,7 +738,6 @@ pub(super) async fn format_with_prettier(
             let format_result = prettier
                 .format(buffer, buffer_path, ignore_dir, cx)
                 .await
-                .map(crate::lsp_store::FormatOperation::Prettier)
                 .with_context(|| format!("{} failed to format buffer", prettier_description));
 
             Some(format_result)

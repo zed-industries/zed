@@ -1320,7 +1320,7 @@ impl Buffer {
             this.update(cx, |this, cx| {
                 if this.version() == diff.base_version {
                     this.finalize_last_transaction();
-                    this.apply_diff(diff, cx);
+                    this.apply_diff(diff, true, cx);
                     tx.send(this.finalize_last_transaction().cloned()).ok();
                     this.has_conflict = false;
                     this.did_reload(this.version(), this.line_ending(), new_mtime, cx);
@@ -1555,6 +1555,13 @@ impl Buffer {
         };
         self.apply_diagnostic_update(server_id, diagnostics, lamport_timestamp, cx);
         self.send_operation(op, true, cx);
+    }
+
+    pub fn get_diagnostics(&self, server_id: LanguageServerId) -> Option<&DiagnosticSet> {
+        let Ok(idx) = self.diagnostics.binary_search_by_key(&server_id, |v| v.0) else {
+            return None;
+        };
+        Some(&self.diagnostics[idx].1)
     }
 
     fn request_autoindent(&mut self, cx: &mut Context<Self>) {
@@ -1872,9 +1879,14 @@ impl Buffer {
     /// Applies a diff to the buffer. If the buffer has changed since the given diff was
     /// calculated, then adjust the diff to account for those changes, and discard any
     /// parts of the diff that conflict with those changes.
-    pub fn apply_diff(&mut self, diff: Diff, cx: &mut Context<Self>) -> Option<TransactionId> {
-        // Check for any edits to the buffer that have occurred since this diff
-        // was computed.
+    ///
+    /// If `atomic` is true, the diff will be applied as a single edit.
+    pub fn apply_diff(
+        &mut self,
+        diff: Diff,
+        atomic: bool,
+        cx: &mut Context<Self>,
+    ) -> Option<TransactionId> {
         let snapshot = self.snapshot();
         let mut edits_since = snapshot.edits_since::<usize>(&diff.base_version).peekable();
         let mut delta = 0;
@@ -1904,7 +1916,17 @@ impl Buffer {
 
         self.start_transaction();
         self.text.set_line_ending(diff.line_ending);
-        self.edit(adjusted_edits, None, cx);
+        if atomic {
+            self.edit(adjusted_edits, None, cx);
+        } else {
+            let mut delta = 0isize;
+            for (range, new_text) in adjusted_edits {
+                let adjusted_range =
+                    (range.start as isize + delta) as usize..(range.end as isize + delta) as usize;
+                delta += new_text.len() as isize - range.len() as isize;
+                self.edit([(adjusted_range, new_text)], None, cx);
+            }
+        }
         self.end_transaction(cx)
     }
 
@@ -1928,13 +1950,14 @@ impl Buffer {
         if self.capability == Capability::ReadOnly {
             return false;
         }
-        if self.has_conflict || self.has_unsaved_edits() {
+        if self.has_conflict {
             return true;
         }
         match self.file.as_ref().map(|f| f.disk_state()) {
-            Some(DiskState::New) => !self.is_empty(),
-            Some(DiskState::Deleted) => true,
-            _ => false,
+            Some(DiskState::New) | Some(DiskState::Deleted) => {
+                !self.is_empty() && self.has_unsaved_edits()
+            }
+            _ => self.has_unsaved_edits(),
         }
     }
 
@@ -1955,7 +1978,7 @@ impl Buffer {
                 }
                 None => true,
             },
-            DiskState::Deleted => true,
+            DiskState::Deleted => false,
         }
     }
 
@@ -2160,8 +2183,10 @@ impl Buffer {
     {
         // Skip invalid edits and coalesce contiguous ones.
         let mut edits: Vec<(Range<usize>, Arc<str>)> = Vec::new();
+
         for (range, new_text) in edits_iter {
             let mut range = range.start.to_offset(self)..range.end.to_offset(self);
+
             if range.start > range.end {
                 mem::swap(&mut range.start, &mut range.end);
             }
@@ -4727,21 +4752,25 @@ impl CharClassifier {
     }
 
     pub fn kind_with(&self, c: char, ignore_punctuation: bool) -> CharKind {
-        if c.is_whitespace() {
-            return CharKind::Whitespace;
-        } else if c.is_alphanumeric() || c == '_' {
+        if c.is_alphanumeric() || c == '_' {
             return CharKind::Word;
         }
 
         if let Some(scope) = &self.scope {
-            if let Some(characters) = scope.word_characters() {
+            let characters = if self.for_completion {
+                scope.completion_query_characters()
+            } else {
+                scope.word_characters()
+            };
+            if let Some(characters) = characters {
                 if characters.contains(&c) {
-                    if c == '-' && !self.for_completion && !ignore_punctuation {
-                        return CharKind::Punctuation;
-                    }
                     return CharKind::Word;
                 }
             }
+        }
+
+        if c.is_whitespace() {
+            return CharKind::Whitespace;
         }
 
         if ignore_punctuation {

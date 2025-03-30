@@ -1,5 +1,3 @@
-// #![allow(unused, dead_code)]
-
 use crate::branch_picker::{self, BranchList};
 use crate::git_panel::{commit_message_editor, GitPanel};
 use git::{Commit, GenerateCommitMessage};
@@ -104,7 +102,7 @@ impl CommitModal {
         });
     }
 
-    pub fn toggle(workspace: &mut Workspace, window: &mut Window, cx: &mut Context<'_, Workspace>) {
+    pub fn toggle(workspace: &mut Workspace, window: &mut Window, cx: &mut Context<Workspace>) {
         let Some(git_panel) = workspace.panel::<GitPanel>(cx) else {
             return;
         };
@@ -351,7 +349,7 @@ impl CommitModal {
 }
 
 impl Render for CommitModal {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let properties = self.properties;
         let width = px(properties.modal_width);
         let container_padding = px(properties.container_padding);

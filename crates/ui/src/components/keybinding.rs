@@ -33,8 +33,7 @@ impl KeyBinding {
             return Self::for_action_in(action, &focused, window, cx);
         }
         let key_binding =
-            gpui::Keymap::binding_to_display_from_bindings(&window.bindings_for_action(action))
-                .cloned()?;
+            gpui::Keymap::binding_to_display_from_bindings(window.bindings_for_action(action))?;
         Some(Self::new(key_binding, cx))
     }
 
@@ -46,9 +45,8 @@ impl KeyBinding {
         cx: &App,
     ) -> Option<Self> {
         let key_binding = gpui::Keymap::binding_to_display_from_bindings(
-            &window.bindings_for_action_in(action, focus),
-        )
-        .cloned()?;
+            window.bindings_for_action_in(action, focus),
+        )?;
         Some(Self::new(key_binding, cx))
     }
 

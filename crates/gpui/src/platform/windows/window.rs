@@ -48,7 +48,7 @@ pub struct WindowsWindowState {
 
     pub click_state: ClickState,
     pub system_settings: WindowsSystemSettings,
-    pub current_cursor: HCURSOR,
+    pub current_cursor: Option<HCURSOR>,
     pub nc_button_pressed: Option<u32>,
 
     pub display: WindowsDisplay,
@@ -76,7 +76,7 @@ impl WindowsWindowState {
         hwnd: HWND,
         transparent: bool,
         cs: &CREATESTRUCTW,
-        current_cursor: HCURSOR,
+        current_cursor: Option<HCURSOR>,
         display: WindowsDisplay,
         gpu_context: &BladeContext,
     ) -> Result<Self> {
@@ -351,7 +351,7 @@ struct WindowCreateContext<'a> {
     transparent: bool,
     is_movable: bool,
     executor: ForegroundExecutor,
-    current_cursor: HCURSOR,
+    current_cursor: Option<HCURSOR>,
     windows_version: WindowsVersion,
     validation_number: usize,
     main_receiver: flume::Receiver<Runnable>,
@@ -518,6 +518,32 @@ impl PlatformWindow for WindowsWindow {
     /// whether the mouse collides with other elements of GPUI).
     fn content_size(&self) -> Size<Pixels> {
         self.0.state.borrow().content_size()
+    }
+
+    fn resize(&mut self, size: Size<Pixels>) {
+        let hwnd = self.0.hwnd;
+        let bounds =
+            crate::bounds(self.bounds().origin, size).to_device_pixels(self.scale_factor());
+        let rect = calculate_window_rect(bounds, self.0.state.borrow().border_offset);
+
+        self.0
+            .executor
+            .spawn(async move {
+                unsafe {
+                    SetWindowPos(
+                        hwnd,
+                        None,
+                        bounds.origin.x.0,
+                        bounds.origin.y.0,
+                        rect.right - rect.left,
+                        rect.bottom - rect.top,
+                        SWP_NOMOVE,
+                    )
+                    .context("unable to set window content size")
+                    .log_err();
+                }
+            })
+            .detach();
     }
 
     fn scale_factor(&self) -> f32 {

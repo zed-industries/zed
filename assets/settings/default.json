@@ -25,7 +25,7 @@
   // Features that can be globally enabled or disabled
   "features": {
     // Which edit prediction provider to use.
-    "edit_prediction_provider": "copilot"
+    "edit_prediction_provider": "zed"
   },
   // The name of a font to use for rendering text in the editor
   "buffer_font_family": "Zed Plex Mono",
@@ -115,6 +115,15 @@
   "confirm_quit": false,
   // Whether to restore last closed project when fresh Zed instance is opened.
   "restore_on_startup": "last_session",
+  // Whether to attempt to restore previous file's state when opening it again.
+  // The state is stored per pane.
+  // When disabled, defaults are applied instead of the state restoration.
+  //
+  // E.g. for editors, selections, folds and scroll positions are restored, if the same file is closed and, later, opened again in the same pane.
+  // When disabled, a single selection in the very beginning of the file, zero scroll position and no folds state is used as a default.
+  //
+  // Default: true
+  "restore_on_file_reopen": true,
   // Size of the drop target in the editor.
   "drop_target_size": 0.2,
   // Whether the window should be closed when using 'close active item' on a window with no tabs.
@@ -155,6 +164,8 @@
   //
   // Default: not set, defaults to "bar"
   "cursor_shape": null,
+  // Determines when the mouse cursor should be hidden in an editor or input box.
+  "hide_mouse": "on_typing_and_movement",
   // How to highlight the current line in the editor.
   //
   // 1. Don't highlight the current line:
@@ -184,6 +195,11 @@
   // Whether to show the signature help after completion or a bracket pair inserted.
   // If `auto_signature_help` is enabled, this setting will be treated as enabled also.
   "show_signature_help_after_edits": false,
+  // What to do when go to definition yields no results.
+  //
+  // 1. Do nothing: `none`
+  // 2. Find references for the same symbol: `find_all_references` (default)
+  "go_to_definition_fallback": "find_all_references",
   // Whether to show wrap guides (vertical rulers) in the editor.
   // Setting this to true will show a guide at the 'preferred_line_length' value
   // if 'soft_wrap' is set to 'preferred_line_length', and will show any
@@ -429,6 +445,8 @@
   "project_panel": {
     // Whether to show the project panel button in the status bar
     "button": true,
+    // Whether to hide the gitignore entries in the project panel.
+    "hide_gitignore": false,
     // Default width of the project panel.
     "default_width": 240,
     // Where to dock the project panel. Can be 'left' or 'right'.
@@ -620,7 +638,46 @@
       "provider": "zed.dev",
       // The model to use.
       "model": "claude-3-5-sonnet-latest"
-    }
+    },
+    "default_profile": "write",
+    "profiles": {
+      "ask": {
+        "name": "Ask",
+        "tools": {
+          "diagnostics": true,
+          "fetch": true,
+          "list-directory": true,
+          "now": true,
+          "path-search": true,
+          "read-file": true,
+          "regex-search": true,
+          "thinking": true
+        }
+      },
+      "write": {
+        "name": "Write",
+        "tools": {
+          "bash": true,
+          "batch-tool": true,
+          "copy-path": true,
+          "create-file": true,
+          "delete-path": true,
+          "diagnostics": true,
+          "find-replace-file": true,
+          "edit-files": false,
+          "fetch": true,
+          "list-directory": true,
+          "move-path": true,
+          "now": true,
+          "path-search": true,
+          "read-file": true,
+          "regex-search": true,
+          "thinking": true
+        }
+      }
+    },
+    // Shows a notification when the agent needs confirmation before running an edit tool call or when that's concluded.
+    "notify_when_agent_waiting": true
   },
   // The settings for slash commands.
   "slash_commands": {
@@ -999,7 +1056,7 @@
     //         "alternate_scroll": "on",
     //  2. Default alternate scroll mode to off
     //         "alternate_scroll": "off",
-    "alternate_scroll": "off",
+    "alternate_scroll": "on",
     // Set whether the option key behaves as the meta key.
     // May take 2 values:
     //  1. Rely on default platform handling of option key, on macOS
@@ -1279,11 +1336,19 @@
         "allowed": true
       }
     },
+    "LaTeX": {
+      "format_on_save": "on",
+      "formatter": "language_server",
+      "language_servers": ["texlab", "..."],
+      "prettier": {
+        "allowed": false
+      }
+    },
     "Markdown": {
       "format_on_save": "off",
       "use_on_type_format": false,
       "allow_rewrap": "anywhere",
-      "soft_wrap": "bounded",
+      "soft_wrap": "editor_width",
       "prettier": {
         "allowed": true
       }
@@ -1502,11 +1567,6 @@
   // Mostly useful for developers who are managing multiple instances of Zed.
   "dev": {
     // "theme": "Andromeda"
-  },
-  // Task-related settings.
-  "task": {
-    // Whether to show task status indicator in the status bar. Default: true
-    "show_status_indicator": true
   },
   // Whether to show full labels in line indicator or short ones
   //

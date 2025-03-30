@@ -4,13 +4,11 @@ use crate::{
     worktree_store::{WorktreeStore, WorktreeStoreEvent},
     ProjectItem as _, ProjectPath,
 };
-use ::git::{parse_git_remote_url, BuildPermalinkParams, GitHostingProviderRegistry};
-use anyhow::{anyhow, bail, Context as _, Result};
+use anyhow::{anyhow, Context as _, Result};
 use client::Client;
 use collections::{hash_map, HashMap, HashSet};
 use fs::Fs;
 use futures::{channel::oneshot, future::Shared, Future, FutureExt as _, StreamExt};
-use git::{blame::Blame, repository::RepoPath};
 use gpui::{
     App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, Subscription, Task, WeakEntity,
 };
@@ -25,16 +23,8 @@ use rpc::{
     proto::{self, ToProto},
     AnyProtoClient, ErrorExt as _, TypedEnvelope,
 };
-use serde::Deserialize;
 use smol::channel::Receiver;
-use std::{
-    io,
-    ops::Range,
-    path::{Path, PathBuf},
-    pin::pin,
-    sync::Arc,
-    time::Instant,
-};
+use std::{io, path::Path, pin::pin, sync::Arc, time::Instant};
 use text::BufferId;
 use util::{debug_panic, maybe, ResultExt as _, TryFutureExt};
 use worktree::{File, PathChange, ProjectEntryId, Worktree, WorktreeId};
@@ -750,9 +740,7 @@ impl BufferStore {
         client.add_entity_message_handler(Self::handle_buffer_saved);
         client.add_entity_message_handler(Self::handle_update_buffer_file);
         client.add_entity_request_handler(Self::handle_save_buffer);
-        client.add_entity_request_handler(Self::handle_blame_buffer);
         client.add_entity_request_handler(Self::handle_reload_buffers);
-        client.add_entity_request_handler(Self::handle_get_permalink_to_line);
     }
 
     /// Creates a buffer store, optionally retaining its buffers.
@@ -936,172 +924,6 @@ impl BufferStore {
                 cx.emit(BufferStoreEvent::BufferChangedFilePath { buffer, old_file });
             })
         })
-    }
-
-    pub fn blame_buffer(
-        &self,
-        buffer: &Entity<Buffer>,
-        version: Option<clock::Global>,
-        cx: &App,
-    ) -> Task<Result<Option<Blame>>> {
-        let buffer = buffer.read(cx);
-        let Some(file) = File::from_dyn(buffer.file()) else {
-            return Task::ready(Err(anyhow!("buffer has no file")));
-        };
-
-        match file.worktree.clone().read(cx) {
-            Worktree::Local(worktree) => {
-                let worktree = worktree.snapshot();
-                let blame_params = maybe!({
-                    let local_repo = match worktree.local_repo_for_path(&file.path) {
-                        Some(repo_for_path) => repo_for_path,
-                        None => return Ok(None),
-                    };
-
-                    let relative_path = local_repo
-                        .relativize(&file.path)
-                        .context("failed to relativize buffer path")?;
-
-                    let repo = local_repo.repo().clone();
-
-                    let content = match version {
-                        Some(version) => buffer.rope_for_version(&version).clone(),
-                        None => buffer.as_rope().clone(),
-                    };
-
-                    anyhow::Ok(Some((repo, relative_path, content)))
-                });
-
-                cx.spawn(async move |cx| {
-                    let Some((repo, relative_path, content)) = blame_params? else {
-                        return Ok(None);
-                    };
-                    repo.blame(relative_path.clone(), content, cx)
-                        .await
-                        .with_context(|| format!("Failed to blame {:?}", relative_path.0))
-                        .map(Some)
-                })
-            }
-            Worktree::Remote(worktree) => {
-                let buffer_id = buffer.remote_id();
-                let version = buffer.version();
-                let project_id = worktree.project_id();
-                let client = worktree.client();
-                cx.spawn(async move |_| {
-                    let response = client
-                        .request(proto::BlameBuffer {
-                            project_id,
-                            buffer_id: buffer_id.into(),
-                            version: serialize_version(&version),
-                        })
-                        .await?;
-                    Ok(deserialize_blame_buffer_response(response))
-                })
-            }
-        }
-    }
-
-    pub fn get_permalink_to_line(
-        &self,
-        buffer: &Entity<Buffer>,
-        selection: Range<u32>,
-        cx: &App,
-    ) -> Task<Result<url::Url>> {
-        let buffer = buffer.read(cx);
-        let Some(file) = File::from_dyn(buffer.file()) else {
-            return Task::ready(Err(anyhow!("buffer has no file")));
-        };
-
-        match file.worktree.read(cx) {
-            Worktree::Local(worktree) => {
-                let worktree_path = worktree.abs_path().clone();
-                let Some((repo_entry, repo)) =
-                    worktree.repository_for_path(file.path()).and_then(|entry| {
-                        let repo = worktree.get_local_repo(&entry)?.repo().clone();
-                        Some((entry, repo))
-                    })
-                else {
-                    // If we're not in a Git repo, check whether this is a Rust source
-                    // file in the Cargo registry (presumably opened with go-to-definition
-                    // from a normal Rust file). If so, we can put together a permalink
-                    // using crate metadata.
-                    if buffer
-                        .language()
-                        .is_none_or(|lang| lang.name() != "Rust".into())
-                    {
-                        return Task::ready(Err(anyhow!("no permalink available")));
-                    }
-                    let file_path = worktree_path.join(file.path());
-                    return cx.spawn(async move |cx| {
-                        let provider_registry =
-                            cx.update(GitHostingProviderRegistry::default_global)?;
-                        get_permalink_in_rust_registry_src(provider_registry, file_path, selection)
-                            .map_err(|_| anyhow!("no permalink available"))
-                    });
-                };
-
-                let path = match repo_entry.relativize(file.path()) {
-                    Ok(RepoPath(path)) => path,
-                    Err(e) => return Task::ready(Err(e)),
-                };
-
-                let remote = repo_entry
-                    .branch()
-                    .and_then(|b| b.upstream.as_ref())
-                    .and_then(|b| b.remote_name())
-                    .unwrap_or("origin")
-                    .to_string();
-
-                cx.spawn(async move |cx| {
-                    let origin_url = repo
-                        .remote_url(&remote)
-                        .ok_or_else(|| anyhow!("remote \"{remote}\" not found"))?;
-
-                    let sha = repo
-                        .head_sha()
-                        .ok_or_else(|| anyhow!("failed to read HEAD SHA"))?;
-
-                    let provider_registry =
-                        cx.update(GitHostingProviderRegistry::default_global)?;
-
-                    let (provider, remote) =
-                        parse_git_remote_url(provider_registry, &origin_url)
-                            .ok_or_else(|| anyhow!("failed to parse Git remote URL"))?;
-
-                    let path = path
-                        .to_str()
-                        .ok_or_else(|| anyhow!("failed to convert path to string"))?;
-
-                    Ok(provider.build_permalink(
-                        remote,
-                        BuildPermalinkParams {
-                            sha: &sha,
-                            path,
-                            selection: Some(selection),
-                        },
-                    ))
-                })
-            }
-            Worktree::Remote(worktree) => {
-                let buffer_id = buffer.remote_id();
-                let project_id = worktree.project_id();
-                let client = worktree.client();
-                cx.spawn(async move |_| {
-                    let response = client
-                        .request(proto::GetPermalinkToLine {
-                            project_id,
-                            buffer_id: buffer_id.into(),
-                            selection: Some(proto::Range {
-                                start: selection.start as u64,
-                                end: selection.end as u64,
-                            }),
-                        })
-                        .await?;
-
-                    url::Url::parse(&response.permalink).context("failed to parse permalink")
-                })
-            }
-        }
     }
 
     fn add_buffer(&mut self, buffer_entity: Entity<Buffer>, cx: &mut Context<Self>) -> Result<()> {
@@ -1662,52 +1484,6 @@ impl BufferStore {
         })
     }
 
-    pub async fn handle_blame_buffer(
-        this: Entity<Self>,
-        envelope: TypedEnvelope<proto::BlameBuffer>,
-        mut cx: AsyncApp,
-    ) -> Result<proto::BlameBufferResponse> {
-        let buffer_id = BufferId::new(envelope.payload.buffer_id)?;
-        let version = deserialize_version(&envelope.payload.version);
-        let buffer = this.read_with(&cx, |this, _| this.get_existing(buffer_id))??;
-        buffer
-            .update(&mut cx, |buffer, _| {
-                buffer.wait_for_version(version.clone())
-            })?
-            .await?;
-        let blame = this
-            .update(&mut cx, |this, cx| {
-                this.blame_buffer(&buffer, Some(version), cx)
-            })?
-            .await?;
-        Ok(serialize_blame_buffer_response(blame))
-    }
-
-    pub async fn handle_get_permalink_to_line(
-        this: Entity<Self>,
-        envelope: TypedEnvelope<proto::GetPermalinkToLine>,
-        mut cx: AsyncApp,
-    ) -> Result<proto::GetPermalinkToLineResponse> {
-        let buffer_id = BufferId::new(envelope.payload.buffer_id)?;
-        // let version = deserialize_version(&envelope.payload.version);
-        let selection = {
-            let proto_selection = envelope
-                .payload
-                .selection
-                .context("no selection to get permalink for defined")?;
-            proto_selection.start as u32..proto_selection.end as u32
-        };
-        let buffer = this.read_with(&cx, |this, _| this.get_existing(buffer_id))??;
-        let permalink = this
-            .update(&mut cx, |this, cx| {
-                this.get_permalink_to_line(&buffer, selection, cx)
-            })?
-            .await?;
-        Ok(proto::GetPermalinkToLineResponse {
-            permalink: permalink.to_string(),
-        })
-    }
-
     pub fn reload_buffers(
         &self,
         buffers: HashSet<Entity<Buffer>>,
@@ -1929,140 +1705,4 @@ fn is_not_found_error(error: &anyhow::Error) -> bool {
         .root_cause()
         .downcast_ref::<io::Error>()
         .is_some_and(|err| err.kind() == io::ErrorKind::NotFound)
-}
-
-fn serialize_blame_buffer_response(blame: Option<git::blame::Blame>) -> proto::BlameBufferResponse {
-    let Some(blame) = blame else {
-        return proto::BlameBufferResponse {
-            blame_response: None,
-        };
-    };
-
-    let entries = blame
-        .entries
-        .into_iter()
-        .map(|entry| proto::BlameEntry {
-            sha: entry.sha.as_bytes().into(),
-            start_line: entry.range.start,
-            end_line: entry.range.end,
-            original_line_number: entry.original_line_number,
-            author: entry.author.clone(),
-            author_mail: entry.author_mail.clone(),
-            author_time: entry.author_time,
-            author_tz: entry.author_tz.clone(),
-            committer: entry.committer_name.clone(),
-            committer_mail: entry.committer_email.clone(),
-            committer_time: entry.committer_time,
-            committer_tz: entry.committer_tz.clone(),
-            summary: entry.summary.clone(),
-            previous: entry.previous.clone(),
-            filename: entry.filename.clone(),
-        })
-        .collect::<Vec<_>>();
-
-    let messages = blame
-        .messages
-        .into_iter()
-        .map(|(oid, message)| proto::CommitMessage {
-            oid: oid.as_bytes().into(),
-            message,
-        })
-        .collect::<Vec<_>>();
-
-    proto::BlameBufferResponse {
-        blame_response: Some(proto::blame_buffer_response::BlameResponse {
-            entries,
-            messages,
-            remote_url: blame.remote_url,
-        }),
-    }
-}
-
-fn deserialize_blame_buffer_response(
-    response: proto::BlameBufferResponse,
-) -> Option<git::blame::Blame> {
-    let response = response.blame_response?;
-    let entries = response
-        .entries
-        .into_iter()
-        .filter_map(|entry| {
-            Some(git::blame::BlameEntry {
-                sha: git::Oid::from_bytes(&entry.sha).ok()?,
-                range: entry.start_line..entry.end_line,
-                original_line_number: entry.original_line_number,
-                committer_name: entry.committer,
-                committer_time: entry.committer_time,
-                committer_tz: entry.committer_tz,
-                committer_email: entry.committer_mail,
-                author: entry.author,
-                author_mail: entry.author_mail,
-                author_time: entry.author_time,
-                author_tz: entry.author_tz,
-                summary: entry.summary,
-                previous: entry.previous,
-                filename: entry.filename,
-            })
-        })
-        .collect::<Vec<_>>();
-
-    let messages = response
-        .messages
-        .into_iter()
-        .filter_map(|message| Some((git::Oid::from_bytes(&message.oid).ok()?, message.message)))
-        .collect::<HashMap<_, _>>();
-
-    Some(Blame {
-        entries,
-        messages,
-        remote_url: response.remote_url,
-    })
-}
-
-fn get_permalink_in_rust_registry_src(
-    provider_registry: Arc<GitHostingProviderRegistry>,
-    path: PathBuf,
-    selection: Range<u32>,
-) -> Result<url::Url> {
-    #[derive(Deserialize)]
-    struct CargoVcsGit {
-        sha1: String,
-    }
-
-    #[derive(Deserialize)]
-    struct CargoVcsInfo {
-        git: CargoVcsGit,
-        path_in_vcs: String,
-    }
-
-    #[derive(Deserialize)]
-    struct CargoPackage {
-        repository: String,
-    }
-
-    #[derive(Deserialize)]
-    struct CargoToml {
-        package: CargoPackage,
-    }
-
-    let Some((dir, cargo_vcs_info_json)) = path.ancestors().skip(1).find_map(|dir| {
-        let json = std::fs::read_to_string(dir.join(".cargo_vcs_info.json")).ok()?;
-        Some((dir, json))
-    }) else {
-        bail!("No .cargo_vcs_info.json found in parent directories")
-    };
-    let cargo_vcs_info = serde_json::from_str::<CargoVcsInfo>(&cargo_vcs_info_json)?;
-    let cargo_toml = std::fs::read_to_string(dir.join("Cargo.toml"))?;
-    let manifest = toml::from_str::<CargoToml>(&cargo_toml)?;
-    let (provider, remote) = parse_git_remote_url(provider_registry, &manifest.package.repository)
-        .ok_or_else(|| anyhow!("Failed to parse package.repository field of manifest"))?;
-    let path = PathBuf::from(cargo_vcs_info.path_in_vcs).join(path.strip_prefix(dir).unwrap());
-    let permalink = provider.build_permalink(
-        remote,
-        BuildPermalinkParams {
-            sha: &cargo_vcs_info.git.sha1,
-            path: &path.to_string_lossy(),
-            selection: Some(selection),
-        },
-    );
-    Ok(permalink)
 }

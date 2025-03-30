@@ -17,6 +17,7 @@ use gpui::{BackgroundExecutor, TestAppContext, VisualTestContext};
 use menu::{SelectFirst, SelectNext, SelectPrevious};
 use project::{FakeFs, Project};
 use serde_json::json;
+use task::LaunchConfig;
 use unindent::Unindent as _;
 use util::path;
 
@@ -56,8 +57,10 @@ async fn test_basic_fetch_initial_scope_and_variables(
     let cx = &mut VisualTestContext::from_window(*workspace, cx);
 
     let task = project.update(cx, |project, cx| {
-        project.start_debug_session(
-            dap::test_config(dap::DebugRequestType::Launch, None, None),
+        project.fake_debug_session(
+            dap::DebugRequestType::Launch(LaunchConfig::default()),
+            None,
+            false,
             cx,
         )
     });
@@ -283,8 +286,10 @@ async fn test_fetch_variables_for_multiple_scopes(
     let cx = &mut VisualTestContext::from_window(*workspace, cx);
 
     let task = project.update(cx, |project, cx| {
-        project.start_debug_session(
-            dap::test_config(dap::DebugRequestType::Launch, None, None),
+        project.fake_debug_session(
+            dap::DebugRequestType::Launch(LaunchConfig::default()),
+            None,
+            false,
             cx,
         )
     });
@@ -562,8 +567,10 @@ async fn test_keyboard_navigation(executor: BackgroundExecutor, cx: &mut TestApp
     let cx = &mut VisualTestContext::from_window(*workspace, cx);
 
     let task = project.update(cx, |project, cx| {
-        project.start_debug_session(
-            dap::test_config(dap::DebugRequestType::Launch, None, None),
+        project.fake_debug_session(
+            dap::DebugRequestType::Launch(LaunchConfig::default()),
+            None,
+            false,
             cx,
         )
     });
@@ -1103,6 +1110,219 @@ async fn test_keyboard_navigation(executor: BackgroundExecutor, cx: &mut TestApp
             });
     });
 
+    // select scope 2 backwards
+    cx.dispatch_action(SelectPrevious);
+    cx.run_until_parked();
+    running_state.update(cx, |debug_panel_item, cx| {
+        debug_panel_item
+            .variable_list()
+            .update(cx, |variable_list, _| {
+                variable_list.assert_visual_entries(vec!["> Scope 1", "> Scope 2 <=== selected"]);
+            });
+    });
+
+    // select scope 1 backwards
+    cx.dispatch_action(SelectNext);
+    cx.run_until_parked();
+    running_state.update(cx, |debug_panel_item, cx| {
+        debug_panel_item
+            .variable_list()
+            .update(cx, |variable_list, _| {
+                variable_list.assert_visual_entries(vec!["> Scope 1 <=== selected", "> Scope 2"]);
+            });
+    });
+
+    // test stepping through nested with ExpandSelectedEntry/CollapseSelectedEntry actions
+
+    cx.dispatch_action(ExpandSelectedEntry);
+    cx.run_until_parked();
+    running_state.update(cx, |debug_panel_item, cx| {
+        debug_panel_item
+            .variable_list()
+            .update(cx, |variable_list, _| {
+                variable_list.assert_visual_entries(vec![
+                    "v Scope 1 <=== selected",
+                    "    > variable1",
+                    "    > variable2",
+                    "> Scope 2",
+                ]);
+            });
+    });
+
+    cx.dispatch_action(ExpandSelectedEntry);
+    cx.run_until_parked();
+    running_state.update(cx, |debug_panel_item, cx| {
+        debug_panel_item
+            .variable_list()
+            .update(cx, |variable_list, _| {
+                variable_list.assert_visual_entries(vec![
+                    "v Scope 1",
+                    "    > variable1 <=== selected",
+                    "    > variable2",
+                    "> Scope 2",
+                ]);
+            });
+    });
+
+    cx.dispatch_action(ExpandSelectedEntry);
+    cx.run_until_parked();
+    running_state.update(cx, |debug_panel_item, cx| {
+        debug_panel_item
+            .variable_list()
+            .update(cx, |variable_list, _| {
+                variable_list.assert_visual_entries(vec![
+                    "v Scope 1",
+                    "    v variable1 <=== selected",
+                    "        > nested1",
+                    "        > nested2",
+                    "    > variable2",
+                    "> Scope 2",
+                ]);
+            });
+    });
+
+    cx.dispatch_action(ExpandSelectedEntry);
+    cx.run_until_parked();
+    running_state.update(cx, |debug_panel_item, cx| {
+        debug_panel_item
+            .variable_list()
+            .update(cx, |variable_list, _| {
+                variable_list.assert_visual_entries(vec![
+                    "v Scope 1",
+                    "    v variable1",
+                    "        > nested1 <=== selected",
+                    "        > nested2",
+                    "    > variable2",
+                    "> Scope 2",
+                ]);
+            });
+    });
+
+    cx.dispatch_action(ExpandSelectedEntry);
+    cx.run_until_parked();
+    running_state.update(cx, |debug_panel_item, cx| {
+        debug_panel_item
+            .variable_list()
+            .update(cx, |variable_list, _| {
+                variable_list.assert_visual_entries(vec![
+                    "v Scope 1",
+                    "    v variable1",
+                    "        > nested1",
+                    "        > nested2 <=== selected",
+                    "    > variable2",
+                    "> Scope 2",
+                ]);
+            });
+    });
+
+    cx.dispatch_action(ExpandSelectedEntry);
+    cx.run_until_parked();
+    running_state.update(cx, |debug_panel_item, cx| {
+        debug_panel_item
+            .variable_list()
+            .update(cx, |variable_list, _| {
+                variable_list.assert_visual_entries(vec![
+                    "v Scope 1",
+                    "    v variable1",
+                    "        > nested1",
+                    "        > nested2",
+                    "    > variable2 <=== selected",
+                    "> Scope 2",
+                ]);
+            });
+    });
+
+    cx.dispatch_action(CollapseSelectedEntry);
+    cx.run_until_parked();
+    running_state.update(cx, |debug_panel_item, cx| {
+        debug_panel_item
+            .variable_list()
+            .update(cx, |variable_list, _| {
+                variable_list.assert_visual_entries(vec![
+                    "v Scope 1",
+                    "    v variable1",
+                    "        > nested1",
+                    "        > nested2 <=== selected",
+                    "    > variable2",
+                    "> Scope 2",
+                ]);
+            });
+    });
+
+    cx.dispatch_action(CollapseSelectedEntry);
+    cx.run_until_parked();
+    running_state.update(cx, |debug_panel_item, cx| {
+        debug_panel_item
+            .variable_list()
+            .update(cx, |variable_list, _| {
+                variable_list.assert_visual_entries(vec![
+                    "v Scope 1",
+                    "    v variable1",
+                    "        > nested1 <=== selected",
+                    "        > nested2",
+                    "    > variable2",
+                    "> Scope 2",
+                ]);
+            });
+    });
+
+    cx.dispatch_action(CollapseSelectedEntry);
+    cx.run_until_parked();
+    running_state.update(cx, |debug_panel_item, cx| {
+        debug_panel_item
+            .variable_list()
+            .update(cx, |variable_list, _| {
+                variable_list.assert_visual_entries(vec![
+                    "v Scope 1",
+                    "    v variable1 <=== selected",
+                    "        > nested1",
+                    "        > nested2",
+                    "    > variable2",
+                    "> Scope 2",
+                ]);
+            });
+    });
+
+    cx.dispatch_action(CollapseSelectedEntry);
+    cx.run_until_parked();
+    running_state.update(cx, |debug_panel_item, cx| {
+        debug_panel_item
+            .variable_list()
+            .update(cx, |variable_list, _| {
+                variable_list.assert_visual_entries(vec![
+                    "v Scope 1",
+                    "    > variable1 <=== selected",
+                    "    > variable2",
+                    "> Scope 2",
+                ]);
+            });
+    });
+
+    cx.dispatch_action(CollapseSelectedEntry);
+    cx.run_until_parked();
+    running_state.update(cx, |debug_panel_item, cx| {
+        debug_panel_item
+            .variable_list()
+            .update(cx, |variable_list, _| {
+                variable_list.assert_visual_entries(vec![
+                    "v Scope 1 <=== selected",
+                    "    > variable1",
+                    "    > variable2",
+                    "> Scope 2",
+                ]);
+            });
+    });
+
+    cx.dispatch_action(CollapseSelectedEntry);
+    cx.run_until_parked();
+    running_state.update(cx, |debug_panel_item, cx| {
+        debug_panel_item
+            .variable_list()
+            .update(cx, |variable_list, _| {
+                variable_list.assert_visual_entries(vec!["> Scope 1 <=== selected", "> Scope 2"]);
+            });
+    });
+
     let shutdown_session = project.update(cx, |project, cx| {
         project.dap_store().update(cx, |dap_store, cx| {
             dap_store.shutdown_session(session.read(cx).session_id(), cx)
@@ -1149,8 +1369,10 @@ async fn test_variable_list_only_sends_requests_when_rendering(
     let cx = &mut VisualTestContext::from_window(*workspace, cx);
 
     let task = project.update(cx, |project, cx| {
-        project.start_debug_session(
-            dap::test_config(dap::DebugRequestType::Launch, None, None),
+        project.fake_debug_session(
+            dap::DebugRequestType::Launch(LaunchConfig::default()),
+            None,
+            false,
             cx,
         )
     });
@@ -1426,8 +1648,10 @@ async fn test_it_fetches_scopes_variables_when_you_select_a_stack_frame(
     let cx = &mut VisualTestContext::from_window(*workspace, cx);
 
     let task = project.update(cx, |project, cx| {
-        project.start_debug_session(
-            dap::test_config(dap::DebugRequestType::Launch, None, None),
+        project.fake_debug_session(
+            dap::DebugRequestType::Launch(LaunchConfig::default()),
+            None,
+            false,
             cx,
         )
     });

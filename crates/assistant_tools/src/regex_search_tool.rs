@@ -11,6 +11,8 @@ use project::{
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::{cmp, fmt::Write, sync::Arc};
+use ui::IconName;
+use util::markdown::MarkdownString;
 use util::paths::PathMatcher;
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
@@ -22,10 +24,17 @@ pub struct RegexSearchToolInput {
     /// Optional starting position for paginated results (0-based).
     /// When not provided, starts from the beginning.
     #[serde(default)]
-    pub offset: Option<usize>,
+    pub offset: Option<u32>,
 }
 
-const RESULTS_PER_PAGE: usize = 20;
+impl RegexSearchToolInput {
+    /// Which page of search results this is.
+    pub fn page(&self) -> u32 {
+        1 + (self.offset.unwrap_or(0) / RESULTS_PER_PAGE)
+    }
+}
+
+const RESULTS_PER_PAGE: u32 = 20;
 
 pub struct RegexSearchTool;
 
@@ -34,13 +43,37 @@ impl Tool for RegexSearchTool {
         "regex-search".into()
     }
 
+    fn needs_confirmation(&self) -> bool {
+        false
+    }
+
     fn description(&self) -> String {
         include_str!("./regex_search_tool/description.md").into()
+    }
+
+    fn icon(&self) -> IconName {
+        IconName::Regex
     }
 
     fn input_schema(&self) -> serde_json::Value {
         let schema = schemars::schema_for!(RegexSearchToolInput);
         serde_json::to_value(&schema).unwrap()
+    }
+
+    fn ui_text(&self, input: &serde_json::Value) -> String {
+        match serde_json::from_value::<RegexSearchToolInput>(input.clone()) {
+            Ok(input) => {
+                let page = input.page();
+                let regex = MarkdownString::inline_code(&input.regex);
+
+                if page > 1 {
+                    format!("Get page {page} of search results for regex “{regex}”")
+                } else {
+                    format!("Search files for regex “{regex}”")
+                }
+            }
+            Err(_) => "Search with regex".to_string(),
+        }
     }
 
     fn run(
@@ -154,7 +187,7 @@ impl Tool for RegexSearchTool {
                     offset + matches_found,
                     offset + RESULTS_PER_PAGE,
                 ))
-          } else {
+            } else {
                 Ok(format!("Found {matches_found} matches:\n{output}"))
             }
         })

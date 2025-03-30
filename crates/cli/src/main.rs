@@ -27,6 +27,7 @@ trait InstalledApp {
     fn zed_version_string(&self) -> String;
     fn launch(&self, ipc_url: String) -> anyhow::Result<()>;
     fn run_foreground(&self, ipc_url: String) -> io::Result<ExitStatus>;
+    fn path(&self) -> PathBuf;
 }
 
 #[derive(Parser, Debug)]
@@ -73,6 +74,10 @@ struct Args {
     /// Run zed in dev-server mode
     #[arg(long)]
     dev_server_token: Option<String>,
+    /// Not supported in Zed CLI, only supported on Zed binary
+    /// Will attempt to give the correct command to run
+    #[arg(long)]
+    system_specs: bool,
     /// Uninstall Zed from user system
     #[cfg(all(
         any(target_os = "linux", target_os = "macos"),
@@ -138,6 +143,16 @@ fn main() -> Result<()> {
     if args.version {
         println!("{}", app.zed_version_string());
         return Ok(());
+    }
+
+    if args.system_specs {
+        let path = app.path();
+        let msg = [
+            "The `--system-specs` argument is not supported in the Zed CLI, only on Zed binary.",
+            "To retrieve the system specs on the command line, run the following command:",
+            &format!("{} --system-specs", path.display()),
+        ];
+        return Err(anyhow::anyhow!(msg.join("\n")));
     }
 
     #[cfg(all(
@@ -437,6 +452,10 @@ mod linux {
                 .arg(ipc_url)
                 .status()
         }
+
+        fn path(&self) -> PathBuf {
+            self.0.clone()
+        }
     }
 
     impl App {
@@ -674,6 +693,10 @@ mod windows {
                 .spawn()?
                 .wait()
         }
+
+        fn path(&self) -> PathBuf {
+            self.0.clone()
+        }
     }
 
     impl Detect {
@@ -706,10 +729,11 @@ mod mac_os {
     use anyhow::{anyhow, Context as _, Result};
     use core_foundation::{
         array::{CFArray, CFIndex},
+        base::TCFType as _,
         string::kCFStringEncodingUTF8,
         url::{CFURLCreateWithBytes, CFURL},
     };
-    use core_services::{kLSLaunchDefaults, LSLaunchURLSpec, LSOpenFromURLSpec, TCFType};
+    use core_services::{kLSLaunchDefaults, LSLaunchURLSpec, LSOpenFromURLSpec};
     use serde::Deserialize;
     use std::{
         ffi::OsStr,
@@ -736,7 +760,6 @@ mod mac_os {
         },
         LocalPath {
             executable: PathBuf,
-            plist: InfoPlist,
         },
     }
 
@@ -773,34 +796,16 @@ mod mac_os {
                         plist,
                     })
                 }
-                _ => {
-                    println!("Bundle path {bundle_path:?} has no *.app extension, attempting to locate a dev build");
-                    let plist_path = bundle_path
-                        .parent()
-                        .with_context(|| format!("Bundle path {bundle_path:?} has no parent"))?
-                        .join("WebRTC.framework/Resources/Info.plist");
-                    let plist =
-                        plist::from_file::<_, InfoPlist>(&plist_path).with_context(|| {
-                            format!("Reading dev bundle plist file at {plist_path:?}")
-                        })?;
-                    Ok(Bundle::LocalPath {
-                        executable: bundle_path,
-                        plist,
-                    })
-                }
+                _ => Ok(Bundle::LocalPath {
+                    executable: bundle_path,
+                }),
             }
         }
     }
 
     impl InstalledApp for Bundle {
         fn zed_version_string(&self) -> String {
-            let is_dev = matches!(self, Self::LocalPath { .. });
-            format!(
-                "Zed {}{} – {}",
-                self.plist().bundle_short_version_string,
-                if is_dev { " (dev)" } else { "" },
-                self.path().display(),
-            )
+            format!("Zed {} – {}", self.version(), self.path().display(),)
         }
 
         fn launch(&self, url: String) -> anyhow::Result<()> {
@@ -876,13 +881,20 @@ mod mac_os {
 
             std::process::Command::new(path).arg(ipc_url).status()
         }
+
+        fn path(&self) -> PathBuf {
+            match self {
+                Bundle::App { app_bundle, .. } => app_bundle.join("Contents/MacOS/zed").clone(),
+                Bundle::LocalPath { executable, .. } => executable.clone(),
+            }
+        }
     }
 
     impl Bundle {
-        fn plist(&self) -> &InfoPlist {
+        fn version(&self) -> String {
             match self {
-                Self::App { plist, .. } => plist,
-                Self::LocalPath { plist, .. } => plist,
+                Self::App { plist, .. } => plist.bundle_short_version_string.clone(),
+                Self::LocalPath { .. } => "<development>".to_string(),
             }
         }
 

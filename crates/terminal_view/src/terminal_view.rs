@@ -590,6 +590,10 @@ impl TerminalView {
         let mut dispatch_context = KeyContext::new_with_defaults();
         dispatch_context.add("Terminal");
 
+        if self.terminal.read(cx).vi_mode_enabled() {
+            dispatch_context.add("vi_mode");
+        }
+
         let mode = self.terminal.read(cx).last_content.mode;
         dispatch_context.set(
             "screen",
@@ -977,6 +981,15 @@ fn subscribe_for_terminal_events(
             Event::SelectionsChanged => {
                 window.invalidate_character_coordinates();
                 cx.emit(SearchEvent::ActiveMatchChanged)
+            }
+            Event::TaskLocatorReady { task_id, success } => {
+                if *success {
+                    workspace
+                        .update(cx, |workspace, cx| {
+                            workspace.debug_task_ready(task_id, cx);
+                        })
+                        .log_err();
+                }
             }
         },
     );

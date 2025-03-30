@@ -398,7 +398,7 @@ impl ButtonLike {
         self
     }
 
-    pub(crate) fn height(mut self, height: DefiniteLength) -> Self {
+    pub fn height(mut self, height: DefiniteLength) -> Self {
         self.height = Some(height);
         self
     }

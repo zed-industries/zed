@@ -11,6 +11,7 @@ use cli::FORCE_CLI_MODE_ENV_VAR_NAME;
 use client::{parse_zed_link, Client, ProxySettings, UserStore};
 use collab_ui::channel_view::ChannelView;
 use collections::HashMap;
+use dap::DapRegistry;
 use db::kvp::{GLOBAL_KEY_VALUE_STORE, KEY_VALUE_STORE};
 use editor::Editor;
 use extension::ExtensionHostProxy;
@@ -215,6 +216,16 @@ fn main() {
         session_id.clone(),
     );
 
+    if args.system_specs {
+        let system_specs = feedback::system_specs::SystemSpecs::new_stateless(
+            app_version,
+            app_commit_sha.clone(),
+            *release_channel::RELEASE_CHANNEL,
+        );
+        println!("Zed System Specs (from CLI):\n{}", system_specs);
+        return;
+    }
+
     let (open_listener, mut open_rx) = OpenListener::new();
 
     let failed_single_instance_check = if *db::ZED_STATELESS
@@ -254,7 +265,7 @@ fn main() {
         };
     log::info!("Using git binary path: {:?}", git_binary_path);
 
-    let fs = Arc::new(RealFs::new(git_binary_path));
+    let fs = Arc::new(RealFs::new(git_binary_path, app.background_executor()));
     let user_settings_file_rx = watch_config_file(
         &app.background_executor(),
         fs.clone(),
@@ -302,6 +313,7 @@ fn main() {
             AppCommitSha::set_global(app_commit_sha, cx);
         }
         settings::init(cx);
+        zlog_settings::init(cx);
         handle_settings_file_changes(user_settings_file_rx, cx, handle_settings_changed);
         handle_keymap_file_changes(user_keymap_file_rx, cx);
         client::init_settings(cx);
@@ -411,6 +423,7 @@ fn main() {
 
         let app_state = Arc::new(AppState {
             languages: languages.clone(),
+            debug_adapters: DapRegistry::default().into(),
             client: client.clone(),
             user_store: user_store.clone(),
             fs: fs.clone(),
@@ -422,6 +435,7 @@ fn main() {
         AppState::set_global(Arc::downgrade(&app_state), cx);
 
         auto_update::init(client.http_client(), cx);
+        dap_adapters::init(app_state.debug_adapters.clone());
         auto_update_ui::init(cx);
         reliability::init(
             client.http_client(),
@@ -951,6 +965,11 @@ struct Args {
     /// Instructs zed to run as a dev server on this machine. (not implemented)
     #[arg(long)]
     dev_server_token: Option<String>,
+
+    /// Prints system specs. Useful for submitting issues on GitHub when encountering a bug
+    /// that prevents Zed from starting, so you can't run `zed: copy system specs to clipboard`
+    #[arg(long)]
+    system_specs: bool,
 
     /// Run zed in the foreground, only used on Windows, to match the behavior of the behavior on macOS.
     #[arg(long)]

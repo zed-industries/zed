@@ -3,13 +3,13 @@ mod color_extractor;
 pub mod connection_manager;
 pub mod debounced_delay;
 pub mod debugger;
-pub mod git;
+pub mod git_store;
 pub mod image_store;
 pub mod lsp_command;
 pub mod lsp_store;
+mod manifest_tree;
 pub mod prettier_store;
 pub mod project_settings;
-mod project_tree;
 pub mod search;
 mod task_inventory;
 pub mod task_store;
@@ -24,11 +24,12 @@ mod direnv;
 mod environment;
 use buffer_diff::BufferDiff;
 pub use environment::{EnvironmentErrorMessage, ProjectEnvironmentEvent};
-use git::Repository;
+use git_store::{GitEvent, Repository};
 pub mod search_history;
 mod yarn;
 
-use crate::git::GitStore;
+use crate::git_store::GitStore;
+pub use git_store::git_traversal::{ChildEntriesGitIter, GitEntry, GitEntryRef, GitTraversal};
 
 use anyhow::{anyhow, Context as _, Result};
 use buffer_store::{BufferStore, BufferStoreEvent};
@@ -37,7 +38,7 @@ use client::{
 };
 use clock::ReplicaId;
 
-use dap::{client::DebugAdapterClient, DebugAdapterConfig};
+use dap::{client::DebugAdapterClient, DapRegistry, DebugAdapterConfig};
 
 use collections::{BTreeSet, HashMap, HashSet};
 use debounced_delay::DebouncedDelay;
@@ -55,7 +56,7 @@ use futures::{
 pub use image_store::{ImageItem, ImageStore};
 use image_store::{ImageItemEvent, ImageStoreEvent};
 
-use ::git::{blame::Blame, repository::GitRepository, status::FileStatus};
+use ::git::{blame::Blame, status::FileStatus};
 use gpui::{
     AnyEntity, App, AppContext, AsyncApp, BorrowAppContext, Context, Entity, EventEmitter, Hsla,
     SharedString, Task, WeakEntity, Window,
@@ -72,6 +73,7 @@ use lsp::{
 };
 use lsp_command::*;
 use lsp_store::{CompletionDocumentation, LspFormatTarget, OpenLspBufferHandle};
+pub use manifest_tree::ManifestProviders;
 use node_runtime::NodeRuntime;
 use parking_lot::Mutex;
 pub use prettier_store::PrettierStore;
@@ -162,7 +164,9 @@ pub struct Project {
     active_entry: Option<ProjectEntryId>,
     buffer_ordered_messages_tx: mpsc::UnboundedSender<BufferOrderedMessage>,
     languages: Arc<LanguageRegistry>,
+    debug_adapters: Arc<DapRegistry>,
     dap_store: Entity<DapStore>,
+
     breakpoint_store: Entity<BreakpointStore>,
     client: Arc<client::Client>,
     join_project_response_message_id: u32,
@@ -269,7 +273,6 @@ pub enum Event {
     WorktreeOrderChanged,
     WorktreeRemoved(WorktreeId),
     WorktreeUpdatedEntries(WorktreeId, UpdatedEntriesSet),
-    WorktreeUpdatedGitRepositories(WorktreeId),
     DiskBasedDiagnosticsStarted {
         language_server_id: LanguageServerId,
     },
@@ -299,6 +302,8 @@ pub enum Event {
     RevealInProjectPanel(ProjectEntryId),
     SnippetEdit(BufferId, Vec<(lsp::Range, Snippet)>),
     ExpandedAllForEntry(WorktreeId, ProjectEntryId),
+    GitStateUpdated,
+    ActiveRepositoryChanged,
 }
 
 pub enum DebugAdapterClientState {
@@ -389,6 +394,8 @@ pub struct Completion {
     pub documentation: Option<CompletionDocumentation>,
     /// Completion data source which it was constructed from.
     pub source: CompletionSource,
+    /// A path to an icon for this completion that is shown in the menu.
+    pub icon_path: Option<SharedString>,
     /// An optional callback to invoke when this completion is confirmed.
     /// Returns, whether new completions should be retriggered after the current one.
     /// If `true` is returned, the editor will show a new completion menu after this completion is confirmed.
@@ -656,6 +663,15 @@ pub struct Symbol {
     pub signature: [u8; 32],
 }
 
+#[derive(Clone, Debug)]
+pub struct DocumentSymbol {
+    pub name: String,
+    pub kind: lsp::SymbolKind,
+    pub range: Range<Unclipped<PointUtf16>>,
+    pub selection_range: Range<Unclipped<PointUtf16>>,
+    pub children: Vec<DocumentSymbol>,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct HoverBlock {
     pub text: String,
@@ -805,6 +821,7 @@ impl Project {
         node: NodeRuntime,
         user_store: Entity<UserStore>,
         languages: Arc<LanguageRegistry>,
+        debug_adapters: Arc<DapRegistry>,
         fs: Arc<dyn Fs>,
         env: Option<HashMap<String, String>>,
         cx: &mut App,
@@ -841,6 +858,7 @@ impl Project {
                     node.clone(),
                     fs.clone(),
                     languages.clone(),
+                    debug_adapters.clone(),
                     environment.clone(),
                     toolchain_store.read(cx).as_language_toolchain_store(),
                     breakpoint_store.clone(),
@@ -866,7 +884,6 @@ impl Project {
 
             let task_store = cx.new(|cx| {
                 TaskStore::local(
-                    fs.clone(),
                     buffer_store.downgrade(),
                     worktree_store.clone(),
                     toolchain_store.read(cx).as_language_toolchain_store(),
@@ -909,6 +926,7 @@ impl Project {
                     cx,
                 )
             });
+            cx.subscribe(&git_store, Self::on_git_store_event).detach();
 
             cx.subscribe(&lsp_store, Self::on_lsp_store_event).detach();
 
@@ -927,6 +945,7 @@ impl Project {
                 active_entry: None,
                 snippets,
                 languages,
+                debug_adapters,
                 client,
                 task_store,
                 user_store,
@@ -935,6 +954,7 @@ impl Project {
                 ssh_client: None,
                 breakpoint_store,
                 dap_store,
+
                 buffers_needing_diff: Default::default(),
                 git_diff_debouncer: DebouncedDelay::new(),
                 terminals: Terminals {
@@ -998,7 +1018,6 @@ impl Project {
                 .new(|cx| ToolchainStore::remote(SSH_PROJECT_ID, ssh.read(cx).proto_client(), cx));
             let task_store = cx.new(|cx| {
                 TaskStore::remote(
-                    fs.clone(),
                     buffer_store.downgrade(),
                     worktree_store.clone(),
                     toolchain_store.read(cx).as_language_toolchain_store(),
@@ -1009,7 +1028,12 @@ impl Project {
             });
 
             let settings_observer = cx.new(|cx| {
-                SettingsObserver::new_remote(worktree_store.clone(), task_store.clone(), cx)
+                SettingsObserver::new_remote(
+                    fs.clone(),
+                    worktree_store.clone(),
+                    task_store.clone(),
+                    cx,
+                )
             });
             cx.subscribe(&settings_observer, Self::on_settings_observer_event)
                 .detach();
@@ -1085,6 +1109,7 @@ impl Project {
                 active_entry: None,
                 snippets,
                 languages,
+                debug_adapters: Arc::new(DapRegistry::default()),
                 client,
                 task_store,
                 user_store,
@@ -1222,7 +1247,6 @@ impl Project {
 
         let breakpoint_store =
             cx.new(|_| BreakpointStore::remote(remote_id, client.clone().into()))?;
-
         let dap_store = cx.new(|_cx| {
             DapStore::new_remote(remote_id, client.clone().into(), breakpoint_store.clone())
         })?;
@@ -1245,7 +1269,6 @@ impl Project {
         let task_store = cx.new(|cx| {
             if run_tasks {
                 TaskStore::remote(
-                    fs.clone(),
                     buffer_store.downgrade(),
                     worktree_store.clone(),
                     Arc::new(EmptyToolchainStore),
@@ -1259,7 +1282,7 @@ impl Project {
         })?;
 
         let settings_observer = cx.new(|cx| {
-            SettingsObserver::new_remote(worktree_store.clone(), task_store.clone(), cx)
+            SettingsObserver::new_remote(fs.clone(), worktree_store.clone(), task_store.clone(), cx)
         })?;
 
         let git_store = cx.new(|cx| {
@@ -1310,6 +1333,7 @@ impl Project {
                 collaborators: Default::default(),
                 join_project_response_message_id: response.message_id,
                 languages,
+                debug_adapters: Arc::new(DapRegistry::default()),
                 user_store: user_store.clone(),
                 task_store,
                 snippets,
@@ -1429,18 +1453,18 @@ impl Project {
         }
     }
 
+    pub fn queue_debug_session(&mut self, config: DebugAdapterConfig, cx: &mut Context<Self>) {
+        if config.locator.is_none() {
+            self.start_debug_session(config, cx).detach_and_log_err(cx);
+        }
+    }
+
     pub fn start_debug_session(
         &mut self,
         config: DebugAdapterConfig,
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<Session>>> {
-        let worktree = maybe!({
-            if let Some(cwd) = &config.cwd {
-                Some(self.find_worktree(cwd.as_path(), cx)?.0)
-            } else {
-                self.worktrees(cx).next()
-            }
-        });
+        let worktree = maybe!({ self.worktrees(cx).next() });
 
         let Some(worktree) = &worktree else {
             return Task::ready(Err(anyhow!("Failed to find a worktree")));
@@ -1454,14 +1478,51 @@ impl Project {
     }
 
     #[cfg(any(test, feature = "test-support"))]
+    pub fn fake_debug_session(
+        &mut self,
+        request: task::DebugRequestType,
+        caps: Option<dap::Capabilities>,
+        fails: bool,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<Entity<Session>>> {
+        use dap::{Capabilities, FakeAdapter};
+        use task::DebugRequestDisposition;
+
+        let worktree = maybe!({ self.worktrees(cx).next() });
+
+        let Some(worktree) = &worktree else {
+            return Task::ready(Err(anyhow!("Failed to find a worktree")));
+        };
+        let config = DebugAdapterConfig {
+            label: "test config".into(),
+            adapter: FakeAdapter::ADAPTER_NAME.into(),
+            request: DebugRequestDisposition::UserConfigured(request),
+            initialize_args: None,
+            tcp_connection: None,
+            locator: None,
+            args: Default::default(),
+        };
+        let caps = caps.unwrap_or(Capabilities {
+            supports_step_back: Some(false),
+            ..Default::default()
+        });
+        self.dap_store
+            .update(cx, |dap_store, cx| {
+                dap_store.new_fake_session(config, worktree, None, caps, fails, cx)
+            })
+            .1
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
     pub async fn example(
         root_paths: impl IntoIterator<Item = &Path>,
         cx: &mut AsyncApp,
     ) -> Entity<Project> {
         use clock::FakeSystemClock;
 
-        let fs = Arc::new(RealFs::default());
+        let fs = Arc::new(RealFs::new(None, cx.background_executor().clone()));
         let languages = LanguageRegistry::test(cx.background_executor().clone());
+        let debug_adapters = DapRegistry::default().into();
         let clock = Arc::new(FakeSystemClock::new());
         let http_client = http_client::FakeHttpClient::with_404_response();
         let client = cx
@@ -1475,6 +1536,7 @@ impl Project {
                     node_runtime::NodeRuntime::unavailable(),
                     user_store,
                     Arc::new(languages),
+                    debug_adapters,
                     fs,
                     None,
                     cx,
@@ -1505,6 +1567,7 @@ impl Project {
         use clock::FakeSystemClock;
 
         let languages = LanguageRegistry::test(cx.executor());
+        let debug_adapters = DapRegistry::fake();
         let clock = Arc::new(FakeSystemClock::new());
         let http_client = http_client::FakeHttpClient::with_404_response();
         let client = cx.update(|cx| client::Client::new(clock, http_client.clone(), cx));
@@ -1515,6 +1578,7 @@ impl Project {
                 node_runtime::NodeRuntime::unavailable(),
                 user_store,
                 Arc::new(languages),
+                Arc::new(debug_adapters),
                 fs,
                 None,
                 cx,
@@ -1556,6 +1620,10 @@ impl Project {
 
     pub fn languages(&self) -> &Arc<LanguageRegistry> {
         &self.languages
+    }
+
+    pub fn debug_adapters(&self) -> &Arc<DapRegistry> {
+        &self.debug_adapters
     }
 
     pub fn client(&self) -> Arc<Client> {
@@ -1763,8 +1831,9 @@ impl Project {
         project_path: &ProjectPath,
         cx: &App,
     ) -> Option<FileStatus> {
-        self.worktree_for_id(project_path.worktree_id, cx)
-            .and_then(|worktree| worktree.read(cx).status_for_file(&project_path.path))
+        self.git_store
+            .read(cx)
+            .project_path_git_status(project_path, cx)
     }
 
     pub fn visibility_for_paths(
@@ -2021,6 +2090,11 @@ impl Project {
         self.worktree_store.update(cx, |worktree_store, cx| {
             worktree_store.send_project_updates(cx);
         });
+        if let Some(remote_id) = self.remote_id() {
+            self.git_store.update(cx, |git_store, cx| {
+                git_store.shared(remote_id, self.client.clone().into(), cx)
+            });
+        }
         cx.emit(Event::Reshared);
         Ok(())
     }
@@ -2688,6 +2762,19 @@ impl Project {
         }
     }
 
+    fn on_git_store_event(
+        &mut self,
+        _: Entity<GitStore>,
+        event: &GitEvent,
+        cx: &mut Context<Self>,
+    ) {
+        match event {
+            GitEvent::GitStateUpdated => cx.emit(Event::GitStateUpdated),
+            GitEvent::ActiveRepositoryChanged => cx.emit(Event::ActiveRepositoryChanged),
+            GitEvent::FileSystemUpdated | GitEvent::IndexWriteError(_) => {}
+        }
+    }
+
     fn on_ssh_event(
         &mut self,
         _: Entity<SshRemoteClient>,
@@ -2721,15 +2808,27 @@ impl Project {
         match event {
             SettingsObserverEvent::LocalSettingsUpdated(result) => match result {
                 Err(InvalidSettingsError::LocalSettings { message, path }) => {
-                    let message =
-                        format!("Failed to set local settings in {:?}:\n{}", path, message);
+                    let message = format!("Failed to set local settings in {path:?}:\n{message}");
                     cx.emit(Event::Toast {
-                        notification_id: "local-settings".into(),
+                        notification_id: format!("local-settings-{path:?}").into(),
                         message,
                     });
                 }
-                Ok(_) => cx.emit(Event::HideToast {
-                    notification_id: "local-settings".into(),
+                Ok(path) => cx.emit(Event::HideToast {
+                    notification_id: format!("local-settings-{path:?}").into(),
+                }),
+                Err(_) => {}
+            },
+            SettingsObserverEvent::LocalTasksUpdated(result) => match result {
+                Err(InvalidSettingsError::Tasks { message, path }) => {
+                    let message = format!("Failed to set local tasks in {path:?}:\n{message}");
+                    cx.emit(Event::Toast {
+                        notification_id: format!("local-tasks-{path:?}").into(),
+                        message,
+                    });
+                }
+                Ok(path) => cx.emit(Event::HideToast {
+                    notification_id: format!("local-tasks-{path:?}").into(),
                 }),
                 Err(_) => {}
             },
@@ -2761,12 +2860,11 @@ impl Project {
                     .report_discovered_project_events(*worktree_id, changes);
                 cx.emit(Event::WorktreeUpdatedEntries(*worktree_id, changes.clone()))
             }
-            WorktreeStoreEvent::WorktreeUpdatedGitRepositories(worktree_id) => {
-                cx.emit(Event::WorktreeUpdatedGitRepositories(*worktree_id))
-            }
             WorktreeStoreEvent::WorktreeDeletedEntry(worktree_id, id) => {
                 cx.emit(Event::DeletedEntry(*worktree_id, *id))
             }
+            // Listen to the GitStore instead.
+            WorktreeStoreEvent::WorktreeUpdatedGitRepositories(_, _) => {}
         }
     }
 
@@ -3198,6 +3296,19 @@ impl Project {
     ) -> Task<Result<Vec<DocumentHighlight>>> {
         let position = position.to_point_utf16(buffer.read(cx));
         self.document_highlights_impl(buffer, position, cx)
+    }
+
+    pub fn document_symbols(
+        &mut self,
+        buffer: &Entity<Buffer>,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<Vec<DocumentSymbol>>> {
+        self.request_lsp(
+            buffer.clone(),
+            LanguageServerToQuery::FirstCapable,
+            GetDocumentSymbols,
+            cx,
+        )
     }
 
     pub fn symbols(&self, query: &str, cx: &mut Context<Self>) -> Task<Result<Vec<Symbol>>> {
@@ -3677,7 +3788,7 @@ impl Project {
         &mut self,
         source: WorktreeId,
         destination: WorktreeId,
-        cx: &mut Context<'_, Self>,
+        cx: &mut Context<Self>,
     ) -> Result<()> {
         self.worktree_store.update(cx, |worktree_store, cx| {
             worktree_store.move_worktree(source, destination, cx)
@@ -4023,26 +4134,11 @@ impl Project {
     }
 
     pub fn project_path_for_absolute_path(&self, abs_path: &Path, cx: &App) -> Option<ProjectPath> {
-        self.find_local_worktree(abs_path, cx)
+        self.find_worktree(abs_path, cx)
             .map(|(worktree, relative_path)| ProjectPath {
                 worktree_id: worktree.read(cx).id(),
                 path: relative_path.into(),
             })
-    }
-
-    pub fn find_local_worktree(
-        &self,
-        abs_path: &Path,
-        cx: &App,
-    ) -> Option<(Entity<Worktree>, PathBuf)> {
-        let trees = self.worktrees(cx);
-
-        for tree in trees {
-            if let Some(relative_path) = abs_path.strip_prefix(tree.read(cx).abs_path()).ok() {
-                return Some((tree.clone(), relative_path.into()));
-            }
-        }
-        None
     }
 
     pub fn get_workspace_root(&self, project_path: &ProjectPath, cx: &App) -> Option<PathBuf> {
@@ -4054,19 +4150,13 @@ impl Project {
         )
     }
 
-    pub fn get_first_worktree_root_repo(&self, cx: &App) -> Option<Arc<dyn GitRepository>> {
-        let worktree = self.visible_worktrees(cx).next()?.read(cx).as_local()?;
-        let root_entry = worktree.root_git_entry()?;
-        worktree.get_local_repo(&root_entry)?.repo().clone().into()
-    }
-
     pub fn blame_buffer(
         &self,
         buffer: &Entity<Buffer>,
         version: Option<clock::Global>,
         cx: &App,
     ) -> Task<Result<Option<Blame>>> {
-        self.buffer_store.read(cx).blame_buffer(buffer, version, cx)
+        self.git_store.read(cx).blame_buffer(buffer, version, cx)
     }
 
     pub fn get_permalink_to_line(
@@ -4075,7 +4165,7 @@ impl Project {
         selection: Range<u32>,
         cx: &App,
     ) -> Task<Result<url::Url>> {
-        self.buffer_store
+        self.git_store
             .read(cx)
             .get_permalink_to_line(buffer, selection, cx)
     }
@@ -4705,19 +4795,6 @@ impl Project {
     pub fn status_for_buffer_id(&self, buffer_id: BufferId, cx: &App) -> Option<FileStatus> {
         self.git_store.read(cx).status_for_buffer_id(buffer_id, cx)
     }
-}
-
-fn deserialize_code_actions(code_actions: &HashMap<String, bool>) -> Vec<lsp::CodeActionKind> {
-    code_actions
-        .iter()
-        .flat_map(|(kind, enabled)| {
-            if *enabled {
-                Some(kind.clone().into())
-            } else {
-                None
-            }
-        })
-        .collect()
 }
 
 pub struct PathMatchCandidateSet {

@@ -1645,7 +1645,11 @@ impl MultiBuffer {
             };
             let locator = snapshot.excerpt_locator_for_id(*existing);
             excerpts_cursor.seek_forward(&Some(locator), Bias::Left, &());
-            let existing_excerpt = excerpts_cursor.item().unwrap();
+            let Some(existing_excerpt) = excerpts_cursor.item() else {
+                to_remove.push(existing_iter.next().unwrap());
+                to_insert.push(new_iter.next().unwrap());
+                continue;
+            };
             if existing_excerpt.buffer_id != buffer_snapshot.remote_id() {
                 to_remove.push(existing_iter.next().unwrap());
                 to_insert.push(new_iter.next().unwrap());
