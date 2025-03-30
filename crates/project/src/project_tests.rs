@@ -6990,12 +6990,15 @@ async fn test_git_repository_status(cx: &mut gpui::TestAppContext) {
         );
     });
 
+    eprintln!(">>>>>>>>>>> write c.txt");
     std::fs::write(work_dir.join("c.txt"), "some changes").unwrap();
 
     tree.flush_fs_events(cx).await;
     cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
         .await;
     cx.executor().run_until_parked();
+
+    eprintln!(">>>>>>>>>>> check");
 
     repository.read_with(cx, |repository, _| {
         let entries = repository.cached_status().collect::<Vec<_>>();
@@ -7392,12 +7395,14 @@ async fn test_rename_work_directory(cx: &mut gpui::TestAppContext) {
         );
     });
 
+    eprintln!(">>>>>>>>>>>>>>>>>> rename");
     std::fs::rename(
         root_path.join("projects/project1"),
         root_path.join("projects/project2"),
     )
     .unwrap();
     tree.flush_fs_events(cx).await;
+    eprintln!("<<<<<<<<<<<<<<<<<< rename");
 
     repository.read_with(cx, |repository, _| {
         assert_eq!(
@@ -7490,10 +7495,14 @@ async fn test_file_status(cx: &mut gpui::TestAppContext) {
         );
     });
 
+    eprintln!(">>>>>>>>>>>>> modify a.txt");
     // Modify a file in the working copy.
     std::fs::write(work_dir.join(A_TXT), "aa").unwrap();
     tree.flush_fs_events(cx).await;
+    cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
+        .await;
     cx.executor().run_until_parked();
+    eprintln!("<<<<<<<<<<<<< modify a.txt");
 
     // The worktree detects that the file's git status has changed.
     repository.read_with(cx, |repository, _| {

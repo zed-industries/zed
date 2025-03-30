@@ -2812,6 +2812,7 @@ impl Repository {
         Fut: Future<Output = R> + 'static,
         R: Send + 'static,
     {
+        log::debug!("send keyed job");
         let (result_tx, result_rx) = futures::channel::oneshot::channel();
         self.job_sender
             .unbounded_send(GitJob {
