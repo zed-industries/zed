@@ -497,6 +497,7 @@ dependencies = [
  "serde",
  "serde_json",
  "settings",
+ "smallvec",
  "smol",
  "streaming_diff",
  "telemetry",
