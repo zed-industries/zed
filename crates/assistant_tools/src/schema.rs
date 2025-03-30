@@ -12,7 +12,9 @@ pub fn schema_for<T: JsonSchema>(format: LanguageModelToolSchemaFormat) -> RootS
                 .with(|settings| {
                     settings.meta_schema = None;
                     settings.inline_subschemas = true;
-                    settings.visitors.push(Box::new(SchemaVisitor));
+                    settings
+                        .visitors
+                        .push(Box::new(TransformOneOfIntoAnyOfVisitor));
                 })
                 .into_generator()
         }
@@ -21,9 +23,9 @@ pub fn schema_for<T: JsonSchema>(format: LanguageModelToolSchemaFormat) -> RootS
 }
 
 #[derive(Debug, Clone)]
-struct SchemaVisitor;
+struct TransformOneOfIntoAnyOfVisitor;
 
-impl schemars::visit::Visitor for SchemaVisitor {
+impl schemars::visit::Visitor for TransformOneOfIntoAnyOfVisitor {
     fn visit_root_schema(&mut self, root: &mut RootSchema) {
         schemars::visit::visit_root_schema(self, root)
     }
