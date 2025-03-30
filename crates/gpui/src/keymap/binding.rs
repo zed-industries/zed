@@ -43,7 +43,7 @@ impl KeyBinding {
     ) -> std::result::Result<Self, InvalidKeystrokeError> {
         let mut keystrokes: SmallVec<[Keystroke; 2]> = keystrokes
             .split_whitespace()
-            .map(Keystroke::parse)
+            .map(|input| Keystroke::parse(input, char_matching, key_equivalents))
             .collect::<std::result::Result<_, _>>()?;
 
         // todo(zjk)

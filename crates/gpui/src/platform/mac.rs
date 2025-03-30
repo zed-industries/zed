@@ -45,6 +45,7 @@ use std::{
 pub(crate) use dispatcher::*;
 pub(crate) use display::*;
 pub(crate) use display_link::*;
+pub(crate) use events::*;
 pub(crate) use platform::*;
 pub(crate) use window::*;
 

@@ -525,7 +525,7 @@ unsafe fn parse_keystroke(native_event: id) -> Keystroke {
     // ret
 }
 
-fn always_use_command_layout() -> bool {
+pub fn always_use_command_layout() -> bool {
     if chars_for_modified_key(0, NO_MOD).is_ascii() {
         return false;
     }
@@ -538,7 +538,7 @@ const CMD_MOD: u32 = 1;
 const SHIFT_MOD: u32 = 2;
 const OPTION_MOD: u32 = 8;
 
-fn chars_for_modified_key(code: CGKeyCode, modifiers: u32) -> String {
+pub fn chars_for_modified_key(code: CGKeyCode, modifiers: u32) -> String {
     // Values from: https://github.com/phracker/MacOSX-SDKs/blob/master/MacOSX10.6.sdk/System/Library/Frameworks/Carbon.framework/Versions/A/Frameworks/HIToolbox.framework/Versions/A/Headers/Events.h#L126
     // shifted >> 8 for UCKeyTranslate
     const CG_SPACE_KEY: u16 = 49;

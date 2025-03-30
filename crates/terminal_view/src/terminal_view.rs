@@ -311,7 +311,7 @@ impl TerminalView {
         {
             self.terminal.update(cx, |term, cx| {
                 term.try_keystroke(
-                    &Keystroke::parse("ctrl-cmd-space").unwrap(),
+                    &Keystroke::parse("ctrl-cmd-space", false, None).unwrap(),
                     TerminalSettings::get_global(cx).option_as_meta,
                 )
             });
@@ -578,7 +578,7 @@ impl TerminalView {
     }
 
     fn send_keystroke(&mut self, text: &SendKeystroke, _: &mut Window, cx: &mut Context<Self>) {
-        if let Some(keystroke) = Keystroke::parse(&text.0).log_err() {
+        if let Some(keystroke) = Keystroke::parse(&text.0, false, None).log_err() {
             self.clear_bell(cx);
             self.terminal.update(cx, |term, cx| {
                 term.try_keystroke(&keystroke, TerminalSettings::get_global(cx).option_as_meta);
