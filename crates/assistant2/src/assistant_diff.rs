@@ -742,9 +742,7 @@ impl Render for AssistantDiffToolbar {
         h_group_xl()
             .my_neg_1()
             .items_center()
-            .py_1()
-            .pl_2()
-            .pr_1()
+            .p_1()
             .flex_wrap()
             .justify_between()
             .child(
