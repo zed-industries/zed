@@ -28,7 +28,7 @@ pub struct SymbolInfoToolInput {
     ///
     /// The file must contain exactly one occurrence of `context_before_symbol` followed by
     /// `symbol` followed by `context_after_symbol`. If the file contains zero occurrences,
-    /// or if it contains more than one occurence, the tool will fail, so it is absolutely
+    /// or if it contains more than one occurrence, the tool will fail, so it is absolutely
     /// critical that you verify ahead of time that the string is unique. You can search
     /// the file's contents to verify this ahead of time.
     ///
