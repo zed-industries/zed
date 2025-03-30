@@ -903,10 +903,9 @@ impl Workspace {
 
                 project::Event::WorktreeRemoved(_) | project::Event::WorktreeAdded(_) => {
                     this.update_window_title(window, cx);
-                    // todo(zjk)
-                    // Set `update` to `true` so that the history is updated.
-                    // This event could be triggered by `AddFolderToProject` or `RemoveFromProject`.
                     this.serialize_workspace(window, cx);
+                    // This event could be triggered by `AddFolderToProject` or `RemoveFromProject`.
+                    // So we need to update the history.
                     this.update_history(cx);
                 }
 
@@ -1214,7 +1213,6 @@ impl Workspace {
 
             let serialized_workspace: Option<SerializedWorkspace> =
                 persistence::DB.workspace_for_roots(paths_to_open.as_slice());
-            let is_new_workspace = serialized_workspace.is_none();
 
             let workspace_location = serialized_workspace
                 .as_ref()
@@ -1341,14 +1339,7 @@ impl Workspace {
             window
                 .update(cx, |workspace, window, cx| {
                     window.activate_window();
-                    // if is_new_workspace {
-                    // todo(zjk)
-                    // If opened a new workspace, the workspace will be serialized and notified here.
-                    // If opened an existing workspace, the workspace will be serialized and notified in the
-                    // above `open_items` call.
-                    // workspace.serialize_workspace(window, cx);
                     workspace.update_history(cx);
-                    // }
                 })
                 .log_err();
             Ok((window, opened_items))
@@ -4574,11 +4565,6 @@ impl Workspace {
         cx.notify();
     }
 
-    /// Set the parameter `update` to `true` if the action changes the history of the workspace.
-    /// Typically, there are three cases that change the history:
-    /// 1. A brand new workspace is opened, or an existing workspace has been deleted.
-    /// 2. An existing workspace is loaded, this will change the order of the workspaces in the history.
-    /// 3. `AddFolderToProject` or `RemoveFromProject` action is triggered.
     fn serialize_workspace(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self._schedule_serialize.is_none() {
             self._schedule_serialize = Some(cx.spawn_in(window, async move |this, cx| {
@@ -4594,17 +4580,7 @@ impl Workspace {
         }
     }
 
-    /// Set the parameter `update` to `true` if the action changes the history of the workspace.
-    /// Typically, there are three cases that change the history:
-    /// 1. A brand new workspace is opened, or an existing workspace has been deleted.
-    /// 2. An existing workspace is loaded, this will change the order of the workspaces in the history.
-    /// 3. `AddFolderToProject` or `RemoveFromProject` action is triggered.
-    fn serialize_workspace_internal(
-        &self,
-        // update: bool,
-        window: &mut Window,
-        cx: &mut App,
-    ) -> Task<()> {
+    fn serialize_workspace_internal(&self, window: &mut Window, cx: &mut App) -> Task<()> {
         let Some(database_id) = self.database_id() else {
             return Task::ready(());
         };
@@ -4721,7 +4697,6 @@ impl Workspace {
             let breakpoints = self.project.update(cx, |project, cx| {
                 project.breakpoint_store().read(cx).all_breakpoints(cx)
             });
-            let entry = HistoryManagerEntry::new(database_id, &location);
 
             let center_group = build_serialized_pane_group(&self.center.root, window, cx);
             let docks = build_serialized_docks(self, window, cx);
@@ -4739,16 +4714,8 @@ impl Workspace {
                 window_id: Some(window.window_handle().window_id().as_u64()),
             };
 
-            let manager = HistoryManager::global(cx);
-            return window.spawn(cx, async move |cx| {
+            return window.spawn(cx, async move |_| {
                 persistence::DB.save_workspace(serialized_workspace).await;
-                // if let Some(manager) = manager {
-                //     manager
-                //         .update(cx, |this, cx| {
-                //             this.update_history(database_id, entry, cx);
-                //         })
-                //         .log_err();
-                // }
             });
         }
         Task::ready(())
@@ -4946,11 +4913,8 @@ impl Workspace {
 
             workspace
                 .update_in(cx, |workspace, window, cx| {
-                    // todo(zjk)
                     // Serialize ourself to make sure our timestamps and any pane / item changes are replicated
-                    // Set `update` to `true` so that the history is updated, newly opened workspaces are moved to the top
                     workspace.serialize_workspace_internal(window, cx).detach();
-                    // workspace.update_history(cx);
 
                     // Ensure that we mark the window as edited if we did load dirty items
                     workspace.update_window_edited(window, cx);
