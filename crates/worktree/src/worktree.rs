@@ -1435,6 +1435,9 @@ impl LocalWorktree {
                             // FIXME the status scan ID will go away
                             if new_repo.git_dir_scan_id != old_repo.git_dir_scan_id
                                 || new_repo.status_scan_id != old_repo.status_scan_id
+                                // XXX jank
+                                || new_repo.work_directory_abs_path
+                                    != old_repo.work_directory_abs_path
                             {
                                 changes.push(UpdatedGitRepository {
                                     work_directory_id: new_entry_id,
@@ -3186,6 +3189,7 @@ impl BackgroundScannerState {
         watcher: &dyn Watcher,
     ) -> Option<LocalRepositoryEntry> {
         // TODO canonicalize here?
+        eprintln!("insert git repository for path {work_directory:?}");
         log::info!("insert git repository for {dot_git_path:?}");
         let work_dir_entry = self.snapshot.entry_for_path(work_directory.path_key().0)?;
         let work_directory_abs_path = self
