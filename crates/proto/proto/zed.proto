@@ -361,7 +361,10 @@ message Envelope {
         RemoveRepository remove_repository = 329;
 
         GetDocumentSymbols get_document_symbols = 330;
-        GetDocumentSymbolsResponse get_document_symbols_response = 331; // current max
+        GetDocumentSymbolsResponse get_document_symbols_response = 331;
+
+        LspExtFindRunnable lsp_ext_find_runnable = 332;
+        LspExtFindRunnableResponse lsp_ext_find_runnable_response = 333; // current max
     }
 
     reserved 87 to 88;
@@ -2290,6 +2293,36 @@ message LspExtExpandMacro {
 message LspExtExpandMacroResponse {
     string name = 1;
     string expansion = 2;
+}
+
+message LspExtFindRunnable {
+    uint64 project_id = 1;
+    uint64 buffer_id = 2;
+    optional Anchor position = 3;
+}
+
+message LspExtFindRunnableResponse {
+    repeated Runnable runnables = 1;
+}
+
+message Runnable {
+    string label = 1;
+    optional LocationLink location = 2;
+    string kind = 3;
+    RunnableCommand command = 4;
+}
+
+message RunnableCommand {
+    string kind = 1;
+    string program = 2;
+    repeated string args = 3;
+    string cwd = 4;
+    repeated EnviromentArg environment = 5;
+}
+
+message EnviromentArg {
+    string key = 1;
+    string value = 2;
 }
 
 message LspExtOpenDocs {

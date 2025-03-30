@@ -9,7 +9,7 @@ use text::ToPointUtf16;
 
 use crate::{
     element::register_action, lsp_ext::find_specific_language_server_in_selection, Editor,
-    ExpandMacroRecursively, OpenDocs,
+    ExpandMacroRecursively, FindRunnables, OpenDocs,
 };
 
 fn is_rust_language(language: &Language) -> bool {
@@ -24,8 +24,81 @@ pub fn apply_related_actions(editor: &Entity<Editor>, window: &mut Window, cx: &
         .is_some()
     {
         register_action(editor, window, expand_macro_recursively);
+        register_action(editor, window, find_runnables);
         register_action(editor, window, open_docs);
     }
+}
+
+pub fn find_runnables(
+    editor: &mut Editor,
+    _: &FindRunnables,
+    window: &mut Window,
+    cx: &mut Context<Editor>,
+) {
+    if editor.selections.count() == 0 {
+        return;
+    }
+    let Some(project) = &editor.project else {
+        return;
+    };
+    let Some(workspace) = editor.workspace() else {
+        return;
+    };
+    let Some((trigger_anchor, _, server_to_query, buffer)) =
+        find_specific_language_server_in_selection(
+            editor,
+            cx,
+            is_rust_language,
+            RUST_ANALYZER_NAME,
+        )
+    else {
+        return;
+    };
+
+    let project = project.clone();
+    let buffer_snapshot = buffer.read(cx).snapshot();
+    let position = trigger_anchor.text_anchor.to_point_utf16(&buffer_snapshot);
+
+    let expand_macro_task = project.update(cx, |project, cx| {
+        project.request_lsp(
+            buffer,
+            project::LanguageServerToQuery::Other(server_to_query),
+            project::lsp_store::lsp_ext_command::FindRunnables { position: None },
+            cx,
+        )
+    });
+    cx.spawn_in(window, async move |_editor, cx| {
+        let found_runnables = expand_macro_task.await.context("expand macro")?;
+        if found_runnables.is_empty() {
+            log::info!("Empty macro expansion for position {position:?}");
+            return Ok(());
+        }
+
+        let buffer = project
+            .update(cx, |project, cx| project.create_buffer(cx))?
+            .await?;
+        workspace.update_in(cx, |workspace, window, cx| {
+            buffer.update(cx, |buffer, cx| {
+                buffer.set_text(format!("{:#?}", found_runnables), cx);
+                buffer.set_capability(Capability::ReadOnly, cx);
+            });
+            let multibuffer = cx.new(|cx| {
+                MultiBuffer::singleton(buffer, cx).with_title("Detected Runnables".to_owned())
+            });
+            workspace.add_item_to_active_pane(
+                Box::new(cx.new(|cx| {
+                    let mut editor = Editor::for_multibuffer(multibuffer, None, window, cx);
+                    editor.set_read_only(true);
+                    editor
+                })),
+                None,
+                true,
+                window,
+                cx,
+            );
+        })
+    })
+    .detach_and_log_err(cx);
 }
 
 pub fn expand_macro_recursively(

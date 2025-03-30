@@ -293,6 +293,7 @@ actions!(
         DuplicateLineUp,
         DuplicateSelection,
         ExpandMacroRecursively,
+        FindRunnables,
         FindAllReferences,
         Fold,
         FoldAll,
