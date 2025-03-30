@@ -5,6 +5,8 @@ When no path is provided, it returns a list of all public code symbols in the pr
 
 You can also provide an optional regular expression which filters the output by only showing code symbols which match that regex.
 
+Results are paginated with 2000 entries per page. Use the optional 'offset' parameter to request subsequent pages.
+
 Markdown headings indicate the structure of the output; just like
 with markdown headings, the more # symbols there are at the beginning of a line,
 the deeper it is in the hierarchy.

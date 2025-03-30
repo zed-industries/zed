@@ -46,7 +46,21 @@ pub struct CodeSymbolsInput {
     /// </example>
     #[serde(default)]
     pub regex: Option<String>,
+
+    /// Optional starting position for paginated results (0-based).
+    /// When not provided, starts from the beginning.
+    #[serde(default)]
+    pub offset: Option<u32>,
 }
+
+impl CodeSymbolsInput {
+    /// Which page of search results this is.
+    pub fn page(&self) -> u32 {
+        1 + (self.offset.unwrap_or(0) / RESULTS_PER_PAGE)
+    }
+}
+
+const RESULTS_PER_PAGE: u32 = 2000;
 
 pub struct CodeSymbolsTool;
 
@@ -74,14 +88,28 @@ impl Tool for CodeSymbolsTool {
 
     fn ui_text(&self, input: &serde_json::Value) -> String {
         match serde_json::from_value::<CodeSymbolsInput>(input.clone()) {
-            Ok(input) => match &input.path {
-                Some(path) => {
-                    let path = MarkdownString::inline_code(path);
-                    format!("Read outline for {path}")
+            Ok(input) => {
+                let page = input.page();
+
+                match &input.path {
+                    Some(path) => {
+                        let path = MarkdownString::inline_code(path);
+                        if page > 1 {
+                            format!("List page {page} of code symbols for {path}")
+                        } else {
+                            format!("List code symbols for {path}")
+                        }
+                    }
+                    None => {
+                        if page > 1 {
+                            format!("List page {page} of project symbols")
+                        } else {
+                            "List all project symbols".to_string()
+                        }
+                    }
                 }
-                None => "List all project symbols".to_string(),
-            },
-            Err(_) => "Read outline".to_string(),
+            }
+            Err(_) => "List code symbols".to_string(),
         }
     }
 
@@ -147,22 +175,45 @@ impl Tool for CodeSymbolsTool {
                     return Err(anyhow!("No symbols found matching the criteria."));
                 }
 
-                // Now render the grouped symbols
+                let offset = input.offset.unwrap_or(0);
+                let mut skips_remaining = offset;
+                let mut symbols_rendered = 0;
+                let mut has_more_symbols = false;
                 let mut output = String::new();
+
                 for (file_path, file_symbols) in symbols_by_file {
-                    // Extract the filename from the path for the heading
-                    let filename = file_symbols[0]
-                        .path
-                        .path
-                        .file_name()
-                        .map(|f| f.to_string_lossy().to_string())
-                        .unwrap_or_else(|| "unknown".to_string());
+                    // Track symbols in this file
+                    let mut file_symbols_rendered = 0;
+                    let mut file_header_written = false;
 
-                    // Add a heading for the file
-                    writeln!(&mut output, "# File: {} ({})", filename, file_path).ok();
-
-                    // Add all symbols for this file with their labels
+                    // Process symbols for this file
                     for symbol in file_symbols {
+                        if skips_remaining > 0 {
+                            skips_remaining -= 1;
+                            continue;
+                        }
+
+                        // Check if we've already rendered a full page
+                        if symbols_rendered >= RESULTS_PER_PAGE {
+                            has_more_symbols = true;
+                            break;
+                        }
+
+                        // Write file header only when we're going to include symbols from this file
+                        if !file_header_written {
+                            // Extract the filename from the path for the heading
+                            let filename = symbol
+                                .path
+                                .path
+                                .file_name()
+                                .map(|f| f.to_string_lossy().to_string())
+                                .unwrap_or_else(|| "unknown".to_string());
+
+                            // Add a heading for the file
+                            writeln!(&mut output, "# File: {} ({})", filename, file_path).ok();
+                            file_header_written = true;
+                        }
+
                         // Use the symbol's existing label instead of debug formatting the kind
                         let kind_str = format!("{} ", symbol.label.text());
 
@@ -186,13 +237,38 @@ impl Tool for CodeSymbolsTool {
                             )
                             .ok();
                         }
+
+                        symbols_rendered += 1;
+                        file_symbols_rendered += 1;
                     }
 
-                    // Add a blank line between files for readability
-                    writeln!(&mut output).ok();
+                    // Add a blank line between files for readability if we rendered symbols from this file
+                    if file_symbols_rendered > 0 {
+                        writeln!(&mut output).ok();
+                    }
+
+                    // Check if we need to stop after this file
+                    if has_more_symbols {
+                        break;
+                    }
                 }
 
-                Ok(output)
+                if symbols_rendered == 0 {
+                    Ok("No symbols found in the requested page.".to_string())
+                } else if has_more_symbols {
+                    let result = format!(
+                        "{}Showing symbols {}-{} (there were more symbols found; use offset: {} to see next page)",
+                        output,
+                        offset + 1,
+                        offset + symbols_rendered,
+                        offset + RESULTS_PER_PAGE,
+                    );
+                    Ok(result)
+                } else {
+                    let total = offset + symbols_rendered;
+                    let result = format!("{}Found {} total symbols", output, total);
+                    Ok(result)
+                }
             });
         }
 
@@ -235,8 +311,8 @@ impl Tool for CodeSymbolsTool {
             let language_registry =
                 project.read_with(cx, |project, _| project.languages().clone())?;
 
-            // Convert the document symbols to a hierarchical outline
-            let outline = render_outline(&symbols, language, language_registry).await?;
+            // Convert the document symbols to a hierarchical outline with pagination
+            let outline = render_outline(&symbols, language, language_registry, &input).await?;
 
             Ok(outline)
         })
@@ -249,13 +325,54 @@ async fn render_outline(
     symbols: &[DocumentSymbol],
     language: Option<Arc<language::Language>>,
     language_registry: Arc<LanguageRegistry>,
+    input: &CodeSymbolsInput,
 ) -> Result<String> {
     // Collect all symbols (flattened) to get labels for them all at once
     let mut all_symbols = Vec::new();
     collect_symbols_recursive(symbols, &mut all_symbols);
 
+    // Filter by regex if provided
+    let regex_filter = match &input.regex {
+        Some(regex_str) => match Regex::new(regex_str) {
+            Ok(re) => Some(re),
+            Err(err) => return Err(anyhow!("Invalid regex pattern: {}", err)),
+        },
+        None => None,
+    };
+
+    // Apply regex filter if needed
+    let filtered_symbols = if regex_filter.is_some() {
+        all_symbols
+            .into_iter()
+            .filter(|symbol| {
+                regex_filter
+                    .as_ref()
+                    .map_or(true, |re| re.is_match(&symbol.name))
+            })
+            .collect()
+    } else {
+        all_symbols
+    };
+
+    // Setup pagination variables
+    let offset = input.offset.unwrap_or(0) as usize;
+    let total_symbols = filtered_symbols.len();
+
+    // If offset is beyond our symbol count, return early
+    if offset >= total_symbols {
+        return Ok(format!(
+            "No symbols found at offset {}. Total symbols: {}",
+            offset, total_symbols
+        ));
+    }
+
+    // Paginate the filtered symbols
+    let page_end = std::cmp::min(offset + RESULTS_PER_PAGE as usize, total_symbols);
+    let paged_symbols = &filtered_symbols[offset..page_end];
+    let has_more = page_end < total_symbols;
+
     // Create a list of symbol name/kind pairs for generating labels
-    let label_params: Vec<(String, _)> = all_symbols
+    let label_params: Vec<(String, _)> = paged_symbols
         .iter()
         .map(|symbol| (symbol.name.clone(), symbol.kind))
         .collect();
@@ -282,10 +399,32 @@ async fn render_outline(
         vec![None; label_params.len()]
     };
 
-    // Format output with the retrieved labels
+    // Format the outline with the symbols we're showing
     let mut output = String::new();
-    let mut symbol_index = 0;
-    render_symbols(symbols, 1, &mut output, &labels, &mut symbol_index);
+
+    for (i, symbol) in paged_symbols.iter().enumerate() {
+        let label = labels.get(i).and_then(|l| l.as_ref());
+        render_symbol(symbol, 1, &mut output, label);
+    }
+
+    // Add pagination info if needed
+    if has_more {
+        writeln!(&mut output, "\nShowing symbols {}-{} (there were more symbols found; use offset: {} to see next page)",
+            offset + 1,
+            page_end,
+            page_end
+        ).ok();
+    } else {
+        writeln!(
+            &mut output,
+            "\nShowing symbols {}-{} (total symbols: {})",
+            offset + 1,
+            page_end,
+            total_symbols
+        )
+        .ok();
+    }
+
     Ok(output)
 }
 
@@ -330,43 +469,37 @@ fn write_symbol_kind(buf: &mut String, kind: lsp::SymbolKind) -> Result<(), fmt:
     }
 }
 
-// Non-async function to format symbols with their labels
-fn render_symbols(
-    symbols: &[DocumentSymbol],
+// Render a single symbol and its children
+fn render_symbol(
+    symbol: &DocumentSymbol,
     depth: usize,
     output: &mut String,
-    labels: &[Option<language::CodeLabel>],
-    symbol_index: &mut usize,
+    label: Option<&language::CodeLabel>,
 ) {
-    for symbol in symbols {
-        // Get the current symbol's index
-        let current_index = *symbol_index;
-        *symbol_index += 1;
+    // Add heading based on depth (# for level 1, ## for level 2, etc.)
+    write!(output, "{} ", "#".repeat(depth)).ok();
 
-        write!(output, "{} ", "#".repeat(depth)).ok();
+    // Write the symbol kind
+    if let Some(label) = label {
+        write!(output, "{} ", label.text()).ok();
+    } else {
+        write_symbol_kind(output, symbol.kind).ok();
+    }
 
-        // Add heading based on depth (# for level 1, ## for level 2, etc.)
-        if let Some(Some(label)) = labels.get(current_index) {
-            write!(output, "{} ", label.text()).ok();
-        } else {
-            write_symbol_kind(output, symbol.kind).ok();
-        }
+    output.push_str(&symbol.name);
 
-        output.push_str(&symbol.name);
+    // Convert to 1-based line numbers for display
+    let start_line = symbol.range.start.0.row as usize + 1;
+    let end_line = symbol.range.end.0.row as usize + 1;
 
-        // Convert to 1-based line numbers for display
-        let start_line = symbol.range.start.0.row as usize + 1;
-        let end_line = symbol.range.end.0.row as usize + 1;
+    if start_line == end_line {
+        writeln!(output, " [L{}]", start_line).ok();
+    } else {
+        writeln!(output, " [L{}-{}]", start_line, end_line).ok();
+    }
 
-        if start_line == end_line {
-            writeln!(output, " [L{}]", start_line).ok();
-        } else {
-            writeln!(output, " [L{}-{}]", start_line, end_line).ok();
-        }
-
-        // Recursively process children with increased depth
-        if !symbol.children.is_empty() {
-            render_symbols(&symbol.children, depth + 1, output, labels, symbol_index);
-        }
+    // Recursively process children with increased depth
+    for child in &symbol.children {
+        render_symbol(child, depth + 1, output, label);
     }
 }
