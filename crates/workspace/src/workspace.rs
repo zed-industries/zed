@@ -1341,14 +1341,14 @@ impl Workspace {
             window
                 .update(cx, |workspace, window, cx| {
                     window.activate_window();
-                    if is_new_workspace {
-                        // todo(zjk)
-                        // If opened a new workspace, the workspace will be serialized and notified here.
-                        // If opened an existing workspace, the workspace will be serialized and notified in the
-                        // above `open_items` call.
-                        // workspace.serialize_workspace(window, cx);
-                        workspace.update_history(cx);
-                    }
+                    // if is_new_workspace {
+                    // todo(zjk)
+                    // If opened a new workspace, the workspace will be serialized and notified here.
+                    // If opened an existing workspace, the workspace will be serialized and notified in the
+                    // above `open_items` call.
+                    // workspace.serialize_workspace(window, cx);
+                    workspace.update_history(cx);
+                    // }
                 })
                 .log_err();
             Ok((window, opened_items))
@@ -4950,7 +4950,7 @@ impl Workspace {
                     // Serialize ourself to make sure our timestamps and any pane / item changes are replicated
                     // Set `update` to `true` so that the history is updated, newly opened workspaces are moved to the top
                     workspace.serialize_workspace_internal(window, cx).detach();
-                    workspace.update_history(cx);
+                    // workspace.update_history(cx);
 
                     // Ensure that we mark the window as edited if we did load dirty items
                     workspace.update_window_edited(window, cx);
@@ -6465,6 +6465,7 @@ async fn open_ssh_project_inner(
             let mut workspace =
                 Workspace::new(Some(workspace_id), project, app_state.clone(), window, cx);
             workspace.set_serialized_ssh_project(serialized_ssh_project);
+            workspace.update_history(cx);
             workspace
         });
     })?;
