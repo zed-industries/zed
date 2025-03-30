@@ -958,6 +958,13 @@ pub struct SemanticTokensSettings {
     ///
     /// Default: 50
     #[serde(default = "semantic_tokens_debounce_ms")]
+    pub fetch_debounce_ms: u64,
+    /// Whether or not to debounce semantic tokens updates after buffer edits.
+    ///
+    /// Set to 0 to disable debouncing.
+    ///
+    /// Default: 50
+    #[serde(default = "semantic_tokens_debounce_ms")]
     pub edit_debounce_ms: u64,
     /// Whether or not to debounce semantic tokens updates after buffer scrolls.
     ///

@@ -5,63 +5,6 @@ use super::*;
 #[derive(Debug)]
 pub struct SemanticTokensFull;
 
-impl SemanticTokensFull {
-    pub fn legend(
-        lsp_store: Entity<LspStore>,
-        server_id: LanguageServerId,
-        cx: &AsyncApp,
-    ) -> Result<lsp::SemanticTokensLegend> {
-        let language_server = cx.update(|cx| {
-            lsp_store
-                .read(cx)
-                .language_server_for_id(server_id)
-                .with_context(|| {
-                    format!("Missing the language server that just returned a response {server_id}")
-                })
-        })??;
-        let server_capabilities = language_server.capabilities();
-        let legend = match server_capabilities.semantic_tokens_provider {
-            Some(lsp::SemanticTokensServerCapabilities::SemanticTokensOptions(options)) => {
-                options.legend
-            }
-            Some(lsp::SemanticTokensServerCapabilities::SemanticTokensRegistrationOptions(
-                options,
-            )) => options.semantic_tokens_options.legend,
-            None => anyhow::bail!("Missing semantic tokens provider in the server"),
-        };
-        Ok(legend)
-    }
-
-    pub fn serialize_semantic_token(token: SemanticToken) -> proto::SemanticToken {
-        proto::SemanticToken {
-            start: Some(language::proto::serialize_anchor(&token.range.start)),
-            end: Some(language::proto::serialize_anchor(&token.range.end)),
-            token: token.r#type.as_str().into(),
-            modifiers: token
-                .modifiers
-                .into_iter()
-                .map(|r#mod| r#mod.as_str().into())
-                .collect_vec(),
-        }
-    }
-
-    pub fn proto_to_semantic_token(proto: proto::SemanticToken) -> anyhow::Result<SemanticToken> {
-        let start = proto
-            .start
-            .and_then(language::proto::deserialize_anchor)
-            .context("invalid start position")?;
-        let end = proto
-            .end
-            .and_then(language::proto::deserialize_anchor)
-            .context("invalid end position")?;
-        Ok(SemanticToken {
-            range: start..end,
-            modifiers: vec![],
-            r#type: lsp::SemanticTokenType::from(proto.token),
-        })
-    }
-}
-
 #[async_trait(?Send)]
 impl LspCommand for SemanticTokensFull {
     type Response = Vec<SemanticToken>;
@@ -104,7 +47,7 @@ impl LspCommand for SemanticTokensFull {
         mut cx: AsyncApp,
     ) -> Result<Self::Response> {
         let snapshot = buffer.update(&mut cx, |buffer, _| buffer.snapshot())?;
-        let legend = Self::legend(lsp_store, server_id, &cx)?;
+        let legend = legend(lsp_store, server_id, &cx)?;
         let tokens = match message {
             Some(lsp::SemanticTokensResult::Partial(tokens)) => tokens.data,
             Some(lsp::SemanticTokensResult::Tokens(tokens)) => tokens.data,
@@ -181,7 +124,7 @@ impl LspCommand for SemanticTokensFull {
         proto::SemanticTokensResponse {
             tokens: response
                 .into_iter()
-                .map(Self::serialize_semantic_token)
+                .map(serialize_semantic_token)
                 .collect_vec(),
             version: serialize_version(buffer_version),
         }
@@ -197,7 +140,7 @@ impl LspCommand for SemanticTokensFull {
         message
             .tokens
             .into_iter()
-            .map(Self::proto_to_semantic_token)
+            .map(proto_to_semantic_token)
             .collect::<Result<Vec<_>>>()
     }
 
@@ -221,4 +164,59 @@ fn active_modifiers(
             }
         })
         .collect_vec()
+}
+
+fn legend(
+    lsp_store: Entity<LspStore>,
+    server_id: LanguageServerId,
+    cx: &AsyncApp,
+) -> Result<lsp::SemanticTokensLegend> {
+    let language_server = cx.update(|cx| {
+        lsp_store
+            .read(cx)
+            .language_server_for_id(server_id)
+            .with_context(|| {
+                format!("Missing the language server that just returned a response {server_id}")
+            })
+    })??;
+    let server_capabilities = language_server.capabilities();
+    let legend = match server_capabilities.semantic_tokens_provider {
+        Some(lsp::SemanticTokensServerCapabilities::SemanticTokensOptions(options)) => {
+            options.legend
+        }
+        Some(lsp::SemanticTokensServerCapabilities::SemanticTokensRegistrationOptions(options)) => {
+            options.semantic_tokens_options.legend
+        }
+        None => anyhow::bail!("Missing semantic tokens provider in the server"),
+    };
+    Ok(legend)
+}
+
+fn serialize_semantic_token(token: SemanticToken) -> proto::SemanticToken {
+    proto::SemanticToken {
+        start: Some(language::proto::serialize_anchor(&token.range.start)),
+        end: Some(language::proto::serialize_anchor(&token.range.end)),
+        token: token.r#type.as_str().into(),
+        modifiers: token
+            .modifiers
+            .into_iter()
+            .map(|r#mod| r#mod.as_str().into())
+            .collect_vec(),
+    }
+}
+
+fn proto_to_semantic_token(proto: proto::SemanticToken) -> anyhow::Result<SemanticToken> {
+    let start = proto
+        .start
+        .and_then(language::proto::deserialize_anchor)
+        .context("invalid start position")?;
+    let end = proto
+        .end
+        .and_then(language::proto::deserialize_anchor)
+        .context("invalid end position")?;
+    Ok(SemanticToken {
+        range: start..end,
+        modifiers: vec![],
+        r#type: lsp::SemanticTokenType::from(proto.token),
+    })
 }

@@ -1169,7 +1169,9 @@ fn consolidate_wrap_edits(edits: Vec<WrapEdit>) -> Vec<WrapEdit> {
 mod tests {
     use super::*;
     use crate::{
-        display_map::{fold_map::FoldMap, inlay_map::InlayMap, tab_map::TabMap},
+        display_map::{
+            fold_map::FoldMap, inlay_map::InlayMap, tab_map::TabMap, token_map::TokenMap,
+        },
         test::test_font,
         MultiBuffer,
     };
@@ -1219,7 +1221,9 @@ mod tests {
         });
         let mut buffer_snapshot = buffer.read_with(cx, |buffer, cx| buffer.snapshot(cx));
         log::info!("Buffer text: {:?}", buffer_snapshot.text());
-        let (mut inlay_map, inlay_snapshot) = InlayMap::new(buffer_snapshot.clone());
+        let (mut token_map, token_snapshot) = TokenMap::new(buffer_snapshot.clone());
+        log::info!("TokemMap text: {:?}", token_snapshot.text());
+        let (mut inlay_map, inlay_snapshot) = InlayMap::new(token_snapshot);
         log::info!("InlayMap text: {:?}", inlay_snapshot.text());
         let (mut fold_map, fold_snapshot) = FoldMap::new(inlay_snapshot.clone());
         log::info!("FoldMap text: {:?}", fold_snapshot.text());
@@ -1281,7 +1285,7 @@ mod tests {
                 }
                 40..=59 => {
                     let (inlay_snapshot, inlay_edits) =
-                        inlay_map.randomly_mutate(&mut next_inlay_id, &mut rng);
+                        inlay_map.randomly_mutate(token_map, &mut next_inlay_id, &mut rng);
                     let (fold_snapshot, fold_edits) = fold_map.read(inlay_snapshot, inlay_edits);
                     let (tabs_snapshot, tab_edits) =
                         tab_map.sync(fold_snapshot, fold_edits, tab_size);
@@ -1303,8 +1307,10 @@ mod tests {
             }
 
             log::info!("Buffer text: {:?}", buffer_snapshot.text());
-            let (inlay_snapshot, inlay_edits) =
-                inlay_map.sync(buffer_snapshot.clone(), buffer_edits);
+            let (token_snapshot, token_edits) =
+                token_map.sync(buffer_snapshot.clone(), buffer_edits);
+            log::info!("TokenMap text: {:?}", token_snapshot.text());
+            let (inlay_snapshot, inlay_edits) = inlay_map.sync(token_snapshot, token_edits);
             log::info!("InlayMap text: {:?}", inlay_snapshot.text());
             let (fold_snapshot, fold_edits) = fold_map.read(inlay_snapshot, inlay_edits);
             log::info!("FoldMap text: {:?}", fold_snapshot.text());

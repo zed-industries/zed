@@ -9,7 +9,7 @@ use anyhow::Context as _;
 use clock::Global;
 use collections::{HashMap, HashSet, IndexMap};
 use futures::future;
-use gpui::{AppContext as _, AsyncApp, Entity, Task};
+use gpui::{AppContext as _, AsyncApp, Entity, Task, WeakEntity};
 use language::{language_settings::SemanticTokensSettings, Buffer, BufferSnapshot};
 use multi_buffer::{ExcerptId, MultiBufferSnapshot};
 use parking_lot::RwLock;
@@ -28,7 +28,7 @@ use crate::{
     Editor,
 };
 
-const MAX_CONCURRENT_LSP_REQUESTS: usize = 15;
+const MAX_CONCURRENT_LSP_REQUESTS: usize = 5;
 const INVISIBLE_RANGES_TOKENS_REQUEST_DELAY_MILLIS: u64 = 100;
 
 pub struct SemanticTokensCache {
@@ -152,7 +152,7 @@ impl SemanticTokensCache {
             None
         } else {
             Some(TokenSplice {
-                to_remove: invalidated_tokens,
+                to_remove: vec![],
                 to_insert: Vec::new(),
             })
         }
@@ -410,6 +410,93 @@ fn new_update_task(
     })
 }
 
+async fn semantic_tokens_fetch(
+    editor: WeakEntity<Editor>,
+    invalidate: bool,
+    lsp_request_limiter: Arc<Semaphore>,
+    cached_excerpt_tokens: Option<Arc<RwLock<CachedExcerptTokens>>>,
+    visible_tokens: &[Token],
+    fetch_range: &Range<language::Anchor>,
+    fetch_range_to_log: &Range<language::Point>,
+    buffer_snapshot: &BufferSnapshot,
+    query: &ExcerptQuery,
+    cx: &mut AsyncApp,
+) -> anyhow::Result<Option<Vec<SemanticToken>>> {
+    let (lsp_request_guard, got_throttled) = if query.invalidate.should_invalidate() {
+        (None, false)
+    } else {
+        match lsp_request_limiter.try_acquire() {
+            Some(guard) => (Some(guard), false),
+            None => (Some(lsp_request_limiter.acquire().await), true),
+        }
+    };
+    let semantic_tokens_fetch_task = editor.update(cx, |editor, cx| {
+        if got_throttled {
+            let query_not_around_visible_range = match editor
+                .excerpts_for_query(None, cx)
+                .remove(&query.excerpt_id)
+            {
+                Some((_, _, current_visible_range)) => {
+                    let visible_offset_length = current_visible_range.len();
+                    let double_visible_range = current_visible_range
+                        .start
+                        .saturating_sub(visible_offset_length)
+                        ..current_visible_range
+                            .end
+                            .saturating_add(visible_offset_length)
+                            .min(buffer_snapshot.len());
+                    !double_visible_range
+                        .contains(&fetch_range.start.to_offset(&buffer_snapshot))
+                        && !double_visible_range
+                            .contains(&fetch_range.end.to_offset(&buffer_snapshot))
+                }
+                None => true,
+            };
+            if query_not_around_visible_range {
+                log::trace!("Fetching semantic tokens for range {fetch_range_to_log:?} got throttled and fell off the current visible range, skipping.");
+                if let Some(task_ranges) = editor
+                    .semantic_tokens_cache
+                    .update_tasks
+                    .get_mut(&query.excerpt_id)
+                {
+                    task_ranges.invalidate_range(&buffer_snapshot, &fetch_range);
+                }
+                return None;
+            }
+        }
+
+        let buffer = editor.buffer().read(cx).buffer(query.buffer_id)?;
+
+        // TODO: request range
+        editor
+            .semantics_provider
+            .as_ref()?
+            .semantic_tokens(buffer, cx)
+    });
+
+    let new_tokens = match semantic_tokens_fetch_task.ok().flatten() {
+        Some(fetch_task) => {
+            log::debug!(
+                "Fetching semantic tokens for range {fetch_range_to_log:?}, reason: {query_reason}, invalidate: {invalidate}",
+                query_reason = query.reason,
+            );
+            log::trace!(
+                "Currently visible semantic tokens: {visible_tokens:?}, cached semantic tokens present: {}",
+                cached_excerpt_tokens.is_some(),
+            );
+            fetch_task.await.context("semantic tokens fetch task")?
+        }
+        None => return Ok(None),
+    };
+    drop(lsp_request_guard);
+    log::debug!(
+        "Fetched {} semantic tokens for range {fetch_range_to_log:?}",
+        new_tokens.len()
+    );
+    log::trace!("Fetched semantic tokens: {new_tokens:?}");
+    Ok(Some(new_tokens))
+}
+
 fn fetch_and_update_tokens(
     excerpt_buffer: Entity<Buffer>,
     query: ExcerptQuery,
@@ -419,71 +506,12 @@ fn fetch_and_update_tokens(
 ) -> Task<anyhow::Result<()>> {
     cx.spawn(async move |editor, cx|{
         let buffer_snapshot = excerpt_buffer.update(cx, |buffer, _| buffer.snapshot())?;
-        let (lsp_request_limiter, multi_buffer_snapshot) =
-            editor.update(cx, |editor, cx| {
-                let multi_buffer_snapshot =
-                    editor.buffer().update(cx, |buffer, cx| buffer.snapshot(cx));
-                let lsp_request_limiter = Arc::clone(&editor.semantic_tokens_cache.lsp_request_limiter);
-                (lsp_request_limiter, multi_buffer_snapshot)
-            })?;
-
-        let (lsp_request_guard, got_throttled) = if query.invalidate.should_invalidate() {
-            (None, false)
-        } else {
-            match lsp_request_limiter.try_acquire() {
-                Some(guard) => (Some(guard), false),
-                None => (Some(lsp_request_limiter.acquire().await), true),
-            }
-        };
-        let fetch_range_to_log = fetch_range.start.to_point(&buffer_snapshot)
-            ..fetch_range.end.to_point(&buffer_snapshot);
-        let semantic_tokens_fetch_task = editor
-            .update(cx, |editor, cx| {
-                if got_throttled {
-                    let query_not_around_visible_range = match editor
-                        .excerpts_for_query(None, cx)
-                        .remove(&query.excerpt_id)
-                    {
-                        Some((_, _, current_visible_range)) => {
-                            let visible_offset_length = current_visible_range.len();
-                            let double_visible_range = current_visible_range
-                                .start
-                                .saturating_sub(visible_offset_length)
-                                ..current_visible_range
-                                    .end
-                                    .saturating_add(visible_offset_length)
-                                    .min(buffer_snapshot.len());
-                            !double_visible_range
-                                .contains(&fetch_range.start.to_offset(&buffer_snapshot))
-                                && !double_visible_range
-                                    .contains(&fetch_range.end.to_offset(&buffer_snapshot))
-                        }
-                        None => true,
-                    };
-                    if query_not_around_visible_range {
-                        log::trace!("Fetching semantic tokens for range {fetch_range_to_log:?} got throttled and fell off the current visible range, skipping.");
-                        if let Some(task_ranges) = editor
-                            .semantic_tokens_cache
-                            .update_tasks
-                            .get_mut(&query.excerpt_id)
-                        {
-                            task_ranges.invalidate_range(&buffer_snapshot, &fetch_range);
-                        }
-                        return None;
-                    }
-                }
-
-                let buffer = editor.buffer().read(cx).buffer(query.buffer_id)?;
-
-                // TODO: request range
-                editor
-                    .semantics_provider
-                    .as_ref()?
-                    .semantic_tokens(buffer, cx)
-            })
-            .ok()
-            .flatten();
-
+        let (lsp_request_limiter, multi_buffer_snapshot) = editor.update(cx, |editor, cx| {
+            let multi_buffer_snapshot = editor.buffer().update(cx, |buffer, cx| buffer.snapshot(cx));
+            let lsp_request_limiter = Arc::clone(&editor.semantic_tokens_cache.lsp_request_limiter);
+            (lsp_request_limiter, multi_buffer_snapshot)
+        })?;
+        let visible_tokens = editor.update(cx, |editor, cx| editor.visible_semantic_tokens(cx))?;
         let cached_excerpt_tokens = editor.update(cx, |editor, _| {
             editor
                 .semantic_tokens_cache
@@ -491,28 +519,22 @@ fn fetch_and_update_tokens(
                 .get(&query.excerpt_id)
                 .cloned()
         })?;
-
-        let visible_tokens = editor.update(cx, |editor, cx| editor.visible_semantic_tokens(cx))?;
-        let new_tokens = match semantic_tokens_fetch_task {
-            Some(fetch_task) => {
-                log::debug!(
-                    "Fetching semantic tokens for range {fetch_range_to_log:?}, reason: {query_reason}, invalidate: {invalidate}",
-                    query_reason = query.reason,
-                );
-                log::trace!(
-                    "Currently visible semantic tokens: {visible_tokens:?}, cached semantic tokens present: {}",
-                    cached_excerpt_tokens.is_some(),
-                );
-                fetch_task.await.context("semantic tokens fetch task")?
-            }
-            None => return Ok(()),
+        let fetch_range_to_log =
+            fetch_range.start.to_point(&buffer_snapshot)..fetch_range.end.to_point(&buffer_snapshot);
+        let Some(new_tokens) = semantic_tokens_fetch(
+            editor.clone(),
+            invalidate,
+            lsp_request_limiter,
+            cached_excerpt_tokens.as_ref().map(|arc| arc.clone()),
+            &visible_tokens,
+            &fetch_range,
+            &fetch_range_to_log,
+            &buffer_snapshot,
+            &query,
+            cx,
+        ).await? else {
+            return Ok(())
         };
-        drop(lsp_request_guard);
-        log::debug!(
-            "Fetched {} semantic tokens for range {fetch_range_to_log:?}",
-            new_tokens.len()
-        );
-        log::trace!("Fetched semantic tokens: {new_tokens:?}");
 
         let background_task_buffer_snapshot = buffer_snapshot.clone();
         let background_fetch_range = fetch_range.clone();

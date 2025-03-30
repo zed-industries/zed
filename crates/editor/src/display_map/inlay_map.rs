@@ -11,7 +11,11 @@ use std::{
 use sum_tree::{Bias, Cursor, SumTree};
 use text::{Patch, Rope};
 
-use super::{custom_highlights::CustomHighlightsChunks, Highlights};
+use super::{
+    custom_highlights::CustomHighlightsChunks,
+    token_map::{TokenEdit, TokenMap, TokenOffset, TokenPoint, TokenSnapshot},
+    Highlights,
+};
 
 /// Decides where the [`Inlay`]s should be displayed.
 ///
@@ -23,7 +27,7 @@ pub struct InlayMap {
 
 #[derive(Clone)]
 pub struct InlaySnapshot {
-    pub buffer: MultiBufferSnapshot,
+    pub token_snapshot: TokenSnapshot,
     transforms: SumTree<Transform>,
     pub version: usize,
 }
@@ -395,11 +399,14 @@ impl InlayPoint {
 }
 
 impl InlayMap {
-    pub fn new(buffer: MultiBufferSnapshot) -> (Self, InlaySnapshot) {
+    pub fn new(token_snapshot: TokenSnapshot) -> (Self, InlaySnapshot) {
         let version = 0;
         let snapshot = InlaySnapshot {
-            buffer: buffer.clone(),
-            transforms: SumTree::from_iter(Some(Transform::Isomorphic(buffer.text_summary())), &()),
+            token_snapshot: token_snapshot.clone(),
+            transforms: SumTree::from_iter(
+                Some(Transform::Isomorphic(token_snapshot.buffer.text_summary())),
+                &(),
+            ),
             version,
         };
 
@@ -414,32 +421,40 @@ impl InlayMap {
 
     pub fn sync(
         &mut self,
-        buffer_snapshot: MultiBufferSnapshot,
-        mut buffer_edits: Vec<text::Edit<usize>>,
+        snapshot: TokenSnapshot,
+        mut buffer_edits: Vec<TokenEdit>,
     ) -> (InlaySnapshot, Vec<InlayEdit>) {
+        let buffer_snapshot = snapshot.buffer;
         let snapshot = &mut self.snapshot;
 
         if buffer_edits.is_empty()
-            && snapshot.buffer.trailing_excerpt_update_count()
+            && snapshot
+                .token_snapshot
+                .buffer
+                .trailing_excerpt_update_count()
                 != buffer_snapshot.trailing_excerpt_update_count()
         {
             buffer_edits.push(Edit {
-                old: snapshot.buffer.len()..snapshot.buffer.len(),
-                new: buffer_snapshot.len()..buffer_snapshot.len(),
+                old: TokenOffset(snapshot.token_snapshot.buffer.len())
+                    ..TokenOffset(snapshot.token_snapshot.buffer.len()),
+                new: TokenOffset(buffer_snapshot.len())..TokenOffset(buffer_snapshot.len()),
             });
         }
 
         if buffer_edits.is_empty() {
-            if snapshot.buffer.edit_count() != buffer_snapshot.edit_count()
-                || snapshot.buffer.non_text_state_update_count()
+            if snapshot.token_snapshot.buffer.edit_count() != buffer_snapshot.edit_count()
+                || snapshot.token_snapshot.buffer.non_text_state_update_count()
                     != buffer_snapshot.non_text_state_update_count()
-                || snapshot.buffer.trailing_excerpt_update_count()
+                || snapshot
+                    .token_snapshot
+                    .buffer
+                    .trailing_excerpt_update_count()
                     != buffer_snapshot.trailing_excerpt_update_count()
             {
                 snapshot.version += 1;
             }
 
-            snapshot.buffer = buffer_snapshot;
+            snapshot.token_snapshot.buffer = buffer_snapshot;
             (snapshot.clone(), Vec::new())
         } else {
             let mut inlay_edits = Patch::default();
@@ -447,9 +462,9 @@ impl InlayMap {
             let mut cursor = snapshot.transforms.cursor::<(usize, InlayOffset)>(&());
             let mut buffer_edits_iter = buffer_edits.iter().peekable();
             while let Some(buffer_edit) = buffer_edits_iter.next() {
-                new_transforms.append(cursor.slice(&buffer_edit.old.start, Bias::Left, &()), &());
+                new_transforms.append(cursor.slice(&buffer_edit.old.start.0, Bias::Left, &()), &());
                 if let Some(Transform::Isomorphic(transform)) = cursor.item() {
-                    if cursor.end(&()).0 == buffer_edit.old.start {
+                    if cursor.end(&()).0 == buffer_edit.old.start.0 {
                         push_isomorphic(&mut new_transforms, *transform);
                         cursor.next(&());
                     }
@@ -457,14 +472,14 @@ impl InlayMap {
 
                 // Remove all the inlays and transforms contained by the edit.
                 let old_start =
-                    cursor.start().1 + InlayOffset(buffer_edit.old.start - cursor.start().0);
-                cursor.seek(&buffer_edit.old.end, Bias::Right, &());
+                    cursor.start().1 + InlayOffset(buffer_edit.old.start.0 - cursor.start().0);
+                cursor.seek(&buffer_edit.old.end.0, Bias::Right, &());
                 let old_end =
-                    cursor.start().1 + InlayOffset(buffer_edit.old.end - cursor.start().0);
+                    cursor.start().1 + InlayOffset(buffer_edit.old.end.0 - cursor.start().0);
 
                 // Push the unchanged prefix.
                 let prefix_start = new_transforms.summary().input.len;
-                let prefix_end = buffer_edit.new.start;
+                let prefix_end = buffer_edit.new.start.0;
                 push_isomorphic(
                     &mut new_transforms,
                     buffer_snapshot.text_summary_for_range(prefix_start..prefix_end),
@@ -475,7 +490,7 @@ impl InlayMap {
                     probe
                         .position
                         .to_offset(&buffer_snapshot)
-                        .cmp(&buffer_edit.new.start)
+                        .cmp(&buffer_edit.new.start.0)
                         .then(std::cmp::Ordering::Greater)
                 }) {
                     Ok(ix) | Err(ix) => ix,
@@ -483,7 +498,7 @@ impl InlayMap {
 
                 for inlay in &self.inlays[start_ix..] {
                     let buffer_offset = inlay.position.to_offset(&buffer_snapshot);
-                    if buffer_offset > buffer_edit.new.end {
+                    if buffer_offset > buffer_edit.new.end.0 {
                         break;
                     }
 
@@ -503,7 +518,7 @@ impl InlayMap {
                 let transform_start = new_transforms.summary().input.len;
                 push_isomorphic(
                     &mut new_transforms,
-                    buffer_snapshot.text_summary_for_range(transform_start..buffer_edit.new.end),
+                    buffer_snapshot.text_summary_for_range(transform_start..buffer_edit.new.end.0),
                 );
                 let new_end = InlayOffset(new_transforms.summary().output.len);
                 inlay_edits.push(Edit {
@@ -515,11 +530,11 @@ impl InlayMap {
                 // we can push its remainder.
                 if buffer_edits_iter
                     .peek()
-                    .map_or(true, |edit| edit.old.start >= cursor.end(&()).0)
+                    .map_or(true, |edit| edit.old.start.0 >= cursor.end(&()).0)
                 {
                     let transform_start = new_transforms.summary().input.len;
                     let transform_end =
-                        buffer_edit.new.end + (cursor.end(&()).0 - buffer_edit.old.end);
+                        buffer_edit.new.end.0 + (cursor.end(&()).0 - buffer_edit.old.end.0);
                     push_isomorphic(
                         &mut new_transforms,
                         buffer_snapshot.text_summary_for_range(transform_start..transform_end),
@@ -536,7 +551,7 @@ impl InlayMap {
             drop(cursor);
             snapshot.transforms = new_transforms;
             snapshot.version += 1;
-            snapshot.buffer = buffer_snapshot;
+            snapshot.token_snapshot.buffer = buffer_snapshot;
             snapshot.check_invariants();
 
             (snapshot.clone(), inlay_edits.into_inner())
@@ -545,6 +560,7 @@ impl InlayMap {
 
     pub fn splice(
         &mut self,
+        mut token_map: TokenMap,
         to_remove: &[InlayId],
         to_insert: Vec<Inlay>,
     ) -> (InlaySnapshot, Vec<InlayEdit>) {
@@ -554,7 +570,7 @@ impl InlayMap {
         self.inlays.retain(|inlay| {
             let retain = !to_remove.contains(&inlay.id);
             if !retain {
-                let offset = inlay.position.to_offset(&snapshot.buffer);
+                let offset = inlay.position.to_offset(&snapshot.token_snapshot.buffer);
                 edits.insert(offset);
             }
             retain
@@ -566,11 +582,13 @@ impl InlayMap {
                 continue;
             }
 
-            let offset = inlay_to_insert.position.to_offset(&snapshot.buffer);
+            let offset = inlay_to_insert
+                .position
+                .to_offset(&snapshot.token_snapshot.buffer);
             match self.inlays.binary_search_by(|probe| {
                 probe
                     .position
-                    .cmp(&inlay_to_insert.position, &snapshot.buffer)
+                    .cmp(&inlay_to_insert.position, &snapshot.token_snapshot.buffer)
                     .then(std::cmp::Ordering::Less)
             }) {
                 Ok(ix) | Err(ix) => {
@@ -588,8 +606,9 @@ impl InlayMap {
                 new: offset..offset,
             })
             .collect();
-        let buffer_snapshot = snapshot.buffer.clone();
-        let (snapshot, edits) = self.sync(buffer_snapshot, buffer_edits);
+        let buffer_snapshot = snapshot.token_snapshot.buffer.clone();
+        let (snapshot, edits) = token_map.sync(buffer_snapshot, buffer_edits);
+        let (snapshot, edits) = self.sync(snapshot, edits);
         (snapshot, edits)
     }
 
@@ -600,6 +619,7 @@ impl InlayMap {
     #[cfg(test)]
     pub(crate) fn randomly_mutate(
         &mut self,
+        token_map: &mut TokenMap,
         next_inlay_id: &mut usize,
         rng: &mut rand::rngs::StdRng,
     ) -> (InlaySnapshot, Vec<InlayEdit>) {
@@ -611,7 +631,11 @@ impl InlayMap {
         let snapshot = &mut self.snapshot;
         for i in 0..rng.gen_range(1..=5) {
             if self.inlays.is_empty() || rng.gen() {
-                let position = snapshot.buffer.random_byte_range(0, rng).start;
+                let position = snapshot
+                    .token_snapshot
+                    .buffer
+                    .random_byte_range(0, rng)
+                    .start;
                 let bias = if rng.gen() { Bias::Left } else { Bias::Right };
                 let len = if rng.gen_bool(0.01) {
                     0
@@ -638,7 +662,7 @@ impl InlayMap {
 
                 to_insert.push(Inlay {
                     id: inlay_id,
-                    position: snapshot.buffer.anchor_at(position, bias),
+                    position: snapshot.token_snapshot.buffer.anchor_at(position, bias),
                     text: text.into(),
                 });
             } else {
@@ -653,7 +677,7 @@ impl InlayMap {
         }
         log::info!("removing inlays: {:?}", to_remove);
 
-        let (snapshot, edits) = self.splice(&to_remove, to_insert);
+        let (snapshot, edits) = self.splice(token_map, &to_remove, to_insert);
         (snapshot, edits)
     }
 }
@@ -669,8 +693,14 @@ impl InlaySnapshot {
             Some(Transform::Isomorphic(_)) => {
                 let buffer_offset_start = cursor.start().1 .1;
                 let buffer_offset_end = buffer_offset_start + overshoot;
-                let buffer_start = self.buffer.offset_to_point(buffer_offset_start);
-                let buffer_end = self.buffer.offset_to_point(buffer_offset_end);
+                let buffer_start = self
+                    .token_snapshot
+                    .buffer
+                    .offset_to_point(buffer_offset_start);
+                let buffer_end = self
+                    .token_snapshot
+                    .buffer
+                    .offset_to_point(buffer_offset_end);
                 InlayPoint(cursor.start().1 .0 .0 + (buffer_end - buffer_start))
             }
             Some(Transform::Inlay(inlay)) => {
@@ -699,8 +729,12 @@ impl InlaySnapshot {
             Some(Transform::Isomorphic(_)) => {
                 let buffer_point_start = cursor.start().1 .1;
                 let buffer_point_end = buffer_point_start + overshoot;
-                let buffer_offset_start = self.buffer.point_to_offset(buffer_point_start);
-                let buffer_offset_end = self.buffer.point_to_offset(buffer_point_end);
+                let buffer_offset_start = self
+                    .token_snapshot
+                    .buffer
+                    .point_to_offset(buffer_point_start);
+                let buffer_offset_end =
+                    self.token_snapshot.buffer.point_to_offset(buffer_point_end);
                 InlayOffset(cursor.start().1 .0 .0 + (buffer_offset_end - buffer_offset_start))
             }
             Some(Transform::Inlay(inlay)) => {
@@ -719,7 +753,7 @@ impl InlaySnapshot {
                 cursor.start().1 + overshoot
             }
             Some(Transform::Inlay(_)) => cursor.start().1,
-            None => self.buffer.max_point(),
+            None => self.token_snapshot.buffer.max_point(),
         }
     }
     pub fn to_buffer_offset(&self, offset: InlayOffset) -> usize {
@@ -731,7 +765,7 @@ impl InlaySnapshot {
                 cursor.start().1 + overshoot.0
             }
             Some(Transform::Inlay(_)) => cursor.start().1,
-            None => self.buffer.len(),
+            None => self.token_snapshot.buffer.len(),
         }
     }
 
@@ -840,7 +874,8 @@ impl InlaySnapshot {
                     } else {
                         let overshoot = point.0 - cursor.start().0 .0;
                         let buffer_point = cursor.start().1 + overshoot;
-                        let clipped_buffer_point = self.buffer.clip_point(buffer_point, bias);
+                        let clipped_buffer_point =
+                            self.token_snapshot.buffer.clip_point(buffer_point, bias);
                         let clipped_overshoot = clipped_buffer_point - cursor.start().1;
                         let clipped_point = InlayPoint(cursor.start().0 .0 + clipped_overshoot);
                         if clipped_point == point {
@@ -910,7 +945,10 @@ impl InlaySnapshot {
                 let suffix_start = buffer_start + overshoot;
                 let suffix_end =
                     buffer_start + (cmp::min(cursor.end(&()).0, range.end).0 - cursor.start().0 .0);
-                summary = self.buffer.text_summary_for_range(suffix_start..suffix_end);
+                summary = self
+                    .token_snapshot
+                    .buffer
+                    .text_summary_for_range(suffix_start..suffix_end);
                 cursor.next(&());
             }
             Some(Transform::Inlay(inlay)) => {
@@ -933,6 +971,7 @@ impl InlaySnapshot {
                     let prefix_start = cursor.start().1;
                     let prefix_end = prefix_start + overshoot;
                     summary += self
+                        .token_snapshot
                         .buffer
                         .text_summary_for_range::<TextSummary, _>(prefix_start..prefix_end);
                 }
@@ -952,7 +991,7 @@ impl InlaySnapshot {
         let inlay_point = InlayPoint::new(row, 0);
         cursor.seek(&inlay_point, Bias::Left, &());
 
-        let max_buffer_row = self.buffer.max_row();
+        let max_buffer_row = self.token_snapshot.buffer.max_row();
         let mut buffer_point = cursor.start().1;
         let buffer_row = if row == 0 {
             MultiBufferRow(0)
@@ -969,7 +1008,7 @@ impl InlaySnapshot {
         InlayBufferRows {
             transforms: cursor,
             inlay_row: inlay_point.row(),
-            buffer_rows: self.buffer.row_infos(buffer_row),
+            buffer_rows: self.token_snapshot.buffer.row_infos(buffer_row),
             max_buffer_row,
         }
     }
@@ -998,8 +1037,7 @@ impl InlaySnapshot {
             buffer_range,
             language_aware,
             highlights.text_highlights,
-            highlights.semantic_highlights,
-            &self.buffer,
+            &self.token_snapshot.buffer,
         );
 
         InlayChunks {
@@ -1026,7 +1064,10 @@ impl InlaySnapshot {
     fn check_invariants(&self) {
         #[cfg(any(debug_assertions, feature = "test-support"))]
         {
-            assert_eq!(self.transforms.summary().input, self.buffer.text_summary());
+            assert_eq!(
+                self.transforms.summary().input,
+                self.token_snapshot.text_summary()
+            );
             let mut transforms = self.transforms.iter().peekable();
             while let Some(transform) = transforms.next() {
                 let transform_is_isomorphic = matches!(transform, Transform::Isomorphic(_));
@@ -1067,7 +1108,7 @@ fn push_isomorphic(sum_tree: &mut SumTree<Transform>, summary: TextSummary) {
 mod tests {
     use super::*;
     use crate::{
-        display_map::{InlayHighlights, TextHighlights},
+        display_map::{token_map::TokenMap, InlayHighlights, TextHighlights},
         hover_links::InlayHighlight,
         InlayId, MultiBuffer,
     };
@@ -1167,11 +1208,13 @@ mod tests {
     fn test_basic_inlays(cx: &mut App) {
         let buffer = MultiBuffer::build_simple("abcdefghi", cx);
         let buffer_edits = buffer.update(cx, |buffer, _| buffer.subscribe());
-        let (mut inlay_map, inlay_snapshot) = InlayMap::new(buffer.read(cx).snapshot(cx));
+        let (token_map, token_snapshot) = TokenMap::new(buffer.read(cx).snapshot(cx));
+        let (mut inlay_map, inlay_snapshot) = InlayMap::new(token_snapshot);
         assert_eq!(inlay_snapshot.text(), "abcdefghi");
         let mut next_inlay_id = 0;
 
         let (inlay_snapshot, _) = inlay_map.splice(
+            token_map,
             &[],
             vec![Inlay {
                 id: InlayId::Hint(post_inc(&mut next_inlay_id)),
@@ -1458,7 +1501,8 @@ mod tests {
     #[gpui::test]
     fn test_inlay_buffer_rows(cx: &mut App) {
         let buffer = MultiBuffer::build_simple("abc\ndef\nghi", cx);
-        let (mut inlay_map, inlay_snapshot) = InlayMap::new(buffer.read(cx).snapshot(cx));
+        let (_, token_snapshot) = TokenMap::new(buffer.read(cx).snapshot(cx));
+        let (mut inlay_map, inlay_snapshot) = InlayMap::new(token_snapshot);
         assert_eq!(inlay_snapshot.text(), "abc\ndef\nghi");
         let mut next_inlay_id = 0;
 
@@ -1512,7 +1556,8 @@ mod tests {
         let mut buffer_snapshot = buffer.read(cx).snapshot(cx);
         let mut next_inlay_id = 0;
         log::info!("buffer text: {:?}", buffer_snapshot.text());
-        let (mut inlay_map, mut inlay_snapshot) = InlayMap::new(buffer_snapshot.clone());
+        let (_, token_snapshot) = TokenMap::new(buffer.read(cx).snapshot(cx));
+        let (mut inlay_map, mut inlay_snapshot) = InlayMap::new(token_snapshot);
         for _ in 0..operations {
             let mut inlay_edits = Patch::default();
 

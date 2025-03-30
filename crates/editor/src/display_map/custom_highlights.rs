@@ -12,21 +12,6 @@ use std::{
 };
 use sum_tree::TreeMap;
 
-use super::SemanticHighlights;
-
-#[derive(Debug, Clone)]
-pub struct Token {
-    pub(crate) id: usize,
-    pub range: Range<multi_buffer::Anchor>,
-    pub style: HighlightStyle,
-}
-
-impl Token {
-    pub fn new(id: usize, range: Range<multi_buffer::Anchor>, style: HighlightStyle) -> Self {
-        Self { id, range, style }
-    }
-}
-
 pub struct CustomHighlightsChunks<'a> {
     buffer_chunks: MultiBufferChunks<'a>,
     buffer_chunk: Option<Chunk<'a>>,
@@ -35,11 +20,8 @@ pub struct CustomHighlightsChunks<'a> {
 
     highlight_endpoints: Peekable<vec::IntoIter<HighlightEndpoint>>,
     active_highlights: BTreeMap<TypeId, HighlightStyle>,
-    semantic_highlights: Option<&'a SemanticHighlights>,
     text_highlights: Option<&'a TreeMap<TypeId, Arc<(HighlightStyle, Vec<Range<Anchor>>)>>>,
 }
-
-enum SemanticHighlightActiveToken {}
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 struct HighlightEndpoint {
@@ -54,7 +36,6 @@ impl<'a> CustomHighlightsChunks<'a> {
         range: Range<usize>,
         language_aware: bool,
         text_highlights: Option<&'a TreeMap<TypeId, Arc<(HighlightStyle, Vec<Range<Anchor>>)>>>,
-        semantic_highlights: Option<&'a SemanticHighlights>,
         multibuffer_snapshot: &'a MultiBufferSnapshot,
     ) -> Self {
         Self {
@@ -62,11 +43,9 @@ impl<'a> CustomHighlightsChunks<'a> {
             buffer_chunk: None,
             offset: range.start,
             text_highlights,
-            semantic_highlights,
             highlight_endpoints: create_highlight_endpoints(
                 &range,
                 text_highlights,
-                semantic_highlights,
                 multibuffer_snapshot,
             ),
             active_highlights: Default::default(),
@@ -75,12 +54,8 @@ impl<'a> CustomHighlightsChunks<'a> {
     }
 
     pub fn seek(&mut self, new_range: Range<usize>) {
-        self.highlight_endpoints = create_highlight_endpoints(
-            &new_range,
-            self.text_highlights,
-            self.semantic_highlights,
-            self.multibuffer_snapshot,
-        );
+        self.highlight_endpoints =
+            create_highlight_endpoints(&new_range, self.text_highlights, self.multibuffer_snapshot);
         self.offset = new_range.start;
         self.buffer_chunks.seek(new_range);
         self.buffer_chunk.take();
@@ -91,31 +66,9 @@ impl<'a> CustomHighlightsChunks<'a> {
 fn create_highlight_endpoints(
     range: &Range<usize>,
     text_highlights: Option<&TreeMap<TypeId, Arc<(HighlightStyle, Vec<Range<Anchor>>)>>>,
-    semantic_highlights: Option<&SemanticHighlights>,
     buffer: &MultiBufferSnapshot,
 ) -> iter::Peekable<vec::IntoIter<HighlightEndpoint>> {
     let mut highlight_endpoints = Vec::new();
-    if let Some(semantic_highlights) = semantic_highlights {
-        let end = buffer.anchor_after(range.end);
-        for token in semantic_highlights.iter() {
-            if token.range.start.cmp(&end, &buffer).is_ge() {
-                break;
-            }
-            highlight_endpoints.push(HighlightEndpoint {
-                offset: token.range.start.to_offset(&buffer),
-                is_start: true,
-                tag: TypeId::of::<SemanticHighlightActiveToken>(),
-                style: token.style,
-            });
-            highlight_endpoints.push(HighlightEndpoint {
-                offset: token.range.end.to_offset(&buffer),
-                is_start: false,
-                tag: TypeId::of::<SemanticHighlightActiveToken>(),
-                style: token.style,
-            });
-        }
-        highlight_endpoints.sort();
-    }
     if let Some(text_highlights) = text_highlights {
         let start = buffer.anchor_after(range.start);
         let end = buffer.anchor_after(range.end);
@@ -195,12 +148,8 @@ impl<'a> Iterator for CustomHighlightsChunks<'a> {
             ..chunk.clone()
         };
         if !self.active_highlights.is_empty() {
-            let mut active_highlights = self.active_highlights.clone();
-            let mut highlight_style = active_highlights
-                .remove(&TypeId::of::<SemanticHighlightActiveToken>())
-                .inspect(|_| prefix.syntax_highlight_id = None)
-                .unwrap_or_default();
-            for active_highlight in active_highlights.values() {
+            let mut highlight_style = HighlightStyle::default();
+            for active_highlight in self.active_highlights.values() {
                 highlight_style.highlight(*active_highlight);
             }
             prefix.highlight_style = Some(highlight_style);

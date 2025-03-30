@@ -660,6 +660,9 @@ impl LanguageServer {
                     execute_command: Some(ExecuteCommandClientCapabilities {
                         dynamic_registration: Some(false),
                     }),
+                    semantic_tokens: Some(SemanticTokensWorkspaceClientCapabilities {
+                        refresh_support: Some(true),
+                    }),
                     ..Default::default()
                 }),
                 text_document: Some(TextDocumentClientCapabilities {
@@ -777,6 +780,54 @@ impl LanguageServer {
                     document_symbol: Some(DocumentSymbolClientCapabilities {
                         hierarchical_document_symbol_support: Some(true),
                         ..DocumentSymbolClientCapabilities::default()
+                    }),
+                    semantic_tokens: Some(SemanticTokensClientCapabilities {
+                        augments_syntax_tokens: Some(true),
+                        overlapping_token_support: Some(true),
+                        server_cancel_support: Some(true),
+                        dynamic_registration: Some(false),
+                        requests: SemanticTokensClientCapabilitiesRequests {
+                            range: Some(true),
+                            full: Some(SemanticTokensFullOptions::Delta { delta: Some(true) }),
+                        },
+                        multiline_token_support: Some(false),
+                        formats: vec![TokenFormat::new("relative")],
+                        token_types: vec![
+                            SemanticTokenType::NAMESPACE,
+                            SemanticTokenType::TYPE,
+                            SemanticTokenType::CLASS,
+                            SemanticTokenType::ENUM,
+                            SemanticTokenType::INTERFACE,
+                            SemanticTokenType::STRUCT,
+                            SemanticTokenType::TYPE_PARAMETER,
+                            SemanticTokenType::PARAMETER,
+                            SemanticTokenType::VARIABLE,
+                            SemanticTokenType::PROPERTY,
+                            SemanticTokenType::ENUM_MEMBER,
+                            SemanticTokenType::EVENT,
+                            SemanticTokenType::FUNCTION,
+                            SemanticTokenType::METHOD,
+                            SemanticTokenType::MACRO,
+                            SemanticTokenType::KEYWORD,
+                            SemanticTokenType::MODIFIER,
+                            SemanticTokenType::COMMENT,
+                            SemanticTokenType::STRING,
+                            SemanticTokenType::REGEXP,
+                            SemanticTokenType::NUMBER,
+                            SemanticTokenType::OPERATOR,
+                        ],
+                        token_modifiers: vec![
+                            SemanticTokenModifier::DECLARATION,
+                            SemanticTokenModifier::DEFINITION,
+                            SemanticTokenModifier::READONLY,
+                            SemanticTokenModifier::STATIC,
+                            SemanticTokenModifier::DEPRECATED,
+                            SemanticTokenModifier::ABSTRACT,
+                            SemanticTokenModifier::ASYNC,
+                            SemanticTokenModifier::MODIFICATION,
+                            SemanticTokenModifier::DOCUMENTATION,
+                            SemanticTokenModifier::DEFAULT_LIBRARY,
+                        ],
                     }),
                     ..TextDocumentClientCapabilities::default()
                 }),
