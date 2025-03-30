@@ -7,7 +7,6 @@ use std::{
     time::{Duration, Instant},
 };
 
-use anyhow::anyhow;
 use calloop::{
     timer::{TimeoutAction, Timer},
     EventLoop, LoopHandle,
@@ -87,12 +86,12 @@ use crate::{
     ScreenCaptureSource,
 };
 use crate::{
-    point, px, size, AnyWindowHandle, Bounds, CursorStyle, DevicePixels, DisplayId, FileDropEvent,
-    ForegroundExecutor, KeyDownEvent, KeyUpEvent, Keystroke, LinuxCommon, Modifiers,
-    ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseExitEvent, MouseMoveEvent,
-    MouseUpEvent, NavigationDirection, Pixels, PlatformDisplay, PlatformInput, Point, ScaledPixels,
-    ScrollDelta, ScrollWheelEvent, Size, TouchPhase, WindowParams, DOUBLE_CLICK_INTERVAL,
-    SCROLL_LINES,
+    point, px, size, start_scap_default_target_source, AnyWindowHandle, Bounds, CursorStyle,
+    DevicePixels, DisplayId, FileDropEvent, ForegroundExecutor, KeyDownEvent, KeyUpEvent,
+    Keystroke, LinuxCommon, Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent,
+    MouseExitEvent, MouseMoveEvent, MouseUpEvent, NavigationDirection, Pixels, PlatformDisplay,
+    PlatformInput, Point, ScaledPixels, ScrollDelta, ScrollWheelEvent, Size, TouchPhase,
+    WindowParams, DOUBLE_CLICK_INTERVAL, SCROLL_LINES,
 };
 
 /// Used to convert evdev scancode to xkb scancode
@@ -643,9 +642,7 @@ impl LinuxClient for WaylandClient {
     fn screen_capture_sources(
         &self,
     ) -> oneshot::Receiver<anyhow::Result<Vec<Box<dyn ScreenCaptureSource>>>> {
-        let (mut tx, rx) = oneshot::channel();
-        tx.send(Err(anyhow!("screen capture not implemented"))).ok();
-        rx
+        start_scap_default_target_source()
     }
 
     fn open_window(
