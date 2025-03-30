@@ -728,6 +728,7 @@ dependencies = [
  "language",
  "language_model",
  "log",
+ "lsp",
  "open",
  "project",
  "rand 0.8.5",

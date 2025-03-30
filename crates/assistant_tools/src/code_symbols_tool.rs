@@ -1,4 +1,4 @@
-use std::fmt::Write;
+use std::fmt::{self, Write};
 use std::sync::Arc;
 
 use anyhow::{anyhow, Result};
@@ -6,6 +6,7 @@ use assistant_tool::{ActionLog, Tool};
 use gpui::{App, Entity, Task};
 use language::LanguageRegistry;
 use language_model::LanguageModelRequestMessage;
+use lsp::SymbolKind;
 use project::{DocumentSymbol, Project, Symbol};
 use regex::Regex;
 use schemars::JsonSchema;
@@ -110,11 +111,9 @@ impl Tool for CodeSymbolsTool {
 
                 // If regex is provided, prepare it for filtering
                 let regex_filter = match input.regex {
-                    Some(regex_str) => {
-                        match Regex::new(&regex_str) {
-                            Ok(re) => Some(re),
-                            Err(err) => return Err(anyhow!("Invalid regex pattern: {}", err)),
-                        }
+                    Some(regex_str) => match Regex::new(&regex_str) {
+                        Ok(re) => Some(re),
+                        Err(err) => return Err(anyhow!("Invalid regex pattern: {}", err)),
                     },
                     None => None,
                 };
@@ -152,7 +151,10 @@ impl Tool for CodeSymbolsTool {
                 let mut output = String::new();
                 for (file_path, file_symbols) in symbols_by_file {
                     // Extract the filename from the path for the heading
-                    let filename = file_symbols[0].path.path.file_name()
+                    let filename = file_symbols[0]
+                        .path
+                        .path
+                        .file_name()
                         .map(|f| f.to_string_lossy().to_string())
                         .unwrap_or_else(|| "unknown".to_string());
 
@@ -230,11 +232,12 @@ impl Tool for CodeSymbolsTool {
 
             // Get the language for this buffer
             let language = buffer.read_with(cx, |buffer, _| buffer.language().cloned())?;
-            let language_registry = project.read_with(cx, |project, _| project.languages().clone())?;
+            let language_registry =
+                project.read_with(cx, |project, _| project.languages().clone())?;
 
             // Convert the document symbols to a hierarchical outline
             let outline = render_outline(&symbols, language, language_registry).await?;
-            
+
             Ok(outline)
         })
     }
@@ -256,7 +259,7 @@ async fn render_outline(
         .iter()
         .map(|symbol| (symbol.name.clone(), symbol.kind))
         .collect();
-    
+
     // Get labels for the symbols if we have a language with an adapter
     let labels = if let Some(language) = &language {
         let lsp_adapter = language_registry
@@ -265,7 +268,10 @@ async fn render_outline(
             .cloned();
 
         if let Some(lsp_adapter) = lsp_adapter {
-            match lsp_adapter.labels_for_symbols(&label_params, language).await {
+            match lsp_adapter
+                .labels_for_symbols(&label_params, language)
+                .await
+            {
                 Ok(labels) => labels,
                 Err(_) => vec![None; label_params.len()],
             }
@@ -291,6 +297,39 @@ fn collect_symbols_recursive(symbols: &[DocumentSymbol], all_symbols: &mut Vec<D
     }
 }
 
+// If we don't know the symbol kind,
+fn write_symbol_kind(buf: &mut String, kind: lsp::SymbolKind) -> Result<(), fmt::Error> {
+    match kind {
+        SymbolKind::FILE => write!(buf, "file "),
+        SymbolKind::MODULE => write!(buf, "module "),
+        SymbolKind::NAMESPACE => write!(buf, "namespace "),
+        SymbolKind::PACKAGE => write!(buf, "package "),
+        SymbolKind::CLASS => write!(buf, "class "),
+        SymbolKind::METHOD => write!(buf, "method "),
+        SymbolKind::PROPERTY => write!(buf, "property "),
+        SymbolKind::FIELD => write!(buf, "field "),
+        SymbolKind::CONSTRUCTOR => write!(buf, "constructor "),
+        SymbolKind::ENUM => write!(buf, "enum "),
+        SymbolKind::INTERFACE => write!(buf, "interface "),
+        SymbolKind::FUNCTION => write!(buf, "function "),
+        SymbolKind::VARIABLE => write!(buf, "variable "),
+        SymbolKind::CONSTANT => write!(buf, "constant "),
+        SymbolKind::STRING => write!(buf, "string "),
+        SymbolKind::NUMBER => write!(buf, "number "),
+        SymbolKind::BOOLEAN => write!(buf, "boolean "),
+        SymbolKind::ARRAY => write!(buf, "array "),
+        SymbolKind::OBJECT => write!(buf, "object "),
+        SymbolKind::KEY => write!(buf, "key "),
+        SymbolKind::NULL => write!(buf, "null "),
+        SymbolKind::ENUM_MEMBER => write!(buf, "enum member "),
+        SymbolKind::STRUCT => write!(buf, "struct "),
+        SymbolKind::EVENT => write!(buf, "event "),
+        SymbolKind::OPERATOR => write!(buf, "operator "),
+        SymbolKind::TYPE_PARAMETER => write!(buf, "type parameter "),
+        _ => Ok(()),
+    }
+}
+
 // Non-async function to format symbols with their labels
 fn render_symbols(
     symbols: &[DocumentSymbol],
@@ -304,16 +343,16 @@ fn render_symbols(
         let current_index = *symbol_index;
         *symbol_index += 1;
 
-        // Add heading based on depth (# for level 1, ## for level 2, etc.)
-        let kind_str = if let Some(Some(label)) = labels.get(current_index) {
-            label.text().to_string()
-        } else {
-            format!("{:?}", symbol.kind)
-        };
-        
-        let display_text = format!("{} {}", kind_str, symbol.name);
+        write!(output, "{} ", "#".repeat(depth)).ok();
 
-        write!(output, "{} {}", "#".repeat(depth), display_text).ok();
+        // Add heading based on depth (# for level 1, ## for level 2, etc.)
+        if let Some(Some(label)) = labels.get(current_index) {
+            write!(output, "{} ", label.text()).ok();
+        } else {
+            write_symbol_kind(output, symbol.kind).ok();
+        }
+
+        output.push_str(&symbol.name);
 
         // Convert to 1-based line numbers for display
         let start_line = symbol.range.start.0.row as usize + 1;
