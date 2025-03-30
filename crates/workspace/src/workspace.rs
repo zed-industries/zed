@@ -4693,7 +4693,7 @@ impl Workspace {
             }
         }
 
-        if let Some(location) = self.serialize_workspace_localtion(cx) {
+        if let Some(location) = self.serialize_workspace_location(cx) {
             let breakpoints = self.project.update(cx, |project, cx| {
                 project.breakpoint_store().read(cx).all_breakpoints(cx)
             });
@@ -4721,7 +4721,7 @@ impl Workspace {
         Task::ready(())
     }
 
-    fn serialize_workspace_localtion(&self, cx: &App) -> Option<SerializedWorkspaceLocation> {
+    fn serialize_workspace_location(&self, cx: &App) -> Option<SerializedWorkspaceLocation> {
         if let Some(ssh_project) = &self.serialized_ssh_project {
             Some(SerializedWorkspaceLocation::Ssh(ssh_project.clone()))
         } else if let Some(local_paths) = self.local_paths(cx) {
@@ -4739,7 +4739,7 @@ impl Workspace {
         let Some(id) = self.database_id() else {
             return;
         };
-        let Some(location) = self.serialize_workspace_localtion(cx) else {
+        let Some(location) = self.serialize_workspace_location(cx) else {
             return;
         };
         if let Some(manager) = HistoryManager::global(cx) {
