@@ -1,10 +1,11 @@
+use std::cmp;
 use std::fmt::{self, Write};
 use std::sync::Arc;
 
 use anyhow::{anyhow, Result};
 use assistant_tool::{ActionLog, Tool};
 use gpui::{App, Entity, Task};
-use language::LanguageRegistry;
+use language::{CodeLabel, Language, LanguageRegistry};
 use language_model::LanguageModelRequestMessage;
 use lsp::SymbolKind;
 use project::{DocumentSymbol, Project, Symbol};
@@ -13,6 +14,8 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use ui::IconName;
 use util::markdown::MarkdownString;
+
+use crate::code_symbol_iter::{CodeSymbolIterator, Entry};
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct CodeSymbolsInput {
@@ -319,101 +322,44 @@ impl Tool for CodeSymbolsTool {
     }
 }
 
-// Avoid async recursion by splitting into an async function that gets labels,
-// and a non-async function that formats the output using those labels
 async fn render_outline(
     symbols: &[DocumentSymbol],
-    language: Option<Arc<language::Language>>,
-    language_registry: Arc<LanguageRegistry>,
+    language: Option<Arc<Language>>,
+    registry: Arc<LanguageRegistry>,
     input: &CodeSymbolsInput,
 ) -> Result<String> {
-    // Collect all symbols (flattened) to get labels for them all at once
-    let mut all_symbols = Vec::new();
-    collect_symbols_recursive(symbols, &mut all_symbols);
-
-    // Filter by regex if provided
-    let regex_filter = match &input.regex {
+    let regex = match &input.regex {
         Some(regex_str) => match Regex::new(regex_str) {
-            Ok(re) => Some(re),
-            Err(err) => return Err(anyhow!("Invalid regex pattern: {}", err)),
+            Ok(regex) => Some(regex),
+            Err(err) => return Err(anyhow!("Invalid regex: {err}")),
         },
         None => None,
     };
-
-    // Apply regex filter if needed
-    let filtered_symbols = if regex_filter.is_some() {
-        all_symbols
-            .into_iter()
-            .filter(|symbol| {
-                regex_filter
-                    .as_ref()
-                    .map_or(true, |re| re.is_match(&symbol.name))
-            })
-            .collect()
-    } else {
-        all_symbols
+    let offset = input.offset.unwrap_or(0);
+    let entries = CodeSymbolIterator::new(symbols, None)
+        .skip(offset as usize)
+        // Get 1 more than RESULTS_PER_PAGE so we can tell if there are more results.
+        .take((RESULTS_PER_PAGE as usize).saturating_add(1));
+    let labels = match language.and_then(|lang| registry.lsp_adapters(&lang.name()).first()) {
+        Some(lsp_adapter) => lsp_adapter
+            .labels_for_symbols(entries.clone(), lang)
+            .await
+            .ok(),
+        None => None,
     };
 
-    // Setup pagination variables
-    let offset = input.offset.unwrap_or(0) as usize;
-    let total_symbols = filtered_symbols.len();
-
-    // If offset is beyond our symbol count, return early
-    if offset >= total_symbols {
-        return Ok(format!(
-            "No symbols found at offset {}. Total symbols: {}",
-            offset, total_symbols
-        ));
-    }
-
-    // Paginate the filtered symbols
-    let page_end = std::cmp::min(offset + RESULTS_PER_PAGE as usize, total_symbols);
-    let paged_symbols = &filtered_symbols[offset..page_end];
-    let has_more = page_end < total_symbols;
-
-    // Create a list of symbol name/kind pairs for generating labels
-    let label_params: Vec<(String, _)> = paged_symbols
-        .iter()
-        .map(|symbol| (symbol.name.clone(), symbol.kind))
-        .collect();
-
-    // Get labels for the symbols if we have a language with an adapter
-    let labels = if let Some(language) = &language {
-        let lsp_adapter = language_registry
-            .lsp_adapters(&language.name())
-            .first()
-            .cloned();
-
-        if let Some(lsp_adapter) = lsp_adapter {
-            match lsp_adapter
-                .labels_for_symbols(&label_params, language)
-                .await
-            {
-                Ok(labels) => labels,
-                Err(_) => vec![None; label_params.len()],
-            }
-        } else {
-            vec![None; label_params.len()]
-        }
-    } else {
-        vec![None; label_params.len()]
-    };
-
-    // Format the outline with the symbols we're showing
     let mut output = String::new();
+    let mut has_more = match labels {
+        Some(labels) => render_entries(&mut output, entries.zip(labels.iter())),
+        None => render_entries(&mut output, entries.map(|entry| (entry, None))),
+    };
 
-    for (i, symbol) in paged_symbols.iter().enumerate() {
-        let label = labels.get(i).and_then(|l| l.as_ref());
-        render_symbol(symbol, 1, &mut output, label);
-    }
-
-    // Add pagination info if needed
     if has_more {
         writeln!(&mut output, "\nShowing symbols {}-{} (there were more symbols found; use offset: {} to see next page)",
             offset + 1,
             page_end,
             page_end
-        ).ok();
+        )
     } else {
         writeln!(
             &mut output,
@@ -422,17 +368,19 @@ async fn render_outline(
             page_end,
             total_symbols
         )
-        .ok();
     }
+    .ok();
 
     Ok(output)
 }
 
-// Helper function to collect all symbols in a flattened list
-fn collect_symbols_recursive(symbols: &[DocumentSymbol], all_symbols: &mut Vec<DocumentSymbol>) {
-    for symbol in symbols {
-        all_symbols.push(symbol.clone());
-        collect_symbols_recursive(&symbol.children, all_symbols);
+fn gather_symbols(
+    symbols: impl IntoIterator<Item = DocumentSymbol>,
+    predicate: impl Clone + Fn(&DocumentSymbol) -> bool,
+    all_symbols: &mut Vec<DocumentSymbol>,
+) {
+    for symbol in symbols.into_iter().filter(|symbol| predicate(&symbol)) {
+        all_symbols.push(symbol);
     }
 }
 
@@ -469,37 +417,39 @@ fn write_symbol_kind(buf: &mut String, kind: lsp::SymbolKind) -> Result<(), fmt:
     }
 }
 
-// Render a single symbol and its children
-fn render_symbol(
-    symbol: &DocumentSymbol,
-    depth: usize,
-    output: &mut String,
-    label: Option<&language::CodeLabel>,
-) {
-    // Add heading based on depth (# for level 1, ## for level 2, etc.)
-    write!(output, "{} ", "#".repeat(depth)).ok();
+/// Only renders at most RESULTS_PER_PAGE entries, and returns whether the iterator
+/// had more entries left to render afterwards.
+fn render_entries(entries: impl IntoIterator<(Entry, Option<&CodeLabel>)>, output: &mut String) {
+    let mut entries_rendered = 0;
 
-    // Write the symbol kind
-    if let Some(label) = label {
-        write!(output, "{} ", label.text()).ok();
-    } else {
-        write_symbol_kind(output, symbol.kind).ok();
+    for (entry, code_label) in entries {
+        if entries_rendered >= RESULTS_PER_PAGE {
+            // We were about to render more than a page; instead, stop here
+            // and return that there were more entries to render.
+            return true;
+        }
+        // Add heading based on depth (# for level 1, ## for level 2, etc.)
+        write!(output, "{} ", "#".repeat(entry.depth)).ok();
+
+        if let Some(code_label) = code_label {
+            output.push_str(code_label.text());
+        } else {
+            write_symbol_kind(output, entry.kind).ok();
+            output.push_str(entry.name.as_str());
+        }
+
+        // Convert to 1-based line numbers for display
+        let start_line = entry.range.start.0.row as usize + 1;
+        let end_line = entry.range.end.0.row as usize + 1;
+
+        if start_line == end_line {
+            writeln!(output, " [L{}]", start_line).ok();
+        } else {
+            writeln!(output, " [L{}-{}]", start_line, end_line).ok();
+        }
+
+        entries_rendered += 1;
     }
 
-    output.push_str(&symbol.name);
-
-    // Convert to 1-based line numbers for display
-    let start_line = symbol.range.start.0.row as usize + 1;
-    let end_line = symbol.range.end.0.row as usize + 1;
-
-    if start_line == end_line {
-        writeln!(output, " [L{}]", start_line).ok();
-    } else {
-        writeln!(output, " [L{}-{}]", start_line, end_line).ok();
-    }
-
-    // Recursively process children with increased depth
-    for child in &symbol.children {
-        render_symbol(child, depth + 1, output, label);
-    }
+    false
 }
