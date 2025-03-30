@@ -1,24 +1,15 @@
 use std::fmt::Write;
 use std::sync::Arc;
-use std::time::Duration;
 
 use anyhow::{anyhow, Result};
 use assistant_tool::{ActionLog, Tool};
 use gpui::{App, Entity, Task};
-use language::{Anchor, BufferSnapshot, Outline};
 use language_model::LanguageModelRequestMessage;
-use project::Project;
+use project::{DocumentSymbol, Project};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use ui::IconName;
 use util::markdown::MarkdownString;
-
-const LANGUAGE_SERVER_RETRIES: [Duration; 4] = [
-    Duration::from_millis(100),
-    Duration::from_millis(500),
-    Duration::from_millis(1000),
-    Duration::from_millis(2000),
-];
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct OutlineToolInput {
@@ -87,77 +78,69 @@ impl Tool for OutlineTool {
             Err(err) => return Task::ready(Err(anyhow!(err))),
         };
 
-        let Some(project_path) = project.read(cx).find_project_path(&input.path, cx) else {
-            return Task::ready(Err(anyhow!("Path {} not found in project", &input.path)));
-        };
-
         cx.spawn(async move |cx| {
-            let buffer = cx
-                .update(|cx| {
-                    project.update(cx, |project, cx| project.open_buffer(project_path, cx))
-                })?
-                .await?;
+            let buffer = {
+                let project_path = project.read_with(cx, |project, cx| {
+                    project
+                        .find_project_path(&input.path, cx)
+                        .ok_or_else(|| anyhow!("Path {} not found in project", &input.path))
+                })??;
+
+                project
+                    .update(cx, |project, cx| project.open_buffer(project_path, cx))?
+                    .await?
+            };
 
             action_log.update(cx, |action_log, cx| {
                 action_log.buffer_read(buffer.clone(), cx);
             })?;
 
-            // If we just opened the buffer, language server information might not be available
-            // right away. When that happens, we poll it with increasing delays until either it
-            // succeeds or we give up and time out.
-            for retry_delay in LANGUAGE_SERVER_RETRIES {
-                let (outline, snapshot) = buffer.read_with(cx, |buffer, _cx| {
-                    let snapshot = buffer.snapshot();
-                    (snapshot.outline(None), snapshot)
-                })?;
-
-                if snapshot.is_empty() {
-                    return Err(anyhow!("This file is empty."));
-                }
-
-                if let Some(outline) = outline {
-                    let string = to_outline_string(outline, &snapshot);
-
-                    if !string.is_empty() {
-                        return Ok(string);
-                    }
-                }
-
-                log::info!(
-                    "Outline information not available yet for {}. Retrying in {:?}.",
-                    &input.path,
-                    retry_delay
-                );
-
-                cx.background_executor().timer(retry_delay).await;
+            // Check if the file is empty
+            if buffer.read_with(cx, |buffer, _| buffer.snapshot().is_empty())? {
+                return Err(anyhow!("This file is empty."));
             }
 
-            Err(anyhow!(
-                "Timed out waiting for the language server to provide outline information on this file."
-            ))
+            // Request document symbols from the language server
+            let symbols = project
+                .update(cx, |project, cx| project.document_symbols(&buffer, cx))?
+                .await?;
+
+            if symbols.is_empty() {
+                return Err(anyhow!("No outline information available for this file."));
+            }
+
+            // Convert the document symbols to a hierarchical outline
+            let outline = render_outline(&symbols);
+
+            Ok(outline)
         })
     }
 }
 
-fn to_outline_string(outline: Outline<Anchor>, snapshot: &BufferSnapshot) -> String {
-    let mut buf = String::new();
+fn render_outline(symbols: &[DocumentSymbol]) -> String {
+    let mut output = String::new();
+    render_symbols(symbols, 1, &mut output);
+    output
+}
 
-    for item in outline.items.iter() {
-        let point_item = item.to_point(snapshot);
-        // Add heading based on depth. (Don't use indentation, because models are
-        // more likely to treat # for headings as semantic than spaces.)
-        write!(buf, "{} {} ", "#".repeat(item.depth), item.text).ok();
+fn render_symbols(symbols: &[DocumentSymbol], depth: usize, output: &mut String) {
+    for symbol in symbols {
+        // Add heading based on depth (# for level 1, ## for level 2, etc.)
+        write!(output, "{} {} ", "#".repeat(depth), symbol.name).ok();
 
-        // Convert to 1-based line numbers.
-        let start_line = point_item.range.start.row as usize + 1;
-        let end_line = point_item.range.end.row as usize + 1;
+        // Convert to 1-based line numbers for display
+        let start_line = symbol.range.start.0.row as usize + 1;
+        let end_line = symbol.range.end.0.row as usize + 1;
 
         if start_line == end_line {
-            writeln!(buf, "[L{}]", start_line).ok();
+            writeln!(output, "[L{}]", start_line).ok();
         } else {
-            writeln!(buf, "[L{}-{}]", start_line, end_line).ok();
+            writeln!(output, "[L{}-{}]", start_line, end_line).ok();
+        }
+
+        // Recursively process children with increased depth
+        if !symbol.children.is_empty() {
+            render_symbols(&symbol.children, depth + 1, output);
         }
     }
-
-    buf
 }
