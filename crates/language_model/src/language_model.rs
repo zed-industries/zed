@@ -66,6 +66,13 @@ pub enum LanguageModelCompletionEvent {
     UsageUpdate(TokenUsage),
 }
 
+/// Indicates the format used to define the input schema for a language model tool.
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+pub enum LanguageModelToolSchemaFormat {
+    JsonSchema,
+    JsonSchemaSubset,
+}
+
 #[derive(Debug, PartialEq, Clone, Copy, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum StopReason {
@@ -174,6 +181,10 @@ pub trait LanguageModel: Send + Sync {
     /// Returns the availability of this language model.
     fn availability(&self) -> LanguageModelAvailability {
         LanguageModelAvailability::Public
+    }
+
+    fn tool_input_format(&self) -> LanguageModelToolSchemaFormat {
+        LanguageModelToolSchemaFormat::JsonSchema
     }
 
     fn max_token_count(&self) -> usize;

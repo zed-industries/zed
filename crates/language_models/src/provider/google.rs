@@ -8,7 +8,9 @@ use gpui::{
     AnyView, App, AsyncApp, Context, Entity, FontStyle, Subscription, Task, TextStyle, WhiteSpace,
 };
 use http_client::HttpClient;
-use language_model::{AuthenticateError, LanguageModelCompletionEvent};
+use language_model::{
+    AuthenticateError, LanguageModelCompletionEvent, LanguageModelToolSchemaFormat,
+};
 use language_model::{
     LanguageModel, LanguageModelId, LanguageModelName, LanguageModelProvider,
     LanguageModelProviderId, LanguageModelProviderName, LanguageModelProviderState,
@@ -292,6 +294,10 @@ impl LanguageModel for GoogleLanguageModel {
         LanguageModelProviderName(PROVIDER_NAME.into())
     }
 
+    fn tool_input_format(&self) -> LanguageModelToolSchemaFormat {
+        LanguageModelToolSchemaFormat::JsonSchemaSubset
+    }
+
     fn telemetry_id(&self) -> String {
         format!("google/{}", self.model.id())
     }
@@ -440,18 +446,12 @@ pub fn into_google(
             request
                 .tools
                 .into_iter()
-                .map(|tool| {
-                    let mut parameters = tool.input_schema;
-                    if let serde_json::Value::Object(map) = &mut parameters {
-                        map.remove("$schema");
-                    }
-                    google_ai::Tool {
-                        function_declarations: vec![FunctionDeclaration {
-                            name: tool.name,
-                            description: tool.description,
-                            parameters,
-                        }],
-                    }
+                .map(|tool| google_ai::Tool {
+                    function_declarations: vec![FunctionDeclaration {
+                        name: tool.name,
+                        description: tool.description,
+                        parameters: tool.input_schema,
+                    }],
                 })
                 .collect(),
         ),

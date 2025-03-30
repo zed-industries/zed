@@ -1,8 +1,9 @@
+use crate::schema::schema_for;
 use anyhow::{anyhow, Result};
 use assistant_tool::{ActionLog, Tool, ToolWorkingSet};
 use futures::future::join_all;
 use gpui::{App, AppContext, Entity, Task};
-use language_model::LanguageModelRequestMessage;
+use language_model::{LanguageModelRequestMessage, LanguageModelToolSchemaFormat};
 use project::Project;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -162,8 +163,8 @@ impl Tool for BatchTool {
         IconName::Cog
     }
 
-    fn input_schema(&self) -> serde_json::Value {
-        let schema = schemars::schema_for!(BatchToolInput);
+    fn input_schema(&self, format: LanguageModelToolSchemaFormat) -> serde_json::Value {
+        let schema = schema_for::<BatchToolInput>(format);
         serde_json::to_value(&schema).unwrap()
     }
 

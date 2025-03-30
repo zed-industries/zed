@@ -16,6 +16,7 @@ mod path_search_tool;
 mod read_file_tool;
 mod regex_search_tool;
 mod replace;
+mod schema;
 mod thinking_tool;
 
 use std::sync::Arc;

@@ -777,7 +777,7 @@ impl Thread {
                 LanguageModelRequestTool {
                     name: tool.name(),
                     description: tool.description(),
-                    input_schema: tool.input_schema(),
+                    input_schema: tool.input_schema(model.tool_input_format()),
                 }
             }));
 

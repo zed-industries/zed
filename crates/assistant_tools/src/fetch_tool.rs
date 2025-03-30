@@ -2,13 +2,14 @@ use std::cell::RefCell;
 use std::rc::Rc;
 use std::sync::Arc;
 
+use crate::schema::schema_for;
 use anyhow::{anyhow, bail, Context as _, Result};
 use assistant_tool::{ActionLog, Tool};
 use futures::AsyncReadExt as _;
 use gpui::{App, AppContext as _, Entity, Task};
 use html_to_markdown::{convert_html_to_markdown, markdown, TagHandler};
 use http_client::{AsyncBody, HttpClientWithUrl};
-use language_model::LanguageModelRequestMessage;
+use language_model::{LanguageModelRequestMessage, LanguageModelToolSchemaFormat};
 use project::Project;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -127,8 +128,8 @@ impl Tool for FetchTool {
         IconName::Globe
     }
 
-    fn input_schema(&self) -> serde_json::Value {
-        let schema = schemars::schema_for!(FetchToolInput);
+    fn input_schema(&self, format: LanguageModelToolSchemaFormat) -> serde_json::Value {
+        let schema = schema_for::<FetchToolInput>(format);
         serde_json::to_value(&schema).unwrap()
     }
 
