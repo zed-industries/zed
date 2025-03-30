@@ -3,7 +3,7 @@ use collections::BTreeMap;
 use credentials_provider::CredentialsProvider;
 use editor::{Editor, EditorElement, EditorStyle};
 use futures::{future::BoxFuture, FutureExt, StreamExt};
-use google_ai::stream_generate_content;
+use google_ai::{FunctionDeclaration, GenerateContentResponse};
 use gpui::{
     AnyView, App, AsyncApp, Context, Entity, FontStyle, Subscription, Task, TextStyle, WhiteSpace,
 };
@@ -17,7 +17,7 @@ use language_model::{
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
-use std::{future, sync::Arc};
+use std::sync::Arc;
 use strum::IntoEnumIterator;
 use theme::ThemeSettings;
 use ui::{prelude::*, Icon, IconName, List, Tooltip};
@@ -174,7 +174,7 @@ impl LanguageModelProvider for GoogleLanguageModelProvider {
             model,
             state: self.state.clone(),
             http_client: self.http_client.clone(),
-            rate_limiter: RateLimiter::new(4),
+            request_limiter: RateLimiter::new(4),
         }))
     }
 
@@ -211,7 +211,7 @@ impl LanguageModelProvider for GoogleLanguageModelProvider {
                     model,
                     state: self.state.clone(),
                     http_client: self.http_client.clone(),
-                    rate_limiter: RateLimiter::new(4),
+                    request_limiter: RateLimiter::new(4),
                 }) as Arc<dyn LanguageModel>
             })
             .collect()
@@ -240,7 +240,39 @@ pub struct GoogleLanguageModel {
     model: google_ai::Model,
     state: gpui::Entity<State>,
     http_client: Arc<dyn HttpClient>,
-    rate_limiter: RateLimiter,
+    request_limiter: RateLimiter,
+}
+
+impl GoogleLanguageModel {
+    fn stream_completion(
+        &self,
+        request: google_ai::GenerateContentRequest,
+        cx: &AsyncApp,
+    ) -> BoxFuture<
+        'static,
+        Result<futures::stream::BoxStream<'static, Result<GenerateContentResponse>>>,
+    > {
+        let http_client = self.http_client.clone();
+
+        let Ok((api_key, api_url)) = cx.read_entity(&self.state, |state, cx| {
+            let settings = &AllLanguageModelSettings::get_global(cx).google;
+            (state.api_key.clone(), settings.api_url.clone())
+        }) else {
+            return futures::future::ready(Err(anyhow!("App state dropped"))).boxed();
+        };
+
+        async move {
+            let api_key = api_key.ok_or_else(|| anyhow!("Missing Google API key"))?;
+            let request = google_ai::stream_generate_content(
+                http_client.as_ref(),
+                &api_url,
+                &api_key,
+                request,
+            );
+            request.await.context("failed to stream completion")
+        }
+        .boxed()
+    }
 }
 
 impl LanguageModel for GoogleLanguageModel {
@@ -305,21 +337,10 @@ impl LanguageModel for GoogleLanguageModel {
         Result<futures::stream::BoxStream<'static, Result<LanguageModelCompletionEvent>>>,
     > {
         let request = into_google(request, self.model.id().to_string());
-
-        let http_client = self.http_client.clone();
-        let Ok((api_key, api_url)) = cx.read_entity(&self.state, |state, cx| {
-            let settings = &AllLanguageModelSettings::get_global(cx).google;
-            (state.api_key.clone(), settings.api_url.clone())
-        }) else {
-            return futures::future::ready(Err(anyhow!("App state dropped"))).boxed();
-        };
-
-        let future = self.rate_limiter.stream(async move {
-            let api_key = api_key.ok_or_else(|| anyhow!("Missing Google API Key"))?;
-            let response =
-                stream_generate_content(http_client.as_ref(), &api_url, &api_key, request);
-            let events = response.await?;
-            Ok(google_ai::extract_text_from_events(events).boxed())
+        let request = self.stream_completion(request, cx);
+        let future = self.request_limiter.stream(async move {
+            let response = request.await.map_err(|err| anyhow!(err))?;
+            Ok(google_ai::extract_text_from_events(response).boxed())
         });
         async move {
             Ok(future
@@ -332,13 +353,57 @@ impl LanguageModel for GoogleLanguageModel {
 
     fn use_any_tool(
         &self,
-        _request: LanguageModelRequest,
-        _name: String,
-        _description: String,
-        _schema: serde_json::Value,
-        _cx: &AsyncApp,
+        request: LanguageModelRequest,
+        name: String,
+        description: String,
+        schema: serde_json::Value,
+        cx: &AsyncApp,
     ) -> BoxFuture<'static, Result<futures::stream::BoxStream<'static, Result<String>>>> {
-        future::ready(Err(anyhow!("not implemented"))).boxed()
+        let mut request = into_google(request, self.model.id().to_string());
+        request.tools = Some(vec![google_ai::Tool {
+            function_declarations: vec![google_ai::FunctionDeclaration {
+                name: name.clone(),
+                description,
+                parameters: schema,
+            }],
+        }]);
+        request.tool_config = Some(google_ai::ToolConfig {
+            function_calling_config: google_ai::FunctionCallingConfig {
+                mode: google_ai::FunctionCallingMode::Any,
+                allowed_function_names: Some(vec![name]),
+            },
+        });
+        let response = self.stream_completion(request, cx);
+        self.request_limiter
+            .run(async move {
+                let response = response.await?;
+                Ok(response
+                    .filter_map(|event| async move {
+                        match event {
+                            Ok(response) => {
+                                if let Some(candidates) = &response.candidates {
+                                    for candidate in candidates {
+                                        for part in &candidate.content.parts {
+                                            if let google_ai::Part::FunctionCallPart(
+                                                function_call_part,
+                                            ) = part
+                                            {
+                                                return Some(Ok(serde_json::to_string(
+                                                    &function_call_part.function_call.args,
+                                                )
+                                                .unwrap_or_default()));
+                                            }
+                                        }
+                                    }
+                                }
+                                None
+                            }
+                            Err(e) => Some(Err(e)),
+                        }
+                    })
+                    .boxed())
+            })
+            .boxed()
     }
 }
 
@@ -371,6 +436,26 @@ pub fn into_google(
             top_k: None,
         }),
         safety_settings: None,
+        tools: Some(
+            request
+                .tools
+                .into_iter()
+                .map(|tool| {
+                    let mut parameters = tool.input_schema;
+                    if let serde_json::Value::Object(map) = &mut parameters {
+                        map.remove("$schema");
+                    }
+                    google_ai::Tool {
+                        function_declarations: vec![FunctionDeclaration {
+                            name: tool.name,
+                            description: tool.description,
+                            parameters,
+                        }],
+                    }
+                })
+                .collect(),
+        ),
+        tool_config: None,
     }
 }
 

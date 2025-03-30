@@ -127,6 +127,10 @@ pub struct GenerateContentRequest {
     pub contents: Vec<Content>,
     pub generation_config: Option<GenerationConfig>,
     pub safety_settings: Option<Vec<SafetySetting>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tools: Option<Vec<Tool>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_config: Option<ToolConfig>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -166,6 +170,8 @@ pub enum Role {
 pub enum Part {
     TextPart(TextPart),
     InlineDataPart(InlineDataPart),
+    FunctionCallPart(FunctionCallPart),
+    FunctionResponsePart(FunctionResponsePart),
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -185,6 +191,19 @@ pub struct InlineDataPart {
 pub struct GenerativeContentBlob {
     pub mime_type: String,
     pub data: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FunctionCallPart {
+    pub function_call: FunctionCall,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FunctionResponsePart {
+    // Name must match FunctionCall.name
+    pub function_response: FunctionResponse,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -296,6 +315,53 @@ pub struct CountTokensRequest {
 #[serde(rename_all = "camelCase")]
 pub struct CountTokensResponse {
     pub total_tokens: usize,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct FunctionCall {
+    pub name: String,
+    pub args: serde_json::Value,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct FunctionResponse {
+    pub name: String,
+    pub response: serde_json::Value,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Tool {
+    pub function_declarations: Vec<FunctionDeclaration>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ToolConfig {
+    pub function_calling_config: FunctionCallingConfig,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FunctionCallingConfig {
+    pub mode: FunctionCallingMode,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub allowed_function_names: Option<Vec<String>>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum FunctionCallingMode {
+    Auto,
+    Any,
+    None,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct FunctionDeclaration {
+    pub name: String,
+    pub description: String,
+    pub parameters: serde_json::Value,
 }
 
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
