@@ -118,18 +118,19 @@ impl Tool for CodeSymbolsTool {
                     None => None,
                 };
 
-                // Render a flat list of all symbols, filtered by regex if provided
-                let mut output = String::new();
-                for symbol in symbols {
+                // Group symbols by file path
+                use std::collections::HashMap;
+                let mut symbols_by_file: HashMap<String, Vec<&project::Symbol>> = HashMap::new();
+                
+                // First, filter and group symbols by file
+                for symbol in &symbols {
                     // Skip this symbol if it doesn't match the regex filter
                     if let Some(re) = &regex_filter {
                         if !re.is_match(&symbol.name) {
                             continue;
                         }
                     }
-
-                    let kind_str = format!("{:?} ", symbol.kind);
-
+                    
                     let worktree_name = project.read_with(cx, |project, cx| {
                         project
                             .worktree_for_id(symbol.path.worktree_id, cx)
@@ -138,33 +139,55 @@ impl Tool for CodeSymbolsTool {
                     })?;
 
                     let path = format!("{}/{}", worktree_name, symbol.path.path.to_string_lossy());
-                    
-                    // Extract the filename from the path for display
-                    let filename = symbol.path.path.file_name()
-                        .map(|f| f.to_string_lossy().to_string())
-                        .unwrap_or_else(|| "unknown".to_string());
-
-                    // Convert to 1-based line numbers for display
-                    let start_line = symbol.range.start.0.row as usize + 1;
-                    let end_line = symbol.range.end.0.row as usize + 1;
-
-                    if start_line == end_line {
-                        writeln!(
-                            &mut output,
-                            "# {}{} [{}] - {} [L{}]",
-                            kind_str, symbol.name, filename, path, start_line
-                        )
-                        .ok();
-                    } else {
-                        writeln!(
-                            &mut output,
-                            "# {}{} [{}] - {} [L{}-{}]",
-                            kind_str, symbol.name, filename, path, start_line, end_line
-                        )
-                        .ok();
-                    }
+                    symbols_by_file.entry(path).or_default().push(symbol);
+                }
+                
+                // If no symbols matched the filter, return early
+                if symbols_by_file.is_empty() {
+                    return Err(anyhow!("No symbols found matching the criteria."));
                 }
 
+                // Now render the grouped symbols
+                let mut output = String::new();
+                for (file_path, file_symbols) in symbols_by_file {
+                    // Extract the filename from the path for the heading
+                    let filename = file_symbols[0].path.path.file_name()
+                        .map(|f| f.to_string_lossy().to_string())
+                        .unwrap_or_else(|| "unknown".to_string());
+                        
+                    // Add a heading for the file
+                    writeln!(&mut output, "# File: {} ({})", filename, file_path).ok();
+                    
+                    // Add all symbols for this file
+                    for symbol in file_symbols {
+                        let kind_str = format!("{:?} ", symbol.kind);
+                        
+                        // Convert to 1-based line numbers for display
+                        let start_line = symbol.range.start.0.row as usize + 1;
+                        let end_line = symbol.range.end.0.row as usize + 1;
+                        
+                        // Write the symbol with indentation
+                        if start_line == end_line {
+                            writeln!(
+                                &mut output,
+                                "## {}{} [L{}]",
+                                kind_str, symbol.name, start_line
+                            )
+                            .ok();
+                        } else {
+                            writeln!(
+                                &mut output,
+                                "## {}{} [L{}-{}]",
+                                kind_str, symbol.name, start_line, end_line
+                            )
+                            .ok();
+                        }
+                    }
+                    
+                    // Add a blank line between files for readability
+                    writeln!(&mut output).ok();
+                }
+                
                 Ok(output)
             });
         }
