@@ -13,7 +13,7 @@ use text::{Patch, Rope};
 
 use super::{
     custom_highlights::CustomHighlightsChunks,
-    token_map::{TokenEdit, TokenMap, TokenOffset, TokenPoint, TokenSnapshot},
+    token_map::{TokenChunks, TokenEdit, TokenMap, TokenOffset, TokenPoint, TokenSnapshot},
     Highlights,
 };
 
@@ -208,7 +208,7 @@ pub struct InlayBufferRows<'a> {
 
 pub struct InlayChunks<'a> {
     transforms: Cursor<'a, Transform, (InlayOffset, usize)>,
-    buffer_chunks: CustomHighlightsChunks<'a>,
+    buffer_chunks: TokenChunks<'a>,
     buffer_chunk: Option<Chunk<'a>>,
     inlay_chunks: Option<text::Chunks<'a>>,
     inlay_chunk: Option<&'a str>,
@@ -223,8 +223,8 @@ impl InlayChunks<'_> {
     pub fn seek(&mut self, new_range: Range<InlayOffset>) {
         self.transforms.seek(&new_range.start, Bias::Right, &());
 
-        let buffer_range = self.snapshot.to_buffer_offset(new_range.start)
-            ..self.snapshot.to_buffer_offset(new_range.end);
+        let buffer_range = self.snapshot.to_token_offset(new_range.start)
+            ..self.snapshot.to_token_offset(new_range.end);
         self.buffer_chunks.seek(buffer_range);
         self.inlay_chunks = None;
         self.buffer_chunk = None;
@@ -756,16 +756,16 @@ impl InlaySnapshot {
             None => self.token_snapshot.buffer.max_point(),
         }
     }
-    pub fn to_buffer_offset(&self, offset: InlayOffset) -> usize {
+    pub fn to_token_offset(&self, offset: InlayOffset) -> TokenOffset {
         let mut cursor = self.transforms.cursor::<(InlayOffset, usize)>(&());
         cursor.seek(&offset, Bias::Right, &());
         match cursor.item() {
             Some(Transform::Isomorphic(_)) => {
                 let overshoot = offset - cursor.start().0;
-                cursor.start().1 + overshoot.0
+                TokenOffset(cursor.start().1 + overshoot.0)
             }
-            Some(Transform::Inlay(_)) => cursor.start().1,
-            None => self.token_snapshot.buffer.len(),
+            Some(Transform::Inlay(_)) => TokenOffset(cursor.start().1),
+            None => TokenOffset(self.token_snapshot.buffer.len()),
         }
     }
 
@@ -1032,13 +1032,10 @@ impl InlaySnapshot {
         let mut cursor = self.transforms.cursor::<(InlayOffset, usize)>(&());
         cursor.seek(&range.start, Bias::Right, &());
 
-        let buffer_range = self.to_buffer_offset(range.start)..self.to_buffer_offset(range.end);
-        let buffer_chunks = CustomHighlightsChunks::new(
-            buffer_range,
-            language_aware,
-            highlights.text_highlights,
-            &self.token_snapshot.buffer,
-        );
+        let buffer_range = self.to_token_offset(range.start)..self.to_token_offset(range.end);
+        let buffer_chunks =
+            self.token_snapshot
+                .chunks(buffer_range, language_aware, highlights.clone());
 
         InlayChunks {
             transforms: cursor,

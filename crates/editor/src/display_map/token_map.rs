@@ -1,6 +1,6 @@
 use crate::HighlightStyles;
 use collections::BTreeSet;
-use gpui::HighlightStyle;
+use gpui::{HighlightStyle, Hsla};
 use language::{Chunk, Edit, Point, TextSummary};
 use multi_buffer::{MultiBufferRow, MultiBufferRows, RowInfo, ToOffset};
 use multi_buffer::{MultiBufferSnapshot, ToOffset as _};
@@ -240,6 +240,7 @@ impl<'a> Iterator for TokenChunks<'a> {
                 self.output_offset.0 += prefix.len();
                 Chunk {
                     text: prefix,
+                    highlight_style: Some(HighlightStyle::color(Hsla::blue())),
                     ..chunk.clone()
                 }
             }

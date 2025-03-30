@@ -412,7 +412,7 @@ impl FoldMap {
                 let anchor = inlay_snapshot
                     .token_snapshot
                     .buffer
-                    .anchor_before(inlay_snapshot.to_buffer_offset(edit.new.start));
+                    .anchor_before(inlay_snapshot.to_token_offset(edit.new.start).0);
                 let mut folds_cursor = self
                     .snapshot
                     .folds

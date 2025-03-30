@@ -611,7 +611,7 @@ impl DisplayMap {
     }
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub(crate) struct Highlights<'a> {
     pub text_highlights: Option<&'a TextHighlights>,
     pub inlay_highlights: Option<&'a InlayHighlights>,
@@ -1464,7 +1464,8 @@ impl DisplayPoint {
         let fold_point = map.tab_snapshot.to_fold_point(tab_point, bias).0;
         let inlay_point = fold_point.to_inlay_point(&map.fold_snapshot);
         map.inlay_snapshot
-            .to_buffer_offset(map.inlay_snapshot.to_offset(inlay_point))
+            .to_token_offset(map.inlay_snapshot.to_offset(inlay_point))
+            .0
     }
 }
 
