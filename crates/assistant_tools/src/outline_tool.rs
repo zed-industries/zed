@@ -86,9 +86,7 @@ impl Tool for OutlineTool {
                         .ok_or_else(|| anyhow!("Path {} not found in project", &input.path))
                 })??;
 
-                project
-                    .update(cx, |project, cx| project.open_buffer(project_path, cx))?
-                    .await?
+                project.update(cx, |project, cx| project.open_buffer(project_path, cx))?.await?
             };
 
             action_log.update(cx, |action_log, cx| {
@@ -126,7 +124,12 @@ fn render_outline(symbols: &[DocumentSymbol]) -> String {
 fn render_symbols(symbols: &[DocumentSymbol], depth: usize, output: &mut String) {
     for symbol in symbols {
         // Add heading based on depth (# for level 1, ## for level 2, etc.)
-        write!(output, "{} {} ", "#".repeat(depth), symbol.name).ok();
+        write!(output, "{} ", "#".repeat(depth)).ok();
+        
+        // The outline panel doesn't modify the text or add symbol type information
+        // in its rendering; the text already includes that information from the
+        // language server
+        write!(output, "{} ", symbol.name).ok();
 
         // Convert to 1-based line numbers for display
         let start_line = symbol.range.start.0.row as usize + 1;
