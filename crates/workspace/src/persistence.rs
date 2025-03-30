@@ -148,6 +148,8 @@ impl Column for SerializedWindowBounds {
 pub struct Breakpoint {
     pub position: u32,
     pub message: Option<Arc<str>>,
+    pub condition: Option<Arc<str>>,
+    pub hit_condition: Option<Arc<str>>,
     pub state: BreakpointState,
 }
 
@@ -216,12 +218,16 @@ impl Column for Breakpoint {
             .with_context(|| format!("Failed to read BreakPoint at index {start_index}"))?
             as u32;
         let (message, next_index) = Option::<String>::column(statement, start_index + 1)?;
+        let (condition, next_index) = Option::<String>::column(statement, next_index)?;
+        let (hit_condition, next_index) = Option::<String>::column(statement, next_index)?;
         let (state, next_index) = BreakpointStateWrapper::column(statement, next_index)?;
 
         Ok((
             Breakpoint {
                 position,
                 message: message.map(Arc::from),
+                condition: condition.map(Arc::from),
+                hit_condition: hit_condition.map(Arc::from),
                 state: state.0.into_owned(),
             },
             next_index,
@@ -526,7 +532,11 @@ define_connection! {
     ),
     sql!(
         ALTER TABLE breakpoints DROP COLUMN kind
-    )
+    ),
+    sql!(
+        ALTER TABLE breakpoints ADD COLUMN condition TEXT;
+        ALTER TABLE breakpoints ADD COLUMN hit_condition TEXT;
+    ),
     ];
 }
 
@@ -699,6 +709,8 @@ impl WorkspaceDb {
                         row: breakpoint.position,
                         path,
                         message: breakpoint.message,
+                        condition: breakpoint.condition,
+                        hit_condition: breakpoint.hit_condition,
                         state: breakpoint.state,
                     });
                 }
@@ -1406,18 +1418,24 @@ mod tests {
             position: 123,
             message: None,
             state: BreakpointState::Enabled,
+            condition: None,
+            hit_condition: None,
         };
 
         let log_breakpoint = Breakpoint {
             position: 456,
             message: Some("Test log message".into()),
             state: BreakpointState::Enabled,
+            condition: None,
+            hit_condition: None,
         };
 
         let disable_breakpoint = Breakpoint {
             position: 578,
             message: None,
             state: BreakpointState::Disabled,
+            condition: None,
+            hit_condition: None,
         };
 
         let workspace = SerializedWorkspace {
@@ -1438,18 +1456,24 @@ mod tests {
                             path: Arc::from(path),
                             message: breakpoint.message.clone(),
                             state: breakpoint.state,
+                            condition: breakpoint.condition.clone(),
+                            hit_condition: breakpoint.hit_condition.clone(),
                         },
                         SourceBreakpoint {
                             row: log_breakpoint.position,
                             path: Arc::from(path),
                             message: log_breakpoint.message.clone(),
                             state: log_breakpoint.state,
+                            condition: breakpoint.condition.clone(),
+                            hit_condition: breakpoint.hit_condition.clone(),
                         },
                         SourceBreakpoint {
                             row: disable_breakpoint.position,
                             path: Arc::from(path),
                             message: disable_breakpoint.message.clone(),
                             state: disable_breakpoint.state,
+                            condition: breakpoint.condition.clone(),
+                            hit_condition: breakpoint.hit_condition.clone(),
                         },
                     ],
                 );
