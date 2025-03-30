@@ -47,7 +47,7 @@ impl CommitView {
         cx: &mut App,
     ) {
         let commit_diff = repo
-            .update(cx, |repo, _| repo.load_commit(commit.sha.to_string()))
+            .update(cx, |repo, _| repo.load_commit_diff(commit.sha.to_string()))
             .ok();
 
         window

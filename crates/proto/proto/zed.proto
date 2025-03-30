@@ -361,7 +361,10 @@ message Envelope {
         RemoveRepository remove_repository = 329;
 
         GetDocumentSymbols get_document_symbols = 330;
-        GetDocumentSymbolsResponse get_document_symbols_response = 331; // current max
+        GetDocumentSymbolsResponse get_document_symbols_response = 331;
+
+        LoadCommitDiff load_commit_diff = 332;
+        LoadCommitDiffResponse load_commit_diff_response = 333; // current max
     }
 
     reserved 87 to 88;
@@ -3355,6 +3358,23 @@ message GitCommitDetails {
     int64 commit_timestamp = 3;
     string committer_email = 4;
     string committer_name = 5;
+}
+
+message LoadCommitDiff {
+    uint64 project_id = 1;
+    reserved 2;
+    uint64 work_directory_id = 3;
+    string commit = 4;
+}
+
+message LoadCommitDiffResponse {
+    repeated CommitFile files = 1;
+}
+
+message CommitFile {
+    string path = 1;
+    optional string old_text = 2;
+    optional string new_text = 3;
 }
 
 message GitReset {
