@@ -107,7 +107,7 @@ impl SharedClipboard {
             return;
         }
 
-        let message = if expected == self.neovim {
+        let message = if expected != self.neovim {
             "Test is incorrect (currently expected != neovim_state)"
         } else {
             "Editor does not match nvim behavior"
@@ -119,12 +119,9 @@ impl SharedClipboard {
                 {}
                 # keystrokes:
                 {}
-                # currently expected:
-                {}
-                # neovim register \"{}:
-                {}
-                # zed register \"{}:
-                {}"},
+                # currently expected: {:?}
+                # neovim register \"{}: {:?}
+                # zed register \"{}: {:?}"},
             message,
             self.state.initial,
             self.state.recent_keystrokes,

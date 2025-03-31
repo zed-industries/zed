@@ -188,13 +188,7 @@ impl Vim {
             let text_layout_details = editor.text_layout_details(window);
             let mut selection = editor.selections.newest_display(cx);
             let snapshot = editor.snapshot(window, cx);
-            motion.expand_selection(
-                &snapshot,
-                &mut selection,
-                times,
-                false,
-                &text_layout_details,
-            );
+            motion.expand_selection(&snapshot, &mut selection, times, &text_layout_details);
             let start = snapshot
                 .buffer_snapshot
                 .anchor_before(selection.start.to_point(&snapshot));
