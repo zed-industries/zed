@@ -92,12 +92,14 @@ impl HistoryManager {
                 }
             }
         }
-        cx.spawn(async move |_| {
-            for id in deleted_ids.iter() {
-                WORKSPACE_DB.delete_workspace_by_id(*id).await.log_err();
-            }
-        })
-        .detach();
+        if !user_removed.is_empty() {
+            cx.spawn(async move |_| {
+                for id in deleted_ids.iter() {
+                    WORKSPACE_DB.delete_workspace_by_id(*id).await.log_err();
+                }
+            })
+            .detach();
+        }
     }
 }
 
