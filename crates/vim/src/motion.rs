@@ -671,8 +671,6 @@ impl Motion {
             EndOfLine { .. }
             | EndOfLineDownward
             | Matching
-            | UnmatchedForward { .. }
-            | UnmatchedBackward { .. }
             | FindForward { .. }
             | NextWordEnd { .. }
             | PreviousWordEnd { .. }
@@ -688,6 +686,8 @@ impl Motion {
             | SentenceBackward
             | SentenceForward
             | GoToColumn
+            | UnmatchedForward { .. }
+            | UnmatchedBackward { .. }
             | NextWordStart { .. }
             | PreviousWordStart { .. }
             | NextSubwordStart { .. }

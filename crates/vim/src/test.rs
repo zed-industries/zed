@@ -1932,3 +1932,41 @@ async fn test_delete_paragraph_motion(cx: &mut gpui::TestAppContext) {
     cx.shared_state().await.assert_eq("heˇl\n\nhello world.\n");
     cx.shared_clipboard().await.assert_eq("lo world.");
 }
+
+#[gpui::test]
+async fn test_delete_unmatched_brace(cx: &mut gpui::TestAppContext) {
+    let mut cx = NeovimBackedTestContext::new(cx).await;
+    cx.set_shared_state(indoc! {
+        "fn o(wow: i32) {
+          dbgˇ!(wow)
+          dbg!(wow)
+        }
+        "
+    })
+    .await;
+    cx.simulate_shared_keystrokes("d ] }").await;
+    cx.shared_state().await.assert_eq(indoc! {
+        "fn o(wow: i32) {
+          dbˇg
+        }
+        "
+    });
+    cx.shared_clipboard().await.assert_eq("!(wow)\n  dbg!(wow)");
+    cx.set_shared_state(indoc! {
+        "fn o(wow: i32) {
+          ˇdbg!(wow)
+          dbg!(wow)
+        }
+        "
+    })
+    .await;
+    cx.simulate_shared_keystrokes("d ] }").await;
+    cx.shared_state().await.assert_eq(indoc! {
+        "fn o(wow: i32) {
+         ˇ}
+        "
+    });
+    cx.shared_clipboard()
+        .await
+        .assert_eq("  dbg!(wow)\n  dbg!(wow)\n");
+}
