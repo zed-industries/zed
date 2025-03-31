@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use call::{ActiveCall, ParticipantLocation, Room};
 use client::{proto::PeerId, User};
+use feature_flags::FeatureFlagAppExt;
 use gpui::{actions, App, Task, Window};
 use gpui::{canvas, point, AnyElement, Hsla, IntoElement, MouseButton, Path, Styled};
 use rpc::proto::{self};
@@ -301,8 +302,8 @@ impl TitleBar {
         let can_share_projects = room.can_share_projects();
         let screen_sharing_supported = match self.platform_style {
             PlatformStyle::Mac | PlatformStyle::Linux => true,
-            // todo!
-            PlatformStyle::Windows => false,
+            // Windows screen sharing not yet tested.
+            PlatformStyle::Windows => cx.is_staff(),
         };
 
         let mut children = Vec::new();
