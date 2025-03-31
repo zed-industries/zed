@@ -11,7 +11,7 @@ use gpui::{
 use language::language_settings::{all_language_settings, EditPredictionProvider};
 use settings::{Settings, SettingsStore};
 use std::sync::Arc;
-use ui::{prelude::*, CheckboxWithLabel, ElevationIndex, Tooltip};
+use ui::{prelude::*, CheckboxWithLabel, ElevationIndex, KeyBinding};
 use vim_mode_setting::VimModeSetting;
 use workspace::{
     dock::DockPosition,
@@ -21,12 +21,12 @@ use workspace::{
 
 pub use base_keymap_setting::BaseKeymap;
 pub use multibuffer_hint::*;
+use zed_actions::OpenRemote;
 
 actions!(welcome, [ResetHints]);
 
 pub const FIRST_OPEN: &str = "first_open";
 pub const DOCS_URL: &str = "https://zed.dev/docs/";
-const BOOK_ONBOARDING: &str = "https://dub.sh/zed-c-onboarding";
 
 pub fn init(cx: &mut App) {
     BaseKeymap::register(cx);
@@ -73,7 +73,7 @@ pub struct WelcomePage {
 }
 
 impl Render for WelcomePage {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let edit_prediction_provider_is_zed =
             all_language_settings(None, cx).edit_predictions.provider
                 == EditPredictionProvider::Zed;
@@ -123,6 +123,7 @@ impl Render for WelcomePage {
                         h_flex()
                             .items_start()
                             .gap_8()
+
                             .child(
                                 v_flex()
                                     .gap_2()
@@ -130,16 +131,79 @@ impl Render for WelcomePage {
                                     .border_r_1()
                                     .border_color(cx.theme().colors().border_variant)
                                     .child(
-                                        self.section_label( cx).child(
-                                            Label::new("Get Started")
-                                                .size(LabelSize::XSmall)
-                                                .color(Color::Muted),
-                                        ),
+                                        Label::new("Start a Project")
+                                            .ml_1()
+                                            .size(LabelSize::XSmall)
+                                            .color(Color::Muted)
+                                            .buffer_font(cx)
+                                    )
+                                    .when(cfg!(target_os = "macos"), |el| {
+                                        el.child(
+                                            Button::new("open-a-project", "Open a Project")
+                                                .icon(IconName::Plus)
+                                                .icon_size(IconSize::Small)
+                                                .icon_color(Color::Muted)
+                                                .icon_position(IconPosition::Start)
+                                                .key_binding(
+                                                    KeyBinding::for_action(
+                                                        &workspace::Open,
+                                                        window,
+                                                        cx,
+                                                    )
+                                                    .map(|kb| kb.size(rems_from_px(12.))),
+                                                )
+                                                .on_click(cx.listener(|_, _, window, cx| {
+                                                    telemetry::event!("Welcome Project Opened");
+                                                    window.dispatch_action(workspace::Open.boxed_clone(), cx)
+                                                })),
+                                        )
+                                    })
+                                    .child(
+                                        Button::new("connect-remote", "Connect Remote")
+                                            .icon(IconName::Cloud)
+                                            .icon_size(IconSize::Small)
+                                            .icon_color(Color::Muted)
+                                            .icon_position(IconPosition::Start)
+                                            .key_binding(
+                                                KeyBinding::for_action(
+                                                    &OpenRemote,
+                                                    window,
+                                                    cx,
+                                                )
+                                                .map(|kb| kb.size(rems_from_px(12.))),
+                                            )
+                                            .on_click(cx.listener(|_, _, window, cx| {
+                                                telemetry::event!("Welcome Remote Connected");
+                                                window.dispatch_action(OpenRemote.boxed_clone(), cx)
+                                            })),
+
+                                    )
+                                    .child(
+                                        Button::new("clone-repo", "Clone Repo")
+                                            .icon(IconName::GitBranchSmall)
+                                            .icon_size(IconSize::Small)
+                                            .icon_color(Color::Muted)
+                                            .icon_position(IconPosition::Start)
+                                            .on_click(cx.listener(|_, _, _, cx| {
+                                                telemetry::event!("Welcome Repo Cloned");
+                                                cx.open_url(DOCS_URL);
+                                            })),
+                                    ),
+                            )
+                            .child(
+                                v_flex()
+                                    .gap_2()
+                                    .child(
+                                        Label::new("Make Yourself At Home")
+                                            .ml_1()
+                                            .size(LabelSize::XSmall)
+                                            .color(Color::Muted)
+                                            .buffer_font(cx)
                                     )
                                     .child(
                                         Button::new("choose-theme", "Choose a Theme")
                                             .icon(IconName::SwatchBook)
-                                            .icon_size(IconSize::XSmall)
+                                            .icon_size(IconSize::Small)
                                             .icon_color(Color::Muted)
                                             .icon_position(IconPosition::Start)
                                             .on_click(cx.listener(|this, _, window, cx| {
@@ -154,7 +218,7 @@ impl Render for WelcomePage {
                                     .child(
                                         Button::new("choose-keymap", "Choose a Keymap")
                                             .icon(IconName::Keyboard)
-                                            .icon_size(IconSize::XSmall)
+                                            .icon_size(IconSize::Small)
                                             .icon_color(Color::Muted)
                                             .icon_position(IconPosition::Start)
                                             .on_click(cx.listener(|this, _, window, cx| {
@@ -170,106 +234,6 @@ impl Render for WelcomePage {
                                                     .ok();
                                             })),
                                     )
-                                    .child(
-                                        Button::new(
-                                            "try-zed-edit-prediction",
-                                            edit_prediction_label,
-                                        )
-                                        .disabled(edit_prediction_provider_is_zed)
-                                        .icon(IconName::ZedPredict)
-                                        .icon_size(IconSize::XSmall)
-                                        .icon_color(Color::Muted)
-                                        .icon_position(IconPosition::Start)
-                                        .on_click(
-                                            cx.listener(|_, _, window, cx| {
-                                                telemetry::event!("Welcome Screen Try Edit Prediction clicked");
-                                                window.dispatch_action(zed_actions::OpenZedPredictOnboarding.boxed_clone(), cx);
-                                            }),
-                                        ),
-                                    )
-                                    .child(
-                                        Button::new("edit settings", "Edit Settings")
-                                            .icon(IconName::Settings)
-                                            .icon_size(IconSize::XSmall)
-                                            .icon_color(Color::Muted)
-                                            .icon_position(IconPosition::Start)
-                                            .on_click(cx.listener(|_, _, window, cx| {
-                                                telemetry::event!("Welcome Settings Edited");
-                                                window.dispatch_action(Box::new(
-                                                    zed_actions::OpenSettings,
-                                                ), cx);
-                                            })),
-                                    ),
-                            )
-                            .child(
-                                v_flex()
-                                    .gap_2()
-                                    .child(
-                                        self.section_label(cx).child(
-                                            Label::new("Resources")
-                                                .size(LabelSize::XSmall)
-                                                .color(Color::Muted),
-                                        ),
-                                    )
-                                    .when(cfg!(target_os = "macos"), |el| {
-                                        el.child(
-                                            Button::new("install-cli", "Install the CLI")
-                                                .icon(IconName::Terminal)
-                                                .icon_size(IconSize::XSmall)
-                                                .icon_color(Color::Muted)
-                                                .icon_position(IconPosition::Start)
-                                                .on_click(cx.listener(|_, _, _, cx| {
-                                                    telemetry::event!("Welcome CLI Installed");
-                                                    cx
-                                                        .spawn(async move |_, cx| {
-                                                            install_cli::install_cli(&cx).await
-                                                        })
-                                                        .detach_and_log_err(cx);
-                                                })),
-                                        )
-                                    })
-                                    .child(
-                                        Button::new("view-docs", "View Documentation")
-                                            .icon(IconName::FileCode)
-                                            .icon_size(IconSize::XSmall)
-                                            .icon_color(Color::Muted)
-                                            .icon_position(IconPosition::Start)
-                                            .on_click(cx.listener(|_, _, _, cx| {
-                                                telemetry::event!("Welcome Documentation Viewed");
-                                                cx.open_url(DOCS_URL);
-                                            })),
-                                    )
-                                    .child(
-                                        Button::new("explore-extensions", "Explore Extensions")
-                                            .icon(IconName::Blocks)
-                                            .icon_size(IconSize::XSmall)
-                                            .icon_color(Color::Muted)
-                                            .icon_position(IconPosition::Start)
-                                            .on_click(cx.listener(|_, _, window, cx| {
-                                                telemetry::event!("Welcome Extensions Page Opened");
-                                                window.dispatch_action(Box::new(
-                                                    zed_actions::Extensions::default(),
-                                                ), cx);
-                                            })),
-                                    )
-                                    .child(
-                                        Button::new("book-onboarding", "Book Onboarding")
-                                            .icon(IconName::PhoneIncoming)
-                                            .icon_size(IconSize::XSmall)
-                                            .icon_color(Color::Muted)
-                                            .icon_position(IconPosition::Start)
-                                            .on_click(cx.listener(|_, _, _, cx| {
-                                                cx.open_url(BOOK_ONBOARDING);
-                                            })),
-                                    ),
-                            ),
-                    )
-                    .child(
-                        v_container()
-                            .gap_2()
-                            .child(
-                                h_flex()
-                                    .justify_between()
                                     .child(
                                         CheckboxWithLabel::new(
                                             "enable-vim",
@@ -291,16 +255,14 @@ impl Render for WelcomePage {
                                         .fill()
                                         .elevation(ElevationIndex::ElevatedSurface),
                                     )
-                                    .child(
-                                        IconButton::new("vim-mode", IconName::Info)
-                                            .icon_size(IconSize::XSmall)
-                                            .icon_color(Color::Muted)
-                                            .tooltip(
-                                                Tooltip::text(
-                                                    "You can also toggle Vim Mode via the command palette or Editor Controls menu.")
-                                            ),
-                                    ),
                             )
+
+
+                        ,
+                    )
+                    .child(
+                        v_container()
+                            .gap_2()
                             .child(
                                 CheckboxWithLabel::new(
                                     "enable-crash",
@@ -376,13 +338,6 @@ impl WelcomePage {
         });
 
         this
-    }
-
-    fn section_label(&self, cx: &mut App) -> Div {
-        div()
-            .pl_1()
-            .font_buffer(cx)
-            .text_color(Color::Muted.color(cx))
     }
 
     fn update_settings<T: Settings>(
