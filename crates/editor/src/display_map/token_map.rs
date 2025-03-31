@@ -226,55 +226,34 @@ impl<'a> Iterator for TokenChunks<'a> {
         if self.output_offset == self.max_output_offset {
             return None;
         }
+        let chunk = self
+            .buffer_chunk
+            .get_or_insert_with(|| self.buffer_chunks.next().unwrap());
+        if chunk.text.is_empty() {
+            *chunk = self.buffer_chunks.next().unwrap();
+        }
+
+        let (prefix, suffix) = chunk.text.split_at(
+            chunk
+                .text
+                .len()
+                .min(self.transforms.end(&()).0 .0 - self.output_offset.0),
+        );
+
+        chunk.text = suffix;
+        self.output_offset.0 += prefix.len();
 
         let chunk = match self.transforms.item()? {
-            Transform::Isomorphic(_) => {
-                let chunk = self
-                    .buffer_chunk
-                    .get_or_insert_with(|| self.buffer_chunks.next().unwrap());
-                if chunk.text.is_empty() {
-                    *chunk = self.buffer_chunks.next().unwrap();
-                }
-
-                let (prefix, suffix) = chunk.text.split_at(
-                    chunk
-                        .text
-                        .len()
-                        .min(self.transforms.end(&()).0 .0 - self.output_offset.0),
-                );
-
-                chunk.text = suffix;
-                self.output_offset.0 += prefix.len();
-                Chunk {
-                    text: prefix,
-                    ..chunk.clone()
-                }
-            }
-            Transform::Highlight(token, _) => {
-                let chunk = self
-                    .buffer_chunk
-                    .get_or_insert_with(|| self.buffer_chunks.next().unwrap());
-                if chunk.text.is_empty() {
-                    *chunk = self.buffer_chunks.next().unwrap();
-                }
-
-                let (prefix, suffix) = chunk.text.split_at(
-                    chunk
-                        .text
-                        .len()
-                        .min(self.transforms.end(&()).0 .0 - self.output_offset.0),
-                );
-
-                chunk.text = suffix;
-                self.output_offset.0 += prefix.len();
-
-                Chunk {
-                    text: prefix,
-                    syntax_highlight_id: None,
-                    highlight_style: Some(token.style),
-                    ..Default::default()
-                }
-            }
+            Transform::Isomorphic(_) => Chunk {
+                text: prefix,
+                ..chunk.clone()
+            },
+            Transform::Highlight(token, _) => Chunk {
+                text: prefix,
+                syntax_highlight_id: None,
+                highlight_style: Some(token.style),
+                ..Default::default()
+            },
         };
 
         if self.output_offset == self.transforms.end(&()).0 {
