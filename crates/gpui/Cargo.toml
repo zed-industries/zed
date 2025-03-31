@@ -101,7 +101,6 @@ raw-window-handle = "0.6"
 refineable.workspace = true
 resvg = { version = "0.45.0", default-features = false, features = ["text", "system-fonts", "memmap-fonts"] }
 usvg = { version = "0.45.0", default-features = false }
-scap.workspace = true
 schemars.workspace = true
 seahash = "4.1"
 semantic_version.workspace = true
@@ -137,6 +136,9 @@ objc2 = { version = "0.5", optional = true }
 objc2-metal = { version = "0.2", optional = true }
 #TODO: replace with "objc2"
 metal.workspace = true
+
+[target.'cfg(any(target_os = "linux", target_os = "freebsd", target_os = "windows"))'.dependencies]
+scap.workspace = true
 
 [target.'cfg(any(target_os = "linux", target_os = "freebsd", target_os = "macos"))'.dependencies]
 pathfinder_geometry = "0.5"

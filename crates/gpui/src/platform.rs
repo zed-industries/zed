@@ -77,7 +77,7 @@ pub(crate) use windows::*;
 #[cfg(any(test, feature = "test-support"))]
 pub use test::TestScreenCaptureSource;
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "windows"))]
 pub(crate) use scap_screen_capture::{scap_screen_sources, start_scap_default_target_source};
 
 /// Returns a background executor for the current platform.
