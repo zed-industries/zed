@@ -203,7 +203,6 @@ pub struct FunctionCallPart {
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FunctionResponsePart {
-    // Name must match FunctionCall.name
     pub function_response: FunctionResponse,
 }
 

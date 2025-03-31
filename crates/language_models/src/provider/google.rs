@@ -1,5 +1,5 @@
 use anyhow::{anyhow, Context as _, Result};
-use collections::{BTreeMap, HashMap};
+use collections::BTreeMap;
 use credentials_provider::CredentialsProvider;
 use editor::{Editor, EditorElement, EditorStyle};
 use futures::Stream;
@@ -414,16 +414,43 @@ pub fn into_google(
     request: LanguageModelRequest,
     model: String,
 ) -> google_ai::GenerateContentRequest {
+    let has_tools = !request.tools.is_empty();
     google_ai::GenerateContentRequest {
         model,
         contents: request
             .messages
             .into_iter()
-            .map(|msg| google_ai::Content {
-                parts: vec![google_ai::Part::TextPart(google_ai::TextPart {
-                    text: msg.string_contents(),
-                })],
-                role: match msg.role {
+            .map(|message| google_ai::Content {
+                parts: message
+                    .content
+                    .into_iter()
+                    .filter_map(|content| match content {
+                        language_model::MessageContent::Text(text) => {
+                            Some(Part::TextPart(google_ai::TextPart { text }))
+                        }
+                        language_model::MessageContent::Image(_) => None,
+                        language_model::MessageContent::ToolUse(tool_use) => {
+                            Some(Part::FunctionCallPart(google_ai::FunctionCallPart {
+                                function_call: google_ai::FunctionCall {
+                                    name: tool_use.name.to_string(),
+                                    args: tool_use.input,
+                                },
+                            }))
+                        }
+                        language_model::MessageContent::ToolResult(tool_result) => Some(
+                            Part::FunctionResponsePart(google_ai::FunctionResponsePart {
+                                function_response: google_ai::FunctionResponse {
+                                    name: tool_result.tool_use_id.to_string(),
+                                    // The API expects a valid JSON object
+                                    response: serde_json::json!({
+                                        "output": tool_result.content
+                                    }),
+                                },
+                            }),
+                        ),
+                    })
+                    .collect(),
+                role: match message.role {
                     Role::User => google_ai::Role::User,
                     Role::Assistant => google_ai::Role::Model,
                     Role::System => google_ai::Role::User, // Google AI doesn't have a system role
@@ -452,7 +479,12 @@ pub fn into_google(
                 })
                 .collect(),
         ),
-        tool_config: None,
+        tool_config: has_tools.then(|| google_ai::ToolConfig {
+            function_calling_config: google_ai::FunctionCallingConfig {
+                mode: google_ai::FunctionCallingMode::Any,
+                allowed_function_names: None,
+            },
+        }),
     }
 }
 
@@ -505,7 +537,7 @@ pub fn map_to_language_model_completion_events(
                                         Part::TextPart(text_part) => events.push(Ok(
                                             LanguageModelCompletionEvent::Text(text_part.text),
                                         )),
-                                        Part::InlineDataPart(_) => {} //TODO?,
+                                        Part::InlineDataPart(_) => {}
                                         Part::FunctionCallPart(function_call_part) => {
                                             wants_to_use_tool = true;
                                             let name: Arc<str> =
@@ -518,14 +550,7 @@ pub fn map_to_language_model_completion_events(
                                                 },
                                             )));
                                         }
-                                        Part::FunctionResponsePart(function_response_part) => {
-                                            //TODO
-                                            println!(
-                                                "FunctionResponsePart {}\n{}",
-                                                function_response_part.function_response.name,
-                                                function_response_part.function_response.response
-                                            );
-                                        }
+                                        Part::FunctionResponsePart(_) => {}
                                     });
                             }
                         }

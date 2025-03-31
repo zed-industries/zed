@@ -18,7 +18,7 @@ pub fn schema_to_json(
     match format {
         LanguageModelToolSchemaFormat::JsonSchema => Ok(value),
         LanguageModelToolSchemaFormat::JsonSchemaSubset => {
-            transform_fields_json_schema_subset(&mut value);
+            transform_fields_to_json_schema_subset(&mut value);
             Ok(value)
         }
     }
@@ -80,7 +80,7 @@ impl schemars::visit::Visitor for TransformToJsonSchemaSubsetVisitor {
     }
 }
 
-fn transform_fields_json_schema_subset(json: &mut serde_json::Value) {
+fn transform_fields_to_json_schema_subset(json: &mut serde_json::Value) {
     if let serde_json::Value::Object(obj) = json {
         if let Some(default) = obj.get("default") {
             let is_null = default.is_null();
@@ -109,12 +109,12 @@ fn transform_fields_json_schema_subset(json: &mut serde_json::Value) {
 
         for (_, value) in obj.iter_mut() {
             if let serde_json::Value::Object(_) | serde_json::Value::Array(_) = value {
-                transform_fields_json_schema_subset(value);
+                transform_fields_to_json_schema_subset(value);
             }
         }
     } else if let serde_json::Value::Array(arr) = json {
         for item in arr.iter_mut() {
-            transform_fields_json_schema_subset(item);
+            transform_fields_to_json_schema_subset(item);
         }
     }
 }
