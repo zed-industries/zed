@@ -3563,4 +3563,32 @@ mod test {
         cx.simulate_shared_keystrokes("3 space").await;
         cx.shared_state().await.assert_eq("πππˇππ");
     }
+
+    #[gpui::test]
+    async fn test_space_non_ascii_eol(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+
+        cx.set_shared_state(indoc! {"
+            ππππˇπ
+            anotherline"})
+            .await;
+        cx.simulate_shared_keystrokes("3 space").await;
+        cx.shared_state().await.assert_eq(indoc! {"
+            πππππ
+            anˇotherline"});
+    }
+
+    #[gpui::test]
+    async fn test_backspace_non_ascii_bol(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+
+        cx.set_shared_state(indoc! {"
+                        ππππ
+                        πanˇotherline"})
+            .await;
+        cx.simulate_shared_keystrokes("4 backspace").await;
+        cx.shared_state().await.assert_eq(indoc! {"
+                        πππˇπ
+                        πanotherline"});
+    }
 }
