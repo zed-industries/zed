@@ -201,6 +201,13 @@ where
         }
     }
 
+    pub fn retain<F>(&mut self, f: F)
+    where
+        F: FnMut(&Edit<T>) -> bool,
+    {
+        self.0.retain(f);
+    }
+
     pub fn old_to_new(&self, old: T) -> T {
         let ix = match self.0.binary_search_by(|probe| probe.old.start.cmp(&old)) {
             Ok(ix) => ix,

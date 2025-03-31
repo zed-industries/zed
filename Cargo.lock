@@ -697,6 +697,7 @@ dependencies = [
  "clock",
  "collections",
  "derive_more",
+ "futures 0.3.31",
  "gpui",
  "icons",
  "language",

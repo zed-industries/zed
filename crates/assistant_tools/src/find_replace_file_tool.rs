@@ -189,15 +189,16 @@ impl Tool for FindReplaceFileTool {
                 .await;
 
             if let Some(diff) = result {
-                let edit_ids = buffer.update(cx, |buffer, cx| {
-                    buffer.finalize_last_transaction();
-                    buffer.apply_diff(diff, false, cx);
-                    let transaction = buffer.finalize_last_transaction();
-                    transaction.map_or(Vec::new(), |transaction| transaction.edit_ids.clone())
-                })?;
+                cx.update(|cx| {
+                    buffer.update(cx, |buffer, cx| {
+                        buffer.finalize_last_transaction();
+                        buffer.apply_diff(diff, cx);
+                        buffer.finalize_last_transaction();
+                    });
 
-                action_log.update(cx, |log, cx| {
-                    log.buffer_edited(buffer.clone(), edit_ids, cx)
+                    action_log.update(cx, |log, cx| {
+                        log.buffer_edited(buffer.clone(), cx)
+                    });
                 })?;
 
                 project.update(cx, |project, cx| {

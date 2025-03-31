@@ -1,11 +1,12 @@
 use anyhow::{Context as _, Result};
 use buffer_diff::BufferDiff;
-use collections::{BTreeMap, HashMap, HashSet};
+use collections::{BTreeMap, HashSet};
+use futures::{channel::mpsc, StreamExt};
 use gpui::{App, AppContext, AsyncApp, Context, Entity, Subscription, Task, WeakEntity};
-use language::{
-    Buffer, BufferEvent, DiskState, OffsetRangeExt, Operation, TextBufferSnapshot, ToOffset,
-};
-use std::{ops::Range, sync::Arc};
+use language::{Buffer, BufferEvent, DiskState, Point};
+use std::{cmp, ops::Range};
+use text::{Edit, Patch, Rope};
+use util::RangeExt;
 
 /// Tracks actions performed by tools in a thread
 pub struct ActionLog {
@@ -55,16 +56,20 @@ impl ActionLog {
                     diff.set_secondary_diff(unreviewed_diff.clone());
                     diff
                 });
-                let (diff_update_tx, diff_update_rx) = async_watch::channel(());
+                let (diff_update_tx, diff_update_rx) = mpsc::unbounded();
                 TrackedBuffer {
                     buffer: buffer.clone(),
-                    change: Change::Edited {
-                        edit_ids: HashSet::default(),
-                        initial_content: if created {
-                            None
-                        } else {
-                            Some(text_snapshot.clone())
-                        },
+                    base_text: if created {
+                        Rope::default()
+                    } else {
+                        buffer.read(cx).as_rope().clone()
+                    },
+                    unreviewed_changes: Patch::default(),
+                    diff_version: text_snapshot.version().clone(),
+                    status: if created {
+                        TrackedBufferStatus::Created
+                    } else {
+                        TrackedBufferStatus::Modified
                     },
                     version: buffer.read(cx).version(),
                     diff,
@@ -91,9 +96,7 @@ impl ActionLog {
         cx: &mut Context<Self>,
     ) {
         match event {
-            BufferEvent::Operation { operation, .. } => {
-                self.handle_buffer_operation(buffer, operation, cx)
-            }
+            BufferEvent::Edited { .. } => self.handle_buffer_edited(buffer, cx),
             BufferEvent::FileHandleChanged => {
                 self.handle_buffer_file_changed(buffer, cx);
             }
@@ -101,35 +104,11 @@ impl ActionLog {
         };
     }
 
-    fn handle_buffer_operation(
-        &mut self,
-        buffer: Entity<Buffer>,
-        operation: &Operation,
-        cx: &mut Context<Self>,
-    ) {
+    fn handle_buffer_edited(&mut self, buffer: Entity<Buffer>, cx: &mut Context<Self>) {
         let Some(tracked_buffer) = self.tracked_buffers.get_mut(&buffer) else {
             return;
         };
-        let Operation::Buffer(text::Operation::Edit(operation)) = operation else {
-            return;
-        };
-        let Change::Edited { edit_ids, .. } = &mut tracked_buffer.change else {
-            return;
-        };
-        if edit_ids.contains(&operation.timestamp) {
-            return;
-        }
-
-        // If the buffer operation overlaps with any tracked edits, mark it as unreviewed.
-        let buffer = buffer.read(cx);
-        let operation_edit_ranges = buffer
-            .edited_ranges_for_edit_ids::<usize>([&operation.timestamp])
-            .collect::<Vec<_>>();
-        let tracked_edit_ranges = buffer.edited_ranges_for_edit_ids::<usize>(edit_ids.iter());
-        if ranges_intersect(operation_edit_ranges, tracked_edit_ranges) {
-            edit_ids.insert(operation.timestamp);
-            tracked_buffer.schedule_diff_update();
-        }
+        tracked_buffer.schedule_diff_update(ChangeAuthor::User, cx);
     }
 
     fn handle_buffer_file_changed(&mut self, buffer: Entity<Buffer>, cx: &mut Context<Self>) {
@@ -137,24 +116,8 @@ impl ActionLog {
             return;
         };
 
-        match tracked_buffer.change {
-            Change::Deleted { .. } => {
-                if buffer
-                    .read(cx)
-                    .file()
-                    .map_or(false, |file| file.disk_state() != DiskState::Deleted)
-                {
-                    // If the buffer had been deleted by a tool, but it got
-                    // resurrected externally, we want to clear the changes we
-                    // were tracking and reset the buffer's state.
-                    tracked_buffer.change = Change::Edited {
-                        edit_ids: HashSet::default(),
-                        initial_content: Some(buffer.read(cx).text_snapshot()),
-                    };
-                }
-                tracked_buffer.schedule_diff_update();
-            }
-            Change::Edited { .. } => {
+        match tracked_buffer.status {
+            TrackedBufferStatus::Created | TrackedBufferStatus::Modified => {
                 if buffer
                     .read(cx)
                     .file()
@@ -163,9 +126,25 @@ impl ActionLog {
                     // If the buffer had been edited by a tool, but it got
                     // deleted externally, we want to stop tracking it.
                     self.tracked_buffers.remove(&buffer);
-                } else {
-                    tracked_buffer.schedule_diff_update();
                 }
+                cx.notify();
+            }
+            TrackedBufferStatus::Deleted => {
+                if buffer
+                    .read(cx)
+                    .file()
+                    .map_or(false, |file| file.disk_state() != DiskState::Deleted)
+                {
+                    // If the buffer had been deleted by a tool, but it got
+                    // resurrected externally, we want to clear the changes we
+                    // were tracking and reset the buffer's state.
+                    tracked_buffer.unreviewed_changes = Patch::default();
+                    tracked_buffer.base_text = buffer.read(cx).as_rope().clone();
+                    tracked_buffer.status = TrackedBufferStatus::Modified;
+                    tracked_buffer.version = buffer.read(cx).version();
+                    tracked_buffer.schedule_diff_update(ChangeAuthor::User, cx);
+                }
+                cx.notify();
             }
         }
     }
@@ -173,18 +152,59 @@ impl ActionLog {
     async fn maintain_diff(
         this: WeakEntity<Self>,
         buffer: Entity<Buffer>,
-        mut diff_update: async_watch::Receiver<()>,
+        mut diff_update: mpsc::UnboundedReceiver<(ChangeAuthor, text::BufferSnapshot)>,
         cx: &mut AsyncApp,
     ) -> Result<()> {
-        while let Some(_) = diff_update.recv().await.ok() {
-            let update = this.update(cx, |this, cx| {
-                let tracked_buffer = this
-                    .tracked_buffers
-                    .get_mut(&buffer)
-                    .context("buffer not tracked")?;
-                anyhow::Ok(tracked_buffer.update_diff(cx))
-            })??;
-            update.await;
+        while let Some((author, buffer_snapshot)) = diff_update.next().await {
+            let (diff, base_text, language, language_registry) =
+                this.update(cx, |this, cx| {
+                    let tracked_buffer = this
+                        .tracked_buffers
+                        .get_mut(&buffer)
+                        .context("buffer not tracked")?;
+
+                    let row_edits =
+                        row_edits_since_version(&tracked_buffer.diff_version, &buffer_snapshot);
+                    match author {
+                        ChangeAuthor::User => {
+                            tracked_buffer.unreviewed_changes = rebase_patch(
+                                &tracked_buffer.unreviewed_changes,
+                                row_edits,
+                                &mut tracked_buffer.base_text,
+                                buffer_snapshot.as_rope(),
+                            );
+                        }
+                        ChangeAuthor::Agent => {
+                            tracked_buffer.unreviewed_changes =
+                                tracked_buffer.unreviewed_changes.compose(row_edits)
+                        }
+                    }
+
+                    anyhow::Ok((
+                        tracked_buffer.diff.clone(),
+                        tracked_buffer.base_text.clone(),
+                        tracked_buffer.buffer.read(cx).language().cloned(),
+                        tracked_buffer.buffer.read(cx).language_registry(),
+                    ))
+                })??;
+
+            let diff_snapshot = BufferDiff::update_diff(
+                diff.clone(),
+                buffer_snapshot.clone(),
+                // todo!("use a rope here")
+                Some(std::sync::Arc::new(base_text.to_string())),
+                true,
+                false,
+                language,
+                language_registry,
+                cx,
+            )
+            .await;
+            if let Ok(diff_snapshot) = diff_snapshot {
+                diff.update(cx, |diff, cx| {
+                    diff.set_snapshot(&buffer_snapshot, diff_snapshot, false, None, cx)
+                })?;
+            }
             this.update(cx, |_this, cx| cx.notify())?;
         }
 
@@ -197,99 +217,88 @@ impl ActionLog {
     }
 
     /// Track a buffer as read, so we can notify the model about user edits.
-    pub fn will_create_buffer(
-        &mut self,
-        buffer: Entity<Buffer>,
-        edit_id: Option<clock::Lamport>,
-        cx: &mut Context<Self>,
-    ) {
+    pub fn will_create_buffer(&mut self, buffer: Entity<Buffer>, cx: &mut Context<Self>) {
         self.track_buffer(buffer.clone(), true, cx);
-        self.buffer_edited(buffer, edit_id.into_iter().collect(), cx)
+        self.buffer_edited(buffer, cx)
     }
 
     /// Mark a buffer as edited, so we can refresh it in the context
-    pub fn buffer_edited(
-        &mut self,
-        buffer: Entity<Buffer>,
-        mut edit_ids: Vec<clock::Lamport>,
-        cx: &mut Context<Self>,
-    ) {
+    pub fn buffer_edited(&mut self, buffer: Entity<Buffer>, cx: &mut Context<Self>) {
         self.edited_since_project_diagnostics_check = true;
         self.stale_buffers_in_context.insert(buffer.clone());
 
         let tracked_buffer = self.track_buffer(buffer.clone(), false, cx);
-
-        match &mut tracked_buffer.change {
-            Change::Edited {
-                edit_ids: existing_edit_ids,
-                ..
-            } => {
-                existing_edit_ids.extend(edit_ids);
-            }
-            Change::Deleted {
-                deleted_content,
-                deletion_id,
-                ..
-            } => {
-                edit_ids.extend(*deletion_id);
-                tracked_buffer.change = Change::Edited {
-                    edit_ids: edit_ids.into_iter().collect(),
-                    initial_content: Some(deleted_content.clone()),
-                };
-            }
+        if let TrackedBufferStatus::Deleted = tracked_buffer.status {
+            tracked_buffer.status = TrackedBufferStatus::Modified;
         }
-
-        tracked_buffer.schedule_diff_update();
+        tracked_buffer.schedule_diff_update(ChangeAuthor::Agent, cx);
     }
 
     pub fn will_delete_buffer(&mut self, buffer: Entity<Buffer>, cx: &mut Context<Self>) {
         let tracked_buffer = self.track_buffer(buffer.clone(), false, cx);
-        if let Change::Edited {
-            initial_content, ..
-        } = &tracked_buffer.change
-        {
-            if let Some(initial_content) = initial_content {
-                let deletion_id = buffer.update(cx, |buffer, cx| buffer.set_text("", cx));
-                tracked_buffer.change = Change::Deleted {
-                    deleted_content: initial_content.clone(),
-                    deletion_id,
-                };
-                tracked_buffer.schedule_diff_update();
-            } else {
+        match tracked_buffer.status {
+            TrackedBufferStatus::Created => {
                 self.tracked_buffers.remove(&buffer);
                 cx.notify();
             }
+            TrackedBufferStatus::Modified => {
+                tracked_buffer.status = TrackedBufferStatus::Deleted;
+                tracked_buffer.unreviewed_changes = Patch::new(vec![Edit {
+                    old: 0..tracked_buffer.base_text.max_point().row + 1,
+                    new: 0..1,
+                }]);
+                tracked_buffer.version = buffer.read(cx).version();
+                tracked_buffer.schedule_diff_update(ChangeAuthor::Agent, cx);
+            }
+            TrackedBufferStatus::Deleted => todo!(),
         }
+        cx.notify();
     }
 
-    pub fn keep_edits_in_range<T: ToOffset>(
+    pub fn keep_edits_in_range<T: language::ToPoint>(
         &mut self,
-        buffer_handle: Entity<Buffer>,
+        buffer: Entity<Buffer>,
         buffer_range: Range<T>,
         cx: &mut Context<Self>,
     ) {
-        let Some(tracked_buffer) = self.tracked_buffers.get_mut(&buffer_handle) else {
+        let Some(tracked_buffer) = self.tracked_buffers.get_mut(&buffer) else {
             return;
         };
 
-        let buffer = buffer_handle.read(cx);
-        let buffer_range = buffer_range.to_offset(buffer);
-
-        match &mut tracked_buffer.change {
-            Change::Deleted { .. } => {
-                self.tracked_buffers.remove(&buffer_handle);
+        match tracked_buffer.status {
+            TrackedBufferStatus::Deleted => {
+                self.tracked_buffers.remove(&buffer);
                 cx.notify();
             }
-            Change::Edited { edit_ids, .. } => {
-                edit_ids.retain(|edit_id| {
-                    for range in buffer.edited_ranges_for_edit_ids::<usize>([edit_id]) {
-                        if buffer_range.end >= range.start && buffer_range.start <= range.end {
-                            return false;
-                        }
+            _ => {
+                let buffer = buffer.read(cx);
+                let buffer_range =
+                    buffer_range.start.to_point(buffer)..buffer_range.end.to_point(buffer);
+                let buffer_row_range = buffer_range.start.row..buffer_range.end.row + 1;
+                tracked_buffer.unreviewed_changes.retain(|edit| {
+                    if edit.new.overlaps(&buffer_row_range) {
+                        let old_bytes = tracked_buffer
+                            .base_text
+                            .point_to_offset(Point::new(edit.new.start, 0))
+                            ..tracked_buffer.base_text.point_to_offset(cmp::min(
+                                Point::new(edit.new.start + edit.old_len(), 0),
+                                tracked_buffer.base_text.max_point(),
+                            ));
+                        let new_bytes = buffer.point_to_offset(Point::new(edit.new.start, 0))
+                            ..buffer.point_to_offset(cmp::min(
+                                Point::new(edit.new.end, 0),
+                                buffer.max_point(),
+                            ));
+                        tracked_buffer.base_text.replace(
+                            old_bytes,
+                            &buffer.text_for_range(new_bytes).collect::<String>(),
+                        );
+                        false
+                    } else {
+                        true
                     }
-                    true
                 });
-                tracked_buffer.schedule_diff_update();
+                tracked_buffer.schedule_diff_update(ChangeAuthor::User, cx);
             }
         }
     }
@@ -321,43 +330,152 @@ impl ActionLog {
     }
 }
 
-fn ranges_intersect(
-    ranges_a: impl IntoIterator<Item = Range<usize>>,
-    ranges_b: impl IntoIterator<Item = Range<usize>>,
-) -> bool {
-    let mut ranges_a_iter = ranges_a.into_iter().peekable();
-    let mut ranges_b_iter = ranges_b.into_iter().peekable();
-    while let (Some(range_a), Some(range_b)) = (ranges_a_iter.peek(), ranges_b_iter.peek()) {
-        if range_a.end < range_b.start {
-            ranges_a_iter.next();
-        } else if range_b.end < range_a.start {
-            ranges_b_iter.next();
-        } else {
-            return true;
+fn rebase_patch(
+    patch: &Patch<u32>,
+    edits: Vec<Edit<u32>>,
+    old_text: &mut Rope,
+    new_text: &Rope,
+) -> Patch<u32> {
+    let mut translated_unreviewed_edits = Patch::default();
+    let mut conflicting_edits = Vec::new();
+
+    let mut old_edits = patch.edits().iter().cloned().peekable();
+    let mut new_edits = edits.into_iter().peekable();
+    let mut delta = 0i32;
+    loop {
+        match (old_edits.peek(), new_edits.peek()) {
+            (Some(old_edit), Some(new_edit)) => {
+                if new_edit.old.end <= old_edit.new.start {
+                    let mut new_edit = new_edits.next().unwrap();
+
+                    new_edit.old.start = (new_edit.old.start as i32 + delta) as u32;
+                    new_edit.old.end = (new_edit.old.end as i32 + delta) as u32;
+
+                    let old_bytes = old_text.point_to_offset(Point::new(new_edit.old.start, 0))
+                        ..old_text.point_to_offset(cmp::min(
+                            Point::new(new_edit.old.end, 0),
+                            old_text.max_point(),
+                        ));
+                    let new_bytes = new_text.point_to_offset(Point::new(new_edit.new.start, 0))
+                        ..new_text.point_to_offset(cmp::min(
+                            Point::new(new_edit.new.end, 0),
+                            new_text.max_point(),
+                        ));
+                    old_text.replace(
+                        old_bytes,
+                        &new_text.chunks_in_range(new_bytes).collect::<String>(),
+                    );
+
+                    delta += new_edit.new_len() as i32 - new_edit.old_len() as i32;
+                } else if new_edit.old.start >= old_edit.new.end {
+                    let mut old_edit = old_edits.next().unwrap();
+                    old_edit.old.start = (old_edit.old.start as i32 + delta) as u32;
+                    old_edit.old.end = (old_edit.old.end as i32 + delta) as u32;
+                    old_edit.new.start = (old_edit.new.start as i32 + delta) as u32;
+                    old_edit.new.end = (old_edit.new.end as i32 + delta) as u32;
+                    translated_unreviewed_edits.push(old_edit);
+                } else {
+                    let mut old_edit = old_edits.next().unwrap();
+                    old_edit.old.start = (old_edit.old.start as i32 + delta) as u32;
+                    old_edit.old.end = (old_edit.old.end as i32 + delta) as u32;
+                    old_edit.new.start = (old_edit.new.start as i32 + delta) as u32;
+                    old_edit.new.end = (old_edit.new.end as i32 + delta) as u32;
+
+                    let mut new_edit = new_edits.next().unwrap();
+                    new_edit.old.start = (new_edit.old.start as i32 + delta) as u32;
+                    new_edit.old.end = (new_edit.old.end as i32 + delta) as u32;
+
+                    translated_unreviewed_edits.push(old_edit);
+                    conflicting_edits.push(new_edit);
+                }
+            }
+            (Some(_old_edit), None) => {
+                let mut old_edit = old_edits.next().unwrap();
+                old_edit.old.start = (old_edit.old.start as i32 + delta) as u32;
+                old_edit.old.end = (old_edit.old.end as i32 + delta) as u32;
+                old_edit.new.start = (old_edit.new.start as i32 + delta) as u32;
+                old_edit.new.end = (old_edit.new.end as i32 + delta) as u32;
+                translated_unreviewed_edits.push(old_edit);
+            }
+            (None, Some(_new_edit)) => {
+                let mut new_edit = new_edits.next().unwrap();
+
+                new_edit.old.start = (new_edit.old.start as i32 + delta) as u32;
+                new_edit.old.end = (new_edit.old.end as i32 + delta) as u32;
+
+                let old_bytes = old_text.point_to_offset(Point::new(new_edit.old.start, 0))
+                    ..old_text.point_to_offset(cmp::min(
+                        Point::new(new_edit.old.end, 0),
+                        old_text.max_point(),
+                    ));
+                let new_bytes = new_text.point_to_offset(Point::new(new_edit.new.start, 0))
+                    ..new_text.point_to_offset(cmp::min(
+                        Point::new(new_edit.new.end, 0),
+                        new_text.max_point(),
+                    ));
+                old_text.replace(
+                    old_bytes,
+                    &new_text.chunks_in_range(new_bytes).collect::<String>(),
+                );
+
+                delta += new_edit.new_len() as i32 - new_edit.old_len() as i32;
+            }
+            (None, None) => break,
         }
     }
-    false
+    translated_unreviewed_edits.compose(conflicting_edits)
+}
+
+fn row_edits_since_version(
+    since: &clock::Global,
+    buffer_snapshot: &text::BufferSnapshot,
+) -> Vec<Edit<u32>> {
+    let mut edits = buffer_snapshot.edits_since::<Point>(since).peekable();
+    let mut row_edits = Vec::new();
+    while let Some(edit) = edits.next() {
+        let mut old_range = edit.old.start.row..edit.old.end.row + 1;
+        let mut new_range = edit.new.start.row..edit.new.end.row + 1;
+        while let Some(next_edit) = edits.peek() {
+            if old_range.end > next_edit.old.start.row {
+                old_range.end = next_edit.old.end.row + 1;
+                new_range.end = next_edit.new.end.row + 1;
+                edits.next();
+            } else {
+                break;
+            }
+        }
+
+        row_edits.push(Edit {
+            old: old_range,
+            new: new_range,
+        });
+    }
+    row_edits
+}
+
+enum ChangeAuthor {
+    User,
+    Agent,
+}
+
+#[derive(Copy, Clone, Eq, PartialEq)]
+enum TrackedBufferStatus {
+    Created,
+    Modified,
+    Deleted,
 }
 
 struct TrackedBuffer {
     buffer: Entity<Buffer>,
-    change: Change,
+    base_text: Rope,
+    unreviewed_changes: Patch<u32>,
+    status: TrackedBufferStatus,
     version: clock::Global,
     diff: Entity<BufferDiff>,
-    diff_update: async_watch::Sender<()>,
+    diff_version: clock::Global,
+    diff_update: mpsc::UnboundedSender<(ChangeAuthor, text::BufferSnapshot)>,
     _maintain_diff: Task<()>,
     _subscription: Subscription,
-}
-
-enum Change {
-    Edited {
-        edit_ids: HashSet<clock::Lamport>,
-        initial_content: Option<TextBufferSnapshot>,
-    },
-    Deleted {
-        deleted_content: TextBufferSnapshot,
-        deletion_id: Option<clock::Lamport>,
-    },
 }
 
 impl TrackedBuffer {
@@ -369,65 +487,10 @@ impl TrackedBuffer {
             .is_some()
     }
 
-    fn schedule_diff_update(&self) {
-        self.diff_update.send(()).ok();
-    }
-
-    fn update_diff(&mut self, cx: &mut App) -> Task<()> {
-        match &self.change {
-            Change::Edited { edit_ids, .. } => {
-                let edits_to_undo = edit_ids
-                    .iter()
-                    .map(|edit_id| (*edit_id, u32::MAX))
-                    .collect::<HashMap<_, _>>();
-                let buffer_without_edits = self.buffer.update(cx, |buffer, cx| buffer.branch(cx));
-                buffer_without_edits
-                    .update(cx, |buffer, cx| buffer.undo_operations(edits_to_undo, cx));
-                let diff_update = self.diff.update(cx, |diff, cx| {
-                    diff.set_base_text(
-                        buffer_without_edits,
-                        self.buffer.read(cx).text_snapshot(),
-                        cx,
-                    )
-                });
-
-                cx.background_spawn(async move {
-                    _ = diff_update.await;
-                })
-            }
-            Change::Deleted {
-                deleted_content, ..
-            } => {
-                let deleted_content = deleted_content.clone();
-
-                let diff = self.diff.clone();
-                let buffer_snapshot = self.buffer.read(cx).text_snapshot();
-                let language = self.buffer.read(cx).language().cloned();
-                let language_registry = self.buffer.read(cx).language_registry().clone();
-
-                cx.spawn(async move |cx| {
-                    let base_text = Arc::new(deleted_content.text());
-
-                    let diff_snapshot = BufferDiff::update_diff(
-                        diff.clone(),
-                        buffer_snapshot.clone(),
-                        Some(base_text.clone()),
-                        true,
-                        false,
-                        language.clone(),
-                        language_registry.clone(),
-                        cx,
-                    )
-                    .await;
-                    if let Ok(diff_snapshot) = diff_snapshot {
-                        diff.update(cx, |diff, cx| {
-                            diff.set_snapshot(&buffer_snapshot, diff_snapshot, false, None, cx)
-                        })
-                        .ok();
-                    }
-                })
-            }
-        }
+    fn schedule_diff_update(&self, author: ChangeAuthor, cx: &App) {
+        self.diff_update
+            .unbounded_send((author, self.buffer.read(cx).text_snapshot()))
+            .ok();
     }
 }
 
@@ -451,25 +514,25 @@ mod tests {
         let action_log = cx.new(|_| ActionLog::new());
         let buffer = cx.new(|cx| Buffer::local("abc\ndef\nghi\njkl\nmno", cx));
 
-        let edit1 = buffer.update(cx, |buffer, cx| {
-            buffer
-                .edit([(Point::new(1, 1)..Point::new(1, 2), "E")], None, cx)
-                .unwrap()
+        cx.update(|cx| {
+            action_log.update(cx, |log, cx| log.buffer_read(buffer.clone(), cx));
+            buffer.update(cx, |buffer, cx| {
+                buffer
+                    .edit([(Point::new(1, 1)..Point::new(1, 2), "E")], None, cx)
+                    .unwrap()
+            });
+            buffer.update(cx, |buffer, cx| {
+                buffer
+                    .edit([(Point::new(4, 2)..Point::new(4, 3), "O")], None, cx)
+                    .unwrap()
+            });
+            action_log.update(cx, |log, cx| log.buffer_edited(buffer.clone(), cx));
         });
-        let edit2 = buffer.update(cx, |buffer, cx| {
-            buffer
-                .edit([(Point::new(4, 2)..Point::new(4, 3), "O")], None, cx)
-                .unwrap()
-        });
+        cx.run_until_parked();
         assert_eq!(
             buffer.read_with(cx, |buffer, _| buffer.text()),
             "abc\ndEf\nghi\njkl\nmnO"
         );
-
-        action_log.update(cx, |log, cx| {
-            log.buffer_edited(buffer.clone(), vec![edit1, edit2], cx)
-        });
-        cx.run_until_parked();
         assert_eq!(
             unreviewed_hunks(&action_log, cx),
             vec![(
@@ -509,10 +572,7 @@ mod tests {
             log.keep_edits_in_range(buffer.clone(), Point::new(0, 0)..Point::new(4, 3), cx)
         });
         cx.run_until_parked();
-        assert_eq!(
-            unreviewed_hunks(&action_log, cx),
-            vec![(buffer.clone(), vec![])]
-        );
+        assert_eq!(unreviewed_hunks(&action_log, cx), vec![]);
     }
 
     #[gpui::test(iterations = 10)]
@@ -520,32 +580,28 @@ mod tests {
         let action_log = cx.new(|_| ActionLog::new());
         let buffer = cx.new(|cx| Buffer::local("abc\ndef\nghi\njkl\nmno", cx));
 
-        let tool_edit = buffer.update(cx, |buffer, cx| {
-            buffer
-                .edit(
-                    [(Point::new(0, 2)..Point::new(2, 3), "C\nDEF\nGHI")],
-                    None,
-                    cx,
-                )
-                .unwrap()
-        });
-        assert_eq!(
-            buffer.read_with(cx, |buffer, _| buffer.text()),
-            "abC\nDEF\nGHI\njkl\nmno"
-        );
-
-        action_log.update(cx, |log, cx| {
-            log.buffer_edited(buffer.clone(), vec![tool_edit], cx)
+        cx.update(|cx| {
+            action_log.update(cx, |log, cx| log.buffer_read(buffer.clone(), cx));
+            buffer.update(cx, |buffer, cx| {
+                buffer
+                    .edit([(Point::new(1, 2)..Point::new(2, 3), "F\nGHI")], None, cx)
+                    .unwrap()
+            });
+            action_log.update(cx, |log, cx| log.buffer_edited(buffer.clone(), cx));
         });
         cx.run_until_parked();
+        assert_eq!(
+            buffer.read_with(cx, |buffer, _| buffer.text()),
+            "abc\ndeF\nGHI\njkl\nmno"
+        );
         assert_eq!(
             unreviewed_hunks(&action_log, cx),
             vec![(
                 buffer.clone(),
                 vec![HunkStatus {
-                    range: Point::new(0, 0)..Point::new(3, 0),
+                    range: Point::new(1, 0)..Point::new(3, 0),
                     diff_status: DiffHunkStatusKind::Modified,
-                    old_text: "abc\ndef\nghi\n".into(),
+                    old_text: "def\nghi\n".into(),
                 }],
             )]
         );
@@ -555,13 +611,37 @@ mod tests {
         });
         cx.run_until_parked();
         assert_eq!(
+            buffer.read_with(cx, |buffer, _| buffer.text()),
+            "abXc\ndeF\nGHI\njkl\nmno"
+        );
+        assert_eq!(
             unreviewed_hunks(&action_log, cx),
             vec![(
                 buffer.clone(),
                 vec![HunkStatus {
-                    range: Point::new(0, 0)..Point::new(3, 0),
+                    range: Point::new(1, 0)..Point::new(3, 0),
                     diff_status: DiffHunkStatusKind::Modified,
-                    old_text: "abXc\ndef\nghi\n".into(),
+                    old_text: "def\nghi\n".into(),
+                }],
+            )]
+        );
+
+        buffer.update(cx, |buffer, cx| {
+            buffer.edit([(Point::new(1, 1)..Point::new(1, 1), "Y")], None, cx)
+        });
+        cx.run_until_parked();
+        assert_eq!(
+            buffer.read_with(cx, |buffer, _| buffer.text()),
+            "abXc\ndYeF\nGHI\njkl\nmno"
+        );
+        assert_eq!(
+            unreviewed_hunks(&action_log, cx),
+            vec![(
+                buffer.clone(),
+                vec![HunkStatus {
+                    range: Point::new(1, 0)..Point::new(3, 0),
+                    diff_status: DiffHunkStatusKind::Modified,
+                    old_text: "def\nghi\n".into(),
                 }],
             )]
         );
@@ -659,10 +739,8 @@ mod tests {
             .unwrap();
         cx.run_until_parked();
         // Simulate file2 being recreated by a tool.
-        let edit_id = buffer2.update(cx, |buffer, cx| buffer.set_text("IPSUM", cx));
-        action_log.update(cx, |log, cx| {
-            log.will_create_buffer(buffer2.clone(), edit_id, cx)
-        });
+        buffer2.update(cx, |buffer, cx| buffer.set_text("IPSUM", cx));
+        action_log.update(cx, |log, cx| log.will_create_buffer(buffer2.clone(), cx));
         project
             .update(cx, |project, cx| project.save_buffer(buffer2.clone(), cx))
             .await
