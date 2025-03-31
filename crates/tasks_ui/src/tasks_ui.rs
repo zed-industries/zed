@@ -224,6 +224,7 @@ where
                     )
                 })
                 .unwrap_or_default();
+            // TODO kb need to list LSP tasks too?
             task_inventory
                 .read(cx)
                 .list_tasks(file, language, task_contexts.worktree(), cx)
@@ -293,6 +294,7 @@ fn task_contexts(workspace: &Workspace, window: &mut Window, cx: &mut App) -> Ta
 
     let active_editor = active_item.and_then(|item| item.act_as::<Editor>(cx));
 
+    // TODO kb populate task contexts with some data like `lsp_store`?
     let editor_context_task = active_editor.as_ref().map(|active_editor| {
         active_editor.update(cx, |editor, cx| editor.task_context(window, cx))
     });

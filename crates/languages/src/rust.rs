@@ -3,12 +3,11 @@ use async_compression::futures::bufread::GzipDecoder;
 use async_trait::async_trait;
 use collections::HashMap;
 use futures::{StreamExt, io::BufReader};
-use gpui::{App, AppContext, AsyncApp, SharedString, Task};
+use gpui::{App, AsyncApp, SharedString, Task};
 use http_client::github::AssetKind;
 use http_client::github::{GitHubLspBinaryVersion, latest_github_release};
 pub use language::*;
-use lsp::{InitializeParams, LanguageServerBinary};
-use project::lsp_store::rust_analyzer_ext;
+use lsp::{InitializeParams, LanguageServer, LanguageServerBinary};
 use regex::Regex;
 use serde_json::json;
 use smol::fs::{self};
@@ -799,38 +798,95 @@ impl ContextProvider for RustContextProvider {
         Some(TaskTemplates(task_templates))
     }
 
-    // TODO kb now call it
     fn lsp_tasks(
         &self,
         file: &dyn crate::File,
-        server: &lsp::LanguageServer,
+        // TODO kb
+        // lsp_store: &LspStore,
+        // buffer_store: &BufferStore,
+        server: &LanguageServer,
         cx: &App,
     ) -> Task<Result<Vec<()>>> {
-        if server.name() != SERVER_NAME {
-            return Task::ready(Ok(Vec::new()));
-        }
-        let url = file
-            .as_local()
-            .map(|f| f.abs_path(cx))
-            .and_then(|abs_path| {
-                lsp::Url::from_file_path(&abs_path)
-                    .map_err(|_| anyhow!("failed to convert abs path {abs_path:?} to uri"))
-                    .log_err()
-            });
-        let Some(url) = dbg!(url) else {
-            return Task::ready(Ok(Vec::new()));
-        };
-        let request =
-            server.request::<rust_analyzer_ext::Runnables>(rust_analyzer_ext::RunnablesParams {
-                text_document: lsp::TextDocumentIdentifier::new(url),
-                position: None,
+        // if server.name() != SERVER_NAME {
+        //     return Task::ready(Ok(Vec::new()));
+        // }
+        // let url = file
+        //     // TODO kb make a proto request for remote clients, need buffer_id or something for that?
+        //     .as_local()
+        //     .map(|f| f.abs_path(cx))
+        //     .and_then(|abs_path| {
+        //         lsp::Url::from_file_path(&abs_path)
+        //             .map_err(|_| anyhow!("failed to convert abs path {abs_path:?} to uri"))
+        //             .log_err()
+        //     });
+        // let Some(url) = dbg!(url) else {
+        //     return Task::ready(Ok(Vec::new()));
+        // };
+        // let request =
+        //     server.request::<rust_analyzer_ext::Runnables>(rust_analyzer_ext::RunnablesParams {
+        //         text_document: lsp::TextDocumentIdentifier::new(url),
+        //         position: None,
+        //     });
+
+        // cx.background_spawn(async move {
+        //     let tasks = request.await?;
+        //     dbg!(tasks);
+        //     Ok(Vec::new())
+        // })
+        todo!("TODO kb")
+
+        /*
+
+        pub fn lsp_runnables(
+            editor: &mut Editor,
+            window: &mut Window,
+            cx: &mut Context<Editor>,
+        ) -> Task<TaskTemplates> {
+            let Some(project) = &editor.project else {
+                return;
+            };
+            let Some(workspace) = editor.workspace() else {
+                return;
+            };
+
+            let buffers = editor
+                .buffer()
+                .read(cx)
+                .all_buffers()
+                .into_iter()
+                .filter_map(|buffer| {
+                    let language = buffer.read(cx).language()?;
+                    if is_rust_language(language) {
+                        let server_id_task = project.update(cx, |project, cx| {
+                            project.language_server_id_for_name(buffer, language_server_name, cx)
+                        });
+                        return Some((buffer, server_id_task));
+                    }
+                    None
+                })
+                .collect::<Vec<_>>();
+            let a = cx.spawn(|editor, cx| async move {
+                if let Some((client, project_id)) = upstream_client {
+                    todo!("TODO kb")
+                } else {
+                    project
+                        .update(cx, |project, cx| {
+                            project.request_lsp(
+                                buffer,
+                                project::LanguageServerToQuery::Other(server_to_query),
+                                project::lsp_store::lsp_ext_command::LspRunnables {},
+                                cx,
+                            )
+                        })?
+                        .await
+                        .context("lsp runnables")?
+                }
             });
 
-        cx.background_spawn(async move {
-            let tasks = request.await?;
-            dbg!(tasks);
-            Ok(Vec::new())
-        })
+            todo!("TODO kb")
+        }
+
+        */
     }
 }
 
@@ -1041,7 +1097,7 @@ mod tests {
 
     use super::*;
     use crate::language;
-    use gpui::{BorrowAppContext, Hsla, TestAppContext};
+    use gpui::{AppContext as _, BorrowAppContext, Hsla, TestAppContext};
     use language::language_settings::AllLanguageSettings;
     use lsp::CompletionItemLabelDetails;
     use settings::SettingsStore;

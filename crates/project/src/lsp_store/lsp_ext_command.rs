@@ -1,12 +1,17 @@
 use crate::{lsp_command::LspCommand, lsp_store::LspStore, make_text_document_identifier};
 use anyhow::{Context as _, Result};
 use async_trait::async_trait;
+use collections::HashMap;
 use gpui::{App, AsyncApp, Entity};
 use language::{Buffer, point_to_lsp, proto::deserialize_anchor};
 use lsp::{LanguageServer, LanguageServerId};
 use rpc::proto::{self, PeerId};
 use serde::{Deserialize, Serialize};
-use std::{path::Path, sync::Arc};
+use std::{
+    path::{Path, PathBuf},
+    sync::Arc,
+};
+use task::TaskTemplates;
 use text::{BufferId, PointUtf16, ToPointUtf16};
 
 pub enum LspExpandMacro {}
@@ -361,5 +366,149 @@ impl LspCommand for SwitchSourceHeader {
 
     fn buffer_id_from_proto(message: &proto::LspExtSwitchSourceHeader) -> Result<BufferId> {
         BufferId::new(message.buffer_id)
+    }
+}
+
+// https://rust-analyzer.github.io/book/contributing/lsp-extensions.html#runnables
+// Taken from https://github.com/rust-lang/rust-analyzer/blob/a73a37a757a58b43a796d3eb86a1f7dfd0036659/crates/rust-analyzer/src/lsp/ext.rs#L425-L489
+pub enum Runnables {}
+
+impl lsp::request::Request for Runnables {
+    type Params = RunnablesParams;
+    type Result = Vec<Runnable>;
+    const METHOD: &'static str = "experimental/runnables";
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct RunnablesParams {
+    pub text_document: lsp::TextDocumentIdentifier,
+    pub position: Option<lsp::Position>,
+}
+
+#[derive(Deserialize, Serialize, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct Runnable {
+    pub label: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub location: Option<lsp::LocationLink>,
+    pub kind: RunnableKind,
+    pub args: RunnableArgs,
+}
+
+#[derive(Deserialize, Serialize, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
+#[serde(untagged)]
+pub enum RunnableArgs {
+    Cargo(CargoRunnableArgs),
+    Shell(ShellRunnableArgs),
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(rename_all = "lowercase")]
+pub enum RunnableKind {
+    Cargo,
+    Shell,
+}
+
+#[derive(Deserialize, Serialize, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct CargoRunnableArgs {
+    #[serde(skip_serializing_if = "HashMap::is_empty")]
+    pub environment: HashMap<String, String>,
+    pub cwd: PathBuf,
+    /// Command to be executed instead of cargo
+    pub override_cargo: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub workspace_root: Option<PathBuf>,
+    // command, --package and --lib stuff
+    pub cargo_args: Vec<String>,
+    // stuff after --
+    pub executable_args: Vec<String>,
+}
+
+#[derive(Deserialize, Serialize, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct ShellRunnableArgs {
+    #[serde(skip_serializing_if = "HashMap::is_empty")]
+    pub environment: HashMap<String, String>,
+    pub cwd: PathBuf,
+    pub program: String,
+    pub args: Vec<String>,
+}
+
+#[derive(Default, Deserialize, Serialize, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct LspRunnables;
+
+#[async_trait(?Send)]
+impl LspCommand for LspRunnables {
+    type Response = TaskTemplates;
+    type LspRequest = Runnables;
+    type ProtoRequest = proto::LspExtRunnables;
+
+    fn display_name(&self) -> &str {
+        "LSP Runnables"
+    }
+
+    fn to_lsp(
+        &self,
+        path: &Path,
+        buffer: &Buffer,
+        language_server: &Arc<LanguageServer>,
+        cx: &App,
+    ) -> Result<RunnablesParams> {
+        Ok(RunnablesParams {
+            text_document: todo!(),
+            position: None,
+        })
+    }
+
+    async fn response_from_lsp(
+        self,
+        message: Vec<Runnable>,
+        lsp_store: Entity<LspStore>,
+        buffer: Entity<Buffer>,
+        server_id: LanguageServerId,
+        cx: AsyncApp,
+    ) -> Result<Self::Response> {
+        todo!("TODO kb")
+    }
+
+    fn to_proto(&self, project_id: u64, buffer: &Buffer) -> Self::ProtoRequest {
+        todo!("TODO kb")
+    }
+
+    async fn from_proto(
+        message: Self::ProtoRequest,
+        lsp_store: Entity<LspStore>,
+        buffer: Entity<Buffer>,
+        cx: AsyncApp,
+    ) -> Result<Self> {
+        todo!("TODO kb")
+    }
+
+    fn response_to_proto(
+        response: Self::Response,
+        lsp_store: &mut LspStore,
+        peer_id: PeerId,
+        buffer_version: &clock::Global,
+        cx: &mut App,
+    ) -> proto::LspExtRunnablesResponse {
+        todo!("TODO kb")
+    }
+
+    async fn response_from_proto(
+        self,
+        message: <Self::ProtoRequest as proto::RequestMessage>::Response,
+        lsp_store: Entity<LspStore>,
+        buffer: Entity<Buffer>,
+        cx: AsyncApp,
+    ) -> Result<TaskTemplates> {
+        todo!("TODO kb")
+    }
+
+    fn buffer_id_from_proto(message: &Self::ProtoRequest) -> Result<BufferId> {
+        todo!("TODO kb")
     }
 }

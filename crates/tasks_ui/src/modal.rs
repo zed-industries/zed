@@ -221,71 +221,42 @@ impl PickerDelegate for TasksModalDelegate {
         cx: &mut Context<picker::Picker<Self>>,
     ) -> Task<()> {
         let task_type = self.task_modal_type.clone();
-        let workspace = self.workspace.upgrade();
-        let buffer = self
-            .task_contexts
-            .location()
-            .map(|location| &location.buffer)
-            .cloned();
-        cx.spawn_in(window, async move |picker, cx| {
-            let Some(candidates) = picker
-                .update(cx, |picker, cx| match &mut picker.delegate.candidates {
-                    Some(candidates) => string_match_candidates(candidates.iter(), task_type),
-                    None => {
-                        let Some(task_inventory) = picker
-                            .delegate
-                            .task_store
-                            .read(cx)
-                            .task_inventory()
-                            .cloned()
-                        else {
-                            return Vec::new();
-                        };
+        let candidates = match &self.candidates {
+            Some(candidates) => Task::ready(string_match_candidates(candidates, task_type)),
+            None => {
+                if let Some(task_inventory) = self.task_store.read(cx).task_inventory().cloned() {
+                    let task = task_inventory
+                        .read(cx)
+                        .used_and_current_resolved_tasks(&self.task_contexts, cx);
 
-                        let language_servers = buffer
-                            .and_then(|buffer| {
-                                workspace
-                                    .map(|workspace| {
-                                        workspace.read(cx).project().read(cx).lsp_store()
-                                    })
-                                    .map(|lsp_store| {
-                                        lsp_store.update(cx, |lsp_store, cx| {
-                                            buffer.update(cx, |buffer, cx| {
-                                                // TODO kb won't work on remote clients :(
-                                                lsp_store
-                                                    .language_servers_for_local_buffer(buffer, cx)
-                                                    .map(|(_, server)| server.clone())
-                                                    .collect::<Vec<_>>()
-                                            })
-                                        })
-                                    })
+                    cx.spawn(async move |picker, cx| {
+                        let (used, current) = task.await;
+                        picker
+                            .update(cx, |picker, _| {
+                                picker.delegate.last_used_candidate_index = if used.is_empty() {
+                                    None
+                                } else {
+                                    Some(used.len() - 1)
+                                };
+
+                                let mut new_candidates = used;
+                                new_candidates.extend(current);
+                                let match_candidates =
+                                    string_match_candidates(&new_candidates, task_type);
+                                let _ = picker.delegate.candidates.insert(new_candidates);
+                                match_candidates
                             })
-                            .unwrap_or_default();
+                            .ok()
+                            .unwrap_or_default()
+                    })
+                } else {
+                    Task::ready(Vec::new())
+                }
+            }
+        };
 
-                        let (used, current) =
-                            task_inventory.read(cx).used_and_current_resolved_tasks(
-                                &picker.delegate.task_contexts,
-                                language_servers.iter().map(|s| s.as_ref()),
-                                cx,
-                            );
-                        picker.delegate.last_used_candidate_index = if used.is_empty() {
-                            None
-                        } else {
-                            Some(used.len() - 1)
-                        };
-
-                        let mut new_candidates = used;
-                        new_candidates.extend(current);
-                        let match_candidates =
-                            string_match_candidates(new_candidates.iter(), task_type);
-                        let _ = picker.delegate.candidates.insert(new_candidates);
-                        match_candidates
-                    }
-                })
-                .ok()
-            else {
-                return;
-            };
+        cx.spawn_in(window, async move |picker, cx| {
+            let candidates = candidates.await;
             let matches = fuzzy::match_strings(
                 &candidates,
                 &query,
@@ -726,10 +697,11 @@ impl PickerDelegate for TasksModalDelegate {
 }
 
 fn string_match_candidates<'a>(
-    candidates: impl Iterator<Item = &'a (TaskSourceKind, ResolvedTask)> + 'a,
+    candidates: impl IntoIterator<Item = &'a (TaskSourceKind, ResolvedTask)> + 'a,
     task_modal_type: TaskModal,
 ) -> Vec<StringMatchCandidate> {
     candidates
+        .into_iter()
         .enumerate()
         .filter(|(_, (_, candidate))| match candidate.task_type() {
             TaskType::Script => task_modal_type == TaskModal::ScriptModal,
