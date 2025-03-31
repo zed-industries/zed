@@ -1,9 +1,9 @@
 use crate::{
     AbsoluteLength, AnyElement, App, Asset, AssetLogger, Bounds, DefiniteLength, Element,
-    ElementId, GlobalElementId, Hitbox, Image, InteractiveElement, Interactivity, IntoElement,
-    LayoutId, Length, ObjectFit, Pixels, RenderImage, Resource, SMOOTH_SVG_SCALE_FACTOR,
-    SharedString, SharedUri, StyleRefinement, Styled, SvgSize, Task, Window, px,
-    swap_rgba_pa_to_bgra,
+    ElementId, GlobalElementId, Hitbox, Image, ImageCache, InteractiveElement, Interactivity,
+    IntoElement, LayoutId, Length, ObjectFit, Pixels, RenderImage, Resource,
+    SMOOTH_SVG_SCALE_FACTOR, SharedString, SharedUri, StyleRefinement, Styled, SvgSize, Task,
+    Window, px, swap_rgba_pa_to_bgra,
 };
 use anyhow::{Result, anyhow};
 
@@ -190,6 +190,7 @@ pub struct Img {
     interactivity: Interactivity,
     source: ImageSource,
     style: ImageStyle,
+    cache: Option<ImageCache>,
 }
 
 /// Create a new image element.
@@ -198,6 +199,7 @@ pub fn img(source: impl Into<ImageSource>) -> Img {
         interactivity: Interactivity::default(),
         source: source.into(),
         style: ImageStyle::default(),
+        cache: None,
     }
 }
 
@@ -209,6 +211,15 @@ impl Img {
             "avif", "jpg", "jpeg", "png", "gif", "webp", "tif", "tiff", "tga", "dds", "bmp", "ico",
             "hdr", "exr", "pbm", "pam", "ppm", "pgm", "ff", "farbfeld", "qoi", "svg",
         ]
+    }
+
+    /// Sets the image collection to use for this image.
+    #[inline]
+    pub fn cache(self, cache: &ImageCache) -> Self {
+        Self {
+            cache: Some(cache.clone()),
+            ..self
+        }
     }
 }
 
@@ -276,7 +287,7 @@ impl Element for Img {
                 |mut style, window, cx| {
                     let mut replacement_id = None;
 
-                    match self.source.use_data(window, cx) {
+                    match self.source.use_data(self.cache.as_ref(), window, cx) {
                         Some(Ok(data)) => {
                             if let Some(state) = &mut state {
                                 let frame_count = data.frame_count();
@@ -421,7 +432,7 @@ impl Element for Img {
             window,
             cx,
             |style, window, cx| {
-                if let Some(Ok(data)) = source.use_data(window, cx) {
+                if let Some(Ok(data)) = source.use_data(self.cache.as_ref(), window, cx) {
                     let new_bounds = self
                         .style
                         .object_fit
@@ -474,11 +485,18 @@ impl StatefulInteractiveElement for Img {}
 impl ImageSource {
     pub(crate) fn use_data(
         &self,
+        cache: Option<&ImageCache>,
         window: &mut Window,
         cx: &mut App,
     ) -> Option<Result<Arc<RenderImage>, ImageCacheError>> {
         match self {
-            ImageSource::Resource(resource) => window.use_asset::<ImgResourceLoader>(&resource, cx),
+            ImageSource::Resource(resource) => {
+                if let Some(cache) = cache {
+                    cache.load(resource, window, cx)
+                } else {
+                    window.use_asset::<ImgResourceLoader>(resource, cx)
+                }
+            }
             ImageSource::Custom(loading_fn) => loading_fn(window, cx),
             ImageSource::Render(data) => Some(Ok(data.to_owned())),
             ImageSource::Image(data) => window.use_asset::<AssetLogger<ImageDecoder>>(data, cx),
