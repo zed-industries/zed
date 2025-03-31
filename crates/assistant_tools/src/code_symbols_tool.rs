@@ -7,7 +7,7 @@ use assistant_tool::{ActionLog, Tool};
 use collections::IndexMap;
 use gpui::{App, AsyncApp, Entity, Task};
 use language::{CodeLabel, Language, LanguageRegistry};
-use language_model::LanguageModelRequestMessage;
+use language_model::{LanguageModelRequestMessage, LanguageModelToolSchemaFormat};
 use lsp::SymbolKind;
 use project::{DocumentSymbol, Project, Symbol};
 use regex::{Regex, RegexBuilder};
@@ -17,6 +17,7 @@ use ui::IconName;
 use util::markdown::MarkdownString;
 
 use crate::code_symbol_iter::{CodeSymbolIterator, Entry};
+use crate::schema::json_schema_for;
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct CodeSymbolsInput {
@@ -93,9 +94,8 @@ impl Tool for CodeSymbolsTool {
         IconName::Eye
     }
 
-    fn input_schema(&self) -> serde_json::Value {
-        let schema = schemars::schema_for!(CodeSymbolsInput);
-        serde_json::to_value(&schema).unwrap()
+    fn input_schema(&self, format: LanguageModelToolSchemaFormat) -> serde_json::Value {
+        json_schema_for::<CodeSymbolsInput>(format)
     }
 
     fn ui_text(&self, input: &serde_json::Value) -> String {

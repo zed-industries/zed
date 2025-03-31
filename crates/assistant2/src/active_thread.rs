@@ -1789,12 +1789,13 @@ impl ActiveThread {
     fn handle_deny_tool(
         &mut self,
         tool_use_id: LanguageModelToolUseId,
+        tool_name: Arc<str>,
         _: &ClickEvent,
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         self.thread.update(cx, |thread, cx| {
-            thread.deny_tool_use(tool_use_id, cx);
+            thread.deny_tool_use(tool_use_id, tool_name, cx);
         });
     }
 
@@ -1867,10 +1868,12 @@ impl ActiveThread {
                                     })
                                     .child({
                                         let tool_id = tool.id.clone();
+                                        let tool_name = tool.name.clone();
                                         Button::new("deny-tool", "Deny").on_click(cx.listener(
                                             move |this, event, window, cx| {
                                                 this.handle_deny_tool(
                                                     tool_id.clone(),
+                                                    tool_name.clone(),
                                                     event,
                                                     window,
                                                     cx,
