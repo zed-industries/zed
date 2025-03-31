@@ -13,7 +13,6 @@ use collections::{HashMap, HashSet, VecDeque};
 use gpui::{App, AppContext as _, Entity, SharedString, Task};
 use itertools::Itertools;
 use language::{ContextProvider, File, Language, LanguageToolchainStore, Location};
-use lsp::LanguageServer;
 use settings::{InvalidSettingsError, TaskKind, parse_json_with_comments};
 use task::{
     DebugTaskDefinition, ResolvedTask, TaskContext, TaskId, TaskTemplate, TaskTemplates,
@@ -174,13 +173,35 @@ impl Inventory {
     /// Deduplicates the tasks by their labels and context and splits the ordered list into two: used tasks and the rest, newly resolved tasks.
     pub fn used_and_current_resolved_tasks<'a>(
         &'a self,
-        task_contexts: &'a TaskContexts,
-        language_servers: impl IntoIterator<Item = &'a LanguageServer> + 'a,
+        task_contexts: &'a TaskContexts, // <-- can have editor.foo props inside
         cx: &'a App,
-    ) -> (
+    ) -> Task<(
         Vec<(TaskSourceKind, ResolvedTask)>,
         Vec<(TaskSourceKind, ResolvedTask)>,
-    ) {
+    )> {
+        /*
+
+        // TODO kb how to get this generically?
+
+        let provider = language.as_ref().and_then(|l| l.context_provider()).unwrap();
+        let tasks = provider.lsp_tasks(task_contexts.lsp_store.clone(), task_contexts.buffer_store.clone(), cx).await;
+
+        if let Some((provider, file)) = language
+            .as_ref()
+            .and_then(|l| l.context_provider())
+            .zip(file.as_deref())
+        {
+
+            let lsp_tasks = language_servers
+                .into_iter()
+                .map(|server| provider.lsp_tasks(file, server, cx))
+                .collect::<Vec<_>>();
+            let aaa = smol::block_on(futures::future::join_all(lsp_tasks));
+            dbg!(aaa);
+        }
+
+        */
+
         let worktree = task_contexts.worktree();
         let location = task_contexts.location();
         let language = location
@@ -229,19 +250,6 @@ impl Inventory {
 
         let not_used_score = post_inc(&mut lru_score);
         let global_tasks = self.global_templates_from_settings();
-
-        if let Some((provider, file)) = language
-            .as_ref()
-            .and_then(|l| l.context_provider())
-            .zip(file.as_deref())
-        {
-            let lsp_tasks = language_servers
-                .into_iter()
-                .map(|server| provider.lsp_tasks(file, server, cx))
-                .collect::<Vec<_>>();
-            let aaa = smol::block_on(futures::future::join_all(lsp_tasks));
-            dbg!(aaa);
-        }
 
         let language_tasks = language
             .and_then(|language| language.context_provider()?.associated_tasks(file, cx))
@@ -313,7 +321,7 @@ impl Inventory {
             .map(|(kind, task, _)| (kind, task))
             .collect::<Vec<_>>();
 
-        (previously_spawned_tasks, new_resolved_tasks)
+        Task::ready((previously_spawned_tasks, new_resolved_tasks))
     }
 
     /// Returns the last scheduled task by task_id if provided.
@@ -1008,12 +1016,14 @@ mod tests {
         worktree: Option<WorktreeId>,
         cx: &mut TestAppContext,
     ) -> Vec<String> {
-        let (used, current) = inventory.update(cx, |inventory, cx| {
-            let mut task_contexts = TaskContexts::default();
-            task_contexts.active_worktree_context =
-                worktree.map(|worktree| (worktree, TaskContext::default()));
-            inventory.used_and_current_resolved_tasks(&task_contexts, None, cx)
-        });
+        let (used, current) = inventory
+            .update(cx, |inventory, cx| {
+                let mut task_contexts = TaskContexts::default();
+                task_contexts.active_worktree_context =
+                    worktree.map(|worktree| (worktree, TaskContext::default()));
+                inventory.used_and_current_resolved_tasks(&task_contexts, cx)
+            })
+            .await;
         used.into_iter()
             .chain(current)
             .map(|(_, task)| task.original_task().label.clone())
@@ -1040,12 +1050,14 @@ mod tests {
         worktree: Option<WorktreeId>,
         cx: &mut TestAppContext,
     ) -> Vec<(TaskSourceKind, String)> {
-        let (used, current) = inventory.update(cx, |inventory, cx| {
-            let mut task_contexts = TaskContexts::default();
-            task_contexts.active_worktree_context =
-                worktree.map(|worktree| (worktree, TaskContext::default()));
-            inventory.used_and_current_resolved_tasks(&task_contexts, None, cx)
-        });
+        let (used, current) = inventory
+            .update(cx, |inventory, cx| {
+                let mut task_contexts = TaskContexts::default();
+                task_contexts.active_worktree_context =
+                    worktree.map(|worktree| (worktree, TaskContext::default()));
+                inventory.used_and_current_resolved_tasks(&task_contexts, cx)
+            })
+            .await;
         let mut all = used;
         all.extend(current);
         all.into_iter()

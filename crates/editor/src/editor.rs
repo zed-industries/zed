@@ -131,7 +131,7 @@ pub use proposed_changes_editor::{
 };
 use smallvec::smallvec;
 use std::{cell::OnceCell, iter::Peekable};
-use task::{ResolvedTask, TaskTemplate, TaskVariables};
+use task::{ResolvedTask, RunnableTag, TaskTemplate, TaskVariables};
 
 pub use lsp::CompletionContext;
 use lsp::{
@@ -12428,12 +12428,12 @@ impl Editor {
             return Task::ready(());
         }
         let project = self.project.as_ref().map(Entity::downgrade);
-        cx.spawn_in(window, async move |this, cx| {
+        cx.spawn_in(window, async move |editor, cx| {
             cx.background_executor().timer(UPDATE_DEBOUNCE).await;
             let Some(project) = project.and_then(|p| p.upgrade()) else {
                 return;
             };
-            let Ok(display_snapshot) = this.update(cx, |this, cx| {
+            let Ok(display_snapshot) = editor.update(cx, |this, cx| {
                 this.display_map.update(cx, |map, cx| map.snapshot(cx))
             }) else {
                 return;
@@ -12458,13 +12458,15 @@ impl Editor {
                     .await;
 
             let rows = Self::runnable_rows(project, display_snapshot, new_rows, cx.clone());
-            this.update(cx, |this, _| {
-                this.clear_tasks();
-                for (key, value) in rows {
-                    this.insert_tasks(key, value);
-                }
-            })
-            .ok();
+            // TODO kb fetch LSP tasks here?
+            editor
+                .update(cx, |editor, _| {
+                    editor.clear_tasks();
+                    for (key, value) in rows {
+                        editor.insert_tasks(key, value);
+                    }
+                })
+                .ok();
         })
     }
     fn fetch_runnable_ranges(
@@ -12479,7 +12481,7 @@ impl Editor {
         snapshot: DisplaySnapshot,
         runnable_ranges: Vec<RunnableRange>,
         mut cx: AsyncWindowContext,
-    ) -> Vec<((BufferId, u32), RunnableTasks)> {
+    ) -> Vec<((BufferId, BufferRow), RunnableTasks)> {
         runnable_ranges
             .into_iter()
             .filter_map(|mut runnable| {
@@ -12536,11 +12538,9 @@ impl Editor {
             )
         });
 
-        let tags = mem::take(&mut runnable.tags);
-        let mut tags: Vec<_> = tags
+        let mut templates_with_tags = mem::take(&mut runnable.tags)
             .into_iter()
-            .flat_map(|tag| {
-                let tag = tag.0.clone();
+            .flat_map(|RunnableTag(tag)| {
                 inventory
                     .as_ref()
                     .into_iter()
@@ -12557,20 +12557,20 @@ impl Editor {
                     })
             })
             .sorted_by_key(|(kind, _)| kind.to_owned())
-            .collect();
-        if let Some((leading_tag_source, _)) = tags.first() {
+            .collect::<Vec<_>>();
+        if let Some((leading_tag_source, _)) = templates_with_tags.first() {
             // Strongest source wins; if we have worktree tag binding, prefer that to
             // global and language bindings;
             // if we have a global binding, prefer that to language binding.
-            let first_mismatch = tags
+            let first_mismatch = templates_with_tags
                 .iter()
                 .position(|(tag_source, _)| tag_source != leading_tag_source);
             if let Some(index) = first_mismatch {
-                tags.truncate(index);
+                templates_with_tags.truncate(index);
             }
         }
 
-        tags
+        templates_with_tags
     }
 
     pub fn move_to_enclosing_bracket(
