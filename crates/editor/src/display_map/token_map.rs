@@ -195,7 +195,6 @@ pub struct TokenChunks<'a> {
     transforms: Cursor<'a, Transform, (TokenOffset, usize)>,
     buffer_chunks: CustomHighlightsChunks<'a>,
     buffer_chunk: Option<Chunk<'a>>,
-    token_chunk: Option<&'a str>,
     token_chunks: Option<text::Chunks<'a>>,
     output_offset: TokenOffset,
     max_output_offset: TokenOffset,
@@ -268,43 +267,6 @@ impl<'a> Iterator for TokenChunks<'a> {
 
                 chunk.text = suffix;
                 self.output_offset.0 += prefix.len();
-                // let range = token.range.to_offset(&self.snapshot.buffer);
-                // let offset_in_token = self.output_offset - self.transforms.start().0;
-                // let next_endpoint = if offset_in_token.0 < range.start {
-                //     range.start - offset_in_token.0
-                // } else if offset_in_token.0 > range.end {
-                //     log::error!("fail");
-                //     usize::MAX
-                // } else {
-                //     range.end - offset_in_token.0
-                // };
-                // let token_chunks = self.token_chunks.get_or_insert_with(|| {
-                //     let start = offset_in_token;
-                //     let end = cmp::min(self.max_output_offset, self.transforms.end(&()).0)
-                //         - self.transforms.start().0;
-                //     log::error!("{}", token.text);
-                //     token.text.chunks_in_range(start.0..end.0)
-                // });
-                // let token_chunk = self
-                //     .token_chunk
-                //     .get_or_insert_with(|| token_chunks.next().unwrap());
-                // let (chunk, remainder) = token_chunk.split_at(token_chunk.len().min(next_endpoint));
-                // *token_chunk = remainder;
-                // if token_chunk.is_empty() {
-                //     self.token_chunk = None;
-                // }
-
-                // self.output_offset.0 += chunk.len();
-
-                // let (prefix, suffix) = chunk.text.split_at(
-                //     chunk
-                //         .text
-                //         .len()
-                //         .min(self.transforms.end(&()).0 .0 - self.output_offset.0),
-                // );
-
-                // chunk.text = suffix;
-                // self.output_offset.0 += prefix.len();
 
                 Chunk {
                     text: prefix,
@@ -507,15 +469,20 @@ impl TokenMap {
         to_remove: &[usize],
         to_insert: Vec<Token>,
     ) -> (TokenSnapshot, Vec<TokenEdit>) {
+        log::error!("splice ({}, {})", to_remove.len(), to_insert.len());
+        if to_remove.len() > 100 {
+            panic!()
+        }
         let snapshot = &mut self.snapshot;
         let mut buffer_edits = vec![];
 
         self.tokens.retain(|token| {
             let retain = !to_remove.contains(&token.id);
             if !retain {
+                let range = token.range.to_offset(&snapshot.buffer);
                 buffer_edits.push(Edit {
-                    old: token.range.to_offset(&snapshot.buffer),
-                    new: token.range.to_offset(&snapshot.buffer),
+                    new: range.clone(),
+                    old: range,
                 })
             }
             retain
@@ -878,7 +845,6 @@ impl TokenSnapshot {
             buffer_chunks,
             token_chunks: None,
             buffer_chunk: None,
-            token_chunk: None,
             output_offset: range.start,
             max_output_offset: range.end,
             snapshot: self,
@@ -927,7 +893,7 @@ fn push_semantic_tokens(
             .then(std::cmp::Ordering::Greater)
     });
 
-    if ix > tokens.len() {
+    if ix >= tokens.len() && range.start != range.end {
         push_isomorphic(
             sum_tree,
             buffer_snapshot.text_summary_for_range(range.start..range.end),
@@ -962,6 +928,7 @@ fn push_semantic_tokens(
         acc = prefix_end;
     }
     if acc != range.end {
+        // TODO: REVIEW assertion failed: end_offset >= self.offset
         push_isomorphic(
             sum_tree,
             buffer_snapshot.text_summary_for_range(acc..range.end),

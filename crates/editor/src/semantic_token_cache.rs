@@ -583,7 +583,9 @@ fn calculate_token_updates(
     visible_tokens: &[Token],
 ) -> Option<ExcerptTokensUpdate> {
     let mut add_to_cache = Vec::<SemanticToken>::new();
+    let mut excerpt_tokens_to_persist = HashMap::default();
     for new_token in new_excerpt_tokens {
+        // TODO: REVIEW
         if !contains_position(&fetch_range, new_token.range.start, buffer_snapshot) {
             continue;
         }
@@ -612,6 +614,7 @@ fn calculate_token_updates(
                                 break;
                             }
                             if cached_token == &new_token {
+                                excerpt_tokens_to_persist.insert(*id, cached_token.clone());
                                 missing_from_cache = false;
                             }
                         }
@@ -634,12 +637,19 @@ fn calculate_token_updates(
             visible_tokens
                 .iter()
                 .filter(|token| token.range.start.excerpt_id == excerpt_id)
-                .map(|token| token.id),
+                .map(|token| token.id)
+                .filter(|token_id| !excerpt_tokens_to_persist.contains_key(token_id)),
         );
 
         if let Some(cached_excerpt_tokens) = &cached_excerpt_tokens {
             let cached_excerpt_tokens = cached_excerpt_tokens.read();
-            remove_from_cache.extend(cached_excerpt_tokens.ordered_tokens.iter().copied());
+            remove_from_cache.extend(
+                cached_excerpt_tokens
+                    .ordered_tokens
+                    .iter()
+                    .filter(|token_id| !excerpt_tokens_to_persist.contains_key(token_id))
+                    .copied(),
+            );
             remove_from_visible.extend(remove_from_cache.iter().cloned());
         }
     }
