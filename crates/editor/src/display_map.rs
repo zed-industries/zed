@@ -69,7 +69,7 @@ use sum_tree::{Bias, TreeMap};
 use tab_map::{TabMap, TabSnapshot};
 use text::{BufferId, LineIndent};
 pub use token_map::Token;
-use token_map::{TokenMap, TokenPoint, TokenSnapshot};
+use token_map::{TokenMap, TokenSnapshot};
 use ui::{px, SharedString};
 use unicode_segmentation::UnicodeSegmentation;
 use wrap_map::{WrapMap, WrapSnapshot};

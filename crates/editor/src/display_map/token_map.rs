@@ -53,7 +53,7 @@ impl sum_tree::Item for Transform {
                 input: *summary,
                 output: *summary,
             },
-            Transform::Highlight(token, summary) => TransformSummary {
+            Transform::Highlight(_, summary) => TransformSummary {
                 input: *summary,
                 output: *summary,
             },
@@ -185,7 +185,6 @@ pub struct TokenChunks<'a> {
     buffer_chunks: CustomHighlightsChunks<'a>,
     buffer_chunk: Option<Chunk<'a>>,
     token_chunks: Option<text::Chunks<'a>>,
-    token_chunk: Option<&'a str>,
     output_offset: TokenOffset,
     max_output_offset: TokenOffset,
     snapshot: &'a TokenSnapshot,
@@ -202,10 +201,6 @@ impl TokenChunks<'_> {
         self.buffer_chunk = None;
         self.output_offset = new_range.start;
         self.max_output_offset = new_range.end;
-    }
-
-    pub fn offset(&self) -> TokenOffset {
-        self.output_offset
     }
 }
 
@@ -240,7 +235,7 @@ impl<'a> Iterator for TokenChunks<'a> {
                     ..chunk.clone()
                 }
             }
-            Transform::Highlight(_, _) => {
+            Transform::Highlight(token, _) => {
                 let chunk = self
                     .buffer_chunk
                     .get_or_insert_with(|| self.buffer_chunks.next().unwrap());
@@ -259,6 +254,8 @@ impl<'a> Iterator for TokenChunks<'a> {
                 self.output_offset.0 += prefix.len();
                 Chunk {
                     text: prefix,
+                    syntax_highlight_id: None,
+                    highlight_style: Some(token.style),
                     ..chunk.clone()
                 }
             }
@@ -391,6 +388,7 @@ impl TokenMap {
                 cursor.seek(&buffer_edit.old.end, Bias::Right, &());
                 let old_end =
                     cursor.start().1 + TokenOffset(buffer_edit.old.end - cursor.start().0);
+
                 // Push the unchanged prefix.
                 let prefix_start = new_transforms.summary().input.len;
                 let prefix_end = buffer_edit.new.start;
@@ -400,18 +398,39 @@ impl TokenMap {
                 );
                 let new_start = TokenOffset(new_transforms.summary().output.len);
 
+                let start_ix = match self.tokens.binary_search_by(|probe| {
+                    probe
+                        .range
+                        .end
+                        .to_offset(&buffer_snapshot)
+                        .cmp(&buffer_edit.new.start)
+                        .then(std::cmp::Ordering::Greater)
+                }) {
+                    Ok(ix) | Err(ix) => ix,
+                };
+
                 // Apply the rest of the edit.
                 let transform_start = new_transforms.summary().input.len;
-                push_isomorphic(
-                    &mut new_transforms,
-                    buffer_snapshot.text_summary_for_range(transform_start..buffer_edit.new.end),
-                );
+                if let Some(token) = self.tokens.get(start_ix) {
+                    new_transforms.push(
+                        Transform::Highlight(
+                            token.clone(),
+                            buffer_snapshot
+                                .text_summary_for_range(transform_start..buffer_edit.new.end),
+                        ),
+                        &(),
+                    );
+                } else {
+                    push_isomorphic(
+                        &mut new_transforms,
+                        buffer_snapshot
+                            .text_summary_for_range(transform_start..buffer_edit.new.end),
+                    )
+                }
                 let new_end = TokenOffset(new_transforms.summary().output.len);
                 token_edits.push(Edit {
                     old: old_start..old_end,
                     new: new_start..new_end,
-                    // old: TokenOffset(buffer_edit.old.start)..TokenOffset(buffer_edit.old.end),
-                    // new: TokenOffset(buffer_edit.new.start)..TokenOffset(buffer_edit.new.end),
                 });
 
                 // If the next edit doesn't intersect the current isomorphic transform, then
@@ -457,7 +476,6 @@ impl TokenMap {
         self.tokens.retain(|token| {
             let retain = !to_remove.contains(&token.id);
             if !retain {
-                // TODO: review
                 let offset = token.range.start.to_offset(&snapshot.buffer);
                 edits.insert(offset);
             }
@@ -465,24 +483,21 @@ impl TokenMap {
         });
 
         for token_to_insert in to_insert {
-            // Avoid inserting empty tokens.
-            // if token_to_insert.text.is_empty() {
-            //     continue;
-            // }
+            // TODO: give attention here
+            let offset = token_to_insert.range.start.to_offset(&snapshot.buffer);
+            match self.tokens.binary_search_by(|probe| {
+                probe
+                    .range
+                    .start
+                    .cmp(&token_to_insert.range.start, &snapshot.buffer)
+                    .then(std::cmp::Ordering::Less)
+            }) {
+                Ok(ix) | Err(ix) => {
+                    self.tokens.insert(ix, token_to_insert);
+                }
+            }
 
-            // let offset = token_to_insert.position.to_offset(&snapshot.buffer);
-            // match self.tokens.binary_search_by(|probe| {
-            //     probe
-            //         .position
-            //         .cmp(&token_to_insert.position, &snapshot.buffer)
-            //         .then(std::cmp::Ordering::Less)
-            // }) {
-            //     Ok(ix) | Err(ix) => {
-            //         self.tokens.insert(ix, token_to_insert);
-            //     }
-            // }
-            //
-            // edits.insert(offset);
+            edits.insert(offset);
         }
 
         let buffer_edits = edits
@@ -547,7 +562,7 @@ impl TokenSnapshot {
                 let buffer_point_start = cursor.start().1 .1;
                 let buffer_point_end = buffer_point_start + overshoot;
                 let buffer_offset_start = self.buffer.point_to_offset(buffer_point_start);
-                let buffer_offset_end = self.buffer.point_to_offset(buffer_point_end);
+                let buffer_offset_end = self.buffer.point_to_offset(buffer_point_end); // TODO: check here
                 TokenOffset(cursor.start().1 .0 .0 + (buffer_offset_end - buffer_offset_start))
             }
             Some(Transform::Highlight(_, _)) => {
@@ -681,7 +696,7 @@ impl TokenSnapshot {
         cursor.seek(&point, Bias::Left, &());
         loop {
             match cursor.item() {
-                Some(Transform::Isomorphic(transform)) => {
+                Some(Transform::Isomorphic(_)) => {
                     if cursor.start().0 == point {
                         // if let Some(Transform::Highlight(token, _)) = cursor.prev_item() {
                         //     if token.position.bias() == Bias::Left {
@@ -902,7 +917,6 @@ impl TokenSnapshot {
             transforms: cursor,
             buffer_chunks,
             token_chunks: None,
-            token_chunk: None,
             buffer_chunk: None,
             output_offset: range.start,
             max_output_offset: range.end,
