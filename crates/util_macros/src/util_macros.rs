@@ -2,7 +2,7 @@
 
 use proc_macro::TokenStream;
 use quote::quote;
-use syn::{LitStr, parse_macro_input};
+use syn::{parse_macro_input, LitStr};
 
 /// This macro replaces the path separator `/` with `\` for Windows.
 /// But if the target OS is not Windows, the path is returned as is.

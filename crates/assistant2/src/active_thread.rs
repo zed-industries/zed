@@ -1,4 +1,3 @@
-use crate::AssistantPanel;
 use crate::context::{AssistantContext, ContextId};
 use crate::thread::{
     LastRestoreCheckpoint, MessageId, MessageSegment, RequestKind, Thread, ThreadError,
@@ -7,15 +6,16 @@ use crate::thread::{
 use crate::thread_store::ThreadStore;
 use crate::tool_use::{PendingToolUseStatus, ToolUse, ToolUseStatus};
 use crate::ui::{AgentNotification, AgentNotificationEvent, ContextPill};
+use crate::AssistantPanel;
 use assistant_settings::{AssistantSettings, NotifyWhenAgentWaiting};
 use collections::HashMap;
 use editor::{Editor, MultiBuffer};
 use gpui::{
-    AbsoluteLength, Animation, AnimationExt, AnyElement, App, ClickEvent, DefiniteLength,
-    EdgesRefinement, Empty, Entity, Focusable, Hsla, Length, ListAlignment, ListState, MouseButton,
-    PlatformDisplay, ScrollHandle, Stateful, StyleRefinement, Subscription, Task,
-    TextStyleRefinement, Transformation, UnderlineStyle, WeakEntity, WindowHandle,
-    linear_color_stop, linear_gradient, list, percentage, pulsating_between,
+    linear_color_stop, linear_gradient, list, percentage, pulsating_between, AbsoluteLength,
+    Animation, AnimationExt, AnyElement, App, ClickEvent, DefiniteLength, EdgesRefinement, Empty,
+    Entity, Focusable, Hsla, Length, ListAlignment, ListState, MouseButton, PlatformDisplay,
+    ScrollHandle, Stateful, StyleRefinement, Subscription, Task, TextStyleRefinement,
+    Transformation, UnderlineStyle, WeakEntity, WindowHandle,
 };
 use language::{Buffer, LanguageRegistry};
 use language_model::{LanguageModelRegistry, LanguageModelToolUseId, Role};
@@ -27,11 +27,11 @@ use std::sync::Arc;
 use std::time::Duration;
 use text::ToPoint;
 use theme::ThemeSettings;
-use ui::{Disclosure, IconButton, KeyBinding, Scrollbar, ScrollbarState, Tooltip, prelude::*};
+use ui::{prelude::*, Disclosure, IconButton, KeyBinding, Scrollbar, ScrollbarState, Tooltip};
 use util::ResultExt as _;
 use workspace::{OpenOptions, Workspace};
 
-use crate::context_store::{ContextStore, refresh_context_store_text};
+use crate::context_store::{refresh_context_store_text, ContextStore};
 
 pub struct ActiveThread {
     language_registry: Arc<LanguageRegistry>,

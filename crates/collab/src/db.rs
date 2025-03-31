@@ -4,24 +4,24 @@ mod tables;
 #[cfg(test)]
 pub mod tests;
 
-use crate::{Error, Result, executor::Executor};
+use crate::{executor::Executor, Error, Result};
 use anyhow::anyhow;
 use collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use dashmap::DashMap;
 use futures::StreamExt;
 use project_repository_statuses::StatusKind;
-use rand::{Rng, SeedableRng, prelude::StdRng};
+use rand::{prelude::StdRng, Rng, SeedableRng};
 use rpc::ExtensionProvides;
 use rpc::{
-    ConnectionId, ExtensionMetadata,
     proto::{self},
+    ConnectionId, ExtensionMetadata,
 };
 use sea_orm::{
+    entity::prelude::*,
+    sea_query::{Alias, Expr, OnConflict},
     ActiveValue, Condition, ConnectionTrait, DatabaseConnection, DatabaseTransaction, DbErr,
     FromQueryResult, IntoActiveModel, IsolationLevel, JoinType, QueryOrder, QuerySelect, Statement,
     TransactionTrait,
-    entity::prelude::*,
-    sea_query::{Alias, Expr, OnConflict},
 };
 use semantic_version::SemanticVersion;
 use serde::{Deserialize, Serialize};

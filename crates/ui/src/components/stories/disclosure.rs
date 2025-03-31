@@ -1,8 +1,8 @@
 use gpui::Render;
 use story::Story;
 
-use crate::Disclosure;
 use crate::prelude::*;
+use crate::Disclosure;
 
 pub struct DisclosureStory;
 

@@ -1,16 +1,16 @@
 use super::base_keymap_setting::BaseKeymap;
-use fuzzy::{StringMatch, StringMatchCandidate, match_strings};
+use fuzzy::{match_strings, StringMatch, StringMatchCandidate};
 use gpui::{
-    App, Context, DismissEvent, Entity, EventEmitter, Focusable, Render, Task, WeakEntity, Window,
-    actions,
+    actions, App, Context, DismissEvent, Entity, EventEmitter, Focusable, Render, Task, WeakEntity,
+    Window,
 };
 use picker::{Picker, PickerDelegate};
 use project::Fs;
-use settings::{Settings, update_settings_file};
+use settings::{update_settings_file, Settings};
 use std::sync::Arc;
-use ui::{ListItem, ListItemSpacing, prelude::*};
+use ui::{prelude::*, ListItem, ListItemSpacing};
 use util::ResultExt;
-use workspace::{ModalView, Workspace, ui::HighlightedLabel};
+use workspace::{ui::HighlightedLabel, ModalView, Workspace};
 
 actions!(welcome, [ToggleBaseKeymapSelector]);
 

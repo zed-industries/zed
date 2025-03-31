@@ -1,7 +1,7 @@
 use gpui::Render;
 use story::{Story, StoryItem, StorySection};
 
-use crate::{ToggleButton, prelude::*};
+use crate::{prelude::*, ToggleButton};
 
 pub struct ToggleButtonStory;
 

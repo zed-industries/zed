@@ -1,7 +1,7 @@
 use notify::EventKind;
 use parking_lot::Mutex;
 use std::sync::{Arc, OnceLock};
-use util::{ResultExt, paths::SanitizedPath};
+use util::{paths::SanitizedPath, ResultExt};
 
 use crate::{PathEvent, PathEventKind, Watcher};
 

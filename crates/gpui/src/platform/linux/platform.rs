@@ -14,19 +14,19 @@ use std::{
     time::Duration,
 };
 
-use anyhow::{Context as _, anyhow};
+use anyhow::{anyhow, Context as _};
 use async_task::Runnable;
-use calloop::{LoopSignal, channel::Channel};
+use calloop::{channel::Channel, LoopSignal};
 use futures::channel::oneshot;
 use util::ResultExt as _;
 #[cfg(any(feature = "wayland", feature = "x11"))]
 use xkbcommon::xkb::{self, Keycode, Keysym, State};
 
 use crate::{
-    Action, AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, DisplayId,
+    px, Action, AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, DisplayId,
     ForegroundExecutor, Keymap, LinuxDispatcher, Menu, MenuItem, OwnedMenu, PathPromptOptions,
     Pixels, Platform, PlatformDisplay, PlatformTextSystem, PlatformWindow, Point, Result,
-    ScreenCaptureSource, Task, WindowAppearance, WindowParams, px,
+    ScreenCaptureSource, Task, WindowAppearance, WindowParams,
 };
 #[cfg(any(feature = "wayland", feature = "x11"))]
 pub(crate) const SCROLL_LINES: f32 = 3.0;
@@ -852,7 +852,7 @@ impl crate::Modifiers {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{Point, px};
+    use crate::{px, Point};
 
     #[test]
     fn test_is_within_click_distance() {

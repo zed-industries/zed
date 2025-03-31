@@ -1,20 +1,20 @@
 use crate::{
-    AppState, Error, Result,
     db::{self, AccessTokenId, Database, UserId},
     rpc::Principal,
+    AppState, Error, Result,
 };
-use anyhow::{Context as _, anyhow};
+use anyhow::{anyhow, Context as _};
 use axum::{
     http::{self, Request, StatusCode},
     middleware::Next,
     response::IntoResponse,
 };
 use base64::prelude::*;
-use prometheus::{Histogram, exponential_buckets, register_histogram};
+use prometheus::{exponential_buckets, register_histogram, Histogram};
 pub use rpc::auth::random_token;
 use scrypt::{
-    Scrypt,
     password_hash::{PasswordHash, PasswordVerifier},
+    Scrypt,
 };
 use serde::{Deserialize, Serialize};
 use sha2::Digest;
@@ -232,7 +232,7 @@ mod test {
     use sea_orm::EntityTrait;
 
     use super::*;
-    use crate::db::{NewUserParams, access_token};
+    use crate::db::{access_token, NewUserParams};
 
     #[gpui::test]
     async fn test_verify_access_token(cx: &mut gpui::TestAppContext) {

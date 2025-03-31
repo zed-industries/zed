@@ -1,7 +1,7 @@
 use crate::{
-    AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, ForegroundExecutor, Keymap,
-    Platform, PlatformDisplay, PlatformTextSystem, ScreenCaptureFrame, ScreenCaptureSource,
-    ScreenCaptureStream, Task, TestDisplay, TestWindow, WindowAppearance, WindowParams, px, size,
+    px, size, AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, ForegroundExecutor,
+    Keymap, Platform, PlatformDisplay, PlatformTextSystem, ScreenCaptureFrame, ScreenCaptureSource,
+    ScreenCaptureStream, Task, TestDisplay, TestWindow, WindowAppearance, WindowParams,
 };
 use anyhow::Result;
 use collections::VecDeque;
@@ -16,7 +16,7 @@ use std::{
 #[cfg(target_os = "windows")]
 use windows::Win32::{
     Graphics::Imaging::{CLSID_WICImagingFactory, IWICImagingFactory},
-    System::Com::{CLSCTX_INPROC_SERVER, CoCreateInstance},
+    System::Com::{CoCreateInstance, CLSCTX_INPROC_SERVER},
 };
 
 /// TestPlatform implements the Platform trait for use in tests.

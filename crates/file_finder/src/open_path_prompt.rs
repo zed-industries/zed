@@ -3,14 +3,14 @@ use fuzzy::{StringMatch, StringMatchCandidate};
 use picker::{Picker, PickerDelegate};
 use project::DirectoryLister;
 use std::{
-    path::{MAIN_SEPARATOR_STR, Path, PathBuf},
+    path::{Path, PathBuf, MAIN_SEPARATOR_STR},
     sync::{
-        Arc,
         atomic::{self, AtomicBool},
+        Arc,
     },
 };
+use ui::{prelude::*, HighlightedLabel, ListItemSpacing};
 use ui::{Context, ListItem, Window};
-use ui::{HighlightedLabel, ListItemSpacing, prelude::*};
 use util::{maybe, paths::compare_paths};
 use workspace::Workspace;
 

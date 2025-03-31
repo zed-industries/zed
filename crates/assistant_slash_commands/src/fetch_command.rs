@@ -1,16 +1,16 @@
 use std::cell::RefCell;
 use std::rc::Rc;
-use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
+use std::sync::Arc;
 
-use anyhow::{Context, Result, anyhow, bail};
+use anyhow::{anyhow, bail, Context, Result};
 use assistant_slash_command::{
     ArgumentCompletion, SlashCommand, SlashCommandOutput, SlashCommandOutputSection,
     SlashCommandResult,
 };
 use futures::AsyncReadExt;
 use gpui::{Task, WeakEntity};
-use html_to_markdown::{TagHandler, convert_html_to_markdown, markdown};
+use html_to_markdown::{convert_html_to_markdown, markdown, TagHandler};
 use http_client::{AsyncBody, HttpClient, HttpClientWithUrl};
 use language::{BufferSnapshot, LspAdapterDelegate};
 use ui::prelude::*;

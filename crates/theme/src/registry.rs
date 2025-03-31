@@ -12,9 +12,9 @@ use thiserror::Error;
 use util::ResultExt;
 
 use crate::{
-    Appearance, AppearanceContent, ChevronIcons, DEFAULT_ICON_THEME_NAME, DirectoryIcons,
-    IconDefinition, IconTheme, Theme, ThemeFamily, ThemeFamilyContent, default_icon_theme,
-    read_icon_theme, read_user_theme, refine_theme_family,
+    default_icon_theme, read_icon_theme, read_user_theme, refine_theme_family, Appearance,
+    AppearanceContent, ChevronIcons, DirectoryIcons, IconDefinition, IconTheme, Theme, ThemeFamily,
+    ThemeFamilyContent, DEFAULT_ICON_THEME_NAME,
 };
 
 /// The metadata for a theme.

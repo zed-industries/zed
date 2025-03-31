@@ -1,10 +1,10 @@
 use super::metal_atlas::MetalAtlas;
 use crate::{
-    AtlasTextureId, AtlasTextureKind, AtlasTile, Background, Bounds, ContentMask, DevicePixels,
-    MonochromeSprite, PaintSurface, Path, PathId, PathVertex, PolychromeSprite, PrimitiveBatch,
-    Quad, ScaledPixels, Scene, Shadow, Size, Surface, Underline, point, size,
+    point, size, AtlasTextureId, AtlasTextureKind, AtlasTile, Background, Bounds, ContentMask,
+    DevicePixels, MonochromeSprite, PaintSurface, Path, PathId, PathVertex, PolychromeSprite,
+    PrimitiveBatch, Quad, ScaledPixels, Scene, Shadow, Size, Surface, Underline,
 };
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
 use block::ConcreteBlock;
 use cocoa::{
     base::{NO, YES},

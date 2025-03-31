@@ -1,39 +1,38 @@
 use crate::{
     rpc::{CLEANUP_TIMEOUT, RECONNECT_TIMEOUT},
     tests::{
-        RoomParticipants, TestClient, TestServer, channel_id, following_tests::join_channel,
-        room_participants, rust_lang,
+        channel_id, following_tests::join_channel, room_participants, rust_lang, RoomParticipants,
+        TestClient, TestServer,
     },
 };
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
 use assistant_context_editor::ContextStore;
 use assistant_slash_command::SlashCommandWorkingSet;
-use buffer_diff::{DiffHunkSecondaryStatus, DiffHunkStatus, assert_hunks};
-use call::{ActiveCall, ParticipantLocation, Room, room};
-use client::{RECEIVE_TIMEOUT, User};
+use buffer_diff::{assert_hunks, DiffHunkSecondaryStatus, DiffHunkStatus};
+use call::{room, ActiveCall, ParticipantLocation, Room};
+use client::{User, RECEIVE_TIMEOUT};
 use collections::{HashMap, HashSet};
 use fs::{FakeFs, Fs as _, RemoveOptions};
-use futures::{StreamExt as _, channel::mpsc};
+use futures::{channel::mpsc, StreamExt as _};
 use git::status::{FileStatus, StatusCode, TrackedStatus, UnmergedStatus, UnmergedStatusCode};
 use gpui::{
-    App, BackgroundExecutor, Entity, Modifiers, MouseButton, MouseDownEvent, TestAppContext,
-    UpdateGlobal, px, size,
+    px, size, App, BackgroundExecutor, Entity, Modifiers, MouseButton, MouseDownEvent,
+    TestAppContext, UpdateGlobal,
 };
 use language::{
-    Diagnostic, DiagnosticEntry, FakeLspAdapter, Language, LanguageConfig, LanguageMatcher,
-    LineEnding, OffsetRangeExt, Point, Rope,
     language_settings::{
         AllLanguageSettings, Formatter, FormatterList, PrettierSettings, SelectedFormatter,
     },
-    tree_sitter_rust, tree_sitter_typescript,
+    tree_sitter_rust, tree_sitter_typescript, Diagnostic, DiagnosticEntry, FakeLspAdapter,
+    Language, LanguageConfig, LanguageMatcher, LineEnding, OffsetRangeExt, Point, Rope,
 };
 use lsp::{LanguageServerId, OneOf};
 use parking_lot::Mutex;
 use pretty_assertions::assert_eq;
 use project::{
-    DiagnosticSummary, HoverBlockKind, Project, ProjectPath,
     lsp_store::{FormatTrigger, LspFormatTarget},
     search::{SearchQuery, SearchResult},
+    DiagnosticSummary, HoverBlockKind, Project, ProjectPath,
 };
 use prompt_store::PromptBuilder;
 use rand::prelude::*;
@@ -45,8 +44,8 @@ use std::{
     path::{Path, PathBuf},
     rc::Rc,
     sync::{
-        Arc,
         atomic::{AtomicBool, Ordering::SeqCst},
+        Arc,
     },
     time::Duration,
 };
@@ -6207,19 +6206,15 @@ async fn test_contact_requests(
     executor.run_until_parked();
     assert_eq!(client_a.summarize_contacts(cx_a).current, &["user_b"]);
     assert_eq!(client_b.summarize_contacts(cx_b).current, &["user_a"]);
-    assert!(
-        client_b
-            .summarize_contacts(cx_b)
-            .incoming_requests
-            .is_empty()
-    );
+    assert!(client_b
+        .summarize_contacts(cx_b)
+        .incoming_requests
+        .is_empty());
     assert!(client_c.summarize_contacts(cx_c).current.is_empty());
-    assert!(
-        client_c
-            .summarize_contacts(cx_c)
-            .outgoing_requests
-            .is_empty()
-    );
+    assert!(client_c
+        .summarize_contacts(cx_c)
+        .outgoing_requests
+        .is_empty());
 
     async fn disconnect_and_reconnect(client: &TestClient, cx: &mut TestAppContext) {
         client.disconnect(&cx.to_async());

@@ -1,15 +1,15 @@
 use crate::{
-    ItemNavHistory, WorkspaceId,
     item::{Item, ItemEvent},
+    ItemNavHistory, WorkspaceId,
 };
 use call::{RemoteVideoTrack, RemoteVideoTrackView, Room};
-use client::{User, proto::PeerId};
+use client::{proto::PeerId, User};
 use gpui::{
-    AppContext as _, Entity, EventEmitter, FocusHandle, Focusable, InteractiveElement,
-    ParentElement, Render, SharedString, Styled, div,
+    div, AppContext as _, Entity, EventEmitter, FocusHandle, Focusable, InteractiveElement,
+    ParentElement, Render, SharedString, Styled,
 };
 use std::sync::Arc;
-use ui::{Icon, IconName, prelude::*};
+use ui::{prelude::*, Icon, IconName};
 
 pub enum Event {
     Close,

@@ -1,5 +1,5 @@
 use crate::HttpClient;
-use anyhow::{Context, Result, anyhow, bail};
+use anyhow::{anyhow, bail, Context, Result};
 use futures::AsyncReadExt;
 use serde::Deserialize;
 use std::sync::Arc;
@@ -147,7 +147,7 @@ pub fn build_asset_url(repo_name_with_owner: &str, tag: &str, kind: AssetKind) -
 
 #[cfg(test)]
 mod tests {
-    use crate::github::{AssetKind, build_asset_url};
+    use crate::github::{build_asset_url, AssetKind};
 
     #[test]
     fn test_build_asset_url() {

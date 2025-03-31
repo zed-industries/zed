@@ -4,18 +4,18 @@ use std::{
     sync::Arc,
 };
 
-use anyhow::{Context as _, Result, anyhow};
+use anyhow::{anyhow, Context as _, Result};
 use collections::{HashMap, HashSet};
 use fs::Fs;
 use futures::{
-    FutureExt,
     future::{self, Shared},
     stream::FuturesUnordered,
+    FutureExt,
 };
 use gpui::{AppContext as _, AsyncApp, Context, Entity, EventEmitter, Task, WeakEntity};
 use language::{
-    Buffer, LanguageRegistry, LocalFile,
     language_settings::{Formatter, LanguageSettings, SelectedFormatter},
+    Buffer, LanguageRegistry, LocalFile,
 };
 use lsp::{LanguageServer, LanguageServerId, LanguageServerName};
 use node_runtime::NodeRuntime;
@@ -25,8 +25,8 @@ use smol::stream::StreamExt;
 use util::{ResultExt, TryFutureExt};
 
 use crate::{
-    File, PathChange, ProjectEntryId, Worktree, lsp_store::WorktreeId,
-    worktree_store::WorktreeStore,
+    lsp_store::WorktreeId, worktree_store::WorktreeStore, File, PathChange, ProjectEntryId,
+    Worktree,
 };
 
 pub struct PrettierStore {

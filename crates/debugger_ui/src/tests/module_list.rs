@@ -4,14 +4,14 @@ use crate::{
     tests::{active_debug_session_panel, init_test, init_test_workspace},
 };
 use dap::{
-    StoppedEvent,
     requests::{Modules, StackTrace, Threads},
+    StoppedEvent,
 };
 use gpui::{BackgroundExecutor, TestAppContext, VisualTestContext};
 use project::{FakeFs, Project};
 use std::sync::{
-    Arc,
     atomic::{AtomicBool, AtomicI32, Ordering},
+    Arc,
 };
 use task::LaunchConfig;
 

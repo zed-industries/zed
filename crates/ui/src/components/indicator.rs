@@ -1,4 +1,4 @@
-use crate::{AnyIcon, prelude::*};
+use crate::{prelude::*, AnyIcon};
 
 #[derive(Default)]
 enum IndicatorKind {

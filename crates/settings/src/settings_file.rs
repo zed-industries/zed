@@ -1,7 +1,7 @@
-use crate::{Settings, settings_store::SettingsStore};
+use crate::{settings_store::SettingsStore, Settings};
 use collections::HashSet;
 use fs::{Fs, PathEventKind};
-use futures::{StreamExt, channel::mpsc};
+use futures::{channel::mpsc, StreamExt};
 use gpui::{App, BackgroundExecutor, ReadGlobal};
 use std::{path::PathBuf, sync::Arc, time::Duration};
 

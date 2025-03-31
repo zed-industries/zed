@@ -20,9 +20,9 @@ use call::ActiveCall;
 use client::{Client, UserStore};
 use feature_flags::{FeatureFlagAppExt, ZedPro};
 use gpui::{
-    Action, AnyElement, App, Context, Corner, Decorations, Element, Entity, InteractiveElement,
-    Interactivity, IntoElement, MouseButton, ParentElement, Render, Stateful,
-    StatefulInteractiveElement, Styled, Subscription, WeakEntity, Window, actions, div, px,
+    actions, div, px, Action, AnyElement, App, Context, Corner, Decorations, Element, Entity,
+    InteractiveElement, Interactivity, IntoElement, MouseButton, ParentElement, Render, Stateful,
+    StatefulInteractiveElement, Styled, Subscription, WeakEntity, Window,
 };
 use onboarding_banner::OnboardingBanner;
 use project::Project;
@@ -32,11 +32,11 @@ use smallvec::SmallVec;
 use std::sync::Arc;
 use theme::ActiveTheme;
 use ui::{
-    Avatar, Button, ButtonLike, ButtonStyle, ContextMenu, Icon, IconName, IconSize,
-    IconWithIndicator, Indicator, PopoverMenu, Tooltip, h_flex, prelude::*,
+    h_flex, prelude::*, Avatar, Button, ButtonLike, ButtonStyle, ContextMenu, Icon, IconName,
+    IconSize, IconWithIndicator, Indicator, PopoverMenu, Tooltip,
 };
 use util::ResultExt;
-use workspace::{Workspace, notifications::NotifyResultExt};
+use workspace::{notifications::NotifyResultExt, Workspace};
 use zed_actions::{OpenBrowser, OpenRecent, OpenRemote};
 
 pub use onboarding_banner::restore_banner;

@@ -4,9 +4,9 @@ use std::{
     rc::Rc,
 };
 
-use gpui::{Bounds, Point, size};
+use gpui::{size, Bounds, Point};
 use terminal::Terminal;
-use ui::{ContentSize, Pixels, ScrollableHandle, px};
+use ui::{px, ContentSize, Pixels, ScrollableHandle};
 
 #[derive(Debug)]
 struct ScrollHandleState {

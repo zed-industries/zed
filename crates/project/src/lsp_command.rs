@@ -1,13 +1,13 @@
 mod signature_help;
 
 use crate::{
+    lsp_store::{LocalLspStore, LspStore},
     CodeAction, CompletionSource, CoreCompletion, DocumentHighlight, DocumentSymbol, Hover,
     HoverBlock, HoverBlockKind, InlayHint, InlayHintLabel, InlayHintLabelPart,
     InlayHintLabelPartTooltip, InlayHintTooltip, Location, LocationLink, LspAction, MarkupContent,
     PrepareRenameResponse, ProjectTransaction, ResolveState,
-    lsp_store::{LocalLspStore, LspStore},
 };
-use anyhow::{Context as _, Result, anyhow};
+use anyhow::{anyhow, Context as _, Result};
 use async_trait::async_trait;
 use client::proto::{self, PeerId};
 use clock::Global;
@@ -15,12 +15,11 @@ use collections::HashSet;
 use futures::future;
 use gpui::{App, AsyncApp, Entity};
 use language::{
-    Anchor, Bias, Buffer, BufferSnapshot, CachedLspAdapter, CharKind, OffsetRangeExt, PointUtf16,
-    ToOffset, ToPointUtf16, Transaction, Unclipped,
-    language_settings::{InlayHintKind, LanguageSettings, language_settings},
+    language_settings::{language_settings, InlayHintKind, LanguageSettings},
     point_from_lsp, point_to_lsp,
     proto::{deserialize_anchor, deserialize_version, serialize_anchor, serialize_version},
-    range_from_lsp, range_to_lsp,
+    range_from_lsp, range_to_lsp, Anchor, Bias, Buffer, BufferSnapshot, CachedLspAdapter, CharKind,
+    OffsetRangeExt, PointUtf16, ToOffset, ToPointUtf16, Transaction, Unclipped,
 };
 use lsp::{
     AdapterServerCapabilities, CodeActionKind, CodeActionOptions, CompletionContext,

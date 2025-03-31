@@ -18,7 +18,7 @@ use language::{
 use lsp::{CodeActionKind, LanguageServerBinary, LanguageServerBinaryOptions, LanguageServerName};
 use serde::Serialize;
 use serde_json::Value;
-use util::{ResultExt, maybe};
+use util::{maybe, ResultExt};
 
 use crate::LanguageServerRegistryProxy;
 

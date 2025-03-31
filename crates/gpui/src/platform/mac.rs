@@ -30,7 +30,7 @@ mod platform;
 mod window;
 mod window_appearance;
 
-use crate::{DevicePixels, Pixels, Size, px, size};
+use crate::{px, size, DevicePixels, Pixels, Size};
 use cocoa::{
     base::{id, nil},
     foundation::{NSAutoreleasePool, NSNotFound, NSRect, NSSize, NSString, NSUInteger},
@@ -38,7 +38,7 @@ use cocoa::{
 
 use objc::runtime::{BOOL, NO, YES};
 use std::{
-    ffi::{CStr, c_char},
+    ffi::{c_char, CStr},
     ops::Range,
 };
 
@@ -60,7 +60,11 @@ trait BoolExt {
 
 impl BoolExt for bool {
     fn to_objc(self) -> BOOL {
-        if self { YES } else { NO }
+        if self {
+            YES
+        } else {
+            NO
+        }
     }
 }
 

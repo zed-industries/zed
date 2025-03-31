@@ -1,5 +1,5 @@
 use crate::schema::json_schema_for;
-use anyhow::{Context as _, Result, anyhow};
+use anyhow::{anyhow, Context as _, Result};
 use assistant_tool::{ActionLog, Tool};
 use gpui::{App, Entity, Task};
 use language_model::{LanguageModelRequestMessage, LanguageModelToolSchemaFormat};

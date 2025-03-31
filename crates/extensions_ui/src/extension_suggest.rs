@@ -9,7 +9,7 @@ use gpui::{AppContext as _, Context, Entity, SharedString, Window};
 use language::Buffer;
 use ui::prelude::*;
 use workspace::notifications::simple_message_notification::MessageNotification;
-use workspace::{Workspace, notifications::NotificationId};
+use workspace::{notifications::NotificationId, Workspace};
 
 const SUGGESTIONS_BY_EXTENSION_ID: &[(&str, &[&str])] = &[
     ("astro", &["astro"]),

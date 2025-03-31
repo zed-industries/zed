@@ -1,7 +1,7 @@
 use gpui::AnyElement;
 use smallvec::SmallVec;
 
-use crate::{ListHeader, prelude::*};
+use crate::{prelude::*, ListHeader};
 
 /// A group of settings.
 #[derive(IntoElement)]

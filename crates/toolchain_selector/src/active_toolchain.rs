@@ -1,12 +1,12 @@
 use editor::Editor;
 use gpui::{
-    AsyncWindowContext, Context, Entity, IntoElement, ParentElement, Render, Subscription, Task,
-    WeakEntity, Window, div,
+    div, AsyncWindowContext, Context, Entity, IntoElement, ParentElement, Render, Subscription,
+    Task, WeakEntity, Window,
 };
 use language::{Buffer, BufferEvent, LanguageName, Toolchain};
 use project::{Project, WorktreeId};
 use ui::{Button, ButtonCommon, Clickable, FluentBuilder, LabelSize, SharedString, Tooltip};
-use workspace::{StatusItemView, Workspace, item::ItemHandle};
+use workspace::{item::ItemHandle, StatusItemView, Workspace};
 
 use crate::ToolchainSelector;
 

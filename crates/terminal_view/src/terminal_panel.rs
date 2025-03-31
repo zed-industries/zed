@@ -1,47 +1,48 @@
 use std::{cmp, ops::ControlFlow, path::PathBuf, sync::Arc, time::Duration};
 
 use crate::{
-    TerminalView, default_working_directory,
+    default_working_directory,
     persistence::{
-        SerializedItems, SerializedTerminalPanel, deserialize_terminal_panel, serialize_pane_group,
+        deserialize_terminal_panel, serialize_pane_group, SerializedItems, SerializedTerminalPanel,
     },
+    TerminalView,
 };
 use breadcrumbs::Breadcrumbs;
 use collections::HashMap;
 use db::kvp::KEY_VALUE_STORE;
 use futures::future::join_all;
 use gpui::{
-    Action, AnyView, App, AsyncApp, AsyncWindowContext, Context, Corner, Entity, EventEmitter,
-    ExternalPaths, FocusHandle, Focusable, IntoElement, ParentElement, Pixels, Render, Styled,
-    Task, WeakEntity, Window, actions,
+    actions, Action, AnyView, App, AsyncApp, AsyncWindowContext, Context, Corner, Entity,
+    EventEmitter, ExternalPaths, FocusHandle, Focusable, IntoElement, ParentElement, Pixels,
+    Render, Styled, Task, WeakEntity, Window,
 };
 use itertools::Itertools;
-use project::{Fs, Project, ProjectEntryId, terminals::TerminalKind};
-use search::{BufferSearchBar, buffer_search::DivRegistrar};
+use project::{terminals::TerminalKind, Fs, Project, ProjectEntryId};
+use search::{buffer_search::DivRegistrar, BufferSearchBar};
 use settings::Settings;
 use task::{RevealStrategy, RevealTarget, ShellBuilder, SpawnInTerminal, TaskId};
 use terminal::{
-    Terminal,
     terminal_settings::{TerminalDockPosition, TerminalSettings},
+    Terminal,
 };
 use ui::{
-    ButtonCommon, Clickable, ContextMenu, FluentBuilder, PopoverMenu, Toggleable, Tooltip,
-    prelude::*,
+    prelude::*, ButtonCommon, Clickable, ContextMenu, FluentBuilder, PopoverMenu, Toggleable,
+    Tooltip,
 };
 use util::{ResultExt, TryFutureExt};
 use workspace::{
+    dock::{DockPosition, Panel, PanelEvent, PanelHandle},
+    item::SerializableItem,
+    move_active_item, move_item, pane,
+    ui::IconName,
     ActivateNextPane, ActivatePane, ActivatePaneDown, ActivatePaneLeft, ActivatePaneRight,
     ActivatePaneUp, ActivatePreviousPane, DraggedSelection, DraggedTab, ItemId, MoveItemToPane,
     MoveItemToPaneInDirection, NewTerminal, Pane, PaneGroup, SplitDirection, SplitDown, SplitLeft,
     SplitRight, SplitUp, SwapPaneDown, SwapPaneLeft, SwapPaneRight, SwapPaneUp, ToggleZoom,
     Workspace,
-    dock::{DockPosition, Panel, PanelEvent, PanelHandle},
-    item::SerializableItem,
-    move_active_item, move_item, pane,
-    ui::IconName,
 };
 
-use anyhow::{Context as _, Result, anyhow};
+use anyhow::{anyhow, Context as _, Result};
 use zed_actions::assistant::InlineAssist;
 
 const TERMINAL_PANEL_KEY: &str = "TerminalPanel";

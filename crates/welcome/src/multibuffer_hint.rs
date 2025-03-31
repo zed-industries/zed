@@ -1,10 +1,10 @@
 use std::collections::HashSet;
-use std::sync::OnceLock;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::OnceLock;
 
 use db::kvp::KEY_VALUE_STORE;
 use gpui::{App, EntityId, EventEmitter, Subscription};
-use ui::{IconButtonShape, Tooltip, prelude::*};
+use ui::{prelude::*, IconButtonShape, Tooltip};
 use workspace::item::{ItemEvent, ItemHandle};
 use workspace::{ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView};
 

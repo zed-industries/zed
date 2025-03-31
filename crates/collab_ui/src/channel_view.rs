@@ -2,17 +2,17 @@ use anyhow::Result;
 use call::ActiveCall;
 use channel::{Channel, ChannelBuffer, ChannelBufferEvent, ChannelStore};
 use client::{
-    ChannelId, Collaborator, ParticipantIndex,
     proto::{self, PeerId},
+    ChannelId, Collaborator, ParticipantIndex,
 };
 use collections::HashMap;
 use editor::{
-    CollaborationHub, DisplayPoint, Editor, EditorEvent, display_map::ToDisplayPoint,
-    scroll::Autoscroll,
+    display_map::ToDisplayPoint, scroll::Autoscroll, CollaborationHub, DisplayPoint, Editor,
+    EditorEvent,
 };
 use gpui::{
-    AnyView, App, ClipboardItem, Context, Entity, EventEmitter, Focusable, Pixels, Point, Render,
-    Subscription, Task, VisualContext as _, WeakEntity, Window, actions,
+    actions, AnyView, App, ClipboardItem, Context, Entity, EventEmitter, Focusable, Pixels, Point,
+    Render, Subscription, Task, VisualContext as _, WeakEntity, Window,
 };
 use project::Project;
 use rpc::proto::ChannelVisibility;
@@ -23,12 +23,12 @@ use std::{
 use ui::prelude::*;
 use util::ResultExt;
 use workspace::item::TabContentParams;
+use workspace::{item::Dedup, notifications::NotificationId};
 use workspace::{
-    ItemNavHistory, Pane, SaveIntent, Toast, ViewId, Workspace, WorkspaceId,
     item::{FollowableItem, Item, ItemEvent, ItemHandle},
     searchable::SearchableItemHandle,
+    ItemNavHistory, Pane, SaveIntent, Toast, ViewId, Workspace, WorkspaceId,
 };
-use workspace::{item::Dedup, notifications::NotificationId};
 
 actions!(collab, [CopyLink]);
 

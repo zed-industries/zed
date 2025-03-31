@@ -1,25 +1,25 @@
 use anyhow::ensure;
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use collections::HashMap;
 use gpui::{App, Task};
 use gpui::{AsyncApp, SharedString};
+use language::language_settings::language_settings;
 use language::LanguageToolchainStore;
 use language::Toolchain;
 use language::ToolchainList;
 use language::ToolchainLister;
-use language::language_settings::language_settings;
 use language::{ContextProvider, LspAdapter, LspAdapterDelegate};
 use language::{LanguageName, ManifestName, ManifestProvider, ManifestQuery};
 use lsp::LanguageServerBinary;
 use lsp::LanguageServerName;
 use node_runtime::NodeRuntime;
-use pet_core::Configuration;
 use pet_core::os_environment::Environment;
 use pet_core::python_environment::PythonEnvironmentKind;
-use project::Fs;
+use pet_core::Configuration;
 use project::lsp_store::language_server_settings;
-use serde_json::{Value, json};
+use project::Fs;
+use serde_json::{json, Value};
 use smol::lock::OnceCell;
 use std::cmp::Ordering;
 
@@ -1116,7 +1116,7 @@ impl LspAdapter for PyLspAdapter {
 #[cfg(test)]
 mod tests {
     use gpui::{AppContext as _, BorrowAppContext, Context, TestAppContext};
-    use language::{AutoindentMode, Buffer, language_settings::AllLanguageSettings};
+    use language::{language_settings::AllLanguageSettings, AutoindentMode, Buffer};
     use settings::SettingsStore;
     use std::num::NonZeroU32;
 

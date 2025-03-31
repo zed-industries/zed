@@ -2,8 +2,8 @@ use gpui::Hsla;
 use serde_derive::Deserialize;
 
 use crate::{
-    AccentContent, amber, blue, cyan, gold, grass, indigo, iris, jade, lime, orange, pink, purple,
-    tomato, try_parse_color,
+    amber, blue, cyan, gold, grass, indigo, iris, jade, lime, orange, pink, purple, tomato,
+    try_parse_color, AccentContent,
 };
 
 /// A collection of colors that are used to color indent aware lines in the editor.

@@ -1,4 +1,4 @@
-use crate::{Bounds, DisplayId, Pixels, PlatformDisplay, px, size};
+use crate::{px, size, Bounds, DisplayId, Pixels, PlatformDisplay};
 use anyhow::Result;
 use cocoa::{
     appkit::NSScreen,

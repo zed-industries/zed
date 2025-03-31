@@ -1,5 +1,5 @@
 use gpui::{
-    App, Entity, FocusHandle, KeyBinding, Render, Subscription, Window, actions, div, prelude::*,
+    actions, div, prelude::*, App, Entity, FocusHandle, KeyBinding, Render, Subscription, Window,
 };
 use ui::prelude::*;
 

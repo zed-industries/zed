@@ -1,5 +1,5 @@
-use anyhow::{Result, anyhow};
-use client::{ParticipantIndex, User, proto};
+use anyhow::{anyhow, Result};
+use client::{proto, ParticipantIndex, User};
 use collections::HashMap;
 use gpui::WeakEntity;
 use livekit_client::AudioStream;

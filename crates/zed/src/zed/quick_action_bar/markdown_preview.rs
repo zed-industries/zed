@@ -1,8 +1,8 @@
 use gpui::{AnyElement, Modifiers, WeakEntity};
 use markdown_preview::{
-    OpenPreview, OpenPreviewToTheSide, markdown_preview_view::MarkdownPreviewView,
+    markdown_preview_view::MarkdownPreviewView, OpenPreview, OpenPreviewToTheSide,
 };
-use ui::{IconButtonShape, Tooltip, prelude::*, text_for_keystroke};
+use ui::{prelude::*, text_for_keystroke, IconButtonShape, Tooltip};
 use workspace::Workspace;
 
 use super::QuickActionBar;

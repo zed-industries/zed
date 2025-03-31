@@ -1,14 +1,14 @@
 use crate::{
-    AnchorRangeExt, Autoscroll, DisplayPoint, Editor, MultiBuffer, RowExt,
-    display_map::ToDisplayPoint,
+    display_map::ToDisplayPoint, AnchorRangeExt, Autoscroll, DisplayPoint, Editor, MultiBuffer,
+    RowExt,
 };
 use buffer_diff::DiffHunkStatusKind;
 use collections::BTreeMap;
 use futures::Future;
 
 use gpui::{
-    AnyWindowHandle, App, Context, Entity, Focusable as _, Keystroke, Pixels, Point,
-    VisualTestContext, Window, WindowHandle, prelude::*,
+    prelude::*, AnyWindowHandle, App, Context, Entity, Focusable as _, Keystroke, Pixels, Point,
+    VisualTestContext, Window, WindowHandle,
 };
 use itertools::Itertools;
 use language::{Buffer, BufferSnapshot, LanguageRegistry};
@@ -20,8 +20,8 @@ use std::{
     ops::{Deref, DerefMut, Range},
     path::Path,
     sync::{
-        Arc,
         atomic::{AtomicUsize, Ordering},
+        Arc,
     },
 };
 use util::{

@@ -1,6 +1,6 @@
 use gpui::{
-    App, Application, Bounds, ColorSpace, Context, Half, Render, Window, WindowOptions, canvas,
-    div, linear_color_stop, linear_gradient, point, prelude::*, px, size,
+    canvas, div, linear_color_stop, linear_gradient, point, prelude::*, px, size, App, Application,
+    Bounds, ColorSpace, Context, Half, Render, Window, WindowOptions,
 };
 
 struct GradientViewer {

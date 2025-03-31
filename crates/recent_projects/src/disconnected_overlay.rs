@@ -5,11 +5,11 @@ use project::project_settings::ProjectSettings;
 use remote::SshConnectionOptions;
 use settings::Settings;
 use ui::{
-    Button, ButtonCommon, ButtonStyle, Clickable, Context, ElevationIndex, FluentBuilder, Headline,
-    HeadlineSize, IconName, IconPosition, InteractiveElement, IntoElement, Label, Modal,
-    ModalFooter, ModalHeader, ParentElement, Section, Styled, StyledExt, Window, div, h_flex, rems,
+    div, h_flex, rems, Button, ButtonCommon, ButtonStyle, Clickable, Context, ElevationIndex,
+    FluentBuilder, Headline, HeadlineSize, IconName, IconPosition, InteractiveElement, IntoElement,
+    Label, Modal, ModalFooter, ModalHeader, ParentElement, Section, Styled, StyledExt, Window,
 };
-use workspace::{ModalView, OpenOptions, Workspace, notifications::DetachAndPromptErr};
+use workspace::{notifications::DetachAndPromptErr, ModalView, OpenOptions, Workspace};
 
 use crate::open_ssh_project;
 

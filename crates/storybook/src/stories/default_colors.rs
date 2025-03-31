@@ -1,10 +1,10 @@
 use gpui::{
-    App, Context, DefaultColor, DefaultThemeAppearance, Entity, Hsla, Render, Window, colors, div,
-    prelude::*,
+    colors, div, prelude::*, App, Context, DefaultColor, DefaultThemeAppearance, Entity, Hsla,
+    Render, Window,
 };
 use story::Story;
 use strum::IntoEnumIterator;
-use ui::{ActiveTheme, h_flex};
+use ui::{h_flex, ActiveTheme};
 
 pub struct DefaultColorsStory;
 

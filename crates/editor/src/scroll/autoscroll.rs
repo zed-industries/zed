@@ -1,7 +1,7 @@
 use crate::{
-    DisplayRow, Editor, EditorMode, LineWithInvisibles, RowExt, display_map::ToDisplayPoint,
+    display_map::ToDisplayPoint, DisplayRow, Editor, EditorMode, LineWithInvisibles, RowExt,
 };
-use gpui::{Bounds, Context, Pixels, Window, px};
+use gpui::{px, Bounds, Context, Pixels, Window};
 use language::Point;
 use multi_buffer::Anchor;
 use std::{cmp, f32};

@@ -22,12 +22,12 @@ use alacritty_terminal::{
     term::Config,
     vte::ansi::Processor,
 };
-use gpui::{Bounds, ClipboardItem, Entity, FontStyle, TextStyle, WhiteSpace, canvas, size};
+use gpui::{canvas, size, Bounds, ClipboardItem, Entity, FontStyle, TextStyle, WhiteSpace};
 use language::Buffer;
 use settings::Settings as _;
 use terminal_view::terminal_element::TerminalElement;
 use theme::ThemeSettings;
-use ui::{IntoElement, prelude::*};
+use ui::{prelude::*, IntoElement};
 
 use crate::outputs::OutputContent;
 

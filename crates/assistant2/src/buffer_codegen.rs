@@ -5,12 +5,12 @@ use anyhow::{Context as _, Result};
 use client::telemetry::Telemetry;
 use collections::HashSet;
 use editor::{Anchor, AnchorRangeExt, MultiBuffer, MultiBufferSnapshot, ToOffset as _, ToPoint};
-use futures::{SinkExt, Stream, StreamExt, channel::mpsc, future::LocalBoxFuture, join};
+use futures::{channel::mpsc, future::LocalBoxFuture, join, SinkExt, Stream, StreamExt};
 use gpui::{App, AppContext as _, Context, Entity, EventEmitter, Subscription, Task};
-use language::{Buffer, IndentKind, Point, TransactionId, line_diff};
+use language::{line_diff, Buffer, IndentKind, Point, TransactionId};
 use language_model::{
-    LanguageModel, LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage,
-    LanguageModelTextStream, Role, report_assistant_event,
+    report_assistant_event, LanguageModel, LanguageModelRegistry, LanguageModelRequest,
+    LanguageModelRequestMessage, LanguageModelTextStream, Role,
 };
 use multi_buffer::MultiBufferRow;
 use parking_lot::Mutex;
@@ -1028,14 +1028,14 @@ impl Diff {
 mod tests {
     use super::*;
     use futures::{
-        Stream,
         stream::{self},
+        Stream,
     };
     use gpui::TestAppContext;
     use indoc::indoc;
     use language::{
-        Buffer, Language, LanguageConfig, LanguageMatcher, Point, language_settings,
-        tree_sitter_rust,
+        language_settings, tree_sitter_rust, Buffer, Language, LanguageConfig, LanguageMatcher,
+        Point,
     };
     use language_model::{LanguageModelRegistry, TokenUsage};
     use rand::prelude::*;

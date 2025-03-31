@@ -1,7 +1,7 @@
-use anyhow::{Context as _, Result, anyhow};
+use anyhow::{anyhow, Context as _, Result};
 use collections::HashMap;
 use editor::ProposedChangesEditor;
-use futures::{TryFutureExt as _, future};
+use futures::{future, TryFutureExt as _};
 use gpui::{App, AppContext as _, AsyncApp, Entity, SharedString};
 use language::{AutoindentMode, Buffer, BufferSnapshot};
 use project::{Project, ProjectPath};
@@ -548,7 +548,7 @@ mod tests {
     use super::*;
     use gpui::App;
     use language::{
-        Language, LanguageConfig, LanguageMatcher, language_settings::AllLanguageSettings,
+        language_settings::AllLanguageSettings, Language, LanguageConfig, LanguageMatcher,
     };
     use settings::SettingsStore;
     use ui::BorrowAppContext;

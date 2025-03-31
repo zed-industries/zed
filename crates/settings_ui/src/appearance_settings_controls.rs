@@ -4,8 +4,8 @@ use gpui::{App, FontFeatures, FontWeight};
 use settings::{EditableSettingControl, Settings};
 use theme::{FontFamilyCache, SystemAppearance, ThemeMode, ThemeRegistry, ThemeSettings};
 use ui::{
-    CheckboxWithLabel, ContextMenu, DropdownMenu, NumericStepper, SettingsContainer, SettingsGroup,
-    ToggleButton, prelude::*,
+    prelude::*, CheckboxWithLabel, ContextMenu, DropdownMenu, NumericStepper, SettingsContainer,
+    SettingsGroup, ToggleButton,
 };
 
 #[derive(IntoElement)]

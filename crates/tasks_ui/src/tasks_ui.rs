@@ -8,7 +8,7 @@ use modal::{TaskOverrides, TasksModal};
 use project::{Location, TaskContexts, Worktree};
 use task::{RevealTarget, TaskContext, TaskId, TaskModal, TaskVariables, VariableName};
 use workspace::tasks::schedule_task;
-use workspace::{Start, Workspace, tasks::schedule_resolved_task};
+use workspace::{tasks::schedule_resolved_task, Start, Workspace};
 
 mod modal;
 
@@ -347,7 +347,7 @@ mod tests {
     use editor::Editor;
     use gpui::TestAppContext;
     use language::{Language, LanguageConfig};
-    use project::{BasicContextProvider, FakeFs, Project, task_store::TaskStore};
+    use project::{task_store::TaskStore, BasicContextProvider, FakeFs, Project};
     use serde_json::json;
     use task::{TaskContext, TaskVariables, VariableName};
     use ui::VisualContext;

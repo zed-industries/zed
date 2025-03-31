@@ -1,13 +1,13 @@
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use futures::StreamExt;
 use gpui::AsyncApp;
 use language::{
-    LanguageToolchainStore, LspAdapter, LspAdapterDelegate, language_settings::AllLanguageSettings,
+    language_settings::AllLanguageSettings, LanguageToolchainStore, LspAdapter, LspAdapterDelegate,
 };
 use lsp::{LanguageServerBinary, LanguageServerName};
 use node_runtime::NodeRuntime;
-use project::{Fs, lsp_store::language_server_settings};
+use project::{lsp_store::language_server_settings, Fs};
 use serde_json::Value;
 use settings::{Settings, SettingsLocation};
 use smol::fs;
@@ -17,7 +17,7 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
-use util::{ResultExt, maybe, merge_json_value_into};
+use util::{maybe, merge_json_value_into, ResultExt};
 
 const SERVER_PATH: &str = "node_modules/yaml-language-server/bin/yaml-language-server";
 

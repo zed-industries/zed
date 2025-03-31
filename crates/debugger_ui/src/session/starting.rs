@@ -4,11 +4,11 @@ use anyhow::Result;
 
 use dap::client::SessionId;
 use gpui::{
-    Animation, AnimationExt, Entity, EventEmitter, FocusHandle, Focusable, Task, Transformation,
-    percentage,
+    percentage, Animation, AnimationExt, Entity, EventEmitter, FocusHandle, Focusable, Task,
+    Transformation,
 };
 use project::debugger::session::Session;
-use ui::{Color, Context, Icon, IconName, IntoElement, ParentElement, Render, Styled, v_flex};
+use ui::{v_flex, Color, Context, Icon, IconName, IntoElement, ParentElement, Render, Styled};
 
 pub(crate) struct StartingState {
     focus_handle: FocusHandle,

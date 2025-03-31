@@ -5,9 +5,9 @@ use std::time::Duration;
 use anyhow::Context as _;
 use futures::channel::{mpsc, oneshot};
 #[cfg(unix)]
-use futures::{AsyncBufReadExt as _, io::BufReader};
+use futures::{io::BufReader, AsyncBufReadExt as _};
 #[cfg(unix)]
-use futures::{AsyncWriteExt as _, FutureExt as _, select_biased};
+use futures::{select_biased, AsyncWriteExt as _, FutureExt as _};
 use futures::{SinkExt, StreamExt};
 use gpui::{AsyncApp, BackgroundExecutor, Task};
 #[cfg(unix)]

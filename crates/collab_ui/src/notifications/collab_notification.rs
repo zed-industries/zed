@@ -1,4 +1,4 @@
-use gpui::{AnyElement, SharedUri, img, prelude::*};
+use gpui::{img, prelude::*, AnyElement, SharedUri};
 use smallvec::SmallVec;
 use ui::prelude::*;
 

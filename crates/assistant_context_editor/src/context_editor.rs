@@ -2,36 +2,36 @@ use anyhow::Result;
 use assistant_settings::AssistantSettings;
 use assistant_slash_command::{SlashCommand, SlashCommandOutputSection, SlashCommandWorkingSet};
 use assistant_slash_commands::{
-    DefaultSlashCommand, DocsSlashCommand, DocsSlashCommandArgs, FileSlashCommand,
-    selections_creases,
+    selections_creases, DefaultSlashCommand, DocsSlashCommand, DocsSlashCommandArgs,
+    FileSlashCommand,
 };
 use client::{proto, zed_urls};
-use collections::{BTreeSet, HashMap, HashSet, hash_map};
+use collections::{hash_map, BTreeSet, HashMap, HashSet};
 use editor::{
-    Anchor, Editor, EditorEvent, MenuInlineCompletionsPolicy, ProposedChangeLocation,
-    ProposedChangesEditor, RowExt, ToOffset as _, ToPoint,
     actions::{FoldAt, MoveToEndOfLine, Newline, ShowCompletions, UnfoldAt},
     display_map::{
         BlockContext, BlockId, BlockPlacement, BlockProperties, BlockStyle, Crease, CreaseMetadata,
         CustomBlockId, FoldId, RenderBlock, ToDisplayPoint,
     },
     scroll::Autoscroll,
+    Anchor, Editor, EditorEvent, MenuInlineCompletionsPolicy, ProposedChangeLocation,
+    ProposedChangesEditor, RowExt, ToOffset as _, ToPoint,
 };
-use editor::{FoldPlaceholder, display_map::CreaseId};
+use editor::{display_map::CreaseId, FoldPlaceholder};
 use fs::Fs;
 use futures::FutureExt;
 use gpui::{
-    Animation, AnimationExt, AnyElement, AnyView, App, AsyncWindowContext, ClipboardEntry,
+    actions, div, img, impl_internal_actions, percentage, point, prelude::*, pulsating_between,
+    size, Animation, AnimationExt, AnyElement, AnyView, App, AsyncWindowContext, ClipboardEntry,
     ClipboardItem, CursorStyle, Empty, Entity, EventEmitter, FocusHandle, Focusable, FontWeight,
     Global, InteractiveElement, IntoElement, ParentElement, Pixels, Render, RenderImage,
     SharedString, Size, StatefulInteractiveElement, Styled, Subscription, Task, Transformation,
-    WeakEntity, actions, div, img, impl_internal_actions, percentage, point, prelude::*,
-    pulsating_between, size,
+    WeakEntity,
 };
 use indexed_docs::IndexedDocsStore;
 use language::{
+    language_settings::{all_language_settings, SoftWrap},
     BufferSnapshot, LspAdapterDelegate, ToOffset,
-    language_settings::{SoftWrap, all_language_settings},
 };
 use language_model::{
     LanguageModelImage, LanguageModelProvider, LanguageModelProviderTosView, LanguageModelRegistry,
@@ -46,32 +46,32 @@ use project::lsp_store::LocalLspAdapterDelegate;
 use project::{Project, Worktree};
 use rope::Point;
 use serde::{Deserialize, Serialize};
-use settings::{Settings, SettingsStore, update_settings_file};
+use settings::{update_settings_file, Settings, SettingsStore};
 use std::{any::TypeId, borrow::Cow, cmp, ops::Range, path::PathBuf, sync::Arc, time::Duration};
 use text::SelectionGoal;
 use ui::{
-    ButtonLike, Disclosure, ElevationIndex, KeyBinding, PopoverMenuHandle, TintColor, Tooltip,
-    prelude::*,
+    prelude::*, ButtonLike, Disclosure, ElevationIndex, KeyBinding, PopoverMenuHandle, TintColor,
+    Tooltip,
 };
-use util::{ResultExt, maybe};
+use util::{maybe, ResultExt};
 use workspace::searchable::{Direction, SearchableItemHandle};
 use workspace::{
-    Save, ShowConfiguration, Toast, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView,
-    Workspace,
     item::{self, FollowableItem, Item, ItemHandle},
     notifications::NotificationId,
     pane::{self, SaveIntent},
     searchable::{SearchEvent, SearchableItem},
+    Save, ShowConfiguration, Toast, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView,
+    Workspace,
 };
 
+use crate::{
+    slash_command::SlashCommandCompletionProvider, slash_command_picker,
+    ThoughtProcessOutputSection,
+};
 use crate::{
     AssistantContext, AssistantPatch, AssistantPatchStatus, CacheStatus, Content, ContextEvent,
     ContextId, InvokedSlashCommandId, InvokedSlashCommandStatus, Message, MessageId,
     MessageMetadata, MessageStatus, ParsedSlashCommand, PendingSlashCommandStatus, RequestType,
-};
-use crate::{
-    ThoughtProcessOutputSection, slash_command::SlashCommandCompletionProvider,
-    slash_command_picker,
 };
 
 actions!(

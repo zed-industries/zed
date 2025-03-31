@@ -1,7 +1,7 @@
-use gpui::{App, Styled, hsla};
+use gpui::{hsla, App, Styled};
 
-use crate::ElevationIndex;
 use crate::prelude::*;
+use crate::ElevationIndex;
 
 fn elevated<E: Styled>(this: E, cx: &App, index: ElevationIndex) -> E {
     this.bg(cx.theme().colors().elevated_surface_background)

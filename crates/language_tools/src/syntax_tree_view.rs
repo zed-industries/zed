@@ -1,18 +1,18 @@
-use editor::{Anchor, Editor, ExcerptId, scroll::Autoscroll};
+use editor::{scroll::Autoscroll, Anchor, Editor, ExcerptId};
 use gpui::{
-    App, AppContext as _, Context, Div, Entity, EventEmitter, FocusHandle, Focusable, Hsla,
-    InteractiveElement, IntoElement, MouseButton, MouseDownEvent, MouseMoveEvent, ParentElement,
-    Render, ScrollStrategy, SharedString, Styled, UniformListScrollHandle, WeakEntity, Window,
-    actions, div, rems, uniform_list,
+    actions, div, rems, uniform_list, App, AppContext as _, Context, Div, Entity, EventEmitter,
+    FocusHandle, Focusable, Hsla, InteractiveElement, IntoElement, MouseButton, MouseDownEvent,
+    MouseMoveEvent, ParentElement, Render, ScrollStrategy, SharedString, Styled,
+    UniformListScrollHandle, WeakEntity, Window,
 };
 use language::{Buffer, OwnedSyntaxLayer};
 use std::{mem, ops::Range};
 use theme::ActiveTheme;
 use tree_sitter::{Node, TreeCursor};
-use ui::{ButtonLike, Color, ContextMenu, Label, LabelCommon, PopoverMenu, h_flex};
+use ui::{h_flex, ButtonLike, Color, ContextMenu, Label, LabelCommon, PopoverMenu};
 use workspace::{
-    SplitDirection, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView, Workspace,
     item::{Item, ItemHandle},
+    SplitDirection, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView, Workspace,
 };
 
 actions!(debug, [OpenSyntaxTreeView]);

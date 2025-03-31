@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use crate::schema::json_schema_for;
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
 use assistant_tool::{ActionLog, Tool};
 use chrono::{Local, Utc};
 use gpui::{App, Entity, Task};

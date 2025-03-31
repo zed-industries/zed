@@ -1,8 +1,8 @@
 use crate::ProjectIndex;
 use gpui::{
-    AnyElement, App, CursorStyle, Entity, EventEmitter, FocusHandle, Focusable, IntoElement,
-    ListOffset, ListState, MouseMoveEvent, Render, UniformListScrollHandle, canvas, div, list,
-    uniform_list,
+    canvas, div, list, uniform_list, AnyElement, App, CursorStyle, Entity, EventEmitter,
+    FocusHandle, Focusable, IntoElement, ListOffset, ListState, MouseMoveEvent, Render,
+    UniformListScrollHandle,
 };
 use project::WorktreeId;
 use settings::Settings;

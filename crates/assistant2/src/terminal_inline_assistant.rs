@@ -3,18 +3,18 @@ use crate::context_store::ContextStore;
 use crate::inline_prompt_editor::{
     CodegenStatus, PromptEditor, PromptEditorEvent, TerminalInlineAssistId,
 };
-use crate::terminal_codegen::{CLEAR_INPUT, CodegenEvent, TerminalCodegen};
+use crate::terminal_codegen::{CodegenEvent, TerminalCodegen, CLEAR_INPUT};
 use crate::thread_store::ThreadStore;
 use anyhow::{Context as _, Result};
 use client::telemetry::Telemetry;
 use collections::{HashMap, VecDeque};
-use editor::{MultiBuffer, actions::SelectAll};
+use editor::{actions::SelectAll, MultiBuffer};
 use fs::Fs;
 use gpui::{App, Entity, Focusable, Global, Subscription, UpdateGlobal, WeakEntity};
 use language::Buffer;
 use language_model::{
-    LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage, Role,
-    report_assistant_event,
+    report_assistant_event, LanguageModelRegistry, LanguageModelRequest,
+    LanguageModelRequestMessage, Role,
 };
 use prompt_store::PromptBuilder;
 use std::sync::Arc;
@@ -22,7 +22,7 @@ use telemetry_events::{AssistantEvent, AssistantKind, AssistantPhase};
 use terminal_view::TerminalView;
 use ui::prelude::*;
 use util::ResultExt;
-use workspace::{Toast, Workspace, notifications::NotificationId};
+use workspace::{notifications::NotificationId, Toast, Workspace};
 
 pub fn init(
     fs: Arc<dyn Fs>,

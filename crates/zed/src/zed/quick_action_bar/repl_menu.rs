@@ -1,17 +1,16 @@
 use std::time::Duration;
 
 use gpui::ElementId;
-use gpui::{Animation, AnimationExt, AnyElement, Entity, Transformation, percentage};
+use gpui::{percentage, Animation, AnimationExt, AnyElement, Entity, Transformation};
 use picker::Picker;
 use repl::{
-    ExecutionState, JupyterSettings, Kernel, KernelSpecification, KernelStatus, Session,
-    SessionSupport,
     components::{KernelPickerDelegate, KernelSelector},
-    worktree_id_for_editor,
+    worktree_id_for_editor, ExecutionState, JupyterSettings, Kernel, KernelSpecification,
+    KernelStatus, Session, SessionSupport,
 };
 use ui::{
-    ButtonLike, ContextMenu, IconWithIndicator, Indicator, IntoElement, PopoverMenu,
-    PopoverMenuHandle, Tooltip, prelude::*,
+    prelude::*, ButtonLike, ContextMenu, IconWithIndicator, Indicator, IntoElement, PopoverMenu,
+    PopoverMenuHandle, Tooltip,
 };
 use util::ResultExt;
 

@@ -1,6 +1,6 @@
 use crate::prelude::*;
 use gpui::IntoElement;
-use smallvec::{SmallVec, smallvec};
+use smallvec::{smallvec, SmallVec};
 
 #[derive(IntoElement, IntoComponent)]
 #[component(scope = "Notification")]

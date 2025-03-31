@@ -1,5 +1,5 @@
-use crate::{Indicator, prelude::*};
-use gpui::{AnyElement, FontWeight, IntoElement, Length, div};
+use crate::{prelude::*, Indicator};
+use gpui::{div, AnyElement, FontWeight, IntoElement, Length};
 
 /// A table component
 #[derive(IntoElement, IntoComponent)]

@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
 use crate::{
-    ParticipantIdentity, TrackSid,
     test::{TestServerAudioTrack, TestServerVideoTrack, WeakRoom},
+    ParticipantIdentity, TrackSid,
 };
 
 #[derive(Clone, Debug)]

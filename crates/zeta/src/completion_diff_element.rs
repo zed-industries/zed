@@ -2,8 +2,8 @@ use std::cmp;
 
 use crate::InlineCompletion;
 use gpui::{
-    AnyElement, App, BorderStyle, Bounds, Corners, Edges, HighlightStyle, Hsla, StyledText,
-    TextLayout, TextStyle, point, prelude::*, quad, size,
+    point, prelude::*, quad, size, AnyElement, App, BorderStyle, Bounds, Corners, Edges,
+    HighlightStyle, Hsla, StyledText, TextLayout, TextStyle,
 };
 use language::OffsetRangeExt;
 use settings::Settings;

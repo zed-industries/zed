@@ -1,8 +1,9 @@
 use crate::{Channel, ChannelStore};
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
 use client::{
-    ChannelId, Client, Subscription, TypedEnvelope, UserId, proto,
+    proto,
     user::{User, UserStore},
+    ChannelId, Client, Subscription, TypedEnvelope, UserId,
 };
 use collections::HashSet;
 use futures::lock::Mutex;
@@ -15,7 +16,7 @@ use std::{
 };
 use sum_tree::{Bias, SumTree};
 use time::OffsetDateTime;
-use util::{ResultExt as _, TryFutureExt, post_inc};
+use util::{post_inc, ResultExt as _, TryFutureExt};
 
 pub struct ChannelChat {
     pub channel_id: ChannelId,
@@ -338,7 +339,7 @@ impl ChannelChat {
                                     .item()
                                     .map_or(false, |message| message.id == message_id)
                                 {
-                                    Some(cursor.start().1.0)
+                                    Some(cursor.start().1 .0)
                                 } else {
                                     None
                                 },
@@ -594,7 +595,7 @@ impl ChannelChat {
 
             let mut old_cursor = self.messages.cursor::<(ChannelMessageId, Count)>(&());
             let mut new_messages = old_cursor.slice(&first_message.id, Bias::Left, &());
-            let start_ix = old_cursor.start().1.0;
+            let start_ix = old_cursor.start().1 .0;
             let removed_messages = old_cursor.slice(&last_message.id, Bias::Right, &());
             let removed_count = removed_messages.summary().count;
             let new_count = messages.summary().count;
@@ -612,7 +613,7 @@ impl ChannelChat {
                 );
 
                 while let Some(message) = old_cursor.item() {
-                    let message_ix = old_cursor.start().1.0;
+                    let message_ix = old_cursor.start().1 .0;
                     if nonces.contains(&message.nonce) {
                         if ranges.last().map_or(false, |r| r.end == message_ix) {
                             ranges.last_mut().unwrap().end += 1;

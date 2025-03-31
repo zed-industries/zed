@@ -1,21 +1,21 @@
 use std::{
-    any::{TypeId, type_name},
+    any::{type_name, TypeId},
     cell::{Ref, RefCell, RefMut},
     marker::PhantomData,
     mem,
     ops::{Deref, DerefMut},
     path::{Path, PathBuf},
     rc::{Rc, Weak},
-    sync::{Arc, atomic::Ordering::SeqCst},
+    sync::{atomic::Ordering::SeqCst, Arc},
     time::Duration,
 };
 
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
 use derive_more::{Deref, DerefMut};
 use futures::{
-    Future, FutureExt,
     channel::oneshot,
     future::{LocalBoxFuture, Shared},
+    Future, FutureExt,
 };
 use parking_lot::RwLock;
 use slotmap::SlotMap;
@@ -30,14 +30,14 @@ pub use test_context::*;
 use util::ResultExt;
 
 use crate::{
-    Action, ActionBuildError, ActionRegistry, Any, AnyView, AnyWindowHandle, AppContext, Asset,
-    AssetSource, BackgroundExecutor, Bounds, ClipboardItem, DispatchPhase, DisplayId, EventEmitter,
-    FocusHandle, FocusMap, ForegroundExecutor, Global, KeyBinding, Keymap, Keystroke, LayoutId,
-    Menu, MenuItem, OwnedMenu, PathPromptOptions, Pixels, Platform, PlatformDisplay, Point,
-    PromptBuilder, PromptHandle, PromptLevel, Render, RenderablePromptHandle, Reservation,
-    ScreenCaptureSource, SharedString, SubscriberSet, Subscription, SvgRenderer, Task, TextSystem,
-    Window, WindowAppearance, WindowHandle, WindowId, WindowInvalidator, current_platform, hash,
-    init_app_menus,
+    current_platform, hash, init_app_menus, Action, ActionBuildError, ActionRegistry, Any, AnyView,
+    AnyWindowHandle, AppContext, Asset, AssetSource, BackgroundExecutor, Bounds, ClipboardItem,
+    DispatchPhase, DisplayId, EventEmitter, FocusHandle, FocusMap, ForegroundExecutor, Global,
+    KeyBinding, Keymap, Keystroke, LayoutId, Menu, MenuItem, OwnedMenu, PathPromptOptions, Pixels,
+    Platform, PlatformDisplay, Point, PromptBuilder, PromptHandle, PromptLevel, Render,
+    RenderablePromptHandle, Reservation, ScreenCaptureSource, SharedString, SubscriberSet,
+    Subscription, SvgRenderer, Task, TextSystem, Window, WindowAppearance, WindowHandle, WindowId,
+    WindowInvalidator,
 };
 
 mod async_context;
@@ -1513,15 +1513,15 @@ impl App {
     pub fn set_prompt_builder(
         &mut self,
         renderer: impl Fn(
-            PromptLevel,
-            &str,
-            Option<&str>,
-            &[&str],
-            PromptHandle,
-            &mut Window,
-            &mut App,
-        ) -> RenderablePromptHandle
-        + 'static,
+                PromptLevel,
+                &str,
+                Option<&str>,
+                &[&str],
+                PromptHandle,
+                &mut Window,
+                &mut App,
+            ) -> RenderablePromptHandle
+            + 'static,
     ) {
         self.prompt_builder = Some(PromptBuilder::Custom(Box::new(renderer)))
     }

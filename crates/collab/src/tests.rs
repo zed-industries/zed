@@ -20,9 +20,9 @@ mod randomized_test_helpers;
 mod remote_editing_collaboration_tests;
 mod test_server;
 
-use language::{Language, LanguageConfig, LanguageMatcher, tree_sitter_rust};
+use language::{tree_sitter_rust, Language, LanguageConfig, LanguageMatcher};
 pub use randomized_test_helpers::{
-    RandomizedTest, TestError, UserTestPlan, run_randomized_test, save_randomized_test_plan,
+    run_randomized_test, save_randomized_test_plan, RandomizedTest, TestError, UserTestPlan,
 };
 pub use test_server::{TestClient, TestServer};
 

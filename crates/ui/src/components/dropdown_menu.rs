@@ -1,6 +1,6 @@
 use gpui::{ClickEvent, Corner, CursorStyle, Entity, MouseButton};
 
-use crate::{ContextMenu, PopoverMenu, prelude::*};
+use crate::{prelude::*, ContextMenu, PopoverMenu};
 
 #[derive(IntoElement)]
 pub struct DropdownMenu {

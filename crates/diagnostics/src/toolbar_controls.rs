@@ -2,7 +2,7 @@ use crate::ProjectDiagnosticsEditor;
 use gpui::{Context, Entity, EventEmitter, ParentElement, Render, WeakEntity, Window};
 use ui::prelude::*;
 use ui::{IconButton, IconButtonShape, IconName, Tooltip};
-use workspace::{ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView, item::ItemHandle};
+use workspace::{item::ItemHandle, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView};
 
 pub struct ToolbarControls {
     editor: Option<WeakEntity<ProjectDiagnosticsEditor>>,

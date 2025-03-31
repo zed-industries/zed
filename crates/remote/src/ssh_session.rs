@@ -1,21 +1,20 @@
 use crate::{
     json_log::LogRecord,
     protocol::{
-        MESSAGE_LEN_SIZE, MessageId, message_len_from_buffer, read_message_with_len, write_message,
+        message_len_from_buffer, read_message_with_len, write_message, MessageId, MESSAGE_LEN_SIZE,
     },
     proxy::ProxyLaunchError,
 };
-use anyhow::{Context as _, Result, anyhow};
+use anyhow::{anyhow, Context as _, Result};
 use async_trait::async_trait;
 use collections::HashMap;
 use futures::{
-    AsyncReadExt as _, Future, FutureExt as _, StreamExt as _,
     channel::{
         mpsc::{self, Sender, UnboundedReceiver, UnboundedSender},
         oneshot,
     },
     future::{BoxFuture, Shared},
-    select, select_biased,
+    select, select_biased, AsyncReadExt as _, Future, FutureExt as _, StreamExt as _,
 };
 use gpui::{
     App, AppContext as _, AsyncApp, BorrowAppContext, Context, Entity, EventEmitter, Global,
@@ -26,9 +25,9 @@ use parking_lot::Mutex;
 use paths;
 use release_channel::{AppCommitSha, AppVersion, ReleaseChannel};
 use rpc::{
+    proto::{self, build_typed_envelope, Envelope, EnvelopedMessage, PeerId, RequestMessage},
     AnyProtoClient, EntityMessageSubscriber, ErrorExt, ProtoClient, ProtoMessageHandlerSet,
     RpcError,
-    proto::{self, Envelope, EnvelopedMessage, PeerId, RequestMessage, build_typed_envelope},
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -43,8 +42,8 @@ use std::{
     ops::ControlFlow,
     path::{Path, PathBuf},
     sync::{
-        Arc, Weak,
         atomic::{AtomicU32, AtomicU64, Ordering::SeqCst},
+        Arc, Weak,
     },
     time::{Duration, Instant},
 };
@@ -1292,7 +1291,7 @@ trait RemoteConnection: Send + Sync {
         cx: &mut AsyncApp,
     ) -> Task<Result<i32>>;
     fn upload_directory(&self, src_path: PathBuf, dest_path: PathBuf, cx: &App)
-    -> Task<Result<()>>;
+        -> Task<Result<()>>;
     async fn kill(&self) -> Result<()>;
     fn has_been_killed(&self) -> bool;
     fn ssh_args(&self) -> Vec<String>;
@@ -2372,12 +2371,11 @@ mod fake {
     use anyhow::Result;
     use async_trait::async_trait;
     use futures::{
-        FutureExt, SinkExt, StreamExt,
         channel::{
             mpsc::{self, Sender},
             oneshot,
         },
-        select_biased,
+        select_biased, FutureExt, SinkExt, StreamExt,
     };
     use gpui::{App, AppContext as _, AsyncApp, SemanticVersion, Task, TestAppContext};
     use release_channel::ReleaseChannel;

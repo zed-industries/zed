@@ -1,10 +1,10 @@
 use gpui::{
-    AnyElement, App, BoxShadow, IntoElement, ParentElement, RenderOnce, Styled, Window, div, hsla,
-    point, px,
+    div, hsla, point, px, AnyElement, App, BoxShadow, IntoElement, ParentElement, RenderOnce,
+    Styled, Window,
 };
 use theme::ActiveTheme;
 
-use crate::{ElevationIndex, h_flex};
+use crate::{h_flex, ElevationIndex};
 
 use super::ButtonLike;
 

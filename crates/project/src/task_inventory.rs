@@ -13,13 +13,13 @@ use collections::{HashMap, HashSet, VecDeque};
 use gpui::{App, AppContext as _, Entity, SharedString, Task};
 use itertools::Itertools;
 use language::{ContextProvider, File, Language, LanguageToolchainStore, Location};
-use settings::{InvalidSettingsError, TaskKind, parse_json_with_comments};
+use settings::{parse_json_with_comments, InvalidSettingsError, TaskKind};
 use task::{
     DebugTaskDefinition, ResolvedTask, TaskContext, TaskId, TaskTemplate, TaskTemplates,
     TaskVariables, VariableName,
 };
 use text::{Point, ToPoint};
-use util::{NumericPrefixWithSuffix, ResultExt as _, paths::PathExt as _, post_inc};
+use util::{paths::PathExt as _, post_inc, NumericPrefixWithSuffix, ResultExt as _};
 use worktree::WorktreeId;
 
 use crate::{task_store::TaskSettingsLocation, worktree_store::WorktreeStore};

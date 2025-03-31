@@ -3,13 +3,13 @@ use fuzzy::{StringMatch, StringMatchCandidate};
 
 use core::cmp;
 use gpui::{
-    App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, InteractiveElement,
-    IntoElement, ParentElement, Render, SharedString, Styled, Subscription, Task, WeakEntity,
-    Window, rems,
+    rems, App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
+    InteractiveElement, IntoElement, ParentElement, Render, SharedString, Styled, Subscription,
+    Task, WeakEntity, Window,
 };
 use picker::{Picker, PickerDelegate};
 use std::sync::Arc;
-use ui::{HighlightedLabel, ListItem, ListItemSpacing, prelude::*};
+use ui::{prelude::*, HighlightedLabel, ListItem, ListItemSpacing};
 use util::ResultExt;
 use workspace::{ModalView, Workspace};
 

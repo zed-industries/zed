@@ -1,8 +1,8 @@
-use anyhow::{Context as _, Result, anyhow};
+use anyhow::{anyhow, Context as _, Result};
 use collections::BTreeMap;
 use credentials_provider::CredentialsProvider;
 use editor::{Editor, EditorElement, EditorStyle};
-use futures::{FutureExt, StreamExt, future::BoxFuture};
+use futures::{future::BoxFuture, FutureExt, StreamExt};
 use gpui::{
     AnyView, App, AsyncApp, Context, Entity, FontStyle, Subscription, Task, TextStyle, WhiteSpace,
 };
@@ -20,10 +20,10 @@ use settings::{Settings, SettingsStore};
 use std::sync::Arc;
 use strum::IntoEnumIterator;
 use theme::ThemeSettings;
-use ui::{Icon, IconName, List, Tooltip, prelude::*};
+use ui::{prelude::*, Icon, IconName, List, Tooltip};
 use util::ResultExt;
 
-use crate::{AllLanguageModelSettings, ui::InstructionListItem};
+use crate::{ui::InstructionListItem, AllLanguageModelSettings};
 
 const PROVIDER_ID: &str = "mistral";
 const PROVIDER_NAME: &str = "Mistral";

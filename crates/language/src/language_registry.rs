@@ -1,18 +1,17 @@
 use crate::{
-    CachedLspAdapter, File, Language, LanguageConfig, LanguageId, LanguageMatcher,
-    LanguageServerName, LspAdapter, PLAIN_TEXT, ToolchainLister,
     language_settings::{
-        AllLanguageSettingsContent, LanguageSettingsContent, all_language_settings,
+        all_language_settings, AllLanguageSettingsContent, LanguageSettingsContent,
     },
     task_context::ContextProvider,
-    with_parser,
+    with_parser, CachedLspAdapter, File, Language, LanguageConfig, LanguageId, LanguageMatcher,
+    LanguageServerName, LspAdapter, ToolchainLister, PLAIN_TEXT,
 };
-use anyhow::{Context as _, Result, anyhow};
-use collections::{HashMap, HashSet, hash_map};
+use anyhow::{anyhow, Context as _, Result};
+use collections::{hash_map, HashMap, HashSet};
 
 use futures::{
-    Future,
     channel::{mpsc, oneshot},
+    Future,
 };
 use globset::GlobSet;
 use gpui::{App, BackgroundExecutor, SharedString};
@@ -32,7 +31,7 @@ use sum_tree::Bias;
 use text::{Point, Rope};
 use theme::Theme;
 use unicase::UniCase;
-use util::{ResultExt, maybe, post_inc};
+use util::{maybe, post_inc, ResultExt};
 
 #[derive(
     Debug, Clone, Hash, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, JsonSchema,

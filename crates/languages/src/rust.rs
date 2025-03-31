@@ -1,11 +1,11 @@
-use anyhow::{Context as _, Result, anyhow};
+use anyhow::{anyhow, Context as _, Result};
 use async_compression::futures::bufread::GzipDecoder;
 use async_trait::async_trait;
 use collections::HashMap;
-use futures::{StreamExt, io::BufReader};
+use futures::{io::BufReader, StreamExt};
 use gpui::{App, AsyncApp, SharedString, Task};
 use http_client::github::AssetKind;
-use http_client::github::{GitHubLspBinaryVersion, latest_github_release};
+use http_client::github::{latest_github_release, GitHubLspBinaryVersion};
 pub use language::*;
 use lsp::LanguageServerBinary;
 use regex::Regex;
@@ -18,7 +18,7 @@ use std::{
     sync::{Arc, LazyLock},
 };
 use task::{TaskTemplate, TaskTemplates, TaskType, TaskVariables, VariableName};
-use util::{ResultExt, fs::remove_matching, maybe};
+use util::{fs::remove_matching, maybe, ResultExt};
 
 use crate::language_settings::language_settings;
 

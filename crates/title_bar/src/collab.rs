@@ -1,12 +1,12 @@
 use std::sync::Arc;
 
 use call::{ActiveCall, ParticipantLocation, Room};
-use client::{User, proto::PeerId};
-use gpui::{AnyElement, Hsla, IntoElement, MouseButton, Path, Styled, canvas, point};
-use gpui::{App, Task, Window, actions};
+use client::{proto::PeerId, User};
+use gpui::{actions, App, Task, Window};
+use gpui::{canvas, point, AnyElement, Hsla, IntoElement, MouseButton, Path, Styled};
 use rpc::proto::{self};
 use theme::ActiveTheme;
-use ui::{Avatar, AvatarAudioStatusIndicator, Facepile, TintColor, Tooltip, prelude::*};
+use ui::{prelude::*, Avatar, AvatarAudioStatusIndicator, Facepile, TintColor, Tooltip};
 use workspace::notifications::DetachAndPromptErr;
 
 use crate::TitleBar;

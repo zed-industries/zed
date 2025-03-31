@@ -1,30 +1,30 @@
 use crate::{
+    editor_settings::SeedQuerySetting,
+    persistence::{SerializedEditor, DB},
+    scroll::ScrollAnchor,
     Anchor, Autoscroll, Editor, EditorEvent, EditorSettings, ExcerptId, ExcerptRange, FormatTarget,
     MultiBuffer, MultiBufferSnapshot, NavigationData, SearchWithinRange, ToPoint as _,
-    editor_settings::SeedQuerySetting,
-    persistence::{DB, SerializedEditor},
-    scroll::ScrollAnchor,
 };
-use anyhow::{Context as _, Result, anyhow};
+use anyhow::{anyhow, Context as _, Result};
 use clock::Global;
 use collections::{HashMap, HashSet};
 use file_icons::FileIcons;
 use futures::future::try_join_all;
 use git::status::GitSummary;
 use gpui::{
-    AnyElement, App, AsyncWindowContext, Context, Entity, EntityId, EventEmitter, IntoElement,
-    ParentElement, Pixels, SharedString, Styled, Task, WeakEntity, Window, point,
+    point, AnyElement, App, AsyncWindowContext, Context, Entity, EntityId, EventEmitter,
+    IntoElement, ParentElement, Pixels, SharedString, Styled, Task, WeakEntity, Window,
 };
 use language::{
-    Bias, Buffer, CharKind, DiskState, Point, SelectionGoal,
-    proto::serialize_anchor as serialize_text_anchor,
+    proto::serialize_anchor as serialize_text_anchor, Bias, Buffer, CharKind, DiskState, Point,
+    SelectionGoal,
 };
 use lsp::DiagnosticSeverity;
 use project::{
-    Project, ProjectEntryId, ProjectItem as _, ProjectPath, lsp_store::FormatTrigger,
-    project_settings::ProjectSettings, search::SearchQuery,
+    lsp_store::FormatTrigger, project_settings::ProjectSettings, search::SearchQuery, Project,
+    ProjectEntryId, ProjectItem as _, ProjectPath,
 };
-use rpc::proto::{self, PeerId, update_view};
+use rpc::proto::{self, update_view, PeerId};
 use settings::Settings;
 use std::{
     any::TypeId,
@@ -38,21 +38,21 @@ use std::{
 };
 use text::{BufferId, Selection};
 use theme::{Theme, ThemeSettings};
-use ui::{IconDecorationKind, prelude::*};
-use util::{ResultExt, TryFutureExt, paths::PathExt};
+use ui::{prelude::*, IconDecorationKind};
+use util::{paths::PathExt, ResultExt, TryFutureExt};
 use workspace::{
-    ItemId, ItemNavHistory, ToolbarItemLocation, ViewId, Workspace, WorkspaceId,
-    item::{FollowableItem, Item, ItemEvent, ProjectItem},
-    searchable::{Direction, SearchEvent, SearchableItem, SearchableItemHandle},
-};
-use workspace::{
-    OpenOptions,
-    item::{Dedup, ItemSettings, SerializableItem, TabContentParams},
-};
-use workspace::{
-    OpenVisible, Pane, WorkspaceSettings,
     item::{BreadcrumbText, FollowEvent, ProjectItemKind},
     searchable::SearchOptions,
+    OpenVisible, Pane, WorkspaceSettings,
+};
+use workspace::{
+    item::{Dedup, ItemSettings, SerializableItem, TabContentParams},
+    OpenOptions,
+};
+use workspace::{
+    item::{FollowableItem, Item, ItemEvent, ProjectItem},
+    searchable::{Direction, SearchEvent, SearchableItem, SearchableItemHandle},
+    ItemId, ItemNavHistory, ToolbarItemLocation, ViewId, Workspace, WorkspaceId,
 };
 
 pub const MAX_TAB_TITLE_LEN: usize = 24;

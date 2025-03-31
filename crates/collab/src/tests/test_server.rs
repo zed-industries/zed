@@ -1,22 +1,22 @@
 use crate::{
-    AppState, Config, RateLimiter,
-    db::{NewUserParams, UserId, tests::TestDb},
+    db::{tests::TestDb, NewUserParams, UserId},
     executor::Executor,
-    rpc::{CLEANUP_TIMEOUT, Principal, RECONNECT_TIMEOUT, Server, ZedVersion},
+    rpc::{Principal, Server, ZedVersion, CLEANUP_TIMEOUT, RECONNECT_TIMEOUT},
+    AppState, Config, RateLimiter,
 };
 use anyhow::anyhow;
 use call::ActiveCall;
 use channel::{ChannelBuffer, ChannelStore};
 use client::{
-    self, ChannelId, Client, Connection, Credentials, EstablishConnectionError, UserStore,
-    proto::PeerId,
+    self, proto::PeerId, ChannelId, Client, Connection, Credentials, EstablishConnectionError,
+    UserStore,
 };
 use clock::FakeSystemClock;
 use collab_ui::channel_view::ChannelView;
 use collections::{HashMap, HashSet};
 use dap::DapRegistry;
 use fs::FakeFs;
-use futures::{StreamExt as _, channel::oneshot};
+use futures::{channel::oneshot, StreamExt as _};
 use git::GitHostingProviderRegistry;
 use gpui::{AppContext as _, BackgroundExecutor, Entity, Task, TestAppContext, VisualTestContext};
 use http_client::FakeHttpClient;
@@ -27,8 +27,8 @@ use parking_lot::Mutex;
 use project::{Project, WorktreeId};
 use remote::SshRemoteClient;
 use rpc::{
-    RECEIVE_TIMEOUT,
     proto::{self, ChannelRole},
+    RECEIVE_TIMEOUT,
 };
 use semantic_version::SemanticVersion;
 use serde_json::json;
@@ -40,8 +40,8 @@ use std::{
     ops::{Deref, DerefMut},
     path::Path,
     sync::{
-        Arc,
         atomic::{AtomicBool, AtomicUsize, Ordering::SeqCst},
+        Arc,
     },
 };
 use util::path;

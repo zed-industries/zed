@@ -1,6 +1,6 @@
 use gpui::{
-    App, AppContext as _, Context, Entity, HighlightStyle, InteractiveText, IntoElement,
-    ParentElement, Render, Styled, StyledText, Window, div, green, red,
+    div, green, red, App, AppContext as _, Context, Entity, HighlightStyle, InteractiveText,
+    IntoElement, ParentElement, Render, Styled, StyledText, Window,
 };
 use indoc::indoc;
 use story::*;

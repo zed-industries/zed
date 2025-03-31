@@ -6,13 +6,12 @@ pub mod ips_file;
 pub mod slack;
 
 use crate::{
-    AppState, Error, Result, auth,
+    auth,
     db::{User, UserId},
-    rpc,
+    rpc, AppState, Error, Result,
 };
 use anyhow::anyhow;
 use axum::{
-    Extension, Json, Router,
     body::Body,
     extract::{Path, Query},
     headers::Header,
@@ -20,6 +19,7 @@ use axum::{
     middleware::{self, Next},
     response::IntoResponse,
     routing::{get, post},
+    Extension, Json, Router,
 };
 use axum_extra::response::ErasedJson;
 use serde::{Deserialize, Serialize};

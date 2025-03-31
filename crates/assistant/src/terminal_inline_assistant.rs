@@ -1,27 +1,27 @@
 use crate::{AssistantPanel, AssistantPanelEvent, DEFAULT_CONTEXT_LINES};
 use anyhow::{Context as _, Result};
-use assistant_context_editor::{RequestType, humanize_token_count};
+use assistant_context_editor::{humanize_token_count, RequestType};
 use assistant_settings::AssistantSettings;
 use client::telemetry::Telemetry;
 use collections::{HashMap, VecDeque};
 use editor::{
-    Editor, EditorElement, EditorEvent, EditorMode, EditorStyle, MultiBuffer,
     actions::{MoveDown, MoveUp, SelectAll},
+    Editor, EditorElement, EditorEvent, EditorMode, EditorStyle, MultiBuffer,
 };
 use fs::Fs;
-use futures::{SinkExt, StreamExt, channel::mpsc};
+use futures::{channel::mpsc, SinkExt, StreamExt};
 use gpui::{
     App, Context, Entity, EventEmitter, FocusHandle, Focusable, Global, Subscription, Task,
     TextStyle, UpdateGlobal, WeakEntity,
 };
 use language::Buffer;
 use language_model::{
-    LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage, Role,
-    report_assistant_event,
+    report_assistant_event, LanguageModelRegistry, LanguageModelRequest,
+    LanguageModelRequestMessage, Role,
 };
 use language_model_selector::{LanguageModelSelector, LanguageModelSelectorPopoverMenu};
 use prompt_store::PromptBuilder;
-use settings::{Settings, update_settings_file};
+use settings::{update_settings_file, Settings};
 use std::{
     cmp,
     sync::Arc,
@@ -31,9 +31,9 @@ use telemetry_events::{AssistantEvent, AssistantKind, AssistantPhase};
 use terminal::Terminal;
 use terminal_view::TerminalView;
 use theme::ThemeSettings;
-use ui::{IconButtonShape, Tooltip, prelude::*, text_for_action};
+use ui::{prelude::*, text_for_action, IconButtonShape, Tooltip};
 use util::ResultExt;
-use workspace::{Toast, Workspace, notifications::NotificationId};
+use workspace::{notifications::NotificationId, Toast, Workspace};
 
 pub fn init(
     fs: Arc<dyn Fs>,

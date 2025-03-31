@@ -1,7 +1,7 @@
 use gpui::AnyElement;
 use smallvec::SmallVec;
 
-use crate::{Label, ListHeader, prelude::*, v_flex};
+use crate::{prelude::*, v_flex, Label, ListHeader};
 
 pub enum EmptyMessage {
     Text(SharedString),

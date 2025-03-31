@@ -17,7 +17,7 @@
 use std::path::Path;
 use std::sync::Arc;
 
-use anyhow::{Result, bail};
+use anyhow::{bail, Result};
 use collections::HashMap;
 use command_palette_hooks::CommandPaletteFilter;
 use gpui::{AsyncApp, Context, Entity, EventEmitter, Subscription, Task, WeakEntity};
@@ -30,9 +30,8 @@ use util::ResultExt as _;
 use crate::{ContextServerSettings, ServerConfig};
 
 use crate::{
-    CONTEXT_SERVERS_NAMESPACE, ContextServerFactoryRegistry,
     client::{self, Client},
-    types,
+    types, ContextServerFactoryRegistry, CONTEXT_SERVERS_NAMESPACE,
 };
 
 pub struct ContextServer {

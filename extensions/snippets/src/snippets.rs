@@ -1,7 +1,7 @@
 use serde_json::json;
 use std::fs;
 use zed::LanguageServerId;
-use zed_extension_api::{self as zed, Result, settings::LspSettings};
+use zed_extension_api::{self as zed, settings::LspSettings, Result};
 
 struct SnippetExtension {
     cached_binary_path: Option<String>,

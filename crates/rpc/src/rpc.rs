@@ -11,7 +11,7 @@ pub use extension::*;
 pub use llm::*;
 pub use notification::*;
 pub use peer::*;
-pub use proto::{Receipt, TypedEnvelope, error::*};
+pub use proto::{error::*, Receipt, TypedEnvelope};
 mod macros;
 
 #[cfg(feature = "gpui")]

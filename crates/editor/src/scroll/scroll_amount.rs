@@ -1,5 +1,5 @@
 use serde::Deserialize;
-use ui::{Pixels, px};
+use ui::{px, Pixels};
 
 #[derive(Debug)]
 pub enum ScrollDirection {

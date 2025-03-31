@@ -1,20 +1,20 @@
 use crate::session::DebugSession;
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
 use collections::HashMap;
 use command_palette_hooks::CommandPaletteFilter;
 use dap::{
-    ContinuedEvent, LoadedSourceEvent, ModuleEvent, OutputEvent, StoppedEvent, ThreadEvent,
-    client::SessionId, debugger_settings::DebuggerSettings,
+    client::SessionId, debugger_settings::DebuggerSettings, ContinuedEvent, LoadedSourceEvent,
+    ModuleEvent, OutputEvent, StoppedEvent, ThreadEvent,
 };
-use futures::{SinkExt as _, channel::mpsc};
+use futures::{channel::mpsc, SinkExt as _};
 use gpui::{
-    Action, App, AsyncWindowContext, Context, Entity, EventEmitter, FocusHandle, Focusable,
-    Subscription, Task, WeakEntity, actions,
+    actions, Action, App, AsyncWindowContext, Context, Entity, EventEmitter, FocusHandle,
+    Focusable, Subscription, Task, WeakEntity,
 };
 use project::{
-    Project,
     debugger::dap_store::{self, DapStore},
     terminals::TerminalKind,
+    Project,
 };
 use rpc::proto::{self};
 use settings::Settings;
@@ -24,10 +24,9 @@ use terminal_view::terminal_panel::TerminalPanel;
 use ui::prelude::*;
 use util::ResultExt;
 use workspace::{
-    ClearAllBreakpoints, Continue, Disconnect, Pane, Pause, Restart, StepBack, StepInto, StepOut,
-    StepOver, Stop, ToggleIgnoreBreakpoints, Workspace,
     dock::{DockPosition, Panel, PanelEvent},
-    pane,
+    pane, ClearAllBreakpoints, Continue, Disconnect, Pane, Pause, Restart, StepBack, StepInto,
+    StepOut, StepOver, Stop, ToggleIgnoreBreakpoints, Workspace,
 };
 
 pub enum DebugPanelEvent {

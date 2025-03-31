@@ -1,27 +1,27 @@
 use super::{
-    Connection,
     proto::{
         self, AnyTypedEnvelope, EnvelopedMessage, MessageStream, PeerId, Receipt, RequestMessage,
         TypedEnvelope,
     },
+    Connection,
 };
-use anyhow::{Context as _, Result, anyhow};
+use anyhow::{anyhow, Context as _, Result};
 use collections::HashMap;
 use futures::{
-    FutureExt, SinkExt, Stream, StreamExt, TryFutureExt,
     channel::{mpsc, oneshot},
     stream::BoxStream,
+    FutureExt, SinkExt, Stream, StreamExt, TryFutureExt,
 };
 use parking_lot::{Mutex, RwLock};
 use proto::{ErrorCode, ErrorCodeExt, ErrorExt, RpcError};
-use serde::{Serialize, ser::SerializeStruct};
+use serde::{ser::SerializeStruct, Serialize};
 use std::{
     fmt, future,
     future::Future,
     sync::atomic::Ordering::SeqCst,
     sync::{
-        Arc,
         atomic::{self, AtomicU32},
+        Arc,
     },
     time::Duration,
     time::Instant,
@@ -1030,12 +1030,10 @@ mod tests {
 
         let _ = io_ended_rx.await;
         let _ = messages_ended_rx.await;
-        assert!(
-            server_conn
-                .send(WebSocketMessage::Binary(vec![]))
-                .await
-                .is_err()
-        );
+        assert!(server_conn
+            .send(WebSocketMessage::Binary(vec![]))
+            .await
+            .is_err());
     }
 
     #[gpui::test(iterations = 50)]

@@ -1,6 +1,6 @@
 use super::{SerializedAxis, SerializedWindowBounds};
 use crate::{
-    Member, Pane, PaneAxis, SerializableItemRegistry, Workspace, WorkspaceId, item::ItemHandle,
+    item::ItemHandle, Member, Pane, PaneAxis, SerializableItemRegistry, Workspace, WorkspaceId,
 };
 use anyhow::{Context as _, Result};
 use async_recursion::async_recursion;
@@ -10,7 +10,7 @@ use db::sqlez::{
 };
 use gpui::{AsyncWindowContext, Entity, WeakEntity};
 use itertools::Itertools as _;
-use project::{Project, debugger::breakpoint_store::SourceBreakpoint};
+use project::{debugger::breakpoint_store::SourceBreakpoint, Project};
 use remote::ssh_session::SshProjectId;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -18,7 +18,7 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
-use util::{ResultExt, paths::SanitizedPath};
+use util::{paths::SanitizedPath, ResultExt};
 use uuid::Uuid;
 
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]

@@ -1,35 +1,34 @@
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
-    AnyElement, BackgroundExecutor, Entity, Focusable, FontWeight, ListSizingBehavior,
-    ScrollStrategy, SharedString, Size, StrikethroughStyle, StyledText, UniformListScrollHandle,
-    div, px, uniform_list,
+    div, px, uniform_list, AnyElement, BackgroundExecutor, Entity, Focusable, FontWeight,
+    ListSizingBehavior, ScrollStrategy, SharedString, Size, StrikethroughStyle, StyledText,
+    UniformListScrollHandle,
 };
 use language::Buffer;
 use language::CodeLabel;
 use markdown::Markdown;
 use multi_buffer::{Anchor, ExcerptId};
 use ordered_float::OrderedFloat;
-use project::CompletionSource;
 use project::lsp_store::CompletionDocumentation;
+use project::CompletionSource;
 use project::{CodeAction, Completion, TaskSourceKind};
 
 use std::{
     cell::RefCell,
-    cmp::{Reverse, min},
+    cmp::{min, Reverse},
     iter,
     ops::Range,
     rc::Rc,
 };
 use task::ResolvedTask;
-use ui::{Color, IntoElement, ListItem, Pixels, Popover, Styled, prelude::*};
+use ui::{prelude::*, Color, IntoElement, ListItem, Pixels, Popover, Styled};
 use util::ResultExt;
 
 use crate::hover_popover::{hover_markdown_style, open_markdown_url};
 use crate::{
-    CodeActionProvider, CompletionId, CompletionProvider, DisplayRow, Editor, EditorStyle,
-    ResolvedTasks,
     actions::{ConfirmCodeAction, ConfirmCompletion},
-    split_words, styled_runs_for_code_label,
+    split_words, styled_runs_for_code_label, CodeActionProvider, CompletionId, CompletionProvider,
+    DisplayRow, Editor, EditorStyle, ResolvedTasks,
 };
 
 pub const MENU_GAP: Pixels = px(4.);

@@ -1,4 +1,4 @@
-use anyhow::{Context as _, Result, anyhow};
+use anyhow::{anyhow, Context as _, Result};
 use collections::HashMap;
 use gpui::{Context, Entity, Window};
 use multi_buffer::{MultiBuffer, ToOffset};

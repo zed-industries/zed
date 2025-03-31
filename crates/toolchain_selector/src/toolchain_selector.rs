@@ -2,16 +2,16 @@ mod active_toolchain;
 
 pub use active_toolchain::ActiveToolchain;
 use editor::Editor;
-use fuzzy::{StringMatch, StringMatchCandidate, match_strings};
+use fuzzy::{match_strings, StringMatch, StringMatchCandidate};
 use gpui::{
-    App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, ParentElement,
-    Render, Styled, Task, WeakEntity, Window, actions,
+    actions, App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
+    ParentElement, Render, Styled, Task, WeakEntity, Window,
 };
 use language::{LanguageName, Toolchain, ToolchainList};
 use picker::{Picker, PickerDelegate};
 use project::{Project, WorktreeId};
 use std::{path::Path, sync::Arc};
-use ui::{HighlightedLabel, ListItem, ListItemSpacing, prelude::*};
+use ui::{prelude::*, HighlightedLabel, ListItem, ListItemSpacing};
 use util::ResultExt;
 use workspace::{ModalView, Workspace};
 

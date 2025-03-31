@@ -1,4 +1,4 @@
-use language::{Language, with_parser, with_query_cursor};
+use language::{with_parser, with_query_cursor, Language};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
@@ -203,7 +203,7 @@ fn chunk_text_with_syntactic_ranges(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use language::{Language, LanguageConfig, LanguageMatcher, tree_sitter_rust};
+    use language::{tree_sitter_rust, Language, LanguageConfig, LanguageMatcher};
     use unindent::Unindent as _;
 
     #[test]

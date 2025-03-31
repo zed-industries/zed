@@ -4,12 +4,13 @@ use crate::{FontFallbacks, FontFeatures};
 use cocoa::appkit::CGFloat;
 use core_foundation::{
     array::{
-        CFArray, CFArrayAppendArray, CFArrayAppendValue, CFArrayCreateMutable, CFArrayGetCount,
-        CFArrayGetValueAtIndex, CFArrayRef, CFMutableArrayRef, kCFTypeArrayCallBacks,
+        kCFTypeArrayCallBacks, CFArray, CFArrayAppendArray, CFArrayAppendValue,
+        CFArrayCreateMutable, CFArrayGetCount, CFArrayGetValueAtIndex, CFArrayRef,
+        CFMutableArrayRef,
     },
-    base::{CFRelease, TCFType, kCFAllocatorDefault},
+    base::{kCFAllocatorDefault, CFRelease, TCFType},
     dictionary::{
-        CFDictionaryCreate, kCFTypeDictionaryKeyCallBacks, kCFTypeDictionaryValueCallBacks,
+        kCFTypeDictionaryKeyCallBacks, kCFTypeDictionaryValueCallBacks, CFDictionaryCreate,
     },
     number::CFNumber,
     string::{CFString, CFStringRef},
@@ -17,11 +18,12 @@ use core_foundation::{
 use core_foundation_sys::locale::CFLocaleCopyPreferredLanguages;
 use core_graphics::{display::CFDictionary, geometry::CGAffineTransform};
 use core_text::{
-    font::{CTFont, CTFontRef, cascade_list_for_languages},
+    font::{cascade_list_for_languages, CTFont, CTFontRef},
     font_descriptor::{
-        CTFontDescriptor, CTFontDescriptorCopyAttributes, CTFontDescriptorCreateCopyWithFeature,
+        kCTFontCascadeListAttribute, kCTFontFeatureSettingsAttribute, CTFontDescriptor,
+        CTFontDescriptorCopyAttributes, CTFontDescriptorCreateCopyWithFeature,
         CTFontDescriptorCreateWithAttributes, CTFontDescriptorCreateWithNameAndSize,
-        CTFontDescriptorRef, kCTFontCascadeListAttribute, kCTFontFeatureSettingsAttribute,
+        CTFontDescriptorRef,
     },
 };
 use font_kit::font::Font as FontKitFont;

@@ -3,13 +3,13 @@ use std::path::Path;
 use collections::HashSet;
 use feature_flags::FeatureFlagAppExt;
 use gpui::{
-    App, Empty, Entity, EventEmitter, FocusHandle, Focusable, Global, ListAlignment, ListState,
-    SharedString, Subscription, Window, actions, list, prelude::*,
+    actions, list, prelude::*, App, Empty, Entity, EventEmitter, FocusHandle, Focusable, Global,
+    ListAlignment, ListState, SharedString, Subscription, Window,
 };
 use release_channel::ReleaseChannel;
 use settings::Settings;
 use ui::prelude::*;
-use workspace::{Item, Workspace, WorkspaceId, item::ItemEvent};
+use workspace::{item::ItemEvent, Item, Workspace, WorkspaceId};
 
 use super::edit_action::EditAction;
 

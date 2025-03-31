@@ -1,5 +1,5 @@
 use gpui::{
-    FontStyle, FontWeight, HighlightStyle, SharedString, StrikethroughStyle, UnderlineStyle, px,
+    px, FontStyle, FontWeight, HighlightStyle, SharedString, StrikethroughStyle, UnderlineStyle,
 };
 use language::HighlightId;
 use std::{fmt::Display, ops::Range, path::PathBuf};

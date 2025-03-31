@@ -6,8 +6,8 @@ use gpui::{
     WeakEntity, Window,
 };
 use language::Diagnostic;
-use ui::{Button, ButtonLike, Color, Icon, IconName, Label, Tooltip, h_flex, prelude::*};
-use workspace::{StatusItemView, ToolbarItemEvent, Workspace, item::ItemHandle};
+use ui::{h_flex, prelude::*, Button, ButtonLike, Color, Icon, IconName, Label, Tooltip};
+use workspace::{item::ItemHandle, StatusItemView, ToolbarItemEvent, Workspace};
 
 use crate::{Deploy, ProjectDiagnosticsEditor};
 

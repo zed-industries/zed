@@ -1,16 +1,16 @@
 use fs::Fs;
-use fuzzy::{StringMatch, StringMatchCandidate, match_strings};
+use fuzzy::{match_strings, StringMatch, StringMatchCandidate};
 use gpui::{
     App, Context, DismissEvent, Entity, EventEmitter, Focusable, Render, UpdateGlobal, WeakEntity,
     Window,
 };
 use picker::{Picker, PickerDelegate};
-use settings::{Settings as _, SettingsStore, update_settings_file};
+use settings::{update_settings_file, Settings as _, SettingsStore};
 use std::sync::Arc;
 use theme::{Appearance, IconTheme, ThemeMeta, ThemeRegistry, ThemeSettings};
-use ui::{ListItem, ListItemSpacing, prelude::*, v_flex};
+use ui::{prelude::*, v_flex, ListItem, ListItemSpacing};
 use util::ResultExt;
-use workspace::{ModalView, ui::HighlightedLabel};
+use workspace::{ui::HighlightedLabel, ModalView};
 use zed_actions::{ExtensionCategoryFilter, Extensions};
 
 pub(crate) struct IconThemeSelector {

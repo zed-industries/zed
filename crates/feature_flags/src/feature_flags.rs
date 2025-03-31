@@ -1,5 +1,5 @@
 use futures::channel::oneshot;
-use futures::{FutureExt, select_biased};
+use futures::{select_biased, FutureExt};
 use gpui::{App, Context, Global, Subscription, Task, Window};
 use std::cell::RefCell;
 use std::rc::Rc;

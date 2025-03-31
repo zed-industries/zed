@@ -37,12 +37,12 @@ use std::time::Duration;
 
 use editor::{Editor, MultiBuffer};
 use gpui::{
-    Animation, AnimationExt, AnyElement, ClipboardItem, Entity, Render, Transformation, WeakEntity,
-    percentage,
+    percentage, Animation, AnimationExt, AnyElement, ClipboardItem, Entity, Render, Transformation,
+    WeakEntity,
 };
 use language::Buffer;
 use runtimelib::{ExecutionState, JupyterMessageContent, MimeBundle, MimeType};
-use ui::{Context, IntoElement, Styled, Tooltip, Window, div, prelude::*, v_flex};
+use ui::{div, prelude::*, v_flex, Context, IntoElement, Styled, Tooltip, Window};
 
 mod image;
 use image::ImageView;

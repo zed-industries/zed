@@ -1,4 +1,4 @@
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
 use assistant_slash_command::{
     ArgumentCompletion, SlashCommand, SlashCommandOutput, SlashCommandOutputSection,
     SlashCommandResult,
@@ -14,11 +14,11 @@ use rope::Point;
 use std::{
     fmt::Write,
     path::{Path, PathBuf},
-    sync::{Arc, atomic::AtomicBool},
+    sync::{atomic::AtomicBool, Arc},
 };
 use ui::prelude::*;
-use util::ResultExt;
 use util::paths::PathMatcher;
+use util::ResultExt;
 use workspace::Workspace;
 
 use crate::create_label_for_command;

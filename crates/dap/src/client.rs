@@ -2,12 +2,12 @@ use crate::{
     adapters::{DebugAdapterBinary, DebugAdapterName},
     transport::{IoKind, LogKind, TransportDelegate},
 };
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
 use dap_types::{
     messages::{Message, Response},
     requests::Request,
 };
-use futures::{FutureExt as _, channel::oneshot, select};
+use futures::{channel::oneshot, select, FutureExt as _};
 use gpui::{AppContext, AsyncApp, BackgroundExecutor};
 use smol::channel::{Receiver, Sender};
 use std::{
@@ -281,17 +281,17 @@ mod tests {
     use super::*;
     use crate::{client::DebugAdapterClient, debugger_settings::DebuggerSettings};
     use dap_types::{
-        Capabilities, InitializeRequestArguments, InitializeRequestArgumentsPathFormat,
-        RunInTerminalRequestArguments,
         messages::Events,
         requests::{Initialize, Request, RunInTerminal},
+        Capabilities, InitializeRequestArguments, InitializeRequestArgumentsPathFormat,
+        RunInTerminalRequestArguments,
     };
     use gpui::TestAppContext;
     use serde_json::json;
     use settings::{Settings, SettingsStore};
     use std::sync::{
-        Arc,
         atomic::{AtomicBool, Ordering},
+        Arc,
     };
 
     pub fn init_test(cx: &mut gpui::TestAppContext) {

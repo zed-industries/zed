@@ -1,6 +1,6 @@
-use gpui::{Context, Element, Entity, Render, Subscription, WeakEntity, Window, div};
+use gpui::{div, Context, Element, Entity, Render, Subscription, WeakEntity, Window};
 use ui::text_for_keystrokes;
-use workspace::{StatusItemView, item::ItemHandle, ui::prelude::*};
+use workspace::{item::ItemHandle, ui::prelude::*, StatusItemView};
 
 use crate::{Vim, VimEvent, VimGlobals};
 

@@ -22,12 +22,12 @@ mod visual;
 use anyhow::Result;
 use collections::HashMap;
 use editor::{
-    Anchor, Bias, Editor, EditorEvent, EditorMode, EditorSettings, ToPoint,
     movement::{self, FindRange},
+    Anchor, Bias, Editor, EditorEvent, EditorMode, EditorSettings, ToPoint,
 };
 use gpui::{
-    Action, App, AppContext, Axis, Context, Entity, EventEmitter, KeyContext, KeystrokeEvent,
-    Render, Subscription, Task, WeakEntity, Window, actions, impl_actions,
+    actions, impl_actions, Action, App, AppContext, Axis, Context, Entity, EventEmitter,
+    KeyContext, KeystrokeEvent, Render, Subscription, Task, WeakEntity, Window,
 };
 use insert::{NormalBefore, TemporaryNormal};
 use language::{CharKind, CursorShape, Point, Selection, SelectionGoal, TransactionId};
@@ -38,12 +38,12 @@ use object::Object;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use serde_derive::Serialize;
-use settings::{Settings, SettingsSources, SettingsStore, update_settings_file};
+use settings::{update_settings_file, Settings, SettingsSources, SettingsStore};
 use state::{Mode, Operator, RecordedSelection, SearchState, VimGlobals};
 use std::{mem, ops::Range, sync::Arc};
 use surrounds::SurroundsType;
 use theme::ThemeSettings;
-use ui::{IntoElement, SharedString, px};
+use ui::{px, IntoElement, SharedString};
 use vim_mode_setting::VimModeSetting;
 use workspace::{self, Pane, Workspace};
 

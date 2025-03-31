@@ -1,6 +1,6 @@
 use std::{path::PathBuf, str::FromStr, sync::Arc};
 
-use anyhow::{Result, bail};
+use anyhow::{bail, Result};
 
 use async_trait::async_trait;
 use collections::BTreeMap;
@@ -9,13 +9,13 @@ use gpui::{
 };
 use language::{LanguageName, LanguageRegistry, LanguageToolchainStore, Toolchain, ToolchainList};
 use rpc::{
-    AnyProtoClient, TypedEnvelope,
     proto::{self, FromProto, ToProto},
+    AnyProtoClient, TypedEnvelope,
 };
 use settings::WorktreeId;
 use util::ResultExt as _;
 
-use crate::{ProjectEnvironment, worktree_store::WorktreeStore};
+use crate::{worktree_store::WorktreeStore, ProjectEnvironment};
 
 pub struct ToolchainStore(ToolchainStoreInner);
 enum ToolchainStoreInner {

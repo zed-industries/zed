@@ -1,10 +1,10 @@
 use anyhow::anyhow;
 use gpui::{
-    AnyElement, Empty, Entity, FocusHandle, Focusable, ListState, Subscription, WeakEntity, list,
+    list, AnyElement, Empty, Entity, FocusHandle, Focusable, ListState, Subscription, WeakEntity,
 };
 use project::{
-    ProjectItem as _, ProjectPath,
     debugger::session::{Session, SessionEvent},
+    ProjectItem as _, ProjectPath,
 };
 use std::{path::Path, sync::Arc};
 use ui::prelude::*;

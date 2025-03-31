@@ -1,10 +1,10 @@
 use crate::{
-    Vim,
     motion::{self, Motion},
     object::Object,
     state::Mode,
+    Vim,
 };
-use editor::{Bias, movement, scroll::Autoscroll};
+use editor::{movement, scroll::Autoscroll, Bias};
 use gpui::{Context, Window};
 use language::BracketPair;
 
@@ -544,7 +544,7 @@ mod test {
     use gpui::KeyBinding;
     use indoc::indoc;
 
-    use crate::{PushAddSurrounds, state::Mode, test::VimTestContext};
+    use crate::{state::Mode, test::VimTestContext, PushAddSurrounds};
 
     #[gpui::test]
     async fn test_add_surrounds(cx: &mut gpui::TestAppContext) {

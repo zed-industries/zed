@@ -1,4 +1,4 @@
-use gpui::{Div, div};
+use gpui::{div, Div};
 
 use crate::StyledExt;
 

@@ -1,16 +1,16 @@
 use crate::{AudioStream, Participant, RemoteTrack, RoomEvent, TrackPublication};
 
 use crate::mock_client::{participant::*, publication::*, track::*};
-use anyhow::{Context as _, Result, anyhow};
+use anyhow::{anyhow, Context as _, Result};
 use async_trait::async_trait;
-use collections::{BTreeMap, HashMap, HashSet, btree_map::Entry as BTreeEntry, hash_map::Entry};
+use collections::{btree_map::Entry as BTreeEntry, hash_map::Entry, BTreeMap, HashMap, HashSet};
 use gpui::{App, AsyncApp, BackgroundExecutor};
 use livekit_api::{proto, token};
 use parking_lot::Mutex;
 use postage::{mpsc, sink::Sink};
 use std::sync::{
-    Arc, Weak,
     atomic::{AtomicBool, Ordering::SeqCst},
+    Arc, Weak,
 };
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq, PartialOrd, Ord)]

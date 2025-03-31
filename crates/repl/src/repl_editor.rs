@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use anyhow::{Context as _, Result};
 use editor::Editor;
-use gpui::{App, Entity, WeakEntity, Window, prelude::*};
+use gpui::{prelude::*, App, Entity, WeakEntity, Window};
 use language::{BufferSnapshot, Language, LanguageName, Point};
 use project::{ProjectItem as _, WorktreeId};
 

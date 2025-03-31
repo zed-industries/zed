@@ -15,8 +15,8 @@ use std::{
 };
 use task::{Shell, ShellBuilder, SpawnInTerminal};
 use terminal::{
-    TaskState, TaskStatus, Terminal, TerminalBuilder,
     terminal_settings::{self, TerminalSettings, VenvSettings},
+    TaskState, TaskStatus, Terminal, TerminalBuilder,
 };
 use util::ResultExt;
 

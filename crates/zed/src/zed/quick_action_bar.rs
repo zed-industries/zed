@@ -12,15 +12,15 @@ use gpui::{
     Action, ClickEvent, Context, Corner, ElementId, Entity, EventEmitter, FocusHandle, Focusable,
     InteractiveElement, ParentElement, Render, Styled, Subscription, WeakEntity, Window,
 };
-use search::{BufferSearchBar, buffer_search};
+use search::{buffer_search, BufferSearchBar};
 use settings::{Settings, SettingsStore};
 use ui::{
-    ButtonStyle, ContextMenu, ContextMenuEntry, IconButton, IconButtonShape, IconName, IconSize,
-    PopoverMenu, PopoverMenuHandle, Tooltip, prelude::*,
+    prelude::*, ButtonStyle, ContextMenu, ContextMenuEntry, IconButton, IconButtonShape, IconName,
+    IconSize, PopoverMenu, PopoverMenuHandle, Tooltip,
 };
 use vim_mode_setting::VimModeSetting;
 use workspace::{
-    ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView, Workspace, item::ItemHandle,
+    item::ItemHandle, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView, Workspace,
 };
 use zed_actions::{assistant::InlineAssist, outline::ToggleOutline};
 

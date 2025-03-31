@@ -1,9 +1,9 @@
 use std::sync::Arc;
 
 use collections::HashMap;
-use gpui::{AnyView, App, EventEmitter, FocusHandle, Focusable, Subscription, canvas};
+use gpui::{canvas, AnyView, App, EventEmitter, FocusHandle, Focusable, Subscription};
 use language_model::{LanguageModelProvider, LanguageModelProviderId, LanguageModelRegistry};
-use ui::{ElevationIndex, prelude::*};
+use ui::{prelude::*, ElevationIndex};
 use workspace::Item;
 
 pub struct ConfigurationView {

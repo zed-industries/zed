@@ -1,4 +1,4 @@
-use gpui::{Entity, Render, prelude::*};
+use gpui::{prelude::*, Entity, Render};
 use story::Story;
 use strum::IntoEnumIterator;
 use ui::prelude::*;

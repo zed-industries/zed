@@ -2,12 +2,12 @@ use std::sync::Arc;
 
 use assistant_settings::{AgentProfile, AssistantSettings};
 use fs::Fs;
-use gpui::{Action, Entity, FocusHandle, Subscription, WeakEntity, prelude::*};
+use gpui::{prelude::*, Action, Entity, FocusHandle, Subscription, WeakEntity};
 use indexmap::IndexMap;
-use settings::{Settings as _, SettingsStore, update_settings_file};
+use settings::{update_settings_file, Settings as _, SettingsStore};
 use ui::{
-    ButtonLike, ContextMenu, ContextMenuEntry, KeyBinding, PopoverMenu, PopoverMenuHandle,
-    prelude::*,
+    prelude::*, ButtonLike, ContextMenu, ContextMenuEntry, KeyBinding, PopoverMenu,
+    PopoverMenuHandle,
 };
 use util::ResultExt as _;
 

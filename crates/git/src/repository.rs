@@ -1,9 +1,9 @@
 use crate::status::GitStatus;
 use crate::{Oid, SHORT_SHA_LENGTH};
-use anyhow::{Context as _, Result, anyhow};
+use anyhow::{anyhow, Context as _, Result};
 use collections::HashMap;
 use futures::future::BoxFuture;
-use futures::{AsyncWriteExt, FutureExt as _, select_biased};
+use futures::{select_biased, AsyncWriteExt, FutureExt as _};
 use git2::BranchType;
 use gpui::{AsyncApp, BackgroundExecutor, SharedString};
 use parking_lot::Mutex;
@@ -23,8 +23,8 @@ use std::{
 };
 use sum_tree::MapSeekTarget;
 use thiserror::Error;
-use util::ResultExt;
 use util::command::{new_smol_command, new_std_command};
+use util::ResultExt;
 use uuid::Uuid;
 
 pub use askpass::{AskPassDelegate, AskPassResult, AskPassSession};
@@ -1843,19 +1843,16 @@ mod tests {
             .unwrap();
         let checkpoint2 = repo.checkpoint().await.unwrap();
 
-        assert!(
-            !repo
-                .compare_checkpoints(checkpoint1, checkpoint2.clone())
-                .await
-                .unwrap()
-        );
+        assert!(!repo
+            .compare_checkpoints(checkpoint1, checkpoint2.clone())
+            .await
+            .unwrap());
 
         let checkpoint3 = repo.checkpoint().await.unwrap();
-        assert!(
-            repo.compare_checkpoints(checkpoint2, checkpoint3)
-                .await
-                .unwrap()
-        );
+        assert!(repo
+            .compare_checkpoints(checkpoint2, checkpoint3)
+            .await
+            .unwrap());
     }
 
     #[test]

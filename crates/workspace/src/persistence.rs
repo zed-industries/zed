@@ -8,10 +8,10 @@ use std::{
     sync::Arc,
 };
 
-use anyhow::{Context, Result, anyhow, bail};
+use anyhow::{anyhow, bail, Context, Result};
 use client::DevServerProjectId;
 use db::{define_connection, query, sqlez::connection::Connection, sqlez_macros::sql};
-use gpui::{Axis, Bounds, WindowBounds, WindowId, point, size};
+use gpui::{point, size, Axis, Bounds, WindowBounds, WindowId};
 use itertools::Itertools;
 use project::debugger::breakpoint_store::{BreakpointState, SourceBreakpoint};
 
@@ -24,7 +24,7 @@ use sqlez::{
 };
 
 use ui::px;
-use util::{ResultExt, maybe};
+use util::{maybe, ResultExt};
 use uuid::Uuid;
 
 use crate::WorkspaceId;
@@ -259,7 +259,7 @@ impl sqlez::bindable::Bind for SerializedPixels {
         statement: &sqlez::statement::Statement,
         start_index: i32,
     ) -> anyhow::Result<i32> {
-        let this: i32 = self.0.0 as i32;
+        let this: i32 = self.0 .0 as i32;
         this.bind(statement, start_index)
     }
 }

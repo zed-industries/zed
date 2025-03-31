@@ -9,7 +9,7 @@ pub mod types;
 
 use command_palette_hooks::CommandPaletteFilter;
 pub use context_server_settings::{ContextServerSettings, ServerCommand, ServerConfig};
-use gpui::{App, actions};
+use gpui::{actions, App};
 
 pub use crate::context_server_tool::ContextServerTool;
 pub use crate::registry::ContextServerFactoryRegistry;

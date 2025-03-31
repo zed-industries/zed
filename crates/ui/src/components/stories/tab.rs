@@ -3,7 +3,7 @@ use std::cmp::Ordering;
 use gpui::Render;
 use story::Story;
 
-use crate::{IconButtonShape, TabPosition, prelude::*};
+use crate::{prelude::*, IconButtonShape, TabPosition};
 use crate::{Indicator, Tab};
 
 pub struct TabStory;

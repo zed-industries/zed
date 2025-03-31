@@ -3,11 +3,11 @@ pub mod log;
 
 use crate::replace::{replace_exact, replace_with_flexible_indent};
 use crate::schema::json_schema_for;
-use anyhow::{Context, Result, anyhow};
+use anyhow::{anyhow, Context, Result};
 use assistant_tool::{ActionLog, Tool};
 use collections::HashSet;
 use edit_action::{EditAction, EditActionParser};
-use futures::{SinkExt, StreamExt, channel::mpsc};
+use futures::{channel::mpsc, SinkExt, StreamExt};
 use gpui::{App, AppContext, AsyncApp, Entity, Task};
 use language_model::LanguageModelToolSchemaFormat;
 use language_model::{

@@ -3,7 +3,7 @@ use std::ops::{Deref, DerefMut};
 use std::sync::LazyLock;
 
 use collections::HashMap;
-use gpui::{AnyElement, App, IntoElement, RenderOnce, SharedString, Window, div, prelude::*, px};
+use gpui::{div, prelude::*, px, AnyElement, App, IntoElement, RenderOnce, SharedString, Window};
 use linkme::distributed_slice;
 use parking_lot::RwLock;
 use theme::ActiveTheme;

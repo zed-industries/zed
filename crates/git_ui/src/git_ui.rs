@@ -8,7 +8,7 @@ use git::{
     status::{FileStatus, StatusCode, UnmergedStatus, UnmergedStatusCode},
 };
 use git_panel_settings::GitPanelSettings;
-use gpui::{App, FocusHandle, actions};
+use gpui::{actions, App, FocusHandle};
 use onboarding::GitOnboardingModal;
 use project_diff::ProjectDiff;
 use ui::prelude::*;
@@ -165,9 +165,9 @@ fn render_remote_button(
 mod remote_button {
     use gpui::{Action, AnyView, ClickEvent, Corner, FocusHandle};
     use ui::{
-        App, ButtonCommon, Clickable, ContextMenu, ElementId, FluentBuilder, Icon, IconName,
-        IconSize, IntoElement, Label, LabelCommon, LabelSize, LineHeightStyle, ParentElement,
-        PopoverMenu, SharedString, SplitButton, Styled, Tooltip, Window, div, h_flex, rems,
+        div, h_flex, rems, App, ButtonCommon, Clickable, ContextMenu, ElementId, FluentBuilder,
+        Icon, IconName, IconSize, IntoElement, Label, LabelCommon, LabelSize, LineHeightStyle,
+        ParentElement, PopoverMenu, SharedString, SplitButton, Styled, Tooltip, Window,
     };
 
     pub fn render_fetch_button(

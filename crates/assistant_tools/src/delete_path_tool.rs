@@ -1,7 +1,7 @@
 use crate::schema::json_schema_for;
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
 use assistant_tool::{ActionLog, Tool};
-use futures::{SinkExt, StreamExt, channel::mpsc};
+use futures::{channel::mpsc, SinkExt, StreamExt};
 use gpui::{App, AppContext, Entity, Task};
 use language_model::{LanguageModelRequestMessage, LanguageModelToolSchemaFormat};
 use project::{Project, ProjectPath};

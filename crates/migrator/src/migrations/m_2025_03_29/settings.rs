@@ -1,8 +1,8 @@
 use std::ops::Range;
 use tree_sitter::{Query, QueryMatch};
 
-use crate::MigrationPatterns;
 use crate::patterns::SETTINGS_ROOT_KEY_VALUE_PATTERN;
+use crate::MigrationPatterns;
 
 pub const SETTINGS_PATTERNS: MigrationPatterns = &[
     (SETTINGS_ROOT_KEY_VALUE_PATTERN, replace_setting_name),

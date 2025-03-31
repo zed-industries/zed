@@ -1,6 +1,6 @@
 #![allow(missing_docs)]
 
-use gpui::{Hsla, hsla};
+use gpui::{hsla, Hsla};
 
 #[derive(Clone, PartialEq)]
 pub struct SystemColors {

@@ -3,7 +3,7 @@
 #[path = "../wit/since_v0.2.0/settings.rs"]
 mod types;
 
-use crate::{Project, Result, SettingsLocation, Worktree, wit};
+use crate::{wit, Project, Result, SettingsLocation, Worktree};
 use serde_json;
 pub use types::*;
 

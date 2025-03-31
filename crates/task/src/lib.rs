@@ -6,7 +6,7 @@ pub mod static_source;
 mod task_template;
 mod vscode_format;
 
-use collections::{HashMap, HashSet, hash_map};
+use collections::{hash_map, HashMap, HashSet};
 use gpui::SharedString;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};

@@ -1,4 +1,4 @@
-use gpui::{App, actions};
+use gpui::{actions, App};
 use workspace::Workspace;
 
 pub mod markdown_elements;

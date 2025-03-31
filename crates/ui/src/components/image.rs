@@ -1,7 +1,7 @@
-use gpui::{App, IntoElement, Rems, RenderOnce, Size, Styled, Window, svg};
+use gpui::{svg, App, IntoElement, Rems, RenderOnce, Size, Styled, Window};
 use serde::{Deserialize, Serialize};
 use strum::{EnumIter, EnumString, IntoStaticStr};
-use ui_macros::{DerivePathStr, path_str};
+use ui_macros::{path_str, DerivePathStr};
 
 use crate::Color;
 

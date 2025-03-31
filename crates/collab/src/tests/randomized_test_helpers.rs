@@ -9,7 +9,7 @@ use gpui::{BackgroundExecutor, Task, TestAppContext};
 use parking_lot::Mutex;
 use rand::prelude::*;
 use rpc::RECEIVE_TIMEOUT;
-use serde::{Deserialize, Serialize, de::DeserializeOwned};
+use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use settings::SettingsStore;
 use std::sync::OnceLock;
 use std::{
@@ -17,8 +17,8 @@ use std::{
     path::PathBuf,
     rc::Rc,
     sync::{
-        Arc,
         atomic::{AtomicBool, Ordering::SeqCst},
+        Arc,
     },
 };
 

@@ -1,7 +1,7 @@
 use gpui::{
-    App, Application, Bounds, Context, DisplayId, Hsla, Pixels, SharedString, Size, Window,
-    WindowBackgroundAppearance, WindowBounds, WindowKind, WindowOptions, div, point, prelude::*,
-    px, rgb,
+    div, point, prelude::*, px, rgb, App, Application, Bounds, Context, DisplayId, Hsla, Pixels,
+    SharedString, Size, Window, WindowBackgroundAppearance, WindowBounds, WindowKind,
+    WindowOptions,
 };
 
 struct WindowContent {

@@ -17,9 +17,9 @@ use sqlez::thread_safe_connection::ThreadSafeConnection;
 use sqlez_macros::sql;
 use std::future::Future;
 use std::path::Path;
-use std::sync::{LazyLock, atomic::Ordering};
+use std::sync::{atomic::Ordering, LazyLock};
 use std::{env, sync::atomic::AtomicBool};
-use util::{ResultExt, maybe};
+use util::{maybe, ResultExt};
 
 const CONNECTION_INITIALIZE_QUERY: &str = sql!(
     PRAGMA foreign_keys=TRUE;

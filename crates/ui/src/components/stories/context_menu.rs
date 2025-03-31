@@ -1,8 +1,8 @@
-use gpui::{Corner, Entity, Render, actions};
+use gpui::{actions, Corner, Entity, Render};
 use story::Story;
 
 use crate::prelude::*;
-use crate::{ContextMenu, Label, right_click_menu};
+use crate::{right_click_menu, ContextMenu, Label};
 
 actions!(context_menu, [PrintCurrentDate, PrintBestFood]);
 

@@ -6,15 +6,15 @@ use anyhow::{Context as _, Result};
 use client::proto::ViewId;
 use collections::HashMap;
 use feature_flags::{FeatureFlagAppExt as _, NotebookFeatureFlag};
-use futures::FutureExt;
 use futures::future::Shared;
+use futures::FutureExt;
 use gpui::{
-    AnyElement, App, Entity, EventEmitter, FocusHandle, Focusable, ListScrollEvent, ListState,
-    Point, Task, actions, list, prelude::*,
+    actions, list, prelude::*, AnyElement, App, Entity, EventEmitter, FocusHandle, Focusable,
+    ListScrollEvent, ListState, Point, Task,
 };
 use language::{Language, LanguageRegistry};
 use project::{Project, ProjectEntryId, ProjectPath};
-use ui::{Tooltip, prelude::*};
+use ui::{prelude::*, Tooltip};
 use workspace::item::{ItemEvent, TabContentParams};
 use workspace::searchable::SearchableItemHandle;
 use workspace::{Item, ItemHandle, Pane, ProjectItem, ToolbarItemLocation};

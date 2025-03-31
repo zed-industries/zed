@@ -1,5 +1,5 @@
 use gpui::AnyElement;
-use ui::{Indicator, ListItem, prelude::*};
+use ui::{prelude::*, Indicator, ListItem};
 
 use crate::KernelSpecification;
 

@@ -1,15 +1,15 @@
 mod prompts;
 
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
 use chrono::{DateTime, Utc};
 use collections::HashMap;
-use futures::FutureExt as _;
 use futures::future::{self, BoxFuture, Shared};
+use futures::FutureExt as _;
 use fuzzy::StringMatchCandidate;
 use gpui::{App, BackgroundExecutor, Global, ReadGlobal, SharedString, Task};
 use heed::{
-    Database, RoTxn,
     types::{SerdeBincode, SerdeJson, Str},
+    Database, RoTxn,
 };
 use parking_lot::RwLock;
 pub use prompts::*;
@@ -19,7 +19,7 @@ use std::{
     cmp::Reverse,
     future::Future,
     path::PathBuf,
-    sync::{Arc, atomic::AtomicBool},
+    sync::{atomic::AtomicBool, Arc},
 };
 use text::LineEnding;
 use util::ResultExt;

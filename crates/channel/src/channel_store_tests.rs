@@ -1,7 +1,7 @@
 use crate::channel_chat::ChannelChatEvent;
 
 use super::*;
-use client::{Client, UserStore, test::FakeServer};
+use client::{test::FakeServer, Client, UserStore};
 use clock::FakeSystemClock;
 use gpui::{App, AppContext as _, Entity, SemanticVersion, TestAppContext};
 use http_client::FakeHttpClient;

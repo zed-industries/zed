@@ -1,10 +1,10 @@
 use assistant_context_editor::SavedContextMetadata;
 use gpui::{
-    App, Entity, FocusHandle, Focusable, ScrollStrategy, UniformListScrollHandle, WeakEntity,
-    uniform_list,
+    uniform_list, App, Entity, FocusHandle, Focusable, ScrollStrategy, UniformListScrollHandle,
+    WeakEntity,
 };
 use time::{OffsetDateTime, UtcOffset};
-use ui::{IconButtonShape, ListItem, ListItemSpacing, Tooltip, prelude::*};
+use ui::{prelude::*, IconButtonShape, ListItem, ListItemSpacing, Tooltip};
 
 use crate::history_store::{HistoryEntry, HistoryStore};
 use crate::thread_store::SerializedThreadMetadata;

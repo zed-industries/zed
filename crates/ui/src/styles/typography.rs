@@ -1,12 +1,12 @@
 use crate::prelude::*;
 use gpui::{
-    AnyElement, App, IntoElement, ParentElement, Rems, RenderOnce, SharedString, Styled, Window,
-    div, rems,
+    div, rems, AnyElement, App, IntoElement, ParentElement, Rems, RenderOnce, SharedString, Styled,
+    Window,
 };
 use settings::Settings;
 use theme::{ActiveTheme, ThemeSettings};
 
-use crate::{Color, rems_from_px};
+use crate::{rems_from_px, Color};
 
 /// Extends [`gpui::Styled`] with typography-related styling methods.
 pub trait StyledTypography: Styled + Sized {

@@ -2,8 +2,8 @@ use crate::command::command_interceptor;
 use crate::motion::MotionKind;
 use crate::normal::repeat::Replayer;
 use crate::surrounds::SurroundsType;
-use crate::{ToggleMarksView, ToggleRegistersView, UseSystemClipboard, Vim, VimAddon, VimSettings};
 use crate::{motion::Motion, object::Object};
+use crate::{ToggleMarksView, ToggleRegistersView, UseSystemClipboard, Vim, VimAddon, VimSettings};
 use anyhow::Result;
 use collections::HashMap;
 use command_palette_hooks::{CommandPaletteFilter, CommandPaletteInterceptor};
@@ -28,8 +28,8 @@ use std::{fmt::Display, ops::Range, sync::Arc};
 use text::{Bias, ToPoint};
 use theme::ThemeSettings;
 use ui::{
-    ActiveTheme, Context, Div, FluentBuilder, KeyBinding, ParentElement, SharedString, Styled,
-    StyledTypography, Window, h_flex, rems,
+    h_flex, rems, ActiveTheme, Context, Div, FluentBuilder, KeyBinding, ParentElement,
+    SharedString, Styled, StyledTypography, Window,
 };
 use util::ResultExt;
 use workspace::searchable::Direction;

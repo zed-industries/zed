@@ -1,4 +1,4 @@
-use gpui::{Rgba, WindowAppearance, prelude::*};
+use gpui::{prelude::*, Rgba, WindowAppearance};
 
 use ui::prelude::*;
 

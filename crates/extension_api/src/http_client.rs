@@ -1,7 +1,7 @@
 //! An HTTP client.
 
 pub use crate::wit::zed::extension::http_client::{
-    HttpMethod, HttpRequest, HttpResponse, HttpResponseStream, RedirectPolicy, fetch, fetch_stream,
+    fetch, fetch_stream, HttpMethod, HttpRequest, HttpResponse, HttpResponseStream, RedirectPolicy,
 };
 
 impl HttpRequest {

@@ -1,8 +1,8 @@
-use anyhow::{Context as _, Result, anyhow};
+use anyhow::{anyhow, Context as _, Result};
 use collections::BTreeMap;
 use credentials_provider::CredentialsProvider;
 use editor::{Editor, EditorElement, EditorStyle};
-use futures::{FutureExt, Stream, StreamExt, future::BoxFuture};
+use futures::{future::BoxFuture, FutureExt, Stream, StreamExt};
 use google_ai::{FunctionDeclaration, GenerateContentResponse, Part, UsageMetadata};
 use gpui::{
     AnyView, App, AsyncApp, Context, Entity, FontStyle, Subscription, Task, TextStyle, WhiteSpace,
@@ -24,11 +24,11 @@ use std::pin::Pin;
 use std::sync::Arc;
 use strum::IntoEnumIterator;
 use theme::ThemeSettings;
-use ui::{Icon, IconName, List, Tooltip, prelude::*};
+use ui::{prelude::*, Icon, IconName, List, Tooltip};
 use util::ResultExt;
 
-use crate::AllLanguageModelSettings;
 use crate::ui::InstructionListItem;
+use crate::AllLanguageModelSettings;
 
 const PROVIDER_ID: &str = "google";
 const PROVIDER_NAME: &str = "Google AI";

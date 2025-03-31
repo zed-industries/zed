@@ -8,8 +8,8 @@ use collab_ui::{
 };
 use editor::{Editor, ExcerptRange, MultiBuffer};
 use gpui::{
-    AppContext as _, BackgroundExecutor, BorrowAppContext, Entity, SharedString, TestAppContext,
-    VisualTestContext, point,
+    point, AppContext as _, BackgroundExecutor, BorrowAppContext, Entity, SharedString,
+    TestAppContext, VisualTestContext,
 };
 use language::Capability;
 use project::WorktreeSettings;
@@ -17,7 +17,7 @@ use rpc::proto::PeerId;
 use serde_json::json;
 use settings::SettingsStore;
 use util::path;
-use workspace::{SplitDirection, Workspace, item::ItemHandle as _};
+use workspace::{item::ItemHandle as _, SplitDirection, Workspace};
 
 use super::TestClient;
 
@@ -441,7 +441,7 @@ async fn test_basic_following(
         use crate::rpc::RECONNECT_TIMEOUT;
         use gpui::TestScreenCaptureSource;
         use workspace::{
-            dock::{DockPosition, test::TestPanel},
+            dock::{test::TestPanel, DockPosition},
             item::test::TestItem,
             shared_screen::SharedScreen,
         };

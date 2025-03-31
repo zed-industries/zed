@@ -4,13 +4,13 @@ use std::sync::Arc;
 use client::ExtensionMetadata;
 use extension_host::{ExtensionSettings, ExtensionStore};
 use fs::Fs;
-use fuzzy::{StringMatch, StringMatchCandidate, match_strings};
-use gpui::{App, DismissEvent, Entity, EventEmitter, Focusable, Task, WeakEntity, prelude::*};
+use fuzzy::{match_strings, StringMatch, StringMatchCandidate};
+use gpui::{prelude::*, App, DismissEvent, Entity, EventEmitter, Focusable, Task, WeakEntity};
 use picker::{Picker, PickerDelegate};
 use release_channel::ReleaseChannel;
 use semantic_version::SemanticVersion;
 use settings::update_settings_file;
-use ui::{HighlightedLabel, ListItem, ListItemSpacing, prelude::*};
+use ui::{prelude::*, HighlightedLabel, ListItem, ListItemSpacing};
 use util::ResultExt;
 use workspace::ModalView;
 

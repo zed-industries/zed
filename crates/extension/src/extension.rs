@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use ::lsp::LanguageServerName;
-use anyhow::{Context as _, Result, anyhow, bail};
+use anyhow::{anyhow, bail, Context as _, Result};
 use async_trait::async_trait;
 use fs::normalize_path;
 use gpui::{App, Task};

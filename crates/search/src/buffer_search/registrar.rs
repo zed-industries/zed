@@ -1,4 +1,4 @@
-use gpui::{Action, Context, Div, Entity, InteractiveElement, Window, div};
+use gpui::{div, Action, Context, Div, Entity, InteractiveElement, Window};
 use workspace::Workspace;
 
 use crate::BufferSearchBar;

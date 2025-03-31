@@ -2,7 +2,7 @@
 mod context_tests;
 
 use crate::patch::{AssistantEdit, AssistantPatch, AssistantPatchStatus};
-use anyhow::{Context as _, Result, anyhow};
+use anyhow::{anyhow, Context as _, Result};
 use assistant_slash_command::{
     SlashCommandContent, SlashCommandEvent, SlashCommandLine, SlashCommandOutputSection,
     SlashCommandResult, SlashCommandWorkingSet,
@@ -12,17 +12,17 @@ use client::{self, proto, telemetry::Telemetry};
 use clock::ReplicaId;
 use collections::{HashMap, HashSet};
 use fs::{Fs, RemoveOptions};
-use futures::{FutureExt, StreamExt, future::Shared};
+use futures::{future::Shared, FutureExt, StreamExt};
 use gpui::{
     App, AppContext as _, Context, Entity, EventEmitter, RenderImage, SharedString, Subscription,
     Task,
 };
 use language::{AnchorRangeExt, Bias, Buffer, LanguageRegistry, OffsetRangeExt, Point, ToOffset};
 use language_model::{
-    LanguageModel, LanguageModelCacheConfiguration, LanguageModelCompletionEvent,
-    LanguageModelImage, LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage,
-    LanguageModelToolUseId, MaxMonthlySpendReachedError, MessageContent, PaymentRequiredError,
-    Role, StopReason, report_assistant_event,
+    report_assistant_event, LanguageModel, LanguageModelCacheConfiguration,
+    LanguageModelCompletionEvent, LanguageModelImage, LanguageModelRegistry, LanguageModelRequest,
+    LanguageModelRequestMessage, LanguageModelToolUseId, MaxMonthlySpendReachedError,
+    MessageContent, PaymentRequiredError, Role, StopReason,
 };
 use open_ai::Model as OpenAiModel;
 use paths::contexts_dir;
@@ -31,7 +31,7 @@ use prompt_store::PromptBuilder;
 use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
 use std::{
-    cmp::{Ordering, max},
+    cmp::{max, Ordering},
     fmt::Debug,
     iter, mem,
     ops::Range,
@@ -43,7 +43,7 @@ use std::{
 use telemetry_events::{AssistantEvent, AssistantKind, AssistantPhase};
 use text::{BufferSnapshot, ToPoint};
 use ui::IconName;
-use util::{ResultExt, TryFutureExt, post_inc};
+use util::{post_inc, ResultExt, TryFutureExt};
 use uuid::Uuid;
 
 #[derive(Clone, Eq, PartialEq, Hash, PartialOrd, Ord, Serialize, Deserialize)]

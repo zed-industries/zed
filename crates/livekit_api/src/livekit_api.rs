@@ -1,7 +1,7 @@
 pub mod proto;
 pub mod token;
 
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use prost::Message;
 use reqwest::header::CONTENT_TYPE;

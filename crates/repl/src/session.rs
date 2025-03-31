@@ -2,22 +2,22 @@ use crate::components::KernelListItem;
 use crate::kernels::RemoteRunningKernel;
 use crate::setup_editor_session_actions;
 use crate::{
-    KernelStatus,
     kernels::{Kernel, KernelSpecification, NativeRunningKernel},
     outputs::{ExecutionStatus, ExecutionView},
+    KernelStatus,
 };
 use collections::{HashMap, HashSet};
 use editor::{
-    Anchor, AnchorRangeExt as _, Editor, MultiBuffer, ToPoint,
     display_map::{
         BlockContext, BlockId, BlockPlacement, BlockProperties, BlockStyle, CustomBlockId,
         RenderBlock,
     },
     scroll::Autoscroll,
+    Anchor, AnchorRangeExt as _, Editor, MultiBuffer, ToPoint,
 };
 use futures::FutureExt as _;
 use gpui::{
-    Context, Entity, EventEmitter, Render, Subscription, Task, WeakEntity, Window, div, prelude::*,
+    div, prelude::*, Context, Entity, EventEmitter, Render, Subscription, Task, WeakEntity, Window,
 };
 use language::Point;
 use project::Fs;
@@ -27,7 +27,7 @@ use runtimelib::{
 };
 use std::{env::temp_dir, ops::Range, sync::Arc, time::Duration};
 use theme::ActiveTheme;
-use ui::{IconButtonShape, Tooltip, prelude::*};
+use ui::{prelude::*, IconButtonShape, Tooltip};
 use util::ResultExt as _;
 
 pub struct Session {

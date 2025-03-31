@@ -1,16 +1,16 @@
-use crate::{ChatPanelButton, ChatPanelSettings, collab_panel};
+use crate::{collab_panel, ChatPanelButton, ChatPanelSettings};
 use anyhow::Result;
-use call::{ActiveCall, room};
+use call::{room, ActiveCall};
 use channel::{ChannelChat, ChannelChatEvent, ChannelMessage, ChannelMessageId, ChannelStore};
 use client::{ChannelId, Client};
 use collections::HashMap;
 use db::kvp::KEY_VALUE_STORE;
-use editor::{Editor, actions};
+use editor::{actions, Editor};
 use gpui::{
-    Action, App, AsyncWindowContext, ClipboardItem, Context, CursorStyle, DismissEvent, ElementId,
-    Entity, EventEmitter, FocusHandle, Focusable, FontWeight, HighlightStyle, ListOffset,
-    ListScrollEvent, ListState, Render, Stateful, Subscription, Task, WeakEntity, Window, actions,
-    div, list, prelude::*, px,
+    actions, div, list, prelude::*, px, Action, App, AsyncWindowContext, ClipboardItem, Context,
+    CursorStyle, DismissEvent, ElementId, Entity, EventEmitter, FocusHandle, Focusable, FontWeight,
+    HighlightStyle, ListOffset, ListScrollEvent, ListState, Render, Stateful, Subscription, Task,
+    WeakEntity, Window,
 };
 use language::LanguageRegistry;
 use menu::Confirm;
@@ -22,13 +22,13 @@ use settings::Settings;
 use std::{sync::Arc, time::Duration};
 use time::{OffsetDateTime, UtcOffset};
 use ui::{
-    Avatar, Button, ContextMenu, IconButton, IconName, KeyBinding, Label, PopoverMenu, Tab, TabBar,
-    Tooltip, prelude::*,
+    prelude::*, Avatar, Button, ContextMenu, IconButton, IconName, KeyBinding, Label, PopoverMenu,
+    Tab, TabBar, Tooltip,
 };
 use util::{ResultExt, TryFutureExt};
 use workspace::{
-    Workspace,
     dock::{DockPosition, Panel, PanelEvent},
+    Workspace,
 };
 
 mod message_editor;

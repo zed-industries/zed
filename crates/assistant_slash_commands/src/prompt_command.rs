@@ -1,4 +1,4 @@
-use anyhow::{Context as _, Result, anyhow};
+use anyhow::{anyhow, Context as _, Result};
 use assistant_slash_command::{
     ArgumentCompletion, SlashCommand, SlashCommandOutput, SlashCommandOutputSection,
     SlashCommandResult,
@@ -6,7 +6,7 @@ use assistant_slash_command::{
 use gpui::{Task, WeakEntity};
 use language::{BufferSnapshot, LspAdapterDelegate};
 use prompt_store::PromptStore;
-use std::sync::{Arc, atomic::AtomicBool};
+use std::sync::{atomic::AtomicBool, Arc};
 use ui::prelude::*;
 use workspace::Workspace;
 

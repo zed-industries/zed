@@ -1,9 +1,9 @@
-use super::{Client, Status, TypedEnvelope, proto};
-use anyhow::{Context as _, Result, anyhow};
+use super::{proto, Client, Status, TypedEnvelope};
+use anyhow::{anyhow, Context as _, Result};
 use chrono::{DateTime, Utc};
-use collections::{HashMap, HashSet, hash_map::Entry};
+use collections::{hash_map::Entry, HashMap, HashSet};
 use feature_flags::FeatureFlagAppExt;
-use futures::{Future, StreamExt, channel::mpsc};
+use futures::{channel::mpsc, Future, StreamExt};
 use gpui::{
     App, AsyncApp, Context, Entity, EventEmitter, SharedString, SharedUri, Task, WeakEntity,
 };

@@ -1,4 +1,4 @@
-use zed_extension_api::{self as zed, Result, settings::LspSettings};
+use zed_extension_api::{self as zed, settings::LspSettings, Result};
 
 const PROTOBUF_LANGUAGE_SERVER_NAME: &str = "protobuf-language-server";
 

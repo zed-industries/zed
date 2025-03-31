@@ -3,7 +3,7 @@ use crate::{
     LanguageModelProviderState,
 };
 use collections::BTreeMap;
-use gpui::{App, Context, Entity, EventEmitter, Global, prelude::*};
+use gpui::{prelude::*, App, Context, Entity, EventEmitter, Global};
 use std::sync::Arc;
 
 pub fn init(cx: &mut App) {

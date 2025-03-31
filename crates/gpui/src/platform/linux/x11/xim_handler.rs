@@ -1,6 +1,6 @@
 use std::default::Default;
 
-use x11rb::protocol::{Event, xproto};
+use x11rb::protocol::{xproto, Event};
 use xim::{AHashMap, AttributeName, Client, ClientError, ClientHandler, InputStyle};
 
 pub enum XimCallbackEvent {

@@ -1,5 +1,5 @@
 use crate::ResultExt;
-use anyhow::{Result, bail};
+use anyhow::{bail, Result};
 use async_fs as fs;
 use futures_lite::StreamExt;
 use std::path::{Path, PathBuf};

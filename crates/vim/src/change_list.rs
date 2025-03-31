@@ -1,9 +1,9 @@
 use editor::{
-    Anchor, Bias, Direction, Editor, display_map::ToDisplayPoint, movement, scroll::Autoscroll,
+    display_map::ToDisplayPoint, movement, scroll::Autoscroll, Anchor, Bias, Direction, Editor,
 };
-use gpui::{Context, Window, actions};
+use gpui::{actions, Context, Window};
 
-use crate::{Vim, state::Mode};
+use crate::{state::Mode, Vim};
 
 actions!(vim, [ChangeListOlder, ChangeListNewer]);
 

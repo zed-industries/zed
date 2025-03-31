@@ -9,17 +9,17 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use gpui::{
-    AnyElement, App, BorderStyle, Bounds, ClipboardItem, CursorStyle, DispatchPhase, Edges, Entity,
-    FocusHandle, Focusable, FontStyle, FontWeight, GlobalElementId, Hitbox, Hsla, KeyContext,
-    Length, MouseDownEvent, MouseEvent, MouseMoveEvent, MouseUpEvent, Point, Render, Stateful,
-    StrikethroughStyle, StyleRefinement, StyledText, Task, TextLayout, TextRun, TextStyle,
-    TextStyleRefinement, actions, point, quad,
+    actions, point, quad, AnyElement, App, BorderStyle, Bounds, ClipboardItem, CursorStyle,
+    DispatchPhase, Edges, Entity, FocusHandle, Focusable, FontStyle, FontWeight, GlobalElementId,
+    Hitbox, Hsla, KeyContext, Length, MouseDownEvent, MouseEvent, MouseMoveEvent, MouseUpEvent,
+    Point, Render, Stateful, StrikethroughStyle, StyleRefinement, StyledText, Task, TextLayout,
+    TextRun, TextStyle, TextStyleRefinement,
 };
 use language::{Language, LanguageRegistry, Rope};
-use parser::{MarkdownEvent, MarkdownTag, MarkdownTagEnd, parse_links_only, parse_markdown};
+use parser::{parse_links_only, parse_markdown, MarkdownEvent, MarkdownTag, MarkdownTagEnd};
 use pulldown_cmark::Alignment;
 use theme::SyntaxTheme;
-use ui::{Tooltip, prelude::*};
+use ui::{prelude::*, Tooltip};
 use util::{ResultExt, TryFutureExt};
 
 use crate::parser::CodeBlockKind;
@@ -294,7 +294,11 @@ impl Selection {
     }
 
     fn tail(&self) -> usize {
-        if self.reversed { self.end } else { self.start }
+        if self.reversed {
+            self.end
+        } else {
+            self.start
+        }
     }
 }
 
@@ -531,7 +535,7 @@ impl MarkdownElement {
         window: &mut Window,
         _cx: &mut App,
         mut f: impl 'static
-        + FnMut(&mut Markdown, &T, DispatchPhase, &mut Window, &mut Context<Markdown>),
+            + FnMut(&mut Markdown, &T, DispatchPhase, &mut Window, &mut Context<Markdown>),
     ) {
         window.on_mouse_event({
             let markdown = self.markdown.downgrade();

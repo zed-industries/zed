@@ -18,8 +18,8 @@ pub use keymap_file::{
 };
 pub use settings_file::*;
 pub use settings_store::{
-    InvalidSettingsError, LocalSettingsKind, Settings, SettingsLocation, SettingsSources,
-    SettingsStore, TaskKind, parse_json_with_comments,
+    parse_json_with_comments, InvalidSettingsError, LocalSettingsKind, Settings, SettingsLocation,
+    SettingsSources, SettingsStore, TaskKind,
 };
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug, Hash, PartialOrd, Ord)]

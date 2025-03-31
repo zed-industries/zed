@@ -1,13 +1,13 @@
 use assets::Assets;
-use gpui::{Application, Entity, KeyBinding, StyleRefinement, WindowOptions, prelude::*, rgb};
-use language::{LanguageRegistry, language_settings::AllLanguageSettings};
+use gpui::{prelude::*, rgb, Application, Entity, KeyBinding, StyleRefinement, WindowOptions};
+use language::{language_settings::AllLanguageSettings, LanguageRegistry};
 use markdown::{Markdown, MarkdownStyle};
 use node_runtime::NodeRuntime;
 use settings::SettingsStore;
 use std::sync::Arc;
 use theme::LoadThemes;
 use ui::prelude::*;
-use ui::{App, Window, div};
+use ui::{div, App, Window};
 
 const MARKDOWN_EXAMPLE: &str = r#"
 # Markdown Example Document

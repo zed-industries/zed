@@ -6,10 +6,10 @@ use client::{Client, UserStore};
 use gpui::{App, Entity};
 use std::sync::Arc;
 
-pub use channel_buffer::{ACKNOWLEDGE_DEBOUNCE_INTERVAL, ChannelBuffer, ChannelBufferEvent};
+pub use channel_buffer::{ChannelBuffer, ChannelBufferEvent, ACKNOWLEDGE_DEBOUNCE_INTERVAL};
 pub use channel_chat::{
-    ChannelChat, ChannelChatEvent, ChannelMessage, ChannelMessageId, MessageParams,
-    mentions_to_proto,
+    mentions_to_proto, ChannelChat, ChannelChatEvent, ChannelMessage, ChannelMessageId,
+    MessageParams,
 };
 pub use channel_store::{Channel, ChannelEvent, ChannelMembership, ChannelStore};
 

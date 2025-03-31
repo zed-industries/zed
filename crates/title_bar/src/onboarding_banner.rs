@@ -1,5 +1,5 @@
 use gpui::{Action, Entity, Global, Render, SharedString};
-use ui::{ButtonLike, Tooltip, prelude::*};
+use ui::{prelude::*, ButtonLike, Tooltip};
 use util::ResultExt;
 
 /// Prompts the user to try newly released Zed's features

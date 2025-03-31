@@ -3,9 +3,9 @@ use std::str::FromStr;
 use std::sync::Arc;
 
 use crate::ui::InstructionListItem;
-use anyhow::{Context as _, Result, anyhow};
-use aws_config::Region;
+use anyhow::{anyhow, Context as _, Result};
 use aws_config::stalled_stream_protection::StalledStreamProtectionConfig;
+use aws_config::Region;
 use aws_credential_types::Credentials;
 use aws_http_client::AwsHttpClient;
 use bedrock::bedrock_client::types::{
@@ -13,14 +13,13 @@ use bedrock::bedrock_client::types::{
 };
 use bedrock::bedrock_client::{self, Config};
 use bedrock::{
-    BedrockError, BedrockInnerContent, BedrockMessage, BedrockSpecificTool,
+    value_to_aws_document, BedrockError, BedrockInnerContent, BedrockMessage, BedrockSpecificTool,
     BedrockStreamingResponse, BedrockTool, BedrockToolChoice, BedrockToolInputSchema, Model,
-    value_to_aws_document,
 };
 use collections::{BTreeMap, HashMap};
 use credentials_provider::CredentialsProvider;
 use editor::{Editor, EditorElement, EditorStyle};
-use futures::{FutureExt, Stream, StreamExt, future::BoxFuture, stream::BoxStream};
+use futures::{future::BoxFuture, stream::BoxStream, FutureExt, Stream, StreamExt};
 use gpui::{
     AnyView, App, AsyncApp, Context, Entity, FontStyle, Subscription, Task, TextStyle, WhiteSpace,
 };
@@ -39,8 +38,8 @@ use settings::{Settings, SettingsStore};
 use strum::IntoEnumIterator;
 use theme::ThemeSettings;
 use tokio::runtime::Handle;
-use ui::{Icon, IconName, List, Tooltip, prelude::*};
-use util::{ResultExt, maybe};
+use ui::{prelude::*, Icon, IconName, List, Tooltip};
+use util::{maybe, ResultExt};
 
 use crate::AllLanguageModelSettings;
 

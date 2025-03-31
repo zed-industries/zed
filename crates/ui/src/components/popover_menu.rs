@@ -1,10 +1,10 @@
 use std::{cell::RefCell, rc::Rc};
 
 use gpui::{
-    AnyElement, AnyView, App, Bounds, Corner, DismissEvent, DispatchPhase, Element, ElementId,
-    Entity, Focusable as _, GlobalElementId, HitboxId, InteractiveElement, IntoElement, LayoutId,
-    Length, ManagedView, MouseDownEvent, ParentElement, Pixels, Point, Style, Window, anchored,
-    deferred, div, point, prelude::FluentBuilder, px, size,
+    anchored, deferred, div, point, prelude::FluentBuilder, px, size, AnyElement, AnyView, App,
+    Bounds, Corner, DismissEvent, DispatchPhase, Element, ElementId, Entity, Focusable as _,
+    GlobalElementId, HitboxId, InteractiveElement, IntoElement, LayoutId, Length, ManagedView,
+    MouseDownEvent, ParentElement, Pixels, Point, Style, Window,
 };
 
 use crate::prelude::*;

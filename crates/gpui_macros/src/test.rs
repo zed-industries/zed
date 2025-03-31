@@ -3,8 +3,8 @@ use proc_macro2::Ident;
 use quote::{format_ident, quote};
 use std::mem;
 use syn::{
-    AttributeArgs, FnArg, ItemFn, Lit, Meta, MetaList, NestedMeta, PathSegment, Type, parse_quote,
-    spanned::Spanned,
+    parse_quote, spanned::Spanned, AttributeArgs, FnArg, ItemFn, Lit, Meta, MetaList, NestedMeta,
+    PathSegment, Type,
 };
 
 pub fn test(args: TokenStream, function: TokenStream) -> TokenStream {

@@ -1,14 +1,14 @@
 use crate::{
-    Vim,
     motion::{self, Motion},
     object::Object,
     state::Mode,
+    Vim,
 };
 use editor::{
-    Anchor, Bias, Editor, EditorSnapshot, ToOffset, ToPoint, display_map::ToDisplayPoint,
-    scroll::Autoscroll,
+    display_map::ToDisplayPoint, scroll::Autoscroll, Anchor, Bias, Editor, EditorSnapshot,
+    ToOffset, ToPoint,
 };
-use gpui::{Context, Window, actions};
+use gpui::{actions, Context, Window};
 use language::{Point, SelectionGoal};
 use std::ops::Range;
 use std::sync::Arc;

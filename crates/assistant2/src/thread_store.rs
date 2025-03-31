@@ -2,20 +2,20 @@ use std::borrow::Cow;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
 use assistant_settings::{AgentProfile, AssistantSettings};
 use assistant_tool::{ToolId, ToolSource, ToolWorkingSet};
 use chrono::{DateTime, Utc};
 use collections::HashMap;
 use context_server::manager::ContextServerManager;
 use context_server::{ContextServerFactoryRegistry, ContextServerTool};
-use futures::FutureExt as _;
 use futures::future::{self, BoxFuture, Shared};
+use futures::FutureExt as _;
 use gpui::{
-    App, BackgroundExecutor, Context, Entity, Global, ReadGlobal, SharedString, Task, prelude::*,
+    prelude::*, App, BackgroundExecutor, Context, Entity, Global, ReadGlobal, SharedString, Task,
 };
-use heed::Database;
 use heed::types::SerdeBincode;
+use heed::Database;
 use language_model::{LanguageModelToolUseId, Role, TokenUsage};
 use project::Project;
 use prompt_store::PromptBuilder;

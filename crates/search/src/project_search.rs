@@ -1,27 +1,27 @@
 use crate::{
-    BufferSearchBar, FocusSearch, NextHistoryQuery, PreviousHistoryQuery, ReplaceAll, ReplaceNext,
-    SearchOptions, SelectNextMatch, SelectPreviousMatch, ToggleCaseSensitive, ToggleIncludeIgnored,
-    ToggleRegex, ToggleReplace, ToggleWholeWord, buffer_search::Deploy,
+    buffer_search::Deploy, BufferSearchBar, FocusSearch, NextHistoryQuery, PreviousHistoryQuery,
+    ReplaceAll, ReplaceNext, SearchOptions, SelectNextMatch, SelectPreviousMatch,
+    ToggleCaseSensitive, ToggleIncludeIgnored, ToggleRegex, ToggleReplace, ToggleWholeWord,
 };
 use anyhow::Context as _;
 use collections::{HashMap, HashSet};
 use editor::{
-    Anchor, Editor, EditorElement, EditorEvent, EditorSettings, EditorStyle, MAX_TAB_TITLE_LEN,
-    MultiBuffer, actions::SelectAll, items::active_match_index, scroll::Autoscroll,
+    actions::SelectAll, items::active_match_index, scroll::Autoscroll, Anchor, Editor,
+    EditorElement, EditorEvent, EditorSettings, EditorStyle, MultiBuffer, MAX_TAB_TITLE_LEN,
 };
 use futures::StreamExt;
 use gpui::{
-    Action, AnyElement, AnyView, App, Axis, Context, Entity, EntityId, EventEmitter, FocusHandle,
-    Focusable, Global, Hsla, InteractiveElement, IntoElement, KeyContext, ParentElement, Point,
-    Render, SharedString, Styled, Subscription, Task, TextStyle, UpdateGlobal, WeakEntity, Window,
-    actions, div,
+    actions, div, Action, AnyElement, AnyView, App, Axis, Context, Entity, EntityId, EventEmitter,
+    FocusHandle, Focusable, Global, Hsla, InteractiveElement, IntoElement, KeyContext,
+    ParentElement, Point, Render, SharedString, Styled, Subscription, Task, TextStyle,
+    UpdateGlobal, WeakEntity, Window,
 };
 use language::{Buffer, Language};
 use menu::Confirm;
 use project::{
-    Project, ProjectPath,
     search::{SearchInputKind, SearchQuery},
     search_history::SearchHistoryCursor,
+    Project, ProjectPath,
 };
 use settings::Settings;
 use std::{
@@ -34,15 +34,15 @@ use std::{
 };
 use theme::ThemeSettings;
 use ui::{
-    Icon, IconButton, IconButtonShape, IconName, KeyBinding, Label, LabelCommon, LabelSize,
-    Toggleable, Tooltip, h_flex, prelude::*, utils::SearchInputWidth, v_flex,
+    h_flex, prelude::*, utils::SearchInputWidth, v_flex, Icon, IconButton, IconButtonShape,
+    IconName, KeyBinding, Label, LabelCommon, LabelSize, Toggleable, Tooltip,
 };
 use util::paths::PathMatcher;
 use workspace::{
-    DeploySearch, ItemNavHistory, NewSearch, ToolbarItemEvent, ToolbarItemLocation,
-    ToolbarItemView, Workspace, WorkspaceId,
     item::{BreadcrumbText, Item, ItemEvent, ItemHandle},
     searchable::{Direction, SearchableItem, SearchableItemHandle},
+    DeploySearch, ItemNavHistory, NewSearch, ToolbarItemEvent, ToolbarItemLocation,
+    ToolbarItemView, Workspace, WorkspaceId,
 };
 
 actions!(
@@ -943,7 +943,11 @@ impl ProjectSearchView {
 
             let editor = item.act_as::<Editor>(cx)?;
             let query = editor.query_suggestion(window, cx);
-            if query.is_empty() { None } else { Some(query) }
+            if query.is_empty() {
+                None
+            } else {
+                Some(query)
+            }
         });
 
         let search = if let Some(existing) = existing {
@@ -2231,7 +2235,7 @@ pub mod tests {
     use std::{ops::Deref as _, sync::Arc};
 
     use super::*;
-    use editor::{DisplayPoint, display_map::DisplayRow};
+    use editor::{display_map::DisplayRow, DisplayPoint};
     use gpui::{Action, TestAppContext, VisualTestContext, WindowHandle};
     use project::FakeFs;
     use serde_json::json;
@@ -3629,13 +3633,11 @@ pub mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(cx.update(|cx| second_pane.read(cx).items_len()), 1);
-        assert!(
-            window
-                .update(cx, |_, window, cx| second_pane
-                    .focus_handle(cx)
-                    .contains_focused(window, cx))
-                .unwrap()
-        );
+        assert!(window
+            .update(cx, |_, window, cx| second_pane
+                .focus_handle(cx)
+                .contains_focused(window, cx))
+            .unwrap());
         let search_bar = window.build_entity(cx, |_, _| ProjectSearchBar::new());
         window
             .update(cx, {
@@ -3724,12 +3726,11 @@ pub mod tests {
         window
             .update(cx, |_workspace, _, cx| {
                 second_pane.update(cx, |pane, _cx| {
-                    assert!(
-                        pane.active_item()
-                            .unwrap()
-                            .downcast::<ProjectSearchView>()
-                            .is_some()
-                    );
+                    assert!(pane
+                        .active_item()
+                        .unwrap()
+                        .downcast::<ProjectSearchView>()
+                        .is_some());
 
                     assert_eq!(pane.items_len(), 2);
                 });

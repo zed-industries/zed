@@ -1,9 +1,9 @@
-use anyhow::{Context as _, Result, anyhow};
+use anyhow::{anyhow, Context as _, Result};
 use client::{Client, TelemetrySettings};
-use db::RELEASE_CHANNEL;
 use db::kvp::KEY_VALUE_STORE;
+use db::RELEASE_CHANNEL;
 use gpui::{
-    App, AppContext as _, AsyncApp, Context, Entity, Global, SemanticVersion, Task, Window, actions,
+    actions, App, AppContext as _, AsyncApp, Context, Entity, Global, SemanticVersion, Task, Window,
 };
 use http_client::{AsyncBody, HttpClient, HttpClientWithUrl};
 use paths::remote_servers_dir;
@@ -252,11 +252,9 @@ impl AutoUpdater {
     }
 
     pub fn start_polling(&self, cx: &mut Context<Self>) -> Task<Result<()>> {
-        cx.spawn(async move |this, cx| {
-            loop {
-                this.update(cx, |this, cx| this.poll(cx))?;
-                cx.background_executor().timer(POLL_INTERVAL).await;
-            }
+        cx.spawn(async move |this, cx| loop {
+            this.update(cx, |this, cx| this.poll(cx))?;
+            cx.background_executor().timer(POLL_INTERVAL).await;
         })
     }
 

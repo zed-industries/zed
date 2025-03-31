@@ -1,6 +1,6 @@
-use crate::{Vim, motion::Motion, object::Object, state::Mode};
+use crate::{motion::Motion, object::Object, state::Mode, Vim};
 use collections::HashMap;
-use editor::{Bias, Editor, display_map::ToDisplayPoint};
+use editor::{display_map::ToDisplayPoint, Bias, Editor};
 use gpui::actions;
 use gpui::{Context, Window};
 use language::SelectionGoal;

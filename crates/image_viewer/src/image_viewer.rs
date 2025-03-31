@@ -4,22 +4,22 @@ mod image_viewer_settings;
 use std::path::PathBuf;
 
 use anyhow::Context as _;
-use editor::{EditorSettings, items::entry_git_aware_label_color};
+use editor::{items::entry_git_aware_label_color, EditorSettings};
 use file_icons::FileIcons;
 use gpui::{
-    AnyElement, App, Bounds, Context, Entity, EventEmitter, FocusHandle, Focusable,
-    InteractiveElement, IntoElement, ObjectFit, ParentElement, Render, Styled, Task, WeakEntity,
-    Window, canvas, div, fill, img, opaque_grey, point, size,
+    canvas, div, fill, img, opaque_grey, point, size, AnyElement, App, Bounds, Context, Entity,
+    EventEmitter, FocusHandle, Focusable, InteractiveElement, IntoElement, ObjectFit,
+    ParentElement, Render, Styled, Task, WeakEntity, Window,
 };
 use persistence::IMAGE_VIEWER;
-use project::{ImageItem, Project, ProjectPath, image_store::ImageItemEvent};
+use project::{image_store::ImageItemEvent, ImageItem, Project, ProjectPath};
 use settings::Settings;
 use theme::Theme;
 use ui::prelude::*;
 use util::paths::PathExt;
 use workspace::{
-    ItemId, ItemSettings, Pane, ToolbarItemLocation, Workspace, WorkspaceId,
     item::{BreadcrumbText, Item, ProjectItem, SerializableItem, TabContentParams},
+    ItemId, ItemSettings, Pane, ToolbarItemLocation, Workspace, WorkspaceId,
 };
 
 pub use crate::image_info::*;

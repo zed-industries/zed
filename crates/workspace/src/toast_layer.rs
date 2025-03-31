@@ -3,7 +3,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use gpui::{AnyView, DismissEvent, Entity, FocusHandle, ManagedView, Subscription, Task, actions};
+use gpui::{actions, AnyView, DismissEvent, Entity, FocusHandle, ManagedView, Subscription, Task};
 use ui::{animation::DefaultAnimations, prelude::*};
 
 use crate::Workspace;

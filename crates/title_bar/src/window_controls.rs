@@ -1,4 +1,4 @@
-use gpui::{Action, Hsla, svg};
+use gpui::{svg, Action, Hsla};
 use ui::prelude::*;
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy)]

@@ -2,11 +2,11 @@ pub mod cursor_position;
 
 use cursor_position::{LineIndicatorFormat, UserCaretPosition};
 use editor::{
-    Anchor, Editor, MultiBufferSnapshot, ToOffset, ToPoint, actions::Tab, scroll::Autoscroll,
+    actions::Tab, scroll::Autoscroll, Anchor, Editor, MultiBufferSnapshot, ToOffset, ToPoint,
 };
 use gpui::{
-    App, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, Render, SharedString, Styled,
-    Subscription, div, prelude::*,
+    div, prelude::*, App, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, Render,
+    SharedString, Styled, Subscription,
 };
 use language::Buffer;
 use settings::Settings;

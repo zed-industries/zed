@@ -6,12 +6,12 @@ use project::{Entry, PathMatchCandidateSet, Project, ProjectPath, WorktreeId};
 use std::{
     path::{Path, PathBuf},
     sync::{
-        Arc,
         atomic::{self, AtomicBool},
+        Arc,
     },
 };
+use ui::{highlight_ranges, prelude::*, LabelLike, ListItemSpacing};
 use ui::{Context, ListItem, Window};
-use ui::{LabelLike, ListItemSpacing, highlight_ranges, prelude::*};
 use util::ResultExt;
 use workspace::Workspace;
 

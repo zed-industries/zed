@@ -1,6 +1,6 @@
 use anyhow::Context as _;
 use collections::HashMap;
-use futures::{Future, FutureExt, channel::oneshot};
+use futures::{channel::oneshot, Future, FutureExt};
 use parking_lot::{Mutex, RwLock};
 use std::{
     marker::PhantomData,

@@ -1,28 +1,27 @@
 use editor::{CursorLayout, HighlightedRange, HighlightedRangeLine};
 use gpui::{
-    AnyElement, App, AvailableSpace, Bounds, ContentMask, Context, DispatchPhase, Element,
-    ElementId, Entity, FocusHandle, Font, FontStyle, FontWeight, GlobalElementId, HighlightStyle,
-    Hitbox, Hsla, InputHandler, InteractiveElement, Interactivity, IntoElement, LayoutId,
-    ModifiersChangedEvent, MouseButton, MouseMoveEvent, Pixels, Point, ShapedLine,
-    StatefulInteractiveElement, StrikethroughStyle, Styled, TextRun, TextStyle, UTF16Selection,
-    UnderlineStyle, WeakEntity, WhiteSpace, Window, WindowTextSystem, div, fill, point, px,
-    relative, size,
+    div, fill, point, px, relative, size, AnyElement, App, AvailableSpace, Bounds, ContentMask,
+    Context, DispatchPhase, Element, ElementId, Entity, FocusHandle, Font, FontStyle, FontWeight,
+    GlobalElementId, HighlightStyle, Hitbox, Hsla, InputHandler, InteractiveElement, Interactivity,
+    IntoElement, LayoutId, ModifiersChangedEvent, MouseButton, MouseMoveEvent, Pixels, Point,
+    ShapedLine, StatefulInteractiveElement, StrikethroughStyle, Styled, TextRun, TextStyle,
+    UTF16Selection, UnderlineStyle, WeakEntity, WhiteSpace, Window, WindowTextSystem,
 };
 use itertools::Itertools;
 use language::CursorShape;
 use settings::Settings;
 use terminal::{
-    IndexedCell, Terminal, TerminalBounds, TerminalContent,
     alacritty_terminal::{
         grid::Dimensions,
         index::Point as AlacPoint,
-        term::{TermMode, cell::Flags},
+        term::{cell::Flags, TermMode},
         vte::ansi::{
             Color::{self as AnsiColor, Named},
             CursorShape as AlacCursorShape, NamedColor,
         },
     },
     terminal_settings::TerminalSettings,
+    IndexedCell, Terminal, TerminalBounds, TerminalContent,
 };
 use theme::{ActiveTheme, Theme, ThemeSettings};
 use ui::{ParentElement, Tooltip};

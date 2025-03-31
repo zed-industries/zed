@@ -6,7 +6,7 @@ pub mod variable_list;
 
 use super::{DebugPanelItemEvent, ThreadItem};
 use console::Console;
-use dap::{Capabilities, Thread, client::SessionId, debugger_settings::DebuggerSettings};
+use dap::{client::SessionId, debugger_settings::DebuggerSettings, Capabilities, Thread};
 use gpui::{AppContext, Entity, EventEmitter, FocusHandle, Focusable, Subscription, WeakEntity};
 use loaded_source_list::LoadedSourceList;
 use module_list::ModuleList;
@@ -15,10 +15,10 @@ use rpc::proto::ViewId;
 use settings::Settings;
 use stack_frame_list::StackFrameList;
 use ui::{
-    ActiveTheme, AnyElement, App, Button, ButtonCommon, Clickable, Context, ContextMenu,
-    Disableable, Divider, DropdownMenu, FluentBuilder, IconButton, IconName, IconSize, Indicator,
-    InteractiveElement, IntoElement, Label, ParentElement, Render, SharedString,
-    StatefulInteractiveElement, Styled, Tooltip, Window, div, h_flex, v_flex,
+    div, h_flex, v_flex, ActiveTheme, AnyElement, App, Button, ButtonCommon, Clickable, Context,
+    ContextMenu, Disableable, Divider, DropdownMenu, FluentBuilder, IconButton, IconName, IconSize,
+    Indicator, InteractiveElement, IntoElement, Label, ParentElement, Render, SharedString,
+    StatefulInteractiveElement, Styled, Tooltip, Window,
 };
 use util::ResultExt;
 use variable_list::VariableList;

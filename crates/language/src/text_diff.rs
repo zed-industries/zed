@@ -1,8 +1,9 @@
 use crate::{CharClassifier, CharKind, LanguageScope};
 use imara_diff::{
-    Algorithm, UnifiedDiffBuilder, diff,
+    diff,
     intern::{InternedInput, Token},
     sources::lines_with_terminator,
+    Algorithm, UnifiedDiffBuilder,
 };
 use std::{iter, ops::Range, sync::Arc};
 

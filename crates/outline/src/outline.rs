@@ -4,19 +4,19 @@ use std::{
     sync::Arc,
 };
 
-use editor::{Anchor, AnchorRangeExt, Editor, EditorMode, scroll::Autoscroll};
+use editor::{scroll::Autoscroll, Anchor, AnchorRangeExt, Editor, EditorMode};
 use fuzzy::StringMatch;
 use gpui::{
-    App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, HighlightStyle,
-    ParentElement, Point, Render, Styled, StyledText, Task, TextStyle, WeakEntity, Window, div,
-    rems,
+    div, rems, App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
+    HighlightStyle, ParentElement, Point, Render, Styled, StyledText, Task, TextStyle, WeakEntity,
+    Window,
 };
 use language::{Outline, OutlineItem};
 use ordered_float::OrderedFloat;
 use picker::{Picker, PickerDelegate};
 use settings::Settings;
 use theme::{ActiveTheme, ThemeSettings};
-use ui::{ListItem, ListItemSpacing, prelude::*};
+use ui::{prelude::*, ListItem, ListItemSpacing};
 use util::ResultExt;
 use workspace::{DismissDecision, ModalView};
 

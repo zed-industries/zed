@@ -1,5 +1,5 @@
 use crate::file_command::{FileCommandMetadata, FileSlashCommand};
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
 use assistant_slash_command::{
     ArgumentCompletion, SlashCommand, SlashCommandOutput, SlashCommandOutputSection,
     SlashCommandResult,
@@ -8,7 +8,7 @@ use collections::HashSet;
 use futures::future;
 use gpui::{App, Task, WeakEntity, Window};
 use language::{BufferSnapshot, LspAdapterDelegate};
-use std::sync::{Arc, atomic::AtomicBool};
+use std::sync::{atomic::AtomicBool, Arc};
 use text::OffsetRangeExt;
 use ui::prelude::*;
 use workspace::Workspace;

@@ -7,7 +7,7 @@ use language_model_selector::{
 };
 use settings::update_settings_file;
 use std::sync::Arc;
-use ui::{ButtonLike, PopoverMenuHandle, Tooltip, prelude::*};
+use ui::{prelude::*, ButtonLike, PopoverMenuHandle, Tooltip};
 
 pub struct AssistantModelSelector {
     selector: Entity<LanguageModelSelector>,

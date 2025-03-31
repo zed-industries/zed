@@ -1,4 +1,4 @@
-use gpui::{App, ClipboardItem, PromptLevel, actions};
+use gpui::{actions, App, ClipboardItem, PromptLevel};
 use system_specs::SystemSpecs;
 use util::ResultExt;
 use workspace::Workspace;

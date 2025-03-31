@@ -1,8 +1,8 @@
 use crate::{
-    self as gpui, AbsoluteLength, AlignItems, BorderStyle, CursorStyle, DefiniteLength, Fill,
-    FlexDirection, FlexWrap, Font, FontStyle, FontWeight, Hsla, JustifyContent, Length,
-    SharedString, StrikethroughStyle, StyleRefinement, TextOverflow, UnderlineStyle, WhiteSpace,
-    px, relative, rems,
+    self as gpui, px, relative, rems, AbsoluteLength, AlignItems, BorderStyle, CursorStyle,
+    DefiniteLength, Fill, FlexDirection, FlexWrap, Font, FontStyle, FontWeight, Hsla,
+    JustifyContent, Length, SharedString, StrikethroughStyle, StyleRefinement, TextOverflow,
+    UnderlineStyle, WhiteSpace,
 };
 use crate::{TextAlign, TextStyleRefinement};
 pub use gpui_macros::{

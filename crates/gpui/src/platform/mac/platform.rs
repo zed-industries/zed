@@ -1,17 +1,16 @@
 use super::{
-    BoolExt,
     attributed_string::{NSAttributedString, NSMutableAttributedString},
     events::key_to_native,
-    renderer, screen_capture,
+    renderer, screen_capture, BoolExt,
 };
 use crate::{
-    Action, AnyWindowHandle, BackgroundExecutor, ClipboardEntry, ClipboardItem, ClipboardString,
-    CursorStyle, ForegroundExecutor, Image, ImageFormat, Keymap, MacDispatcher, MacDisplay,
-    MacWindow, Menu, MenuItem, PathPromptOptions, Platform, PlatformDisplay, PlatformTextSystem,
-    PlatformWindow, Result, ScreenCaptureSource, SemanticVersion, Task, WindowAppearance,
-    WindowParams, hash,
+    hash, Action, AnyWindowHandle, BackgroundExecutor, ClipboardEntry, ClipboardItem,
+    ClipboardString, CursorStyle, ForegroundExecutor, Image, ImageFormat, Keymap, MacDispatcher,
+    MacDisplay, MacWindow, Menu, MenuItem, PathPromptOptions, Platform, PlatformDisplay,
+    PlatformTextSystem, PlatformWindow, Result, ScreenCaptureSource, SemanticVersion, Task,
+    WindowAppearance, WindowParams,
 };
-use anyhow::{Context as _, anyhow};
+use anyhow::{anyhow, Context as _};
 use block::ConcreteBlock;
 use cocoa::{
     appkit::{
@@ -20,7 +19,7 @@ use cocoa::{
         NSPasteboardTypePNG, NSPasteboardTypeRTF, NSPasteboardTypeRTFD, NSPasteboardTypeString,
         NSPasteboardTypeTIFF, NSSavePanel, NSWindow,
     },
-    base::{BOOL, NO, YES, id, nil, selector},
+    base::{id, nil, selector, BOOL, NO, YES},
     foundation::{
         NSArray, NSAutoreleasePool, NSBundle, NSData, NSInteger, NSProcessInfo, NSRange, NSString,
         NSUInteger, NSURL,
@@ -48,7 +47,7 @@ use ptr::null_mut;
 use std::{
     cell::Cell,
     convert::TryInto,
-    ffi::{CStr, OsStr, c_void},
+    ffi::{c_void, CStr, OsStr},
     os::{raw::c_char, unix::ffi::OsStrExt},
     path::{Path, PathBuf},
     process::Command,

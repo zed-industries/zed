@@ -1,7 +1,7 @@
 use crate::prelude::*;
 use crate::v_flex;
 use gpui::{
-    AnyElement, App, Element, IntoElement, ParentElement, Pixels, RenderOnce, Styled, Window, div,
+    div, AnyElement, App, Element, IntoElement, ParentElement, Pixels, RenderOnce, Styled, Window,
 };
 use smallvec::SmallVec;
 

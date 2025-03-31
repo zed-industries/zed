@@ -1,17 +1,17 @@
 use anyhow::Result;
-use editor::{Editor, scroll::Autoscroll};
+use editor::{scroll::Autoscroll, Editor};
 use gpui::{
-    AnyElement, App, ClickEvent, Context, DismissEvent, Entity, EventEmitter, FocusHandle,
-    Focusable, Length, ListSizingBehavior, ListState, MouseButton, MouseUpEvent, Render,
-    ScrollHandle, ScrollStrategy, Stateful, Task, UniformListScrollHandle, Window, actions, div,
-    impl_actions, list, prelude::*, uniform_list,
+    actions, div, impl_actions, list, prelude::*, uniform_list, AnyElement, App, ClickEvent,
+    Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, Length,
+    ListSizingBehavior, ListState, MouseButton, MouseUpEvent, Render, ScrollHandle, ScrollStrategy,
+    Stateful, Task, UniformListScrollHandle, Window,
 };
 use head::Head;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use std::{sync::Arc, time::Duration};
 use ui::{
-    Color, Divider, Label, ListItem, ListItemSpacing, Scrollbar, ScrollbarState, prelude::*, v_flex,
+    prelude::*, v_flex, Color, Divider, Label, ListItem, ListItemSpacing, Scrollbar, ScrollbarState,
 };
 use util::ResultExt;
 use workspace::ModalView;

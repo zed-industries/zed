@@ -1,23 +1,23 @@
 use crate::fallback_themes::zed_default_dark;
 use crate::{
-    Appearance, DEFAULT_ICON_THEME_NAME, IconTheme, IconThemeNotFoundError, SyntaxTheme, Theme,
-    ThemeNotFoundError, ThemeRegistry, ThemeStyleContent,
+    Appearance, IconTheme, IconThemeNotFoundError, SyntaxTheme, Theme, ThemeNotFoundError,
+    ThemeRegistry, ThemeStyleContent, DEFAULT_ICON_THEME_NAME,
 };
 use anyhow::Result;
 use derive_more::{Deref, DerefMut};
 use gpui::{
-    App, Context, Font, FontFallbacks, FontFeatures, FontStyle, FontWeight, Global, Pixels,
-    Subscription, Window, px,
+    px, App, Context, Font, FontFallbacks, FontFeatures, FontStyle, FontWeight, Global, Pixels,
+    Subscription, Window,
 };
 use refineable::Refineable;
 use schemars::{
-    JsonSchema,
     r#gen::SchemaGenerator,
     schema::{InstanceType, Schema, SchemaObject},
+    JsonSchema,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use settings::{Settings, SettingsJsonSchemaParams, SettingsSources, add_references_to_properties};
+use settings::{add_references_to_properties, Settings, SettingsJsonSchemaParams, SettingsSources};
 use std::sync::Arc;
 use util::ResultExt as _;
 

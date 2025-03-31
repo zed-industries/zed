@@ -5,8 +5,8 @@ use project::project_settings::{InlineBlameSettings, ProjectSettings};
 use settings::{EditableSettingControl, Settings};
 use theme::{FontFamilyCache, ThemeSettings};
 use ui::{
-    CheckboxWithLabel, ContextMenu, DropdownMenu, NumericStepper, SettingsContainer, SettingsGroup,
-    prelude::*,
+    prelude::*, CheckboxWithLabel, ContextMenu, DropdownMenu, NumericStepper, SettingsContainer,
+    SettingsGroup,
 };
 
 use crate::EditorSettings;

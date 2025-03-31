@@ -10,17 +10,17 @@ use gpui::{
 };
 use http_client::BlockedHttpClient;
 use language::{
-    FakeLspAdapter, Language, LanguageConfig, LanguageMatcher, LanguageRegistry,
     language_settings::{
-        AllLanguageSettings, Formatter, FormatterList, PrettierSettings, SelectedFormatter,
-        language_settings,
+        language_settings, AllLanguageSettings, Formatter, FormatterList, PrettierSettings,
+        SelectedFormatter,
     },
-    tree_sitter_typescript,
+    tree_sitter_typescript, FakeLspAdapter, Language, LanguageConfig, LanguageMatcher,
+    LanguageRegistry,
 };
 use node_runtime::NodeRuntime;
 use project::{
-    ProjectPath,
     lsp_store::{FormatTrigger, LspFormatTarget},
+    ProjectPath,
 };
 use remote::SshRemoteClient;
 use remote_server::{HeadlessAppState, HeadlessProject};

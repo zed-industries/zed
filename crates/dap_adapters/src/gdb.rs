@@ -1,6 +1,6 @@
 use std::ffi::OsStr;
 
-use anyhow::{Result, bail};
+use anyhow::{bail, Result};
 use async_trait::async_trait;
 use gpui::AsyncApp;
 use task::{DebugAdapterConfig, DebugTaskDefinition};

@@ -1,12 +1,12 @@
 use crate::notification_window_options;
 use crate::notifications::collab_notification::CollabNotification;
-use call::{ActiveCall, room};
+use call::{room, ActiveCall};
 use client::User;
 use collections::HashMap;
 use gpui::{App, Size};
 use std::sync::{Arc, Weak};
 
-use ui::{Button, Label, prelude::*};
+use ui::{prelude::*, Button, Label};
 use util::ResultExt;
 use workspace::AppState;
 

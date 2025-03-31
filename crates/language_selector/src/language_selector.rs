@@ -5,17 +5,17 @@ use anyhow::anyhow;
 use editor::Editor;
 use file_finder::file_finder_settings::FileFinderSettings;
 use file_icons::FileIcons;
-use fuzzy::{StringMatch, StringMatchCandidate, match_strings};
+use fuzzy::{match_strings, StringMatch, StringMatchCandidate};
 use gpui::{
-    App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, ParentElement,
-    Render, Styled, WeakEntity, Window, actions,
+    actions, App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
+    ParentElement, Render, Styled, WeakEntity, Window,
 };
 use language::{Buffer, LanguageMatcher, LanguageName, LanguageRegistry};
 use picker::{Picker, PickerDelegate};
 use project::Project;
 use settings::Settings;
 use std::{ops::Not as _, path::Path, sync::Arc};
-use ui::{HighlightedLabel, ListItem, ListItemSpacing, prelude::*};
+use ui::{prelude::*, HighlightedLabel, ListItem, ListItemSpacing};
 use util::ResultExt;
 use workspace::{ModalView, Workspace};
 

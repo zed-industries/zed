@@ -1,5 +1,5 @@
 use std::{
-    collections::{BTreeMap, btree_map::Entry},
+    collections::{btree_map::Entry, BTreeMap},
     ffi::OsStr,
     ops::ControlFlow,
     path::{Path, PathBuf},

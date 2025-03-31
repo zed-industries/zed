@@ -2,36 +2,36 @@ use anyhow::Result;
 use client::UserStore;
 use copilot::{Copilot, Status};
 use editor::{
-    Editor,
     actions::{ShowEditPrediction, ToggleEditPrediction},
     scroll::Autoscroll,
+    Editor,
 };
 use feature_flags::{FeatureFlagAppExt, PredictEditsRateCompletionsFeatureFlag};
 use fs::Fs;
 use gpui::{
-    Action, Animation, AnimationExt, App, AsyncWindowContext, Corner, Entity, FocusHandle,
-    Focusable, IntoElement, ParentElement, Render, Subscription, WeakEntity, actions, div,
-    pulsating_between,
+    actions, div, pulsating_between, Action, Animation, AnimationExt, App, AsyncWindowContext,
+    Corner, Entity, FocusHandle, Focusable, IntoElement, ParentElement, Render, Subscription,
+    WeakEntity,
 };
 use indoc::indoc;
 use language::{
+    language_settings::{self, all_language_settings, AllLanguageSettings, EditPredictionProvider},
     EditPredictionsMode, File, Language,
-    language_settings::{self, AllLanguageSettings, EditPredictionProvider, all_language_settings},
 };
 use regex::Regex;
-use settings::{Settings, SettingsStore, update_settings_file};
+use settings::{update_settings_file, Settings, SettingsStore};
 use std::{
     sync::{Arc, LazyLock},
     time::Duration,
 };
 use supermaven::{AccountStatus, Supermaven};
 use ui::{
-    Clickable, ContextMenu, ContextMenuEntry, IconButton, IconButtonShape, Indicator, PopoverMenu,
-    PopoverMenuHandle, Tooltip, prelude::*,
+    prelude::*, Clickable, ContextMenu, ContextMenuEntry, IconButton, IconButtonShape, Indicator,
+    PopoverMenu, PopoverMenuHandle, Tooltip,
 };
 use workspace::{
-    StatusItemView, Toast, Workspace, create_and_open_local_file, item::ItemHandle,
-    notifications::NotificationId,
+    create_and_open_local_file, item::ItemHandle, notifications::NotificationId, StatusItemView,
+    Toast, Workspace,
 };
 use zed_actions::OpenBrowser;
 use zeta::RateCompletions;

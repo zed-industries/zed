@@ -1,13 +1,13 @@
 use crate::{
-    Project, ProjectEntryId, ProjectItem, ProjectPath,
     worktree_store::{WorktreeStore, WorktreeStoreEvent},
+    Project, ProjectEntryId, ProjectItem, ProjectPath,
 };
-use anyhow::{Context as _, Result, anyhow};
-use collections::{HashMap, HashSet, hash_map};
-use futures::{StreamExt, channel::oneshot};
+use anyhow::{anyhow, Context as _, Result};
+use collections::{hash_map, HashMap, HashSet};
+use futures::{channel::oneshot, StreamExt};
 use gpui::{
-    App, AsyncApp, Context, Entity, EventEmitter, Img, Subscription, Task, WeakEntity, hash,
-    prelude::*,
+    hash, prelude::*, App, AsyncApp, Context, Entity, EventEmitter, Img, Subscription, Task,
+    WeakEntity,
 };
 pub use image::ImageFormat;
 use image::{ExtendedColorType, GenericImageView, ImageReader};

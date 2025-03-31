@@ -1,5 +1,5 @@
 use crate::prelude::*;
-use crate::{Icon, IconName, IconSize, Label, h_flex};
+use crate::{h_flex, Icon, IconName, IconSize, Label};
 
 #[derive(IntoElement)]
 pub struct ListSubHeader {

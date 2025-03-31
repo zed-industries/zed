@@ -1,12 +1,12 @@
 use crate::{
-    ExtensionLibraryKind, ExtensionManifest, GrammarManifestEntry, parse_wasm_extension_version,
+    parse_wasm_extension_version, ExtensionLibraryKind, ExtensionManifest, GrammarManifestEntry,
 };
-use anyhow::{Context as _, Result, anyhow, bail};
+use anyhow::{anyhow, bail, Context as _, Result};
 use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
 use convert_case::{Case, Casing as _};
-use futures::AsyncReadExt;
 use futures::io::BufReader;
+use futures::AsyncReadExt;
 use http_client::{self, AsyncBody, HttpClient};
 use serde::Deserialize;
 use std::{

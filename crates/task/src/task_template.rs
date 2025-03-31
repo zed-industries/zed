@@ -1,12 +1,12 @@
 use std::path::PathBuf;
 use util::serde::default_true;
 
-use anyhow::{Context, bail};
+use anyhow::{bail, Context};
 use collections::{HashMap, HashSet};
-use schemars::{JsonSchema, r#gen::SchemaSettings};
+use schemars::{r#gen::SchemaSettings, JsonSchema};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use util::{ResultExt, truncate_and_remove_front};
+use util::{truncate_and_remove_front, ResultExt};
 
 use crate::{
     AttachConfig, ResolvedTask, RevealTarget, Shell, SpawnInTerminal, TCPHost, TaskContext, TaskId,
@@ -722,10 +722,9 @@ mod tests {
             args: vec!["$ZED_VARIABLE".into()],
             ..TaskTemplate::default()
         };
-        assert!(
-            task.resolve_task(TEST_ID_BASE, &TaskContext::default())
-                .is_none()
-        );
+        assert!(task
+            .resolve_task(TEST_ID_BASE, &TaskContext::default())
+            .is_none());
     }
 
     #[test]

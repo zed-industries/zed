@@ -1,13 +1,13 @@
 use crate::schema::json_schema_for;
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
 use assistant_tool::{ActionLog, Tool};
 use futures::StreamExt;
 use gpui::{App, Entity, Task};
 use language::OffsetRangeExt;
 use language_model::{LanguageModelRequestMessage, LanguageModelToolSchemaFormat};
 use project::{
-    Project,
     search::{SearchQuery, SearchResult},
+    Project,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};

@@ -1,12 +1,12 @@
 use crate::{Client, Connection, Credentials, EstablishConnectionError, UserStore};
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
 use chrono::Duration;
-use futures::{StreamExt, stream::BoxStream};
+use futures::{stream::BoxStream, StreamExt};
 use gpui::{AppContext as _, BackgroundExecutor, Entity, TestAppContext};
 use parking_lot::Mutex;
 use rpc::{
-    ConnectionId, Peer, Receipt, TypedEnvelope,
     proto::{self, GetPrivateUserInfo, GetPrivateUserInfoResponse},
+    ConnectionId, Peer, Receipt, TypedEnvelope,
 };
 use std::sync::Arc;
 

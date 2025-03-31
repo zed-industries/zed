@@ -2,9 +2,9 @@ use std::time::Duration;
 
 use anyhow::Result;
 use gpui::{
-    Animation, AnimationExt as _, App, Application, AssetSource, Bounds, Context, SharedString,
-    Transformation, Window, WindowBounds, WindowOptions, black, bounce, div, ease_in_out,
-    percentage, prelude::*, px, rgb, size, svg,
+    black, bounce, div, ease_in_out, percentage, prelude::*, px, rgb, size, svg, Animation,
+    AnimationExt as _, App, Application, AssetSource, Bounds, Context, SharedString,
+    Transformation, Window, WindowBounds, WindowOptions,
 };
 
 struct Assets {}

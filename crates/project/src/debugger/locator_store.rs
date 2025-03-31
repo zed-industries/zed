@@ -1,4 +1,4 @@
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
 use cargo::CargoLocator;
 use collections::HashMap;
 use dap::DebugAdapterConfig;

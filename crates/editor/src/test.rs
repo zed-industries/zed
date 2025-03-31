@@ -4,12 +4,12 @@ pub mod editor_test_context;
 use std::sync::LazyLock;
 
 use crate::{
-    DisplayPoint, Editor, EditorMode, FoldPlaceholder, MultiBuffer,
     display_map::{DisplayMap, DisplaySnapshot, ToDisplayPoint},
+    DisplayPoint, Editor, EditorMode, FoldPlaceholder, MultiBuffer,
 };
 use gpui::{
-    AppContext as _, Context, Entity, Font, FontFeatures, FontStyle, FontWeight, Pixels, Window,
-    font,
+    font, AppContext as _, Context, Entity, Font, FontFeatures, FontStyle, FontWeight, Pixels,
+    Window,
 };
 use project::Project;
 use util::test::{marked_text_offsets, marked_text_ranges};

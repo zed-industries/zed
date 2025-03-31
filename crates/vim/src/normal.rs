@@ -15,21 +15,21 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::{
-    Vim,
     indent::IndentDirection,
-    motion::{self, Motion, first_non_whitespace, next_line_end, right},
+    motion::{self, first_non_whitespace, next_line_end, right, Motion},
     object::Object,
     state::{Mark, Mode, Operator},
     surrounds::SurroundsType,
+    Vim,
 };
 use case::CaseTarget;
 use collections::BTreeSet;
+use editor::scroll::Autoscroll;
 use editor::Anchor;
 use editor::Bias;
 use editor::Editor;
-use editor::scroll::Autoscroll;
 use editor::{display_map::ToDisplayPoint, movement};
-use gpui::{Context, Window, actions};
+use gpui::{actions, Context, Window};
 use language::{Point, SelectionGoal, ToPoint};
 use log::error;
 use multi_buffer::MultiBufferRow;
@@ -630,9 +630,10 @@ mod test {
     use settings::SettingsStore;
 
     use crate::{
-        VimSettings, motion,
+        motion,
         state::Mode::{self},
         test::{NeovimBackedTestContext, VimTestContext},
+        VimSettings,
     };
 
     #[gpui::test]

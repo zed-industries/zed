@@ -6,35 +6,35 @@ use anyhow::Result;
 use buffer_diff::{BufferDiff, DiffHunkSecondaryStatus};
 use collections::HashSet;
 use editor::{
-    Editor, EditorEvent,
     actions::{GoToHunk, GoToPreviousHunk},
     scroll::Autoscroll,
+    Editor, EditorEvent,
 };
 use futures::StreamExt;
 use git::{
-    Commit, StageAll, StageAndNext, ToggleStaged, UnstageAll, UnstageAndNext,
     repository::{Branch, Upstream, UpstreamTracking, UpstreamTrackingStatus},
     status::FileStatus,
+    Commit, StageAll, StageAndNext, ToggleStaged, UnstageAll, UnstageAndNext,
 };
 use gpui::{
-    Action, AnyElement, AnyView, App, AppContext as _, AsyncWindowContext, Entity, EventEmitter,
-    FocusHandle, Focusable, Render, Subscription, Task, WeakEntity, actions,
+    actions, Action, AnyElement, AnyView, App, AppContext as _, AsyncWindowContext, Entity,
+    EventEmitter, FocusHandle, Focusable, Render, Subscription, Task, WeakEntity,
 };
 use language::{Anchor, Buffer, Capability, OffsetRangeExt};
 use multi_buffer::{MultiBuffer, PathKey};
 use project::{
-    Project, ProjectPath,
     git_store::{GitEvent, GitStore},
+    Project, ProjectPath,
 };
 use std::any::{Any, TypeId};
 use theme::ActiveTheme;
-use ui::{KeyBinding, Tooltip, prelude::*, vertical_divider};
+use ui::{prelude::*, vertical_divider, KeyBinding, Tooltip};
 use util::ResultExt as _;
 use workspace::{
-    CloseActiveItem, ItemNavHistory, SerializableItem, ToolbarItemEvent, ToolbarItemLocation,
-    ToolbarItemView, Workspace,
     item::{BreadcrumbText, Item, ItemEvent, ItemHandle, TabContentParams},
     searchable::SearchableItemHandle,
+    CloseActiveItem, ItemNavHistory, SerializableItem, ToolbarItemEvent, ToolbarItemLocation,
+    ToolbarItemView, Workspace,
 };
 
 actions!(git, [Diff, Add]);
@@ -1249,43 +1249,41 @@ mod preview {
 
             v_flex()
                 .gap_6()
-                .children(vec![
-                    example_group(vec![
-                        single_example(
-                            "No Repo",
-                            div()
-                                .w(width)
-                                .h(height)
-                                .child(no_repo_state)
-                                .into_any_element(),
-                        ),
-                        single_example(
-                            "No Changes",
-                            div()
-                                .w(width)
-                                .h(height)
-                                .child(no_changes_state)
-                                .into_any_element(),
-                        ),
-                        single_example(
-                            "Unknown Upstream",
-                            div()
-                                .w(width)
-                                .h(height)
-                                .child(unknown_upstream_state)
-                                .into_any_element(),
-                        ),
-                        single_example(
-                            "Ahead of Remote",
-                            div()
-                                .w(width)
-                                .h(height)
-                                .child(ahead_of_upstream_state)
-                                .into_any_element(),
-                        ),
-                    ])
-                    .vertical(),
+                .children(vec![example_group(vec![
+                    single_example(
+                        "No Repo",
+                        div()
+                            .w(width)
+                            .h(height)
+                            .child(no_repo_state)
+                            .into_any_element(),
+                    ),
+                    single_example(
+                        "No Changes",
+                        div()
+                            .w(width)
+                            .h(height)
+                            .child(no_changes_state)
+                            .into_any_element(),
+                    ),
+                    single_example(
+                        "Unknown Upstream",
+                        div()
+                            .w(width)
+                            .h(height)
+                            .child(unknown_upstream_state)
+                            .into_any_element(),
+                    ),
+                    single_example(
+                        "Ahead of Remote",
+                        div()
+                            .w(width)
+                            .h(height)
+                            .child(ahead_of_upstream_state)
+                            .into_any_element(),
+                    ),
                 ])
+                .vertical()])
                 .into_any_element()
         }
     }
@@ -1295,7 +1293,7 @@ mod preview {
 #[cfg(test)]
 mod tests {
     use db::indoc;
-    use editor::test::editor_test_context::{EditorTestContext, assert_state_with_diff};
+    use editor::test::editor_test_context::{assert_state_with_diff, EditorTestContext};
     use gpui::TestAppContext;
     use project::FakeFs;
     use serde_json::json;

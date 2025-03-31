@@ -1,4 +1,4 @@
-use smallvec::{SmallVec, smallvec};
+use smallvec::{smallvec, SmallVec};
 use std::iter;
 use std::sync::LazyLock;
 

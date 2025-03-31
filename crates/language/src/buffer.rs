@@ -1,14 +1,11 @@
 pub use crate::{
-    Grammar, Language, LanguageRegistry,
     diagnostic_set::DiagnosticSet,
     highlight_map::{HighlightId, HighlightMap},
-    proto,
+    proto, Grammar, Language, LanguageRegistry,
 };
 use crate::{
-    LanguageScope, Outline, OutlineConfig, RunnableCapture, RunnableTag, TextObject,
-    TreeSitterOptions,
     diagnostic_set::{DiagnosticEntry, DiagnosticGroup},
-    language_settings::{LanguageSettings, language_settings},
+    language_settings::{language_settings, LanguageSettings},
     outline::OutlineItem,
     syntax_map::{
         SyntaxLayer, SyntaxMap, SyntaxMapCapture, SyntaxMapCaptures, SyntaxMapMatch,
@@ -16,8 +13,10 @@ use crate::{
     },
     task_context::RunnableRange,
     text_diff::text_diff,
+    LanguageScope, Outline, OutlineConfig, RunnableCapture, RunnableTag, TextObject,
+    TreeSitterOptions,
 };
-use anyhow::{Context as _, Result, anyhow};
+use anyhow::{anyhow, Context as _, Result};
 use async_watch as watch;
 use clock::Lamport;
 pub use clock::ReplicaId;
@@ -67,7 +66,7 @@ pub use text::{
 use theme::{ActiveTheme as _, SyntaxTheme};
 #[cfg(any(test, feature = "test-support"))]
 use util::RandomCharIter;
-use util::{RangeExt, debug_panic, maybe};
+use util::{debug_panic, maybe, RangeExt};
 
 #[cfg(any(test, feature = "test-support"))]
 pub use {tree_sitter_rust, tree_sitter_typescript};
@@ -3743,49 +3742,47 @@ impl BufferSnapshot {
 
         let mut captures = Vec::<(Range<usize>, TextObject)>::new();
 
-        iter::from_fn(move || {
-            loop {
-                while let Some(capture) = captures.pop() {
-                    if capture.0.overlaps(&range) {
-                        return Some(capture);
-                    }
+        iter::from_fn(move || loop {
+            while let Some(capture) = captures.pop() {
+                if capture.0.overlaps(&range) {
+                    return Some(capture);
                 }
+            }
 
-                let mat = matches.peek()?;
+            let mat = matches.peek()?;
 
-                let Some(config) = configs[mat.grammar_index].as_ref() else {
-                    matches.advance();
+            let Some(config) = configs[mat.grammar_index].as_ref() else {
+                matches.advance();
+                continue;
+            };
+
+            for capture in mat.captures {
+                let Some(ix) = config
+                    .text_objects_by_capture_ix
+                    .binary_search_by_key(&capture.index, |e| e.0)
+                    .ok()
+                else {
                     continue;
                 };
+                let text_object = config.text_objects_by_capture_ix[ix].1;
+                let byte_range = capture.node.byte_range();
 
-                for capture in mat.captures {
-                    let Some(ix) = config
-                        .text_objects_by_capture_ix
-                        .binary_search_by_key(&capture.index, |e| e.0)
-                        .ok()
-                    else {
-                        continue;
-                    };
-                    let text_object = config.text_objects_by_capture_ix[ix].1;
-                    let byte_range = capture.node.byte_range();
-
-                    let mut found = false;
-                    for (range, existing) in captures.iter_mut() {
-                        if existing == &text_object {
-                            range.start = range.start.min(byte_range.start);
-                            range.end = range.end.max(byte_range.end);
-                            found = true;
-                            break;
-                        }
-                    }
-
-                    if !found {
-                        captures.push((byte_range, text_object));
+                let mut found = false;
+                for (range, existing) in captures.iter_mut() {
+                    if existing == &text_object {
+                        range.start = range.start.min(byte_range.start);
+                        range.end = range.end.max(byte_range.end);
+                        found = true;
+                        break;
                     }
                 }
 
-                matches.advance();
+                if !found {
+                    captures.push((byte_range, text_object));
+                }
             }
+
+            matches.advance();
         })
     }
 
@@ -4095,7 +4092,11 @@ impl BufferSnapshot {
                         .then(a.diagnostic.severity.cmp(&b.diagnostic.severity))
                         // and stabilize order with group_id
                         .then(a.diagnostic.group_id.cmp(&b.diagnostic.group_id));
-                    if reversed { cmp.reverse() } else { cmp }
+                    if reversed {
+                        cmp.reverse()
+                    } else {
+                        cmp
+                    }
                 })?;
             iterators[next_ix]
                 .next()
@@ -4698,24 +4699,22 @@ pub(crate) fn contiguous_ranges(
 ) -> impl Iterator<Item = Range<u32>> {
     let mut values = values;
     let mut current_range: Option<Range<u32>> = None;
-    std::iter::from_fn(move || {
-        loop {
-            if let Some(value) = values.next() {
-                if let Some(range) = &mut current_range {
-                    if value == range.end && range.len() < max_len {
-                        range.end += 1;
-                        continue;
-                    }
+    std::iter::from_fn(move || loop {
+        if let Some(value) = values.next() {
+            if let Some(range) = &mut current_range {
+                if value == range.end && range.len() < max_len {
+                    range.end += 1;
+                    continue;
                 }
-
-                let prev_range = current_range.clone();
-                current_range = Some(value..(value + 1));
-                if prev_range.is_some() {
-                    return prev_range;
-                }
-            } else {
-                return current_range.take();
             }
+
+            let prev_range = current_range.clone();
+            current_range = Some(value..(value + 1));
+            if prev_range.is_some() {
+                return prev_range;
+            }
+        } else {
+            return current_range.take();
         }
     })
 }

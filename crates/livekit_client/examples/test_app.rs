@@ -2,12 +2,12 @@ use std::sync::Arc;
 
 use futures::StreamExt;
 use gpui::{
-    AppContext as _, AsyncApp, Bounds, Context, Entity, InteractiveElement, KeyBinding, Menu,
-    MenuItem, ParentElement, Pixels, Render, ScreenCaptureStream, SharedString,
-    StatefulInteractiveElement as _, Styled, Task, Window, WindowBounds, WindowHandle,
-    WindowOptions, actions, bounds, div, point,
+    actions, bounds, div, point,
     prelude::{FluentBuilder as _, IntoElement},
-    px, rgb, size,
+    px, rgb, size, AppContext as _, AsyncApp, Bounds, Context, Entity, InteractiveElement,
+    KeyBinding, Menu, MenuItem, ParentElement, Pixels, Render, ScreenCaptureStream, SharedString,
+    StatefulInteractiveElement as _, Styled, Task, Window, WindowBounds, WindowHandle,
+    WindowOptions,
 };
 use livekit_client::{
     AudioStream, LocalTrackPublication, Participant, ParticipantIdentity, RemoteParticipant,
@@ -302,7 +302,11 @@ impl LivekitWindow {
         cx: &mut Context<Self>,
     ) -> Option<()> {
         let participant = self.remote_participants.iter().find_map(|(id, state)| {
-            if id == identity { Some(state) } else { None }
+            if id == identity {
+                Some(state)
+            } else {
+                None
+            }
         })?;
         let publication = &participant.audio_output_stream.as_ref()?.0;
         publication.set_enabled(!publication.is_enabled(), cx);
@@ -332,7 +336,11 @@ impl Render for LivekitWindow {
                     button()
                         .id("toggle-mute")
                         .child(if let Some(track) = &self.microphone_track {
-                            if track.is_muted() { "Unmute" } else { "Mute" }
+                            if track.is_muted() {
+                                "Unmute"
+                            } else {
+                                "Mute"
+                            }
                         } else {
                             "Publish mic"
                         })

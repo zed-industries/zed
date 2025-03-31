@@ -1,8 +1,8 @@
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
 use futures::{
-    AsyncBufReadExt, AsyncReadExt,
     io::BufReader,
     stream::{BoxStream, StreamExt},
+    AsyncBufReadExt, AsyncReadExt,
 };
 use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest};
 use serde::{Deserialize, Serialize};

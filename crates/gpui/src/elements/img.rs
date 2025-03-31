@@ -1,16 +1,16 @@
 use crate::{
-    AbsoluteLength, AnyElement, App, Asset, AssetLogger, Bounds, DefiniteLength, Element,
-    ElementId, GlobalElementId, Hitbox, Image, InteractiveElement, Interactivity, IntoElement,
-    LayoutId, Length, ObjectFit, Pixels, RenderImage, Resource, SMOOTH_SVG_SCALE_FACTOR,
-    SharedString, SharedUri, StyleRefinement, Styled, SvgSize, Task, Window, px,
-    swap_rgba_pa_to_bgra,
+    px, swap_rgba_pa_to_bgra, AbsoluteLength, AnyElement, App, Asset, AssetLogger, Bounds,
+    DefiniteLength, Element, ElementId, GlobalElementId, Hitbox, Image, InteractiveElement,
+    Interactivity, IntoElement, LayoutId, Length, ObjectFit, Pixels, RenderImage, Resource,
+    SharedString, SharedUri, StyleRefinement, Styled, SvgSize, Task, Window,
+    SMOOTH_SVG_SCALE_FACTOR,
 };
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
 
 use futures::{AsyncReadExt, Future};
 use image::{
-    AnimationDecoder, DynamicImage, Frame, ImageBuffer, ImageError, ImageFormat, Rgba,
     codecs::{gif::GifDecoder, webp::WebPDecoder},
+    AnimationDecoder, DynamicImage, Frame, ImageBuffer, ImageError, ImageFormat, Rgba,
 };
 use smallvec::SmallVec;
 use std::{

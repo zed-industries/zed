@@ -1,6 +1,6 @@
 use crate::KeyBinding;
 use crate::{h_flex, prelude::*};
-use gpui::{AnyElement, App, BoxShadow, FontStyle, Hsla, IntoElement, Window, point};
+use gpui::{point, AnyElement, App, BoxShadow, FontStyle, Hsla, IntoElement, Window};
 use smallvec::smallvec;
 use theme::Appearance;
 

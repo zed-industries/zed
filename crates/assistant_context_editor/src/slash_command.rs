@@ -3,19 +3,19 @@ use anyhow::Result;
 pub use assistant_slash_command::SlashCommand;
 use assistant_slash_command::{AfterCompletion, SlashCommandLine, SlashCommandWorkingSet};
 use editor::{CompletionProvider, Editor, ExcerptId};
-use fuzzy::{StringMatchCandidate, match_strings};
+use fuzzy::{match_strings, StringMatchCandidate};
 use gpui::{App, AppContext as _, Context, Entity, Task, WeakEntity, Window};
 use language::{Anchor, Buffer, ToPoint};
 use parking_lot::Mutex;
-use project::{CompletionIntent, CompletionSource, lsp_store::CompletionDocumentation};
+use project::{lsp_store::CompletionDocumentation, CompletionIntent, CompletionSource};
 use rope::Point;
 use std::{
     cell::RefCell,
     ops::Range,
     rc::Rc,
     sync::{
-        Arc,
         atomic::{AtomicBool, Ordering::SeqCst},
+        Arc,
     },
 };
 use workspace::Workspace;

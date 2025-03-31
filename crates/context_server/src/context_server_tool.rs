@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use anyhow::{Result, anyhow, bail};
+use anyhow::{anyhow, bail, Result};
 use assistant_tool::{ActionLog, Tool, ToolSource};
 use gpui::{App, Entity, Task};
 use icons::IconName;

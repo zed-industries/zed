@@ -1,4 +1,4 @@
-use crate::{Hsla, Rgba, WindowAppearance, rgb};
+use crate::{rgb, Hsla, Rgba, WindowAppearance};
 
 /// The appearance of the base GPUI colors, used to style GPUI elements
 ///

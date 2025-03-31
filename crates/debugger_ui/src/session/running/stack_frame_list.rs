@@ -1,17 +1,17 @@
 use std::path::Path;
 use std::sync::Arc;
 
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
 use dap::StackFrameId;
 use gpui::{
-    AnyElement, Entity, EventEmitter, FocusHandle, Focusable, ListState, Subscription, Task,
-    WeakEntity, list,
+    list, AnyElement, Entity, EventEmitter, FocusHandle, Focusable, ListState, Subscription, Task,
+    WeakEntity,
 };
 
 use language::PointUtf16;
 use project::debugger::session::{Session, SessionEvent, StackFrame};
 use project::{ProjectItem, ProjectPath};
-use ui::{Tooltip, prelude::*};
+use ui::{prelude::*, Tooltip};
 use util::ResultExt;
 use workspace::Workspace;
 

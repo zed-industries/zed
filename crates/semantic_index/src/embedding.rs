@@ -10,7 +10,7 @@ pub use open_ai::*;
 use sha2::{Digest, Sha256};
 
 use anyhow::Result;
-use futures::{FutureExt, future::BoxFuture};
+use futures::{future::BoxFuture, FutureExt};
 use serde::{Deserialize, Serialize};
 use std::{fmt, future};
 

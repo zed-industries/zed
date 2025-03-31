@@ -1,6 +1,6 @@
 use gpui::{AnyElement, Div, StyleRefinement};
 use smallvec::SmallVec;
-use ui::{ButtonLike, prelude::*};
+use ui::{prelude::*, ButtonLike};
 
 #[derive(IntoElement)]
 pub struct FeatureUpsell {

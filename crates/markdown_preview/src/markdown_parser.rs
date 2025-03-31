@@ -751,12 +751,12 @@ mod tests {
 
     use super::*;
 
-    use ParsedMarkdownListItemType::*;
     use gpui::BackgroundExecutor;
     use language::{
-        HighlightId, Language, LanguageConfig, LanguageMatcher, LanguageRegistry, tree_sitter_rust,
+        tree_sitter_rust, HighlightId, Language, LanguageConfig, LanguageMatcher, LanguageRegistry,
     };
     use pretty_assertions::assert_eq;
+    use ParsedMarkdownListItemType::*;
 
     async fn parse(input: &str) -> ParsedMarkdown {
         parse_markdown(input, None, None).await

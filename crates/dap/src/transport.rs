@@ -1,14 +1,14 @@
-use anyhow::{Context, Result, anyhow, bail};
+use anyhow::{anyhow, bail, Context, Result};
 use dap_types::{
-    ErrorResponse,
     messages::{Message, Response},
+    ErrorResponse,
 };
-use futures::{AsyncRead, AsyncReadExt as _, AsyncWrite, FutureExt as _, channel::oneshot, select};
+use futures::{channel::oneshot, select, AsyncRead, AsyncReadExt as _, AsyncWrite, FutureExt as _};
 use gpui::AsyncApp;
 use settings::Settings as _;
 use smallvec::SmallVec;
 use smol::{
-    channel::{Receiver, Sender, unbounded},
+    channel::{unbounded, Receiver, Sender},
     io::{AsyncBufReadExt as _, AsyncWriteExt, BufReader},
     lock::Mutex,
     net::{TcpListener, TcpStream},

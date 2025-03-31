@@ -2,7 +2,7 @@ mod models;
 
 use std::pin::Pin;
 
-use anyhow::{Context, Error, Result, anyhow};
+use anyhow::{anyhow, Context, Error, Result};
 use aws_sdk_bedrockruntime as bedrock;
 pub use aws_sdk_bedrockruntime as bedrock_client;
 pub use aws_sdk_bedrockruntime::types::{

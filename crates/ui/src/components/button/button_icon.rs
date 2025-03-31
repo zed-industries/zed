@@ -1,4 +1,4 @@
-use crate::{Icon, IconName, IconSize, IconWithIndicator, Indicator, prelude::*};
+use crate::{prelude::*, Icon, IconName, IconSize, IconWithIndicator, Indicator};
 use gpui::Hsla;
 
 /// An icon that appears within a button.

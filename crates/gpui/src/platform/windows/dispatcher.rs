@@ -1,5 +1,5 @@
 use std::{
-    thread::{ThreadId, current},
+    thread::{current, ThreadId},
     time::Duration,
 };
 

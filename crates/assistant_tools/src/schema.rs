@@ -1,8 +1,8 @@
 use anyhow::Result;
 use language_model::LanguageModelToolSchemaFormat;
 use schemars::{
-    JsonSchema,
     schema::{RootSchema, Schema, SchemaObject},
+    JsonSchema,
 };
 
 pub fn json_schema_for<T: JsonSchema>(format: LanguageModelToolSchemaFormat) -> serde_json::Value {

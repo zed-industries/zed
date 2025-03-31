@@ -10,9 +10,9 @@ use gpui::{Task, WeakEntity};
 use language::{BufferSnapshot, CodeLabel, HighlightId, LspAdapterDelegate};
 use std::{
     path::PathBuf,
-    sync::{Arc, atomic::AtomicBool},
+    sync::{atomic::AtomicBool, Arc},
 };
-use ui::{ActiveTheme, App, Window, prelude::*};
+use ui::{prelude::*, ActiveTheme, App, Window};
 use util::ResultExt;
 use workspace::Workspace;
 

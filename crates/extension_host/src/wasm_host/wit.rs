@@ -11,23 +11,23 @@ use lsp::LanguageServerName;
 use release_channel::ReleaseChannel;
 use since_v0_4_0 as latest;
 
-use super::{WasmState, wasm_engine};
-use anyhow::{Context as _, Result, anyhow};
+use super::{wasm_engine, WasmState};
+use anyhow::{anyhow, Context as _, Result};
 use semantic_version::SemanticVersion;
 use std::{ops::RangeInclusive, sync::Arc};
 use wasmtime::{
-    Store,
     component::{Component, Linker, Resource},
+    Store,
 };
 
 #[cfg(test)]
 pub use latest::CodeLabelSpanLiteral;
 pub use latest::{
-    CodeLabel, CodeLabelSpan, Command, ExtensionProject, Range, SlashCommand,
     zed::extension::lsp::{
         Completion, CompletionKind, CompletionLabelDetails, InsertTextFormat, Symbol, SymbolKind,
     },
     zed::extension::slash_command::{SlashCommandArgumentCompletion, SlashCommandOutput},
+    CodeLabel, CodeLabelSpan, Command, ExtensionProject, Range, SlashCommand,
 };
 pub use since_v0_0_4::LanguageServerConfig;
 

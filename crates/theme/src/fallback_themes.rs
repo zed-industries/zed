@@ -1,10 +1,11 @@
 use std::sync::Arc;
 
-use gpui::{FontStyle, FontWeight, HighlightStyle, Hsla, WindowBackgroundAppearance, hsla};
+use gpui::{hsla, FontStyle, FontWeight, HighlightStyle, Hsla, WindowBackgroundAppearance};
 
 use crate::{
-    AccentColors, Appearance, PlayerColors, StatusColors, StatusColorsRefinement, SyntaxTheme,
-    SystemColors, Theme, ThemeColors, ThemeFamily, ThemeStyles, default_color_scales,
+    default_color_scales, AccentColors, Appearance, PlayerColors, StatusColors,
+    StatusColorsRefinement, SyntaxTheme, SystemColors, Theme, ThemeColors, ThemeFamily,
+    ThemeStyles,
 };
 
 /// The default theme family for Zed.

@@ -1,10 +1,10 @@
 use crate::{
-    Icon, IconName, IconSize, KeyBinding, Label, List, ListItem, ListSeparator, ListSubHeader,
-    h_flex, prelude::*, utils::WithRemSize, v_flex,
+    h_flex, prelude::*, utils::WithRemSize, v_flex, Icon, IconName, IconSize, KeyBinding, Label,
+    List, ListItem, ListSeparator, ListSubHeader,
 };
 use gpui::{
-    Action, AnyElement, App, AppContext as _, DismissEvent, Entity, EventEmitter, FocusHandle,
-    Focusable, IntoElement, Render, Subscription, px,
+    px, Action, AnyElement, App, AppContext as _, DismissEvent, Entity, EventEmitter, FocusHandle,
+    Focusable, IntoElement, Render, Subscription,
 };
 use menu::{SelectFirst, SelectLast, SelectNext, SelectPrevious};
 use settings::Settings;

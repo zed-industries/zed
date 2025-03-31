@@ -1,6 +1,6 @@
 use gpui::ClickEvent;
 
-use crate::{IconButtonShape, prelude::*};
+use crate::{prelude::*, IconButtonShape};
 
 #[derive(IntoElement)]
 pub struct NumericStepper {

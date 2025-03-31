@@ -3,12 +3,12 @@ use crate::{
     embedding::{Embedding, EmbeddingProvider, TextToEmbed},
     indexing::{IndexingEntryHandle, IndexingEntrySet},
 };
-use anyhow::{Context as _, Result, anyhow};
+use anyhow::{anyhow, Context as _, Result};
 use collections::Bound;
 use feature_flags::FeatureFlagAppExt;
 use fs::Fs;
 use fs::MTime;
-use futures::{FutureExt as _, stream::StreamExt};
+use futures::{stream::StreamExt, FutureExt as _};
 use futures_batch::ChunksTimeoutStreamExt;
 use gpui::{App, AppContext as _, Entity, Task};
 use heed::types::{SerdeBincode, Str};

@@ -3,12 +3,12 @@ use anyhow::Result;
 use buffer_diff::DiffHunkStatus;
 use collections::HashSet;
 use editor::{
-    Direction, Editor, EditorEvent, MultiBuffer, ToPoint,
     actions::{GoToHunk, GoToPreviousHunk},
+    Direction, Editor, EditorEvent, MultiBuffer, ToPoint,
 };
 use gpui::{
-    Action, AnyElement, AnyView, App, Entity, EventEmitter, FocusHandle, Focusable, SharedString,
-    Subscription, Task, WeakEntity, Window, prelude::*,
+    prelude::*, Action, AnyElement, AnyView, App, Entity, EventEmitter, FocusHandle, Focusable,
+    SharedString, Subscription, Task, WeakEntity, Window,
 };
 use language::{Capability, DiskState, OffsetRangeExt, Point};
 use multi_buffer::PathKey;
@@ -18,12 +18,12 @@ use std::{
     ops::Range,
     sync::Arc,
 };
-use ui::{IconButtonShape, KeyBinding, Tooltip, prelude::*};
+use ui::{prelude::*, IconButtonShape, KeyBinding, Tooltip};
 use workspace::{
-    Item, ItemHandle, ItemNavHistory, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView,
-    Workspace,
     item::{BreadcrumbText, ItemEvent, TabContentParams},
     searchable::SearchableItemHandle,
+    Item, ItemHandle, ItemNavHistory, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView,
+    Workspace,
 };
 
 pub struct AssistantDiff {
@@ -566,27 +566,25 @@ fn render_diff_hunk_controls(
                     }),
             ]
         } else {
-            vec![
-                Button::new(("review", row as u64), "Review")
-                    .key_binding(KeyBinding::for_action_in(
-                        &ToggleKeep,
-                        &editor.read(cx).focus_handle(cx),
-                        window,
-                        cx,
-                    ))
-                    .on_click({
-                        let assistant_diff = assistant_diff.clone();
-                        move |_event, _window, cx| {
-                            assistant_diff.update(cx, |diff, cx| {
-                                diff.review_diff_hunks(
-                                    vec![hunk_range.start..hunk_range.start],
-                                    false,
-                                    cx,
-                                );
-                            });
-                        }
-                    }),
-            ]
+            vec![Button::new(("review", row as u64), "Review")
+                .key_binding(KeyBinding::for_action_in(
+                    &ToggleKeep,
+                    &editor.read(cx).focus_handle(cx),
+                    window,
+                    cx,
+                ))
+                .on_click({
+                    let assistant_diff = assistant_diff.clone();
+                    move |_event, _window, cx| {
+                        assistant_diff.update(cx, |diff, cx| {
+                            diff.review_diff_hunks(
+                                vec![hunk_range.start..hunk_range.start],
+                                false,
+                                cx,
+                            );
+                        });
+                    }
+                })]
         })
         .when(
             !editor.read(cx).buffer().read(cx).all_diff_hunks_expanded(),

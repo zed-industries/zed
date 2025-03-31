@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use futures::{StreamExt, channel::mpsc::UnboundedSender};
+use futures::{channel::mpsc::UnboundedSender, StreamExt};
 use gpui::{App, AppContext};
 use parking_lot::RwLock;
 use serde::Deserialize;

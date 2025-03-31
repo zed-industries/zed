@@ -1,6 +1,6 @@
 use crate::{
-    Clickable, Color, DynamicSpacing, Headline, HeadlineSize, IconButton, IconButtonShape,
-    IconName, Label, LabelCommon, LabelSize, h_flex, v_flex,
+    h_flex, v_flex, Clickable, Color, DynamicSpacing, Headline, HeadlineSize, IconButton,
+    IconButtonShape, IconName, Label, LabelCommon, LabelSize,
 };
 use gpui::{prelude::FluentBuilder, *};
 use smallvec::SmallVec;

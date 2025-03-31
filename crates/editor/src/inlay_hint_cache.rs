@@ -14,22 +14,22 @@ use std::{
 };
 
 use crate::{
-    Anchor, Editor, ExcerptId, InlayId, MultiBuffer, MultiBufferSnapshot, display_map::Inlay,
+    display_map::Inlay, Anchor, Editor, ExcerptId, InlayId, MultiBuffer, MultiBufferSnapshot,
 };
 use anyhow::Context as _;
 use clock::Global;
 use futures::future;
 use gpui::{AppContext as _, AsyncApp, Context, Entity, Task, Window};
-use language::{Buffer, BufferSnapshot, language_settings::InlayHintKind};
+use language::{language_settings::InlayHintKind, Buffer, BufferSnapshot};
 use parking_lot::RwLock;
 use project::{InlayHint, ResolveState};
 
-use collections::{HashMap, HashSet, hash_map};
+use collections::{hash_map, HashMap, HashSet};
 use language::language_settings::InlayHintSettings;
 use smol::lock::Semaphore;
 use sum_tree::Bias;
 use text::{BufferId, ToOffset, ToPoint};
-use util::{ResultExt, post_inc};
+use util::{post_inc, ResultExt};
 
 pub struct InlayHintCache {
     hints: HashMap<ExcerptId, Arc<RwLock<CachedExcerptHints>>>,
@@ -1292,11 +1292,11 @@ fn apply_hint_update(
 pub mod tests {
     use crate::editor_tests::update_test_language_settings;
     use crate::scroll::ScrollAmount;
-    use crate::{ExcerptRange, scroll::Autoscroll, test::editor_lsp_test_context::rust_lang};
+    use crate::{scroll::Autoscroll, test::editor_lsp_test_context::rust_lang, ExcerptRange};
     use futures::StreamExt;
     use gpui::{AppContext as _, Context, SemanticVersion, TestAppContext, WindowHandle};
     use itertools::Itertools as _;
-    use language::{Capability, FakeLspAdapter, language_settings::AllLanguageSettingsContent};
+    use language::{language_settings::AllLanguageSettingsContent, Capability, FakeLspAdapter};
     use language::{Language, LanguageConfig, LanguageMatcher};
     use lsp::FakeLanguageServer;
     use parking_lot::Mutex;

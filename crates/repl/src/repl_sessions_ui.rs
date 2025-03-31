@@ -1,14 +1,14 @@
 use editor::Editor;
 use gpui::{
-    AnyElement, App, Entity, EventEmitter, FocusHandle, Focusable, Subscription, actions,
-    prelude::*,
+    actions, prelude::*, AnyElement, App, Entity, EventEmitter, FocusHandle, Focusable,
+    Subscription,
 };
 use project::ProjectItem as _;
-use ui::{ButtonLike, ElevationIndex, KeyBinding, prelude::*};
+use ui::{prelude::*, ButtonLike, ElevationIndex, KeyBinding};
 use util::ResultExt as _;
-use workspace::WorkspaceId;
 use workspace::item::ItemEvent;
-use workspace::{Workspace, item::Item};
+use workspace::WorkspaceId;
+use workspace::{item::Item, Workspace};
 
 use crate::jupyter_settings::JupyterSettings;
 use crate::repl_store::ReplStore;

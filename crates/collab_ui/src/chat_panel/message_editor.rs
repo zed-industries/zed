@@ -9,10 +9,10 @@ use gpui::{
     HighlightStyle, IntoElement, Render, Task, TextStyle, WeakEntity, Window,
 };
 use language::{
-    Anchor, Buffer, BufferSnapshot, CodeLabel, LanguageRegistry, ToOffset,
-    language_settings::SoftWrap,
+    language_settings::SoftWrap, Anchor, Buffer, BufferSnapshot, CodeLabel, LanguageRegistry,
+    ToOffset,
 };
-use project::{Completion, CompletionSource, search::SearchQuery};
+use project::{search::SearchQuery, Completion, CompletionSource};
 use settings::Settings;
 use std::{
     cell::RefCell,
@@ -22,7 +22,7 @@ use std::{
     time::Duration,
 };
 use theme::ThemeSettings;
-use ui::{TextSize, prelude::*};
+use ui::{prelude::*, TextSize};
 
 use crate::panel_settings::MessageEditorSettings;
 

@@ -1,9 +1,8 @@
 use anyhow::Result;
 use collections::HashMap;
 use git::{
-    GitHostingProvider, GitHostingProviderRegistry, Oid,
     blame::{Blame, BlameEntry},
-    parse_git_remote_url,
+    parse_git_remote_url, GitHostingProvider, GitHostingProviderRegistry, Oid,
 };
 use gpui::{App, AppContext as _, Context, Entity, Subscription, Task};
 use http_client::HttpClient;
@@ -530,7 +529,7 @@ mod tests {
     use std::{cmp, env, ops::Range, path::Path};
     use text::BufferId;
     use unindent::Unindent as _;
-    use util::{RandomCharIter, path};
+    use util::{path, RandomCharIter};
 
     // macro_rules! assert_blame_rows {
     //     ($blame:expr, $rows:expr, $expected:expr, $cx:expr) => {

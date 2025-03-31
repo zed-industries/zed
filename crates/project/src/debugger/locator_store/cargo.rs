@@ -1,5 +1,5 @@
 use super::DapLocator;
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use dap::DebugAdapterConfig;
 use serde_json::Value;

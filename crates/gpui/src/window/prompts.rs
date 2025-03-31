@@ -3,9 +3,9 @@ use std::ops::Deref;
 use futures::channel::oneshot;
 
 use crate::{
-    AnyView, App, AppContext as _, Context, Entity, EventEmitter, FocusHandle, Focusable,
-    InteractiveElement, IntoElement, ParentElement, PromptLevel, Render,
-    StatefulInteractiveElement, Styled, div, opaque_grey, white,
+    div, opaque_grey, white, AnyView, App, AppContext as _, Context, Entity, EventEmitter,
+    FocusHandle, Focusable, InteractiveElement, IntoElement, ParentElement, PromptLevel, Render,
+    StatefulInteractiveElement, Styled,
 };
 
 use super::Window;

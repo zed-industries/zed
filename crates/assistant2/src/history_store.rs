@@ -1,6 +1,6 @@
 use assistant_context_editor::SavedContextMetadata;
 use chrono::{DateTime, Utc};
-use gpui::{Entity, prelude::*};
+use gpui::{prelude::*, Entity};
 
 use crate::thread_store::{SerializedThreadMetadata, ThreadStore};
 

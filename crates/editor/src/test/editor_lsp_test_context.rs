@@ -14,7 +14,7 @@ use futures::Future;
 use gpui::{Context, Entity, Focusable as _, VisualTestContext, Window};
 use indoc::indoc;
 use language::{
-    FakeLspAdapter, Language, LanguageConfig, LanguageMatcher, LanguageQueries, point_to_lsp,
+    point_to_lsp, FakeLspAdapter, Language, LanguageConfig, LanguageMatcher, LanguageQueries,
 };
 use lsp::{notification, request};
 use multi_buffer::ToPointUtf16;

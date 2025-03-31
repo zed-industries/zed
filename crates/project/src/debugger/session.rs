@@ -10,25 +10,25 @@ use super::dap_command::{
     VariablesCommand,
 };
 use super::dap_store::DapAdapterDelegate;
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
 use collections::{HashMap, HashSet, IndexMap, IndexSet};
 use dap::adapters::{DebugAdapter, DebugAdapterBinary};
 use dap::messages::Response;
 use dap::{
-    Capabilities, ContinueArguments, EvaluateArgumentsContext, Module, Source, StackFrameId,
-    SteppingGranularity, StoppedEvent, VariableReference,
     adapters::{DapDelegate, DapStatus},
     client::{DebugAdapterClient, SessionId},
     messages::{Events, Message},
+    Capabilities, ContinueArguments, EvaluateArgumentsContext, Module, Source, StackFrameId,
+    SteppingGranularity, StoppedEvent, VariableReference,
 };
 use dap::{DapRegistry, DebugRequestType, OutputEventCategory};
 use futures::channel::oneshot;
-use futures::{FutureExt, future::Shared};
+use futures::{future::Shared, FutureExt};
 use gpui::{
     App, AppContext, AsyncApp, BackgroundExecutor, Context, Entity, EventEmitter, Task, WeakEntity,
 };
 use rpc::AnyProtoClient;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use settings::Settings;
 use smol::stream::StreamExt;
 use std::any::TypeId;
@@ -43,7 +43,7 @@ use std::{
 };
 use task::{DebugAdapterConfig, DebugTaskDefinition};
 use text::{PointUtf16, ToPointUtf16};
-use util::{ResultExt, merge_json_value_into};
+use util::{merge_json_value_into, ResultExt};
 
 #[derive(Debug, Copy, Clone, Hash, PartialEq, PartialOrd, Ord, Eq)]
 #[repr(transparent)]
@@ -1194,12 +1194,8 @@ impl Session {
     fn fetch<T: DapCommand + PartialEq + Eq + Hash>(
         &mut self,
         request: T,
-        process_result: impl FnOnce(
-            &mut Self,
-            Result<T::Response>,
-            &mut Context<Self>,
-        ) -> Option<T::Response>
-        + 'static,
+        process_result: impl FnOnce(&mut Self, Result<T::Response>, &mut Context<Self>) -> Option<T::Response>
+            + 'static,
         cx: &mut Context<Self>,
     ) {
         const {
@@ -1250,12 +1246,8 @@ impl Session {
         session_id: SessionId,
         mode: &Mode,
         request: T,
-        process_result: impl FnOnce(
-            &mut Self,
-            Result<T::Response>,
-            &mut Context<Self>,
-        ) -> Option<T::Response>
-        + 'static,
+        process_result: impl FnOnce(&mut Self, Result<T::Response>, &mut Context<Self>) -> Option<T::Response>
+            + 'static,
         cx: &mut Context<Self>,
     ) -> Task<Option<T::Response>> {
         if !T::is_supported(&capabilities) {
@@ -1285,12 +1277,8 @@ impl Session {
     fn request<T: DapCommand + PartialEq + Eq + Hash>(
         &self,
         request: T,
-        process_result: impl FnOnce(
-            &mut Self,
-            Result<T::Response>,
-            &mut Context<Self>,
-        ) -> Option<T::Response>
-        + 'static,
+        process_result: impl FnOnce(&mut Self, Result<T::Response>, &mut Context<Self>) -> Option<T::Response>
+            + 'static,
         cx: &mut Context<Self>,
     ) -> Task<Option<T::Response>> {
         Self::request_inner(

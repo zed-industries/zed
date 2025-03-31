@@ -1,15 +1,15 @@
 use crate::{
-    AppState, FollowerState, Pane, Workspace, WorkspaceSettings,
     pane_group::element::pane_axis,
     workspace_settings::{PaneSplitDirectionHorizontal, PaneSplitDirectionVertical},
+    AppState, FollowerState, Pane, Workspace, WorkspaceSettings,
 };
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
 use call::{ActiveCall, ParticipantLocation};
 use client::proto::PeerId;
 use collections::HashMap;
 use gpui::{
-    Along, AnyView, AnyWeakView, Axis, Bounds, Context, Entity, IntoElement, MouseButton, Pixels,
-    Point, StyleRefinement, Window, point, size,
+    point, size, Along, AnyView, AnyWeakView, Axis, Bounds, Context, Entity, IntoElement,
+    MouseButton, Pixels, Point, StyleRefinement, Window,
 };
 use parking_lot::Mutex;
 use project::Project;
@@ -803,9 +803,9 @@ mod element {
     use std::{cell::RefCell, iter, rc::Rc, sync::Arc};
 
     use gpui::{
-        Along, AnyElement, App, Axis, BorderStyle, Bounds, Element, GlobalElementId, IntoElement,
-        MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, Pixels, Point, Size, Style,
-        WeakEntity, Window, px, relative, size,
+        px, relative, size, Along, AnyElement, App, Axis, BorderStyle, Bounds, Element,
+        GlobalElementId, IntoElement, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement,
+        Pixels, Point, Size, Style, WeakEntity, Window,
     };
     use gpui::{CursorStyle, Hitbox};
     use parking_lot::Mutex;

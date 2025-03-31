@@ -5,35 +5,35 @@ use std::{
     collections::BTreeMap,
     hash::Hash,
     ops::Range,
-    path::{MAIN_SEPARATOR_STR, Path, PathBuf},
+    path::{Path, PathBuf, MAIN_SEPARATOR_STR},
     sync::{
-        Arc, OnceLock,
         atomic::{self, AtomicBool},
+        Arc, OnceLock,
     },
     time::Duration,
     u32,
 };
 
 use anyhow::Context as _;
-use collections::{BTreeSet, HashMap, HashSet, hash_map};
+use collections::{hash_map, BTreeSet, HashMap, HashSet};
 use db::kvp::KEY_VALUE_STORE;
 use editor::{
-    AnchorRangeExt, Bias, DisplayPoint, Editor, EditorEvent, EditorMode, EditorSettings, ExcerptId,
-    ExcerptRange, MultiBufferSnapshot, RangeToAnchorExt, ShowScrollbar,
     display_map::ToDisplayPoint,
     items::{entry_git_aware_label_color, entry_label_color},
     scroll::{Autoscroll, AutoscrollStrategy, ScrollAnchor, ScrollbarAutoHide},
+    AnchorRangeExt, Bias, DisplayPoint, Editor, EditorEvent, EditorMode, EditorSettings, ExcerptId,
+    ExcerptRange, MultiBufferSnapshot, RangeToAnchorExt, ShowScrollbar,
 };
 use file_icons::FileIcons;
-use fuzzy::{StringMatch, StringMatchCandidate, match_strings};
+use fuzzy::{match_strings, StringMatch, StringMatchCandidate};
 use gpui::{
-    Action, AnyElement, App, AppContext as _, AsyncWindowContext, Bounds, ClipboardItem, Context,
-    DismissEvent, Div, ElementId, Entity, EventEmitter, FocusHandle, Focusable, HighlightStyle,
-    InteractiveElement, IntoElement, KeyContext, ListHorizontalSizingBehavior, ListSizingBehavior,
-    MouseButton, MouseDownEvent, ParentElement, Pixels, Point, Render, ScrollStrategy,
-    SharedString, Stateful, StatefulInteractiveElement as _, Styled, Subscription, Task,
-    UniformListScrollHandle, WeakEntity, Window, actions, anchored, deferred, div, point, px, size,
-    uniform_list,
+    actions, anchored, deferred, div, point, px, size, uniform_list, Action, AnyElement, App,
+    AppContext as _, AsyncWindowContext, Bounds, ClipboardItem, Context, DismissEvent, Div,
+    ElementId, Entity, EventEmitter, FocusHandle, Focusable, HighlightStyle, InteractiveElement,
+    IntoElement, KeyContext, ListHorizontalSizingBehavior, ListSizingBehavior, MouseButton,
+    MouseDownEvent, ParentElement, Pixels, Point, Render, ScrollStrategy, SharedString, Stateful,
+    StatefulInteractiveElement as _, Styled, Subscription, Task, UniformListScrollHandle,
+    WeakEntity, Window,
 };
 use itertools::Itertools;
 use language::{BufferId, BufferSnapshot, OffsetRangeExt, OutlineItem};
@@ -47,18 +47,18 @@ use settings::{Settings, SettingsStore};
 use smol::channel;
 use theme::{SyntaxTheme, ThemeSettings};
 use ui::{DynamicSpacing, IndentGuideColors, IndentGuideLayout};
-use util::{RangeExt, ResultExt, TryFutureExt, debug_panic};
+use util::{debug_panic, RangeExt, ResultExt, TryFutureExt};
 use workspace::{
-    OpenInTerminal, WeakItemHandle, Workspace,
     dock::{DockPosition, Panel, PanelEvent},
     item::ItemHandle,
     searchable::{SearchEvent, SearchableItem},
     ui::{
-        ActiveTheme, ButtonCommon, Clickable, Color, ContextMenu, FluentBuilder, HighlightedLabel,
-        Icon, IconButton, IconButtonShape, IconName, IconSize, Label, LabelCommon, ListItem,
-        Scrollbar, ScrollbarState, StyledExt, StyledTypography, Toggleable, Tooltip, h_flex,
-        v_flex,
+        h_flex, v_flex, ActiveTheme, ButtonCommon, Clickable, Color, ContextMenu, FluentBuilder,
+        HighlightedLabel, Icon, IconButton, IconButtonShape, IconName, IconSize, Label,
+        LabelCommon, ListItem, Scrollbar, ScrollbarState, StyledExt, StyledTypography, Toggleable,
+        Tooltip,
     },
+    OpenInTerminal, WeakItemHandle, Workspace,
 };
 use worktree::{Entry, ProjectEntryId, WorktreeId};
 
@@ -1767,7 +1767,11 @@ impl OutlinePanel {
         active_editor.update(cx, |editor, cx| {
             buffers_to_toggle.retain(|buffer_id| {
                 let folded = editor.is_buffer_folded(*buffer_id, cx);
-                if fold { !folded } else { folded }
+                if fold {
+                    !folded
+                } else {
+                    folded
+                }
             });
         });
 
@@ -5161,7 +5165,7 @@ impl GenerationState {
 mod tests {
     use db::indoc;
     use gpui::{TestAppContext, VisualTestContext, WindowHandle};
-    use language::{Language, LanguageConfig, LanguageMatcher, tree_sitter_rust};
+    use language::{tree_sitter_rust, Language, LanguageConfig, LanguageMatcher};
     use pretty_assertions::assert_eq;
     use project::FakeFs;
     use search::project_search::{self, perform_project_search};

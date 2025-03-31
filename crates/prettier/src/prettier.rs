@@ -1,8 +1,8 @@
-use anyhow::{Context as _, anyhow};
+use anyhow::{anyhow, Context as _};
 use collections::{HashMap, HashSet};
 use fs::Fs;
 use gpui::{AsyncApp, Entity};
-use language::{Buffer, Diff, language_settings::language_settings};
+use language::{language_settings::language_settings, Buffer, Diff};
 use lsp::{LanguageServer, LanguageServerId};
 use node_runtime::NodeRuntime;
 use paths::default_prettier_dir;

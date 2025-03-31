@@ -1,4 +1,4 @@
-use futures::{FutureExt, channel::oneshot};
+use futures::{channel::oneshot, FutureExt};
 use gpui::{Context, Task};
 use std::{marker::PhantomData, time::Duration};
 

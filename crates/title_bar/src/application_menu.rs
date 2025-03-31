@@ -9,7 +9,7 @@ use schemars::JsonSchema;
 use serde::Deserialize;
 
 use smallvec::SmallVec;
-use ui::{ContextMenu, PopoverMenu, PopoverMenuHandle, Tooltip, prelude::*};
+use ui::{prelude::*, ContextMenu, PopoverMenu, PopoverMenuHandle, Tooltip};
 
 #[cfg(not(target_os = "macos"))]
 impl_actions!(app_menu, [OpenApplicationMenu]);

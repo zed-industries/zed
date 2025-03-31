@@ -1,5 +1,5 @@
-use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
+use std::sync::Arc;
 
 use anyhow::Result;
 use assistant_slash_command::{
@@ -8,9 +8,9 @@ use assistant_slash_command::{
 };
 use gpui::{App, Entity, Task, WeakEntity};
 use language::{BufferSnapshot, CodeLabel, LspAdapterDelegate};
-use terminal_view::{TerminalView, terminal_panel::TerminalPanel};
+use terminal_view::{terminal_panel::TerminalPanel, TerminalView};
 use ui::prelude::*;
-use workspace::{Workspace, dock::Panel};
+use workspace::{dock::Panel, Workspace};
 
 use super::create_label_for_command;
 

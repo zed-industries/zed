@@ -1,19 +1,19 @@
 use std::{sync::Arc, time::Duration};
 
-use crate::{ZED_PREDICT_DATA_COLLECTION_CHOICE, onboarding_event};
+use crate::{onboarding_event, ZED_PREDICT_DATA_COLLECTION_CHOICE};
 use anyhow::Context as _;
 use client::{Client, UserStore};
 use db::kvp::KEY_VALUE_STORE;
 use fs::Fs;
 use gpui::{
-    Animation, AnimationExt as _, ClickEvent, DismissEvent, Entity, EventEmitter, FocusHandle,
-    Focusable, MouseDownEvent, Render, ease_in_out, svg,
+    ease_in_out, svg, Animation, AnimationExt as _, ClickEvent, DismissEvent, Entity, EventEmitter,
+    FocusHandle, Focusable, MouseDownEvent, Render,
 };
 use language::language_settings::{AllLanguageSettings, EditPredictionProvider};
-use settings::{Settings, update_settings_file};
-use ui::{Checkbox, TintColor, prelude::*};
+use settings::{update_settings_file, Settings};
+use ui::{prelude::*, Checkbox, TintColor};
 use util::ResultExt;
-use workspace::{ModalView, Workspace, notifications::NotifyTaskExt};
+use workspace::{notifications::NotifyTaskExt, ModalView, Workspace};
 
 /// Introduces user to Zed's Edit Prediction feature and terms of service
 pub struct ZedPredictModal {

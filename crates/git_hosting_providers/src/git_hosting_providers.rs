@@ -3,9 +3,9 @@ mod settings;
 
 use std::sync::Arc;
 
-use anyhow::{Result, anyhow};
-use git::GitHostingProviderRegistry;
+use anyhow::{anyhow, Result};
 use git::repository::GitRepository;
+use git::GitHostingProviderRegistry;
 use gpui::App;
 use url::Url;
 use util::maybe;

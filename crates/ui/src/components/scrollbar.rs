@@ -1,11 +1,11 @@
 use std::{any::Any, cell::Cell, fmt::Debug, ops::Range, rc::Rc, sync::Arc};
 
-use crate::{IntoElement, prelude::*, px, relative};
+use crate::{prelude::*, px, relative, IntoElement};
 use gpui::{
-    Along, App, Axis as ScrollbarAxis, BorderStyle, Bounds, ContentMask, Corners, Edges, Element,
-    ElementId, Entity, EntityId, GlobalElementId, Hitbox, Hsla, LayoutId, ListState,
-    MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, ScrollHandle, ScrollWheelEvent,
-    Size, Style, UniformListScrollHandle, Window, point, quad,
+    point, quad, Along, App, Axis as ScrollbarAxis, BorderStyle, Bounds, ContentMask, Corners,
+    Edges, Element, ElementId, Entity, EntityId, GlobalElementId, Hitbox, Hsla, LayoutId,
+    ListState, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, ScrollHandle,
+    ScrollWheelEvent, Size, Style, UniformListScrollHandle, Window,
 };
 
 pub struct Scrollbar {
@@ -171,7 +171,11 @@ impl ScrollbarState {
         let mut current_offset = self.scroll_handle.offset().along(axis).min(px(0.)).abs().0;
         if let Some(adjustment) = scroll_adjustment.and_then(|adjustment| {
             let adjust = adjustment.along(axis).0;
-            if adjust < 0.0 { Some(adjust) } else { None }
+            if adjust < 0.0 {
+                Some(adjust)
+            } else {
+                None
+            }
         }) {
             current_offset -= adjustment;
         }

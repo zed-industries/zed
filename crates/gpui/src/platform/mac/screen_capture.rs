@@ -1,12 +1,11 @@
 use crate::{
-    Pixels, Size,
     platform::{ScreenCaptureFrame, ScreenCaptureSource, ScreenCaptureStream},
-    px, size,
+    px, size, Pixels, Size,
 };
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
 use block::ConcreteBlock;
 use cocoa::{
-    base::{YES, id, nil},
+    base::{id, nil, YES},
     foundation::NSArray,
 };
 use core_foundation::base::TCFType;

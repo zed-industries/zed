@@ -5,9 +5,9 @@ use std::{
 };
 
 use gpui::{
-    App, Application, Bounds, Context, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point,
-    Render, SharedString, UniformListScrollHandle, Window, WindowBounds, WindowOptions, canvas,
-    div, point, prelude::*, px, rgb, size, uniform_list,
+    canvas, div, point, prelude::*, px, rgb, size, uniform_list, App, Application, Bounds, Context,
+    MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, Render, SharedString,
+    UniformListScrollHandle, Window, WindowBounds, WindowOptions,
 };
 
 const TOTAL_ITEMS: usize = 10000;

@@ -4,20 +4,20 @@ pub mod request;
 mod sign_in;
 
 use ::fs::Fs;
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
 use collections::{HashMap, HashSet};
 use command_palette_hooks::CommandPaletteFilter;
-use futures::{Future, FutureExt, TryFutureExt, channel::oneshot, future::Shared};
+use futures::{channel::oneshot, future::Shared, Future, FutureExt, TryFutureExt};
 use gpui::{
-    App, AppContext as _, AsyncApp, Context, Entity, EntityId, EventEmitter, Global, Task,
-    WeakEntity, actions,
+    actions, App, AppContext as _, AsyncApp, Context, Entity, EntityId, EventEmitter, Global, Task,
+    WeakEntity,
 };
 use http_client::HttpClient;
 use language::language_settings::CopilotSettings;
 use language::{
-    Anchor, Bias, Buffer, BufferSnapshot, Language, PointUtf16, ToPointUtf16,
-    language_settings::{EditPredictionProvider, all_language_settings, language_settings},
-    point_from_lsp, point_to_lsp,
+    language_settings::{all_language_settings, language_settings, EditPredictionProvider},
+    point_from_lsp, point_to_lsp, Anchor, Bias, Buffer, BufferSnapshot, Language, PointUtf16,
+    ToPointUtf16,
 };
 use lsp::{LanguageServer, LanguageServerBinary, LanguageServerId, LanguageServerName};
 use node_runtime::NodeRuntime;
@@ -33,10 +33,10 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
-use util::{ResultExt, fs::remove_matching};
+use util::{fs::remove_matching, ResultExt};
 
 pub use crate::copilot_completion_provider::CopilotCompletionProvider;
-pub use crate::sign_in::{CopilotCodeVerification, initiate_sign_in};
+pub use crate::sign_in::{initiate_sign_in, CopilotCodeVerification};
 
 actions!(
     copilot,

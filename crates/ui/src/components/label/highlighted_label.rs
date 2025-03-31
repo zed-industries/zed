@@ -2,7 +2,7 @@ use std::ops::Range;
 
 use gpui::{FontWeight, HighlightStyle, StyledText};
 
-use crate::{LabelCommon, LabelLike, LabelSize, LineHeightStyle, prelude::*};
+use crate::{prelude::*, LabelCommon, LabelLike, LabelSize, LineHeightStyle};
 
 #[derive(IntoElement)]
 pub struct HighlightedLabel {

@@ -1,23 +1,23 @@
 #![allow(clippy::format_collect)]
 
-use crate::{Event, task_inventory::TaskContexts, task_store::TaskSettingsLocation, *};
+use crate::{task_inventory::TaskContexts, task_store::TaskSettingsLocation, Event, *};
 use buffer_diff::{
-    BufferDiffEvent, DiffHunkSecondaryStatus, DiffHunkStatus, DiffHunkStatusKind, assert_hunks,
+    assert_hunks, BufferDiffEvent, DiffHunkSecondaryStatus, DiffHunkStatus, DiffHunkStatusKind,
 };
 use fs::FakeFs;
-use futures::{StreamExt, future};
+use futures::{future, StreamExt};
 use git::repository::RepoPath;
 use gpui::{App, BackgroundExecutor, SemanticVersion, UpdateGlobal};
 use http_client::Url;
 use language::{
-    Diagnostic, DiagnosticEntry, DiagnosticSet, DiskState, FakeLspAdapter, LanguageConfig,
-    LanguageMatcher, LanguageName, LineEnding, OffsetRangeExt, Point, ToPoint,
-    language_settings::{AllLanguageSettings, LanguageSettingsContent, language_settings},
-    tree_sitter_rust, tree_sitter_typescript,
+    language_settings::{language_settings, AllLanguageSettings, LanguageSettingsContent},
+    tree_sitter_rust, tree_sitter_typescript, Diagnostic, DiagnosticEntry, DiagnosticSet,
+    DiskState, FakeLspAdapter, LanguageConfig, LanguageMatcher, LanguageName, LineEnding,
+    OffsetRangeExt, Point, ToPoint,
 };
 use lsp::{
-    DiagnosticSeverity, DocumentChanges, FileOperationFilter, NumberOrString, TextDocumentEdit,
-    WillRenameFiles, notification::DidRenameFiles,
+    notification::DidRenameFiles, DiagnosticSeverity, DocumentChanges, FileOperationFilter,
+    NumberOrString, TextDocumentEdit, WillRenameFiles,
 };
 use parking_lot::Mutex;
 use paths::tasks_file;
@@ -29,11 +29,11 @@ use std::{mem, num::NonZeroU32, ops::Range, str::FromStr, sync::OnceLock, task::
 use task::{ResolvedTask, TaskContext};
 use unindent::Unindent as _;
 use util::{
-    TryFutureExt as _, assert_set_eq, path,
+    assert_set_eq, path,
     paths::PathMatcher,
     separator,
-    test::{TempTree, marked_text_offsets},
-    uri,
+    test::{marked_text_offsets, TempTree},
+    uri, TryFutureExt as _,
 };
 use worktree::WorktreeModelHandle as _;
 

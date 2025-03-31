@@ -1,6 +1,6 @@
 use crate::{attach_modal::Candidate, *};
 use attach_modal::AttachModal;
-use dap::{FakeAdapter, client::SessionId};
+use dap::{client::SessionId, FakeAdapter};
 use gpui::{BackgroundExecutor, TestAppContext, VisualTestContext};
 use menu::Confirm;
 use project::{FakeFs, Project};
