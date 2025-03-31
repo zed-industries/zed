@@ -183,10 +183,10 @@ impl TerminalPanel {
                                             split_context.clone(),
                                             |menu, split_context| menu.context(split_context),
                                         )
-                                        .action("Split Right", SplitRight.boxed_clone())
-                                        .action("Split Left", SplitLeft.boxed_clone())
-                                        .action("Split Up", SplitUp.boxed_clone())
-                                        .action("Split Down", SplitDown.boxed_clone())
+                                        .action("Split Right", SplitRight::default().boxed_clone())
+                                        .action("Split Left", SplitLeft::default().boxed_clone())
+                                        .action("Split Up", SplitUp::default().boxed_clone())
+                                        .action("Split Down", SplitDown::default().boxed_clone())
                                     })
                                     .into()
                                 }
@@ -390,7 +390,8 @@ impl TerminalPanel {
                 }
                 self.serialize(cx);
             }
-            pane::Event::Split(direction) => {
+            pane::Event::Split { direction, .. } => {
+                // TODO: support Split::use_existing
                 let Some(new_pane) = self.new_pane_with_cloned_active_terminal(window, cx) else {
                     return;
                 };
