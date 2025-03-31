@@ -1030,20 +1030,23 @@ impl Thread {
                                 }
                             }
                             LanguageModelCompletionEvent::ToolUse(tool_use) => {
-                                if let Some(last_message) = thread.messages.last() {
-                                    let message_id = if last_message.role == Role::Assistant {
-                                        last_message.id
-                                    } else {
-                                        // If we won't have an Assistant message yet, assume this chunk marks the beginning
-                                        // of a new Assistant response.
+                                let last_assistant_message_id = thread
+                                    .messages
+                                    .iter()
+                                    .rfind(|message| message.role == Role::Assistant)
+                                    .map(|message| message.id)
+                                    .unwrap_or_else(|| {
                                         thread.insert_message(
                                             Role::Assistant,
-                                            vec![MessageSegment::Text("".to_string())],
+                                            vec![MessageSegment::Text("Using tool...".to_string())],
                                             cx,
                                         )
-                                    };
-                                    thread.tool_use.request_tool_use(message_id, tool_use, cx);
-                                }
+                                    });
+                                thread.tool_use.request_tool_use(
+                                    last_assistant_message_id,
+                                    tool_use,
+                                    cx,
+                                );
                             }
                         }
 

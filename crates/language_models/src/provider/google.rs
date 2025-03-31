@@ -414,7 +414,6 @@ pub fn into_google(
     request: LanguageModelRequest,
     model: String,
 ) -> google_ai::GenerateContentRequest {
-    let has_tools = !request.tools.is_empty();
     google_ai::GenerateContentRequest {
         model,
         contents: request
@@ -426,7 +425,11 @@ pub fn into_google(
                     .into_iter()
                     .filter_map(|content| match content {
                         language_model::MessageContent::Text(text) => {
-                            Some(Part::TextPart(google_ai::TextPart { text }))
+                            if !text.is_empty() {
+                                Some(Part::TextPart(google_ai::TextPart { text }))
+                            } else {
+                                None
+                            }
                         }
                         language_model::MessageContent::Image(_) => None,
                         language_model::MessageContent::ToolUse(tool_use) => {
@@ -479,12 +482,7 @@ pub fn into_google(
                 })
                 .collect(),
         ),
-        tool_config: has_tools.then(|| google_ai::ToolConfig {
-            function_calling_config: google_ai::FunctionCallingConfig {
-                mode: google_ai::FunctionCallingMode::Any,
-                allowed_function_names: None,
-            },
-        }),
+        tool_config: None,
     }
 }
 
