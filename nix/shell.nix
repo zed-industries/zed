@@ -32,13 +32,6 @@ mkShell' {
     nodejs_22
   ];
 
-  # We set SDKROOT and DEVELOPER_DIR to the Xcode ones instead of the nixpkgs ones, because
-  # we need Swift 6.0 and nixpkgs doesn't have it
-  shellHook = lib.optionalString stdenv.hostPlatform.isDarwin ''
-    export SDKROOT="/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk";
-    export DEVELOPER_DIR="/Applications/Xcode.app/Contents/Developer";
-  '';
-
   env =
     let
       baseEnvs =
