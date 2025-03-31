@@ -1,12 +1,12 @@
 use editor::{
+    Anchor, Bias, DisplayPoint, Editor, RowExt, ToOffset, ToPoint,
     display_map::{DisplayRow, DisplaySnapshot, FoldPoint, ToDisplayPoint},
     movement::{
-        self, find_boundary, find_preceding_boundary_display_point, FindRange, TextLayoutDetails,
+        self, FindRange, TextLayoutDetails, find_boundary, find_preceding_boundary_display_point,
     },
     scroll::Autoscroll,
-    Anchor, Bias, DisplayPoint, Editor, RowExt, ToOffset, ToPoint,
 };
-use gpui::{action_with_deprecated_aliases, actions, impl_actions, px, Context, Window};
+use gpui::{Context, Window, action_with_deprecated_aliases, actions, impl_actions, px};
 use language::{CharKind, Point, Selection, SelectionGoal};
 use multi_buffer::MultiBufferRow;
 use schemars::JsonSchema;
@@ -15,10 +15,10 @@ use std::ops::Range;
 use workspace::searchable::Direction;
 
 use crate::{
+    Vim,
     normal::mark,
     state::{Mode, Operator},
     surrounds::SurroundsType,
-    Vim,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

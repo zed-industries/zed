@@ -3,7 +3,7 @@ use settings::Settings;
 use theme::ThemeSettings;
 
 use crate::prelude::*;
-use crate::{h_flex, v_flex, Color, KeyBinding, Label, LabelSize, StyledExt};
+use crate::{Color, KeyBinding, Label, LabelSize, StyledExt, h_flex, v_flex};
 
 #[derive(IntoComponent)]
 pub struct Tooltip {

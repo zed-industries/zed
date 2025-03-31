@@ -4,11 +4,12 @@ mod worktree_settings;
 mod worktree_tests;
 
 use ::ignore::gitignore::{Gitignore, GitignoreBuilder};
-use anyhow::{anyhow, Context as _, Result};
+use anyhow::{Context as _, Result, anyhow};
 use clock::ReplicaId;
 use collections::{HashMap, HashSet, VecDeque};
-use fs::{copy_recursive, Fs, MTime, PathEvent, RemoveOptions, Watcher};
+use fs::{Fs, MTime, PathEvent, RemoveOptions, Watcher, copy_recursive};
 use futures::{
+    FutureExt as _, Stream, StreamExt,
     channel::{
         mpsc::{self, UnboundedSender},
         oneshot,
@@ -16,16 +17,15 @@ use futures::{
     future::join_all,
     select_biased,
     task::Poll,
-    FutureExt as _, Stream, StreamExt,
 };
 use fuzzy::CharBag;
 use git::{
+    COMMIT_MESSAGE, DOT_GIT, FSMONITOR_DAEMON, GITIGNORE, GitHostingProviderRegistry, INDEX_LOCK,
+    LFS_DIR,
     repository::{Branch, GitRepository, RepoPath, UpstreamTrackingStatus},
     status::{
         FileStatus, GitSummary, StatusCode, TrackedStatus, UnmergedStatus, UnmergedStatusCode,
     },
-    GitHostingProviderRegistry, COMMIT_MESSAGE, DOT_GIT, FSMONITOR_DAEMON, GITIGNORE, INDEX_LOCK,
-    LFS_DIR,
 };
 use gpui::{
     App, AppContext as _, AsyncApp, BackgroundExecutor, Context, Entity, EventEmitter, Task,
@@ -41,12 +41,12 @@ use postage::{
     watch,
 };
 use rpc::{
-    proto::{self, split_worktree_update, FromProto, ToProto},
     AnyProtoClient,
+    proto::{self, FromProto, ToProto, split_worktree_update},
 };
 pub use settings::WorktreeId;
 use settings::{Settings, SettingsLocation, SettingsStore};
-use smallvec::{smallvec, SmallVec};
+use smallvec::{SmallVec, smallvec};
 use smol::channel::{self, Sender};
 use std::{
     any::Any,
@@ -61,16 +61,16 @@ use std::{
     path::{Component, Path, PathBuf},
     pin::Pin,
     sync::{
-        atomic::{self, AtomicI32, AtomicUsize, Ordering::SeqCst},
         Arc,
+        atomic::{self, AtomicI32, AtomicUsize, Ordering::SeqCst},
     },
     time::{Duration, Instant},
 };
 use sum_tree::{Bias, Edit, KeyedItem, SeekTarget, SumTree, Summary, TreeMap, TreeSet, Unit};
 use text::{LineEnding, Rope};
 use util::{
-    paths::{home_dir, PathMatcher, SanitizedPath},
     ResultExt,
+    paths::{PathMatcher, SanitizedPath, home_dir},
 };
 pub use worktree_settings::WorktreeSettings;
 
@@ -3117,9 +3117,10 @@ impl LocalSnapshot {
                     .strip_prefix(self.abs_path.as_path())
                     .unwrap();
                 assert!(self.entry_for_path(ignore_parent_path).is_some());
-                assert!(self
-                    .entry_for_path(ignore_parent_path.join(*GITIGNORE))
-                    .is_some());
+                assert!(
+                    self.entry_for_path(ignore_parent_path.join(*GITIGNORE))
+                        .is_some()
+                );
             }
         }
     }
@@ -3587,11 +3588,7 @@ pub struct File {
 
 impl language::File for File {
     fn as_local(&self) -> Option<&dyn language::LocalFile> {
-        if self.is_local {
-            Some(self)
-        } else {
-            None
-        }
+        if self.is_local { Some(self) } else { None }
     }
 
     fn disk_state(&self) -> DiskState {

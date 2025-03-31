@@ -1,5 +1,5 @@
 use crate::{replace::replace_with_flexible_indent, schema::json_schema_for};
-use anyhow::{anyhow, Context as _, Result};
+use anyhow::{Context as _, Result, anyhow};
 use assistant_tool::{ActionLog, Tool};
 use gpui::{App, AppContext, Entity, Task};
 use language_model::{LanguageModelRequestMessage, LanguageModelToolSchemaFormat};

@@ -6,7 +6,7 @@ pub mod telemetry;
 pub mod user;
 pub mod zed_urls;
 
-use anyhow::{anyhow, bail, Context as _, Result};
+use anyhow::{Context as _, Result, anyhow, bail};
 use async_recursion::async_recursion;
 use async_tungstenite::tungstenite::{
     client::IntoClientRequest,
@@ -17,10 +17,10 @@ use chrono::{DateTime, Utc};
 use clock::SystemClock;
 use credentials_provider::CredentialsProvider;
 use futures::{
-    channel::oneshot, future::BoxFuture, AsyncReadExt, FutureExt, SinkExt, Stream, StreamExt,
-    TryFutureExt as _, TryStreamExt,
+    AsyncReadExt, FutureExt, SinkExt, Stream, StreamExt, TryFutureExt as _, TryStreamExt,
+    channel::oneshot, future::BoxFuture,
 };
-use gpui::{actions, App, AppContext as _, AsyncApp, Entity, Global, Task, WeakEntity};
+use gpui::{App, AppContext as _, AsyncApp, Entity, Global, Task, WeakEntity, actions};
 use http_client::{AsyncBody, HttpClient, HttpClientWithUrl};
 use parking_lot::RwLock;
 use postage::watch;
@@ -40,8 +40,8 @@ use std::{
     marker::PhantomData,
     path::PathBuf,
     sync::{
-        atomic::{AtomicU64, Ordering},
         Arc, LazyLock, Weak,
+        atomic::{AtomicU64, Ordering},
     },
     time::{Duration, Instant},
 };

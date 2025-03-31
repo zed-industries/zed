@@ -1,6 +1,6 @@
 use super::{RandomizedTest, TestClient, TestError, TestServer, UserTestPlan};
 use crate::{db::UserId, tests::run_randomized_test};
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use async_trait::async_trait;
 use call::ActiveCall;
 use collections::{BTreeMap, HashMap};
@@ -9,12 +9,12 @@ use fs::{FakeFs, Fs as _};
 use git::status::{FileStatus, StatusCode, TrackedStatus, UnmergedStatus, UnmergedStatusCode};
 use gpui::{BackgroundExecutor, Entity, TestAppContext};
 use language::{
-    range_to_lsp, FakeLspAdapter, Language, LanguageConfig, LanguageMatcher, PointUtf16,
+    FakeLspAdapter, Language, LanguageConfig, LanguageMatcher, PointUtf16, range_to_lsp,
 };
 use lsp::FakeLanguageServer;
 use pretty_assertions::assert_eq;
 use project::{
-    search::SearchQuery, search::SearchResult, Project, ProjectPath, DEFAULT_COMPLETION_CONTEXT,
+    DEFAULT_COMPLETION_CONTEXT, Project, ProjectPath, search::SearchQuery, search::SearchResult,
 };
 use rand::{
     distributions::{Alphanumeric, DistString},
@@ -27,7 +27,7 @@ use std::{
     rc::Rc,
     sync::Arc,
 };
-use util::{path, ResultExt};
+use util::{ResultExt, path};
 
 #[gpui::test(
     iterations = 100,
@@ -784,10 +784,12 @@ impl RandomizedTest for ProjectCollaborationTest {
                 let save = cx.spawn(|cx| async move {
                     save.await
                         .map_err(|err| anyhow!("save request failed: {:?}", err))?;
-                    assert!(buffer
-                        .read_with(&cx, |buffer, _| { buffer.saved_version().to_owned() })
-                        .expect("App should not be dropped")
-                        .observed_all(&requested_version));
+                    assert!(
+                        buffer
+                            .read_with(&cx, |buffer, _| { buffer.saved_version().to_owned() })
+                            .expect("App should not be dropped")
+                            .observed_all(&requested_version)
+                    );
                     anyhow::Ok(())
                 });
                 if detach {

@@ -1,18 +1,19 @@
 use crate::persistence::model::DockData;
-use crate::{status_bar::StatusItemView, Workspace};
 use crate::{DraggedDock, Event, ModalLayer, Pane};
+use crate::{Workspace, status_bar::StatusItemView};
 use anyhow::Context as _;
 use client::proto;
 use gpui::{
-    deferred, div, px, Action, AnyView, App, Axis, Context, Corner, Entity, EntityId, EventEmitter,
-    FocusHandle, Focusable, IntoElement, KeyContext, MouseButton, MouseDownEvent, MouseUpEvent,
-    ParentElement, Render, SharedString, StyleRefinement, Styled, Subscription, WeakEntity, Window,
+    Action, AnyView, App, Axis, Context, Corner, Entity, EntityId, EventEmitter, FocusHandle,
+    Focusable, IntoElement, KeyContext, MouseButton, MouseDownEvent, MouseUpEvent, ParentElement,
+    Render, SharedString, StyleRefinement, Styled, Subscription, WeakEntity, Window, deferred, div,
+    px,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::SettingsStore;
 use std::sync::Arc;
-use ui::{h_flex, ContextMenu, Divider, DividerColor, IconButton, Tooltip};
+use ui::{ContextMenu, Divider, DividerColor, IconButton, Tooltip, h_flex};
 use ui::{prelude::*, right_click_menu};
 
 pub(crate) const RESIZE_HANDLE_SIZE: Pixels = Pixels(6.);
@@ -930,7 +931,7 @@ impl StatusItemView for PanelButtons {
 #[cfg(any(test, feature = "test-support"))]
 pub mod test {
     use super::*;
-    use gpui::{actions, div, App, Context, Window};
+    use gpui::{App, Context, Window, actions, div};
 
     pub struct TestPanel {
         pub position: DockPosition,

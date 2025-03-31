@@ -5,10 +5,10 @@ use crate::markdown_elements::{
     ParsedMarkdownTableAlignment, ParsedMarkdownTableRow,
 };
 use gpui::{
-    div, img, px, rems, AbsoluteLength, AnyElement, App, AppContext as _, ClipboardItem, Context,
-    DefiniteLength, Div, Element, ElementId, Entity, HighlightStyle, Hsla, ImageSource,
-    InteractiveText, IntoElement, Keystroke, Length, Modifiers, ParentElement, Render, Resource,
-    SharedString, Styled, StyledText, TextStyle, WeakEntity, Window,
+    AbsoluteLength, AnyElement, App, AppContext as _, ClipboardItem, Context, DefiniteLength, Div,
+    Element, ElementId, Entity, HighlightStyle, Hsla, ImageSource, InteractiveText, IntoElement,
+    Keystroke, Length, Modifiers, ParentElement, Render, Resource, SharedString, Styled,
+    StyledText, TextStyle, WeakEntity, Window, div, img, px, rems,
 };
 use settings::Settings;
 use std::{
@@ -18,10 +18,10 @@ use std::{
 };
 use theme::{ActiveTheme, SyntaxTheme, ThemeSettings};
 use ui::{
-    h_flex, relative, tooltip_container, v_flex, ButtonCommon, Checkbox, Clickable, Color,
-    FluentBuilder, IconButton, IconName, IconSize, InteractiveElement, Label, LabelCommon,
-    LabelSize, LinkPreview, StatefulInteractiveElement, StyledExt, StyledImage, ToggleState,
-    Tooltip, VisibleOnHover,
+    ButtonCommon, Checkbox, Clickable, Color, FluentBuilder, IconButton, IconName, IconSize,
+    InteractiveElement, Label, LabelCommon, LabelSize, LinkPreview, StatefulInteractiveElement,
+    StyledExt, StyledImage, ToggleState, Tooltip, VisibleOnHover, h_flex, relative,
+    tooltip_container, v_flex,
 };
 use workspace::{OpenOptions, OpenVisible, Workspace};
 

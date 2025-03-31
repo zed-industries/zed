@@ -2,7 +2,7 @@ use crate::{Completion, Copilot};
 use anyhow::Result;
 use gpui::{App, Context, Entity, EntityId, Task};
 use inline_completion::{Direction, EditPredictionProvider, InlineCompletion};
-use language::{language_settings::AllLanguageSettings, Buffer, OffsetRangeExt, ToOffset};
+use language::{Buffer, OffsetRangeExt, ToOffset, language_settings::AllLanguageSettings};
 use project::Project;
 use settings::Settings;
 use std::{path::Path, time::Duration};
@@ -264,18 +264,18 @@ fn common_prefix<T1: Iterator<Item = char>, T2: Iterator<Item = char>>(a: T1, b:
 mod tests {
     use super::*;
     use editor::{
-        test::editor_lsp_test_context::EditorLspTestContext, Editor, ExcerptRange, MultiBuffer,
+        Editor, ExcerptRange, MultiBuffer, test::editor_lsp_test_context::EditorLspTestContext,
     };
     use fs::FakeFs;
     use futures::StreamExt;
     use gpui::{AppContext as _, BackgroundExecutor, TestAppContext, UpdateGlobal};
     use indoc::indoc;
     use language::{
+        Point,
         language_settings::{
             AllLanguageSettings, AllLanguageSettingsContent, CompletionSettings,
             WordsCompletionMode,
         },
-        Point,
     };
     use project::Project;
     use serde_json::json;
@@ -283,7 +283,7 @@ mod tests {
     use std::future::Future;
     use util::{
         path,
-        test::{marked_text_ranges_by, TextRangeMarker},
+        test::{TextRangeMarker, marked_text_ranges_by},
     };
 
     #[gpui::test(iterations = 10)]

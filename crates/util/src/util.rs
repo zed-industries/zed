@@ -25,7 +25,7 @@ use std::{
 use unicase::UniCase;
 
 #[cfg(unix)]
-use anyhow::{anyhow, Context as _};
+use anyhow::{Context as _, anyhow};
 
 pub use take_until::*;
 #[cfg(any(test, feature = "test-support"))]
@@ -727,7 +727,7 @@ pub fn defer<F: FnOnce()>(f: F) -> Deferred<F> {
 
 #[cfg(any(test, feature = "test-support"))]
 mod rng {
-    use rand::{seq::SliceRandom, Rng};
+    use rand::{Rng, seq::SliceRandom};
     pub struct RandomCharIter<T: Rng> {
         rng: T,
         simple_text: bool,

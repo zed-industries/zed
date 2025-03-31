@@ -7,18 +7,18 @@ use anyhow::Context as _;
 use collections::HashMap;
 use gpui::{App, AsyncApp, Context, Entity, EventEmitter, Task, WeakEntity};
 use language::{
-    proto::{deserialize_anchor, serialize_anchor},
     ContextProvider as _, LanguageToolchainStore, Location,
+    proto::{deserialize_anchor, serialize_anchor},
 };
-use rpc::{proto, AnyProtoClient, TypedEnvelope};
+use rpc::{AnyProtoClient, TypedEnvelope, proto};
 use settings::{InvalidSettingsError, SettingsLocation, TaskKind};
 use task::{TaskContext, TaskVariables, VariableName};
 use text::{BufferId, OffsetRangeExt};
 use util::ResultExt;
 
 use crate::{
-    buffer_store::BufferStore, worktree_store::WorktreeStore, BasicContextProvider, Inventory,
-    ProjectEnvironment,
+    BasicContextProvider, Inventory, ProjectEnvironment, buffer_store::BufferStore,
+    worktree_store::WorktreeStore,
 };
 
 #[allow(clippy::large_enum_variant)] // platform-dependent warning

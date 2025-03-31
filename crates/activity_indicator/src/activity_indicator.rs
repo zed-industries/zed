@@ -3,9 +3,9 @@ use editor::Editor;
 use extension_host::ExtensionStore;
 use futures::StreamExt;
 use gpui::{
-    actions, percentage, Animation, AnimationExt as _, App, Context, CursorStyle, Entity,
-    EventEmitter, InteractiveElement as _, ParentElement as _, Render, SharedString,
-    StatefulInteractiveElement, Styled, Transformation, Window,
+    Animation, AnimationExt as _, App, Context, CursorStyle, Entity, EventEmitter,
+    InteractiveElement as _, ParentElement as _, Render, SharedString, StatefulInteractiveElement,
+    Styled, Transformation, Window, actions, percentage,
 };
 use language::{BinaryStatus, LanguageRegistry, LanguageServerId};
 use project::{
@@ -14,9 +14,9 @@ use project::{
 };
 use smallvec::SmallVec;
 use std::{cmp::Reverse, fmt::Write, sync::Arc, time::Duration};
-use ui::{prelude::*, ButtonLike, ContextMenu, PopoverMenu, PopoverMenuHandle, Tooltip};
+use ui::{ButtonLike, ContextMenu, PopoverMenu, PopoverMenuHandle, Tooltip, prelude::*};
 use util::truncate_and_trailoff;
-use workspace::{item::ItemHandle, StatusItemView, Workspace};
+use workspace::{StatusItemView, Workspace, item::ItemHandle};
 
 actions!(activity_indicator, [ShowErrorMessage]);
 

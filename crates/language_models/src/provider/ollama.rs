@@ -1,5 +1,5 @@
-use anyhow::{anyhow, bail, Result};
-use futures::{future::BoxFuture, stream::BoxStream, FutureExt, StreamExt};
+use anyhow::{Result, anyhow, bail};
+use futures::{FutureExt, StreamExt, future::BoxFuture, stream::BoxStream};
 use gpui::{AnyView, App, AsyncApp, Context, Subscription, Task};
 use http_client::HttpClient;
 use language_model::{AuthenticateError, LanguageModelCompletionEvent};
@@ -9,14 +9,14 @@ use language_model::{
     LanguageModelRequest, RateLimiter, Role,
 };
 use ollama::{
-    get_models, preload_model, stream_chat_completion, ChatMessage, ChatOptions, ChatRequest,
-    ChatResponseDelta, KeepAlive, OllamaToolCall,
+    ChatMessage, ChatOptions, ChatRequest, ChatResponseDelta, KeepAlive, OllamaToolCall,
+    get_models, preload_model, stream_chat_completion,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
 use std::{collections::BTreeMap, sync::Arc};
-use ui::{prelude::*, ButtonLike, Indicator};
+use ui::{ButtonLike, Indicator, prelude::*};
 use util::ResultExt;
 
 use crate::AllLanguageModelSettings;

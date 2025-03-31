@@ -31,14 +31,14 @@ mod yarn;
 use crate::git_store::GitStore;
 pub use git_store::git_traversal::{ChildEntriesGitIter, GitEntry, GitEntryRef, GitTraversal};
 
-use anyhow::{anyhow, Context as _, Result};
+use anyhow::{Context as _, Result, anyhow};
 use buffer_store::{BufferStore, BufferStoreEvent};
 use client::{
-    proto, Client, Collaborator, PendingEntitySubscription, ProjectId, TypedEnvelope, UserStore,
+    Client, Collaborator, PendingEntitySubscription, ProjectId, TypedEnvelope, UserStore, proto,
 };
 use clock::ReplicaId;
 
-use dap::{client::DebugAdapterClient, DapRegistry, DebugAdapterConfig};
+use dap::{DapRegistry, DebugAdapterConfig, client::DebugAdapterClient};
 
 use collections::{BTreeSet, HashMap, HashSet};
 use debounced_delay::DebouncedDelay;
@@ -49,9 +49,9 @@ use debugger::{
 };
 pub use environment::ProjectEnvironment;
 use futures::{
+    StreamExt,
     channel::mpsc::{self, UnboundedReceiver},
     future::try_join_all,
-    StreamExt,
 };
 pub use image_store::{ImageItem, ImageStore};
 use image_store::{ImageItemEvent, ImageStoreEvent};
@@ -63,9 +63,9 @@ use gpui::{
 };
 use itertools::Itertools;
 use language::{
-    language_settings::InlayHintKind, proto::split_operations, Buffer, BufferEvent, Capability,
-    CodeLabel, File as _, Language, LanguageName, LanguageRegistry, PointUtf16, ToOffset,
-    ToPointUtf16, Toolchain, ToolchainList, Transaction, Unclipped,
+    Buffer, BufferEvent, Capability, CodeLabel, File as _, Language, LanguageName,
+    LanguageRegistry, PointUtf16, ToOffset, ToPointUtf16, Toolchain, ToolchainList, Transaction,
+    Unclipped, language_settings::InlayHintKind, proto::split_operations,
 };
 use lsp::{
     CodeActionKind, CompletionContext, CompletionItemKind, DocumentHighlightKind, LanguageServerId,
@@ -80,8 +80,8 @@ pub use prettier_store::PrettierStore;
 use project_settings::{ProjectSettings, SettingsObserver, SettingsObserverEvent};
 use remote::{SshConnectionOptions, SshRemoteClient};
 use rpc::{
-    proto::{FromProto, LanguageServerPromptResponse, ToProto, SSH_PROJECT_ID},
     AnyProtoClient, ErrorCode,
+    proto::{FromProto, LanguageServerPromptResponse, SSH_PROJECT_ID, ToProto},
 };
 use search::{SearchInputKind, SearchQuery, SearchResult};
 use search_history::SearchHistory;
@@ -104,14 +104,13 @@ use terminals::Terminals;
 use text::{Anchor, BufferId};
 use toolchain_store::EmptyToolchainStore;
 use util::{
-    maybe,
-    paths::{compare_paths, SanitizedPath},
-    ResultExt as _,
+    ResultExt as _, maybe,
+    paths::{SanitizedPath, compare_paths},
 };
 use worktree::{CreatedEntry, Snapshot, Traversal};
 pub use worktree::{
-    Entry, EntryKind, File, LocalWorktree, PathChange, ProjectEntryId, UpdatedEntriesSet,
-    UpdatedGitRepositoriesSet, Worktree, WorktreeId, WorktreeSettings, FS_WATCH_LATENCY,
+    Entry, EntryKind, FS_WATCH_LATENCY, File, LocalWorktree, PathChange, ProjectEntryId,
+    UpdatedEntriesSet, UpdatedGitRepositoriesSet, Worktree, WorktreeId, WorktreeSettings,
 };
 use worktree_store::{WorktreeStore, WorktreeStoreEvent};
 
@@ -2988,29 +2987,31 @@ impl Project {
     }
 
     fn recalculate_buffer_diffs(&mut self, cx: &mut Context<Self>) -> Task<()> {
-        cx.spawn(async move |this, cx| loop {
-            let task = this
-                .update(cx, |this, cx| {
-                    let buffers = this
-                        .buffers_needing_diff
-                        .drain()
-                        .filter_map(|buffer| buffer.upgrade())
-                        .collect::<Vec<_>>();
-                    if buffers.is_empty() {
-                        None
-                    } else {
-                        Some(this.git_store.update(cx, |git_store, cx| {
-                            git_store.recalculate_buffer_diffs(buffers, cx)
-                        }))
-                    }
-                })
-                .ok()
-                .flatten();
+        cx.spawn(async move |this, cx| {
+            loop {
+                let task = this
+                    .update(cx, |this, cx| {
+                        let buffers = this
+                            .buffers_needing_diff
+                            .drain()
+                            .filter_map(|buffer| buffer.upgrade())
+                            .collect::<Vec<_>>();
+                        if buffers.is_empty() {
+                            None
+                        } else {
+                            Some(this.git_store.update(cx, |git_store, cx| {
+                                git_store.recalculate_buffer_diffs(buffers, cx)
+                            }))
+                        }
+                    })
+                    .ok()
+                    .flatten();
 
-            if let Some(task) = task {
-                task.await;
-            } else {
-                break;
+                if let Some(task) = task {
+                    task.await;
+                } else {
+                    break;
+                }
             }
         })
     }

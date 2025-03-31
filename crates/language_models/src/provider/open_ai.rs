@@ -1,8 +1,8 @@
-use anyhow::{anyhow, Context as _, Result};
+use anyhow::{Context as _, Result, anyhow};
 use collections::BTreeMap;
 use credentials_provider::CredentialsProvider;
 use editor::{Editor, EditorElement, EditorStyle};
-use futures::{future::BoxFuture, FutureExt, StreamExt};
+use futures::{FutureExt, StreamExt, future::BoxFuture};
 use gpui::{
     AnyView, App, AsyncApp, Context, Entity, FontStyle, Subscription, Task, TextStyle, WhiteSpace,
 };
@@ -13,7 +13,7 @@ use language_model::{
     LanguageModelProviderState, LanguageModelRequest, RateLimiter, Role,
 };
 use open_ai::{
-    stream_completion, FunctionDefinition, ResponseStreamEvent, ToolChoice, ToolDefinition,
+    FunctionDefinition, ResponseStreamEvent, ToolChoice, ToolDefinition, stream_completion,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -21,10 +21,10 @@ use settings::{Settings, SettingsStore};
 use std::sync::Arc;
 use strum::IntoEnumIterator;
 use theme::ThemeSettings;
-use ui::{prelude::*, Icon, IconName, List, Tooltip};
+use ui::{Icon, IconName, List, Tooltip, prelude::*};
 use util::ResultExt;
 
-use crate::{ui::InstructionListItem, AllLanguageModelSettings};
+use crate::{AllLanguageModelSettings, ui::InstructionListItem};
 
 const PROVIDER_ID: &str = "openai";
 const PROVIDER_NAME: &str = "OpenAI";

@@ -1,30 +1,30 @@
 use super::*;
 use crate::{
+    JoinLines,
     scroll::scroll_amount::ScrollAmount,
     test::{
         assert_text_with_selections, build_editor,
-        editor_lsp_test_context::{git_commit_lang, EditorLspTestContext},
+        editor_lsp_test_context::{EditorLspTestContext, git_commit_lang},
         editor_test_context::EditorTestContext,
         select_ranges,
     },
-    JoinLines,
 };
 use buffer_diff::{BufferDiff, DiffHunkSecondaryStatus, DiffHunkStatus, DiffHunkStatusKind};
 use futures::StreamExt;
 use gpui::{
-    div, BackgroundExecutor, SemanticVersion, TestAppContext, UpdateGlobal, VisualTestContext,
-    WindowBounds, WindowOptions,
+    BackgroundExecutor, SemanticVersion, TestAppContext, UpdateGlobal, VisualTestContext,
+    WindowBounds, WindowOptions, div,
 };
 use indoc::indoc;
 use language::{
-    language_settings::{
-        AllLanguageSettings, AllLanguageSettingsContent, CompletionSettings,
-        LanguageSettingsContent, PrettierSettings,
-    },
     BracketPairConfig,
     Capability::ReadWrite,
     FakeLspAdapter, LanguageConfig, LanguageConfigOverride, LanguageMatcher, LanguageName,
     Override, Point,
+    language_settings::{
+        AllLanguageSettings, AllLanguageSettingsContent, CompletionSettings,
+        LanguageSettingsContent, PrettierSettings,
+    },
 };
 use language_settings::{Formatter, FormatterList, IndentGuideSettings};
 use lsp::CompletionParams;
@@ -32,9 +32,9 @@ use multi_buffer::{IndentGuide, PathKey};
 use parking_lot::Mutex;
 use pretty_assertions::{assert_eq, assert_ne};
 use project::{
+    FakeFs,
     debugger::breakpoint_store::{BreakpointState, SourceBreakpoint},
     project_settings::{LspSettings, ProjectSettings},
-    FakeFs,
 };
 use serde_json::{self, json};
 use std::{cell::RefCell, future::Future, rc::Rc, sync::atomic::AtomicBool, time::Instant};
@@ -47,12 +47,12 @@ use text::ToPoint as _;
 use unindent::Unindent;
 use util::{
     assert_set_eq, path,
-    test::{marked_text_ranges, marked_text_ranges_by, sample_text, TextRangeMarker},
+    test::{TextRangeMarker, marked_text_ranges, marked_text_ranges_by, sample_text},
     uri,
 };
 use workspace::{
-    item::{FollowEvent, FollowableItem, Item, ItemHandle},
     CloseAllItems, CloseInactiveItems, NavigationEntry, ViewId,
+    item::{FollowEvent, FollowableItem, Item, ItemHandle},
 };
 
 #[gpui::test]

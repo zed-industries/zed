@@ -8,7 +8,7 @@ use crate::{
     WindowHandle, WindowOptions,
 };
 use anyhow::{anyhow, bail};
-use futures::{channel::oneshot, Stream, StreamExt};
+use futures::{Stream, StreamExt, channel::oneshot};
 use std::{cell::RefCell, future::Future, ops::Deref, rc::Rc, sync::Arc, time::Duration};
 
 /// A TestAppContext is provided to tests created with `#[gpui::test]`, it provides

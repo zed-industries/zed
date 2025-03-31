@@ -1,4 +1,4 @@
-use futures::{future::Shared, FutureExt};
+use futures::{FutureExt, future::Shared};
 use std::{path::Path, sync::Arc};
 use util::ResultExt;
 
@@ -280,7 +280,7 @@ async fn load_shell_environment(
     Option<HashMap<String, String>>,
     Option<EnvironmentErrorMessage>,
 ) {
-    use crate::direnv::{load_direnv_environment, DirenvError};
+    use crate::direnv::{DirenvError, load_direnv_environment};
     use std::path::PathBuf;
     use util::parse_env_output;
 

@@ -1,7 +1,7 @@
 use super::*;
 use crate::{
-    buffer_tests::{markdown_inline_lang, markdown_lang},
     LanguageConfig, LanguageMatcher,
+    buffer_tests::{markdown_inline_lang, markdown_lang},
 };
 use gpui::App;
 use rand::rngs::StdRng;

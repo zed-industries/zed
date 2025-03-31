@@ -8,8 +8,8 @@ use gpui::{
 use project::search::SearchQuery;
 
 use crate::{
-    item::{Item, WeakItemHandle},
     ItemHandle,
+    item::{Item, WeakItemHandle},
 };
 
 #[derive(Clone, Debug)]

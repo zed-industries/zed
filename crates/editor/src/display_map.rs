@@ -27,7 +27,7 @@ mod tab_map;
 mod wrap_map;
 
 use crate::{
-    hover_links::InlayHighlight, movement::TextLayoutDetails, EditorStyle, InlayId, RowExt,
+    EditorStyle, InlayId, RowExt, hover_links::InlayHighlight, movement::TextLayoutDetails,
 };
 pub use block_map::{
     Block, BlockChunks as DisplayChunks, BlockContext, BlockId, BlockMap, BlockPlacement,
@@ -45,8 +45,8 @@ use inlay_map::{InlayMap, InlaySnapshot};
 pub use inlay_map::{InlayOffset, InlayPoint};
 pub use invisibles::{is_invisible, replacement};
 use language::{
-    language_settings::language_settings, ChunkRenderer, OffsetUtf16, Point,
-    Subscription as BufferSubscription,
+    ChunkRenderer, OffsetUtf16, Point, Subscription as BufferSubscription,
+    language_settings::language_settings,
 };
 use lsp::DiagnosticSeverity;
 use multi_buffer::{
@@ -66,7 +66,7 @@ use std::{
 use sum_tree::{Bias, TreeMap};
 use tab_map::{TabMap, TabSnapshot};
 use text::{BufferId, LineIndent};
-use ui::{px, SharedString};
+use ui::{SharedString, px};
 use unicode_segmentation::UnicodeSegmentation;
 use wrap_map::{WrapMap, WrapSnapshot};
 
@@ -1295,7 +1295,7 @@ impl Add for DisplayPoint {
     type Output = Self;
 
     fn add(self, other: Self) -> Self::Output {
-        DisplayPoint(BlockPoint(self.0 .0 + other.0 .0))
+        DisplayPoint(BlockPoint(self.0.0 + other.0.0))
     }
 }
 
@@ -1303,7 +1303,7 @@ impl Sub for DisplayPoint {
     type Output = Self;
 
     fn sub(self, other: Self) -> Self::Output {
-        DisplayPoint(BlockPoint(self.0 .0 - other.0 .0))
+        DisplayPoint(BlockPoint(self.0.0 - other.0.0))
     }
 }
 
@@ -1417,18 +1417,19 @@ pub mod tests {
         movement,
         test::{marked_display_snapshot, test_font},
     };
+    use Bias::*;
     use block_map::BlockPlacement;
     use gpui::{
-        div, font, observe, px, App, AppContext as _, BorrowAppContext, Element, Hsla, Rgba,
+        App, AppContext as _, BorrowAppContext, Element, Hsla, Rgba, div, font, observe, px,
     };
     use language::{
-        language_settings::{AllLanguageSettings, AllLanguageSettingsContent},
         Buffer, Diagnostic, DiagnosticEntry, DiagnosticSet, Language, LanguageConfig,
         LanguageMatcher,
+        language_settings::{AllLanguageSettings, AllLanguageSettingsContent},
     };
     use lsp::LanguageServerId;
     use project::Project;
-    use rand::{prelude::*, Rng};
+    use rand::{Rng, prelude::*};
     use settings::SettingsStore;
     use smol::stream::StreamExt;
     use std::{env, sync::Arc};
@@ -1436,7 +1437,6 @@ pub mod tests {
     use theme::{LoadThemes, SyntaxTheme};
     use unindent::Unindent as _;
     use util::test::{marked_text_ranges, sample_text};
-    use Bias::*;
 
     #[gpui::test(iterations = 100)]
     async fn test_random_display_map(cx: &mut gpui::TestAppContext, mut rng: StdRng) {

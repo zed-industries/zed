@@ -1,13 +1,13 @@
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use collections::HashMap;
 use command_palette_hooks::CommandInterceptResult;
 use editor::{
+    Bias, Editor, ToPoint,
     actions::{SortLinesCaseInsensitive, SortLinesCaseSensitive},
     display_map::ToDisplayPoint,
     scroll::Autoscroll,
-    Bias, Editor, ToPoint,
 };
-use gpui::{actions, impl_internal_actions, Action, App, AppContext as _, Context, Global, Window};
+use gpui::{Action, App, AppContext as _, Context, Global, Window, actions, impl_internal_actions};
 use itertools::Itertools;
 use language::Point;
 use multi_buffer::MultiBufferRow;
@@ -27,19 +27,19 @@ use std::{
 use task::{HideStrategy, RevealStrategy, SpawnInTerminal, TaskId};
 use ui::ActiveTheme;
 use util::ResultExt;
-use workspace::{notifications::NotifyResultExt, SaveIntent};
+use workspace::{SaveIntent, notifications::NotifyResultExt};
 use zed_actions::RevealTarget;
 
 use crate::{
+    ToggleMarksView, ToggleRegistersView, Vim,
     motion::{EndOfDocument, Motion, MotionKind, StartOfDocument},
     normal::{
-        search::{FindCommand, ReplaceCommand, Replacement},
         JoinLines,
+        search::{FindCommand, ReplaceCommand, Replacement},
     },
     object::Object,
     state::{Mark, Mode},
     visual::VisualDeleteLine,
-    ToggleMarksView, ToggleRegistersView, Vim,
 };
 
 #[derive(Clone, Debug, PartialEq)]

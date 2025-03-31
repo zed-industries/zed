@@ -4,8 +4,8 @@ use anyhow::Result;
 use collections::HashMap;
 use gpui::{App, AssetSource, Global};
 use rodio::{
-    source::{Buffered, SamplesConverter},
     Decoder, Source,
+    source::{Buffered, SamplesConverter},
 };
 
 type Sound = Buffered<SamplesConverter<Decoder<Cursor<Vec<u8>>>, f32>>;

@@ -5,7 +5,7 @@ use fsevent_sys::{self as fs, core_foundation as cf};
 use parking_lot::Mutex;
 use std::{
     convert::AsRef,
-    ffi::{c_void, CStr, OsStr},
+    ffi::{CStr, OsStr, c_void},
     os::unix::ffi::OsStrExt,
     path::{Path, PathBuf},
     ptr, slice,
