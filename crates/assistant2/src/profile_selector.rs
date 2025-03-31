@@ -5,7 +5,10 @@ use fs::Fs;
 use gpui::{prelude::*, Action, Entity, FocusHandle, Subscription, WeakEntity};
 use indexmap::IndexMap;
 use settings::{update_settings_file, Settings as _, SettingsStore};
-use ui::{prelude::*, ContextMenu, ContextMenuEntry, PopoverMenu, PopoverMenuHandle, Tooltip};
+use ui::{
+    prelude::*, ButtonLike, ContextMenu, ContextMenuEntry, KeyBinding, PopoverMenu,
+    PopoverMenuHandle,
+};
 use util::ResultExt as _;
 
 use crate::{ManageProfiles, ThreadStore, ToggleProfileSelector};
@@ -60,7 +63,7 @@ impl ProfileSelector {
     ) -> Entity<ContextMenu> {
         ContextMenu::build(window, cx, |mut menu, _window, cx| {
             let settings = AssistantSettings::get_global(cx);
-            let icon_position = IconPosition::Start;
+            let icon_position = IconPosition::End;
 
             menu = menu.header("Profiles");
             for (profile_id, profile) in self.profiles.clone() {
@@ -91,14 +94,23 @@ impl ProfileSelector {
             }
 
             menu = menu.separator();
-            menu = menu.item(
-                ContextMenuEntry::new("Configure Profiles")
-                    .icon(IconName::Pencil)
-                    .icon_color(Color::Muted)
-                    .handler(move |window, cx| {
-                        window.dispatch_action(ManageProfiles.boxed_clone(), cx);
-                    }),
-            );
+            menu = menu.header("Customize Current Profile");
+            menu = menu.item(ContextMenuEntry::new("Tools…").handler({
+                let profile_id = settings.default_profile.clone();
+                move |window, cx| {
+                    window.dispatch_action(
+                        ManageProfiles::customize_tools(profile_id.clone()).boxed_clone(),
+                        cx,
+                    );
+                }
+            }));
+
+            menu = menu.separator();
+            menu = menu.item(ContextMenuEntry::new("Configure Profiles…").handler(
+                move |window, cx| {
+                    window.dispatch_action(ManageProfiles::default().boxed_clone(), cx);
+                },
+            ));
 
             menu
         })
@@ -106,13 +118,20 @@ impl ProfileSelector {
 }
 
 impl Render for ProfileSelector {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let settings = AssistantSettings::get_global(cx);
-        let profile = settings
-            .profiles
-            .get(&settings.default_profile)
+        let profile_id = &settings.default_profile;
+        let profile = settings.profiles.get(profile_id);
+
+        let selected_profile = profile
             .map(|profile| profile.name.clone())
             .unwrap_or_else(|| "Unknown".into());
+
+        let icon = match profile_id.as_ref() {
+            "write" => IconName::Pencil,
+            "ask" => IconName::MessageBubbles,
+            _ => IconName::UserRoundPen,
+        };
 
         let this = cx.entity().clone();
         let focus_handle = self.focus_handle.clone();
@@ -120,19 +139,32 @@ impl Render for ProfileSelector {
             .menu(move |window, cx| {
                 Some(this.update(cx, |this, cx| this.build_context_menu(window, cx)))
             })
-            .trigger_with_tooltip(
-                Button::new("profile-selector-button", profile)
-                    .style(ButtonStyle::Filled)
-                    .label_size(LabelSize::Small),
-                move |window, cx| {
-                    Tooltip::for_action_in(
-                        "Change Profile",
-                        &ToggleProfileSelector,
-                        &focus_handle,
-                        window,
-                        cx,
-                    )
-                },
+            .trigger(
+                ButtonLike::new("profile-selector-button").child(
+                    h_flex()
+                        .gap_1()
+                        .child(Icon::new(icon).size(IconSize::XSmall).color(Color::Muted))
+                        .child(
+                            Label::new(selected_profile)
+                                .size(LabelSize::Small)
+                                .color(Color::Muted),
+                        )
+                        .child(
+                            Icon::new(IconName::ChevronDown)
+                                .size(IconSize::XSmall)
+                                .color(Color::Muted),
+                        )
+                        .child(div().opacity(0.5).children({
+                            let focus_handle = focus_handle.clone();
+                            KeyBinding::for_action_in(
+                                &ToggleProfileSelector,
+                                &focus_handle,
+                                window,
+                                cx,
+                            )
+                            .map(|kb| kb.size(rems_from_px(10.)))
+                        })),
+                ),
             )
             .anchor(gpui::Corner::BottomLeft)
             .with_handle(self.menu_handle.clone())

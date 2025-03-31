@@ -20,33 +20,33 @@ name = "test_app"
 test-support = ["collections/test-support", "gpui/test-support"]
 
 [dependencies]
-gpui_tokio.workspace = true
 anyhow.workspace = true
 async-trait.workspace = true
 collections.workspace = true
 cpal = "0.15"
 futures.workspace = true
 gpui.workspace = true
+gpui_tokio.workspace = true
+http_client_tls.workspace = true
+image.workspace = true
 livekit_api.workspace = true
 log.workspace = true
 nanoid.workspace = true
 parking_lot.workspace = true
 postage.workspace = true
-util.workspace = true
 smallvec.workspace = true
-image.workspace = true
 tokio-tungstenite.workspace = true
-http_client_tls.workspace = true
+util.workspace = true
 
 [target.'cfg(not(all(target_os = "windows", target_env = "gnu")))'.dependencies]
-livekit = { rev = "102ebbb1ccfbdbcb7332d86dc30b1b1c8c01e4f8", git = "https://github.com/zed-industries/livekit-rust-sdks", features = ["__rustls-tls"]}
-libwebrtc = { rev = "102ebbb1ccfbdbcb7332d86dc30b1b1c8c01e4f8", git = "https://github.com/zed-industries/livekit-rust-sdks"}
+libwebrtc = { rev = "102ebbb1ccfbdbcb7332d86dc30b1b1c8c01e4f8", git = "https://github.com/zed-industries/livekit-rust-sdks" }
+livekit = { rev = "102ebbb1ccfbdbcb7332d86dc30b1b1c8c01e4f8", git = "https://github.com/zed-industries/livekit-rust-sdks", features = ["__rustls-tls"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 core-foundation.workspace = true
+core-video.workspace = true
 coreaudio-rs = "0.12.1"
 objc = "0.2"
-core-video.workspace = true
 
 [dev-dependencies]
 collections = { workspace = true, features = ["test-support"] }

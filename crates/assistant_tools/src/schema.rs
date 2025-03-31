@@ -7,11 +7,7 @@ use schemars::{
 
 pub fn json_schema_for<T: JsonSchema>(format: LanguageModelToolSchemaFormat) -> serde_json::Value {
     let schema = root_schema_for::<T>(format);
-
-    let json =
-        schema_to_json(&schema, format).expect("Failed to convert tool calling schema to JSON");
-    println!("---\n{}", serde_json::to_string_pretty(&json).unwrap());
-    json
+    schema_to_json(&schema, format).expect("Failed to convert tool calling schema to JSON")
 }
 
 pub fn schema_to_json(
