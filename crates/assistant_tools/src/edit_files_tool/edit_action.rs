@@ -342,6 +342,14 @@ impl std::fmt::Display for ParseError {
     }
 }
 
+pub fn edit_model_prompt() -> String {
+    include_str!("edit_prompt.md")
+        .to_string()
+        .replace("{{SEARCH_MARKER}}", SEARCH_MARKER)
+        .replace("{{DIVIDER}}", DIVIDER)
+        .replace("{{REPLACE_MARKER}}", REPLACE_MARKER)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -808,19 +816,17 @@ fn new_utils_func() {{}}
         assert_eq!(parser.state, State::Default);
     }
 
-    const SYSTEM_PROMPT: &str = include_str!("./edit_prompt.md");
-
     #[test]
-    fn test_parse_examples_in_system_prompt() {
+    fn test_parse_examples_in_edit_prompt() {
         let mut parser = EditActionParser::new();
-        let actions = parser.parse_chunk(SYSTEM_PROMPT);
-        assert_examples_in_system_prompt(&actions, parser.errors());
+        let actions = parser.parse_chunk(&edit_model_prompt());
+        assert_examples_in_edit_prompt(&actions, parser.errors());
     }
 
     #[gpui::test(iterations = 10)]
-    fn test_random_chunking_of_system_prompt(mut rng: StdRng) {
+    fn test_random_chunking_of_edit_prompt(mut rng: StdRng) {
         let mut parser = EditActionParser::new();
-        let mut remaining = SYSTEM_PROMPT;
+        let mut remaining: &str = &edit_model_prompt();
         let mut actions = Vec::with_capacity(5);
 
         while !remaining.is_empty() {
@@ -833,10 +839,10 @@ fn new_utils_func() {{}}
             remaining = rest;
         }
 
-        assert_examples_in_system_prompt(&actions, parser.errors());
+        assert_examples_in_edit_prompt(&actions, parser.errors());
     }
 
-    fn assert_examples_in_system_prompt(actions: &[(EditAction, String)], errors: &[ParseError]) {
+    fn assert_examples_in_edit_prompt(actions: &[(EditAction, String)], errors: &[ParseError]) {
         assert_eq!(actions.len(), 5);
 
         assert_eq!(

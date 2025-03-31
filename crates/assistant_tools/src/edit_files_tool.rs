@@ -5,7 +5,7 @@ use crate::replace::{replace_exact, replace_with_flexible_indent};
 use anyhow::{anyhow, Context, Result};
 use assistant_tool::{ActionLog, Tool};
 use collections::HashSet;
-use edit_action::{EditAction, EditActionParser};
+use edit_action::{edit_model_prompt, EditAction, EditActionParser};
 use futures::{channel::mpsc, SinkExt, StreamExt};
 use gpui::{App, AppContext, AsyncApp, Entity, Task};
 use language_model::{
@@ -229,10 +229,7 @@ impl EditToolRequest {
 
         messages.push(LanguageModelRequestMessage {
             role: Role::User,
-            content: vec![
-                include_str!("./edit_files_tool/edit_prompt.md").into(),
-                input.edit_instructions.into(),
-            ],
+            content: vec![edit_model_prompt().into(), input.edit_instructions.into()],
             cache: false,
         });
 
