@@ -1370,7 +1370,7 @@ impl BlockSnapshot {
         while let Some(transform) = cursor.item() {
             match &transform.block {
                 Some(Block::ExcerptBoundary { excerpt, .. }) => {
-                    return Some(StickyHeaderExcerpt { excerpt })
+                    return Some(StickyHeaderExcerpt { excerpt });
                 }
                 Some(block) if block.is_buffer_header() => return None,
                 _ => {
@@ -2913,7 +2913,7 @@ mod tests {
 
         log::info!("Wrap width: {:?}", wrap_width);
         log::info!("Excerpt Header Height: {:?}", excerpt_header_height);
-        let is_singleton = rng.gen();
+        let is_singleton = rng.r#gen();
         let buffer = if is_singleton {
             let len = rng.gen_range(0..10);
             let text = RandomCharIter::new(&mut rng).take(len).collect::<String>();
@@ -3077,7 +3077,9 @@ mod tests {
                     let fold = !unfolded_buffers.is_empty() && rng.gen_bool(0.5);
                     let unfold = !folded_buffers.is_empty() && rng.gen_bool(0.5);
                     if !fold && !unfold {
-                        log::info!("Noop fold/unfold operation. Unfolded buffers: {unfolded_count}, folded buffers: {folded_count}");
+                        log::info!(
+                            "Noop fold/unfold operation. Unfolded buffers: {unfolded_count}, folded buffers: {folded_count}"
+                        );
                         continue;
                     }
 

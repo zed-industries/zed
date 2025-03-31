@@ -89,6 +89,7 @@ impl DebugAdapter for PythonDebugAdapter {
             .toolchain_store()
             .active_toolchain(
                 delegate.worktree_id(),
+                Arc::from("".as_ref()),
                 language::LanguageName::new(Self::LANGUAGE_NAME),
                 cx,
             )

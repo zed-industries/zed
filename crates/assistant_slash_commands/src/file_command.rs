@@ -221,7 +221,7 @@ fn collect_files(
     project: Entity<Project>,
     glob_inputs: &[String],
     cx: &mut App,
-) -> impl Stream<Item = Result<SlashCommandEvent>> {
+) -> impl Stream<Item = Result<SlashCommandEvent>> + use<> {
     let Ok(matchers) = glob_inputs
         .into_iter()
         .map(|glob_input| {
@@ -782,7 +782,12 @@ mod test {
         assert_eq!(result.sections[6].label, "summercamp");
         assert_eq!(result.sections[7].label, separator!("zed/assets/themes"));
 
-        assert_eq!(result.text, separator!("zed/assets/themes\n```zed/assets/themes/LICENSE\n1\n```\n\nsummercamp\n```zed/assets/themes/summercamp/LICENSE\n1\n```\n\nsubdir\n```zed/assets/themes/summercamp/subdir/LICENSE\n1\n```\n\nsubsubdir\n```zed/assets/themes/summercamp/subdir/subsubdir/LICENSE\n3\n```\n\n"));
+        assert_eq!(
+            result.text,
+            separator!(
+                "zed/assets/themes\n```zed/assets/themes/LICENSE\n1\n```\n\nsummercamp\n```zed/assets/themes/summercamp/LICENSE\n1\n```\n\nsubdir\n```zed/assets/themes/summercamp/subdir/LICENSE\n1\n```\n\nsubsubdir\n```zed/assets/themes/summercamp/subdir/subsubdir/LICENSE\n3\n```\n\n"
+            )
+        );
 
         // Ensure that the project lasts until after the last await
         drop(project);

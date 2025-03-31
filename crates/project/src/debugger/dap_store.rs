@@ -566,7 +566,7 @@ impl DapStore {
                         .ok(),
                         cx,
                     )
-                })
+                });
             }
         }
 

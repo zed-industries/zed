@@ -293,7 +293,12 @@ impl LspAdapter for PythonLspAdapter {
         cx: &mut AsyncApp,
     ) -> Result<Value> {
         let toolchain = toolchains
-            .active_toolchain(adapter.worktree_id(), LanguageName::new("Python"), cx)
+            .active_toolchain(
+                adapter.worktree_id(),
+                Arc::from("".as_ref()),
+                LanguageName::new("Python"),
+                cx,
+            )
             .await;
         cx.update(move |cx| {
             let mut user_settings =
@@ -373,7 +378,7 @@ impl ContextProvider for PythonContextProvider {
         cx.spawn(async move |cx| {
             let active_toolchain = if let Some(worktree_id) = worktree_id {
                 toolchains
-                    .active_toolchain(worktree_id, "Python".into(), cx)
+                    .active_toolchain(worktree_id, Arc::from("".as_ref()), "Python".into(), cx)
                     .await
                     .map_or_else(
                         || "python3".to_owned(),
@@ -900,6 +905,7 @@ impl LspAdapter for PyLspAdapter {
             let venv = toolchains
                 .active_toolchain(
                     delegate.worktree_id(),
+                    Arc::from("".as_ref()),
                     LanguageName::new("Python"),
                     &mut cx.clone(),
                 )
@@ -1046,7 +1052,12 @@ impl LspAdapter for PyLspAdapter {
         cx: &mut AsyncApp,
     ) -> Result<Value> {
         let toolchain = toolchains
-            .active_toolchain(adapter.worktree_id(), LanguageName::new("Python"), cx)
+            .active_toolchain(
+                adapter.worktree_id(),
+                Arc::from("".as_ref()),
+                LanguageName::new("Python"),
+                cx,
+            )
             .await;
         cx.update(move |cx| {
             let mut user_settings =

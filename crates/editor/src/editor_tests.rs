@@ -3269,18 +3269,6 @@ async fn test_backspace(cx: &mut TestAppContext) {
             ˇtwo
         ˇ  threeˇ  four
     "});
-
-    // Test backspace with line_mode set to true
-    cx.update_editor(|e, _, _| e.selections.line_mode = true);
-    cx.set_state(indoc! {"
-        The ˇquick ˇbrown
-        fox jumps over
-        the lazy dog
-        ˇThe qu«ick bˇ»rown"});
-    cx.update_editor(|e, window, cx| e.backspace(&Backspace, window, cx));
-    cx.assert_editor_state(indoc! {"
-        ˇfox jumps over
-        the lazy dogˇ"});
 }
 
 #[gpui::test]
@@ -3300,16 +3288,6 @@ async fn test_delete(cx: &mut TestAppContext) {
         fouˇ five six
         seven ˇten
     "});
-
-    // Test backspace with line_mode set to true
-    cx.update_editor(|e, _, _| e.selections.line_mode = true);
-    cx.set_state(indoc! {"
-        The ˇquick ˇbrown
-        fox «ˇjum»ps over
-        the lazy dog
-        ˇThe qu«ick bˇ»rown"});
-    cx.update_editor(|e, window, cx| e.backspace(&Backspace, window, cx));
-    cx.assert_editor_state("ˇthe lazy dogˇ");
 }
 
 #[gpui::test]
@@ -4928,7 +4906,7 @@ async fn test_copy_trim(cx: &mut TestAppContext) {
         r#"            «for selection in selections.iter() {
             let mut start = selection.start;
             let mut end = selection.end;
-            let is_entire_line = selection.is_empty() || self.selections.line_mode;
+            let is_entire_line = selection.is_empty();
             if is_entire_line {
                 start = Point::new(start.row, 0);ˇ»
                 end = cmp::min(max_point, Point::new(end.row + 1, 0));
@@ -4943,7 +4921,7 @@ async fn test_copy_trim(cx: &mut TestAppContext) {
             "for selection in selections.iter() {
             let mut start = selection.start;
             let mut end = selection.end;
-            let is_entire_line = selection.is_empty() || self.selections.line_mode;
+            let is_entire_line = selection.is_empty();
             if is_entire_line {
                 start = Point::new(start.row, 0);"
                 .to_string()
@@ -4958,7 +4936,7 @@ async fn test_copy_trim(cx: &mut TestAppContext) {
             "for selection in selections.iter() {
 let mut start = selection.start;
 let mut end = selection.end;
-let is_entire_line = selection.is_empty() || self.selections.line_mode;
+let is_entire_line = selection.is_empty();
 if is_entire_line {
     start = Point::new(start.row, 0);"
                 .to_string()
@@ -4970,7 +4948,7 @@ if is_entire_line {
         r#"       «     for selection in selections.iter() {
             let mut start = selection.start;
             let mut end = selection.end;
-            let is_entire_line = selection.is_empty() || self.selections.line_mode;
+            let is_entire_line = selection.is_empty();
             if is_entire_line {
                 start = Point::new(start.row, 0);ˇ»
                 end = cmp::min(max_point, Point::new(end.row + 1, 0));
@@ -4985,7 +4963,7 @@ if is_entire_line {
             "     for selection in selections.iter() {
             let mut start = selection.start;
             let mut end = selection.end;
-            let is_entire_line = selection.is_empty() || self.selections.line_mode;
+            let is_entire_line = selection.is_empty();
             if is_entire_line {
                 start = Point::new(start.row, 0);"
                 .to_string()
@@ -5000,7 +4978,7 @@ if is_entire_line {
             "for selection in selections.iter() {
 let mut start = selection.start;
 let mut end = selection.end;
-let is_entire_line = selection.is_empty() || self.selections.line_mode;
+let is_entire_line = selection.is_empty();
 if is_entire_line {
     start = Point::new(start.row, 0);"
                 .to_string()
@@ -5012,7 +4990,7 @@ if is_entire_line {
         r#"       «ˇ     for selection in selections.iter() {
             let mut start = selection.start;
             let mut end = selection.end;
-            let is_entire_line = selection.is_empty() || self.selections.line_mode;
+            let is_entire_line = selection.is_empty();
             if is_entire_line {
                 start = Point::new(start.row, 0);»
                 end = cmp::min(max_point, Point::new(end.row + 1, 0));
@@ -5027,7 +5005,7 @@ if is_entire_line {
             "     for selection in selections.iter() {
             let mut start = selection.start;
             let mut end = selection.end;
-            let is_entire_line = selection.is_empty() || self.selections.line_mode;
+            let is_entire_line = selection.is_empty();
             if is_entire_line {
                 start = Point::new(start.row, 0);"
                 .to_string()
@@ -5042,7 +5020,7 @@ if is_entire_line {
             "for selection in selections.iter() {
 let mut start = selection.start;
 let mut end = selection.end;
-let is_entire_line = selection.is_empty() || self.selections.line_mode;
+let is_entire_line = selection.is_empty();
 if is_entire_line {
     start = Point::new(start.row, 0);"
                 .to_string()
@@ -5054,7 +5032,7 @@ if is_entire_line {
         r#"            for selection «in selections.iter() {
             let mut start = selection.start;
             let mut end = selection.end;
-            let is_entire_line = selection.is_empty() || self.selections.line_mode;
+            let is_entire_line = selection.is_empty();
             if is_entire_line {
                 start = Point::new(start.row, 0);ˇ»
                 end = cmp::min(max_point, Point::new(end.row + 1, 0));
@@ -5069,7 +5047,7 @@ if is_entire_line {
             "in selections.iter() {
             let mut start = selection.start;
             let mut end = selection.end;
-            let is_entire_line = selection.is_empty() || self.selections.line_mode;
+            let is_entire_line = selection.is_empty();
             if is_entire_line {
                 start = Point::new(start.row, 0);"
                 .to_string()
@@ -5084,7 +5062,7 @@ if is_entire_line {
             "in selections.iter() {
             let mut start = selection.start;
             let mut end = selection.end;
-            let is_entire_line = selection.is_empty() || self.selections.line_mode;
+            let is_entire_line = selection.is_empty();
             if is_entire_line {
                 start = Point::new(start.row, 0);"
                 .to_string()
@@ -8007,7 +7985,9 @@ async fn test_multibuffer_format_during_save(cx: &mut TestAppContext) {
     assert!(cx.read(|cx| !multi_buffer_editor.is_dirty(cx)));
     assert_eq!(
         multi_buffer_editor.update(cx, |editor, cx| editor.text(cx)),
-        uri!("a|o[file:///a/main.rs formatted]bbbb\ncccc\n\nffff\ngggg\n\njjjj\n\nlll[file:///a/other.rs formatted]mmmm\nnnnn|four|five|six|\nr\n\nuuuu\n\nvvvv\nwwww\nxxxx\n\n{{{{\n||||\n\n\u{7f}\u{7f}\u{7f}\u{7f}"),
+        uri!(
+            "a|o[file:///a/main.rs formatted]bbbb\ncccc\n\nffff\ngggg\n\njjjj\n\nlll[file:///a/other.rs formatted]mmmm\nnnnn|four|five|six|\nr\n\nuuuu\n\nvvvv\nwwww\nxxxx\n\n{{{{\n||||\n\n\u{7f}\u{7f}\u{7f}\u{7f}"
+        ),
     );
     buffer_1.update(cx, |buffer, _| {
         assert!(!buffer.is_dirty());
@@ -18691,7 +18671,7 @@ fn assert_selection_ranges(marked_text: &str, editor: &mut Editor, cx: &mut Cont
 pub fn handle_signature_help_request(
     cx: &mut EditorLspTestContext,
     mocked_response: lsp::SignatureHelp,
-) -> impl Future<Output = ()> {
+) -> impl Future<Output = ()> + use<> {
     let mut request =
         cx.set_request_handler::<lsp::request::SignatureHelpRequest, _, _>(move |_, _, _| {
             let mocked_response = mocked_response.clone();

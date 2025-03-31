@@ -824,7 +824,10 @@ impl ChannelStore {
         })
     }
 
-    pub fn remove_channel(&self, channel_id: ChannelId) -> impl Future<Output = Result<()>> {
+    pub fn remove_channel(
+        &self,
+        channel_id: ChannelId,
+    ) -> impl Future<Output = Result<()>> + use<> {
         let client = self.client.clone();
         async move {
             client

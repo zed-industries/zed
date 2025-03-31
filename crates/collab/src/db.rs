@@ -853,7 +853,7 @@ fn db_status_to_proto(
             _ => {
                 return Err(anyhow!(
                     "Unexpected combination of status fields: {entry:?}"
-                ))
+                ));
             }
         };
     Ok(proto::StatusEntry {

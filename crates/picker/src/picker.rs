@@ -526,7 +526,7 @@ impl<D: PickerDelegate> Picker<D> {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Head::Editor(ref editor) = &self.head else {
+        let Head::Editor(editor) = &self.head else {
             panic!("unexpected call");
         };
         match event {
@@ -617,7 +617,7 @@ impl<D: PickerDelegate> Picker<D> {
     }
 
     pub fn set_query(&self, query: impl Into<Arc<str>>, window: &mut Window, cx: &mut App) {
-        if let Head::Editor(ref editor) = &self.head {
+        if let Head::Editor(editor) = &self.head {
             editor.update(cx, |editor, cx| {
                 editor.set_text(query, window, cx);
                 let editor_offset = editor.buffer().read(cx).len(cx);
@@ -642,7 +642,7 @@ impl<D: PickerDelegate> Picker<D> {
         window: &mut Window,
         cx: &mut Context<Self>,
         ix: usize,
-    ) -> impl IntoElement {
+    ) -> impl IntoElement + use<D> {
         div()
             .id(("item", ix))
             .cursor_pointer()

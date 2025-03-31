@@ -3413,7 +3413,7 @@ impl ContextEditorToolbarItem {
 pub fn render_remaining_tokens(
     context_editor: &Entity<ContextEditor>,
     cx: &App,
-) -> Option<impl IntoElement> {
+) -> Option<impl IntoElement + use<>> {
     let context = &context_editor.read(cx).context;
 
     let (token_count_color, token_count, max_token_count, tooltip) = match token_state(context, cx)?

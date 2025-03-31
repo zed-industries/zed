@@ -2874,9 +2874,9 @@ mod tests {
 
         let entries = cx.read(|cx| workspace.file_project_paths(cx));
         assert_eq!(
-                initial_entries, entries,
-                "Workspace entries should not change after opening excluded files and directories paths"
-            );
+            initial_entries, entries,
+            "Workspace entries should not change after opening excluded files and directories paths"
+        );
 
         cx.read(|cx| {
                 let pane = workspace.read(cx).active_pane().read(cx);

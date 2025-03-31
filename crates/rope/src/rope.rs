@@ -1674,7 +1674,7 @@ mod tests {
                 chunks.seek(offset);
 
                 for _ in 0..5 {
-                    if rng.gen() {
+                    if rng.r#gen() {
                         let expected_next_line_start = expected[offset..end_ix]
                             .find('\n')
                             .map(|newline_ix| offset + newline_ix + 1);
@@ -1763,7 +1763,7 @@ mod tests {
                     }
 
                     assert!((start_ix..=end_ix).contains(&chunks.offset()));
-                    if rng.gen() {
+                    if rng.r#gen() {
                         offset = rng.gen_range(start_ix..=end_ix);
                         while !expected.is_char_boundary(offset) {
                             offset -= 1;

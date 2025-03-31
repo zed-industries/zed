@@ -1414,7 +1414,11 @@ impl ActiveThread {
         )
     }
 
-    fn render_tool_use(&self, tool_use: ToolUse, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_tool_use(
+        &self,
+        tool_use: ToolUse,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement + use<> {
         let is_open = self
             .expanded_tool_uses
             .get(&tool_use.id)

@@ -296,7 +296,9 @@ impl DebugPanel {
         match event {
             dap_store::DapStoreEvent::DebugClientStarted(session_id) => {
                 let Some(session) = dap_store.read(cx).session_by_id(session_id) else {
-                    return log::error!("Couldn't get session with id: {session_id:?} from DebugClientStarted event");
+                    return log::error!(
+                        "Couldn't get session with id: {session_id:?} from DebugClientStarted event"
+                    );
                 };
 
                 let Some(project) = self.project.upgrade() else {

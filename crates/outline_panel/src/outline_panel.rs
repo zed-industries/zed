@@ -5694,8 +5694,7 @@ mod tests {
         outline_panel.update_in(cx, |outline_panel, window, cx| {
             outline_panel.select_next(&SelectNext, window, cx);
         });
-        let next_navigated_outline_selection =
-            "search: InlayHintsConfig { param_names_for_lifetime_elision_hints: true, ..TEST_CONFIG },";
+        let next_navigated_outline_selection = "search: InlayHintsConfig { param_names_for_lifetime_elision_hints: true, ..TEST_CONFIG },";
         outline_panel.update(cx, |outline_panel, cx| {
             assert_eq!(
                 display_entries(

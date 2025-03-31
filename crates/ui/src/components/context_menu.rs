@@ -585,7 +585,7 @@ impl ContextMenu {
         item: &ContextMenuItem,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> impl IntoElement {
+    ) -> impl IntoElement + use<> {
         match item {
             ContextMenuItem::Separator => ListSeparator.into_any_element(),
             ContextMenuItem::Header(header) => ListSubHeader::new(header.clone())

@@ -5,7 +5,7 @@ use collections::HashMap;
 use gpui::{
     px, AbsoluteLength, App, FontFallbacks, FontFeatures, FontWeight, Pixels, SharedString,
 };
-use schemars::{gen::SchemaGenerator, schema::RootSchema, JsonSchema};
+use schemars::{r#gen::SchemaGenerator, schema::RootSchema, JsonSchema};
 use serde_derive::{Deserialize, Serialize};
 use settings::{add_references_to_properties, SettingsJsonSchemaParams, SettingsSources};
 use std::path::PathBuf;

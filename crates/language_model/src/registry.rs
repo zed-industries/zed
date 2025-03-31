@@ -203,6 +203,11 @@ impl LanguageModelRegistry {
     }
 
     pub fn active_provider(&self) -> Option<Arc<dyn LanguageModelProvider>> {
+        #[cfg(debug_assertions)]
+        if std::env::var("ZED_SIMULATE_NO_LLM_PROVIDER").is_ok() {
+            return None;
+        }
+
         Some(self.active_model.as_ref()?.provider.clone())
     }
 

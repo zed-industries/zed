@@ -187,6 +187,7 @@ impl EditorElement {
 
         crate::rust_analyzer_ext::apply_related_actions(editor, window, cx);
         crate::clangd_ext::apply_related_actions(editor, window, cx);
+
         register_action(editor, window, Editor::open_context_menu);
         register_action(editor, window, Editor::move_left);
         register_action(editor, window, Editor::move_right);
@@ -4189,8 +4190,7 @@ impl EditorElement {
                     None;
                 for (&new_row, &new_background) in &layout.highlighted_rows {
                     match &mut current_paint {
-                        Some((current_background, current_range, mut edges)) => {
-                            let current_background = *current_background;
+                        &mut Some((current_background, ref mut current_range, mut edges)) => {
                             let new_range_started = current_background != new_background
                                 || current_range.end.next_row() != new_row;
                             if new_range_started {
@@ -8792,8 +8792,10 @@ mod tests {
                     px(500.0),
                     show_line_numbers,
                 );
-                assert!(invisibles.is_empty(),
-                    "For editor mode {editor_mode_without_invisibles:?} no invisibles was expected but got {invisibles:?}");
+                assert!(
+                    invisibles.is_empty(),
+                    "For editor mode {editor_mode_without_invisibles:?} no invisibles was expected but got {invisibles:?}"
+                );
             }
         }
     }
@@ -8871,7 +8873,9 @@ mod tests {
                             (Invisible::Whitespace { .. }, Invisible::Whitespace { .. })
                             | (Invisible::Tab { .. }, Invisible::Tab { .. }) => {}
                             _ => {
-                                panic!("At index {i}, expected invisible {expected_invisible:?} does not match actual {actual_invisible:?} by kind. Actual invisibles: {actual_invisibles:?}")
+                                panic!(
+                                    "At index {i}, expected invisible {expected_invisible:?} does not match actual {actual_invisible:?} by kind. Actual invisibles: {actual_invisibles:?}"
+                                )
                             }
                         },
                         None => {

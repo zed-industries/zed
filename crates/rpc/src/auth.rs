@@ -43,7 +43,7 @@ pub fn random_token() -> String {
     let mut rng = thread_rng();
     let mut token_bytes = [0; 48];
     for byte in token_bytes.iter_mut() {
-        *byte = rng.gen();
+        *byte = rng.r#gen();
     }
     BASE64_URL_SAFE.encode(token_bytes)
 }

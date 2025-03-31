@@ -8,7 +8,7 @@ use gpui::{App, AsyncApp, BorrowAppContext, Global, Task, UpdateGlobal};
 use paths::{
     debug_task_file_name, local_settings_file_relative_path, task_file_name, EDITORCONFIG_NAME,
 };
-use schemars::{gen::SchemaGenerator, schema::RootSchema, JsonSchema};
+use schemars::{r#gen::SchemaGenerator, schema::RootSchema, JsonSchema};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use smallvec::SmallVec;
 use std::{
@@ -760,7 +760,7 @@ impl SettingsStore {
         cx: &App,
     ) -> serde_json::Value {
         use schemars::{
-            gen::SchemaSettings,
+            r#gen::SchemaSettings,
             schema::{Schema, SchemaObject},
         };
 

@@ -279,7 +279,7 @@ impl RandomizedTest for ProjectCollaborationTest {
                             let project_root_name = root_name_for_project(&project, cx);
                             let mut paths = client.fs().paths(false);
                             paths.remove(0);
-                            let new_root_path = if paths.is_empty() || rng.gen() {
+                            let new_root_path = if paths.is_empty() || rng.r#gen() {
                                 Path::new(path!("/")).join(plan.next_root_dir_name())
                             } else {
                                 paths.choose(rng).unwrap().clone()
@@ -309,7 +309,7 @@ impl RandomizedTest for ProjectCollaborationTest {
                                     .choose(rng)
                             });
                             let Some(worktree) = worktree else { continue };
-                            let is_dir = rng.gen::<bool>();
+                            let is_dir = rng.r#gen::<bool>();
                             let mut full_path =
                                 worktree.read_with(cx, |w, _| PathBuf::from(w.root_name()));
                             full_path.push(gen_file_name(rng));
@@ -387,7 +387,7 @@ impl RandomizedTest for ProjectCollaborationTest {
                                             language::Bias::Left,
                                         )
                                     });
-                                    let detach = rng.gen();
+                                    let detach = rng.r#gen();
                                     break ClientOperation::RequestLspDataInBuffer {
                                         project_root_name,
                                         full_path,
@@ -460,7 +460,7 @@ impl RandomizedTest for ProjectCollaborationTest {
 
                 // Create or update a file or directory
                 96.. => {
-                    let is_dir = rng.gen::<bool>();
+                    let is_dir = rng.r#gen::<bool>();
                     let content;
                     let mut path;
                     let dir_paths = client.fs().directories(false);
@@ -1315,7 +1315,9 @@ impl RandomizedTest for ProjectCollaborationTest {
                     match (host_file, guest_file) {
                         (Some(host_file), Some(guest_file)) => {
                             assert_eq!(guest_file.path(), host_file.path());
-                            assert_eq!(guest_file.disk_state(), host_file.disk_state(),
+                            assert_eq!(
+                                guest_file.disk_state(),
+                                host_file.disk_state(),
                                 "guest {} disk_state does not match host {} for path {:?} in project {}",
                                 guest_user_id,
                                 host_user_id,
@@ -1347,52 +1349,54 @@ impl RandomizedTest for ProjectCollaborationTest {
                             .base_text_string()
                     });
                     assert_eq!(
-                            guest_diff_base, host_diff_base,
-                            "guest {} diff base does not match host's for path {path:?} in project {project_id}",
-                            client.username
-                        );
+                        guest_diff_base, host_diff_base,
+                        "guest {} diff base does not match host's for path {path:?} in project {project_id}",
+                        client.username
+                    );
 
                     let host_saved_version =
                         host_buffer.read_with(host_cx, |b, _| b.saved_version().clone());
                     let guest_saved_version =
                         guest_buffer.read_with(client_cx, |b, _| b.saved_version().clone());
                     assert_eq!(
-                            guest_saved_version, host_saved_version,
-                            "guest {} saved version does not match host's for path {path:?} in project {project_id}",
-                            client.username
-                        );
+                        guest_saved_version, host_saved_version,
+                        "guest {} saved version does not match host's for path {path:?} in project {project_id}",
+                        client.username
+                    );
 
                     let host_is_dirty = host_buffer.read_with(host_cx, |b, _| b.is_dirty());
                     let guest_is_dirty = guest_buffer.read_with(client_cx, |b, _| b.is_dirty());
                     assert_eq!(
-                            guest_is_dirty, host_is_dirty,
-                            "guest {} dirty state does not match host's for path {path:?} in project {project_id}",
-                            client.username
-                        );
+                        guest_is_dirty, host_is_dirty,
+                        "guest {} dirty state does not match host's for path {path:?} in project {project_id}",
+                        client.username
+                    );
 
                     let host_saved_mtime = host_buffer.read_with(host_cx, |b, _| b.saved_mtime());
                     let guest_saved_mtime =
                         guest_buffer.read_with(client_cx, |b, _| b.saved_mtime());
                     assert_eq!(
-                            guest_saved_mtime, host_saved_mtime,
-                            "guest {} saved mtime does not match host's for path {path:?} in project {project_id}",
-                            client.username
-                        );
+                        guest_saved_mtime, host_saved_mtime,
+                        "guest {} saved mtime does not match host's for path {path:?} in project {project_id}",
+                        client.username
+                    );
 
                     let host_is_dirty = host_buffer.read_with(host_cx, |b, _| b.is_dirty());
                     let guest_is_dirty = guest_buffer.read_with(client_cx, |b, _| b.is_dirty());
-                    assert_eq!(guest_is_dirty, host_is_dirty,
-                            "guest {} dirty status does not match host's for path {path:?} in project {project_id}",
-                            client.username
-                        );
+                    assert_eq!(
+                        guest_is_dirty, host_is_dirty,
+                        "guest {} dirty status does not match host's for path {path:?} in project {project_id}",
+                        client.username
+                    );
 
                     let host_has_conflict = host_buffer.read_with(host_cx, |b, _| b.has_conflict());
                     let guest_has_conflict =
                         guest_buffer.read_with(client_cx, |b, _| b.has_conflict());
-                    assert_eq!(guest_has_conflict, host_has_conflict,
-                            "guest {} conflict status does not match host's for path {path:?} in project {project_id}",
-                            client.username
-                        );
+                    assert_eq!(
+                        guest_has_conflict, host_has_conflict,
+                        "guest {} conflict status does not match host's for path {path:?} in project {project_id}",
+                        client.username
+                    );
                 }
             }
         }

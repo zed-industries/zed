@@ -49,7 +49,7 @@ impl<'a> CommitAvatar<'a> {
         &'a self,
         window: &mut Window,
         cx: &mut Context<CommitTooltip>,
-    ) -> Option<impl IntoElement> {
+    ) -> Option<impl IntoElement + use<>> {
         let remote = self
             .commit
             .message

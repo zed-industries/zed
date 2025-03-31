@@ -392,7 +392,7 @@ impl Inventory {
                         }
                     },
                     message: format!("Failed to parse tasks file content as a JSON array: {e}"),
-                })
+                });
             }
         };
         let new_templates = raw_tasks

@@ -1207,7 +1207,7 @@ mod tests {
         log::info!("Wrap width: {:?}", wrap_width);
 
         let buffer = cx.update(|cx| {
-            if rng.gen() {
+            if rng.r#gen() {
                 MultiBuffer::build_random(&mut rng, cx)
             } else {
                 let len = rng.gen_range(0..10);

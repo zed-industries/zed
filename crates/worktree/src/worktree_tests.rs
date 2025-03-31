@@ -1958,7 +1958,7 @@ async fn randomly_mutate_fs(
         let path = dirs.choose(rng).unwrap();
         let new_path = path.join(random_filename(rng));
 
-        if rng.gen() {
+        if rng.r#gen() {
             log::info!(
                 "creating dir {:?}",
                 new_path.strip_prefix(root_path).unwrap()
@@ -2026,7 +2026,7 @@ async fn randomly_mutate_fs(
             file_path.into_iter().chain(dir_path).choose(rng).unwrap()
         };
 
-        let is_rename = rng.gen();
+        let is_rename = rng.r#gen();
         if is_rename {
             let new_path_parent = dirs
                 .iter()
