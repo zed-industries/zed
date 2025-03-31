@@ -386,16 +386,13 @@ pub struct LocalRepositoryEntry {
     pub(crate) work_directory: WorkDirectory,
     pub(crate) work_directory_abs_path: Arc<Path>,
     pub(crate) git_dir_scan_id: usize,
-    pub(crate) status_scan_id: usize,
-    original_dot_git_abs_path: Arc<Path>,
+    pub(crate) pending_status_scans: TreeSet<RepoPath>,
+    pub(crate) original_dot_git_abs_path: Arc<Path>,
     /// Absolute path to the actual .git folder.
     /// Note: if .git is a file, this points to the folder indicated by the .git file
     pub(crate) dot_git_dir_abs_path: Arc<Path>,
     /// Absolute path to the .git file, if we're in a git worktree.
     pub(crate) dot_git_worktree_abs_path: Option<Arc<Path>>,
-    //pub(crate) repo_ptr: Arc<dyn GitRepository>,
-    //pub current_merge_head_shas: Vec<String>,
-    //pub merge_message: Option<String>,
 }
 
 impl sum_tree::Item for LocalRepositoryEntry {
@@ -1293,11 +1290,11 @@ impl LocalWorktree {
 
     fn set_snapshot(
         &mut self,
-        new_snapshot: LocalSnapshot,
+        mut new_snapshot: LocalSnapshot,
         entry_changes: UpdatedEntriesSet,
         cx: &mut Context<Worktree>,
     ) {
-        let repo_changes = self.changed_repos(&self.snapshot, &new_snapshot);
+        let repo_changes = self.changed_repos(&self.snapshot, &mut new_snapshot);
         self.snapshot = new_snapshot;
 
         if let Some(share) = self.update_observer.as_mut() {
@@ -1318,17 +1315,24 @@ impl LocalWorktree {
     fn changed_repos(
         &self,
         old_snapshot: &LocalSnapshot,
-        new_snapshot: &LocalSnapshot,
+        new_snapshot: &mut LocalSnapshot,
     ) -> UpdatedGitRepositoriesSet {
         let mut changes = Vec::new();
         let mut old_repos = old_snapshot.git_repositories.iter().peekable();
-        let mut new_repos = new_snapshot.git_repositories.iter().peekable();
+        let new_repos = new_snapshot.git_repositories.clone();
+        let mut new_repos = new_repos.iter().peekable();
 
         loop {
             match (new_repos.peek().map(clone), old_repos.peek().map(clone)) {
                 (Some((new_entry_id, new_repo)), Some((old_entry_id, old_repo))) => {
                     match Ord::cmp(&new_entry_id, &old_entry_id) {
                         Ordering::Less => {
+                            let paths_to_scan = new_snapshot
+                                .git_repositories
+                                .update(&new_entry_id, |entry| {
+                                    std::mem::take(&mut entry.pending_status_scans)
+                                })
+                                .expect("repo entry is know to exist in snapshot");
                             changes.push(UpdatedGitRepository {
                                 work_directory_id: new_entry_id,
                                 old_work_directory_abs_path: None,
@@ -1336,18 +1340,23 @@ impl LocalWorktree {
                                     new_repo.work_directory_abs_path.clone(),
                                 ),
                                 dot_git_abs_path: Some(new_repo.original_dot_git_abs_path.clone()),
+                                paths_to_scan: Some(paths_to_scan),
                             });
                             new_repos.next();
                         }
                         Ordering::Equal => {
-                            dbg!("");
-                            // FIXME the status scan ID will go away
+                            debug_assert!(old_repo.pending_status_scans.is_empty());
                             if new_repo.git_dir_scan_id != old_repo.git_dir_scan_id
-                                || new_repo.status_scan_id != old_repo.status_scan_id
-                                // XXX jank
+                                || !new_repo.pending_status_scans.is_empty()
                                 || new_repo.work_directory_abs_path
                                     != old_repo.work_directory_abs_path
                             {
+                                let paths_to_scan = new_snapshot
+                                    .git_repositories
+                                    .update(&new_entry_id, |entry| {
+                                        std::mem::take(&mut entry.pending_status_scans)
+                                    })
+                                    .expect("repo entry is know to exist in snapshot");
                                 changes.push(UpdatedGitRepository {
                                     work_directory_id: new_entry_id,
                                     old_work_directory_abs_path: Some(
@@ -1359,6 +1368,7 @@ impl LocalWorktree {
                                     dot_git_abs_path: Some(
                                         new_repo.original_dot_git_abs_path.clone(),
                                     ),
+                                    paths_to_scan: Some(paths_to_scan),
                                 });
                             }
                             new_repos.next();
@@ -1372,17 +1382,25 @@ impl LocalWorktree {
                                 ),
                                 new_work_directory_abs_path: None,
                                 dot_git_abs_path: None,
+                                paths_to_scan: None,
                             });
                             old_repos.next();
                         }
                     }
                 }
                 (Some((entry_id, repo)), None) => {
+                    let paths_to_scan = new_snapshot
+                        .git_repositories
+                        .update(&entry_id, |entry| {
+                            std::mem::take(&mut entry.pending_status_scans)
+                        })
+                        .expect("repo entry is know to exist in snapshot");
                     changes.push(UpdatedGitRepository {
                         work_directory_id: entry_id,
                         old_work_directory_abs_path: None,
                         new_work_directory_abs_path: Some(repo.work_directory_abs_path.clone()),
                         dot_git_abs_path: Some(repo.original_dot_git_abs_path.clone()),
+                        paths_to_scan: Some(paths_to_scan),
                     });
                     new_repos.next();
                 }
@@ -1392,6 +1410,7 @@ impl LocalWorktree {
                         old_work_directory_abs_path: Some(repo.work_directory_abs_path.clone()),
                         new_work_directory_abs_path: None,
                         dot_git_abs_path: Some(repo.original_dot_git_abs_path.clone()),
+                        paths_to_scan: None,
                     });
                     old_repos.next();
                 }
@@ -3146,7 +3165,7 @@ impl BackgroundScannerState {
             work_directory_id,
             work_directory,
             git_dir_scan_id: 0,
-            status_scan_id: 0,
+            pending_status_scans: Default::default(),
             original_dot_git_abs_path: dot_git_abs_path.as_path().into(),
             dot_git_dir_abs_path: actual_dot_git_dir_abs_path.into(),
             work_directory_abs_path: work_directory_abs_path.as_path().into(),
@@ -3500,6 +3519,7 @@ pub struct UpdatedGitRepository {
     /// For a normal git repository checkout, the absolute path to the .git directory.
     /// For a worktree, the absolute path to the worktree's subdirectory inside the .git directory.
     pub dot_git_abs_path: Option<Arc<Path>>,
+    pub paths_to_scan: Option<TreeSet<RepoPath>>,
 }
 
 pub type UpdatedEntriesSet = Arc<[(Arc<Path>, ProjectEntryId, PathChange)]>;
@@ -4602,11 +4622,65 @@ impl BackgroundScanner {
             }
         }
 
+        //for (_work_directory, mut paths) in paths_by_git_repo {
+        //    if let Ok(status) = paths.repo.status_blocking(&paths.repo_paths) {
+        //        let mut changed_path_statuses = Vec::new();
+        //        let statuses = paths.entry.statuses_by_path.clone();
+        //        let mut cursor = statuses.cursor::<PathProgress>(&());
+
+        //        for (repo_path, status) in &*status.entries {
+        //            paths.remove_repo_path(repo_path);
+        //            if cursor.seek_forward(&PathTarget::Path(repo_path), Bias::Left, &()) {
+        //                if &cursor.item().unwrap().status == status {
+        //                    continue;
+        //                }
+        //            }
+
+        //            changed_path_statuses.push(Edit::Insert(StatusEntry {
+        //                repo_path: repo_path.clone(),
+        //                status: *status,
+        //            }));
+        //        }
+
+        //        let mut cursor = statuses.cursor::<PathProgress>(&());
+        //        for path in paths.repo_paths {
+        //            if cursor.seek_forward(&PathTarget::Path(&path), Bias::Left, &()) {
+        //                changed_path_statuses.push(Edit::Remove(PathKey(path.0)));
+        //            }
+        //        }
+
+        //        if !changed_path_statuses.is_empty() {
+        //            let work_directory_id = state.snapshot.repositories.update(
+        //                &AbsPathKey(paths.entry.work_directory_abs_path.as_path().into()),
+        //                &(),
+        //                move |repository_entry| {
+        //                    repository_entry
+        //                        .statuses_by_path
+        //                        .edit(changed_path_statuses, &());
+
+        //                    repository_entry.work_directory_id
+        //                },
+        //            );
+
+        //            if let Some(work_directory_id) = work_directory_id {
+        //                state.snapshot.git_repositories.update(
+        //                    &work_directory_id,
+        //                    |local_repository_entry| {
+        //                        local_repository_entry.status_scan_id += 1;
+        //                    },
+        //                );
+        //            }
+        //        }
+        //    }
+        //}
+
         for (_work_directory, paths) in paths_by_git_repo {
             state.snapshot.git_repositories.update(
                 &paths.work_directory_id,
                 |local_repository_entry| {
-                    local_repository_entry.status_scan_id += 1;
+                    local_repository_entry
+                        .pending_status_scans
+                        .extend(paths.repo_paths);
                 },
             );
         }
@@ -5080,16 +5154,12 @@ async fn do_git_status_update(
         .snapshot
         .git_repositories
         .update(&local_repository.work_directory_id, |entry| {
-            dbg!("y");
-            //entry.current_merge_head_shas = merge_head_shas;
-            //entry.merge_message =
-            //    std::fs::read_to_string(local_repository.dot_git_dir_abs_path.join("MERGE_MSG"))
-            //        .ok()
-            //        .and_then(|merge_msg| Some(merge_msg.lines().next()?.to_owned()));
-            entry.status_scan_id += 1;
+            entry
+                .pending_status_scans
+                .insert(git::WORK_DIRECTORY_REPO_PATH.clone());
         });
 
-    // FIXME understand what function this serves and how to replace it in the git store
+    // FIXME does this need to be replaced somehow?
     //util::extend_sorted(
     //    &mut state.changed_paths,
     //    changed_paths,

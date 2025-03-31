@@ -54,10 +54,12 @@ use std::{
         Arc,
     },
 };
-use sum_tree::{SumTree, TreeSet};
-use text::BufferId;
+use sum_tree::{Edit, SumTree, TreeSet};
+use text::{Bias, BufferId};
 use util::{debug_panic, ResultExt};
-use worktree::{File, PathKey, PathSummary, UpdatedGitRepositoriesSet, Worktree};
+use worktree::{
+    File, PathKey, PathProgress, PathSummary, PathTarget, UpdatedGitRepositoriesSet, Worktree,
+};
 
 pub struct GitStore {
     state: GitStoreState,
@@ -1138,21 +1140,25 @@ impl GitStore {
                 Some(&repo.read(cx).work_directory_abs_path)
                     == update.old_work_directory_abs_path.as_ref()
             }) {
-                if let Some(new_work_directory_abs_path) =
-                    update.new_work_directory_abs_path.clone()
+                if let Some((new_work_directory_abs_path, paths_to_scan)) = update
+                    .new_work_directory_abs_path
+                    .clone()
+                    .zip(update.paths_to_scan.clone())
                 {
                     existing.update(cx, |existing, cx| {
                         existing.snapshot.work_directory_abs_path = new_work_directory_abs_path;
                         // detach
-                        let _ = existing.schedule_scan(updates_tx.clone(), cx);
+                        let _ = existing.schedule_scan(paths_to_scan, updates_tx.clone(), cx);
                     });
                 } else {
                     removed_ids.push(*id);
                 }
-            } else if let Some((work_directory_abs_path, dot_git_abs_path)) = update
-                .new_work_directory_abs_path
-                .clone()
-                .zip(update.dot_git_abs_path.clone())
+            } else if let Some(((work_directory_abs_path, dot_git_abs_path), paths_to_scan)) =
+                update
+                    .new_work_directory_abs_path
+                    .clone()
+                    .zip(update.dot_git_abs_path.clone())
+                    .zip(update.paths_to_scan.clone())
             {
                 let id = RepositoryId(next_repository_id.fetch_add(1, atomic::Ordering::Release));
                 let git_store = cx.weak_entity();
@@ -1167,7 +1173,7 @@ impl GitStore {
                         cx,
                     );
                     // detach
-                    let _ = repo.schedule_scan(updates_tx.clone(), cx);
+                    let _ = repo.schedule_scan(paths_to_scan, updates_tx.clone(), cx);
                     repo
                 });
                 self._subscriptions
@@ -2808,14 +2814,6 @@ impl RepositorySnapshot {
             .to_string()
             .into()
     }
-
-    fn compare(&self, old: &Self) -> Vec<RepositoryEvent> {
-        let mut events = Vec::new();
-        if self.merge_head_shas != old.merge_head_shas {
-            events.push(RepositoryEvent::MergeHeadsChanged);
-        }
-        events
-    }
 }
 
 impl Repository {
@@ -3808,6 +3806,7 @@ impl Repository {
 
     fn schedule_scan(
         &self,
+        paths: TreeSet<RepoPath>,
         updates_tx: Option<mpsc::UnboundedSender<DownstreamUpdate>>,
         cx: &Context<Self>,
     ) -> oneshot::Receiver<anyhow::Result<()>> {
@@ -3819,13 +3818,18 @@ impl Repository {
             let RepositoryState::Local { backend, .. } = state else {
                 bail!("not a local repository")
             };
-            let snapshot = this
+            let (snapshot, events) = this
                 .update(&mut cx, |this, _| {
-                    compute_snapshot(this.id, this.work_directory_abs_path.clone(), &*backend)
+                    compute_snapshot(
+                        this.id,
+                        this.work_directory_abs_path.clone(),
+                        this.snapshot.clone(),
+                        paths,
+                        backend.clone(),
+                    )
                 })?
                 .await?;
             this.update(&mut cx, |this, cx| {
-                let events = snapshot.compare(&this.snapshot);
                 this.snapshot = snapshot.clone();
                 for event in events {
                     cx.emit(event);
@@ -4214,18 +4218,56 @@ fn proto_to_branch(proto: &proto::Branch) -> git::repository::Branch {
 async fn compute_snapshot(
     id: RepositoryId,
     work_directory_abs_path: Arc<Path>,
-    backend: &dyn GitRepository,
-) -> Result<RepositorySnapshot> {
+    prev_snapshot: RepositorySnapshot,
+    mut paths: TreeSet<RepoPath>,
+    backend: Arc<dyn GitRepository>,
+) -> Result<(RepositorySnapshot, Vec<RepositoryEvent>)> {
+    let mut events = Vec::new();
     let branches = backend.branches().await?;
     let branch = branches.into_iter().find(|branch| branch.is_head);
-    let statuses = backend.status_blocking(&[git::WORK_DIRECTORY_REPO_PATH.clone()])?;
-    let merge_message = backend.merge_message().await.map(SharedString::from);
+    let statuses = backend.status_blocking(&paths.iter().cloned().collect::<Vec<_>>())?;
+    let merge_message = backend
+        .merge_message()
+        .await
+        .and_then(|msg| Some(msg.lines().nth(0)?.to_owned().into()));
     let merge_head_shas = backend
         .merge_head_shas()
         .into_iter()
         .map(SharedString::from)
         .collect();
-    // FIXME diff (at the caller's level), including merge conflicts
+
+    if merge_head_shas != prev_snapshot.merge_head_shas {
+        events.push(RepositoryEvent::MergeHeadsChanged);
+    }
+
+    let mut changed_path_statuses = Vec::new();
+    let prev_statuses = prev_snapshot.statuses_by_path.clone();
+    let mut cursor = prev_statuses.cursor::<PathProgress>(&());
+
+    for (repo_path, status) in &*statuses.entries {
+        paths.remove(repo_path);
+        if cursor.seek_forward(&PathTarget::Path(repo_path), Bias::Left, &()) {
+            if &cursor.item().unwrap().status == status {
+                continue;
+            }
+        }
+
+        changed_path_statuses.push(Edit::Insert(StatusEntry {
+            repo_path: repo_path.clone(),
+            status: *status,
+        }));
+    }
+
+    let mut cursor = prev_statuses.cursor::<PathProgress>(&());
+    for path in paths.iter() {
+        if cursor.seek_forward(&PathTarget::Path(&path), Bias::Left, &()) {
+            changed_path_statuses.push(Edit::Remove(PathKey(path.0.clone())));
+        }
+    }
+
+    if branch != prev_snapshot.branch || !changed_path_statuses.is_empty() {
+        events.push(RepositoryEvent::GitStateUpdated);
+    }
 
     let mut statuses_by_path = SumTree::new(&());
     let mut merge_conflicts = TreeSet::default();
@@ -4242,7 +4284,7 @@ async fn compute_snapshot(
         );
     }
 
-    Ok(RepositorySnapshot {
+    let snapshot = RepositorySnapshot {
         id,
         merge_message,
         statuses_by_path,
@@ -4252,7 +4294,9 @@ async fn compute_snapshot(
         branch,
         merge_conflicts,
         merge_head_shas,
-    })
+    };
+
+    Ok((snapshot, events))
 }
 
 fn status_from_proto(
