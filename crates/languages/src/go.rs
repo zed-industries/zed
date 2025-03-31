@@ -168,7 +168,9 @@ impl super::LspAdapter for GoLspAdapter {
                 String::from_utf8_lossy(&install_output.stderr)
             );
 
-            return Err(anyhow!("failed to install gopls with `go install`. Is `go` installed and in the PATH? Check logs for more information."));
+            return Err(anyhow!(
+                "failed to install gopls with `go install`. Is `go` installed and in the PATH? Check logs for more information."
+            ));
         }
 
         let installed_binary_path = gobin_dir.join(BINARY);

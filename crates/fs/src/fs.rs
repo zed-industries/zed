@@ -430,7 +430,7 @@ impl Fs for RealFs {
 
         unsafe {
             unsafe fn ns_string(string: &str) -> id {
-                NSString::alloc(nil).init_str(string).autorelease()
+                unsafe { NSString::alloc(nil).init_str(string).autorelease() }
             }
 
             let url: id = msg_send![class!(NSURL), fileURLWithPath: ns_string(path.to_string_lossy().as_ref())];
@@ -591,7 +591,7 @@ impl Fs for RealFs {
                     (io::ErrorKind::NotFound, _) => Ok(None),
                     (io::ErrorKind::Other, Some(libc::ENOTDIR)) => Ok(None),
                     _ => Err(anyhow::Error::new(err)),
-                }
+                };
             }
         };
 

@@ -878,7 +878,7 @@ impl Motion {
                 smartcase,
             } => {
                 return find_forward(map, point, *before, *char, times, *mode, *smartcase)
-                    .map(|new_point| (new_point, SelectionGoal::None))
+                    .map(|new_point| (new_point, SelectionGoal::None));
             }
             // T F
             FindBackward {

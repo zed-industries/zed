@@ -100,13 +100,13 @@ pub fn derive_refineable(input: TokenStream) -> TokenStream {
                 }
             } else if is_optional {
                 quote! {
-                    if let Some(ref value) = &refinement.#name {
+                    if let Some(value) = &refinement.#name {
                         self.#name = Some(value.clone());
                     }
                 }
             } else {
                 quote! {
-                    if let Some(ref value) = &refinement.#name {
+                    if let Some(value) = &refinement.#name {
                         self.#name = value.clone();
                     }
                 }
@@ -153,7 +153,7 @@ pub fn derive_refineable(input: TokenStream) -> TokenStream {
                 }
             } else {
                 quote! {
-                    if let Some(ref value) = &refinement.#name {
+                    if let Some(value) = &refinement.#name {
                         self.#name = Some(value.clone());
                     }
                 }
@@ -244,7 +244,7 @@ pub fn derive_refineable(input: TokenStream) -> TokenStream {
         derive_stream.extend(quote! { #[derive(#trait_to_derive)] })
     }
 
-    let gen = quote! {
+    let r#gen = quote! {
         /// A refinable version of [`#ident`], see that documentation for details.
         #[derive(Clone)]
         #derive_stream
@@ -321,7 +321,7 @@ pub fn derive_refineable(input: TokenStream) -> TokenStream {
 
         #debug_impl
     };
-    gen.into()
+    r#gen.into()
 }
 
 fn is_refineable_field(f: &Field) -> bool {

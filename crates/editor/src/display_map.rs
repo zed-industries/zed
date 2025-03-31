@@ -1464,7 +1464,7 @@ pub mod tests {
         });
 
         let buffer = cx.update(|cx| {
-            if rng.gen() {
+            if rng.r#gen() {
                 let len = rng.gen_range(0..10);
                 let text = util::RandomCharIter::new(&mut rng)
                     .take(len)
@@ -1526,7 +1526,7 @@ pub mod tests {
                 }
                 30..=44 => {
                     map.update(cx, |map, cx| {
-                        if rng.gen() || blocks.is_empty() {
+                        if rng.r#gen() || blocks.is_empty() {
                             let buffer = map.snapshot(cx).buffer_snapshot;
                             let block_properties = (0..rng.gen_range(1..=1))
                                 .map(|_| {
@@ -1536,7 +1536,7 @@ pub mod tests {
                                             Bias::Left,
                                         ));
 
-                                    let placement = if rng.gen() {
+                                    let placement = if rng.r#gen() {
                                         BlockPlacement::Above(position)
                                     } else {
                                         BlockPlacement::Below(position)
@@ -1580,7 +1580,7 @@ pub mod tests {
                         });
                     }
 
-                    if rng.gen() && fold_count > 0 {
+                    if rng.r#gen() && fold_count > 0 {
                         log::info!("unfolding ranges: {:?}", ranges);
                         map.update(cx, |map, cx| {
                             map.unfold_intersecting(ranges, true, cx);

@@ -471,7 +471,8 @@ impl MetalRenderer {
 
             if !ok {
                 command_encoder.end_encoding();
-                return Err(anyhow!("scene too large: {} paths, {} shadows, {} quads, {} underlines, {} mono, {} poly, {} surfaces",
+                return Err(anyhow!(
+                    "scene too large: {} paths, {} shadows, {} quads, {} underlines, {} mono, {} poly, {} surfaces",
                     scene.paths.len(),
                     scene.shadows.len(),
                     scene.quads.len(),

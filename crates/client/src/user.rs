@@ -581,7 +581,7 @@ impl UserStore {
         })
     }
 
-    pub fn clear_contacts(&self) -> impl Future<Output = ()> {
+    pub fn clear_contacts(&self) -> impl Future<Output = ()> + use<> {
         let (tx, mut rx) = postage::barrier::channel();
         self.update_contacts_tx
             .unbounded_send(UpdateContacts::Clear(tx))

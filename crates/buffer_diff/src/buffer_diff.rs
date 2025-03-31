@@ -433,79 +433,82 @@ impl BufferDiffInner {
 
         let max_point = buffer.max_point();
         let mut summaries = buffer.summaries_for_anchors_with_payload::<Point, _, _>(anchor_iter);
-        iter::from_fn(move || loop {
-            let (start_point, (start_anchor, start_base)) = summaries.next()?;
-            let (mut end_point, (mut end_anchor, end_base)) = summaries.next()?;
+        iter::from_fn(move || {
+            loop {
+                let (start_point, (start_anchor, start_base)) = summaries.next()?;
+                let (mut end_point, (mut end_anchor, end_base)) = summaries.next()?;
 
-            if !start_anchor.is_valid(buffer) {
-                continue;
-            }
-
-            if end_point.column > 0 && end_point < max_point {
-                end_point.row += 1;
-                end_point.column = 0;
-                end_anchor = buffer.anchor_before(end_point);
-            }
-
-            let mut secondary_status = DiffHunkSecondaryStatus::NoSecondaryHunk;
-
-            let mut has_pending = false;
-            if start_anchor
-                .cmp(&pending_hunks_cursor.start().buffer_range.start, buffer)
-                .is_gt()
-            {
-                pending_hunks_cursor.seek_forward(&start_anchor, Bias::Left, buffer);
-            }
-
-            if let Some(pending_hunk) = pending_hunks_cursor.item() {
-                let mut pending_range = pending_hunk.buffer_range.to_point(buffer);
-                if pending_range.end.column > 0 {
-                    pending_range.end.row += 1;
-                    pending_range.end.column = 0;
+                if !start_anchor.is_valid(buffer) {
+                    continue;
                 }
 
-                if pending_range == (start_point..end_point) {
-                    if !buffer.has_edits_since_in_range(
-                        &pending_hunk.buffer_version,
-                        start_anchor..end_anchor,
-                    ) {
-                        has_pending = true;
-                        secondary_status = pending_hunk.new_status;
-                    }
+                if end_point.column > 0 && end_point < max_point {
+                    end_point.row += 1;
+                    end_point.column = 0;
+                    end_anchor = buffer.anchor_before(end_point);
                 }
-            }
 
-            if let (Some(secondary_cursor), false) = (secondary_cursor.as_mut(), has_pending) {
+                let mut secondary_status = DiffHunkSecondaryStatus::NoSecondaryHunk;
+
+                let mut has_pending = false;
                 if start_anchor
-                    .cmp(&secondary_cursor.start().buffer_range.start, buffer)
+                    .cmp(&pending_hunks_cursor.start().buffer_range.start, buffer)
                     .is_gt()
                 {
-                    secondary_cursor.seek_forward(&start_anchor, Bias::Left, buffer);
+                    pending_hunks_cursor.seek_forward(&start_anchor, Bias::Left, buffer);
                 }
 
-                if let Some(secondary_hunk) = secondary_cursor.item() {
-                    let mut secondary_range = secondary_hunk.buffer_range.to_point(buffer);
-                    if secondary_range.end.column > 0 {
-                        secondary_range.end.row += 1;
-                        secondary_range.end.column = 0;
+                if let Some(pending_hunk) = pending_hunks_cursor.item() {
+                    let mut pending_range = pending_hunk.buffer_range.to_point(buffer);
+                    if pending_range.end.column > 0 {
+                        pending_range.end.row += 1;
+                        pending_range.end.column = 0;
                     }
-                    if secondary_range.is_empty() && secondary_hunk.diff_base_byte_range.is_empty()
+
+                    if pending_range == (start_point..end_point) {
+                        if !buffer.has_edits_since_in_range(
+                            &pending_hunk.buffer_version,
+                            start_anchor..end_anchor,
+                        ) {
+                            has_pending = true;
+                            secondary_status = pending_hunk.new_status;
+                        }
+                    }
+                }
+
+                if let (Some(secondary_cursor), false) = (secondary_cursor.as_mut(), has_pending) {
+                    if start_anchor
+                        .cmp(&secondary_cursor.start().buffer_range.start, buffer)
+                        .is_gt()
                     {
-                        // ignore
-                    } else if secondary_range == (start_point..end_point) {
-                        secondary_status = DiffHunkSecondaryStatus::HasSecondaryHunk;
-                    } else if secondary_range.start <= end_point {
-                        secondary_status = DiffHunkSecondaryStatus::OverlapsWithSecondaryHunk;
+                        secondary_cursor.seek_forward(&start_anchor, Bias::Left, buffer);
+                    }
+
+                    if let Some(secondary_hunk) = secondary_cursor.item() {
+                        let mut secondary_range = secondary_hunk.buffer_range.to_point(buffer);
+                        if secondary_range.end.column > 0 {
+                            secondary_range.end.row += 1;
+                            secondary_range.end.column = 0;
+                        }
+                        if secondary_range.is_empty()
+                            && secondary_hunk.diff_base_byte_range.is_empty()
+                        {
+                            // ignore
+                        } else if secondary_range == (start_point..end_point) {
+                            secondary_status = DiffHunkSecondaryStatus::HasSecondaryHunk;
+                        } else if secondary_range.start <= end_point {
+                            secondary_status = DiffHunkSecondaryStatus::OverlapsWithSecondaryHunk;
+                        }
                     }
                 }
-            }
 
-            return Some(DiffHunk {
-                range: start_point..end_point,
-                diff_base_byte_range: start_base..end_base,
-                buffer_range: start_anchor..end_anchor,
-                secondary_status,
-            });
+                return Some(DiffHunk {
+                    range: start_point..end_point,
+                    diff_base_byte_range: start_base..end_base,
+                    buffer_range: start_anchor..end_anchor,
+                    secondary_status,
+                });
+            }
         })
     }
 
@@ -776,7 +779,7 @@ impl BufferDiff {
         language: Option<Arc<Language>>,
         language_registry: Option<Arc<LanguageRegistry>>,
         cx: &mut App,
-    ) -> impl Future<Output = BufferDiffInner> {
+    ) -> impl Future<Output = BufferDiffInner> + use<> {
         let base_text_pair;
         let base_text_exists;
         let base_text_snapshot;
@@ -818,7 +821,7 @@ impl BufferDiff {
         base_text: Option<Arc<String>>,
         base_text_snapshot: language::BufferSnapshot,
         cx: &App,
-    ) -> impl Future<Output = BufferDiffInner> {
+    ) -> impl Future<Output = BufferDiffInner> + use<> {
         let base_text_exists = base_text.is_some();
         let base_text_pair = base_text.map(|text| (text, base_text_snapshot.as_rope().clone()));
         cx.background_spawn(async move {
@@ -2071,7 +2074,7 @@ mod tests {
             )
         });
         let working_copy = working_copy.read_with(cx, |working_copy, _| working_copy.snapshot());
-        let mut index_text = if rng.gen() {
+        let mut index_text = if rng.r#gen() {
             Rope::from(head_text.as_str())
         } else {
             working_copy.as_rope().clone()

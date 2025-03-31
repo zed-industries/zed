@@ -243,7 +243,7 @@ impl Room {
         }
     }
 
-    fn app_will_quit(&mut self, cx: &mut Context<Self>) -> impl Future<Output = ()> {
+    fn app_will_quit(&mut self, cx: &mut Context<Self>) -> impl Future<Output = ()> + use<> {
         let task = if self.status.is_online() {
             let leave = self.leave_internal(cx);
             Some(cx.background_spawn(async move {
@@ -665,7 +665,7 @@ impl Room {
         Ok(())
     }
 
-    pub fn room_update_completed(&mut self) -> impl Future<Output = ()> {
+    pub fn room_update_completed(&mut self) -> impl Future<Output = ()> + use<> {
         let mut done_rx = self.room_update_completed_rx.clone();
         async move {
             while let Some(result) = done_rx.next().await {

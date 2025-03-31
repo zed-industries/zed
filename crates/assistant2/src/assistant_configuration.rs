@@ -105,7 +105,7 @@ impl AssistantConfiguration {
         &mut self,
         provider: &Arc<dyn LanguageModelProvider>,
         cx: &mut Context<Self>,
-    ) -> impl IntoElement {
+    ) -> impl IntoElement + use<> {
         let provider_id = provider.id().0.clone();
         let provider_name = provider.name().0.clone();
         let configuration_view = self

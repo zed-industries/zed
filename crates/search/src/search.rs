@@ -105,12 +105,12 @@ impl SearchOptions {
         options
     }
 
-    pub fn as_button(
+    pub fn as_button<Action: Fn(&gpui::ClickEvent, &mut Window, &mut App) + 'static>(
         &self,
         active: bool,
         focus_handle: FocusHandle,
-        action: impl Fn(&gpui::ClickEvent, &mut Window, &mut App) + 'static,
-    ) -> impl IntoElement {
+        action: Action,
+    ) -> impl IntoElement + use<Action> {
         IconButton::new(self.label(), self.icon())
             .on_click(action)
             .style(ButtonStyle::Subtle)

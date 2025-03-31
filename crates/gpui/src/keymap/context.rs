@@ -438,14 +438,8 @@ mod tests {
             actions!(
                 test,
                 [
-                A,
-                B,
-                C,
-                D,
-                E,
-                F,
-                G, // Don't wrap, test the trailing comma
-            ]
+                    A, B, C, D, E, F, G, // Don't wrap, test the trailing comma
+                ]
             );
         }
     }

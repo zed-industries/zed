@@ -38,7 +38,7 @@ pub use manifest::{ManifestName, ManifestProvider, ManifestQuery};
 use parking_lot::Mutex;
 use regex::Regex;
 use schemars::{
-    gen::SchemaGenerator,
+    r#gen::SchemaGenerator,
     schema::{InstanceType, Schema, SchemaObject},
     JsonSchema,
 };
@@ -598,7 +598,9 @@ pub trait LspAdapter: 'static + Send + Sync {
     /// Should not be called unless the callee is sure that
     /// `Self::is_primary_zed_json_schema_adapter` returns `true`
     async fn clear_zed_json_schema_cache(&self) {
-        unreachable!("Not implemented for this adapter. This method should only be called on the default JSON language server adapter");
+        unreachable!(
+            "Not implemented for this adapter. This method should only be called on the default JSON language server adapter"
+        );
     }
 }
 
@@ -931,8 +933,8 @@ impl BracketPairConfig {
     }
 }
 
-fn bracket_pair_config_json_schema(gen: &mut SchemaGenerator) -> Schema {
-    Option::<Vec<BracketPairContent>>::json_schema(gen)
+fn bracket_pair_config_json_schema(r#gen: &mut SchemaGenerator) -> Schema {
+    Option::<Vec<BracketPairContent>>::json_schema(r#gen)
 }
 
 #[derive(Deserialize, JsonSchema)]
@@ -1532,7 +1534,9 @@ impl Language {
                     .scope_opt_in_language_servers
                     .contains(server_name)
                 {
-                    util::debug_panic!("Server {server_name:?} has been opted-in by scope {name:?} but has not been marked as an opt-in server");
+                    util::debug_panic!(
+                        "Server {server_name:?} has been opted-in by scope {name:?} but has not been marked as an opt-in server"
+                    );
                 }
             }
 

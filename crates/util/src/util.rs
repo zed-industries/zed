@@ -239,7 +239,7 @@ pub fn load_shell_from_passwd() -> Result<()> {
             "updating SHELL environment variable to value from passwd entry: {:?}",
             shell,
         );
-        env::set_var("SHELL", shell);
+        unsafe { env::set_var("SHELL", shell) };
     }
 
     Ok(())
@@ -285,7 +285,7 @@ pub fn load_login_shell_environment() -> Result<()> {
     if let Some(env_output_start) = stdout.find(marker) {
         let env_output = &stdout[env_output_start + marker.len()..];
 
-        parse_env_output(env_output, |key, value| env::set_var(key, value));
+        parse_env_output(env_output, |key, value| unsafe { env::set_var(key, value) });
 
         log::info!(
             "set environment variables from shell:{}, path:{}",

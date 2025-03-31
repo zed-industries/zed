@@ -1273,10 +1273,10 @@ impl Workspace {
             };
 
             let toolchains = DB.toolchains(workspace_id).await?;
-            for (toolchain, worktree_id) in toolchains {
+            for (toolchain, worktree_id, path) in toolchains {
                 project_handle
                     .update(cx, |this, cx| {
-                        this.activate_toolchain(worktree_id, toolchain, cx)
+                        this.activate_toolchain(ProjectPath { worktree_id, path }, toolchain, cx)
                     })?
                     .await;
             }
@@ -1832,7 +1832,7 @@ impl Workspace {
     }
 
     #[cfg(any(test, feature = "test-support"))]
-    pub fn worktree_scans_complete(&self, cx: &App) -> impl Future<Output = ()> + 'static {
+    pub fn worktree_scans_complete(&self, cx: &App) -> impl Future<Output = ()> + 'static + use<> {
         let futures = self
             .worktrees(cx)
             .filter_map(|worktree| worktree.read(cx).as_local())
@@ -5253,7 +5253,7 @@ fn open_items(
     mut project_paths_to_open: Vec<(PathBuf, Option<ProjectPath>)>,
     window: &mut Window,
     cx: &mut Context<Workspace>,
-) -> impl 'static + Future<Output = Result<Vec<Option<Result<Box<dyn ItemHandle>>>>>> {
+) -> impl 'static + Future<Output = Result<Vec<Option<Result<Box<dyn ItemHandle>>>>>> + use<> {
     let restored_items = serialized_workspace.map(|serialized_workspace| {
         Workspace::load_workspace(
             serialized_workspace,
@@ -6319,10 +6319,10 @@ pub fn open_ssh_project(
         })?;
 
         let toolchains = DB.toolchains(workspace_id).await?;
-        for (toolchain, worktree_id) in toolchains {
+        for (toolchain, worktree_id, path) in toolchains {
             project
                 .update(cx, |this, cx| {
-                    this.activate_toolchain(worktree_id, toolchain, cx)
+                    this.activate_toolchain(ProjectPath { worktree_id, path }, toolchain, cx)
                 })?
                 .await;
         }

@@ -1,5 +1,5 @@
 use dap_types::StartDebuggingRequestArguments;
-use schemars::{gen::SchemaSettings, JsonSchema};
+use schemars::{r#gen::SchemaSettings, JsonSchema};
 use serde::{Deserialize, Serialize};
 use std::net::Ipv4Addr;
 use std::path::PathBuf;

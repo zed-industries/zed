@@ -936,12 +936,12 @@ impl BufferSearchBar {
         self.update_matches(!updated, window, cx)
     }
 
-    fn render_search_option_button(
+    fn render_search_option_button<Action: Fn(&ClickEvent, &mut Window, &mut App) + 'static>(
         &self,
         option: SearchOptions,
         focus_handle: FocusHandle,
-        action: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
-    ) -> impl IntoElement {
+        action: Action,
+    ) -> impl IntoElement + use<Action> {
         let is_active = self.search_options.contains(option);
         option.as_button(is_active, focus_handle, action)
     }

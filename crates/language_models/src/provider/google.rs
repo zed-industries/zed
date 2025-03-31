@@ -2,8 +2,7 @@ use anyhow::{anyhow, Context as _, Result};
 use collections::BTreeMap;
 use credentials_provider::CredentialsProvider;
 use editor::{Editor, EditorElement, EditorStyle};
-use futures::Stream;
-use futures::{future::BoxFuture, FutureExt, StreamExt};
+use futures::{future::BoxFuture, FutureExt, Stream, StreamExt};
 use google_ai::{FunctionDeclaration, GenerateContentResponse, Part, UsageMetadata};
 use gpui::{
     AnyView, App, AsyncApp, Context, Entity, FontStyle, Subscription, Task, TextStyle, WhiteSpace,
