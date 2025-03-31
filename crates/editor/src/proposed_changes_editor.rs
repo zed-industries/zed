@@ -455,6 +455,15 @@ impl SemanticsProvider for BranchBufferSemanticsProvider {
         self.0.inlay_hints(buffer, range, cx)
     }
 
+    fn semantic_tokens(
+        &self,
+        buffer: Entity<Buffer>,
+        cx: &mut App,
+    ) -> Option<Task<anyhow::Result<Vec<project::SemanticToken>>>> {
+        let buffer = self.to_base(&buffer, &[], cx)?;
+        self.0.semantic_tokens(buffer, cx)
+    }
+
     fn resolve_inlay_hint(
         &self,
         hint: project::InlayHint,
@@ -464,6 +473,14 @@ impl SemanticsProvider for BranchBufferSemanticsProvider {
     ) -> Option<Task<anyhow::Result<project::InlayHint>>> {
         let buffer = self.to_base(&buffer, &[], cx)?;
         self.0.resolve_inlay_hint(hint, buffer, server_id, cx)
+    }
+
+    fn supports_semantic_tokens(&self, buffer: &Entity<Buffer>, cx: &mut App) -> bool {
+        if let Some(buffer) = self.to_base(&buffer, &[], cx) {
+            self.0.supports_semantic_tokens(&buffer, cx)
+        } else {
+            false
+        }
     }
 
     fn supports_inlay_hints(&self, buffer: &Entity<Buffer>, cx: &mut App) -> bool {

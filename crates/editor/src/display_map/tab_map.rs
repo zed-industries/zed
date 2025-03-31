@@ -164,7 +164,7 @@ pub struct TabSnapshot {
 
 impl TabSnapshot {
     pub fn buffer_snapshot(&self) -> &MultiBufferSnapshot {
-        &self.fold_snapshot.inlay_snapshot.buffer
+        &self.fold_snapshot.inlay_snapshot.token_snapshot.buffer
     }
 
     pub fn line_len(&self, row: u32) -> u32 {
@@ -602,7 +602,7 @@ impl<'a> Iterator for TabChunks<'a> {
 mod tests {
     use super::*;
     use crate::{
-        display_map::{fold_map::FoldMap, inlay_map::InlayMap},
+        display_map::{fold_map::FoldMap, inlay_map::InlayMap, token_map::TokenMap},
         MultiBuffer,
     };
     use rand::{prelude::StdRng, Rng};
@@ -611,7 +611,8 @@ mod tests {
     fn test_expand_tabs(cx: &mut gpui::App) {
         let buffer = MultiBuffer::build_simple("", cx);
         let buffer_snapshot = buffer.read(cx).snapshot(cx);
-        let (_, inlay_snapshot) = InlayMap::new(buffer_snapshot.clone());
+        let (_, token_snapshot) = TokenMap::new(buffer_snapshot.clone());
+        let (_, inlay_snapshot) = InlayMap::new(token_snapshot);
         let (_, fold_snapshot) = FoldMap::new(inlay_snapshot);
         let (_, tab_snapshot) = TabMap::new(fold_snapshot, 4.try_into().unwrap());
 
@@ -628,7 +629,8 @@ mod tests {
 
         let buffer = MultiBuffer::build_simple(input, cx);
         let buffer_snapshot = buffer.read(cx).snapshot(cx);
-        let (_, inlay_snapshot) = InlayMap::new(buffer_snapshot.clone());
+        let (_, token_snapshot) = TokenMap::new(buffer_snapshot.clone());
+        let (_, inlay_snapshot) = InlayMap::new(token_snapshot);
         let (_, fold_snapshot) = FoldMap::new(inlay_snapshot);
         let (_, mut tab_snapshot) = TabMap::new(fold_snapshot, 4.try_into().unwrap());
 
@@ -675,7 +677,8 @@ mod tests {
 
         let buffer = MultiBuffer::build_simple(input, cx);
         let buffer_snapshot = buffer.read(cx).snapshot(cx);
-        let (_, inlay_snapshot) = InlayMap::new(buffer_snapshot.clone());
+        let (_, token_snapshot) = TokenMap::new(buffer_snapshot.clone());
+        let (_, inlay_snapshot) = InlayMap::new(token_snapshot);
         let (_, fold_snapshot) = FoldMap::new(inlay_snapshot);
         let (_, mut tab_snapshot) = TabMap::new(fold_snapshot, 4.try_into().unwrap());
 
@@ -689,7 +692,8 @@ mod tests {
 
         let buffer = MultiBuffer::build_simple(input, cx);
         let buffer_snapshot = buffer.read(cx).snapshot(cx);
-        let (_, inlay_snapshot) = InlayMap::new(buffer_snapshot.clone());
+        let (_, token_snapshot) = TokenMap::new(buffer_snapshot.clone());
+        let (_, inlay_snapshot) = InlayMap::new(token_snapshot);
         let (_, fold_snapshot) = FoldMap::new(inlay_snapshot);
         let (_, tab_snapshot) = TabMap::new(fold_snapshot, 4.try_into().unwrap());
 
@@ -749,7 +753,8 @@ mod tests {
         let buffer_snapshot = buffer.read(cx).snapshot(cx);
         log::info!("Buffer text: {:?}", buffer_snapshot.text());
 
-        let (mut inlay_map, inlay_snapshot) = InlayMap::new(buffer_snapshot.clone());
+        let (_, token_snapshot) = TokenMap::new(buffer_snapshot.clone());
+        let (mut inlay_map, inlay_snapshot) = InlayMap::new(token_snapshot);
         log::info!("InlayMap text: {:?}", inlay_snapshot.text());
         let (mut fold_map, _) = FoldMap::new(inlay_snapshot.clone());
         fold_map.randomly_mutate(&mut rng);

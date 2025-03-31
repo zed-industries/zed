@@ -358,10 +358,14 @@ message Envelope {
         BreakpointsForFile breakpoints_for_file = 327;
 
         UpdateRepository update_repository = 328;
-        RemoveRepository remove_repository = 329;
+        RemoveRepository remove_repository = 329; // current max
 
         GetDocumentSymbols get_document_symbols = 330;
         GetDocumentSymbolsResponse get_document_symbols_response = 331; // current max
+
+        SemanticTokensFullRequest semantic_tokens_full_request = 332;
+        SemanticTokensResponse semantic_tokens_response = 333;
+        RefreshSemanticTokens refresh_semantic_tokens = 334;
     }
 
     reserved 87 to 88;
@@ -3566,4 +3570,26 @@ message GitInit {
     uint64 project_id = 1;
     string abs_path = 2;
     string fallback_branch_name = 3;
+}
+
+message SemanticTokensFullRequest {
+    uint64 project_id = 1;
+    uint64 buffer_id = 2;
+    repeated VectorClockEntry version = 3;
+}
+
+message SemanticToken {
+  Anchor start = 1;
+  Anchor end = 2;
+  string token = 3;
+  repeated string modifiers = 4;
+}
+
+message SemanticTokensResponse {
+  repeated SemanticToken tokens = 1;
+  repeated VectorClockEntry version = 2;
+}
+
+message RefreshSemanticTokens {
+    uint64 project_id = 1;
 }

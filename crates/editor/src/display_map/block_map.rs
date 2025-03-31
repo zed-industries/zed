@@ -1910,7 +1910,10 @@ fn offset_for_row(s: &str, target: u32) -> (u32, usize) {
 mod tests {
     use super::*;
     use crate::{
-        display_map::{fold_map::FoldMap, inlay_map::InlayMap, tab_map::TabMap, wrap_map::WrapMap},
+        display_map::{
+            fold_map::FoldMap, inlay_map::InlayMap, tab_map::TabMap, token_map::TokenMap,
+            wrap_map::WrapMap,
+        },
         test::test_font,
     };
     use gpui::{div, font, px, App, AppContext as _, Element};
@@ -1945,7 +1948,8 @@ mod tests {
         let buffer = cx.update(|cx| MultiBuffer::build_simple(text, cx));
         let buffer_snapshot = cx.update(|cx| buffer.read(cx).snapshot(cx));
         let subscription = buffer.update(cx, |buffer, _| buffer.subscribe());
-        let (mut inlay_map, inlay_snapshot) = InlayMap::new(buffer_snapshot.clone());
+        let (mut token_map, token_snapshot) = TokenMap::new(buffer_snapshot.clone());
+        let (mut inlay_map, inlay_snapshot) = InlayMap::new(token_snapshot);
         let (mut fold_map, fold_snapshot) = FoldMap::new(inlay_snapshot);
         let (mut tab_map, tab_snapshot) = TabMap::new(fold_snapshot, 1.try_into().unwrap());
         let (wrap_map, wraps_snapshot) =
@@ -2094,8 +2098,9 @@ mod tests {
             buffer.snapshot(cx)
         });
 
-        let (inlay_snapshot, inlay_edits) =
-            inlay_map.sync(buffer_snapshot, subscription.consume().into_inner());
+        let (token_snapshot, token_edits) =
+            token_map.sync(buffer_snapshot, subscription.consume().into_inner());
+        let (inlay_snapshot, inlay_edits) = inlay_map.sync(token_snapshot, token_edits);
         let (fold_snapshot, fold_edits) = fold_map.read(inlay_snapshot, inlay_edits);
         let (tab_snapshot, tab_edits) =
             tab_map.sync(fold_snapshot, fold_edits, 4.try_into().unwrap());
@@ -2158,7 +2163,8 @@ mod tests {
         }
 
         let multi_buffer_snapshot = multi_buffer.read(cx).snapshot(cx);
-        let (_, inlay_snapshot) = InlayMap::new(multi_buffer_snapshot.clone());
+        let (_, token_snapshot) = TokenMap::new(multi_buffer_snapshot.clone());
+        let (_, inlay_snapshot) = InlayMap::new(token_snapshot);
         let (_, fold_snapshot) = FoldMap::new(inlay_snapshot);
         let (_, tab_snapshot) = TabMap::new(fold_snapshot, 4.try_into().unwrap());
         let (_, wraps_snapshot) = WrapMap::new(tab_snapshot, font, font_size, Some(wrap_width), cx);
@@ -2192,7 +2198,8 @@ mod tests {
         let buffer = cx.update(|cx| MultiBuffer::build_simple(text, cx));
         let buffer_snapshot = cx.update(|cx| buffer.read(cx).snapshot(cx));
         let _subscription = buffer.update(cx, |buffer, _| buffer.subscribe());
-        let (_inlay_map, inlay_snapshot) = InlayMap::new(buffer_snapshot.clone());
+        let (_, token_snapshot) = TokenMap::new(buffer_snapshot.clone());
+        let (_inlay_map, inlay_snapshot) = InlayMap::new(token_snapshot);
         let (_fold_map, fold_snapshot) = FoldMap::new(inlay_snapshot);
         let (_tab_map, tab_snapshot) = TabMap::new(fold_snapshot, 1.try_into().unwrap());
         let (_wrap_map, wraps_snapshot) =
@@ -2294,7 +2301,8 @@ mod tests {
 
         let buffer = cx.update(|cx| MultiBuffer::build_simple(text, cx));
         let buffer_snapshot = cx.update(|cx| buffer.read(cx).snapshot(cx));
-        let (_, inlay_snapshot) = InlayMap::new(buffer_snapshot.clone());
+        let (_, token_snapshot) = TokenMap::new(buffer_snapshot.clone());
+        let (_, inlay_snapshot) = InlayMap::new(token_snapshot);
         let (_, fold_snapshot) = FoldMap::new(inlay_snapshot);
         let (_, tab_snapshot) = TabMap::new(fold_snapshot, 4.try_into().unwrap());
         let (_, wraps_snapshot) = cx.update(|cx| {
@@ -2338,7 +2346,8 @@ mod tests {
         let buffer = cx.update(|cx| MultiBuffer::build_simple(text, cx));
         let buffer_subscription = buffer.update(cx, |buffer, _cx| buffer.subscribe());
         let buffer_snapshot = cx.update(|cx| buffer.read(cx).snapshot(cx));
-        let (mut inlay_map, inlay_snapshot) = InlayMap::new(buffer_snapshot.clone());
+        let (mut token_map, token_snapshot) = TokenMap::new(buffer_snapshot.clone());
+        let (mut inlay_map, inlay_snapshot) = InlayMap::new(token_snapshot);
         let (mut fold_map, fold_snapshot) = FoldMap::new(inlay_snapshot);
         let tab_size = 1.try_into().unwrap();
         let (mut tab_map, tab_snapshot) = TabMap::new(fold_snapshot, tab_size);
@@ -2365,10 +2374,11 @@ mod tests {
             buffer.edit([(Point::new(2, 0)..Point::new(3, 0), "")], None, cx);
             buffer.snapshot(cx)
         });
-        let (inlay_snapshot, inlay_edits) = inlay_map.sync(
+        let (token_snapshot, token_edits) = token_map.sync(
             buffer_snapshot.clone(),
             buffer_subscription.consume().into_inner(),
         );
+        let (inlay_snapshot, inlay_edits) = inlay_map.sync(token_snapshot, token_edits);
         let (fold_snapshot, fold_edits) = fold_map.read(inlay_snapshot, inlay_edits);
         let (tab_snapshot, tab_edits) = tab_map.sync(fold_snapshot, fold_edits, tab_size);
         let (wraps_snapshot, wrap_edits) = wrap_map.update(cx, |wrap_map, cx| {
@@ -2388,10 +2398,11 @@ mod tests {
             );
             buffer.snapshot(cx)
         });
-        let (inlay_snapshot, inlay_edits) = inlay_map.sync(
+        let (token_snapshot, token_edits) = token_map.sync(
             buffer_snapshot.clone(),
             buffer_subscription.consume().into_inner(),
         );
+        let (inlay_snapshot, inlay_edits) = inlay_map.sync(token_snapshot, token_edits);
         let (fold_snapshot, fold_edits) = fold_map.read(inlay_snapshot, inlay_edits);
         let (tab_snapshot, tab_edits) = tab_map.sync(fold_snapshot, fold_edits, tab_size);
         let (wraps_snapshot, wrap_edits) = wrap_map.update(cx, |wrap_map, cx| {
@@ -2506,7 +2517,8 @@ mod tests {
         let buffer_id_2 = buffer_ids[1];
         let buffer_id_3 = buffer_ids[2];
 
-        let (_, inlay_snapshot) = InlayMap::new(buffer_snapshot.clone());
+        let (_, token_snapshot) = TokenMap::new(buffer_snapshot.clone());
+        let (_, inlay_snapshot) = InlayMap::new(token_snapshot);
         let (_, fold_snapshot) = FoldMap::new(inlay_snapshot);
         let (_, tab_snapshot) = TabMap::new(fold_snapshot, 4.try_into().unwrap());
         let (_, wrap_snapshot) =
@@ -2851,7 +2863,8 @@ mod tests {
         assert_eq!(buffer_ids.len(), 1);
         let buffer_id = buffer_ids[0];
 
-        let (_, inlay_snapshot) = InlayMap::new(buffer_snapshot.clone());
+        let (_, token_snapshot) = TokenMap::new(buffer_snapshot.clone());
+        let (_, inlay_snapshot) = InlayMap::new(token_snapshot);
         let (_, fold_snapshot) = FoldMap::new(inlay_snapshot);
         let (_, tab_snapshot) = TabMap::new(fold_snapshot, 4.try_into().unwrap());
         let (_, wrap_snapshot) =
@@ -2931,7 +2944,8 @@ mod tests {
         };
 
         let mut buffer_snapshot = cx.update(|cx| buffer.read(cx).snapshot(cx));
-        let (mut inlay_map, inlay_snapshot) = InlayMap::new(buffer_snapshot.clone());
+        let (mut token_map, token_snapshot) = TokenMap::new(buffer_snapshot.clone());
+        let (mut inlay_map, inlay_snapshot) = InlayMap::new(token_snapshot);
         let (mut fold_map, fold_snapshot) = FoldMap::new(inlay_snapshot);
         let (mut tab_map, tab_snapshot) = TabMap::new(fold_snapshot, 4.try_into().unwrap());
         let font = test_font();
@@ -2988,8 +3002,9 @@ mod tests {
                         })
                         .collect::<Vec<_>>();
 
-                    let (inlay_snapshot, inlay_edits) =
-                        inlay_map.sync(buffer_snapshot.clone(), vec![]);
+                    let (token_snapshot, token_edits) =
+                        token_map.sync(buffer_snapshot.clone(), vec![]);
+                    let (inlay_snapshot, inlay_edits) = inlay_map.sync(token_snapshot, token_edits);
                     let (fold_snapshot, fold_edits) = fold_map.read(inlay_snapshot, inlay_edits);
                     let (tab_snapshot, tab_edits) =
                         tab_map.sync(fold_snapshot, fold_edits, tab_size);
@@ -3026,8 +3041,9 @@ mod tests {
                         .map(|block| block.id)
                         .collect::<HashSet<_>>();
 
-                    let (inlay_snapshot, inlay_edits) =
-                        inlay_map.sync(buffer_snapshot.clone(), vec![]);
+                    let (token_snapshot, token_edits) =
+                        token_map.sync(buffer_snapshot.clone(), vec![]);
+                    let (inlay_snapshot, inlay_edits) = inlay_map.sync(token_snapshot, token_edits);
                     let (fold_snapshot, fold_edits) = fold_map.read(inlay_snapshot, inlay_edits);
                     let (tab_snapshot, tab_edits) =
                         tab_map.sync(fold_snapshot, fold_edits, tab_size);
@@ -3047,8 +3063,9 @@ mod tests {
                         log::info!("Noop fold/unfold operation on a singleton buffer");
                         continue;
                     }
-                    let (inlay_snapshot, inlay_edits) =
-                        inlay_map.sync(buffer_snapshot.clone(), vec![]);
+                    let (token_snapshot, token_edits) =
+                        token_map.sync(buffer_snapshot.clone(), vec![]);
+                    let (inlay_snapshot, inlay_edits) = inlay_map.sync(token_snapshot, token_edits);
                     let (fold_snapshot, fold_edits) = fold_map.read(inlay_snapshot, inlay_edits);
                     let (tab_snapshot, tab_edits) =
                         tab_map.sync(fold_snapshot, fold_edits, tab_size);
@@ -3133,8 +3150,9 @@ mod tests {
                 }
             }
 
-            let (inlay_snapshot, inlay_edits) =
-                inlay_map.sync(buffer_snapshot.clone(), buffer_edits);
+            let (token_snapshot, token_edits) =
+                token_map.sync(buffer_snapshot.clone(), buffer_edits);
+            let (inlay_snapshot, inlay_edits) = inlay_map.sync(token_snapshot, token_edits);
             let (fold_snapshot, fold_edits) = fold_map.read(inlay_snapshot, inlay_edits);
             let (tab_snapshot, tab_edits) = tab_map.sync(fold_snapshot, fold_edits, tab_size);
             let (wraps_snapshot, wrap_edits) = wrap_map.update(cx, |wrap_map, cx| {

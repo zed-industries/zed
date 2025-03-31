@@ -6,6 +6,7 @@
 //! we display as spaces and where to display custom blocks (like diagnostics).
 //! Seems like a lot? That's because it is. [`DisplayMap`] is conceptually made up
 //! of several smaller structures that form a hierarchy (starting at the bottom):
+//! - [`TokenMap`] that colorize tokens throughough semantic tokens
 //! - [`InlayMap`] that decides where the [`Inlay`]s should be displayed.
 //! - [`FoldMap`] that decides where the fold indicators should be; it also tracks parts of a source file that are currently folded.
 //! - [`TabMap`] that keeps track of hard tabs in a buffer.
@@ -24,6 +25,7 @@ mod fold_map;
 mod inlay_map;
 pub(crate) mod invisibles;
 mod tab_map;
+mod token_map;
 mod wrap_map;
 
 use crate::{
@@ -66,6 +68,8 @@ use std::{
 use sum_tree::{Bias, TreeMap};
 use tab_map::{TabMap, TabSnapshot};
 use text::{BufferId, LineIndent};
+pub use token_map::Token;
+use token_map::{TokenMap, TokenSnapshot};
 use ui::{px, SharedString};
 use unicode_segmentation::UnicodeSegmentation;
 use wrap_map::{WrapMap, WrapSnapshot};
@@ -91,6 +95,8 @@ pub struct DisplayMap {
     /// The buffer that we are displaying.
     buffer: Entity<MultiBuffer>,
     buffer_subscription: BufferSubscription,
+    /// Coloring all semantic tokens.
+    token_map: TokenMap,
     /// Decides where the [`Inlay`]s should be displayed.
     inlay_map: InlayMap,
     /// Decides where the fold indicators should be and tracks parts of a source file that are currently folded.
@@ -128,7 +134,8 @@ impl DisplayMap {
         let tab_size = Self::tab_size(&buffer, cx);
         let buffer_snapshot = buffer.read(cx).snapshot(cx);
         let crease_map = CreaseMap::new(&buffer_snapshot);
-        let (inlay_map, snapshot) = InlayMap::new(buffer_snapshot);
+        let (token_map, snapshot) = TokenMap::new(buffer_snapshot);
+        let (inlay_map, snapshot) = InlayMap::new(snapshot);
         let (fold_map, snapshot) = FoldMap::new(snapshot);
         let (tab_map, snapshot) = TabMap::new(snapshot, tab_size);
         let (wrap_map, snapshot) = WrapMap::new(snapshot, font, font_size, wrap_width, cx);
@@ -140,6 +147,7 @@ impl DisplayMap {
             buffer,
             buffer_subscription,
             fold_map,
+            token_map,
             inlay_map,
             tab_map,
             wrap_map,
@@ -156,7 +164,8 @@ impl DisplayMap {
     pub fn snapshot(&mut self, cx: &mut Context<Self>) -> DisplaySnapshot {
         let buffer_snapshot = self.buffer.read(cx).snapshot(cx);
         let edits = self.buffer_subscription.consume().into_inner();
-        let (inlay_snapshot, edits) = self.inlay_map.sync(buffer_snapshot, edits);
+        let (token_snapshot, edits) = self.token_map.sync(buffer_snapshot, edits);
+        let (inlay_snapshot, edits) = self.inlay_map.sync(token_snapshot.clone(), edits);
         let (fold_snapshot, edits) = self.fold_map.read(inlay_snapshot.clone(), edits);
         let tab_size = Self::tab_size(&self.buffer, cx);
         let (tab_snapshot, edits) = self.tab_map.sync(fold_snapshot.clone(), edits, tab_size);
@@ -167,6 +176,7 @@ impl DisplayMap {
 
         DisplaySnapshot {
             buffer_snapshot: self.buffer.read(cx).snapshot(cx),
+            token_snapshot,
             fold_snapshot,
             inlay_snapshot,
             tab_snapshot,
@@ -201,7 +211,8 @@ impl DisplayMap {
         let buffer_snapshot = self.buffer.read(cx).snapshot(cx);
         let edits = self.buffer_subscription.consume().into_inner();
         let tab_size = Self::tab_size(&self.buffer, cx);
-        let (snapshot, edits) = self.inlay_map.sync(buffer_snapshot.clone(), edits);
+        let (snapshot, edits) = self.token_map.sync(buffer_snapshot.clone(), edits);
+        let (snapshot, edits) = self.inlay_map.sync(snapshot, edits);
         let (mut fold_map, snapshot, edits) = self.fold_map.write(snapshot, edits);
         let (snapshot, edits) = self.tab_map.sync(snapshot, edits, tab_size);
         let (snapshot, edits) = self
@@ -274,6 +285,7 @@ impl DisplayMap {
         let snapshot = self.buffer.read(cx).snapshot(cx);
         let edits = self.buffer_subscription.consume().into_inner();
         let tab_size = Self::tab_size(&self.buffer, cx);
+        let (snapshot, edits) = self.token_map.sync(snapshot, edits);
         let (snapshot, edits) = self.inlay_map.sync(snapshot, edits);
         let (mut fold_map, snapshot, edits) = self.fold_map.write(snapshot, edits);
         let (snapshot, edits) = self.tab_map.sync(snapshot, edits, tab_size);
@@ -303,6 +315,7 @@ impl DisplayMap {
             .collect::<Vec<_>>();
         let edits = self.buffer_subscription.consume().into_inner();
         let tab_size = Self::tab_size(&self.buffer, cx);
+        let (snapshot, edits) = self.token_map.sync(snapshot, edits);
         let (snapshot, edits) = self.inlay_map.sync(snapshot, edits);
         let (mut fold_map, snapshot, edits) = self.fold_map.write(snapshot, edits);
         let (snapshot, edits) = self.tab_map.sync(snapshot, edits, tab_size);
@@ -329,6 +342,7 @@ impl DisplayMap {
         let snapshot = self.buffer.read(cx).snapshot(cx);
         let edits = self.buffer_subscription.consume().into_inner();
         let tab_size = Self::tab_size(&self.buffer, cx);
+        let (snapshot, edits) = self.token_map.sync(snapshot, edits);
         let (snapshot, edits) = self.inlay_map.sync(snapshot, edits);
         let (snapshot, edits) = self.fold_map.read(snapshot, edits);
         let (snapshot, edits) = self.tab_map.sync(snapshot, edits, tab_size);
@@ -347,6 +361,7 @@ impl DisplayMap {
         let snapshot = self.buffer.read(cx).snapshot(cx);
         let edits = self.buffer_subscription.consume().into_inner();
         let tab_size = Self::tab_size(&self.buffer, cx);
+        let (snapshot, edits) = self.token_map.sync(snapshot, edits);
         let (snapshot, edits) = self.inlay_map.sync(snapshot, edits);
         let (snapshot, edits) = self.fold_map.read(snapshot, edits);
         let (snapshot, edits) = self.tab_map.sync(snapshot, edits, tab_size);
@@ -391,6 +406,7 @@ impl DisplayMap {
         let snapshot = self.buffer.read(cx).snapshot(cx);
         let edits = self.buffer_subscription.consume().into_inner();
         let tab_size = Self::tab_size(&self.buffer, cx);
+        let (snapshot, edits) = self.token_map.sync(snapshot, edits);
         let (snapshot, edits) = self.inlay_map.sync(snapshot, edits);
         let (snapshot, edits) = self.fold_map.read(snapshot, edits);
         let (snapshot, edits) = self.tab_map.sync(snapshot, edits, tab_size);
@@ -405,6 +421,7 @@ impl DisplayMap {
         let snapshot = self.buffer.read(cx).snapshot(cx);
         let edits = self.buffer_subscription.consume().into_inner();
         let tab_size = Self::tab_size(&self.buffer, cx);
+        let (snapshot, edits) = self.token_map.sync(snapshot, edits);
         let (snapshot, edits) = self.inlay_map.sync(snapshot, edits);
         let (snapshot, edits) = self.fold_map.read(snapshot, edits);
         let (snapshot, edits) = self.tab_map.sync(snapshot, edits, tab_size);
@@ -423,6 +440,7 @@ impl DisplayMap {
         let snapshot = self.buffer.read(cx).snapshot(cx);
         let edits = self.buffer_subscription.consume().into_inner();
         let tab_size = Self::tab_size(&self.buffer, cx);
+        let (snapshot, edits) = self.token_map.sync(snapshot, edits);
         let (snapshot, edits) = self.inlay_map.sync(snapshot, edits);
         let (snapshot, edits) = self.fold_map.read(snapshot, edits);
         let (snapshot, edits) = self.tab_map.sync(snapshot, edits, tab_size);
@@ -441,6 +459,7 @@ impl DisplayMap {
         let snapshot = self.buffer.read(cx).snapshot(cx);
         let edits = self.buffer_subscription.consume().into_inner();
         let tab_size = Self::tab_size(&self.buffer, cx);
+        let (snapshot, edits) = self.token_map.sync(snapshot, edits);
         let (snapshot, edits) = self.inlay_map.sync(snapshot, edits);
         let (snapshot, edits) = self.fold_map.read(snapshot, edits);
         let (snapshot, edits) = self.tab_map.sync(snapshot, edits, tab_size);
@@ -501,8 +520,43 @@ impl DisplayMap {
             .update(cx, |map, cx| map.set_wrap_width(width, cx))
     }
 
+    pub(crate) fn current_tokens(&self) -> impl Iterator<Item = &Token> {
+        self.token_map.current_tokens()
+    }
+
     pub(crate) fn current_inlays(&self) -> impl Iterator<Item = &Inlay> {
         self.inlay_map.current_inlays()
+    }
+
+    pub(crate) fn splice_tokens(
+        &mut self,
+        to_remove: &[usize],
+        to_insert: Vec<Token>,
+        cx: &mut Context<Self>,
+    ) {
+        if to_remove.is_empty() && to_insert.is_empty() {
+            return;
+        }
+        let buffer_snapshot = self.buffer.read(cx).snapshot(cx);
+        let edits = self.buffer_subscription.consume().into_inner();
+        let (snapshot, edits) = self.token_map.sync(buffer_snapshot, edits);
+        let (snapshot, edits) = self.inlay_map.sync(snapshot, edits);
+        let (snapshot, edits) = self.fold_map.read(snapshot, edits);
+        let tab_size = Self::tab_size(&self.buffer, cx);
+        let (snapshot, edits) = self.tab_map.sync(snapshot, edits, tab_size);
+        let (snapshot, edits) = self
+            .wrap_map
+            .update(cx, |map, cx| map.sync(snapshot, edits, cx));
+        self.block_map.read(snapshot, edits);
+
+        let (snapshot, edits) = self.token_map.splice(to_remove, to_insert);
+        let (snapshot, edits) = self.inlay_map.sync(snapshot, edits);
+        let (snapshot, edits) = self.fold_map.read(snapshot, edits);
+        let (snapshot, edits) = self.tab_map.sync(snapshot, edits, tab_size);
+        let (snapshot, edits) = self
+            .wrap_map
+            .update(cx, |map, cx| map.sync(snapshot, edits, cx));
+        self.block_map.read(snapshot, edits);
     }
 
     pub(crate) fn splice_inlays(
@@ -516,7 +570,8 @@ impl DisplayMap {
         }
         let buffer_snapshot = self.buffer.read(cx).snapshot(cx);
         let edits = self.buffer_subscription.consume().into_inner();
-        let (snapshot, edits) = self.inlay_map.sync(buffer_snapshot, edits);
+        let (snapshot, edits) = self.token_map.sync(buffer_snapshot, edits);
+        let (snapshot, edits) = self.inlay_map.sync(snapshot, edits);
         let (snapshot, edits) = self.fold_map.read(snapshot, edits);
         let tab_size = Self::tab_size(&self.buffer, cx);
         let (snapshot, edits) = self.tab_map.sync(snapshot, edits, tab_size);
@@ -548,8 +603,7 @@ impl DisplayMap {
         self.wrap_map.read(cx).is_rewrapping()
     }
 }
-
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub(crate) struct Highlights<'a> {
     pub text_highlights: Option<&'a TextHighlights>,
     pub inlay_highlights: Option<&'a InlayHighlights>,
@@ -681,6 +735,7 @@ pub struct DisplaySnapshot {
     pub buffer_snapshot: MultiBufferSnapshot,
     pub fold_snapshot: FoldSnapshot,
     pub crease_snapshot: CreaseSnapshot,
+    token_snapshot: TokenSnapshot,
     inlay_snapshot: InlaySnapshot,
     tab_snapshot: TabSnapshot,
     wrap_snapshot: WrapSnapshot,
@@ -1397,8 +1452,9 @@ impl DisplayPoint {
         let tab_point = map.wrap_snapshot.to_tab_point(wrap_point);
         let fold_point = map.tab_snapshot.to_fold_point(tab_point, bias).0;
         let inlay_point = fold_point.to_inlay_point(&map.fold_snapshot);
-        map.inlay_snapshot
-            .to_buffer_offset(map.inlay_snapshot.to_offset(inlay_point))
+        let token_point = map.token_snapshot.to_token_point(inlay_point.0);
+        map.token_snapshot
+            .to_buffer_offset(map.token_snapshot.to_offset(token_point))
     }
 }
 
