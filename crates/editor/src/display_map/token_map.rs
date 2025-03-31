@@ -1,4 +1,3 @@
-use collections::BTreeSet;
 use gpui::HighlightStyle;
 use language::{Chunk, Edit, Point, TextSummary};
 use multi_buffer::MultiBufferSnapshot;
@@ -375,12 +374,12 @@ impl TokenMap {
             let mut buffer_edits_iter = buffer_edits.iter().peekable();
             while let Some(buffer_edit) = buffer_edits_iter.next() {
                 new_transforms.append(cursor.slice(&buffer_edit.old.start, Bias::Left, &()), &());
-                // if let Some(Transform::Isomorphic(transform)) = cursor.item() {
-                //     if cursor.end(&()).0 == buffer_edit.old.start {
-                //         push_isomorphic(&mut new_transforms, *transform);
-                //         cursor.next(&());
-                //     }
-                // }
+                if let Some(Transform::Isomorphic(transform)) = cursor.item() {
+                    if cursor.end(&()).0 == buffer_edit.old.start {
+                        push_isomorphic(&mut new_transforms, *transform);
+                        cursor.next(&());
+                    }
+                }
 
                 // Remove all the inlays and transforms contained by the edit.
                 let old_start =
@@ -471,42 +470,41 @@ impl TokenMap {
         to_insert: Vec<Token>,
     ) -> (TokenSnapshot, Vec<TokenEdit>) {
         let snapshot = &mut self.snapshot;
-        let mut edits = BTreeSet::new();
+        let mut buffer_edits = vec![];
 
         self.tokens.retain(|token| {
             let retain = !to_remove.contains(&token.id);
             if !retain {
-                let offset = token.range.start.to_offset(&snapshot.buffer);
-                edits.insert(offset);
+                buffer_edits.push(Edit {
+                    old: token.range.start.to_offset(&snapshot.buffer)
+                        ..token.range.end.to_offset(&snapshot.buffer),
+                    new: token.range.start.to_offset(&snapshot.buffer)
+                        ..token.range.start.to_offset(&snapshot.buffer),
+                })
             }
             retain
         });
 
         for token_to_insert in to_insert {
-            // TODO: give attention here
-            let offset = token_to_insert.range.start.to_offset(&snapshot.buffer);
             match self.tokens.binary_search_by(|probe| {
                 probe
                     .range
-                    .start
+                    .end
                     .cmp(&token_to_insert.range.start, &snapshot.buffer)
                     .then(std::cmp::Ordering::Less)
             }) {
                 Ok(ix) | Err(ix) => {
+                    buffer_edits.push(Edit {
+                        old: token_to_insert.range.start.to_offset(&snapshot.buffer)
+                            ..token_to_insert.range.end.to_offset(&snapshot.buffer),
+                        new: token_to_insert.range.start.to_offset(&snapshot.buffer)
+                            ..token_to_insert.range.end.to_offset(&snapshot.buffer),
+                    });
                     self.tokens.insert(ix, token_to_insert);
                 }
             }
-
-            edits.insert(offset);
         }
 
-        let buffer_edits = edits
-            .into_iter()
-            .map(|offset| Edit {
-                old: offset..offset,
-                new: offset..offset,
-            })
-            .collect();
         let buffer_snapshot = snapshot.buffer.clone();
         let (snapshot, edits) = self.sync(buffer_snapshot, buffer_edits);
         (snapshot, edits)
