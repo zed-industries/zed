@@ -66,6 +66,15 @@ pub enum LanguageModelCompletionEvent {
     UsageUpdate(TokenUsage),
 }
 
+/// Indicates the format used to define the input schema for a language model tool.
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+pub enum LanguageModelToolSchemaFormat {
+    /// A JSON schema, see https://json-schema.org
+    JsonSchema,
+    /// A subset of an OpenAPI 3.0 schema object supported by Google AI, see https://ai.google.dev/api/caching#Schema
+    JsonSchemaSubset,
+}
+
 #[derive(Debug, PartialEq, Clone, Copy, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum StopReason {
@@ -174,6 +183,10 @@ pub trait LanguageModel: Send + Sync {
     /// Returns the availability of this language model.
     fn availability(&self) -> LanguageModelAvailability {
         LanguageModelAvailability::Public
+    }
+
+    fn tool_input_format(&self) -> LanguageModelToolSchemaFormat {
+        LanguageModelToolSchemaFormat::JsonSchema
     }
 
     fn max_token_count(&self) -> usize;

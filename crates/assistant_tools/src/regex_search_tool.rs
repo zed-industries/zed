@@ -1,9 +1,10 @@
+use crate::schema::json_schema_for;
 use anyhow::{anyhow, Result};
 use assistant_tool::{ActionLog, Tool};
 use futures::StreamExt;
 use gpui::{App, Entity, Task};
 use language::OffsetRangeExt;
-use language_model::LanguageModelRequestMessage;
+use language_model::{LanguageModelRequestMessage, LanguageModelToolSchemaFormat};
 use project::{
     search::{SearchQuery, SearchResult},
     Project,
@@ -55,9 +56,8 @@ impl Tool for RegexSearchTool {
         IconName::Regex
     }
 
-    fn input_schema(&self) -> serde_json::Value {
-        let schema = schemars::schema_for!(RegexSearchToolInput);
-        serde_json::to_value(&schema).unwrap()
+    fn input_schema(&self, format: LanguageModelToolSchemaFormat) -> serde_json::Value {
+        json_schema_for::<RegexSearchToolInput>(format)
     }
 
     fn ui_text(&self, input: &serde_json::Value) -> String {

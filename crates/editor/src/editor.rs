@@ -7891,40 +7891,37 @@ impl Editor {
             }
 
             let mut selections = this.selections.all::<MultiBufferPoint>(cx);
-            if !this.selections.line_mode {
-                let display_map = this.display_map.update(cx, |map, cx| map.snapshot(cx));
-                for selection in &mut selections {
-                    if selection.is_empty() {
-                        let old_head = selection.head();
-                        let mut new_head =
-                            movement::left(&display_map, old_head.to_display_point(&display_map))
-                                .to_point(&display_map);
-                        if let Some((buffer, line_buffer_range)) = display_map
-                            .buffer_snapshot
-                            .buffer_line_for_row(MultiBufferRow(old_head.row))
-                        {
-                            let indent_size =
-                                buffer.indent_size_for_line(line_buffer_range.start.row);
-                            let indent_len = match indent_size.kind {
-                                IndentKind::Space => {
-                                    buffer.settings_at(line_buffer_range.start, cx).tab_size
-                                }
-                                IndentKind::Tab => NonZeroU32::new(1).unwrap(),
-                            };
-                            if old_head.column <= indent_size.len && old_head.column > 0 {
-                                let indent_len = indent_len.get();
-                                new_head = cmp::min(
-                                    new_head,
-                                    MultiBufferPoint::new(
-                                        old_head.row,
-                                        ((old_head.column - 1) / indent_len) * indent_len,
-                                    ),
-                                );
+            let display_map = this.display_map.update(cx, |map, cx| map.snapshot(cx));
+            for selection in &mut selections {
+                if selection.is_empty() {
+                    let old_head = selection.head();
+                    let mut new_head =
+                        movement::left(&display_map, old_head.to_display_point(&display_map))
+                            .to_point(&display_map);
+                    if let Some((buffer, line_buffer_range)) = display_map
+                        .buffer_snapshot
+                        .buffer_line_for_row(MultiBufferRow(old_head.row))
+                    {
+                        let indent_size = buffer.indent_size_for_line(line_buffer_range.start.row);
+                        let indent_len = match indent_size.kind {
+                            IndentKind::Space => {
+                                buffer.settings_at(line_buffer_range.start, cx).tab_size
                             }
+                            IndentKind::Tab => NonZeroU32::new(1).unwrap(),
+                        };
+                        if old_head.column <= indent_size.len && old_head.column > 0 {
+                            let indent_len = indent_len.get();
+                            new_head = cmp::min(
+                                new_head,
+                                MultiBufferPoint::new(
+                                    old_head.row,
+                                    ((old_head.column - 1) / indent_len) * indent_len,
+                                ),
+                            );
                         }
-
-                        selection.set_head(new_head, SelectionGoal::None);
                     }
+
+                    selection.set_head(new_head, SelectionGoal::None);
                 }
             }
 
@@ -7968,9 +7965,8 @@ impl Editor {
         self.hide_mouse_cursor(&HideMouseCursorOrigin::TypingAction);
         self.transact(window, cx, |this, window, cx| {
             this.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
-                let line_mode = s.line_mode;
                 s.move_with(|map, selection| {
-                    if selection.is_empty() && !line_mode {
+                    if selection.is_empty() {
                         let cursor = movement::right(map, selection.head());
                         selection.end = cursor;
                         selection.reversed = true;
@@ -9419,9 +9415,8 @@ impl Editor {
         self.transact(window, cx, |this, window, cx| {
             let edits = this.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
                 let mut edits: Vec<(Range<usize>, String)> = Default::default();
-                let line_mode = s.line_mode;
                 s.move_with(|display_map, selection| {
-                    if !selection.is_empty() || line_mode {
+                    if !selection.is_empty() {
                         return;
                     }
 
@@ -9994,9 +9989,8 @@ impl Editor {
     pub fn move_left(&mut self, _: &MoveLeft, window: &mut Window, cx: &mut Context<Self>) {
         self.hide_mouse_cursor(&HideMouseCursorOrigin::MovementAction);
         self.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
-            let line_mode = s.line_mode;
             s.move_with(|map, selection| {
-                let cursor = if selection.is_empty() && !line_mode {
+                let cursor = if selection.is_empty() {
                     movement::left(map, selection.start)
                 } else {
                     selection.start
@@ -10016,9 +10010,8 @@ impl Editor {
     pub fn move_right(&mut self, _: &MoveRight, window: &mut Window, cx: &mut Context<Self>) {
         self.hide_mouse_cursor(&HideMouseCursorOrigin::MovementAction);
         self.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
-            let line_mode = s.line_mode;
             s.move_with(|map, selection| {
-                let cursor = if selection.is_empty() && !line_mode {
+                let cursor = if selection.is_empty() {
                     movement::right(map, selection.end)
                 } else {
                     selection.end
@@ -10052,9 +10045,8 @@ impl Editor {
         let first_selection = self.selections.first_anchor();
 
         self.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
-            let line_mode = s.line_mode;
             s.move_with(|map, selection| {
-                if !selection.is_empty() && !line_mode {
+                if !selection.is_empty() {
                     selection.goal = SelectionGoal::None;
                 }
                 let (cursor, goal) = movement::up(
@@ -10094,9 +10086,8 @@ impl Editor {
         let text_layout_details = &self.text_layout_details(window);
 
         self.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
-            let line_mode = s.line_mode;
             s.move_with(|map, selection| {
-                if !selection.is_empty() && !line_mode {
+                if !selection.is_empty() {
                     selection.goal = SelectionGoal::None;
                 }
                 let (cursor, goal) = movement::up_by_rows(
@@ -10132,9 +10123,8 @@ impl Editor {
         let text_layout_details = &self.text_layout_details(window);
 
         self.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
-            let line_mode = s.line_mode;
             s.move_with(|map, selection| {
-                if !selection.is_empty() && !line_mode {
+                if !selection.is_empty() {
                     selection.goal = SelectionGoal::None;
                 }
                 let (cursor, goal) = movement::down_by_rows(
@@ -10241,9 +10231,8 @@ impl Editor {
         let text_layout_details = &self.text_layout_details(window);
 
         self.change_selections(Some(autoscroll), window, cx, |s| {
-            let line_mode = s.line_mode;
             s.move_with(|map, selection| {
-                if !selection.is_empty() && !line_mode {
+                if !selection.is_empty() {
                     selection.goal = SelectionGoal::None;
                 }
                 let (cursor, goal) = movement::up_by_rows(
@@ -10284,9 +10273,8 @@ impl Editor {
         let first_selection = self.selections.first_anchor();
 
         self.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
-            let line_mode = s.line_mode;
             s.move_with(|map, selection| {
-                if !selection.is_empty() && !line_mode {
+                if !selection.is_empty() {
                     selection.goal = SelectionGoal::None;
                 }
                 let (cursor, goal) = movement::down(
@@ -10366,9 +10354,8 @@ impl Editor {
 
         let text_layout_details = &self.text_layout_details(window);
         self.change_selections(Some(autoscroll), window, cx, |s| {
-            let line_mode = s.line_mode;
             s.move_with(|map, selection| {
-                if !selection.is_empty() && !line_mode {
+                if !selection.is_empty() {
                     selection.goal = SelectionGoal::None;
                 }
                 let (cursor, goal) = movement::down_by_rows(
@@ -10516,9 +10503,8 @@ impl Editor {
         self.transact(window, cx, |this, window, cx| {
             this.select_autoclose_pair(window, cx);
             this.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
-                let line_mode = s.line_mode;
                 s.move_with(|map, selection| {
-                    if selection.is_empty() && !line_mode {
+                    if selection.is_empty() {
                         let cursor = if action.ignore_newlines {
                             movement::previous_word_start(map, selection.head())
                         } else {
@@ -10542,9 +10528,8 @@ impl Editor {
         self.transact(window, cx, |this, window, cx| {
             this.select_autoclose_pair(window, cx);
             this.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
-                let line_mode = s.line_mode;
                 s.move_with(|map, selection| {
-                    if selection.is_empty() && !line_mode {
+                    if selection.is_empty() {
                         let cursor = movement::previous_subword_start(map, selection.head());
                         selection.set_head(cursor, SelectionGoal::None);
                     }
@@ -10619,9 +10604,8 @@ impl Editor {
         self.hide_mouse_cursor(&HideMouseCursorOrigin::TypingAction);
         self.transact(window, cx, |this, window, cx| {
             this.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
-                let line_mode = s.line_mode;
                 s.move_with(|map, selection| {
-                    if selection.is_empty() && !line_mode {
+                    if selection.is_empty() {
                         let cursor = if action.ignore_newlines {
                             movement::next_word_end(map, selection.head())
                         } else {
@@ -14745,25 +14729,11 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let selections = self.selections.all::<Point>(cx);
+        let selections = self.selections.all_adjusted(cx);
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
-        let line_mode = self.selections.line_mode;
         let ranges = selections
             .into_iter()
-            .map(|s| {
-                if line_mode {
-                    let start = Point::new(s.start.row, 0);
-                    let end = Point::new(
-                        s.end.row,
-                        display_map
-                            .buffer_snapshot
-                            .line_len(MultiBufferRow(s.end.row)),
-                    );
-                    Crease::simple(start..end, display_map.fold_placeholder.clone())
-                } else {
-                    Crease::simple(s.start..s.end, display_map.fold_placeholder.clone())
-                }
-            })
+            .map(|s| Crease::simple(s.range(), display_map.fold_placeholder.clone()))
             .collect::<Vec<_>>();
         self.fold_creases(ranges, true, window, cx);
     }

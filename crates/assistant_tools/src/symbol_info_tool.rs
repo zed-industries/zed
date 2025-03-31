@@ -2,13 +2,15 @@ use anyhow::{anyhow, Context as _, Result};
 use assistant_tool::{ActionLog, Tool};
 use gpui::{App, AsyncApp, Entity, Task};
 use language::{self, Anchor, Buffer, BufferSnapshot, Location, Point, ToPoint, ToPointUtf16};
-use language_model::LanguageModelRequestMessage;
+use language_model::{LanguageModelRequestMessage, LanguageModelToolSchemaFormat};
 use project::Project;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::{fmt::Write, ops::Range, sync::Arc};
 use ui::IconName;
 use util::markdown::MarkdownString;
+
+use crate::schema::json_schema_for;
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct SymbolInfoToolInput {
@@ -82,9 +84,8 @@ impl Tool for SymbolInfoTool {
         IconName::Eye
     }
 
-    fn input_schema(&self) -> serde_json::Value {
-        let schema = schemars::schema_for!(SymbolInfoToolInput);
-        serde_json::to_value(&schema).unwrap()
+    fn input_schema(&self, format: LanguageModelToolSchemaFormat) -> serde_json::Value {
+        json_schema_for::<SymbolInfoToolInput>(format)
     }
 
     fn ui_text(&self, input: &serde_json::Value) -> String {

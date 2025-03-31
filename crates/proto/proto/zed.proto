@@ -361,7 +361,10 @@ message Envelope {
         RemoveRepository remove_repository = 329;
 
         GetDocumentSymbols get_document_symbols = 330;
-        GetDocumentSymbolsResponse get_document_symbols_response = 331; // current max
+        GetDocumentSymbolsResponse get_document_symbols_response = 331;
+
+        LanguageServerIdForName language_server_id_for_name = 332;
+        LanguageServerIdForNameResponse language_server_id_for_name_response = 333; // current max
     }
 
     reserved 87 to 88;
@@ -3566,4 +3569,14 @@ message GitInit {
     uint64 project_id = 1;
     string abs_path = 2;
     string fallback_branch_name = 3;
+}
+
+message LanguageServerIdForName {
+    uint64 project_id = 1;
+    uint64 buffer_id = 2;
+    string name = 3;
+}
+
+message LanguageServerIdForNameResponse {
+    optional uint64 server_id = 1;
 }

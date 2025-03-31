@@ -18,6 +18,7 @@ mod path_search_tool;
 mod read_file_tool;
 mod regex_search_tool;
 mod replace;
+mod schema;
 mod symbol_info_tool;
 mod thinking_tool;
 
