@@ -11,7 +11,7 @@ use gpui::{
 use http_client::HttpClient;
 use language_model::{
     AuthenticateError, LanguageModelCompletionEvent, LanguageModelToolSchemaFormat,
-    LanguageModelToolUse, StopReason,
+    LanguageModelToolUse, LanguageModelToolUseId, StopReason,
 };
 use language_model::{
     LanguageModel, LanguageModelId, LanguageModelName, LanguageModelProvider,
@@ -443,7 +443,7 @@ pub fn into_google(
                         language_model::MessageContent::ToolResult(tool_result) => Some(
                             Part::FunctionResponsePart(google_ai::FunctionResponsePart {
                                 function_response: google_ai::FunctionResponse {
-                                    name: tool_result.tool_use_id.to_string(),
+                                    name: tool_result.tool_name.to_string(),
                                     // The API expects a valid JSON object
                                     response: serde_json::json!({
                                         "output": tool_result.content
@@ -489,6 +489,10 @@ pub fn into_google(
 pub fn map_to_language_model_completion_events(
     events: Pin<Box<dyn Send + Stream<Item = Result<GenerateContentResponse>>>>,
 ) -> impl Stream<Item = Result<LanguageModelCompletionEvent>> {
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static TOOL_CALL_COUNTER: AtomicU64 = AtomicU64::new(0);
+
     struct State {
         events: Pin<Box<dyn Send + Stream<Item = Result<GenerateContentResponse>>>>,
         usage: UsageMetadata,
@@ -502,7 +506,7 @@ pub fn map_to_language_model_completion_events(
             stop_reason: StopReason::EndTurn,
         },
         |mut state| async move {
-            while let Some(event) = state.events.next().await {
+            if let Some(event) = state.events.next().await {
                 match event {
                     Ok(event) => {
                         let mut events: Vec<Result<LanguageModelCompletionEvent>> = Vec::new();
@@ -540,9 +544,14 @@ pub fn map_to_language_model_completion_events(
                                             wants_to_use_tool = true;
                                             let name: Arc<str> =
                                                 function_call_part.function_call.name.into();
+                                            let next_tool_id =
+                                                TOOL_CALL_COUNTER.fetch_add(1, Ordering::SeqCst);
+                                            let id: LanguageModelToolUseId =
+                                                format!("{}-{}", name, next_tool_id).into();
+
                                             events.push(Ok(LanguageModelCompletionEvent::ToolUse(
                                                 LanguageModelToolUse {
-                                                    id: name.clone().into(),
+                                                    id,
                                                     name,
                                                     input: function_call_part.function_call.args,
                                                 },
