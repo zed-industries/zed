@@ -33,7 +33,7 @@ pub struct SshSettings {
 }
 
 impl SshSettings {
-    pub fn ssh_connections(&self) -> impl Iterator<Item = SshConnection> {
+    pub fn ssh_connections(&self) -> impl Iterator<Item = SshConnection> + use<> {
         self.ssh_connections.clone().into_iter().flatten()
     }
 

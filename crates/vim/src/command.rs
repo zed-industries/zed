@@ -31,7 +31,7 @@ use workspace::{notifications::NotifyResultExt, SaveIntent};
 use zed_actions::RevealTarget;
 
 use crate::{
-    motion::{EndOfDocument, Motion, StartOfDocument},
+    motion::{EndOfDocument, Motion, MotionKind, StartOfDocument},
     normal::{
         search::{FindCommand, ReplaceCommand, Replacement},
         JoinLines,
@@ -281,7 +281,7 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
                 };
                 vim.copy_ranges(
                     editor,
-                    true,
+                    MotionKind::Linewise,
                     true,
                     vec![Point::new(range.start.0, 0)..end],
                     window,
@@ -714,7 +714,7 @@ fn generate_commands(_: &App) -> Vec<VimCommand> {
             close_pinned: true,
         }),
         VimCommand::new(
-            ("ex", "it"),
+            ("exi", "t"),
             workspace::CloseActiveItem {
                 save_intent: Some(SaveIntent::SaveAll),
                 close_pinned: false,
@@ -880,6 +880,7 @@ fn generate_commands(_: &App) -> Vec<VimCommand> {
         VimCommand::new(("0", ""), StartOfDocument),
         VimCommand::new(("e", "dit"), editor::actions::ReloadFile)
             .bang(editor::actions::ReloadFile),
+        VimCommand::new(("ex", ""), editor::actions::ReloadFile).bang(editor::actions::ReloadFile),
         VimCommand::new(("cpp", "link"), editor::actions::CopyPermalinkToLine).range(act_on_range),
     ]
 }
@@ -1328,9 +1329,9 @@ impl Vim {
             let snapshot = editor.snapshot(window, cx);
             let start = editor.selections.newest_display(cx);
             let text_layout_details = editor.text_layout_details(window);
-            let mut range = motion
-                .range(&snapshot, start.clone(), times, false, &text_layout_details)
-                .unwrap_or(start.range());
+            let (mut range, _) = motion
+                .range(&snapshot, start.clone(), times, &text_layout_details)
+                .unwrap_or((start.range(), MotionKind::Exclusive));
             if range.start != start.start {
                 editor.change_selections(None, window, cx, |s| {
                     s.select_ranges([

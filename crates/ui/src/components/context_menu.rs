@@ -585,7 +585,7 @@ impl ContextMenu {
         item: &ContextMenuItem,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> impl IntoElement {
+    ) -> impl IntoElement + use<> {
         match item {
             ContextMenuItem::Separator => ListSeparator.into_any_element(),
             ContextMenuItem::Header(header) => ListSubHeader::new(header.clone())
@@ -752,7 +752,7 @@ impl ContextMenu {
                                         KeyBinding::for_action(&**action, window, cx)
                                     })
                                     .map(|binding| {
-                                        div().ml_4().child(binding).when(
+                                        div().ml_4().child(binding.disabled(*disabled)).when(
                                             *disabled && documentation_aside_callback.is_some(),
                                             |parent| parent.invisible(),
                                         )

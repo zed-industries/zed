@@ -256,7 +256,7 @@ impl Clipboard {
                             }
                             Ok(n) => written += n,
                             Err(err) if err.kind() == ErrorKind::WouldBlock => {
-                                break Ok(PostAction::Continue)
+                                break Ok(PostAction::Continue);
                             }
                             Err(_) => break Ok(PostAction::Remove),
                         }

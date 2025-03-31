@@ -1493,7 +1493,9 @@ impl ProjectPanel {
                         } else if dirty_buffers == 1 {
                             "\n\n1 of these has unsaved changes, which will be lost.".to_string()
                         } else {
-                            format!("\n\n{dirty_buffers} of these have unsaved changes, which will be lost.")
+                            format!(
+                                "\n\n{dirty_buffers} of these have unsaved changes, which will be lost."
+                            )
                         };
 
                         format!(

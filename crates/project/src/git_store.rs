@@ -1136,7 +1136,7 @@ impl GitStore {
         &mut self,
         buffers: Vec<Entity<Buffer>>,
         cx: &mut Context<Self>,
-    ) -> impl Future<Output = ()> {
+    ) -> impl Future<Output = ()> + use<> {
         let mut futures = Vec::new();
         for buffer in buffers {
             if let Some(diff_state) = self.diffs.get_mut(&buffer.read(cx).remote_id()) {

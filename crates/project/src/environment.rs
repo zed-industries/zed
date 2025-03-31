@@ -342,7 +342,9 @@ async fn load_shell_environment(
         .await
         .log_err()
     else {
-        return message("Failed to spawn login shell to source login environment variables. See logs for details");
+        return message(
+            "Failed to spawn login shell to source login environment variables. See logs for details",
+        );
     };
 
     if !output.status.success() {

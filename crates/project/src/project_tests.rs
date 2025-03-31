@@ -4772,12 +4772,11 @@ async fn test_search_with_inclusions(cx: &mut gpui::TestAppContext) {
                 false,
                 true,
                 false,
-
-                    PathMatcher::new(&["*.ts".to_owned(), "*.odd".to_owned()]).unwrap(),
-
+                PathMatcher::new(&["*.ts".to_owned(), "*.odd".to_owned()]).unwrap(),
                 Default::default(),
                 None,
-            ).unwrap(),
+            )
+            .unwrap(),
             cx
         )
         .await
@@ -4797,12 +4796,12 @@ async fn test_search_with_inclusions(cx: &mut gpui::TestAppContext) {
                 false,
                 true,
                 false,
-
-                    PathMatcher::new(&["*.rs".to_owned(), "*.ts".to_owned(), "*.odd".to_owned()]).unwrap(),
-
-               Default::default(),
-               None,
-            ).unwrap(),
+                PathMatcher::new(&["*.rs".to_owned(), "*.ts".to_owned(), "*.odd".to_owned()])
+                    .unwrap(),
+                Default::default(),
+                None,
+            )
+            .unwrap(),
             cx
         )
         .await
@@ -4897,7 +4896,8 @@ async fn test_search_with_exclusions(cx: &mut gpui::TestAppContext) {
                 Default::default(),
                 PathMatcher::new(&["*.ts".to_owned(), "*.odd".to_owned()]).unwrap(),
                 None,
-            ).unwrap(),
+            )
+            .unwrap(),
             cx
         )
         .await
@@ -4917,16 +4917,17 @@ async fn test_search_with_exclusions(cx: &mut gpui::TestAppContext) {
                 false,
                 true,
                 false,
-                 Default::default(),
-
-                    PathMatcher::new(&["*.rs".to_owned(), "*.ts".to_owned(), "*.odd".to_owned()]).unwrap(),
-                    None,
-
-            ).unwrap(),
+                Default::default(),
+                PathMatcher::new(&["*.rs".to_owned(), "*.ts".to_owned(), "*.odd".to_owned()])
+                    .unwrap(),
+                None,
+            )
+            .unwrap(),
             cx
         )
         .await
-        .unwrap().is_empty(),
+        .unwrap()
+        .is_empty(),
         "Rust and typescript exclusion should give no files, even if other exclusions don't match anything"
     );
 }
@@ -4982,7 +4983,8 @@ async fn test_search_with_exclusions_and_inclusions(cx: &mut gpui::TestAppContex
                 PathMatcher::new(&["*.ts".to_owned()]).unwrap(),
                 PathMatcher::new(&["*.ts".to_owned()]).unwrap(),
                 None,
-            ).unwrap(),
+            )
+            .unwrap(),
             cx
         )
         .await

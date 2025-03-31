@@ -316,6 +316,14 @@ impl Server {
             .add_request_handler(forward_read_only_project_request::<proto::GitGetBranches>)
             .add_request_handler(forward_read_only_project_request::<proto::OpenUnstagedDiff>)
             .add_request_handler(forward_read_only_project_request::<proto::OpenUncommittedDiff>)
+            .add_request_handler(forward_read_only_project_request::<proto::LspExtExpandMacro>)
+            .add_request_handler(forward_read_only_project_request::<proto::LspExtOpenDocs>)
+            .add_request_handler(
+                forward_read_only_project_request::<proto::LspExtSwitchSourceHeader>,
+            )
+            .add_request_handler(
+                forward_read_only_project_request::<proto::LanguageServerIdForName>,
+            )
             .add_request_handler(
                 forward_mutating_project_request::<proto::RegisterBufferWithLanguageServers>,
             )
@@ -716,7 +724,7 @@ impl Server {
         system_id: Option<String>,
         send_connection_id: Option<oneshot::Sender<ConnectionId>>,
         executor: Executor,
-    ) -> impl Future<Output = ()> {
+    ) -> impl Future<Output = ()> + use<> {
         let this = self.clone();
         let span = info_span!("handle connection", %address,
             connection_id=field::Empty,

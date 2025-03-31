@@ -25,7 +25,7 @@ impl LocatorStore {
         &self,
         debug_config: &mut DebugAdapterConfig,
     ) -> Result<()> {
-        let Some(ref locator_name) = &debug_config.locator else {
+        let Some(locator_name) = &debug_config.locator else {
             log::debug!("Attempted to resolve debug config without a locator field");
             return Ok(());
         };

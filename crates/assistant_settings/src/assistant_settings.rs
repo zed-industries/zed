@@ -26,6 +26,15 @@ pub enum AssistantDockPosition {
     Bottom,
 }
 
+#[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum NotifyWhenAgentWaiting {
+    #[default]
+    PrimaryScreen,
+    AllScreens,
+    Never,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
 #[serde(tag = "name", rename_all = "snake_case")]
 pub enum AssistantProviderContentV1 {
@@ -74,7 +83,7 @@ pub struct AssistantSettings {
     pub default_profile: Arc<str>,
     pub profiles: IndexMap<Arc<str>, AgentProfile>,
     pub always_allow_tool_actions: bool,
-    pub notify_when_agent_waiting: bool,
+    pub notify_when_agent_waiting: NotifyWhenAgentWaiting,
 }
 
 impl AssistantSettings {
@@ -96,8 +105,8 @@ impl JsonSchema for AssistantSettingsContent {
         VersionedAssistantSettingsContent::schema_name()
     }
 
-    fn json_schema(gen: &mut schemars::gen::SchemaGenerator) -> Schema {
-        VersionedAssistantSettingsContent::json_schema(gen)
+    fn json_schema(r#gen: &mut schemars::r#gen::SchemaGenerator) -> Schema {
+        VersionedAssistantSettingsContent::json_schema(r#gen)
     }
 
     fn is_referenceable() -> bool {
@@ -394,10 +403,10 @@ pub struct AssistantSettingsContentV2 {
     ///
     /// Default: false
     always_allow_tool_actions: Option<bool>,
-    /// Whether to show a popup notification when the agent is waiting for user input.
+    /// Where to show a popup notification when the agent is waiting for user input.
     ///
-    /// Default: true
-    notify_when_agent_waiting: Option<bool>,
+    /// Default: "primary_screen"
+    notify_when_agent_waiting: Option<NotifyWhenAgentWaiting>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
@@ -407,7 +416,7 @@ pub struct LanguageModelSelection {
     pub model: String,
 }
 
-fn providers_schema(_: &mut schemars::gen::SchemaGenerator) -> schemars::schema::Schema {
+fn providers_schema(_: &mut schemars::r#gen::SchemaGenerator) -> schemars::schema::Schema {
     schemars::schema::SchemaObject {
         enum_values: Some(vec![
             "anthropic".into(),

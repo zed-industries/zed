@@ -526,7 +526,8 @@ define_connection! {
     ),
     sql!(
         ALTER TABLE breakpoints DROP COLUMN kind
-    )
+    ),
+    sql!(ALTER TABLE toolchains ADD COLUMN relative_worktree_path TEXT DEFAULT "" NOT NULL)
     ];
 }
 
@@ -1331,23 +1332,23 @@ impl WorkspaceDb {
     pub(crate) async fn toolchains(
         &self,
         workspace_id: WorkspaceId,
-    ) -> Result<Vec<(Toolchain, WorktreeId)>> {
+    ) -> Result<Vec<(Toolchain, WorktreeId, Arc<Path>)>> {
         self.write(move |this| {
             let mut select = this
                 .select_bound(sql!(
-                    SELECT name, path, worktree_id, language_name, raw_json FROM toolchains WHERE workspace_id = ?
+                    SELECT name, path, worktree_id, relative_worktree_path, language_name, raw_json FROM toolchains WHERE workspace_id = ?
                 ))
                 .context("Preparing insertion")?;
 
-            let toolchain: Vec<(String, String, u64, String, String)> =
+            let toolchain: Vec<(String, String, u64, String, String, String)> =
                 select(workspace_id)?;
 
-            Ok(toolchain.into_iter().filter_map(|(name, path, worktree_id, language_name, raw_json)| Some((Toolchain {
+            Ok(toolchain.into_iter().filter_map(|(name, path, worktree_id, relative_worktree_path, language_name, raw_json)| Some((Toolchain {
                 name: name.into(),
                 path: path.into(),
                 language_name: LanguageName::new(&language_name),
                 as_json: serde_json::Value::from_str(&raw_json).ok()?
-            }, WorktreeId::from_proto(worktree_id)))).collect())
+            }, WorktreeId::from_proto(worktree_id), Arc::from(relative_worktree_path.as_ref())))).collect())
         })
         .await
     }
@@ -1355,12 +1356,13 @@ impl WorkspaceDb {
         &self,
         workspace_id: WorkspaceId,
         worktree_id: WorktreeId,
+        relative_worktree_path: String,
         toolchain: Toolchain,
     ) -> Result<()> {
         self.write(move |conn| {
             let mut insert = conn
                 .exec_bound(sql!(
-                    INSERT INTO toolchains(workspace_id, worktree_id, language_name, name, path) VALUES (?, ?, ?, ?,  ?)
+                    INSERT INTO toolchains(workspace_id, worktree_id, relative_worktree_path, language_name, name, path) VALUES (?, ?, ?, ?, ?,  ?)
                     ON CONFLICT DO
                     UPDATE SET
                         name = ?4,
@@ -1372,6 +1374,7 @@ impl WorkspaceDb {
             insert((
                 workspace_id,
                 worktree_id.to_usize(),
+                relative_worktree_path,
                 toolchain.language_name.as_ref(),
                 toolchain.name.as_ref(),
                 toolchain.path.as_ref(),

@@ -1300,7 +1300,7 @@ impl settings::Settings for AllLanguageSettings {
     }
 
     fn json_schema(
-        generator: &mut schemars::gen::SchemaGenerator,
+        generator: &mut schemars::r#gen::SchemaGenerator,
         params: &settings::SettingsJsonSchemaParams,
         _: &App,
     ) -> schemars::schema::RootSchema {

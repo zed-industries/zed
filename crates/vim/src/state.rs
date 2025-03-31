@@ -1,4 +1,5 @@
 use crate::command::command_interceptor;
+use crate::motion::MotionKind;
 use crate::normal::repeat::Replayer;
 use crate::surrounds::SurroundsType;
 use crate::{motion::Motion, object::Object};
@@ -695,7 +696,7 @@ impl VimGlobals {
         content: Register,
         register: Option<char>,
         is_yank: bool,
-        linewise: bool,
+        kind: MotionKind,
         cx: &mut Context<Editor>,
     ) {
         if let Some(register) = register {
@@ -752,7 +753,7 @@ impl VimGlobals {
                 if !contains_newline {
                     self.registers.insert('-', content.clone());
                 }
-                if linewise || contains_newline {
+                if kind.linewise() || contains_newline {
                     let mut content = content;
                     for i in '1'..'8' {
                         if let Some(moved) = self.registers.insert(i, content) {

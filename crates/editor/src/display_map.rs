@@ -752,27 +752,11 @@ impl DisplaySnapshot {
 
     // used by line_mode selections and tries to match vim behavior
     pub fn expand_to_line(&self, range: Range<Point>) -> Range<Point> {
-        let max_row = self.buffer_snapshot.max_row().0;
-        let new_start = if range.start.row == 0 {
-            MultiBufferPoint::new(0, 0)
-        } else if range.start.row == max_row || (range.end.column > 0 && range.end.row == max_row) {
-            MultiBufferPoint::new(
-                range.start.row - 1,
-                self.buffer_snapshot
-                    .line_len(MultiBufferRow(range.start.row - 1)),
-            )
-        } else {
-            self.prev_line_boundary(range.start).0
-        };
-
-        let new_end = if range.end.column == 0 {
-            range.end
-        } else if range.end.row < max_row {
-            self.buffer_snapshot
-                .clip_point(MultiBufferPoint::new(range.end.row + 1, 0), Bias::Left)
-        } else {
-            self.buffer_snapshot.max_point()
-        };
+        let new_start = MultiBufferPoint::new(range.start.row, 0);
+        let new_end = MultiBufferPoint::new(
+            range.end.row,
+            self.buffer_snapshot.line_len(MultiBufferRow(range.end.row)),
+        );
 
         new_start..new_end
     }
@@ -1480,7 +1464,7 @@ pub mod tests {
         });
 
         let buffer = cx.update(|cx| {
-            if rng.gen() {
+            if rng.r#gen() {
                 let len = rng.gen_range(0..10);
                 let text = util::RandomCharIter::new(&mut rng)
                     .take(len)
@@ -1542,7 +1526,7 @@ pub mod tests {
                 }
                 30..=44 => {
                     map.update(cx, |map, cx| {
-                        if rng.gen() || blocks.is_empty() {
+                        if rng.r#gen() || blocks.is_empty() {
                             let buffer = map.snapshot(cx).buffer_snapshot;
                             let block_properties = (0..rng.gen_range(1..=1))
                                 .map(|_| {
@@ -1552,7 +1536,7 @@ pub mod tests {
                                             Bias::Left,
                                         ));
 
-                                    let placement = if rng.gen() {
+                                    let placement = if rng.r#gen() {
                                         BlockPlacement::Above(position)
                                     } else {
                                         BlockPlacement::Below(position)
@@ -1596,7 +1580,7 @@ pub mod tests {
                         });
                     }
 
-                    if rng.gen() && fold_count > 0 {
+                    if rng.r#gen() && fold_count > 0 {
                         log::info!("unfolding ranges: {:?}", ranges);
                         map.update(cx, |map, cx| {
                             map.unfold_intersecting(ranges, true, cx);

@@ -441,7 +441,9 @@ mod persistence {
                 .collect::<Vec<&str>>()
                 .join(", ");
 
-            let query = format!("DELETE FROM image_viewers WHERE workspace_id = ? AND item_id NOT IN ({placeholders})");
+            let query = format!(
+                "DELETE FROM image_viewers WHERE workspace_id = ? AND item_id NOT IN ({placeholders})"
+            );
 
             self.write(move |conn| {
                 let mut statement = Statement::prepare(conn, query)?;

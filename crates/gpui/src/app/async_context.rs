@@ -234,11 +234,11 @@ impl AsyncApp {
     }
 
     /// Run something using this entity and cx, when the returned struct is dropped
-    pub fn on_drop<T: 'static>(
+    pub fn on_drop<T: 'static, Callback: FnOnce(&mut T, &mut Context<T>) + 'static>(
         &self,
         entity: &WeakEntity<T>,
-        f: impl FnOnce(&mut T, &mut Context<T>) + 'static,
-    ) -> util::Deferred<impl FnOnce()> {
+        f: Callback,
+    ) -> util::Deferred<impl FnOnce() + use<T, Callback>> {
         let entity = entity.clone();
         let mut cx = self.clone();
         util::defer(move || {

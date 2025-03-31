@@ -1162,9 +1162,9 @@ impl Worktree {
             Worktree::Remote(this) => this.delete_entry(entry_id, trash, cx),
         }?;
 
-        let entry = match self {
-            Worktree::Local(ref this) => this.entry_for_id(entry_id),
-            Worktree::Remote(ref this) => this.entry_for_id(entry_id),
+        let entry = match &*self {
+            Worktree::Local(this) => this.entry_for_id(entry_id),
+            Worktree::Remote(this) => this.entry_for_id(entry_id),
         }?;
 
         let mut ids = vec![entry_id];
@@ -1674,7 +1674,7 @@ impl LocalWorktree {
         changes.into()
     }
 
-    pub fn scan_complete(&self) -> impl Future<Output = ()> {
+    pub fn scan_complete(&self) -> impl Future<Output = ()> + use<> {
         let mut is_scanning_rx = self.is_scanning.1.clone();
         async move {
             let mut is_scanning = *is_scanning_rx.borrow();
@@ -2407,7 +2407,10 @@ impl RemoteWorktree {
         self.completed_scan_id >= scan_id
     }
 
-    pub fn wait_for_snapshot(&mut self, scan_id: usize) -> impl Future<Output = Result<()>> {
+    pub fn wait_for_snapshot(
+        &mut self,
+        scan_id: usize,
+    ) -> impl Future<Output = Result<()>> + use<> {
         let (tx, rx) = oneshot::channel();
         if self.observed_snapshot(scan_id) {
             let _ = tx.send(());
@@ -5061,11 +5064,10 @@ impl BackgroundScanner {
                     );
 
                     if let Some(work_directory_id) = work_directory_id {
-                        let scan_id = state.snapshot.scan_id;
                         state.snapshot.git_repositories.update(
                             &work_directory_id,
                             |local_repository_entry| {
-                                local_repository_entry.status_scan_id = scan_id;
+                                local_repository_entry.status_scan_id += 1;
                             },
                         );
                     }
@@ -5346,7 +5348,6 @@ impl BackgroundScanner {
                             &local_repository.work_directory_id,
                             |entry| {
                                 entry.git_dir_scan_id = scan_id;
-                                entry.status_scan_id = scan_id;
                             },
                         );
                         if let Some(repo_entry) = state

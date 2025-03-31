@@ -936,7 +936,7 @@ impl Window {
     pub(crate) fn new_focus_listener(
         &self,
         value: AnyWindowFocusListener,
-    ) -> (Subscription, impl FnOnce()) {
+    ) -> (Subscription, impl FnOnce() + use<>) {
         self.focus_listeners.insert((), value)
     }
 }
@@ -3719,11 +3719,11 @@ impl Window {
     }
 
     /// Returns a generic handler that invokes the given handler with the view and context associated with the given view handle.
-    pub fn handler_for<V: Render>(
+    pub fn handler_for<V: Render, Callback: Fn(&mut V, &mut Window, &mut Context<V>) + 'static>(
         &self,
         view: &Entity<V>,
-        f: impl Fn(&mut V, &mut Window, &mut Context<V>) + 'static,
-    ) -> impl Fn(&mut Window, &mut App) {
+        f: Callback,
+    ) -> impl Fn(&mut Window, &mut App) + use<V, Callback> {
         let view = view.downgrade();
         move |window: &mut Window, cx: &mut App| {
             view.update(cx, |view, cx| f(view, window, cx)).ok();

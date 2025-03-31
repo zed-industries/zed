@@ -1089,7 +1089,7 @@ fn possible_open_target(
                         return Task::ready(Some(OpenTarget::Worktree(
                             root_path_with_posiition,
                             root_entry.clone(),
-                        )))
+                        )));
                     }
                     None => paths_to_check.push(root_path_with_posiition),
                 }
