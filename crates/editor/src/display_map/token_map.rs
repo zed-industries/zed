@@ -401,10 +401,15 @@ impl TokenMap {
                 // Apply the rest of the edit.
                 let new_start = TokenOffset(new_transforms.summary().output.len);
                 let transform_start = new_transforms.summary().input.len;
-                push_isomorphic(
-                    &mut new_transforms,
-                    buffer_snapshot.text_summary_for_range(transform_start..buffer_edit.new.end),
-                );
+                if transform_start < buffer_edit.new.end {
+                    push_isomorphic(
+                        &mut new_transforms,
+                        buffer_snapshot
+                            .text_summary_for_range(transform_start..buffer_edit.new.end),
+                    );
+                } else {
+                    log::error!("failed {transform_start} {buffer_edit:?}");
+                }
                 let new_end = TokenOffset(new_transforms.summary().output.len);
                 token_edits.push(Edit {
                     old: old_start..old_end,
@@ -474,10 +479,10 @@ impl TokenMap {
         let buffer_edits = edits
             .into_iter()
             .map(|range| Edit {
-                old: range.clone(),
-                new: range,
+                old: range.start..range.start,
+                new: range.start..range.start,
             })
-            .sorted_by(|a, b| a.old.start.cmp(&b.old.start).then(cmp::Ordering::Greater))
+            .sorted_by(|a, b| a.new.start.cmp(&b.new.start))
             .collect_vec();
 
         let buffer_snapshot = snapshot.buffer.clone();
