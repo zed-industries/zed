@@ -2994,7 +2994,7 @@ impl BackgroundScannerState {
     }
 
     fn remove_path(&mut self, path: &Path) {
-        log::info!("background scanner removing path {path:?}");
+        log::debug!("background scanner removing path {path:?}");
         let mut new_entries;
         let removed_entries;
         {

@@ -220,7 +220,6 @@ pub struct RepositorySnapshot {
     pub worktree_scan_id: usize,
     pub completed_scan_id: usize,
     pub branch: Option<Branch>,
-    // FIXME remove this state
     pub merge_conflicts: TreeSet<RepoPath>,
     pub merge_head_shas: Vec<SharedString>,
 }
@@ -274,7 +273,6 @@ enum RepositoryState {
 #[derive(Clone, Debug)]
 pub enum RepositoryEvent {
     GitStateUpdated,
-    // FIXME listen for this downstream
     MergeHeadsChanged,
 }
 
@@ -1407,6 +1405,7 @@ impl GitStore {
         changed_repos: &UpdatedGitRepositoriesSet,
         cx: &mut Context<Self>,
     ) {
+        log::debug!("local worktree repos changed");
         debug_assert!(worktree.read(cx).is_local());
 
         let mut diff_state_updates = HashMap::<Entity<Repository>, Vec<_>>::default();
@@ -2634,6 +2633,7 @@ impl BufferDiffState {
                 })?;
             }
 
+            eprintln!("!!!!!! finished recalculating diffs");
             Ok(())
         }));
 
@@ -2881,7 +2881,6 @@ impl Repository {
         Fut: Future<Output = R> + 'static,
         R: Send + 'static,
     {
-        log::debug!("send keyed job");
         let (result_tx, result_rx) = futures::channel::oneshot::channel();
         self.job_sender
             .unbounded_send(GitJob {
@@ -2983,7 +2982,9 @@ impl Repository {
         let this = cx.weak_entity();
 
         let rx = self.send_job(move |state, mut cx| async move {
-            let Some(this) = this.upgrade() else { todo!() };
+            let Some(this) = this.upgrade() else {
+                bail!("git store was dropped");
+            };
             match state {
                 RepositoryState::Local { .. } => {
                     this.update(&mut cx, |_, cx| {
@@ -4238,10 +4239,6 @@ async fn compute_snapshot(
         .map(SharedString::from)
         .collect();
 
-    if merge_head_shas != prev_snapshot.merge_head_shas {
-        events.push(RepositoryEvent::MergeHeadsChanged);
-    }
-
     let mut changed_path_statuses = Vec::new();
     let prev_statuses = prev_snapshot.statuses_by_path.clone();
     let mut cursor = prev_statuses.cursor::<PathProgress>(&());
@@ -4267,15 +4264,14 @@ async fn compute_snapshot(
         }
     }
 
-    if branch != prev_snapshot.branch || !changed_path_statuses.is_empty() {
-        events.push(RepositoryEvent::GitStateUpdated);
-    }
+    // FIXME diff needs to be computed on background thread. downstream update needs to do this already.
+    // can we reuse this? hard because we need to emit an event.
 
     let mut statuses_by_path = SumTree::new(&());
-    let mut merge_conflicts = TreeSet::default();
+    let mut current_merge_conflicts = TreeSet::default();
     for (repo_path, status) in statuses.entries.iter() {
         if status.is_conflicted() {
-            merge_conflicts.insert(repo_path.clone());
+            current_merge_conflicts.insert(repo_path.clone());
         }
         statuses_by_path.insert_or_replace(
             StatusEntry {
@@ -4284,6 +4280,21 @@ async fn compute_snapshot(
             },
             &(),
         );
+    }
+
+    if merge_head_shas != prev_snapshot.merge_head_shas
+        || branch != prev_snapshot.branch
+        || !changed_path_statuses.is_empty()
+    {
+        events.push(RepositoryEvent::GitStateUpdated);
+    }
+
+    // Cache merge conflict paths so they don't change from staging/unstaging,
+    // until the merge heads change (at commit time, etc.).
+    let mut merge_conflicts = prev_snapshot.merge_conflicts.clone();
+    if merge_head_shas != prev_snapshot.merge_head_shas {
+        merge_conflicts = current_merge_conflicts;
+        events.push(RepositoryEvent::MergeHeadsChanged);
     }
 
     let snapshot = RepositorySnapshot {

@@ -1520,6 +1520,7 @@ mod tests {
             });
         assert_eq!(new_buffer_hunks.as_slice(), &[]);
 
+        eprintln!(">>>>>>>> modify");
         cx.update_window_entity(&buffer_editor, |buffer_editor, window, cx| {
             buffer_editor.set_text("different\n", window, cx);
             buffer_editor.save(false, project.clone(), window, cx)
@@ -1528,6 +1529,7 @@ mod tests {
         .unwrap();
 
         cx.run_until_parked();
+        eprintln!("<<<<<<<< modify");
 
         assert_state_with_diff(
             &diff_editor,
