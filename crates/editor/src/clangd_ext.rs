@@ -1,5 +1,5 @@
 use anyhow::Context as _;
-use gpui::{App, Context, Entity, Task, Window};
+use gpui::{App, Context, Entity, Window};
 use language::Language;
 use url::Url;
 use workspace::{OpenOptions, OpenVisible};
@@ -79,22 +79,16 @@ pub fn switch_source_header(
     .detach_and_log_err(cx);
 }
 
-pub fn apply_related_actions(
-    editor: &Entity<Editor>,
-    window: &mut Window,
-    cx: &mut App,
-) -> Task<()> {
-    let task = editor.update(cx, |editor, cx| {
-        find_specific_language_server_in_selection(editor, cx, is_c_language, CLANGD_SERVER_NAME)
-    });
-
-    let editor = editor.clone();
-    window.spawn(cx, async move |cx| {
-        if task.await.is_some() {
-            cx.update(|window, _| {
-                register_action(&editor, window, switch_source_header);
-            })
-            .ok();
-        }
-    })
+pub fn apply_related_actions(editor: &Entity<Editor>, window: &mut Window, cx: &mut App) {
+    if editor
+        .read(cx)
+        .buffer()
+        .read(cx)
+        .all_buffers()
+        .into_iter()
+        .filter_map(|buffer| buffer.read(cx).language())
+        .any(|language| is_c_language(language))
+    {
+        register_action(&editor, window, switch_source_header);
+    }
 }

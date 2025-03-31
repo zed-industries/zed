@@ -1,7 +1,7 @@
 use std::{fs, path::Path};
 
 use anyhow::Context as _;
-use gpui::{App, AppContext as _, Context, Entity, Task, Window};
+use gpui::{App, AppContext as _, Context, Entity, Window};
 use language::{Capability, Language};
 use multi_buffer::MultiBuffer;
 use project::lsp_store::{lsp_ext_command::ExpandMacro, rust_analyzer_ext::RUST_ANALYZER_NAME};
@@ -16,25 +16,19 @@ fn is_rust_language(language: &Language) -> bool {
     language.name() == "Rust".into()
 }
 
-pub fn apply_related_actions(
-    editor: &Entity<Editor>,
-    window: &mut Window,
-    cx: &mut App,
-) -> Task<()> {
-    let task = editor.update(cx, |editor, cx| {
-        find_specific_language_server_in_selection(editor, cx, is_rust_language, RUST_ANALYZER_NAME)
-    });
-
-    let editor = editor.clone();
-    window.spawn(cx, async move |cx| {
-        if task.await.is_some() {
-            cx.update(|window, _| {
-                register_action(&editor, window, expand_macro_recursively);
-                register_action(&editor, window, open_docs);
-            })
-            .ok();
-        }
-    })
+pub fn apply_related_actions(editor: &Entity<Editor>, window: &mut Window, cx: &mut App) {
+    if editor
+        .read(cx)
+        .buffer()
+        .read(cx)
+        .all_buffers()
+        .into_iter()
+        .filter_map(|buffer| buffer.read(cx).language())
+        .any(|language| is_rust_language(language))
+    {
+        register_action(&editor, window, expand_macro_recursively);
+        register_action(&editor, window, open_docs);
+    }
 }
 
 pub fn expand_macro_recursively(
