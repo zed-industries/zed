@@ -894,23 +894,6 @@ impl AssistantPanel {
                                     }),
                             )
                             .child(
-                                Button::new("profile", "Switch Agent Profile")
-                                    .icon(IconName::UserRoundPen)
-                                    .icon_position(IconPosition::Start)
-                                    .icon_size(IconSize::Small)
-                                    .icon_color(Color::Muted)
-                                    .full_width()
-                                    .key_binding(KeyBinding::for_action_in(
-                                        &ToggleProfileSelector,
-                                        &focus_handle,
-                                        window,
-                                        cx,
-                                    ))
-                                    .on_click(|_event, window, cx| {
-                                        window.dispatch_action(ToggleProfileSelector.boxed_clone(), cx)
-                                    }),
-                            )
-                            .child(
                                 Button::new("mode", "Switch Model")
                                     .icon(IconName::DatabaseZap)
                                     .icon_position(IconPosition::Start)
@@ -986,6 +969,55 @@ impl AssistantPanel {
                             }
                         })
                 )
+            })
+            .when(!recent_history.is_empty(), |parent| {
+                parent
+                    .p_1p5()
+                          .justify_end()
+                          .gap_1()
+                    .child(
+                        h_flex()
+                            .pl_1p5()
+                            .pb_1()
+                            .w_full()
+                            .justify_between()
+                            .border_b_1()
+                            .border_color(cx.theme().colors().border_variant)
+                            .child(
+                                Label::new("Past Interactions")
+                                    .size(LabelSize::Small)
+                                    .color(Color::Muted),
+                            )
+                            .child(
+                                Button::new("view-history", "View All")
+                                    .style(ButtonStyle::Subtle)
+                                    .label_size(LabelSize::Small)
+                                    .key_binding(KeyBinding::for_action_in(
+                                        &OpenHistory,
+                                        &self.focus_handle(cx),
+                                        window,
+                                        cx,
+                                    ).map(|kb| kb.size(rems_from_px(12.))),)
+                                    .on_click(move |_event, window, cx| {
+                                        window.dispatch_action(OpenHistory.boxed_clone(), cx);
+                                    }),
+                            ),
+                    )
+                    .child(v_flex().gap_1().children(
+                        recent_history.into_iter().map(|entry| {
+                             // TODO: Add keyboard navigation.
+                            match entry {
+                                HistoryEntry::Thread(thread) => {
+                                    PastThread::new(thread, cx.entity().downgrade(), false)
+                                        .into_any_element()
+                                }
+                                HistoryEntry::Context(context) => {
+                                    PastContext::new(context, cx.entity().downgrade(), false)
+                                        .into_any_element()
+                                }
+                            }
+                        }),
+                    ))
             })
     }
 
