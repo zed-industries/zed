@@ -497,6 +497,7 @@ dependencies = [
  "serde",
  "serde_json",
  "settings",
+ "smallvec",
  "smol",
  "streaming_diff",
  "telemetry",
@@ -727,9 +728,12 @@ dependencies = [
  "itertools 0.14.0",
  "language",
  "language_model",
+ "log",
+ "lsp",
  "open",
  "project",
  "rand 0.8.5",
+ "regex",
  "release_channel",
  "schemars",
  "serde",
@@ -17537,7 +17541,7 @@ dependencies = [
 
 [[package]]
 name = "zed_proto"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "zed_extension_api 0.1.0",
 ]

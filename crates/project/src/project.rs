@@ -4736,17 +4736,32 @@ impl Project {
         buffer: &Buffer,
         name: &str,
         cx: &mut App,
-    ) -> Option<LanguageServerId> {
-        self.lsp_store.update(cx, |this, cx| {
-            this.language_servers_for_local_buffer(buffer, cx)
-                .find_map(|(adapter, server)| {
-                    if adapter.name.0 == name {
-                        Some(server.server_id())
-                    } else {
-                        None
-                    }
-                })
-        })
+    ) -> Task<Option<LanguageServerId>> {
+        if self.is_local() {
+            Task::ready(self.lsp_store.update(cx, |lsp_store, cx| {
+                lsp_store
+                    .language_servers_for_local_buffer(buffer, cx)
+                    .find_map(|(adapter, server)| {
+                        if adapter.name.0 == name {
+                            Some(server.server_id())
+                        } else {
+                            None
+                        }
+                    })
+            }))
+        } else if let Some(project_id) = self.remote_id() {
+            let request = self.client.request(proto::LanguageServerIdForName {
+                project_id,
+                buffer_id: buffer.remote_id().to_proto(),
+                name: name.to_string(),
+            });
+            cx.background_spawn(async move {
+                let response = request.await.log_err()?;
+                response.server_id.map(LanguageServerId::from_proto)
+            })
+        } else {
+            Task::ready(None)
+        }
     }
 
     pub fn has_language_servers_for(&self, buffer: &Buffer, cx: &mut App) -> bool {

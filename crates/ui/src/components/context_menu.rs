@@ -752,7 +752,7 @@ impl ContextMenu {
                                         KeyBinding::for_action(&**action, window, cx)
                                     })
                                     .map(|binding| {
-                                        div().ml_4().child(binding).when(
+                                        div().ml_4().child(binding.disabled(*disabled)).when(
                                             *disabled && documentation_aside_callback.is_some(),
                                             |parent| parent.invisible(),
                                         )
