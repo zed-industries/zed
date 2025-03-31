@@ -24,13 +24,13 @@ pub struct RegexSearchToolInput {
     /// Optional starting position for paginated results (0-based).
     /// When not provided, starts from the beginning.
     #[serde(default)]
-    pub offset: Option<u32>,
+    pub offset: u32,
 }
 
 impl RegexSearchToolInput {
     /// Which page of search results this is.
     pub fn page(&self) -> u32 {
-        1 + (self.offset.unwrap_or(0) / RESULTS_PER_PAGE)
+        1 + (self.offset / RESULTS_PER_PAGE)
     }
 }
 
@@ -87,7 +87,7 @@ impl Tool for RegexSearchTool {
         const CONTEXT_LINES: u32 = 2;
 
         let (offset, regex) = match serde_json::from_value::<RegexSearchToolInput>(input) {
-            Ok(input) => (input.offset.unwrap_or(0), input.regex),
+            Ok(input) => (input.offset, input.regex),
             Err(err) => return Task::ready(Err(anyhow!(err))),
         };
 

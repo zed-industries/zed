@@ -1,14 +1,16 @@
 use std::fmt::{self, Write};
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use anyhow::{anyhow, Result};
 use assistant_tool::{ActionLog, Tool};
-use gpui::{App, Entity, Task};
+use collections::HashMap;
+use gpui::{App, AsyncApp, Entity, Task};
 use language::{CodeLabel, Language, LanguageRegistry};
 use language_model::LanguageModelRequestMessage;
 use lsp::SymbolKind;
 use project::{DocumentSymbol, Project, Symbol};
-use regex::Regex;
+use regex::{Regex, RegexBuilder};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use ui::IconName;
@@ -52,13 +54,13 @@ pub struct CodeSymbolsInput {
     /// Optional starting position for paginated results (0-based).
     /// When not provided, starts from the beginning.
     #[serde(default)]
-    pub offset: Option<u32>,
+    pub offset: u32,
 }
 
 impl CodeSymbolsInput {
     /// Which page of search results this is.
     pub fn page(&self) -> u32 {
-        1 + (self.offset.unwrap_or(0) / RESULTS_PER_PAGE)
+        1 + (self.offset / RESULTS_PER_PAGE)
     }
 }
 
@@ -128,196 +130,202 @@ impl Tool for CodeSymbolsTool {
             Err(err) => return Task::ready(Err(anyhow!(err))),
         };
 
-        // If no path is specified, list all project symbols instead of a file outline
-        if input.path.is_none() {
-            return cx.spawn(async move |cx| {
-                let symbols = project
-                    .update(cx, |project, cx| project.symbols("", cx))?
-                    .await?;
+        let regex = match input.regex {
+            Some(regex_str) => match RegexBuilder::new(&regex_str).case_insensitive(true).build() {
+                Ok(regex) => Some(regex),
+                Err(err) => return Task::ready(Err(anyhow!("Invalid regex: {err}"))),
+            },
+            None => None,
+        };
 
-                if symbols.is_empty() {
-                    return Err(anyhow!("No symbols found in project."));
-                }
+        cx.spawn(async move |cx| match input.path {
+            Some(path) => file_outline(project, path, action_log, regex, input.offset, cx).await,
+            None => project_symbols(project, regex, input.offset, cx).await,
+        })
+    }
+}
 
-                // If regex is provided, prepare it for filtering
-                let regex_filter = match input.regex {
-                    Some(regex_str) => match Regex::new(&regex_str) {
-                        Ok(re) => Some(re),
-                        Err(err) => return Err(anyhow!("Invalid regex pattern: {}", err)),
-                    },
-                    None => None,
-                };
+async fn file_outline(
+    project: Entity<Project>,
+    path: String,
+    action_log: Entity<ActionLog>,
+    regex: Option<Regex>,
+    offset: u32,
+    cx: &mut AsyncApp,
+) -> anyhow::Result<String> {
+    let buffer = {
+        let project_path = project.read_with(cx, |project, cx| {
+            project
+                .find_project_path(&path, cx)
+                .ok_or_else(|| anyhow!("Path {path} not found in project"))
+        })??;
 
-                // Group symbols by file path
-                use std::collections::HashMap;
-                let mut symbols_by_file: HashMap<String, Vec<&Symbol>> = HashMap::new();
+        project
+            .update(cx, |project, cx| project.open_buffer(project_path, cx))?
+            .await?
+    };
 
-                // First, filter and group symbols by file
-                for symbol in &symbols {
-                    // Skip this symbol if it doesn't match the regex filter
-                    if let Some(re) = &regex_filter {
-                        if !re.is_match(&symbol.name) {
-                            continue;
-                        }
-                    }
+    action_log.update(cx, |action_log, cx| {
+        action_log.buffer_read(buffer.clone(), cx);
+    })?;
 
-                    let worktree_name = project.read_with(cx, |project, cx| {
-                        project
-                            .worktree_for_id(symbol.path.worktree_id, cx)
-                            .map(|worktree| worktree.read(cx).root_name().to_string())
-                            .unwrap_or_default()
-                    })?;
+    let symbols = project
+        .update(cx, |project, cx| project.document_symbols(&buffer, cx))?
+        .await?;
 
-                    let path = format!("{}/{}", worktree_name, symbol.path.path.to_string_lossy());
-                    symbols_by_file.entry(path).or_default().push(symbol);
-                }
+    if symbols.is_empty() {
+        return Err(
+            if buffer.read_with(cx, |buffer, _| buffer.snapshot().is_empty())? {
+                anyhow!("This file is empty.")
+            } else {
+                anyhow!("No outline information available for this file.")
+            },
+        );
+    }
 
-                // If no symbols matched the filter, return early
-                if symbols_by_file.is_empty() {
-                    return Err(anyhow!("No symbols found matching the criteria."));
-                }
+    let language = buffer.read_with(cx, |buffer, _| buffer.language().cloned())?;
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone())?;
 
-                let offset = input.offset.unwrap_or(0);
-                let mut skips_remaining = offset;
-                let mut symbols_rendered = 0;
-                let mut has_more_symbols = false;
-                let mut output = String::new();
+    render_outline(&symbols, language, language_registry, regex, offset).await
+}
 
-                for (file_path, file_symbols) in symbols_by_file {
-                    // Track symbols in this file
-                    let mut file_symbols_rendered = 0;
-                    let mut file_header_written = false;
+async fn project_symbols(
+    project: Entity<Project>,
+    regex: Option<Regex>,
+    offset: u32,
+    cx: &mut AsyncApp,
+) -> anyhow::Result<String> {
+    let symbols = project
+        .update(cx, |project, cx| project.symbols("", cx))?
+        .await?;
 
-                    // Process symbols for this file
-                    for symbol in file_symbols {
-                        if skips_remaining > 0 {
-                            skips_remaining -= 1;
-                            continue;
-                        }
+    if symbols.is_empty() {
+        return Err(anyhow!("No symbols found in project."));
+    }
 
-                        // Check if we've already rendered a full page
-                        if symbols_rendered >= RESULTS_PER_PAGE {
-                            has_more_symbols = true;
-                            break;
-                        }
+    // Group symbols by file path
+    let mut symbols_by_file: HashMap<PathBuf, Vec<&Symbol>> = HashMap::default();
 
-                        // Write file header only when we're going to include symbols from this file
-                        if !file_header_written {
-                            // Extract the filename from the path for the heading
-                            let filename = symbol
-                                .path
-                                .path
-                                .file_name()
-                                .map(|f| f.to_string_lossy().to_string())
-                                .unwrap_or_else(|| "unknown".to_string());
+    for symbol in symbols.iter().filter(|symbol| {
+        if let Some(regex) = &regex {
+            regex.is_match(&symbol.name)
+        } else {
+            true
+        }
+    }) {
+        if let Some(worktree_path) = project.read_with(cx, |project, cx| {
+            project
+                .worktree_for_id(symbol.path.worktree_id, cx)
+                .map(|worktree| PathBuf::from(worktree.read(cx).root_name()))
+        })? {
+            let path = worktree_path.join(&symbol.path.path);
+            symbols_by_file.entry(path).or_default().push(symbol);
+        }
+    }
 
-                            // Add a heading for the file
-                            writeln!(&mut output, "# File: {} ({})", filename, file_path).ok();
-                            file_header_written = true;
-                        }
+    // If no symbols matched the filter, return early
+    if symbols_by_file.is_empty() {
+        return Err(anyhow!("No symbols found matching the criteria."));
+    }
 
-                        // Use the symbol's existing label instead of debug formatting the kind
-                        let kind_str = format!("{} ", symbol.label.text());
+    let mut skips_remaining = offset;
+    let mut symbols_rendered = 0;
+    let mut has_more_symbols = false;
+    let mut output = String::new();
 
-                        // Convert to 1-based line numbers for display
-                        let start_line = symbol.range.start.0.row as usize + 1;
-                        let end_line = symbol.range.end.0.row as usize + 1;
+    for (file_path, file_symbols) in symbols_by_file {
+        // Track symbols in this file
+        let mut file_symbols_rendered = 0;
+        let mut file_header_written = false;
 
-                        // Write the symbol with indentation
-                        if start_line == end_line {
-                            writeln!(
-                                &mut output,
-                                "## {}{} [L{}]",
-                                kind_str, symbol.name, start_line
-                            )
-                            .ok();
-                        } else {
-                            writeln!(
-                                &mut output,
-                                "## {}{} [L{}-{}]",
-                                kind_str, symbol.name, start_line, end_line
-                            )
-                            .ok();
-                        }
+        // Process symbols for this file
+        for symbol in file_symbols {
+            if skips_remaining > 0 {
+                skips_remaining -= 1;
+                continue;
+            }
 
-                        symbols_rendered += 1;
-                        file_symbols_rendered += 1;
-                    }
+            // Check if we've already rendered a full page
+            if symbols_rendered >= RESULTS_PER_PAGE {
+                has_more_symbols = true;
+                break;
+            }
 
-                    // Add a blank line between files for readability if we rendered symbols from this file
-                    if file_symbols_rendered > 0 {
-                        writeln!(&mut output).ok();
-                    }
+            // Write file header only when we're going to include symbols from this file
+            if !file_header_written {
+                // Extract the filename from the path for the heading
+                let filename = symbol
+                    .path
+                    .path
+                    .file_name()
+                    .map(|f| f.to_string_lossy().to_string())
+                    .unwrap_or_else(|| "unknown".to_string());
 
-                    // Check if we need to stop after this file
-                    if has_more_symbols {
-                        break;
-                    }
-                }
+                // Add a heading for the file
+                writeln!(
+                    &mut output,
+                    "# File: {} ({})",
+                    filename,
+                    file_path.display()
+                )
+                .ok();
+                file_header_written = true;
+            }
 
-                if symbols_rendered == 0 {
-                    Ok("No symbols found in the requested page.".to_string())
-                } else if has_more_symbols {
-                    let result = format!(
-                        "{}Showing symbols {}-{} (there were more symbols found; use offset: {} to see next page)",
-                        output,
-                        offset + 1,
-                        offset + symbols_rendered,
-                        offset + RESULTS_PER_PAGE,
-                    );
-                    Ok(result)
-                } else {
-                    let total = offset + symbols_rendered;
-                    let result = format!("{}Found {} total symbols", output, total);
-                    Ok(result)
-                }
-            });
+            // Use the symbol's existing label instead of debug formatting the kind
+            let kind_str = format!("{} ", symbol.label.text());
+
+            // Convert to 1-based line numbers for display
+            let start_line = symbol.range.start.0.row as usize + 1;
+            let end_line = symbol.range.end.0.row as usize + 1;
+
+            // Write the symbol with indentation
+            if start_line == end_line {
+                writeln!(
+                    &mut output,
+                    "## {}{} [L{}]",
+                    kind_str, symbol.name, start_line
+                )
+                .ok();
+            } else {
+                writeln!(
+                    &mut output,
+                    "## {}{} [L{}-{}]",
+                    kind_str, symbol.name, start_line, end_line
+                )
+                .ok();
+            }
+
+            symbols_rendered += 1;
+            file_symbols_rendered += 1;
         }
 
-        // Handle the case with a specified path (existing file outline functionality)
-        cx.spawn(async move |cx| {
-            let buffer = {
-                let project_path = project.read_with(cx, |project, cx| {
-                    project
-                        .find_project_path(input.path.as_ref().unwrap(), cx)
-                        .ok_or_else(|| {
-                            anyhow!("Path {} not found in project", input.path.as_ref().unwrap())
-                        })
-                })??;
+        // Add a blank line between files for readability if we rendered symbols from this file
+        if file_symbols_rendered > 0 {
+            writeln!(&mut output).ok();
+        }
 
-                project
-                    .update(cx, |project, cx| project.open_buffer(project_path, cx))?
-                    .await?
-            };
+        // Check if we need to stop after this file
+        if has_more_symbols {
+            break;
+        }
+    }
 
-            action_log.update(cx, |action_log, cx| {
-                action_log.buffer_read(buffer.clone(), cx);
-            })?;
-
-            // Check if the file is empty
-            if buffer.read_with(cx, |buffer, _| buffer.snapshot().is_empty())? {
-                return Err(anyhow!("This file is empty."));
-            }
-
-            // Request document symbols from the language server
-            let symbols = project
-                .update(cx, |project, cx| project.document_symbols(&buffer, cx))?
-                .await?;
-
-            if symbols.is_empty() {
-                return Err(anyhow!("No outline information available for this file."));
-            }
-
-            // Get the language for this buffer
-            let language = buffer.read_with(cx, |buffer, _| buffer.language().cloned())?;
-            let language_registry =
-                project.read_with(cx, |project, _| project.languages().clone())?;
-
-            // Convert the document symbols to a hierarchical outline with pagination
-            let outline = render_outline(&symbols, language, language_registry, &input).await?;
-
-            Ok(outline)
-        })
+    if symbols_rendered == 0 {
+        Ok("No symbols found in the requested page.".to_string())
+    } else if has_more_symbols {
+        let result = format!(
+                "{}Showing symbols {}-{} (there were more symbols found; use offset: {} to see next page)",
+                output,
+                offset + 1,
+                offset + symbols_rendered,
+                offset + RESULTS_PER_PAGE,
+            );
+        Ok(result)
+    } else {
+        let total = offset + symbols_rendered;
+        let result = format!("{}Found {} total symbols", output, total);
+        Ok(result)
     }
 }
 
@@ -325,16 +333,9 @@ async fn render_outline(
     symbols: &[DocumentSymbol],
     language: Option<Arc<Language>>,
     registry: Arc<LanguageRegistry>,
-    input: &CodeSymbolsInput,
+    regex: Option<Regex>,
+    offset: u32,
 ) -> Result<String> {
-    let regex = match &input.regex {
-        Some(regex_str) => match Regex::new(regex_str) {
-            Ok(regex) => Some(regex),
-            Err(err) => return Err(anyhow!("Invalid regex: {err}")),
-        },
-        None => None,
-    };
-    let offset = input.offset.unwrap_or(0);
     const RESULTS_PER_PAGE_USIZE: usize = RESULTS_PER_PAGE as usize;
     let entries = CodeSymbolIterator::new(symbols, regex.clone())
         .skip(offset as usize)
