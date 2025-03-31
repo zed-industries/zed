@@ -2791,6 +2791,7 @@ impl EditorElement {
             .as_ref()
             .map(|project| project.read(cx).visible_worktrees(cx).count() > 1)
             .unwrap_or_default();
+        let can_open_excerpts = Editor::can_open_excerpts_in_file(for_excerpt.buffer.file());
         let path = for_excerpt.buffer.resolve_file_path(cx, include_root);
         let filename = path
             .as_ref()
@@ -2920,7 +2921,7 @@ impl EditorElement {
                                         ))
                                     }),
                             )
-                            .when(is_selected, |el| {
+                            .when(can_open_excerpts && is_selected && path.is_some(), |el| {
                                 el.child(
                                     h_flex()
                                         .id("jump-to-file-button")
