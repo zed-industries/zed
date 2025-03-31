@@ -14900,6 +14900,13 @@ impl Editor {
         self.display_map.read(cx).folded_buffers()
     }
 
+    pub fn disable_header_for_buffer(&mut self, buffer_id: BufferId, cx: &mut Context<Self>) {
+        self.display_map.update(cx, |display_map, cx| {
+            display_map.disable_header_for_buffer(buffer_id, cx);
+        });
+        cx.notify();
+    }
+
     /// Removes any folds with the given ranges.
     pub fn remove_folds_with_type<T: ToOffset + Clone>(
         &mut self,

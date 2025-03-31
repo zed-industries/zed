@@ -15,6 +15,7 @@ use project::{git_store::Repository, Project, WorktreeId};
 use std::{
     any::{Any, TypeId},
     ffi::OsStr,
+    fmt::Write as _,
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -124,7 +125,7 @@ impl CommitView {
                     0,
                     cx.entity_id().as_non_zero_u64().into(),
                     LineEnding::default(),
-                    commit.message.as_ref().into(),
+                    format_commit(&commit).into(),
                 );
                 metadata_buffer_id = Some(buffer.remote_id());
                 Buffer::build(buffer, Some(file.clone()), Capability::ReadWrite)
@@ -139,6 +140,7 @@ impl CommitView {
                 );
             });
             editor.update(cx, |editor, cx| {
+                editor.disable_header_for_buffer(metadata_buffer_id.unwrap(), cx);
                 editor.change_selections(None, window, cx, |selections| {
                     selections.select_ranges(vec![0..0]);
                 });
@@ -352,6 +354,36 @@ async fn build_buffer_diff(
         diff.set_snapshot(diff_snapshot, &buffer.text, None, cx);
         diff
     })
+}
+
+fn format_commit(commit: &CommitDetails) -> String {
+    let mut result = String::new();
+    writeln!(&mut result, "commit {}", commit.sha).unwrap();
+    writeln!(
+        &mut result,
+        "Author: {} <{}>",
+        commit.committer_name, commit.committer_email
+    )
+    .unwrap();
+    writeln!(
+        &mut result,
+        "Date: {}",
+        time_format::format_local_timestamp(
+            time::OffsetDateTime::from_unix_timestamp(commit.commit_timestamp).unwrap(),
+            time::OffsetDateTime::now_utc(),
+            time_format::TimestampFormat::MediumAbsolute,
+        ),
+    )
+    .unwrap();
+    result.push('\n');
+    for line in commit.message.split('\n') {
+        if line.is_empty() {
+            result.push('\n');
+        } else {
+            writeln!(&mut result, "    {}", line).unwrap();
+        }
+    }
+    result
 }
 
 impl EventEmitter<EditorEvent> for CommitView {}
