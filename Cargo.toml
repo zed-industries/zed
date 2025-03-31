@@ -507,7 +507,7 @@ rust-embed = { version = "8.4", features = ["include-exclude"] }
 rustc-hash = "2.1.0"
 rustls = { version = "0.23.22" }
 rustls-platform-verifier = "0.5.0"
-scap = { git = "https://github.com/zed-industries/scap", rev = "16042d5f16e3b995d1a2af80804db91bc751e41e" }
+scap = { git = "https://github.com/zed-industries/scap", rev = "300f56910ded06d20d5da2462a296204d7da069b" }
 schemars = { version = "0.8", features = ["impl_json_schema", "indexmap2"] }
 semver = "1.0"
 serde = { version = "1.0", features = ["derive", "rc"] }

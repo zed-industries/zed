@@ -2,11 +2,10 @@
 use crate::{
     size, DevicePixels, ScreenCaptureFrame, ScreenCaptureSource, ScreenCaptureStream, Size,
 };
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context as _, Result};
 use futures::channel::oneshot;
 use std::sync::atomic::{self, AtomicBool};
 use std::sync::Arc;
-use util::ResultExt;
 
 /// Populates the receiver with the screens that can be captured.
 ///
@@ -42,7 +41,14 @@ struct ScapCaptureSource {
 fn get_screen_targets(sources_tx: oneshot::Sender<Result<Vec<Box<dyn ScreenCaptureSource>>>>) {
     // Due to use of blocking APIs, a new thread is used.
     std::thread::spawn(|| {
-        let sources = scap::get_all_targets()
+        let targets = match scap::get_all_targets() {
+            Ok(targets) => targets,
+            Err(err) => {
+                sources_tx.send(Err(err)).ok();
+                return;
+            }
+        };
+        let sources = targets
             .iter()
             .filter_map(|target| match target {
                 scap::Target::Display(display) => {
@@ -109,12 +115,10 @@ fn start_default_target_screen_capture(
         let start_result = util::maybe!({
             let mut capturer = new_scap_capturer(None)?;
             capturer.start_capture();
-            let size = match capturer.get_next_frame() {
-                Ok(frame) => frame_size(&frame),
-                Err(std::sync::mpsc::RecvError) => Err(anyhow!(
-                    "Failed to get first frame of screenshare to get the size."
-                ))?,
-            };
+            let first_frame = capturer
+                .get_next_frame()
+                .context("Failed to get first frame of screenshare to get the size.")?;
+            let size = frame_size(&first_frame);
             Ok((capturer, size))
         });
 
@@ -193,8 +197,8 @@ fn run_capture(
     while !cancel_stream.load(std::sync::atomic::Ordering::SeqCst) {
         match capturer.get_next_frame() {
             Ok(frame) => frame_callback(ScreenCaptureFrame(frame)),
-            Err(std::sync::mpsc::RecvError) => {
-                log::error!("Screen capture stream unexpectedly ended.");
+            Err(err) => {
+                log::error!("Halting screen capture due to error: {err}");
                 break;
             }
         }

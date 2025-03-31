@@ -12287,11 +12287,13 @@ dependencies = [
 [[package]]
 name = "scap"
 version = "0.0.8"
-source = "git+https://github.com/zed-industries/scap?rev=16042d5f16e3b995d1a2af80804db91bc751e41e#16042d5f16e3b995d1a2af80804db91bc751e41e"
+source = "git+https://github.com/zed-industries/scap?rev=300f56910ded06d20d5da2462a296204d7da069b#300f56910ded06d20d5da2462a296204d7da069b"
 dependencies = [
+ "anyhow",
  "cocoa 0.25.0",
  "core-graphics-helmer-fork",
  "dbus",
+ "log",
  "objc",
  "pipewire",
  "rand 0.8.5",
