@@ -4,6 +4,7 @@ use gpui::{App, Entity, Task};
 use language::{self, Anchor, Buffer, ToPointUtf16};
 use language_model::LanguageModelRequestMessage;
 use project::{self, Project};
+use regex::Regex;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::{ops::Range, sync::Arc};
@@ -17,16 +18,32 @@ pub struct CodeActionToolInput {
     pub path: String,
 
     /// The specific code action to execute.
-    /// 
+    ///
     /// If this field is provided, the tool will execute the specified action.
     /// If omitted, the tool will list all available code actions for the text range.
-    /// 
-    /// Special case: To perform a rename operation, set this to "textDocument/rename"
-    /// and provide the new name in the `arguments` field.
+    ///
+    /// Here are some actions that are commonly supported (but may not be for this particular
+    /// text range; you can omit this field to list all the actions, if you want to know
+    /// what your options are, or you can just try an action and if it fails I'll tell you
+    /// what the available actions were instead):
+    /// - "quickfix.all" - applies all available quick fixes in the range
+    /// - "source.organizeImports" - sorts and cleans up import statements
+    /// - "source.fixAll" - applies all available auto fixes
+    /// - "refactor.extract" - extracts selected code into a new function or variable
+    /// - "refactor.inline" - inlines a variable by replacing references with its value
+    /// - "refactor.rewrite" - general code rewriting operations
+    /// - "source.addMissingImports" - adds imports for references that lack them
+    /// - "source.removeUnusedImports" - removes imports that aren't being used
+    /// - "source.implementInterface" - generates methods required by an interface/trait
+    /// - "source.generateAccessors" - creates getter/setter methods
+    /// - "source.convertToAsyncFunction" - converts callback-style code to async/await
+    ///
+    /// Also, there is a special case: if you specify exactly "textDocument/rename" as the action,
+    /// then this will rename the symbol to whatever string you specified for the `arguments` field.
     pub action: Option<String>,
-    
+
     /// Optional arguments to pass to the code action.
-    /// 
+    ///
     /// For rename operations (when action="textDocument/rename"), this should contain the new name.
     /// For other code actions, these arguments may be passed to the language server.
     pub arguments: Option<serde_json::Value>,
@@ -94,22 +111,27 @@ impl Tool for CodeActionTool {
                         let new_name = match &input.arguments {
                             Some(serde_json::Value::String(new_name)) => new_name.clone(),
                             Some(value) => {
-                                if let Ok(new_name) = serde_json::from_value::<String>(value.clone()) {
+                                if let Ok(new_name) =
+                                    serde_json::from_value::<String>(value.clone())
+                                {
                                     new_name
                                 } else {
                                     "invalid name".to_string()
                                 }
-                            },
+                            }
                             None => "missing name".to_string(),
                         };
                         format!("Rename '{}' to '{}'", input.text_range, new_name)
                     } else {
-                        format!("Execute code action '{}' for '{}'", action, input.text_range)
+                        format!(
+                            "Execute code action '{}' for '{}'",
+                            action, input.text_range
+                        )
                     }
                 } else {
                     format!("List available code actions for '{}'", input.text_range)
                 }
-            },
+            }
             Err(_) => "Perform code action".to_string(),
         }
     }
@@ -204,7 +226,7 @@ impl Tool for CodeActionTool {
                     }
 
                     // Compile the regex pattern
-                    let regex = match regex::Regex::new(action_type) {
+                    let regex = match Regex::new(action_type) {
                         Ok(regex) => regex,
                         Err(err) => return Err(anyhow!("Invalid regex pattern: {}", err)),
                     };
@@ -345,12 +367,12 @@ fn find_text_range(
 ) -> Option<Range<Anchor>> {
     let snapshot = buffer.snapshot();
     let text = snapshot.text();
-    
+
     // First try with exact match
     let search_string = format!("{context_before_range}{text_range}{context_after_range}");
     let mut positions = text.match_indices(&search_string);
     let position_result = positions.next();
-    
+
     if let Some(position) = position_result {
         // Check if the matched string is unique
         if positions.next().is_none() {
@@ -358,11 +380,11 @@ fn find_text_range(
             let range_end = range_start + text_range.len();
             let range_start_anchor = snapshot.anchor_before(snapshot.offset_to_point(range_start));
             let range_end_anchor = snapshot.anchor_before(snapshot.offset_to_point(range_end));
-            
+
             return Some(range_start_anchor..range_end_anchor);
         }
     }
-    
+
     // If exact match fails or is not unique, try with line-based context
     // Add a newline to the end of before context and beginning of after context
     let line_based_before = if context_before_range.ends_with('\n') {
@@ -370,26 +392,27 @@ fn find_text_range(
     } else {
         format!("{context_before_range}\n")
     };
-    
+
     let line_based_after = if context_after_range.starts_with('\n') {
         context_after_range.to_string()
     } else {
         format!("\n{context_after_range}")
     };
-    
+
     let line_search_string = format!("{line_based_before}{text_range}{line_based_after}");
     let mut line_positions = text.match_indices(&line_search_string);
     let line_position = line_positions.next()?;
-    
+
     // The line-based search string must also appear exactly once
     if line_positions.next().is_some() {
         return None;
     }
-    
+
     let line_range_start = line_position.0 + line_based_before.len();
     let line_range_end = line_range_start + text_range.len();
-    let line_range_start_anchor = snapshot.anchor_before(snapshot.offset_to_point(line_range_start));
+    let line_range_start_anchor =
+        snapshot.anchor_before(snapshot.offset_to_point(line_range_start));
     let line_range_end_anchor = snapshot.anchor_before(snapshot.offset_to_point(line_range_end));
-    
+
     Some(line_range_start_anchor..line_range_end_anchor)
 }
