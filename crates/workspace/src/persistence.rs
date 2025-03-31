@@ -536,7 +536,7 @@ define_connection! {
     sql!(
         ALTER TABLE breakpoints DROP COLUMN kind
     ),
-    sql!(ALTER TABLE toolchains ADD COLUMN relative_worktree_path TEXT DEFAULT "" NOT NULL)
+    sql!(ALTER TABLE toolchains ADD COLUMN relative_worktree_path TEXT DEFAULT "" NOT NULL),
     sql!(
         ALTER TABLE breakpoints ADD COLUMN condition TEXT;
         ALTER TABLE breakpoints ADD COLUMN hit_condition TEXT;
