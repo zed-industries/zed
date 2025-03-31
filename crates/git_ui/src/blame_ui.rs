@@ -5,14 +5,14 @@ use git::{
     repository::CommitSummary,
 };
 use gpui::{
-    div, AnyElement, App, AppContext as _, ClipboardItem, Element as _, Entity, Hsla,
+    AnyElement, App, AppContext as _, ClipboardItem, Element as _, Entity, Hsla,
     InteractiveElement as _, MouseButton, Pixels, StatefulInteractiveElement as _, Styled as _,
-    Subscription, TextStyle, WeakEntity, Window,
+    Subscription, TextStyle, WeakEntity, Window, div,
 };
 use project::{git_store::Repository, project_settings::ProjectSettings};
 use settings::Settings as _;
 use ui::{
-    h_flex, ActiveTheme, Color, ContextMenu, FluentBuilder as _, Icon, IconName, ParentElement as _,
+    ActiveTheme, Color, ContextMenu, FluentBuilder as _, Icon, IconName, ParentElement as _, h_flex,
 };
 use workspace::Workspace;
 

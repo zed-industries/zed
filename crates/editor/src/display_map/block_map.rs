@@ -724,77 +724,79 @@ impl BlockMap {
     {
         let mut boundaries = buffer.excerpt_boundaries_in_range(range).peekable();
 
-        std::iter::from_fn(move || loop {
-            let excerpt_boundary = boundaries.next()?;
-            let wrap_row = wrap_snapshot
-                .make_wrap_point(Point::new(excerpt_boundary.row.0, 0), Bias::Left)
-                .row();
+        std::iter::from_fn(move || {
+            loop {
+                let excerpt_boundary = boundaries.next()?;
+                let wrap_row = wrap_snapshot
+                    .make_wrap_point(Point::new(excerpt_boundary.row.0, 0), Bias::Left)
+                    .row();
 
-            let new_buffer_id = match (&excerpt_boundary.prev, &excerpt_boundary.next) {
-                (None, next) => Some(next.buffer_id),
-                (Some(prev), next) => {
-                    if prev.buffer_id != next.buffer_id {
-                        Some(next.buffer_id)
-                    } else {
-                        None
-                    }
-                }
-            };
-
-            let mut height = 0;
-
-            if let Some(new_buffer_id) = new_buffer_id {
-                let first_excerpt = excerpt_boundary.next.clone();
-                if self.buffers_with_disabled_headers.contains(&new_buffer_id) {
-                    continue;
-                }
-                if self.folded_buffers.contains(&new_buffer_id) {
-                    let mut last_excerpt_end_row = first_excerpt.end_row;
-
-                    while let Some(next_boundary) = boundaries.peek() {
-                        if next_boundary.next.buffer_id == new_buffer_id {
-                            last_excerpt_end_row = next_boundary.next.end_row;
+                let new_buffer_id = match (&excerpt_boundary.prev, &excerpt_boundary.next) {
+                    (None, next) => Some(next.buffer_id),
+                    (Some(prev), next) => {
+                        if prev.buffer_id != next.buffer_id {
+                            Some(next.buffer_id)
                         } else {
-                            break;
+                            None
+                        }
+                    }
+                };
+
+                let mut height = 0;
+
+                if let Some(new_buffer_id) = new_buffer_id {
+                    let first_excerpt = excerpt_boundary.next.clone();
+                    if self.buffers_with_disabled_headers.contains(&new_buffer_id) {
+                        continue;
+                    }
+                    if self.folded_buffers.contains(&new_buffer_id) {
+                        let mut last_excerpt_end_row = first_excerpt.end_row;
+
+                        while let Some(next_boundary) = boundaries.peek() {
+                            if next_boundary.next.buffer_id == new_buffer_id {
+                                last_excerpt_end_row = next_boundary.next.end_row;
+                            } else {
+                                break;
+                            }
+
+                            boundaries.next();
                         }
 
-                        boundaries.next();
+                        let wrap_end_row = wrap_snapshot
+                            .make_wrap_point(
+                                Point::new(
+                                    last_excerpt_end_row.0,
+                                    buffer.line_len(last_excerpt_end_row),
+                                ),
+                                Bias::Right,
+                            )
+                            .row();
+
+                        return Some((
+                            BlockPlacement::Replace(WrapRow(wrap_row)..=WrapRow(wrap_end_row)),
+                            Block::FoldedBuffer {
+                                height: height + self.buffer_header_height,
+                                first_excerpt,
+                            },
+                        ));
                     }
-
-                    let wrap_end_row = wrap_snapshot
-                        .make_wrap_point(
-                            Point::new(
-                                last_excerpt_end_row.0,
-                                buffer.line_len(last_excerpt_end_row),
-                            ),
-                            Bias::Right,
-                        )
-                        .row();
-
-                    return Some((
-                        BlockPlacement::Replace(WrapRow(wrap_row)..=WrapRow(wrap_end_row)),
-                        Block::FoldedBuffer {
-                            height: height + self.buffer_header_height,
-                            first_excerpt,
-                        },
-                    ));
                 }
-            }
 
-            if new_buffer_id.is_some() {
-                height += self.buffer_header_height;
-            } else {
-                height += self.excerpt_header_height;
-            }
+                if new_buffer_id.is_some() {
+                    height += self.buffer_header_height;
+                } else {
+                    height += self.excerpt_header_height;
+                }
 
-            return Some((
-                BlockPlacement::Above(WrapRow(wrap_row)),
-                Block::ExcerptBoundary {
-                    excerpt: excerpt_boundary.next,
-                    height,
-                    starts_new_buffer: new_buffer_id.is_some(),
-                },
-            ));
+                return Some((
+                    BlockPlacement::Above(WrapRow(wrap_row)),
+                    Block::ExcerptBoundary {
+                        excerpt: excerpt_boundary.next,
+                        height,
+                        starts_new_buffer: new_buffer_id.is_some(),
+                    },
+                ));
+            }
         })
     }
 
