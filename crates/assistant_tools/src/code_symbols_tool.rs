@@ -51,6 +51,14 @@ pub struct CodeSymbolsInput {
     #[serde(default)]
     pub regex: Option<String>,
 
+    /// Whether the regex is case-sensitive. Defaults to false (case-insensitive).
+    ///
+    /// <example>
+    /// Set to `true` to make regex matching case-sensitive.
+    /// </example>
+    #[serde(default)]
+    pub case_sensitive: bool,
+
     /// Optional starting position for paginated results (0-based).
     /// When not provided, starts from the beginning.
     #[serde(default)]
@@ -131,7 +139,10 @@ impl Tool for CodeSymbolsTool {
         };
 
         let regex = match input.regex {
-            Some(regex_str) => match RegexBuilder::new(&regex_str).case_insensitive(true).build() {
+            Some(regex_str) => match RegexBuilder::new(&regex_str)
+                .case_insensitive(!input.case_sensitive)
+                .build()
+            {
                 Ok(regex) => Some(regex),
                 Err(err) => return Task::ready(Err(anyhow!("Invalid regex: {err}"))),
             },
