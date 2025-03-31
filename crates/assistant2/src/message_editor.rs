@@ -3,12 +3,11 @@ use std::sync::Arc;
 use collections::HashSet;
 use editor::actions::MoveUp;
 use editor::{ContextMenuOptions, ContextMenuPlacement, Editor, EditorElement, EditorStyle};
+use file_icons::FileIcons;
 use fs::Fs;
-use git::ExpandCommitEditor;
-use git_ui::git_panel;
 use gpui::{
-    point, Animation, AnimationExt, App, DismissEvent, Entity, Focusable, Subscription, TextStyle,
-    WeakEntity,
+    linear_color_stop, linear_gradient, point, Animation, AnimationExt, App, DismissEvent, Entity,
+    Focusable, Subscription, TextStyle, WeakEntity,
 };
 use language_model::LanguageModelRegistry;
 use language_model_selector::ToggleModelSelector;
@@ -17,7 +16,8 @@ use settings::Settings;
 use std::time::Duration;
 use theme::ThemeSettings;
 use ui::{
-    prelude::*, ButtonLike, KeyBinding, PlatformStyle, PopoverMenu, PopoverMenuHandle, Tooltip,
+    prelude::*, ButtonLike, Disclosure, KeyBinding, PlatformStyle, PopoverMenu, PopoverMenuHandle,
+    Tooltip,
 };
 use util::ResultExt as _;
 use vim_mode_setting::VimModeSetting;
@@ -30,7 +30,10 @@ use crate::context_strip::{ContextStrip, ContextStripEvent, SuggestContextKind};
 use crate::profile_selector::ProfileSelector;
 use crate::thread::{RequestKind, Thread};
 use crate::thread_store::ThreadStore;
-use crate::{Chat, ChatMode, NewThread, RemoveAllContext, ThreadEvent, ToggleContextPicker};
+use crate::{
+    AssistantDiff, Chat, ChatMode, OpenAssistantDiff, RemoveAllContext, ThreadEvent,
+    ToggleContextPicker, ToggleProfileSelector,
+};
 
 pub struct MessageEditor {
     thread: Entity<Thread>,
@@ -45,6 +48,7 @@ pub struct MessageEditor {
     inline_context_picker_menu_handle: PopoverMenuHandle<ContextPicker>,
     model_selector: Entity<AssistantModelSelector>,
     profile_selector: Entity<ProfileSelector>,
+    edits_expanded: bool,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -138,7 +142,9 @@ impl MessageEditor {
                     cx,
                 )
             }),
-            profile_selector: cx.new(|cx| ProfileSelector::new(fs, thread_store, cx)),
+            edits_expanded: false,
+            profile_selector: cx
+                .new(|cx| ProfileSelector::new(fs, thread_store, editor.focus_handle(cx), cx)),
             _subscriptions: subscriptions,
         }
     }
@@ -244,6 +250,9 @@ impl MessageEditor {
             thread
                 .update(cx, |thread, cx| {
                     let context = context_store.read(cx).snapshot(cx).collect::<Vec<_>>();
+                    thread.action_log().update(cx, |action_log, cx| {
+                        action_log.clear_reviewed_changes(cx);
+                    });
                     thread.insert_user_message(user_message, context, checkpoint, cx);
                     thread.send_to_model(model, request_kind, cx);
                 })
@@ -290,6 +299,10 @@ impl MessageEditor {
             self.context_strip.focus_handle(cx).focus(window);
         }
     }
+
+    fn handle_review_click(&self, window: &mut Window, cx: &mut Context<Self>) {
+        AssistantDiff::deploy(self.thread.clone(), self.workspace.clone(), window, cx).log_err();
+    }
 }
 
 impl Focusable for MessageEditor {
@@ -328,30 +341,14 @@ impl Render for MessageEditor {
             px(64.)
         };
 
-        let project = self.thread.read(cx).project();
-        let changed_files = if let Some(repository) = project.read(cx).active_repository(cx) {
-            repository.read(cx).cached_status().count()
-        } else {
-            0
-        };
+        let action_log = self.thread.read(cx).action_log();
+        let changed_buffers = action_log.read(cx).changed_buffers(cx);
+        let changed_buffers_count = changed_buffers.len();
 
+        let editor_bg_color = cx.theme().colors().editor_background;
         let border_color = cx.theme().colors().border;
         let active_color = cx.theme().colors().element_selected;
-        let editor_bg_color = cx.theme().colors().editor_background;
         let bg_edit_files_disclosure = editor_bg_color.blend(active_color.opacity(0.3));
-
-        let edit_files_container = || {
-            h_flex()
-                .mx_2()
-                .py_1()
-                .pl_2p5()
-                .pr_1()
-                .bg(bg_edit_files_disclosure)
-                .border_1()
-                .border_color(border_color)
-                .justify_between()
-                .flex_wrap()
-        };
 
         v_flex()
             .size_full()
@@ -413,167 +410,213 @@ impl Render for MessageEditor {
                     ),
                 )
             })
-            .when(
-                changed_files > 0 && !is_generating && !empty_thread,
-                |parent| {
-                    parent.child(
-                        edit_files_container()
-                            .border_b_0()
-                            .rounded_t_md()
-                            .shadow(smallvec::smallvec![gpui::BoxShadow {
-                                color: gpui::black().opacity(0.15),
-                                offset: point(px(1.), px(-1.)),
-                                blur_radius: px(3.),
-                                spread_radius: px(0.),
-                            }])
-                            .child(
-                                h_flex()
-                                    .gap_2()
-                                    .child(Label::new("Edits").size(LabelSize::XSmall))
-                                    .child(div().size_1().rounded_full().bg(border_color))
-                                    .child(
-                                        Label::new(format!(
-                                            "{} {}",
-                                            changed_files,
-                                            if changed_files == 1 { "file" } else { "files" }
-                                        ))
-                                        .size(LabelSize::XSmall),
+            .when(changed_buffers_count > 0, |parent| {
+                parent.child(
+                    v_flex()
+                        .mx_2()
+                        .bg(bg_edit_files_disclosure)
+                        .border_1()
+                        .border_b_0()
+                        .border_color(border_color)
+                        .rounded_t_md()
+                        .shadow(smallvec::smallvec![gpui::BoxShadow {
+                            color: gpui::black().opacity(0.15),
+                            offset: point(px(1.), px(-1.)),
+                            blur_radius: px(3.),
+                            spread_radius: px(0.),
+                        }])
+                        .child(
+                            h_flex()
+                                .p_1p5()
+                                .justify_between()
+                                .when(self.edits_expanded, |this| {
+                                    this.border_b_1().border_color(border_color)
+                                })
+                                .child(
+                                    h_flex()
+                                        .gap_1()
+                                        .child(
+                                            Disclosure::new(
+                                                "edits-disclosure",
+                                                self.edits_expanded,
+                                            )
+                                            .on_click(
+                                                cx.listener(|this, _ev, _window, cx| {
+                                                    this.edits_expanded = !this.edits_expanded;
+                                                    cx.notify();
+                                                }),
+                                            ),
+                                        )
+                                        .child(
+                                            Label::new("Edits")
+                                                .size(LabelSize::Small)
+                                                .color(Color::Muted),
+                                        )
+                                        .child(
+                                            Label::new("•")
+                                                .size(LabelSize::XSmall)
+                                                .color(Color::Muted),
+                                        )
+                                        .child(
+                                            Label::new(format!(
+                                                "{} {}",
+                                                changed_buffers_count,
+                                                if changed_buffers_count == 1 {
+                                                    "file"
+                                                } else {
+                                                    "files"
+                                                }
+                                            ))
+                                            .size(LabelSize::Small)
+                                            .color(Color::Muted),
+                                        ),
+                                )
+                                .child(
+                                    Button::new("review", "Review Changes")
+                                        .label_size(LabelSize::Small)
+                                        .key_binding(
+                                            KeyBinding::for_action_in(
+                                                &OpenAssistantDiff,
+                                                &focus_handle,
+                                                window,
+                                                cx,
+                                            )
+                                            .map(|kb| kb.size(rems_from_px(12.))),
+                                        )
+                                        .on_click(cx.listener(|this, _, window, cx| {
+                                            this.handle_review_click(window, cx)
+                                        })),
+                                ),
+                        )
+                        .when(self.edits_expanded, |parent| {
+                            parent.child(
+                                v_flex().bg(cx.theme().colors().editor_background).children(
+                                    changed_buffers.into_iter().enumerate().flat_map(
+                                        |(index, (buffer, changed))| {
+                                            let file = buffer.read(cx).file()?;
+                                            let path = file.path();
+
+                                            let parent_label = path.parent().and_then(|parent| {
+                                                let parent_str = parent.to_string_lossy();
+
+                                                if parent_str.is_empty() {
+                                                    None
+                                                } else {
+                                                    Some(
+                                                        Label::new(format!(
+                                                            "{}{}",
+                                                            parent_str,
+                                                            std::path::MAIN_SEPARATOR_STR
+                                                        ))
+                                                        .color(Color::Muted)
+                                                        .size(LabelSize::XSmall)
+                                                        .buffer_font(cx),
+                                                    )
+                                                }
+                                            });
+
+                                            let name_label = path.file_name().map(|name| {
+                                                Label::new(name.to_string_lossy().to_string())
+                                                    .size(LabelSize::XSmall)
+                                                    .buffer_font(cx)
+                                            });
+
+                                            let file_icon = FileIcons::get_icon(&path, cx)
+                                                .map(Icon::from_path)
+                                                .map(|icon| {
+                                                    icon.color(Color::Muted).size(IconSize::Small)
+                                                })
+                                                .unwrap_or_else(|| {
+                                                    Icon::new(IconName::File)
+                                                        .color(Color::Muted)
+                                                        .size(IconSize::Small)
+                                                });
+
+                                            let element = div()
+                                                .relative()
+                                                .py_1()
+                                                .px_2()
+                                                .when(index + 1 < changed_buffers_count, |parent| {
+                                                    parent.border_color(border_color).border_b_1()
+                                                })
+                                                .child(
+                                                    h_flex()
+                                                        .gap_2()
+                                                        .justify_between()
+                                                        .child(
+                                                            h_flex()
+                                                                .id("file-container")
+                                                                .pr_8()
+                                                                .gap_1p5()
+                                                                .max_w_full()
+                                                                .overflow_x_scroll()
+                                                                .child(file_icon)
+                                                                .child(
+                                                                    h_flex()
+                                                                        .children(parent_label)
+                                                                        .children(name_label),
+                                                                ) // TODO: show lines changed
+                                                                .child(
+                                                                    Label::new("+")
+                                                                        .color(Color::Created),
+                                                                )
+                                                                .child(
+                                                                    Label::new("-")
+                                                                        .color(Color::Deleted),
+                                                                ),
+                                                        )
+                                                        .when(!changed.needs_review, |parent| {
+                                                            parent.child(
+                                                                Icon::new(IconName::Check)
+                                                                    .color(Color::Success),
+                                                            )
+                                                        })
+                                                        .child(
+                                                            div()
+                                                                .h_full()
+                                                                .absolute()
+                                                                .w_8()
+                                                                .bottom_0()
+                                                                .map(|this| {
+                                                                    if !changed.needs_review {
+                                                                        this.right_4()
+                                                                    } else {
+                                                                        this.right_0()
+                                                                    }
+                                                                })
+                                                                .bg(linear_gradient(
+                                                                    90.,
+                                                                    linear_color_stop(
+                                                                        editor_bg_color,
+                                                                        1.,
+                                                                    ),
+                                                                    linear_color_stop(
+                                                                        editor_bg_color
+                                                                            .opacity(0.2),
+                                                                        0.,
+                                                                    ),
+                                                                )),
+                                                        ),
+                                                );
+
+                                            Some(element)
+                                        },
                                     ),
+                                ),
                             )
-                            .child(
-                                h_flex()
-                                    .gap_1()
-                                    .child(
-                                        Button::new("panel", "Open Git Panel")
-                                            .label_size(LabelSize::XSmall)
-                                            .key_binding({
-                                                let focus_handle = focus_handle.clone();
-                                                KeyBinding::for_action_in(
-                                                    &git_panel::ToggleFocus,
-                                                    &focus_handle,
-                                                    window,
-                                                    cx,
-                                                )
-                                                .map(|kb| kb.size(rems_from_px(10.)))
-                                            })
-                                            .on_click(|_ev, _window, cx| {
-                                                cx.defer(|cx| {
-                                                    cx.dispatch_action(&git_panel::ToggleFocus)
-                                                });
-                                            }),
-                                    )
-                                    .child(
-                                        Button::new("review", "Review Diff")
-                                            .label_size(LabelSize::XSmall)
-                                            .key_binding({
-                                                let focus_handle = focus_handle.clone();
-                                                KeyBinding::for_action_in(
-                                                    &git_ui::project_diff::Diff,
-                                                    &focus_handle,
-                                                    window,
-                                                    cx,
-                                                )
-                                                .map(|kb| kb.size(rems_from_px(10.)))
-                                            })
-                                            .on_click(|_event, _window, cx| {
-                                                cx.defer(|cx| {
-                                                    cx.dispatch_action(&git_ui::project_diff::Diff)
-                                                });
-                                            }),
-                                    )
-                                    .child(
-                                        Button::new("commit", "Commit Changes")
-                                            .label_size(LabelSize::XSmall)
-                                            .key_binding({
-                                                let focus_handle = focus_handle.clone();
-                                                KeyBinding::for_action_in(
-                                                    &ExpandCommitEditor,
-                                                    &focus_handle,
-                                                    window,
-                                                    cx,
-                                                )
-                                                .map(|kb| kb.size(rems_from_px(10.)))
-                                            })
-                                            .on_click(|_event, _window, cx| {
-                                                cx.defer(|cx| {
-                                                    cx.dispatch_action(&ExpandCommitEditor)
-                                                });
-                                            }),
-                                    ),
-                            ),
-                    )
-                },
-            )
-            .when(
-                changed_files > 0 && !is_generating && empty_thread,
-                |parent| {
-                    parent.child(
-                        edit_files_container()
-                            .mb_2()
-                            .rounded_md()
-                            .child(
-                                h_flex()
-                                    .gap_2()
-                                    .child(Label::new("Consider committing your changes before starting a fresh thread").size(LabelSize::XSmall))
-                                    .child(div().size_1().rounded_full().bg(border_color))
-                                    .child(
-                                        Label::new(format!(
-                                            "{} {}",
-                                            changed_files,
-                                            if changed_files == 1 { "file" } else { "files" }
-                                        ))
-                                        .size(LabelSize::XSmall),
-                                    ),
-                            )
-                            .child(
-                                h_flex()
-                                    .gap_1()
-                                    .child(
-                                        Button::new("review", "Review Diff")
-                                            .label_size(LabelSize::XSmall)
-                                            .key_binding({
-                                                let focus_handle = focus_handle.clone();
-                                                KeyBinding::for_action_in(
-                                                    &git_ui::project_diff::Diff,
-                                                    &focus_handle,
-                                                    window,
-                                                    cx,
-                                                )
-                                                .map(|kb| kb.size(rems_from_px(10.)))
-                                            })
-                                            .on_click(|_event, _window, cx| {
-                                                cx.defer(|cx| {
-                                                    cx.dispatch_action(&git_ui::project_diff::Diff)
-                                                });
-                                            }),
-                                    )
-                                    .child(
-                                        Button::new("commit", "Commit Changes")
-                                            .label_size(LabelSize::XSmall)
-                                            .key_binding({
-                                                let focus_handle = focus_handle.clone();
-                                                KeyBinding::for_action_in(
-                                                    &ExpandCommitEditor,
-                                                    &focus_handle,
-                                                    window,
-                                                    cx,
-                                                )
-                                                .map(|kb| kb.size(rems_from_px(10.)))
-                                            })
-                                            .on_click(|_event, _window, cx| {
-                                                cx.defer(|cx| {
-                                                    cx.dispatch_action(&ExpandCommitEditor)
-                                                });
-                                            }),
-                                    ),
-                            ),
-                    )
-                },
-            )
+                        }),
+                )
+            })
             .child(
                 v_flex()
                     .key_context("MessageEditor")
                     .on_action(cx.listener(Self::chat))
+                    .on_action(cx.listener(|this, _: &ToggleProfileSelector, window, cx| {
+                        this.profile_selector
+                            .read(cx)
+                            .menu_handle()
+                            .toggle(window, cx);
+                    }))
                     .on_action(cx.listener(|this, _: &ToggleModelSelector, window, cx| {
                         this.model_selector
                             .update(cx, |model_selector, cx| model_selector.toggle(window, cx));

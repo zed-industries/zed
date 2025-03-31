@@ -640,7 +640,7 @@ impl ExtensionStore {
         &self,
         path: &str,
         query: &[(&str, &str)],
-        cx: &mut Context<'_, ExtensionStore>,
+        cx: &mut Context<ExtensionStore>,
     ) -> Task<Result<Vec<ExtensionMetadata>>> {
         let url = self.http_client.build_zed_api_url(path, query);
         let http_client = self.http_client.clone();

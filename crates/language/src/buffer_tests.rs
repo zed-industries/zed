@@ -374,7 +374,7 @@ async fn test_apply_diff(cx: &mut TestAppContext) {
 
     let diff = buffer.update(cx, |b, cx| b.diff(text.clone(), cx)).await;
     buffer.update(cx, |buffer, cx| {
-        buffer.apply_diff(diff, cx).unwrap();
+        buffer.apply_diff(diff, true, cx).unwrap();
         assert_eq!(buffer.text(), text);
         let actual_offsets = anchors
             .iter()
@@ -388,7 +388,7 @@ async fn test_apply_diff(cx: &mut TestAppContext) {
 
     let diff = buffer.update(cx, |b, cx| b.diff(text.clone(), cx)).await;
     buffer.update(cx, |buffer, cx| {
-        buffer.apply_diff(diff, cx).unwrap();
+        buffer.apply_diff(diff, true, cx).unwrap();
         assert_eq!(buffer.text(), text);
         let actual_offsets = anchors
             .iter()
@@ -433,7 +433,7 @@ async fn test_normalize_whitespace(cx: &mut gpui::TestAppContext) {
     let format_diff = format.await;
     buffer.update(cx, |buffer, cx| {
         let version_before_format = format_diff.base_version.clone();
-        buffer.apply_diff(format_diff, cx);
+        buffer.apply_diff(format_diff, true, cx);
 
         // The outcome depends on the order of concurrent tasks.
         //

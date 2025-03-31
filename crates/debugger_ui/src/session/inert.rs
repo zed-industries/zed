@@ -159,6 +159,8 @@ impl Render for InertState {
                             }),
                             tcp_connection: Some(TCPHost::default()),
                             initialize_args: None,
+                            args: Default::default(),
+                            locator: None,
                         },
                     });
                 } else {
@@ -319,6 +321,8 @@ impl InertState {
             adapter: kind,
             request: DebugRequestType::Attach(task::AttachConfig { process_id: None }),
             initialize_args: None,
+            args: Default::default(),
+            locator: None,
             tcp_connection: Some(TCPHost::default()),
         };
 

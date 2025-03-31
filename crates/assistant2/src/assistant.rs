@@ -1,5 +1,6 @@
 mod active_thread;
 mod assistant_configuration;
+mod assistant_diff;
 mod assistant_model_selector;
 mod assistant_panel;
 mod buffer_codegen;
@@ -40,16 +41,17 @@ pub use crate::assistant_panel::{AssistantPanel, ConcreteAssistantPanelDelegate}
 pub use crate::inline_assistant::InlineAssistant;
 pub use crate::thread::{Message, RequestKind, Thread, ThreadEvent};
 pub use crate::thread_store::ThreadStore;
+pub use assistant_diff::{AssistantDiff, AssistantDiffToolbar};
 
 actions!(
     assistant2,
     [
         NewPromptEditor,
         ToggleContextPicker,
+        ToggleProfileSelector,
         RemoveAllContext,
         OpenHistory,
         OpenConfiguration,
-        ManageProfiles,
         AddContextServer,
         RemoveSelectedThread,
         Chat,
@@ -62,7 +64,12 @@ actions!(
         FocusRight,
         RemoveFocusedContext,
         AcceptSuggestedContext,
-        OpenActiveThreadAsMarkdown
+        OpenActiveThreadAsMarkdown,
+        OpenAssistantDiff,
+        ToggleKeep,
+        Reject,
+        RejectAll,
+        KeepAll
     ]
 );
 
@@ -72,7 +79,21 @@ pub struct NewThread {
     from_thread_id: Option<ThreadId>,
 }
 
-impl_actions!(assistant2, [NewThread]);
+#[derive(PartialEq, Clone, Default, Debug, Deserialize, JsonSchema)]
+pub struct ManageProfiles {
+    #[serde(default)]
+    pub customize_tools: Option<Arc<str>>,
+}
+
+impl ManageProfiles {
+    pub fn customize_tools(profile_id: Arc<str>) -> Self {
+        Self {
+            customize_tools: Some(profile_id),
+        }
+    }
+}
+
+impl_actions!(assistant, [NewThread, ManageProfiles]);
 
 const NAMESPACE: &str = "assistant2";
 

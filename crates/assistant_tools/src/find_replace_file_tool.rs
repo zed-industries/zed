@@ -5,7 +5,7 @@ use language_model::LanguageModelRequestMessage;
 use project::Project;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use std::{collections::HashSet, path::PathBuf, sync::Arc};
+use std::{path::PathBuf, sync::Arc};
 use ui::IconName;
 
 use crate::replace::replace_exact;
@@ -65,7 +65,7 @@ pub struct FindReplaceFileToolInput {
     /// <example>
     /// If a file contains this code:
     ///
-    /// ```rust
+    /// ```ignore
     /// fn check_user_permissions(user_id: &str) -> Result<bool> {
     ///     // Check if user exists first
     ///     let user = database.find_user(user_id)?;
@@ -83,7 +83,7 @@ pub struct FindReplaceFileToolInput {
     /// Your find string should include at least 3 lines of context before and after the part
     /// you want to change:
     ///
-    /// ```
+    /// ```ignore
     /// fn check_user_permissions(user_id: &str) -> Result<bool> {
     ///     // Check if user exists first
     ///     let user = database.find_user(user_id)?;
@@ -100,7 +100,7 @@ pub struct FindReplaceFileToolInput {
     ///
     /// And your replace string might look like:
     ///
-    /// ```
+    /// ```ignore
     /// fn check_user_permissions(user_id: &str) -> Result<bool> {
     ///     // Check if user exists first
     ///     let user = database.find_user(user_id)?;
@@ -182,6 +182,10 @@ impl Tool for FindReplaceFileTool {
                 return Err(anyhow!("`find` string cannot be empty. Use a different tool if you want to create a file."));
             }
 
+            if input.find == input.replace {
+                return Err(anyhow!("The `find` and `replace` strings are identical, so no changes would be made."));
+            }
+
             let result = cx
                 .background_spawn(async move {
                     replace_exact(&input.find, &input.replace, &snapshot).await
@@ -189,19 +193,20 @@ impl Tool for FindReplaceFileTool {
                 .await;
 
             if let Some(diff) = result {
-                buffer.update(cx, |buffer, cx| {
-                    let _ = buffer.apply_diff(diff, cx);
+                let edit_ids = buffer.update(cx, |buffer, cx| {
+                    buffer.finalize_last_transaction();
+                    buffer.apply_diff(diff, false, cx);
+                    let transaction = buffer.finalize_last_transaction();
+                    transaction.map_or(Vec::new(), |transaction| transaction.edit_ids.clone())
+                })?;
+
+                action_log.update(cx, |log, cx| {
+                    log.buffer_edited(buffer.clone(), edit_ids, cx)
                 })?;
 
                 project.update(cx, |project, cx| {
-                    project.save_buffer(buffer.clone(), cx)
+                    project.save_buffer(buffer, cx)
                 })?.await?;
-
-                action_log.update(cx, |log, cx| {
-                    let mut buffers = HashSet::default();
-                    buffers.insert(buffer);
-                    log.buffer_edited(buffers, cx);
-                })?;
 
                 Ok(format!("Edited {}", input.path.display()))
             } else {

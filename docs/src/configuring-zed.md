@@ -553,11 +553,11 @@ List of `string` values
 "cursor_shape": "hollow"
 ```
 
-## Hide Mouse While Typing
+## Hide Mouse
 
-- Description: Determines whether the mouse cursor should be hidden while typing in an editor or input box.
-- Setting: `hide_mouse_while_typing`
-- Default: `true`
+- Description: Determines when the mouse cursor should be hidden in an editor or input box.
+- Setting: `hide_mouse`
+- Default: `on_typing_and_movement`
 
 **Options**
 

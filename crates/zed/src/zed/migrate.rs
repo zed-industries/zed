@@ -49,7 +49,7 @@ struct GlobalMigrationNotification(Entity<MigrationNotification>);
 impl Global for GlobalMigrationNotification {}
 
 impl MigrationBanner {
-    pub fn new(_: &Workspace, cx: &mut Context<'_, Self>) -> Self {
+    pub fn new(_: &Workspace, cx: &mut Context<Self>) -> Self {
         if let Some(notifier) = MigrationNotification::try_global(cx) {
             cx.subscribe(
                 &notifier,
@@ -80,7 +80,7 @@ impl MigrationBanner {
         }
     }
 
-    fn handle_notification(&mut self, event: &MigrationEvent, cx: &mut Context<'_, Self>) {
+    fn handle_notification(&mut self, event: &MigrationEvent, cx: &mut Context<Self>) {
         match event {
             MigrationEvent::ContentChanged {
                 migration_type,

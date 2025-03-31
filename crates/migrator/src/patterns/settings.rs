@@ -2,7 +2,7 @@ pub const SETTINGS_ROOT_KEY_VALUE_PATTERN: &str = r#"(document
     (object
         (pair
             key: (string (string_content) @name)
-            value: (_)
+            value: (_)  @value
         )
     )
 )"#;
