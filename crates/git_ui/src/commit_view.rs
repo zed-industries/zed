@@ -1,4 +1,4 @@
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use buffer_diff::{BufferDiff, BufferDiffSnapshot};
 use editor::{Editor, EditorEvent, MultiBuffer};
 use git::repository::{CommitDetails, CommitDiff, CommitSummary, RepoPath};
@@ -11,7 +11,7 @@ use language::{
     Point, Rope, TextBuffer,
 };
 use multi_buffer::PathKey;
-use project::{git_store::Repository, Project, WorktreeId};
+use project::{Project, WorktreeId, git_store::Repository};
 use std::{
     any::{Any, TypeId},
     ffi::OsStr,
@@ -20,11 +20,11 @@ use std::{
     sync::Arc,
 };
 use ui::{Color, Icon, IconName, Label, LabelCommon as _};
-use util::{truncate_and_trailoff, ResultExt};
+use util::{ResultExt, truncate_and_trailoff};
 use workspace::{
+    Item, ItemHandle as _, ItemNavHistory, ToolbarItemLocation, Workspace,
     item::{BreadcrumbText, ItemEvent, TabContentParams},
     searchable::SearchableItemHandle,
-    Item, ItemHandle as _, ItemNavHistory, ToolbarItemLocation, Workspace,
 };
 
 pub struct CommitView {
@@ -67,10 +67,10 @@ impl CommitView {
                 let (commit_diff, commit_details) = futures::join!(commit_diff?, commit_details?);
                 let commit_diff = commit_diff.log_err()?.log_err()?;
                 let commit_details = commit_details.log_err()?.log_err()?;
+                let repo = repo.upgrade()?;
 
                 workspace
                     .update_in(cx, |workspace, window, cx| {
-                        let repo = repo.upgrade().ok_or_else(|| anyhow!("repo removed"))?;
                         let project = workspace.project();
                         let commit_view = cx.new(|cx| {
                             CommitView::new(
@@ -82,8 +82,21 @@ impl CommitView {
                                 cx,
                             )
                         });
-                        workspace.add_item_to_center(Box::new(commit_view), window, cx);
-                        anyhow::Ok(())
+
+                        let pane = workspace.active_pane();
+                        pane.update(cx, |pane, cx| {
+                            let ix = pane.items().position(|item| {
+                                let commit_view = item.downcast::<CommitView>();
+                                commit_view
+                                    .map_or(false, |view| view.read(cx).commit.sha == commit.sha)
+                            });
+                            if let Some(ix) = ix {
+                                pane.activate_item(ix, true, true, window, cx);
+                                return;
+                            } else {
+                                pane.add_item(Box::new(commit_view), true, true, None, window, cx);
+                            }
+                        })
                     })
                     .log_err()
             })
@@ -367,7 +380,7 @@ fn format_commit(commit: &CommitDetails) -> String {
     .unwrap();
     writeln!(
         &mut result,
-        "Date: {}",
+        "Date:   {}",
         time_format::format_local_timestamp(
             time::OffsetDateTime::from_unix_timestamp(commit.commit_timestamp).unwrap(),
             time::OffsetDateTime::now_utc(),
@@ -382,6 +395,9 @@ fn format_commit(commit: &CommitDetails) -> String {
         } else {
             writeln!(&mut result, "    {}", line).unwrap();
         }
+    }
+    if result.ends_with("\n\n") {
+        result.pop();
     }
     result
 }
