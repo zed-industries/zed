@@ -12,7 +12,7 @@ license = "Apache-2.0"
 workspace = true
 
 [features]
-default = ["macos-blade", "http_client", "font-kit", "wayland", "x11"]
+default = ["http_client", "font-kit", "wayland", "x11"]
 test-support = [
     "leak-detection",
     "collections/test-support",
