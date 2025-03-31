@@ -22,7 +22,7 @@ mod visual;
 use anyhow::Result;
 use collections::HashMap;
 use editor::{
-    Anchor, Bias, Editor, EditorEvent, EditorMode, EditorSettings, ToPoint,
+    Anchor, Bias, Editor, EditorEvent, EditorMode, EditorSettings, HideMouseCursorOrigin, ToPoint,
     movement::{self, FindRange},
 };
 use gpui::{
@@ -767,6 +767,9 @@ impl Vim {
         if let Some(action) = keystroke_event.action.as_ref() {
             // Keystroke is handled by the vim system, so continue forward
             if action.name().starts_with("vim::") {
+                self.update_editor(window, cx, |_, editor, _, _| {
+                    editor.hide_mouse_cursor(&HideMouseCursorOrigin::MovementAction)
+                });
                 return;
             }
         } else if window.has_pending_keystrokes() || keystroke_event.keystroke.is_ime_in_progress()
