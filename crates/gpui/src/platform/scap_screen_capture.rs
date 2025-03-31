@@ -11,6 +11,7 @@ use std::sync::Arc;
 ///
 /// `scap_default_target_source` should be used instead on Wayland, since `scap_screen_sources`
 /// won't return any results.
+#[allow(dead_code)]
 pub(crate) fn scap_screen_sources() -> oneshot::Receiver<Result<Vec<Box<dyn ScreenCaptureSource>>>>
 {
     let (tx, rx) = oneshot::channel();
@@ -23,8 +24,7 @@ pub(crate) fn scap_screen_sources() -> oneshot::Receiver<Result<Vec<Box<dyn Scre
 ///
 /// On Wayland (Linux), prompts the user to select a target, and populates the receiver with a
 /// single screen capture source for their selection.
-///
-/// todo! What happens if a wayland window is resized?
+#[allow(dead_code)]
 pub(crate) fn start_scap_default_target_source(
 ) -> oneshot::Receiver<Result<Vec<Box<dyn ScreenCaptureSource>>>> {
     let (sources_tx, sources_rx) = oneshot::channel();
@@ -169,7 +169,7 @@ impl ScreenCaptureSource for ScapDefaultTargetCaptureSource {
 }
 
 fn new_scap_capturer(target: Option<scap::Target>) -> Result<scap::capturer::Capturer> {
-    Ok(scap::capturer::Capturer::build(scap::capturer::Options {
+    scap::capturer::Capturer::build(scap::capturer::Options {
         fps: 60,
         show_cursor: true,
         show_highlight: true,
@@ -179,7 +179,7 @@ fn new_scap_capturer(target: Option<scap::Target>) -> Result<scap::capturer::Cap
         crop_area: None,
         target,
         excluded_targets: None,
-    })?)
+    })
 }
 
 fn run_capture(

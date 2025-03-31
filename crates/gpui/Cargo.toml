@@ -137,13 +137,11 @@ objc2-metal = { version = "0.2", optional = true }
 #TODO: replace with "objc2"
 metal.workspace = true
 
-[target.'cfg(any(target_os = "linux", target_os = "freebsd", target_os = "windows"))'.dependencies]
-scap.workspace = true
-
 [target.'cfg(any(target_os = "linux", target_os = "freebsd", target_os = "macos"))'.dependencies]
 pathfinder_geometry = "0.5"
 
 [target.'cfg(any(target_os = "linux", target_os = "freebsd"))'.dependencies]
+scap.workspace = true
 # Always used
 flume = "0.11"
 oo7 = { version = "0.4.0", default-features = false, features = [

@@ -27,7 +27,7 @@ mod test;
 mod windows;
 
 #[cfg(not(target_os = "macos"))]
-mod scap_screen_capture;
+pub(crate) mod scap_screen_capture;
 
 use crate::{
     point, Action, AnyWindowHandle, App, AsyncWindowContext, BackgroundExecutor, Bounds,
@@ -76,9 +76,6 @@ pub(crate) use windows::*;
 
 #[cfg(any(test, feature = "test-support"))]
 pub use test::TestScreenCaptureSource;
-
-#[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "windows"))]
-pub(crate) use scap_screen_capture::{scap_screen_sources, start_scap_default_target_source};
 
 /// Returns a background executor for the current platform.
 pub fn background_executor() -> BackgroundExecutor {
@@ -164,6 +161,7 @@ pub(crate) trait Platform: 'static {
         None
     }
 
+    fn is_screen_capture_supported(&self) -> bool;
     fn screen_capture_sources(
         &self,
     ) -> oneshot::Receiver<Result<Vec<Box<dyn ScreenCaptureSource>>>>;

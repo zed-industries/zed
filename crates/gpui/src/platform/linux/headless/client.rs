@@ -66,6 +66,10 @@ impl LinuxClient for HeadlessClient {
         None
     }
 
+    fn is_screen_capture_supported(&self) -> bool {
+        false
+    }
+
     fn screen_capture_sources(
         &self,
     ) -> oneshot::Receiver<anyhow::Result<Vec<Box<dyn ScreenCaptureSource>>>> {

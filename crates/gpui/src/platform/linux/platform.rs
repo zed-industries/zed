@@ -51,6 +51,7 @@ pub trait LinuxClient {
     #[allow(unused)]
     fn display(&self, id: DisplayId) -> Option<Rc<dyn PlatformDisplay>>;
     fn primary_display(&self) -> Option<Rc<dyn PlatformDisplay>>;
+    fn is_screen_capture_supported(&self) -> bool;
     fn screen_capture_sources(
         &self,
     ) -> oneshot::Receiver<Result<Vec<Box<dyn ScreenCaptureSource>>>>;
@@ -232,6 +233,10 @@ impl<P: LinuxClient + 'static> Platform for P {
 
     fn displays(&self) -> Vec<Rc<dyn PlatformDisplay>> {
         self.displays()
+    }
+
+    fn is_screen_capture_supported(&self) -> bool {
+        self.is_screen_capture_supported()
     }
 
     fn screen_capture_sources(

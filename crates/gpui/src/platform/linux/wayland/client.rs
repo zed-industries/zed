@@ -7,6 +7,7 @@ use std::{
     time::{Duration, Instant},
 };
 
+use anyhow::anyhow;
 use calloop::{
     timer::{TimeoutAction, Timer},
     EventLoop, LoopHandle,
@@ -83,12 +84,12 @@ use crate::platform::linux::{
 };
 use crate::platform::{blade::BladeContext, PlatformWindow};
 use crate::{
-    point, px, size, start_scap_default_target_source, AnyWindowHandle, Bounds, CursorStyle,
-    DevicePixels, DisplayId, FileDropEvent, ForegroundExecutor, KeyDownEvent, KeyUpEvent,
-    Keystroke, LinuxCommon, Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent,
-    MouseExitEvent, MouseMoveEvent, MouseUpEvent, NavigationDirection, Pixels, PlatformDisplay,
-    PlatformInput, Point, ScaledPixels, ScreenCaptureSource, ScrollDelta, ScrollWheelEvent, Size,
-    TouchPhase, WindowParams, DOUBLE_CLICK_INTERVAL, SCROLL_LINES,
+    point, px, size, AnyWindowHandle, Bounds, CursorStyle, DevicePixels, DisplayId, FileDropEvent,
+    ForegroundExecutor, KeyDownEvent, KeyUpEvent, Keystroke, LinuxCommon, Modifiers,
+    ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseExitEvent, MouseMoveEvent,
+    MouseUpEvent, NavigationDirection, Pixels, PlatformDisplay, PlatformInput, Point, ScaledPixels,
+    ScreenCaptureSource, ScrollDelta, ScrollWheelEvent, Size, TouchPhase, WindowParams,
+    DOUBLE_CLICK_INTERVAL, SCROLL_LINES,
 };
 
 /// Used to convert evdev scancode to xkb scancode
@@ -636,10 +637,22 @@ impl LinuxClient for WaylandClient {
         None
     }
 
+    fn is_screen_capture_supported(&self) -> bool {
+        false
+    }
+
     fn screen_capture_sources(
         &self,
     ) -> oneshot::Receiver<anyhow::Result<Vec<Box<dyn ScreenCaptureSource>>>> {
-        start_scap_default_target_source()
+        // TODO: Get screen capture working on wayland. Be sure to try window resizing as that may
+        // be tricky.
+        //
+        // start_scap_default_target_source()
+        let (sources_tx, sources_rx) = oneshot::channel();
+        sources_tx
+            .send(Err(anyhow!("Wayland screen capture not yet implemented.")))
+            .ok();
+        sources_rx
     }
 
     fn open_window(

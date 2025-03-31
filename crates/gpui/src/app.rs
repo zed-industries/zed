@@ -650,6 +650,11 @@ impl App {
         self.platform.primary_display()
     }
 
+    /// Returns whether `screen_capture_sources` may work.
+    pub fn is_screen_capture_supported(&self) -> bool {
+        self.platform.is_screen_capture_supported()
+    }
+
     /// Returns a list of available screen capture sources.
     pub fn screen_capture_sources(
         &self,

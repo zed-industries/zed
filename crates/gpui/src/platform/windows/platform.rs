@@ -396,10 +396,19 @@ impl Platform for WindowsPlatform {
         WindowsDisplay::primary_monitor().map(|display| Rc::new(display) as Rc<dyn PlatformDisplay>)
     }
 
+    fn is_screen_capture_supported(&self) -> bool {
+        false
+    }
+
     fn screen_capture_sources(
         &self,
     ) -> oneshot::Receiver<Result<Vec<Box<dyn ScreenCaptureSource>>>> {
-        scap_screen_sources()
+        // TODO: Get screen capture working on windows.
+        //
+        // scap_screen_sources()
+        let (sources_tx, sources_rx) = oneshot::channel();
+        sources_tx.send(Err(anyhow!("Windows screen capture not yet implemented.")));
+        sources_rx
     }
 
     fn active_window(&self) -> Option<AnyWindowHandle> {
