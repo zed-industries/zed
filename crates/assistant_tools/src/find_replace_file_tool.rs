@@ -65,7 +65,7 @@ pub struct FindReplaceFileToolInput {
     /// <example>
     /// If a file contains this code:
     ///
-    /// ```rust
+    /// ```ignore
     /// fn check_user_permissions(user_id: &str) -> Result<bool> {
     ///     // Check if user exists first
     ///     let user = database.find_user(user_id)?;
@@ -83,7 +83,7 @@ pub struct FindReplaceFileToolInput {
     /// Your find string should include at least 3 lines of context before and after the part
     /// you want to change:
     ///
-    /// ```
+    /// ```ignore
     /// fn check_user_permissions(user_id: &str) -> Result<bool> {
     ///     // Check if user exists first
     ///     let user = database.find_user(user_id)?;
@@ -100,7 +100,7 @@ pub struct FindReplaceFileToolInput {
     ///
     /// And your replace string might look like:
     ///
-    /// ```
+    /// ```ignore
     /// fn check_user_permissions(user_id: &str) -> Result<bool> {
     ///     // Check if user exists first
     ///     let user = database.find_user(user_id)?;
