@@ -163,20 +163,20 @@ impl ActionLog {
                         .get_mut(&buffer)
                         .context("buffer not tracked")?;
 
-                    let row_edits =
+                    let edits =
                         row_edits_since_version(&tracked_buffer.diff_version, &buffer_snapshot);
                     match author {
                         ChangeAuthor::User => {
                             tracked_buffer.unreviewed_changes = rebase_patch(
                                 &tracked_buffer.unreviewed_changes,
-                                row_edits,
+                                edits,
                                 &mut tracked_buffer.base_text,
                                 buffer_snapshot.as_rope(),
                             );
                         }
                         ChangeAuthor::Agent => {
                             tracked_buffer.unreviewed_changes =
-                                tracked_buffer.unreviewed_changes.compose(row_edits)
+                                tracked_buffer.unreviewed_changes.compose(edits)
                         }
                     }
 
