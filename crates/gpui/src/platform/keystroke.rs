@@ -193,20 +193,6 @@ impl Keystroke {
         })
     }
 
-    /// Parse a keystroke case-insensitively. This means
-    /// keystrokes like `ctrl-T` will not be rejected.
-    /// Useful in tests to allow more concise keystroke inputs,
-    /// e.g., `simulate_keystrokes("ctrl-T")` instead of `simulate_keystrokes("ctrl-shift-t")`.
-    /// This also allows `simulate_input` style functions to support capital letters,
-    /// e.g., `simulate_input("Title Case")` can work by just parsing each character as a keystroke
-    /// and dispatching it, instead of needing to parse something like
-    /// `simulate_input("shift-title shift-case")`.
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn parse_case_insensitive(
-        source: &str,
-    ) -> std::result::Result<Self, InvalidKeystrokeError> {
-        return Self::parse(source);
-    }
     /// Produces a representation of this key that Parse can understand.
     pub fn unparse(&self) -> String {
         let mut str = String::new();
