@@ -777,7 +777,7 @@ impl Thread {
                 LanguageModelRequestTool {
                     name: tool.name(),
                     description: tool.description(),
-                    input_schema: tool.input_schema(),
+                    input_schema: tool.input_schema(model.tool_input_format()),
                 }
             }));
 
@@ -1030,17 +1030,23 @@ impl Thread {
                                 }
                             }
                             LanguageModelCompletionEvent::ToolUse(tool_use) => {
-                                if let Some(last_assistant_message) = thread
+                                let last_assistant_message_id = thread
                                     .messages
                                     .iter()
                                     .rfind(|message| message.role == Role::Assistant)
-                                {
-                                    thread.tool_use.request_tool_use(
-                                        last_assistant_message.id,
-                                        tool_use,
-                                        cx,
-                                    );
-                                }
+                                    .map(|message| message.id)
+                                    .unwrap_or_else(|| {
+                                        thread.insert_message(
+                                            Role::Assistant,
+                                            vec![MessageSegment::Text("Using tool...".to_string())],
+                                            cx,
+                                        )
+                                    });
+                                thread.tool_use.request_tool_use(
+                                    last_assistant_message_id,
+                                    tool_use,
+                                    cx,
+                                );
                             }
                         }
 
@@ -1257,6 +1263,7 @@ impl Thread {
         tool: Arc<dyn Tool>,
         cx: &mut Context<Thread>,
     ) -> Task<()> {
+        let tool_name: Arc<str> = tool.name().into();
         let run_tool = tool.run(
             input,
             messages,
@@ -1271,9 +1278,11 @@ impl Thread {
 
                 thread
                     .update(cx, |thread, cx| {
-                        let pending_tool_use = thread
-                            .tool_use
-                            .insert_tool_output(tool_use_id.clone(), output);
+                        let pending_tool_use = thread.tool_use.insert_tool_output(
+                            tool_use_id.clone(),
+                            tool_name,
+                            output,
+                        );
 
                         cx.emit(ThreadEvent::ToolFinished {
                             tool_use_id,
@@ -1561,12 +1570,18 @@ impl Thread {
         self.cumulative_token_usage.clone()
     }
 
-    pub fn deny_tool_use(&mut self, tool_use_id: LanguageModelToolUseId, cx: &mut Context<Self>) {
+    pub fn deny_tool_use(
+        &mut self,
+        tool_use_id: LanguageModelToolUseId,
+        tool_name: Arc<str>,
+        cx: &mut Context<Self>,
+    ) {
         let err = Err(anyhow::anyhow!(
             "Permission to run tool action denied by user"
         ));
 
-        self.tool_use.insert_tool_output(tool_use_id.clone(), err);
+        self.tool_use
+            .insert_tool_output(tool_use_id.clone(), tool_name, err);
 
         cx.emit(ThreadEvent::ToolFinished {
             tool_use_id,

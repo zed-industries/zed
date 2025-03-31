@@ -167,6 +167,7 @@ impl LanguageModelImage {
 #[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq, Hash)]
 pub struct LanguageModelToolResult {
     pub tool_use_id: LanguageModelToolUseId,
+    pub tool_name: Arc<str>,
     pub is_error: bool,
     pub content: Arc<str>,
 }

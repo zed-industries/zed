@@ -14,6 +14,8 @@ use gpui::{
 use project::Project;
 use util::test::{marked_text_offsets, marked_text_ranges};
 
+pub use crate::rust_analyzer_ext::expand_macro_recursively;
+
 #[cfg(test)]
 #[ctor::ctor]
 fn init_logger() {

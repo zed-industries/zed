@@ -113,6 +113,7 @@ impl ToolUseState {
                                 tool_use_id.clone(),
                                 LanguageModelToolResult {
                                     tool_use_id,
+                                    tool_name: tool_use.clone(),
                                     is_error: tool_result.is_error,
                                     content: tool_result.content.clone(),
                                 },
@@ -134,6 +135,7 @@ impl ToolUseState {
                 tool_use_id.clone(),
                 LanguageModelToolResult {
                     tool_use_id,
+                    tool_name: tool_use.name.clone(),
                     content: "Tool canceled by user".into(),
                     is_error: true,
                 },
@@ -313,6 +315,7 @@ impl ToolUseState {
     pub fn insert_tool_output(
         &mut self,
         tool_use_id: LanguageModelToolUseId,
+        tool_name: Arc<str>,
         output: Result<String>,
     ) -> Option<PendingToolUse> {
         match output {
@@ -321,6 +324,7 @@ impl ToolUseState {
                     tool_use_id.clone(),
                     LanguageModelToolResult {
                         tool_use_id: tool_use_id.clone(),
+                        tool_name,
                         content: tool_result.into(),
                         is_error: false,
                     },
@@ -332,6 +336,7 @@ impl ToolUseState {
                     tool_use_id.clone(),
                     LanguageModelToolResult {
                         tool_use_id: tool_use_id.clone(),
+                        tool_name,
                         content: err.to_string().into(),
                         is_error: true,
                     },
@@ -379,6 +384,7 @@ impl ToolUseState {
                     request_message.content.push(MessageContent::ToolResult(
                         LanguageModelToolResult {
                             tool_use_id: tool_use_id.clone(),
+                            tool_name: tool_result.tool_name.clone(),
                             is_error: tool_result.is_error,
                             content: if tool_result.content.is_empty() {
                                 // Surprisingly, the API fails if we return an empty string here.

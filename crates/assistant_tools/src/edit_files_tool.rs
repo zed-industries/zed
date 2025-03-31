@@ -2,12 +2,14 @@ mod edit_action;
 pub mod log;
 
 use crate::replace::{replace_exact, replace_with_flexible_indent};
+use crate::schema::json_schema_for;
 use anyhow::{Context, Result, anyhow};
 use assistant_tool::{ActionLog, Tool};
 use collections::HashSet;
 use edit_action::{EditAction, EditActionParser};
 use futures::{SinkExt, StreamExt, channel::mpsc};
 use gpui::{App, AppContext, AsyncApp, Entity, Task};
+use language_model::LanguageModelToolSchemaFormat;
 use language_model::{
     LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage, MessageContent, Role,
 };
@@ -91,9 +93,8 @@ impl Tool for EditFilesTool {
         IconName::Pencil
     }
 
-    fn input_schema(&self) -> serde_json::Value {
-        let schema = schemars::schema_for!(EditFilesToolInput);
-        serde_json::to_value(&schema).unwrap()
+    fn input_schema(&self, format: LanguageModelToolSchemaFormat) -> serde_json::Value {
+        json_schema_for::<EditFilesToolInput>(format)
     }
 
     fn ui_text(&self, input: &serde_json::Value) -> String {
