@@ -41,7 +41,7 @@ use crate::thread_history::{PastContext, PastThread, ThreadHistory};
 use crate::thread_store::ThreadStore;
 use crate::{
     AssistantDiff, InlineAssistant, NewPromptEditor, NewThread, OpenActiveThreadAsMarkdown,
-    OpenAssistantDiff, OpenConfiguration, OpenHistory, ToggleContextPicker, ToggleProfileSelector,
+    OpenAssistantDiff, OpenConfiguration, OpenHistory, ToggleContextPicker,
 };
 
 action_with_deprecated_aliases!(
