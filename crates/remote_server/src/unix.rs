@@ -884,11 +884,11 @@ fn daemonize() -> Result<ControlFlow<()>> {
 }
 
 unsafe fn redirect_standard_streams() -> Result<()> {
-    let devnull_fd = libc::open(b"/dev/null\0" as *const [u8; 10] as _, libc::O_RDWR);
+    let devnull_fd = unsafe { libc::open(b"/dev/null\0" as *const [u8; 10] as _, libc::O_RDWR) };
     anyhow::ensure!(devnull_fd != -1, "failed to open /dev/null");
 
     let process_stdio = |name, fd| {
-        let reopened_fd = libc::dup2(devnull_fd, fd);
+        let reopened_fd = unsafe { libc::dup2(devnull_fd, fd) };
         anyhow::ensure!(
             reopened_fd != -1,
             format!("failed to redirect {} to /dev/null", name)
@@ -901,7 +901,7 @@ unsafe fn redirect_standard_streams() -> Result<()> {
     process_stdio("stderr", libc::STDERR_FILENO)?;
 
     anyhow::ensure!(
-        libc::close(devnull_fd) != -1,
+        unsafe { libc::close(devnull_fd) != -1 },
         "failed to close /dev/null fd after redirecting"
     );
 

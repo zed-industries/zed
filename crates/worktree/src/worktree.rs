@@ -1674,7 +1674,7 @@ impl LocalWorktree {
         changes.into()
     }
 
-    pub fn scan_complete(&self) -> impl Future<Output = ()> {
+    pub fn scan_complete(&self) -> impl Future<Output = ()> + use<> {
         let mut is_scanning_rx = self.is_scanning.1.clone();
         async move {
             let mut is_scanning = *is_scanning_rx.borrow();

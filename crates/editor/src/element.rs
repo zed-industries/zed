@@ -4191,7 +4191,6 @@ impl EditorElement {
                 for (&new_row, &new_background) in &layout.highlighted_rows {
                     match &mut current_paint {
                         &mut Some((current_background, ref mut current_range, mut edges)) => {
-                            let current_background = current_background;
                             let new_range_started = current_background != new_background
                                 || current_range.end.next_row() != new_row;
                             if new_range_started {

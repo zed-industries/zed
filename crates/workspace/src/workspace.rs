@@ -1832,7 +1832,7 @@ impl Workspace {
     }
 
     #[cfg(any(test, feature = "test-support"))]
-    pub fn worktree_scans_complete(&self, cx: &App) -> impl Future<Output = ()> + 'static {
+    pub fn worktree_scans_complete(&self, cx: &App) -> impl Future<Output = ()> + 'static + use<> {
         let futures = self
             .worktrees(cx)
             .filter_map(|worktree| worktree.read(cx).as_local())

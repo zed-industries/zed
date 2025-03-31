@@ -365,7 +365,7 @@ impl BackgroundExecutor {
 
     /// in tests, run an arbitrary number of tasks (determined by the SEED environment variable)
     #[cfg(any(test, feature = "test-support"))]
-    pub fn simulate_random_delay(&self) -> impl Future<Output = ()> {
+    pub fn simulate_random_delay(&self) -> impl Future<Output = ()> + use<> {
         self.dispatcher.as_test().unwrap().simulate_random_delay()
     }
 

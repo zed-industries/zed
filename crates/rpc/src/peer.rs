@@ -377,7 +377,7 @@ impl Peer {
         executor: gpui::BackgroundExecutor,
     ) -> (
         ConnectionId,
-        impl Future<Output = anyhow::Result<()>> + Send,
+        impl Future<Output = anyhow::Result<()>> + Send + use<>,
         BoxStream<'static, Box<dyn AnyTypedEnvelope>>,
     ) {
         let executor = executor.clone();
@@ -403,7 +403,7 @@ impl Peer {
         &self,
         receiver_id: ConnectionId,
         request: T,
-    ) -> impl Future<Output = Result<T::Response>> {
+    ) -> impl Future<Output = Result<T::Response>> + use<T> {
         self.request_internal(None, receiver_id, request)
             .map_ok(|envelope| envelope.payload)
     }
