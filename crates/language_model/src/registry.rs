@@ -4,7 +4,7 @@ use crate::{
 };
 use collections::BTreeMap;
 use gpui::{prelude::*, App, Context, Entity, EventEmitter, Global};
-use std::{env::var, sync::Arc};
+use std::sync::Arc;
 
 pub fn init(cx: &mut App) {
     let registry = cx.new(|_cx| LanguageModelRegistry::default());
@@ -204,7 +204,7 @@ impl LanguageModelRegistry {
 
     pub fn active_provider(&self) -> Option<Arc<dyn LanguageModelProvider>> {
         #[cfg(debug_assertions)]
-        if var("ZED_SIMULATE_NO_LLM_PROVIDER").is_ok() {
+        if std::env::var("ZED_SIMULATE_NO_LLM_PROVIDER").is_ok() {
             return None;
         }
 
