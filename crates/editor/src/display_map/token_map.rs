@@ -405,7 +405,7 @@ impl TokenMap {
                 // Remove all the tokens and transforms contained by the edit.
                 let old_start =
                     cursor.start().1 + TokenOffset(buffer_edit.old.start - cursor.start().0);
-                // cursor.seek(&buffer_edit.old.end, Bias::Right, &());
+                cursor.seek(&buffer_edit.old.end, Bias::Right, &());
                 let old_end =
                     cursor.start().1 + TokenOffset(buffer_edit.old.end - cursor.start().0);
 
@@ -475,11 +475,11 @@ impl TokenMap {
         self.tokens.retain(|token| {
             let retain = !to_remove.contains(&token.id);
             if !retain {
-                let range = token.range.to_offset(&snapshot.buffer);
-                buffer_edits.push(Edit {
-                    new: range.clone(),
-                    old: range,
-                })
+                // let range = token.range.to_offset(&snapshot.buffer);
+                // buffer_edits.push(Edit {
+                //     new: range.clone(),
+                //     old: range,
+                // })
             }
             retain
         });
