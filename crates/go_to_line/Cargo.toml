@@ -39,4 +39,5 @@ rope.workspace = true
 serde_json.workspace = true
 tree-sitter-rust.workspace = true
 tree-sitter-typescript.workspace = true
+tree-sitter-md.workspace = true
 workspace = { workspace = true, features = ["test-support"] }

@@ -5758,6 +5758,7 @@ dependencies = [
  "settings",
  "text",
  "theme",
+ "tree-sitter-md",
  "tree-sitter-rust",
  "tree-sitter-typescript",
  "ui",

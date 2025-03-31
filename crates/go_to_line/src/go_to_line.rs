@@ -8,7 +8,7 @@ use gpui::{
     div, prelude::*, App, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, Render,
     SharedString, Styled, Subscription,
 };
-use language::{Buffer, Language, LanguageConfig, LanguageMatcher};
+use language::Buffer;
 use settings::Settings;
 use text::{Bias, Point};
 use theme::ActiveTheme;
@@ -298,6 +298,7 @@ mod tests {
     use editor::actions::{MoveRight, MoveToBeginning, SelectAll};
     use gpui::{TestAppContext, VisualTestContext};
     use indoc::indoc;
+    use language::{Language, LanguageConfig, LanguageMatcher};
     use project::{FakeFs, Project};
     use serde_json::json;
     use std::{num::NonZeroU32, sync::Arc, time::Duration};
@@ -422,7 +423,7 @@ mod tests {
         fs.insert_tree(
             path!("/dir"),
             json!({
-                "a.rs": "ēlo word"
+                "a.rs": "ēlo"
             }),
         )
         .await;
@@ -448,6 +449,110 @@ mod tests {
             })
             .await
             .unwrap();
+        let editor = workspace
+            .update_in(cx, |workspace, window, cx| {
+                workspace.open_path((worktree_id, "a.rs"), None, true, window, cx)
+            })
+            .await
+            .unwrap()
+            .downcast::<Editor>()
+            .unwrap();
+
+        cx.executor().advance_clock(Duration::from_millis(200));
+        workspace.update(cx, |workspace, cx| {
+            assert_eq!(
+                &SelectionStats {
+                    lines: 0,
+                    characters: 0,
+                    selections: 1,
+                    words: None
+                },
+                workspace
+                    .status_bar()
+                    .read(cx)
+                    .item_of_type::<CursorPosition>()
+                    .expect("missing cursor position item")
+                    .read(cx)
+                    .selection_stats(),
+                "No selections should be initially"
+            );
+        });
+        editor.update_in(cx, |editor, window, cx| {
+            editor.select_all(&SelectAll, window, cx)
+        });
+        cx.executor().advance_clock(Duration::from_millis(200));
+        workspace.update(cx, |workspace, cx| {
+            assert_eq!(
+                &SelectionStats {
+                    lines: 1,
+                    characters: 3,
+                    selections: 1,
+                    words: None
+                },
+                workspace
+                    .status_bar()
+                    .read(cx)
+                    .item_of_type::<CursorPosition>()
+                    .expect("missing cursor position item")
+                    .read(cx)
+                    .selection_stats(),
+                "After selecting a text with multibyte unicode characters, the character count should be correct"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_characters_selection_markdown(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/dir"),
+            json!({
+                "a.md": "# Main Heading
+
+                ## Subheading
+
+                Some regular **bold text** and *italic text* in a paragraph.
+
+                - List item 1
+                - List item 2
+                - List item 3
+
+                [Example link](https://example.com)
+
+                > This is a blockquote with dummy text.
+
+                `inline code`
+
+                ---
+
+                End of dummy text."
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs, [path!("/dir").as_ref()], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        workspace.update_in(cx, |workspace, window, cx| {
+            let cursor_position = cx.new(|_| CursorPosition::new(workspace));
+            workspace.status_bar().update(cx, |status_bar, cx| {
+                status_bar.add_right_item(cursor_position, window, cx);
+            });
+        });
+
+        let worktree_id = workspace.update(cx, |workspace, cx| {
+            workspace.project().update(cx, |project, cx| {
+                project.worktrees(cx).next().unwrap().read(cx).id()
+            })
+        });
+        let _buffer = project
+            .update(cx, |project, cx| {
+                project.open_local_buffer(path!("/dir/a.md"), cx)
+            })
+            .await
+            .unwrap();
         let language = Arc::new(Language::new(
             LanguageConfig {
                 name: "Markdown".into(),
@@ -457,7 +562,7 @@ mod tests {
                 },
                 ..Default::default()
             },
-            Some(tree_sitter_rust::LANGUAGE.into()),
+            Some(tree_sitter_md::LANGUAGE.into()),
         ));
 
         _buffer.update(cx, |buffer, cx| {
@@ -465,7 +570,7 @@ mod tests {
         });
         let editor = workspace
             .update_in(cx, |workspace, window, cx| {
-                workspace.open_path((worktree_id, "a.rs"), None, true, window, cx)
+                workspace.open_path((worktree_id, "a.md"), None, true, window, cx)
             })
             .await
             .unwrap()
@@ -498,10 +603,10 @@ mod tests {
         workspace.update(cx, |workspace, cx| {
             assert_eq!(
                 &SelectionStats {
-                    lines: 1,
-                    characters: 3,
+                    lines: 19,
+                    characters: 412,
                     selections: 1,
-                    words: Some(2)
+                    words: Some(40)
                 },
                 workspace
                     .status_bar()
