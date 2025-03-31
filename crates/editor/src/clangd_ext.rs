@@ -1,6 +1,8 @@
 use anyhow::Context as _;
 use gpui::{App, Context, Entity, Window};
 use language::Language;
+use project::lsp_store::lsp_ext_command::SwitchSourceHeaderResult;
+use rpc::proto;
 use url::Url;
 use workspace::{OpenOptions, OpenVisible};
 
@@ -30,6 +32,7 @@ pub fn switch_source_header(
     let server_lookup =
         find_specific_language_server_in_selection(editor, cx, is_c_language, CLANGD_SERVER_NAME);
     let project = project.clone();
+    let upstream_client = project.read(cx).lsp_store().read(cx).upstream_client();
     cx.spawn_in(window, async move |_editor, cx| {
         let Some((_, _, server_to_query, buffer)) =
             server_lookup.await
@@ -40,14 +43,28 @@ pub fn switch_source_header(
             buffer.file().map(|file| file.path()).map(|path| path.to_string_lossy().to_string()).unwrap_or_else(|| "Unknown".to_string())
         })?;
 
-        let switch_source_header = project.update(cx, |project, cx| {
-            project.request_lsp(
-                buffer,
-                project::LanguageServerToQuery::Other(server_to_query),
-                project::lsp_store::lsp_ext_command::SwitchSourceHeader,
-                cx,
-            )
-        })?.await.with_context(|| format!("Switch source/header LSP request for path \"{source_file}\" failed"))?;
+        let switch_source_header = if let Some((client, project_id)) = upstream_client {
+            let buffer_id = buffer.update(cx, |buffer, _| buffer.remote_id())?;
+            let request = proto::LspExtSwitchSourceHeader {
+                project_id,
+                buffer_id: buffer_id.to_proto(),
+            };
+            let response = client
+                .request(request)
+                .await
+                .context("lsp ext switch source header proto request")?;
+            SwitchSourceHeaderResult(response.target_file)
+        } else {
+            project.update(cx, |project, cx| {
+                project.request_lsp(
+                    buffer,
+                    project::LanguageServerToQuery::Other(server_to_query),
+                    project::lsp_store::lsp_ext_command::SwitchSourceHeader,
+                    cx,
+                )
+            })?.await.with_context(|| format!("Switch source/header LSP request for path \"{source_file}\" failed"))?
+        };
+
         if switch_source_header.0.is_empty() {
             log::info!("Clangd returned an empty string when requesting to switch source/header from \"{source_file}\"" );
             return Ok(());
