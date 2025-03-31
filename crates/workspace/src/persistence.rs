@@ -537,8 +537,8 @@ define_connection! {
         ALTER TABLE breakpoints DROP COLUMN kind
     ),
     sql!(
-        ALTER TABLE breakpoints ADD COLUMN condition TEXT DEFAULT NULL;
-        ALTER TABLE breakpoints ADD COLUMN hit_condition TEXT DEFAULT NULL;
+        ALTER TABLE breakpoints ADD COLUMN condition TEXT;
+        ALTER TABLE breakpoints ADD COLUMN hit_condition TEXT;
     ),
     ];
 }
@@ -718,6 +718,14 @@ impl WorkspaceDb {
                     });
                 }
 
+                for (path, bps) in map.iter() {
+                    log::debug!(
+                        "Got {} breakpoints from path: {}",
+                        bps.len(),
+                        path.to_string_lossy()
+                    );
+                }
+
                 map
             }
             Err(msg) => {
@@ -755,7 +763,9 @@ impl WorkspaceDb {
                             bp.hit_condition,
                             state,
                         )) {
-                            Ok(_) => {}
+                            Ok(_) => {
+                                log::debug!("Stored breakpoint at row: {} in path: {}", bp.row, path.to_string_lossy())
+                            }
                             Err(err) => {
                                 log::error!("{err}");
                                 continue;
