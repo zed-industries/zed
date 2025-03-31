@@ -21,8 +21,8 @@ use git::{
     blame::Blame,
     parse_git_remote_url,
     repository::{
-        Branch, CommitDetails, DiffType, GitRepository, GitRepositoryCheckpoint, PushOptions,
-        Remote, RemoteCommandOutput, RepoPath, ResetMode,
+        Branch, CommitDetails, CommitDiff, CommitFile, DiffType, GitRepository,
+        GitRepositoryCheckpoint, PushOptions, Remote, RemoteCommandOutput, RepoPath, ResetMode,
     },
     status::FileStatus,
 };
@@ -289,6 +289,7 @@ impl GitStore {
         client.add_entity_request_handler(Self::handle_commit);
         client.add_entity_request_handler(Self::handle_reset);
         client.add_entity_request_handler(Self::handle_show);
+        client.add_entity_request_handler(Self::handle_load_commit_diff);
         client.add_entity_request_handler(Self::handle_checkout_files);
         client.add_entity_request_handler(Self::handle_open_commit_message_buffer);
         client.add_entity_request_handler(Self::handle_set_index_text);
@@ -1885,6 +1886,32 @@ impl GitStore {
         })
     }
 
+    async fn handle_load_commit_diff(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::LoadCommitDiff>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::LoadCommitDiffResponse> {
+        let work_directory_id = ProjectEntryId::from_proto(envelope.payload.work_directory_id);
+        let repository_handle = Self::repository_for_request(&this, work_directory_id, &mut cx)?;
+
+        let commit_diff = repository_handle
+            .update(&mut cx, |repository_handle, _| {
+                repository_handle.load_commit_diff(envelope.payload.commit)
+            })?
+            .await??;
+        Ok(proto::LoadCommitDiffResponse {
+            files: commit_diff
+                .files
+                .into_iter()
+                .map(|file| proto::CommitFile {
+                    path: file.path.to_string(),
+                    old_text: file.old_text,
+                    new_text: file.new_text,
+                })
+                .collect(),
+        })
+    }
+
     async fn handle_reset(
         this: Entity<Self>,
         envelope: TypedEnvelope<proto::GitReset>,
@@ -2389,7 +2416,10 @@ impl BufferDiffState {
                 unstaged_diff.as_ref().zip(new_unstaged_diff.clone())
             {
                 unstaged_diff.update(cx, |diff, cx| {
-                    diff.set_snapshot(&buffer, new_unstaged_diff, language_changed, None, cx)
+                    if language_changed {
+                        diff.language_changed(cx);
+                    }
+                    diff.set_snapshot(new_unstaged_diff, &buffer, None, cx)
                 })?
             } else {
                 None
@@ -2398,14 +2428,11 @@ impl BufferDiffState {
             if let Some((uncommitted_diff, new_uncommitted_diff)) =
                 uncommitted_diff.as_ref().zip(new_uncommitted_diff.clone())
             {
-                uncommitted_diff.update(cx, |uncommitted_diff, cx| {
-                    uncommitted_diff.set_snapshot(
-                        &buffer,
-                        new_uncommitted_diff,
-                        language_changed,
-                        unstaged_changed_range,
-                        cx,
-                    );
+                uncommitted_diff.update(cx, |diff, cx| {
+                    if language_changed {
+                        diff.language_changed(cx);
+                    }
+                    diff.set_snapshot(new_uncommitted_diff, &buffer, unstaged_changed_range, cx);
                 })?;
             }
 
@@ -2863,6 +2890,40 @@ impl Repository {
                         commit_timestamp: resp.commit_timestamp,
                         committer_email: resp.committer_email.into(),
                         committer_name: resp.committer_name.into(),
+                    })
+                }
+            }
+        })
+    }
+
+    pub fn load_commit_diff(&self, commit: String) -> oneshot::Receiver<Result<CommitDiff>> {
+        self.send_job(|git_repo, cx| async move {
+            match git_repo {
+                RepositoryState::Local(git_repository) => {
+                    git_repository.load_commit(commit, cx).await
+                }
+                RepositoryState::Remote {
+                    client,
+                    project_id,
+                    work_directory_id,
+                } => {
+                    let response = client
+                        .request(proto::LoadCommitDiff {
+                            project_id: project_id.0,
+                            work_directory_id: work_directory_id.to_proto(),
+                            commit,
+                        })
+                        .await?;
+                    Ok(CommitDiff {
+                        files: response
+                            .files
+                            .into_iter()
+                            .map(|file| CommitFile {
+                                path: PathBuf::from(file.path).into(),
+                                old_text: file.old_text,
+                                new_text: file.new_text,
+                            })
+                            .collect(),
                     })
                 }
             }

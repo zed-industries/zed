@@ -111,6 +111,14 @@ impl GitRepository for FakeGitRepository {
         .boxed()
     }
 
+    fn load_commit(
+        &self,
+        _commit: String,
+        _cx: AsyncApp,
+    ) -> BoxFuture<Result<git::repository::CommitDiff>> {
+        unimplemented!()
+    }
+
     fn set_index_text(
         &self,
         path: RepoPath,

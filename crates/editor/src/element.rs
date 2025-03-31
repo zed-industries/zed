@@ -3,13 +3,12 @@ use crate::{
     ContextMenuPlacement, CursorShape, CustomBlockId, DisplayDiffHunk, DisplayPoint, DisplayRow,
     DocumentHighlightRead, DocumentHighlightWrite, EditDisplayMode, Editor, EditorMode,
     EditorSettings, EditorSnapshot, EditorStyle, FILE_HEADER_HEIGHT, FocusedBlock,
-    GIT_BLAME_MAX_AUTHOR_CHARS_DISPLAYED, GutterDimensions, HalfPageDown, HalfPageUp, HandleInput,
-    HoveredCursor, InlayHintRefreshReason, InlineCompletion, JumpData, LineDown, LineHighlight,
-    LineUp, MAX_LINE_LEN, MIN_LINE_NUMBER_DIGITS, MULTI_BUFFER_EXCERPT_HEADER_HEIGHT, OpenExcerpts,
-    PageDown, PageUp, Point, RowExt, RowRangeExt, SelectPhase, SelectedTextHighlight, Selection,
-    SoftWrap, StickyHeaderExcerpt, ToPoint, ToggleFold,
+    GutterDimensions, HalfPageDown, HalfPageUp, HandleInput, HoveredCursor, InlayHintRefreshReason,
+    InlineCompletion, JumpData, LineDown, LineHighlight, LineUp, MAX_LINE_LEN,
+    MIN_LINE_NUMBER_DIGITS, MULTI_BUFFER_EXCERPT_HEADER_HEIGHT, OpenExcerpts, PageDown, PageUp,
+    Point, RowExt, RowRangeExt, SelectPhase, SelectedTextHighlight, Selection, SoftWrap,
+    StickyHeaderExcerpt, ToPoint, ToggleFold,
     code_context_menus::{CodeActionsMenu, MENU_ASIDE_MAX_WIDTH, MENU_ASIDE_MIN_WIDTH, MENU_GAP},
-    commit_tooltip::{CommitTooltip, ParsedCommitMessage, blame_entry_relative_timestamp},
     display_map::{
         Block, BlockContext, BlockStyle, DisplaySnapshot, HighlightedChunk, ToDisplayPoint,
     },
@@ -17,13 +16,13 @@ use crate::{
         CurrentLineHighlight, DoubleClickInMultibuffer, MultiCursorModifier, ScrollBeyondLastLine,
         ScrollbarAxes, ScrollbarDiagnostics, ShowScrollbar,
     },
-    git::blame::GitBlame,
+    git::blame::{BlameRenderer, GitBlame, GlobalBlameRenderer},
     hover_popover::{
         self, HOVER_POPOVER_GAP, MIN_POPOVER_CHARACTER_WIDTH, MIN_POPOVER_LINE_HEIGHT, hover_at,
     },
     inlay_hint_settings,
     items::BufferSearchHighlights,
-    mouse_context_menu::{self, MenuPosition, MouseContextMenu},
+    mouse_context_menu::{self, MenuPosition},
     scroll::scroll_amount::ScrollAmount,
 };
 use buffer_diff::{DiffHunkStatus, DiffHunkStatusKind};
@@ -34,12 +33,12 @@ use file_icons::FileIcons;
 use git::{Oid, blame::BlameEntry, status::FileStatus};
 use gpui::{
     Action, Along, AnyElement, App, AvailableSpace, Axis as ScrollbarAxis, BorderStyle, Bounds,
-    ClickEvent, ClipboardItem, ContentMask, Context, Corner, Corners, CursorStyle, DispatchPhase,
-    Edges, Element, ElementInputHandler, Entity, Focusable as _, FontId, GlobalElementId, Hitbox,
-    Hsla, InteractiveElement, IntoElement, Keystroke, Length, ModifiersChangedEvent, MouseButton,
+    ClickEvent, ContentMask, Context, Corner, Corners, CursorStyle, DispatchPhase, Edges, Element,
+    ElementInputHandler, Entity, Focusable as _, FontId, GlobalElementId, Hitbox, Hsla,
+    InteractiveElement, IntoElement, Keystroke, Length, ModifiersChangedEvent, MouseButton,
     MouseDownEvent, MouseMoveEvent, MouseUpEvent, PaintQuad, ParentElement, Pixels, ScrollDelta,
     ScrollWheelEvent, ShapedLine, SharedString, Size, StatefulInteractiveElement, Style, Styled,
-    Subscription, TextRun, TextStyleRefinement, Window, anchored, deferred, div, fill,
+    TextRun, TextStyleRefinement, WeakEntity, Window, anchored, deferred, div, fill,
     linear_color_stop, linear_gradient, outline, point, px, quad, relative, size, solid_background,
     transparent_black,
 };
@@ -76,10 +75,10 @@ use std::{
 use sum_tree::Bias;
 use text::BufferId;
 use theme::{ActiveTheme, Appearance, BufferLineHeight, PlayerColor};
-use ui::{ButtonLike, ContextMenu, KeyBinding, POPOVER_Y_PADDING, Tooltip, h_flex, prelude::*};
+use ui::{ButtonLike, KeyBinding, POPOVER_Y_PADDING, Tooltip, h_flex, prelude::*};
 use unicode_segmentation::UnicodeSegmentation;
 use util::{RangeExt, ResultExt, debug_panic};
-use workspace::{item::Item, notifications::NotifyTaskExt};
+use workspace::{Workspace, item::Item, notifications::NotifyTaskExt};
 
 const INLINE_BLAME_PADDING_EM_WIDTHS: f32 = 7.;
 
@@ -426,6 +425,7 @@ impl EditorElement {
         register_action(editor, window, Editor::copy_file_location);
         register_action(editor, window, Editor::toggle_git_blame);
         register_action(editor, window, Editor::toggle_git_blame_inline);
+        register_action(editor, window, Editor::open_git_blame_commit);
         register_action(editor, window, Editor::toggle_selected_diff_hunks);
         register_action(editor, window, Editor::toggle_staged_selected_diff_hunks);
         register_action(editor, window, Editor::stage_and_next);
@@ -1759,14 +1759,21 @@ impl EditorElement {
             padding * em_width
         };
 
+        let workspace = editor.workspace()?.downgrade();
         let blame_entry = blame
             .update(cx, |blame, cx| {
                 blame.blame_for_rows(&[*row_info], cx).next()
             })
             .flatten()?;
 
-        let mut element =
-            render_inline_blame_entry(self.editor.clone(), &blame, blame_entry, &self.style, cx);
+        let mut element = render_inline_blame_entry(
+            self.editor.clone(),
+            workspace,
+            &blame,
+            blame_entry,
+            &self.style,
+            cx,
+        )?;
 
         let start_y = content_origin.y
             + line_height * (display_row.as_f32() - scroll_pixel_position.y / line_height);
@@ -1816,6 +1823,7 @@ impl EditorElement {
         }
 
         let blame = self.editor.read(cx).blame.clone()?;
+        let workspace = self.editor.read(cx).workspace()?;
         let blamed_rows: Vec<_> = blame.update(cx, |blame, cx| {
             blame.blame_for_rows(buffer_rows, cx).collect()
         });
@@ -1829,36 +1837,35 @@ impl EditorElement {
         let start_x = em_width;
 
         let mut last_used_color: Option<(PlayerColor, Oid)> = None;
+        let blame_renderer = cx.global::<GlobalBlameRenderer>().0.clone();
 
         let shaped_lines = blamed_rows
             .into_iter()
             .enumerate()
             .flat_map(|(ix, blame_entry)| {
-                if let Some(blame_entry) = blame_entry {
-                    let mut element = render_blame_entry(
-                        ix,
-                        &blame,
-                        blame_entry,
-                        &self.style,
-                        &mut last_used_color,
-                        self.editor.clone(),
-                        cx,
-                    );
+                let mut element = render_blame_entry(
+                    ix,
+                    &blame,
+                    blame_entry?,
+                    &self.style,
+                    &mut last_used_color,
+                    self.editor.clone(),
+                    workspace.clone(),
+                    blame_renderer.clone(),
+                    cx,
+                )?;
 
-                    let start_y = ix as f32 * line_height - (scroll_top % line_height);
-                    let absolute_offset = gutter_hitbox.origin + point(start_x, start_y);
+                let start_y = ix as f32 * line_height - (scroll_top % line_height);
+                let absolute_offset = gutter_hitbox.origin + point(start_x, start_y);
 
-                    element.prepaint_as_root(
-                        absolute_offset,
-                        size(width, AvailableSpace::MinContent),
-                        window,
-                        cx,
-                    );
+                element.prepaint_as_root(
+                    absolute_offset,
+                    size(width, AvailableSpace::MinContent),
+                    window,
+                    cx,
+                );
 
-                    Some(element)
-                } else {
-                    None
-                }
+                Some(element)
             })
             .collect();
 
@@ -5725,61 +5732,43 @@ fn prepaint_gutter_button(
 
 fn render_inline_blame_entry(
     editor: Entity<Editor>,
-    blame: &gpui::Entity<GitBlame>,
+    workspace: WeakEntity<Workspace>,
+    blame: &Entity<GitBlame>,
     blame_entry: BlameEntry,
     style: &EditorStyle,
     cx: &mut App,
-) -> AnyElement {
-    let relative_timestamp = blame_entry_relative_timestamp(&blame_entry);
-
-    let author = blame_entry.author.as_deref().unwrap_or_default();
-    let summary_enabled = ProjectSettings::get_global(cx)
-        .git
-        .show_inline_commit_summary();
-
-    let text = match blame_entry.summary.as_ref() {
-        Some(summary) if summary_enabled => {
-            format!("{}, {} - {}", author, relative_timestamp, summary)
-        }
-        _ => format!("{}, {}", author, relative_timestamp),
-    };
-    let blame = blame.clone();
-    let blame_entry = blame_entry.clone();
-
-    h_flex()
-        .id("inline-blame")
-        .w_full()
-        .font_family(style.text.font().family)
-        .text_color(cx.theme().status().hint)
-        .line_height(style.text.line_height)
-        .child(Icon::new(IconName::FileGit).color(Color::Hint))
-        .child(text)
-        .gap_2()
-        .hoverable_tooltip(move |window, cx| {
-            let details = blame.read(cx).details_for_entry(&blame_entry);
-            let tooltip =
-                cx.new(|cx| CommitTooltip::blame_entry(&blame_entry, details, window, cx));
-            editor.update(cx, |editor, _| {
-                editor.git_blame_inline_tooltip = Some(tooltip.downgrade())
-            });
-            tooltip.into()
-        })
-        .into_any()
+) -> Option<AnyElement> {
+    let renderer = cx.global::<GlobalBlameRenderer>().0.clone();
+    let blame = blame.read(cx);
+    let details = blame.details_for_entry(&blame_entry);
+    let repository = blame.repository(cx)?.clone();
+    renderer.render_inline_blame_entry(
+        &style.text,
+        blame_entry,
+        details,
+        repository,
+        workspace,
+        editor,
+        cx,
+    )
 }
 
 fn render_blame_entry(
     ix: usize,
-    blame: &gpui::Entity<GitBlame>,
+    blame: &Entity<GitBlame>,
     blame_entry: BlameEntry,
     style: &EditorStyle,
     last_used_color: &mut Option<(PlayerColor, Oid)>,
     editor: Entity<Editor>,
+    workspace: Entity<Workspace>,
+    renderer: Arc<dyn BlameRenderer>,
     cx: &mut App,
-) -> AnyElement {
+) -> Option<AnyElement> {
     let mut sha_color = cx
         .theme()
         .players()
         .color_for_participant(blame_entry.sha.into());
+
     // If the last color we used is the same as the one we get for this line, but
     // the commit SHAs are different, then we try again to get a different color.
     match *last_used_color {
@@ -5791,97 +5780,20 @@ fn render_blame_entry(
     };
     last_used_color.replace((sha_color, blame_entry.sha));
 
-    let relative_timestamp = blame_entry_relative_timestamp(&blame_entry);
-
-    let short_commit_id = blame_entry.sha.display_short();
-
-    let author_name = blame_entry.author.as_deref().unwrap_or("<no name>");
-    let name = util::truncate_and_trailoff(author_name, GIT_BLAME_MAX_AUTHOR_CHARS_DISPLAYED);
-    let details = blame.read(cx).details_for_entry(&blame_entry);
-
-    h_flex()
-        .w_full()
-        .justify_between()
-        .font_family(style.text.font().family)
-        .line_height(style.text.line_height)
-        .id(("blame", ix))
-        .text_color(cx.theme().status().hint)
-        .pr_2()
-        .gap_2()
-        .child(
-            h_flex()
-                .items_center()
-                .gap_2()
-                .child(div().text_color(sha_color.cursor).child(short_commit_id))
-                .child(name),
-        )
-        .child(relative_timestamp)
-        .on_mouse_down(MouseButton::Right, {
-            let blame_entry = blame_entry.clone();
-            let details = details.clone();
-            move |event, window, cx| {
-                deploy_blame_entry_context_menu(
-                    &blame_entry,
-                    details.as_ref(),
-                    editor.clone(),
-                    event.position,
-                    window,
-                    cx,
-                );
-            }
-        })
-        .hover(|style| style.bg(cx.theme().colors().element_hover))
-        .when_some(
-            details
-                .as_ref()
-                .and_then(|details| details.permalink.clone()),
-            |this, url| {
-                this.cursor_pointer().on_click(move |_, _, cx| {
-                    cx.stop_propagation();
-                    cx.open_url(url.as_str())
-                })
-            },
-        )
-        .hoverable_tooltip(move |window, cx| {
-            cx.new(|cx| CommitTooltip::blame_entry(&blame_entry, details.clone(), window, cx))
-                .into()
-        })
-        .into_any()
-}
-
-fn deploy_blame_entry_context_menu(
-    blame_entry: &BlameEntry,
-    details: Option<&ParsedCommitMessage>,
-    editor: Entity<Editor>,
-    position: gpui::Point<Pixels>,
-    window: &mut Window,
-    cx: &mut App,
-) {
-    let context_menu = ContextMenu::build(window, cx, move |menu, _, _| {
-        let sha = format!("{}", blame_entry.sha);
-        menu.on_blur_subscription(Subscription::new(|| {}))
-            .entry("Copy commit SHA", None, move |_, cx| {
-                cx.write_to_clipboard(ClipboardItem::new_string(sha.clone()));
-            })
-            .when_some(
-                details.and_then(|details| details.permalink.clone()),
-                |this, url| {
-                    this.entry("Open permalink", None, move |_, cx| {
-                        cx.open_url(url.as_str())
-                    })
-                },
-            )
-    });
-
-    editor.update(cx, move |editor, cx| {
-        editor.mouse_context_menu = Some(MouseContextMenu::new(
-            MenuPosition::PinnedToScreen(position),
-            context_menu,
-            window,
-            cx,
-        ));
-        cx.notify();
-    });
+    let blame = blame.read(cx);
+    let details = blame.details_for_entry(&blame_entry);
+    let repository = blame.repository(cx)?;
+    renderer.render_blame_entry(
+        &style.text,
+        blame_entry,
+        details,
+        repository,
+        workspace.downgrade(),
+        editor,
+        ix,
+        sha_color.cursor,
+        cx,
+    )
 }
 
 #[derive(Debug)]
@@ -6588,9 +6500,9 @@ impl Element for EditorElement {
         window.with_rem_size(rem_size, |window| {
             window.with_text_style(Some(text_style), |window| {
                 window.with_content_mask(Some(ContentMask { bounds }), |window| {
-                    let mut snapshot = self
-                        .editor
-                        .update(cx, |editor, cx| editor.snapshot(window, cx));
+                    let (mut snapshot, is_read_only) = self.editor.update(cx, |editor, cx| {
+                        (editor.snapshot(window, cx), editor.read_only(cx))
+                    });
                     let style = self.style.clone();
 
                     let font_id = window.text_system().resolve_font(&style.text.font());
@@ -6970,11 +6882,12 @@ impl Element for EditorElement {
                                 .flatten()?;
                             let mut element = render_inline_blame_entry(
                                 self.editor.clone(),
+                                editor.workspace()?.downgrade(),
                                 blame,
                                 blame_entry,
                                 &style,
                                 cx,
-                            );
+                            )?;
                             let inline_blame_padding = INLINE_BLAME_PADDING_EM_WIDTHS * em_advance;
                             Some(
                                 element
@@ -7507,19 +7420,23 @@ impl Element for EditorElement {
                         editor.last_position_map = Some(position_map.clone())
                     });
 
-                    let diff_hunk_controls = self.layout_diff_hunk_controls(
-                        start_row..end_row,
-                        &row_infos,
-                        &text_hitbox,
-                        &position_map,
-                        newest_selection_head,
-                        line_height,
-                        scroll_pixel_position,
-                        &display_hunks,
-                        self.editor.clone(),
-                        window,
-                        cx,
-                    );
+                    let diff_hunk_controls = if is_read_only {
+                        vec![]
+                    } else {
+                        self.layout_diff_hunk_controls(
+                            start_row..end_row,
+                            &row_infos,
+                            &text_hitbox,
+                            &position_map,
+                            newest_selection_head,
+                            line_height,
+                            scroll_pixel_position,
+                            &display_hunks,
+                            self.editor.clone(),
+                            window,
+                            cx,
+                        )
+                    };
 
                     EditorLayout {
                         mode,

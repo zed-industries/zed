@@ -1,11 +1,11 @@
 use crate::askpass_modal::AskPassModal;
 use crate::commit_modal::CommitModal;
+use crate::commit_tooltip::CommitTooltip;
+use crate::commit_view::CommitView;
 use crate::git_panel_settings::StatusStyle;
-use crate::project_diff::Diff;
+use crate::project_diff::{self, Diff, ProjectDiff};
 use crate::remote_output::{self, RemoteAction, SuccessMessage};
-
-use crate::{ProjectDiff, picker_prompt, project_diff};
-use crate::{branch_picker, render_remote_button};
+use crate::{branch_picker, picker_prompt, render_remote_button};
 use crate::{
     git_panel_settings::GitPanelSettings, git_status_icon, repository_selector::RepositorySelector,
 };
@@ -13,13 +13,13 @@ use anyhow::Result;
 use askpass::AskPassDelegate;
 use assistant_settings::AssistantSettings;
 use db::kvp::KEY_VALUE_STORE;
-use editor::commit_tooltip::CommitTooltip;
 
 use editor::{
     Editor, EditorElement, EditorMode, EditorSettings, MultiBuffer, ShowScrollbar,
     scroll::ScrollbarAutoHide,
 };
 use futures::StreamExt as _;
+use git::blame::ParsedCommitMessage;
 use git::repository::{
     Branch, CommitDetails, CommitSummary, DiffType, PushOptions, Remote, RemoteCommandOutput,
     ResetMode, Upstream, UpstreamTracking, UpstreamTrackingStatus,
@@ -3001,6 +3001,7 @@ impl GitPanel {
         let active_repository = self.active_repository.as_ref()?;
         let branch = active_repository.read(cx).current_branch()?;
         let commit = branch.most_recent_commit.as_ref()?.clone();
+        let workspace = self.workspace.clone();
 
         let this = cx.entity();
         Some(
@@ -3023,14 +3024,31 @@ impl GitPanel {
                                 .truncate(),
                         )
                         .id("commit-msg-hover")
-                        .hoverable_tooltip(move |window, cx| {
-                            GitPanelMessageTooltip::new(
-                                this.clone(),
-                                commit.sha.clone(),
-                                window,
-                                cx,
-                            )
-                            .into()
+                        .on_click({
+                            let commit = commit.clone();
+                            let repo = active_repository.downgrade();
+                            move |_, window, cx| {
+                                CommitView::open(
+                                    commit.clone(),
+                                    repo.clone(),
+                                    workspace.clone().clone(),
+                                    window,
+                                    cx,
+                                );
+                            }
+                        })
+                        .hoverable_tooltip({
+                            let repo = active_repository.clone();
+                            move |window, cx| {
+                                GitPanelMessageTooltip::new(
+                                    this.clone(),
+                                    commit.sha.clone(),
+                                    repo.clone(),
+                                    window,
+                                    cx,
+                                )
+                                .into()
+                            }
                         }),
                 )
                 .child(div().flex_1())
@@ -3938,31 +3956,35 @@ impl GitPanelMessageTooltip {
     fn new(
         git_panel: Entity<GitPanel>,
         sha: SharedString,
+        repository: Entity<Repository>,
         window: &mut Window,
         cx: &mut App,
     ) -> Entity<Self> {
         cx.new(|cx| {
             cx.spawn_in(window, async move |this, cx| {
-                let details = git_panel
-                    .update(cx, |git_panel, cx| {
-                        git_panel.load_commit_details(sha.to_string(), cx)
-                    })?
-                    .await?;
+                let (details, workspace) = git_panel.update(cx, |git_panel, cx| {
+                    (
+                        git_panel.load_commit_details(sha.to_string(), cx),
+                        git_panel.workspace.clone(),
+                    )
+                })?;
+                let details = details.await?;
 
-                let commit_details = editor::commit_tooltip::CommitDetails {
+                let commit_details = crate::commit_tooltip::CommitDetails {
                     sha: details.sha.clone(),
                     author_name: details.committer_name.clone(),
                     author_email: details.committer_email.clone(),
                     commit_time: OffsetDateTime::from_unix_timestamp(details.commit_timestamp)?,
-                    message: Some(editor::commit_tooltip::ParsedCommitMessage {
+                    message: Some(ParsedCommitMessage {
                         message: details.message.clone(),
                         ..Default::default()
                     }),
                 };
 
                 this.update_in(cx, |this: &mut GitPanelMessageTooltip, window, cx| {
-                    this.commit_tooltip =
-                        Some(cx.new(move |cx| CommitTooltip::new(commit_details, window, cx)));
+                    this.commit_tooltip = Some(cx.new(move |cx| {
+                        CommitTooltip::new(commit_details, repository, workspace, window, cx)
+                    }));
                     cx.notify();
                 })
             })

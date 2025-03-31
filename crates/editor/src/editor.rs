@@ -16,7 +16,6 @@ pub mod actions;
 mod blink_manager;
 mod clangd_ext;
 mod code_context_menus;
-pub mod commit_tooltip;
 pub mod display_map;
 mod editor_settings;
 mod editor_settings_controls;
@@ -82,19 +81,21 @@ use code_context_menus::{
     AvailableCodeAction, CodeActionContents, CodeActionsItem, CodeActionsMenu, CodeContextMenu,
     CompletionsMenu, ContextMenuOrigin,
 };
-use git::blame::GitBlame;
+use git::blame::{GitBlame, GlobalBlameRenderer};
 use gpui::{
-    Action, Animation, AnimationExt, AnyElement, App, AppContext, AsyncWindowContext,
-    AvailableSpace, Background, Bounds, ClickEvent, ClipboardEntry, ClipboardItem, Context,
-    DispatchPhase, Edges, Entity, EntityInputHandler, EventEmitter, FocusHandle, FocusOutEvent,
-    Focusable, FontId, FontWeight, Global, HighlightStyle, Hsla, KeyContext, Modifiers,
-    MouseButton, MouseDownEvent, PaintQuad, ParentElement, Pixels, Render, SharedString, Size,
-    Stateful, Styled, StyledText, Subscription, Task, TextStyle, TextStyleRefinement,
-    UTF16Selection, UnderlineStyle, UniformListScrollHandle, WeakEntity, WeakFocusHandle, Window,
-    div, impl_actions, point, prelude::*, pulsating_between, px, relative, size,
+    Action, Animation, AnimationExt, AnyElement, AnyWeakEntity, App, AppContext,
+    AsyncWindowContext, AvailableSpace, Background, Bounds, ClickEvent, ClipboardEntry,
+    ClipboardItem, Context, DispatchPhase, Edges, Entity, EntityInputHandler, EventEmitter,
+    FocusHandle, FocusOutEvent, Focusable, FontId, FontWeight, Global, HighlightStyle, Hsla,
+    KeyContext, Modifiers, MouseButton, MouseDownEvent, PaintQuad, ParentElement, Pixels, Render,
+    SharedString, Size, Stateful, Styled, StyledText, Subscription, Task, TextStyle,
+    TextStyleRefinement, UTF16Selection, UnderlineStyle, UniformListScrollHandle, WeakEntity,
+    WeakFocusHandle, Window, div, impl_actions, point, prelude::*, pulsating_between, px, relative,
+    size,
 };
 use highlight_matching_bracket::refresh_matching_bracket_highlights;
 use hover_links::{HoverLink, HoveredLinkState, InlayHighlight, find_file};
+pub use hover_popover::hover_markdown_style;
 use hover_popover::{HoverState, hide_hover};
 use indent_guides::ActiveIndentGuidesState;
 use inlay_hint_cache::{InlayHintCache, InlaySplice, InvalidationStrategy};
@@ -124,6 +125,7 @@ use project::{
     },
 };
 
+pub use git::blame::BlameRenderer;
 pub use proposed_changes_editor::{
     ProposedChangeLocation, ProposedChangesEditor, ProposedChangesEditorToolbar,
 };
@@ -187,8 +189,8 @@ use theme::{
     observe_buffer_font_size_adjustment,
 };
 use ui::{
-    ButtonSize, ButtonStyle, Disclosure, IconButton, IconButtonShape, IconName, IconSize, Key,
-    Tooltip, h_flex, prelude::*,
+    ButtonSize, ButtonStyle, ContextMenu, Disclosure, IconButton, IconButtonShape, IconName,
+    IconSize, Key, Tooltip, h_flex, prelude::*,
 };
 use util::{RangeExt, ResultExt, TryFutureExt, maybe, post_inc};
 use workspace::{
@@ -302,6 +304,8 @@ pub fn init_settings(cx: &mut App) {
 pub fn init(cx: &mut App) {
     init_settings(cx);
 
+    cx.set_global(GlobalBlameRenderer(Arc::new(())));
+
     workspace::register_project_item::<Editor>(cx);
     workspace::FollowableViewRegistry::register::<Editor>(cx);
     workspace::register_serializable_item::<Editor>(cx);
@@ -345,6 +349,10 @@ pub fn init(cx: &mut App) {
             .detach();
         }
     });
+}
+
+pub fn set_blame_renderer(renderer: impl BlameRenderer + 'static, cx: &mut App) {
+    cx.set_global(GlobalBlameRenderer(Arc::new(renderer)));
 }
 
 pub struct SearchWithinRange;
@@ -766,7 +774,7 @@ pub struct Editor {
     show_git_blame_gutter: bool,
     show_git_blame_inline: bool,
     show_git_blame_inline_delay_task: Option<Task<()>>,
-    git_blame_inline_tooltip: Option<WeakEntity<crate::commit_tooltip::CommitTooltip>>,
+    pub git_blame_inline_tooltip: Option<AnyWeakEntity>,
     git_blame_inline_enabled: bool,
     render_diff_hunk_controls: RenderDiffHunkControlsFn,
     serialize_dirty_buffers: bool,
@@ -847,8 +855,6 @@ pub struct EditorSnapshot {
     current_line_highlight: CurrentLineHighlight,
     gutter_hovered: bool,
 }
-
-const GIT_BLAME_MAX_AUTHOR_CHARS_DISPLAYED: usize = 20;
 
 #[derive(Default, Debug, Clone, Copy)]
 pub struct GutterDimensions {
@@ -1641,6 +1647,21 @@ impl Editor {
 
         this.report_editor_event("Editor Opened", None, cx);
         this
+    }
+
+    pub fn deploy_mouse_context_menu(
+        &mut self,
+        position: gpui::Point<Pixels>,
+        context_menu: Entity<ContextMenu>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.mouse_context_menu = Some(MouseContextMenu::new(
+            crate::mouse_context_menu::MenuPosition::PinnedToScreen(position),
+            context_menu,
+            window,
+            cx,
+        ));
     }
 
     pub fn mouse_menu_is_focused(&self, window: &Window, cx: &App) -> bool {
@@ -14922,6 +14943,13 @@ impl Editor {
         self.display_map.read(cx).folded_buffers()
     }
 
+    pub fn disable_header_for_buffer(&mut self, buffer_id: BufferId, cx: &mut Context<Self>) {
+        self.display_map.update(cx, |display_map, cx| {
+            display_map.disable_header_for_buffer(buffer_id, cx);
+        });
+        cx.notify();
+    }
+
     /// Removes any folds with the given ranges.
     pub fn remove_folds_with_type<T: ToOffset + Clone>(
         &mut self,
@@ -15859,6 +15887,45 @@ impl Editor {
     ) {
         self.toggle_git_blame_inline_internal(true, window, cx);
         cx.notify();
+    }
+
+    pub fn open_git_blame_commit(
+        &mut self,
+        _: &OpenGitBlameCommit,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.open_git_blame_commit_internal(window, cx);
+    }
+
+    fn open_git_blame_commit_internal(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<()> {
+        let blame = self.blame.as_ref()?;
+        let snapshot = self.snapshot(window, cx);
+        let cursor = self.selections.newest::<Point>(cx).head();
+        let (buffer, point, _) = snapshot.buffer_snapshot.point_to_buffer_point(cursor)?;
+        let blame_entry = blame
+            .update(cx, |blame, cx| {
+                blame
+                    .blame_for_rows(
+                        &[RowInfo {
+                            buffer_id: Some(buffer.remote_id()),
+                            buffer_row: Some(point.row),
+                            ..Default::default()
+                        }],
+                        cx,
+                    )
+                    .next()
+            })
+            .flatten()?;
+        let renderer = cx.global::<GlobalBlameRenderer>().0.clone();
+        let repo = blame.read(cx).repository(cx)?;
+        let workspace = self.workspace()?.downgrade();
+        renderer.open_blame_commit(blame_entry, repo, workspace, window, cx);
+        None
     }
 
     pub fn git_blame_inline_enabled(&self) -> bool {
@@ -17794,7 +17861,9 @@ fn get_uncommitted_diff_for_buffer(
     let mut tasks = Vec::new();
     project.update(cx, |project, cx| {
         for buffer in buffers {
-            tasks.push(project.open_uncommitted_diff(buffer.clone(), cx))
+            if project::File::from_dyn(buffer.read(cx).file()).is_some() {
+                tasks.push(project.open_uncommitted_diff(buffer.clone(), cx))
+            }
         }
     });
     cx.spawn(async move |cx| {
@@ -18911,13 +18980,13 @@ impl EditorSnapshot {
         let git_blame_entries_width =
             self.git_blame_gutter_max_author_length
                 .map(|max_author_length| {
+                    let renderer = cx.global::<GlobalBlameRenderer>().0.clone();
                     const MAX_RELATIVE_TIMESTAMP: &str = "60 minutes ago";
 
                     /// The number of characters to dedicate to gaps and margins.
                     const SPACING_WIDTH: usize = 4;
 
-                    let max_char_count = max_author_length
-                        .min(GIT_BLAME_MAX_AUTHOR_CHARS_DISPLAYED)
+                    let max_char_count = max_author_length.min(renderer.max_author_length())
                         + ::git::SHORT_SHA_LENGTH
                         + MAX_RELATIVE_TIMESTAMP.len()
                         + SPACING_WIDTH;
