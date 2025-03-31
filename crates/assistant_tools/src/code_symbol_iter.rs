@@ -34,7 +34,7 @@ impl<'a> CodeSymbolIterator<'a> {
     }
 }
 
-impl<'a> Iterator for CodeSymbolIterator<'a> {
+impl Iterator for CodeSymbolIterator<'_> {
     type Item = Entry;
 
     fn next(&mut self) -> Option<Self::Item> {
