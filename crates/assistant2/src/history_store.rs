@@ -43,6 +43,11 @@ impl HistoryStore {
     pub fn entries(&self, cx: &mut Context<Self>) -> Vec<HistoryEntry> {
         let mut history_entries = Vec::new();
 
+        #[cfg(debug_assertions)]
+        if std::env::var("ZED_SIMULATE_NO_THREAD_HISTORY").is_ok() {
+            return history_entries;
+        }
+
         for thread in self.thread_store.update(cx, |this, _cx| this.threads()) {
             history_entries.push(HistoryEntry::Thread(thread));
         }
