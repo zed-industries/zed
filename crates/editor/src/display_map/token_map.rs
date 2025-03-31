@@ -1,4 +1,5 @@
 use gpui::HighlightStyle;
+use itertools::Itertools;
 use language::{Chunk, Edit, Point, TextSummary};
 use multi_buffer::MultiBufferSnapshot;
 use multi_buffer::{MultiBufferRow, MultiBufferRows, RowInfo, ToOffset};
@@ -372,7 +373,9 @@ impl TokenMap {
             let mut new_transforms = SumTree::default();
             let mut cursor = snapshot.transforms.cursor::<(usize, TokenOffset)>(&());
             let mut buffer_edits_iter = buffer_edits.iter().peekable();
+            log::error!("started");
             while let Some(buffer_edit) = buffer_edits_iter.next() {
+                log::error!("  > buffer edit old start {}", buffer_edit.old.start);
                 new_transforms.append(cursor.slice(&buffer_edit.old.start, Bias::Left, &()), &());
                 if let Some(Transform::Isomorphic(transform)) = cursor.item() {
                     if cursor.end(&()).0 == buffer_edit.old.start {
@@ -391,41 +394,20 @@ impl TokenMap {
                 // Push the unchanged prefix.
                 let prefix_start = new_transforms.summary().input.len;
                 let prefix_end = buffer_edit.new.start;
-                push_isomorphic(
+                push_semantic_tokens(
+                    &self.tokens,
+                    &buffer_snapshot,
                     &mut new_transforms,
-                    buffer_snapshot.text_summary_for_range(prefix_start..prefix_end),
+                    prefix_start..prefix_end,
                 );
                 let new_start = TokenOffset(new_transforms.summary().output.len);
 
-                let start_ix = match self.tokens.binary_search_by(|probe| {
-                    probe
-                        .range
-                        .end
-                        .to_offset(&buffer_snapshot)
-                        .cmp(&buffer_edit.new.start)
-                        .then(std::cmp::Ordering::Greater)
-                }) {
-                    Ok(ix) | Err(ix) => ix,
-                };
-
-                // Apply the rest of the edit.
+                // Apply the rest of the edit. TODO: review if it doesn't need a color? or leave it to the update so it eventually is filled?
                 let transform_start = new_transforms.summary().input.len;
-                if let Some(token) = self.tokens.get(start_ix) {
-                    new_transforms.push(
-                        Transform::Highlight(
-                            token.clone(),
-                            buffer_snapshot
-                                .text_summary_for_range(transform_start..buffer_edit.new.end),
-                        ),
-                        &(),
-                    );
-                } else {
-                    push_isomorphic(
-                        &mut new_transforms,
-                        buffer_snapshot
-                            .text_summary_for_range(transform_start..buffer_edit.new.end),
-                    )
-                }
+                push_isomorphic(
+                    &mut new_transforms,
+                    buffer_snapshot.text_summary_for_range(transform_start..buffer_edit.new.end),
+                );
                 let new_end = TokenOffset(new_transforms.summary().output.len);
                 token_edits.push(Edit {
                     old: old_start..old_end,
@@ -477,7 +459,7 @@ impl TokenMap {
             if !retain {
                 buffer_edits.push(Edit {
                     old: token.range.start.to_offset(&snapshot.buffer)
-                        ..token.range.end.to_offset(&snapshot.buffer),
+                        ..token.range.start.to_offset(&snapshot.buffer),
                     new: token.range.start.to_offset(&snapshot.buffer)
                         ..token.range.start.to_offset(&snapshot.buffer),
                 })
@@ -486,24 +468,26 @@ impl TokenMap {
         });
 
         for token_to_insert in to_insert {
-            match self.tokens.binary_search_by(|probe| {
+            buffer_edits.push(Edit {
+                old: token_to_insert.range.start.to_offset(&snapshot.buffer)
+                    ..token_to_insert.range.start.to_offset(&snapshot.buffer),
+                new: token_to_insert.range.start.to_offset(&snapshot.buffer)
+                    ..token_to_insert.range.start.to_offset(&snapshot.buffer),
+            });
+            let (Ok(ix) | Err(ix)) = self.tokens.binary_search_by(|probe| {
                 probe
                     .range
-                    .end
+                    .start
                     .cmp(&token_to_insert.range.start, &snapshot.buffer)
                     .then(std::cmp::Ordering::Less)
-            }) {
-                Ok(ix) | Err(ix) => {
-                    buffer_edits.push(Edit {
-                        old: token_to_insert.range.start.to_offset(&snapshot.buffer)
-                            ..token_to_insert.range.end.to_offset(&snapshot.buffer),
-                        new: token_to_insert.range.start.to_offset(&snapshot.buffer)
-                            ..token_to_insert.range.end.to_offset(&snapshot.buffer),
-                    });
-                    self.tokens.insert(ix, token_to_insert);
-                }
-            }
+            });
+            self.tokens.insert(ix, token_to_insert);
         }
+
+        let buffer_edits = buffer_edits
+            .into_iter()
+            .sorted_by(|a, b| a.old.start.cmp(&b.old.start).then(cmp::Ordering::Greater))
+            .collect_vec();
 
         let buffer_snapshot = snapshot.buffer.clone();
         let (snapshot, edits) = self.sync(buffer_snapshot, buffer_edits);
@@ -613,13 +597,6 @@ impl TokenSnapshot {
             match cursor.item() {
                 Some(Transform::Isomorphic(_)) => {
                     if offset == cursor.end(&()).0 {
-                        // while let Some(Transform::Highlight(token, _)) = cursor.next_item() {
-                        //     if token.position.bias() == Bias::Right {
-                        //         break;
-                        //     } else {
-                        //         cursor.next(&());
-                        //     }
-                        // }
                         return cursor.end(&()).1;
                     } else {
                         let overshoot = offset - cursor.start().0;
@@ -628,13 +605,6 @@ impl TokenSnapshot {
                 }
                 Some(Transform::Highlight(_, _)) => {
                     if offset == cursor.end(&()).0 {
-                        // while let Some(Transform::Highlight(token, _)) = cursor.next_item() {
-                        //     if token.position.bias() == Bias::Right {
-                        //         break;
-                        //     } else {
-                        //         cursor.next(&());
-                        //     }
-                        // }
                         return cursor.end(&()).1;
                     } else {
                         let overshoot = offset - cursor.start().0;
@@ -654,13 +624,6 @@ impl TokenSnapshot {
             match cursor.item() {
                 Some(Transform::Isomorphic(_)) => {
                     if point == cursor.end(&()).0 {
-                        // while let Some(Transform::Highlight(token, _)) = cursor.next_item() {
-                        //     if token.position.bias() == Bias::Right {
-                        //         break;
-                        //     } else {
-                        //         cursor.next(&());
-                        //     }
-                        // }
                         return cursor.end(&()).1;
                     } else {
                         let overshoot = point - cursor.start().0;
@@ -669,13 +632,6 @@ impl TokenSnapshot {
                 }
                 Some(Transform::Highlight(_, _)) => {
                     if point == cursor.end(&()).0 {
-                        // while let Some(Transform::Highlight(token, _)) = cursor.next_item() {
-                        //     if token.position.bias() == Bias::Right {
-                        //         break;
-                        //     } else {
-                        //         cursor.next(&());
-                        //     }
-                        // }
                         return cursor.end(&()).1;
                     } else {
                         let overshoot = point - cursor.start().0;
@@ -696,34 +652,9 @@ impl TokenSnapshot {
             match cursor.item() {
                 Some(Transform::Isomorphic(_)) => {
                     if cursor.start().0 == point {
-                        // if let Some(Transform::Highlight(token, _)) = cursor.prev_item() {
-                        //     if token.position.bias() == Bias::Left {
-                        //         return point;
-                        //     } else if bias == Bias::Left {
-                        //         cursor.prev(&());
-                        //     } else if transform.first_line_chars == 0 {
-                        //         point.0 += Point::new(1, 0);
-                        //     } else {
-                        //         point.0 += Point::new(0, 1);
-                        //     }
-                        // } else {
                         return point;
-                        // }
                     } else if cursor.end(&()).0 == point {
-                        // if let Some(Transform::Highlight(token, _)) = cursor.next_item() {
-                        //     if token.position.bias() == Bias::Right {
-                        //         return point;
-                        //     } else if bias == Bias::Right {
-                        //         cursor.next(&());
-                        //     } else if point.0.column == 0 {
-                        //         point.0.row -= 1;
-                        //         point.0.column = self.line_len(point.0.row);
-                        //     } else {
-                        //         point.0.column -= 1;
-                        //     }
-                        // } else {
                         return point;
-                        // }
                     } else {
                         let overshoot = point.0 - cursor.start().0 .0;
                         let buffer_point = cursor.start().1 + overshoot;
@@ -739,34 +670,9 @@ impl TokenSnapshot {
                 }
                 Some(Transform::Highlight(_, _)) => {
                     if cursor.start().0 == point {
-                        // if let Some(Transform::Highlight(token, _)) = cursor.prev_item() {
-                        //     if token.position.bias() == Bias::Left {
-                        //         return point;
-                        //     } else if bias == Bias::Left {
-                        //         cursor.prev(&());
-                        //     } else if transform.first_line_chars == 0 {
-                        //         point.0 += Point::new(1, 0);
-                        //     } else {
-                        //         point.0 += Point::new(0, 1);
-                        //     }
-                        // } else {
                         return point;
-                        // }
                     } else if cursor.end(&()).0 == point {
-                        // if let Some(Transform::Highlight(token, _)) = cursor.next_item() {
-                        //     if token.position.bias() == Bias::Right {
-                        //         return point;
-                        //     } else if bias == Bias::Right {
-                        //         cursor.next(&());
-                        //     } else if point.0.column == 0 {
-                        //         point.0.row -= 1;
-                        //         point.0.column = self.line_len(point.0.row);
-                        //     } else {
-                        //         point.0.column -= 1;
-                        //     }
-                        // } else {
                         return point;
-                        // }
                     } else {
                         let overshoot = point.0 - cursor.start().0 .0;
                         let buffer_point = cursor.start().1 + overshoot;
@@ -946,6 +852,63 @@ impl TokenSnapshot {
                 }
             }
         }
+    }
+}
+
+fn push_semantic_tokens(
+    tokens: &[Token],
+    buffer_snapshot: &MultiBufferSnapshot,
+    sum_tree: &mut SumTree<Transform>,
+    range: Range<usize>,
+) {
+    let (Ok(ix) | Err(ix)) = tokens.binary_search_by(|probe| {
+        probe
+            .range
+            .start
+            .to_offset(&buffer_snapshot)
+            .cmp(&range.start)
+            .then(std::cmp::Ordering::Greater)
+    });
+
+    if ix >= tokens.len() {
+        push_isomorphic(
+            sum_tree,
+            buffer_snapshot.text_summary_for_range(range.start..range.end),
+        );
+        return;
+    }
+
+    let mut acc = range.start;
+    for token in &tokens[ix..] {
+        let buffer_offset = token.range.end.to_offset(buffer_snapshot);
+        if buffer_offset > range.end {
+            break;
+        }
+
+        if acc != token.range.start.to_offset(buffer_snapshot) {
+            push_isomorphic(
+                sum_tree,
+                buffer_snapshot
+                    .text_summary_for_range(acc..token.range.start.to_offset(buffer_snapshot)),
+            );
+        }
+
+        let prefix_start = sum_tree.summary().input.len;
+        let prefix_end = buffer_offset;
+        sum_tree.push(
+            Transform::Highlight(
+                token.clone(),
+                buffer_snapshot.text_summary_for_range(prefix_start..prefix_end),
+            ),
+            &(),
+        );
+        acc = prefix_end;
+    }
+    if acc != range.end {
+        push_isomorphic(
+            sum_tree,
+            buffer_snapshot.text_summary_for_range(acc..range.end),
+        );
     }
 }
 
