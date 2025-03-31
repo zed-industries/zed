@@ -69,29 +69,26 @@ use xkbcommon::xkb::{self, Keycode, KEYMAP_COMPILE_NO_FLAGS};
 use super::display::WaylandDisplay;
 use super::window::{ImeInput, WaylandWindowStatePtr};
 
-use crate::platform::{blade::BladeContext, PlatformWindow};
-use crate::{
-    platform::linux::{
-        get_xkb_compose_state, is_within_click_distance, open_uri_internal, read_fd,
-        reveal_path_internal,
-        wayland::{
-            clipboard::{Clipboard, DataOffer, FILE_LIST_MIME_TYPE, TEXT_MIME_TYPE},
-            cursor::Cursor,
-            serial::{SerialKind, SerialTracker},
-            window::WaylandWindow,
-        },
-        xdg_desktop_portal::{Event as XDPEvent, XDPEventSource},
-        LinuxClient,
+use crate::platform::linux::{
+    get_xkb_compose_state, is_within_click_distance, open_uri_internal, read_fd,
+    reveal_path_internal,
+    wayland::{
+        clipboard::{Clipboard, DataOffer, FILE_LIST_MIME_TYPE, TEXT_MIME_TYPE},
+        cursor::Cursor,
+        serial::{SerialKind, SerialTracker},
+        window::WaylandWindow,
     },
-    ScreenCaptureSource,
+    xdg_desktop_portal::{Event as XDPEvent, XDPEventSource},
+    LinuxClient,
 };
+use crate::platform::{blade::BladeContext, PlatformWindow};
 use crate::{
     point, px, size, start_scap_default_target_source, AnyWindowHandle, Bounds, CursorStyle,
     DevicePixels, DisplayId, FileDropEvent, ForegroundExecutor, KeyDownEvent, KeyUpEvent,
     Keystroke, LinuxCommon, Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent,
     MouseExitEvent, MouseMoveEvent, MouseUpEvent, NavigationDirection, Pixels, PlatformDisplay,
-    PlatformInput, Point, ScaledPixels, ScrollDelta, ScrollWheelEvent, Size, TouchPhase,
-    WindowParams, DOUBLE_CLICK_INTERVAL, SCROLL_LINES,
+    PlatformInput, Point, ScaledPixels, ScreenCaptureSource, ScrollDelta, ScrollWheelEvent, Size,
+    TouchPhase, WindowParams, DOUBLE_CLICK_INTERVAL, SCROLL_LINES,
 };
 
 /// Used to convert evdev scancode to xkb scancode

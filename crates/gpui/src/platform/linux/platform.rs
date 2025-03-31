@@ -47,7 +47,6 @@ pub trait LinuxClient {
     fn compositor_name(&self) -> &'static str;
     fn with_common<R>(&self, f: impl FnOnce(&mut LinuxCommon) -> R) -> R;
     fn keyboard_layout(&self) -> String;
-
     fn displays(&self) -> Vec<Rc<dyn PlatformDisplay>>;
     #[allow(unused)]
     fn display(&self, id: DisplayId) -> Option<Rc<dyn PlatformDisplay>>;
