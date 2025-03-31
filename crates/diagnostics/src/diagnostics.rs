@@ -305,12 +305,12 @@ impl ProjectDiagnosticsEditor {
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) {
-        if let Some(existing) = workspace.item_of_type::<ProjectDiagnosticsEditor>(cx) {
+        match workspace.item_of_type::<ProjectDiagnosticsEditor>(cx) { Some(existing) => {
             let is_active = workspace
                 .active_item(cx)
                 .is_some_and(|item| item.item_id() == existing.item_id());
             workspace.activate_item(&existing, true, !is_active, window, cx);
-        } else {
+        } _ => {
             let workspace_handle = cx.entity().downgrade();
 
             let include_warnings = match cx.try_global::<IncludeWarnings>() {
@@ -328,7 +328,7 @@ impl ProjectDiagnosticsEditor {
                 )
             });
             workspace.add_item_to_active_pane(Box::new(diagnostics), None, true, window, cx);
-        }
+        }}
     }
 
     fn toggle_warnings(&mut self, _: &ToggleWarnings, window: &mut Window, cx: &mut Context<Self>) {
@@ -472,7 +472,7 @@ impl ProjectDiagnosticsEditor {
                     }
                 }
 
-                if let Some((language_server_id, group)) = to_insert {
+                match to_insert { Some((language_server_id, group)) => {
                     let mut group_state = DiagnosticGroupState {
                         language_server_id,
                         primary_diagnostic: group.entries[group.primary_ix].clone(),
@@ -485,7 +485,7 @@ impl ProjectDiagnosticsEditor {
                     let mut is_first_excerpt_for_group = true;
                     for (ix, entry) in group.entries.iter().map(Some).chain([None]).enumerate() {
                         let resolved_entry = entry.map(|e| e.resolve::<Point>(&snapshot));
-                        let expanded_range = if let Some(entry) = &resolved_entry {
+                        let expanded_range = match &resolved_entry { Some(entry) => {
                             Some(
                                 context_range_for_entry(
                                     entry.range.clone(),
@@ -495,9 +495,9 @@ impl ProjectDiagnosticsEditor {
                                 )
                                 .await,
                             )
-                        } else {
+                        } _ => {
                             None
-                        };
+                        }};
                         if let Some((range, context_range, start_ix)) = &mut pending_range {
                             if let Some(expanded_range) = expanded_range.clone() {
                                 // If the entries are overlapping or next to each-other, merge them into one excerpt.
@@ -581,12 +581,12 @@ impl ProjectDiagnosticsEditor {
                             .diagnostic_groups
                             .push(group_state);
                     })?;
-                } else if let Some((_, group_state)) = to_remove {
+                } _ => { match to_remove { Some((_, group_state)) => {
                     excerpts.update(cx, |excerpts, cx| {
                         excerpts.remove_excerpts(group_state.excerpts.iter().copied(), cx)
                     })?;
                     blocks_to_remove.extend(group_state.blocks.iter().copied());
-                } else if let Some((_, group_state)) = to_keep {
+                } _ => { match to_keep { Some((_, group_state)) => {
                     prev_excerpt_id = *group_state.excerpts.last().unwrap();
                     first_excerpt_id.get_or_insert(prev_excerpt_id);
 
@@ -595,7 +595,7 @@ impl ProjectDiagnosticsEditor {
                             .diagnostic_groups
                             .push(group_state)
                     })?;
-                }
+                } _ => {}}}}}}
             }
 
             let excerpts_snapshot = excerpts.update(cx, |excerpts, cx| excerpts.snapshot(cx))?;

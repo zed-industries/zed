@@ -129,12 +129,11 @@ impl Editor {
 
         let mut target_top;
         let mut target_bottom;
-        if let Some(first_highlighted_row) =
-            self.highlighted_display_row_for_autoscroll(&display_map)
-        {
+        match self.highlighted_display_row_for_autoscroll(&display_map)
+        { Some(first_highlighted_row) => {
             target_top = first_highlighted_row.as_f32();
             target_bottom = target_top + 1.;
-        } else {
+        } _ => {
             let selections = self.selections.all::<Point>(cx);
 
             target_top = selections
@@ -171,7 +170,7 @@ impl Editor {
                 target_top = newest_selection_top;
                 target_bottom = newest_selection_top + 1.;
             }
-        }
+        }}
 
         let margin = if matches!(self.mode, EditorMode::AutoHeight { .. }) {
             0.

@@ -132,10 +132,10 @@ impl Database {
         initial_channel_id: Option<ChannelId>,
         tx: &DatabaseTransaction,
     ) -> Result<User> {
-        if let Some(existing_user) = self
+        match self
             .get_user_by_github_user_id_or_github_login(github_user_id, github_login, tx)
             .await?
-        {
+        { Some(existing_user) => {
             let mut existing_user = existing_user.into_active_model();
             existing_user.github_login = ActiveValue::set(github_login.into());
             existing_user.github_user_created_at = ActiveValue::set(Some(github_user_created_at));
@@ -149,7 +149,7 @@ impl Database {
             }
 
             Ok(existing_user.update(tx).await?)
-        } else {
+        } _ => {
             let user = user::Entity::insert(user::ActiveModel {
                 email_address: ActiveValue::set(github_email.map(|email| email.into())),
                 name: ActiveValue::set(github_name.map(|name| name.into())),
@@ -176,7 +176,7 @@ impl Database {
                 .await?;
             }
             Ok(user)
-        }
+        }}
     }
 
     /// Tries to retrieve a user, first by their GitHub user ID, and then by their GitHub login.

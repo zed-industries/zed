@@ -1236,7 +1236,7 @@ impl Element for Div {
         }
         let content_size = if request_layout.child_layout_ids.is_empty() {
             bounds.size
-        } else if let Some(scroll_handle) = self.interactivity.tracked_scroll_handle.as_ref() {
+        } else { match self.interactivity.tracked_scroll_handle.as_ref() { Some(scroll_handle) => {
             let mut state = scroll_handle.0.borrow_mut();
             state.child_bounds = Vec::with_capacity(request_layout.child_layout_ids.len());
             state.bounds = bounds;
@@ -1247,7 +1247,7 @@ impl Element for Div {
                 state.child_bounds.push(child_bounds);
             }
             (child_max - child_min).into()
-        } else {
+        } _ => {
             for child_layout_id in &request_layout.child_layout_ids {
                 let child_bounds = window.layout_bounds(*child_layout_id);
                 child_min = child_min.min(&child_bounds.origin);
@@ -1258,7 +1258,7 @@ impl Element for Div {
                 }
             }
             (child_max - child_min).into()
-        };
+        }}};
 
         self.interactivity.prepaint(
             global_id,
@@ -2976,14 +2976,14 @@ impl ScrollHandle {
         let ix = self.top_item();
         let state = self.0.borrow();
 
-        if let Some(child_bounds) = state.child_bounds.get(ix) {
+        match state.child_bounds.get(ix) { Some(child_bounds) => {
             (
                 ix,
                 child_bounds.top() + state.offset.borrow().y - state.bounds.top(),
             )
-        } else {
+        } _ => {
             (ix, px(0.))
-        }
+        }}
     }
 
     /// Get the count of children for scrollable item.

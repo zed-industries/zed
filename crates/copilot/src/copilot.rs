@@ -348,7 +348,7 @@ impl Copilot {
         this
     }
 
-    fn shutdown_language_server(&mut self, _cx: &mut Context<Self>) -> impl Future<Output = ()> {
+    fn shutdown_language_server(&mut self, _cx: &mut Context<Self>) -> impl Future<Output = ()> + use<> {
         let shutdown = match mem::replace(&mut self.server, CopilotServer::Disabled) {
             CopilotServer::Running(server) => Some(Box::pin(async move { server.lsp.shutdown() })),
             _ => None,
@@ -553,7 +553,7 @@ impl Copilot {
     }
 
     pub fn sign_in(&mut self, cx: &mut Context<Self>) -> Task<Result<()>> {
-        if let CopilotServer::Running(server) = &mut self.server {
+        match &mut self.server { CopilotServer::Running(server) => {
             let task = match &server.sign_in_status {
                 SignInStatus::Authorized { .. } => Task::ready(Ok(())).shared(),
                 SignInStatus::SigningIn { task, .. } => {
@@ -629,11 +629,11 @@ impl Copilot {
             };
 
             cx.background_spawn(task.map_err(|err| anyhow!("{:?}", err)))
-        } else {
+        } _ => {
             // If we're downloading, wait until download is finished
             // If we're in a stuck state, display to the user
             Task::ready(Err(anyhow!("copilot hasn't started yet")))
-        }
+        }}
     }
 
     pub fn sign_out(&mut self, cx: &mut Context<Self>) -> Task<Result<()>> {
@@ -680,11 +680,11 @@ impl Copilot {
     }
 
     pub fn language_server(&self) -> Option<&Arc<LanguageServer>> {
-        if let CopilotServer::Running(server) = &self.server {
+        match &self.server { CopilotServer::Running(server) => {
             Some(&server.lsp)
-        } else {
+        } _ => {
             None
-        }
+        }}
     }
 
     pub fn register_buffer(&mut self, buffer: &Entity<Buffer>, cx: &mut Context<Self>) {

@@ -72,7 +72,7 @@ pub fn init(cx: &mut App) {
                         .items()
                         .find_map(|item| item.downcast::<ExtensionsPage>());
 
-                    if let Some(existing) = existing {
+                    match existing { Some(existing) => {
                         if provides_filter.is_some() {
                             existing.update(cx, |extensions_page, cx| {
                                 extensions_page.change_provides_filter(provides_filter, cx);
@@ -80,7 +80,7 @@ pub fn init(cx: &mut App) {
                         }
 
                         workspace.activate_item(&existing, true, true, window, cx);
-                    } else {
+                    } _ => {
                         let extensions_page =
                             ExtensionsPage::new(workspace, provides_filter, window, cx);
                         workspace.add_item_to_active_pane(
@@ -90,7 +90,7 @@ pub fn init(cx: &mut App) {
                             window,
                             cx,
                         )
-                    }
+                    }}
                 },
             )
             .register_action(move |workspace, _: &InstallDevExtension, window, cx| {
@@ -969,7 +969,7 @@ impl ExtensionsPage {
         &self,
         editor: &Entity<Editor>,
         cx: &mut Context<Self>,
-    ) -> impl IntoElement {
+    ) -> impl IntoElement + use<> {
         let settings = ThemeSettings::get_global(cx);
         let text_style = TextStyle {
             color: if editor.read(cx).read_only(cx) {
@@ -1058,7 +1058,7 @@ impl ExtensionsPage {
         }
     }
 
-    fn render_empty_state(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_empty_state(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         let has_search = self.search_query(cx).is_some();
 
         let message = if self.is_fetching_extensions {
@@ -1138,7 +1138,7 @@ impl ExtensionsPage {
         }
     }
 
-    fn render_feature_upsells(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_feature_upsells(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         let upsells_count = self.upsells.len();
 
         v_flex().children(self.upsells.iter().enumerate().map(|(ix, feature)| {

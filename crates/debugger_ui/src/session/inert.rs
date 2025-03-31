@@ -284,7 +284,7 @@ impl Render for InertState {
 }
 
 impl InertState {
-    fn render_editor(editor: &Entity<Editor>, cx: &Context<Self>) -> impl IntoElement {
+    fn render_editor(editor: &Entity<Editor>, cx: &Context<Self>) -> impl IntoElement + use<> {
         let settings = ThemeSettings::get_global(cx);
         let text_style = TextStyle {
             color: cx.theme().colors().text,

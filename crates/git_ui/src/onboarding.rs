@@ -8,10 +8,10 @@ use workspace::{ModalView, Workspace};
 use crate::git_panel::GitPanel;
 
 macro_rules! git_onboarding_event {
-    ($name:expr) => {
+    ($name:expr_2021) => {
         telemetry::event!($name, source = "Git Onboarding");
     };
-    ($name:expr, $($key:ident $(= $value:expr)?),+ $(,)?) => {
+    ($name:expr_2021, $($key:ident $(= $value:expr_2021)?),+ $(,)?) => {
         telemetry::event!($name, source = "Git Onboarding", $($key $(= $value)?),+);
     };
 }

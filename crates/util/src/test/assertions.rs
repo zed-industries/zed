@@ -14,7 +14,7 @@ impl<T> SetEqError<T> {
 
 #[macro_export]
 macro_rules! set_eq {
-    ($left:expr,$right:expr) => {{
+    ($left:expr_2021,$right:expr_2021) => {{
         use util::test::*;
 
         let left = $left;
@@ -42,7 +42,7 @@ macro_rules! set_eq {
 
 #[macro_export]
 macro_rules! assert_set_eq {
-    ($left:expr,$right:expr) => {{
+    ($left:expr_2021,$right:expr_2021) => {{
         use util::test::*;
         use util::set_eq;
 

@@ -77,7 +77,7 @@ impl LocalParticipant {
 
 impl RemoteParticipant {
     pub fn track_publications(&self) -> HashMap<TrackSid, RemoteTrackPublication> {
-        if let Some(room) = self.room.upgrade() {
+        match self.room.upgrade() { Some(room) => {
             let server = room.test_server();
             let audio = server
                 .audio_tracks(room.token())
@@ -110,9 +110,9 @@ impl RemoteParticipant {
                     )
                 });
             audio.chain(video).collect()
-        } else {
+        } _ => {
             HashMap::default()
-        }
+        }}
     }
 
     pub fn identity(&self) -> ParticipantIdentity {

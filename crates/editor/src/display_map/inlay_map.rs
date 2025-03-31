@@ -610,9 +610,9 @@ impl InlayMap {
         let mut to_insert = Vec::new();
         let snapshot = &mut self.snapshot;
         for i in 0..rng.gen_range(1..=5) {
-            if self.inlays.is_empty() || rng.gen() {
+            if self.inlays.is_empty() || rng.r#gen() {
                 let position = snapshot.buffer.random_byte_range(0, rng).start;
-                let bias = if rng.gen() { Bias::Left } else { Bias::Right };
+                let bias = if rng.r#gen() { Bias::Left } else { Bias::Right };
                 let len = if rng.gen_bool(0.01) {
                     0
                 } else {
@@ -809,7 +809,7 @@ impl InlaySnapshot {
             match cursor.item() {
                 Some(Transform::Isomorphic(transform)) => {
                     if cursor.start().0 == point {
-                        if let Some(Transform::Inlay(inlay)) = cursor.prev_item() {
+                        match cursor.prev_item() { Some(Transform::Inlay(inlay)) => {
                             if inlay.position.bias() == Bias::Left {
                                 return point;
                             } else if bias == Bias::Left {
@@ -819,11 +819,11 @@ impl InlaySnapshot {
                             } else {
                                 point.0 += Point::new(0, 1);
                             }
-                        } else {
+                        } _ => {
                             return point;
-                        }
+                        }}
                     } else if cursor.end(&()).0 == point {
-                        if let Some(Transform::Inlay(inlay)) = cursor.next_item() {
+                        match cursor.next_item() { Some(Transform::Inlay(inlay)) => {
                             if inlay.position.bias() == Bias::Right {
                                 return point;
                             } else if bias == Bias::Right {
@@ -834,9 +834,9 @@ impl InlaySnapshot {
                             } else {
                                 point.0.column -= 1;
                             }
-                        } else {
+                        } _ => {
                             return point;
-                        }
+                        }}
                     } else {
                         let overshoot = point.0 - cursor.start().0 .0;
                         let buffer_point = cursor.start().1 + overshoot;
@@ -1500,7 +1500,7 @@ mod tests {
             .unwrap_or(10);
 
         let len = rng.gen_range(0..30);
-        let buffer = if rng.gen() {
+        let buffer = if rng.r#gen() {
             let text = util::RandomCharIter::new(&mut rng)
                 .take(len)
                 .collect::<String>();
@@ -1709,7 +1709,7 @@ mod tests {
                     buffer_point
                 );
 
-                if let Some(ch) = buffer_chars.next() {
+                match buffer_chars.next() { Some(ch) => {
                     if ch == '\n' {
                         buffer_point += Point::new(1, 0);
                     } else {
@@ -1720,9 +1720,9 @@ mod tests {
                     let new_inlay_point = inlay_snapshot.to_inlay_point(buffer_point);
                     assert!(new_inlay_point > inlay_point);
                     inlay_point = new_inlay_point;
-                } else {
+                } _ => {
                     break;
-                }
+                }}
             }
 
             let mut inlay_point = InlayPoint::default();

@@ -63,17 +63,17 @@ impl Tool for DiagnosticsTool {
     }
 
     fn ui_text(&self, input: &serde_json::Value) -> String {
-        if let Some(path) = serde_json::from_value::<DiagnosticsToolInput>(input.clone())
+        match serde_json::from_value::<DiagnosticsToolInput>(input.clone())
             .ok()
             .and_then(|input| match input.path {
                 Some(path) if !path.is_empty() => Some(MarkdownString::inline_code(&path)),
                 _ => None,
             })
-        {
+        { Some(path) => {
             format!("Check diagnostics for {path}")
-        } else {
+        } _ => {
             "Check project diagnostics".to_string()
-        }
+        }}
     }
 
     fn run(

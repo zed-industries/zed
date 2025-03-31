@@ -201,9 +201,9 @@ pub fn render_markdown_mut(
         let prev_len = text.len();
         match event {
             Event::Text(t) => {
-                if let Some(language) = &current_language {
+                match &current_language { Some(language) => {
                     render_code(text, highlights, t.as_ref(), language);
-                } else {
+                } _ => {
                     while let Some(mention) = mentions.first() {
                         if !source_range.contains_inclusive(&mention.range) {
                             break;
@@ -294,7 +294,7 @@ pub fn render_markdown_mut(
                                 .push((last_run_len..text.len(), Highlight::Highlight(style)));
                         }
                     }
-                }
+                }}
             }
             Event::Code(t) => {
                 text.push_str(t.as_ref());

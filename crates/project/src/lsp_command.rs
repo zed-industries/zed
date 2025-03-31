@@ -1935,15 +1935,15 @@ impl LspCommand for GetHover {
         _: &clock::Global,
         _: &mut App,
     ) -> proto::GetHoverResponse {
-        if let Some(response) = response {
-            let (start, end) = if let Some(range) = response.range {
+        match response { Some(response) => {
+            let (start, end) = match response.range { Some(range) => {
                 (
                     Some(language::proto::serialize_anchor(&range.start)),
                     Some(language::proto::serialize_anchor(&range.end)),
                 )
-            } else {
+            } _ => {
                 (None, None)
-            };
+            }};
 
             let contents = response
                 .contents
@@ -1964,13 +1964,13 @@ impl LspCommand for GetHover {
                 end,
                 contents,
             }
-        } else {
+        } _ => {
             proto::GetHoverResponse {
                 start: None,
                 end: None,
                 contents: Vec::new(),
             }
-        }
+        }}
     }
 
     async fn response_from_proto(
@@ -2059,7 +2059,7 @@ impl LspCommand for GetCompletions {
         mut cx: AsyncApp,
     ) -> Result<Self::Response> {
         let mut response_list = None;
-        let mut completions = if let Some(completions) = completions {
+        let mut completions = match completions { Some(completions) => {
             match completions {
                 lsp::CompletionResponse::Array(completions) => completions,
                 lsp::CompletionResponse::List(mut list) => {
@@ -2068,9 +2068,9 @@ impl LspCommand for GetCompletions {
                     items
                 }
             }
-        } else {
+        } _ => {
             Vec::new()
-        };
+        }};
 
         let language_server_adapter = lsp_store
             .update(&mut cx, |lsp_store, _| {
@@ -2355,16 +2355,16 @@ impl LspCommand for GetCodeActions {
                 // If we do know that we want specific code actions AND we know that
                 // the server only supports specific code actions, then we want to filter
                 // down to the ones that are supported.
-                if let Some((requested, supported)) = self
+                match self
                     .kinds
                     .as_ref()
                     .zip(Self::supported_code_action_kinds(capabilities))
-                {
+                { Some((requested, supported)) => {
                     let server_supported = supported.into_iter().collect::<HashSet<_>>();
                     requested.iter().any(|kind| server_supported.contains(kind))
-                } else {
+                } _ => {
                     true
-                }
+                }}
             }
         }
     }

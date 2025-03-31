@@ -55,7 +55,7 @@ fn get_attr_value(attrs: &[Attribute], key: &str) -> Option<String> {
         .iter()
         .filter(|attr| attr.path.is_ident("derive_path_static_str"))
         .find_map(|attr| {
-            if let Ok(Meta::List(meta_list)) = attr.parse_meta() {
+            match attr.parse_meta() { Ok(Meta::List(meta_list)) => {
                 meta_list.nested.iter().find_map(|nested_meta| {
                     if let NestedMeta::Meta(Meta::NameValue(name_value)) = nested_meta {
                         if name_value.path.is_ident(key) {
@@ -66,8 +66,8 @@ fn get_attr_value(attrs: &[Attribute], key: &str) -> Option<String> {
                     }
                     None
                 })
-            } else {
+            } _ => {
                 None
-            }
+            }}
         })
 }

@@ -393,7 +393,7 @@ impl Rope {
     pub fn clip_offset(&self, mut offset: usize, bias: Bias) -> usize {
         let mut cursor = self.chunks.cursor::<usize>(&());
         cursor.seek(&offset, Bias::Left, &());
-        if let Some(chunk) = cursor.item() {
+        match cursor.item() { Some(chunk) => {
             let mut ix = offset - cursor.start();
             while !chunk.text.is_char_boundary(ix) {
                 match bias {
@@ -408,42 +408,42 @@ impl Rope {
                 }
             }
             offset
-        } else {
+        } _ => {
             self.summary().len
-        }
+        }}
     }
 
     pub fn clip_offset_utf16(&self, offset: OffsetUtf16, bias: Bias) -> OffsetUtf16 {
         let mut cursor = self.chunks.cursor::<OffsetUtf16>(&());
         cursor.seek(&offset, Bias::Right, &());
-        if let Some(chunk) = cursor.item() {
+        match cursor.item() { Some(chunk) => {
             let overshoot = offset - cursor.start();
             *cursor.start() + chunk.as_slice().clip_offset_utf16(overshoot, bias)
-        } else {
+        } _ => {
             self.summary().len_utf16
-        }
+        }}
     }
 
     pub fn clip_point(&self, point: Point, bias: Bias) -> Point {
         let mut cursor = self.chunks.cursor::<Point>(&());
         cursor.seek(&point, Bias::Right, &());
-        if let Some(chunk) = cursor.item() {
+        match cursor.item() { Some(chunk) => {
             let overshoot = point - cursor.start();
             *cursor.start() + chunk.as_slice().clip_point(overshoot, bias)
-        } else {
+        } _ => {
             self.summary().lines
-        }
+        }}
     }
 
     pub fn clip_point_utf16(&self, point: Unclipped<PointUtf16>, bias: Bias) -> PointUtf16 {
         let mut cursor = self.chunks.cursor::<PointUtf16>(&());
         cursor.seek(&point.0, Bias::Right, &());
-        if let Some(chunk) = cursor.item() {
+        match cursor.item() { Some(chunk) => {
             let overshoot = Unclipped(point.0 - cursor.start());
             *cursor.start() + chunk.as_slice().clip_point_utf16(overshoot, bias)
-        } else {
+        } _ => {
             self.summary().lines_utf16()
-        }
+        }}
     }
 
     pub fn line_len(&self, row: u32) -> u32 {
@@ -1674,7 +1674,7 @@ mod tests {
                 chunks.seek(offset);
 
                 for _ in 0..5 {
-                    if rng.gen() {
+                    if rng.r#gen() {
                         let expected_next_line_start = expected[offset..end_ix]
                             .find('\n')
                             .map(|newline_ix| offset + newline_ix + 1);
@@ -1763,7 +1763,7 @@ mod tests {
                     }
 
                     assert!((start_ix..=end_ix).contains(&chunks.offset()));
-                    if rng.gen() {
+                    if rng.r#gen() {
                         offset = rng.gen_range(start_ix..=end_ix);
                         while !expected.is_char_boundary(offset) {
                             offset -= 1;

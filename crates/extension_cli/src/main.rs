@@ -296,15 +296,15 @@ fn test_languages(
         let config_path = language_dir.join("config.toml");
         let config_content = fs::read_to_string(&config_path)?;
         let config: LanguageConfig = toml::from_str(&config_content)?;
-        let grammar = if let Some(name) = &config.grammar {
+        let grammar = match &config.grammar { Some(name) => {
             Some(
                 grammars
                     .get(name.as_ref())
                     .ok_or_else(|| anyhow!("grammar not found: '{name}'"))?,
             )
-        } else {
+        } _ => {
             None
-        };
+        }};
 
         let query_entries = fs::read_dir(&language_dir)?;
         for entry in query_entries {

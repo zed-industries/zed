@@ -295,7 +295,7 @@ impl RateCompletionModal {
         cx.notify();
     }
 
-    fn render_view_nav(&self, cx: &Context<Self>) -> impl IntoElement {
+    fn render_view_nav(&self, cx: &Context<Self>) -> impl IntoElement + use<> {
         h_flex()
             .h_8()
             .px_1()
@@ -362,15 +362,15 @@ impl RateCompletionModal {
                         .size_full()
                         .bg(cx.theme().colors().editor_background)
                         .overflow_scroll()
-                        .child(if let Some(active_completion) = &self.active_completion {
+                        .child(match &self.active_completion { Some(active_completion) => {
                             format!(
                                 "{}\n{}",
                                 active_completion.completion.input_events,
                                 active_completion.completion.input_excerpt
                             )
-                        } else {
+                        } _ => {
                             "No active completion".to_string()
-                        }),
+                        }}),
                 )
                 .id("raw-input-view"),
         )
@@ -380,7 +380,7 @@ impl RateCompletionModal {
         &mut self,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> Option<impl IntoElement> {
+    ) -> Option<impl IntoElement + use<>> {
         let active_completion = self.active_completion.as_ref()?;
         let completion_id = active_completion.completion.id;
         let focus_handle = &self.focus_handle(cx);

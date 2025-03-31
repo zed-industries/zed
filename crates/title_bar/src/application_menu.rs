@@ -118,7 +118,7 @@ impl ApplicationMenu {
         })
     }
 
-    fn render_application_menu(&self, entry: &MenuEntry) -> impl IntoElement {
+    fn render_application_menu(&self, entry: &MenuEntry) -> impl IntoElement + use<> {
         let handle = entry.handle.clone();
 
         let menu_name = entry.menu.name.clone();
@@ -146,7 +146,7 @@ impl ApplicationMenu {
             )
     }
 
-    fn render_standard_menu(&self, entry: &MenuEntry) -> impl IntoElement {
+    fn render_standard_menu(&self, entry: &MenuEntry) -> impl IntoElement + use<> {
         let current_handle = entry.handle.clone();
 
         let menu_name = entry.menu.name.clone();

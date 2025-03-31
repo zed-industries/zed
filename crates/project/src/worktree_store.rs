@@ -171,12 +171,12 @@ impl WorktreeStore {
         cx: &mut Context<Self>,
     ) -> Task<Result<(Entity<Worktree>, PathBuf)>> {
         let abs_path = abs_path.as_ref();
-        if let Some((tree, relative_path)) = self.find_worktree(abs_path, cx) {
+        match self.find_worktree(abs_path, cx) { Some((tree, relative_path)) => {
             Task::ready(Ok((tree, relative_path)))
-        } else {
+        } _ => {
             let worktree = self.create_worktree(abs_path, visible, cx);
             cx.background_spawn(async move { Ok((worktree.await?, PathBuf::new())) })
-        }
+        }}
     }
 
     pub fn entry_for_id<'a>(&'a self, entry_id: ProjectEntryId, cx: &'a App) -> Option<&'a Entry> {
@@ -403,7 +403,7 @@ impl WorktreeStore {
 
     pub fn remove_worktree(&mut self, id_to_remove: WorktreeId, cx: &mut Context<Self>) {
         self.worktrees.retain(|worktree| {
-            if let Some(worktree) = worktree.upgrade() {
+            match worktree.upgrade() { Some(worktree) => {
                 if worktree.read(cx).id() == id_to_remove {
                     cx.emit(WorktreeStoreEvent::WorktreeRemoved(
                         worktree.entity_id(),
@@ -413,9 +413,9 @@ impl WorktreeStore {
                 } else {
                     true
                 }
-            } else {
+            } _ => {
                 false
-            }
+            }}
         });
         self.send_project_updates(cx);
     }
@@ -456,9 +456,8 @@ impl WorktreeStore {
             .ok_or_else(|| anyhow!("invalid project"))?;
 
         for worktree in worktrees {
-            if let Some(old_worktree) =
-                old_worktrees_by_id.remove(&WorktreeId::from_proto(worktree.id))
-            {
+            match old_worktrees_by_id.remove(&WorktreeId::from_proto(worktree.id))
+            { Some(old_worktree) => {
                 let push_strong_handle =
                     self.retain_worktrees || old_worktree.read(cx).is_visible();
                 let handle = if push_strong_handle {
@@ -467,12 +466,12 @@ impl WorktreeStore {
                     WorktreeHandle::Weak(old_worktree.downgrade())
                 };
                 self.worktrees.push(handle);
-            } else {
+            } _ => {
                 self.add(
                     &Worktree::remote(project_id, replica_id, worktree, client.clone(), cx),
                     cx,
                 );
-            }
+            }}
         }
         self.send_project_updates(cx);
 

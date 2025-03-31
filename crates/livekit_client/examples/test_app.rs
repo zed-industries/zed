@@ -245,14 +245,14 @@ impl LivekitWindow {
     }
 
     fn toggle_mute(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(track) = &self.microphone_track {
+        match &self.microphone_track { Some(track) => {
             if track.is_muted() {
                 track.unmute(cx);
             } else {
                 track.mute(cx);
             }
             cx.notify();
-        } else {
+        } _ => {
             let room = self.room.clone();
             cx.spawn_in(window, async move |this, cx| {
                 let (publication, stream) = room.publish_local_microphone_track(cx).await.unwrap();
@@ -263,11 +263,11 @@ impl LivekitWindow {
                 })
             })
             .detach();
-        }
+        }}
     }
 
     fn toggle_screen_share(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(track) = self.screen_share_track.take() {
+        match self.screen_share_track.take() { Some(track) => {
             self.screen_share_stream.take();
             let participant = self.room.local_participant();
             cx.spawn(async move |_, cx| {
@@ -275,7 +275,7 @@ impl LivekitWindow {
             })
             .detach();
             cx.notify();
-        } else {
+        } _ => {
             let participant = self.room.local_participant();
             let sources = cx.screen_capture_sources();
             cx.spawn_in(window, async move |this, cx| {
@@ -293,7 +293,7 @@ impl LivekitWindow {
                 })
             })
             .detach();
-        }
+        }}
     }
 
     fn toggle_remote_audio_for_participant(
@@ -335,15 +335,15 @@ impl Render for LivekitWindow {
                 div().bg(rgb(0xffd4a8)).flex().flex_row().children([
                     button()
                         .id("toggle-mute")
-                        .child(if let Some(track) = &self.microphone_track {
+                        .child(match &self.microphone_track { Some(track) => {
                             if track.is_muted() {
                                 "Unmute"
                             } else {
                                 "Mute"
                             }
-                        } else {
+                        } _ => {
                             "Publish mic"
-                        })
+                        }})
                         .on_click(cx.listener(|this, _, window, cx| this.toggle_mute(window, cx))),
                     button()
                         .id("toggle-screen-share")

@@ -741,21 +741,21 @@ impl AssistantPanel {
                     }
                 });
 
-        if let Some(context_editor) = context_editor {
+        match context_editor { Some(context_editor) => {
             Some(InlineAssistTarget::Editor(context_editor, false))
-        } else if let Some(workspace_editor) = workspace
+        } _ => { match workspace
             .active_item(cx)
             .and_then(|item| item.act_as::<Editor>(cx))
-        {
+        { Some(workspace_editor) => {
             Some(InlineAssistTarget::Editor(workspace_editor, true))
-        } else if let Some(terminal_view) = workspace
+        } _ => { match workspace
             .active_item(cx)
             .and_then(|item| item.act_as::<TerminalView>(cx))
-        {
+        { Some(terminal_view) => {
             Some(InlineAssistTarget::Terminal(terminal_view))
-        } else {
+        } _ => {
             None
-        }
+        }}}}}}
     }
 
     pub fn create_new_context(

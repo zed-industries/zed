@@ -475,7 +475,7 @@ impl ConfigurationView {
         cx.notify();
     }
 
-    fn render_api_key_editor(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_api_key_editor(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         let settings = ThemeSettings::get_global(cx);
         let text_style = TextStyle {
             color: cx.theme().colors().text,

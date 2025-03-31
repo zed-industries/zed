@@ -88,7 +88,7 @@ where
     #[track_caller]
     pub fn item(&self) -> Option<&'a T> {
         self.assert_did_seek();
-        if let Some(entry) = self.stack.last() {
+        match self.stack.last() { Some(entry) => {
             match *entry.tree.0 {
                 Node::Leaf { ref items, .. } => {
                     if entry.index == items.len() {
@@ -99,15 +99,15 @@ where
                 }
                 _ => unreachable!(),
             }
-        } else {
+        } _ => {
             None
-        }
+        }}
     }
 
     #[track_caller]
     pub fn item_summary(&self) -> Option<&'a T::Summary> {
         self.assert_did_seek();
-        if let Some(entry) = self.stack.last() {
+        match self.stack.last() { Some(entry) => {
             match *entry.tree.0 {
                 Node::Leaf {
                     ref item_summaries, ..
@@ -120,15 +120,15 @@ where
                 }
                 _ => unreachable!(),
             }
-        } else {
+        } _ => {
             None
-        }
+        }}
     }
 
     #[track_caller]
     pub fn next_item(&self) -> Option<&'a T> {
         self.assert_did_seek();
-        if let Some(entry) = self.stack.last() {
+        match self.stack.last() { Some(entry) => {
             if entry.index == entry.tree.0.items().len() - 1 {
                 if let Some(next_leaf) = self.next_leaf() {
                     Some(next_leaf.0.items().first().unwrap())
@@ -141,11 +141,11 @@ where
                     _ => unreachable!(),
                 }
             }
-        } else if self.at_end {
+        } _ => if self.at_end {
             None
         } else {
             self.tree.first()
-        }
+        }}
     }
 
     #[track_caller]
@@ -166,7 +166,7 @@ where
     #[track_caller]
     pub fn prev_item(&self) -> Option<&'a T> {
         self.assert_did_seek();
-        if let Some(entry) = self.stack.last() {
+        match self.stack.last() { Some(entry) => {
             if entry.index == 0 {
                 if let Some(prev_leaf) = self.prev_leaf() {
                     Some(prev_leaf.0.items().last().unwrap())
@@ -179,11 +179,11 @@ where
                     _ => unreachable!(),
                 }
             }
-        } else if self.at_end {
+        } _ => if self.at_end {
             self.tree.last()
         } else {
             None
-        }
+        }}
     }
 
     #[track_caller]
@@ -230,11 +230,11 @@ where
 
         let mut descending = false;
         while !self.stack.is_empty() {
-            if let Some(StackEntry { position, .. }) = self.stack.iter().rev().nth(1) {
+            match self.stack.iter().rev().nth(1) { Some(StackEntry { position, .. }) => {
                 self.position = position.clone();
-            } else {
+            } _ => {
                 self.position = D::zero(cx);
-            }
+            }}
 
             let entry = self.stack.last_mut().unwrap();
             if !descending {

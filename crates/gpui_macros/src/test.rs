@@ -81,7 +81,7 @@ fn try_test(args: Vec<NestedMeta>, function: TokenStream) -> Result<TokenStream,
         let mut inner_fn_args = proc_macro2::TokenStream::new();
         for (ix, arg) in inner_fn.sig.inputs.iter().enumerate() {
             if let FnArg::Typed(arg) = arg {
-                if let Type::Path(ty) = &*arg.ty {
+                match &*arg.ty { Type::Path(ty) => {
                     let last_segment = ty.path.segments.last();
                     match last_segment.map(|s| s.ident.to_string()).as_deref() {
                         Some("StdRng") => {
@@ -96,7 +96,7 @@ fn try_test(args: Vec<NestedMeta>, function: TokenStream) -> Result<TokenStream,
                         }
                         _ => {}
                     }
-                } else if let Type::Reference(ty) = &*arg.ty {
+                } _ => { match &*arg.ty { Type::Reference(ty) => {
                     if let Type::Path(ty) = &*ty.elem {
                         let last_segment = ty.path.segments.last();
                         if let Some("TestAppContext") =
@@ -118,7 +118,7 @@ fn try_test(args: Vec<NestedMeta>, function: TokenStream) -> Result<TokenStream,
                             continue;
                         }
                     }
-                }
+                } _ => {}}}}
             }
 
             return Err(error_with_message("invalid function signature", arg));
@@ -151,14 +151,14 @@ fn try_test(args: Vec<NestedMeta>, function: TokenStream) -> Result<TokenStream,
         let mut inner_fn_args = proc_macro2::TokenStream::new();
         for (ix, arg) in inner_fn.sig.inputs.iter().enumerate() {
             if let FnArg::Typed(arg) = arg {
-                if let Type::Path(ty) = &*arg.ty {
+                match &*arg.ty { Type::Path(ty) => {
                     let last_segment = ty.path.segments.last();
 
                     if let Some("StdRng") = last_segment.map(|s| s.ident.to_string()).as_deref() {
                         inner_fn_args.extend(quote!(rand::SeedableRng::seed_from_u64(_seed),));
                         continue;
                     }
-                } else if let Type::Reference(ty) = &*arg.ty {
+                } _ => { match &*arg.ty { Type::Reference(ty) => {
                     if let Type::Path(ty) = &*ty.elem {
                         let last_segment = ty.path.segments.last();
                         match last_segment.map(|s| s.ident.to_string()).as_deref() {
@@ -200,7 +200,7 @@ fn try_test(args: Vec<NestedMeta>, function: TokenStream) -> Result<TokenStream,
                             _ => {}
                         }
                     }
-                }
+                } _ => {}}}}
             }
 
             return Err(error_with_message("invalid function signature", arg));

@@ -117,9 +117,9 @@ impl ProtoMessageHandlerSet {
         let payload_type_id = message.payload_type_id();
         let mut this = this.lock();
         let handler = this.message_handlers.get(&payload_type_id)?.clone();
-        let entity = if let Some(entity) = this.entities_by_message_type.get(&payload_type_id) {
+        let entity = match this.entities_by_message_type.get(&payload_type_id) { Some(entity) => {
             entity.upgrade()?
-        } else {
+        } _ => {
             let extract_entity_id = *this.entity_id_extractors.get(&payload_type_id)?;
             let entity_type_id = *this.entity_types_by_message_type.get(&payload_type_id)?;
             let entity_id = (extract_entity_id)(message.as_ref());
@@ -133,7 +133,7 @@ impl ProtoMessageHandlerSet {
                 }
                 EntityMessageSubscriber::Entity { handle } => handle.upgrade()?,
             }
-        };
+        }};
         drop(this);
         Some(handler(entity, message, client, cx))
     }
@@ -185,7 +185,7 @@ impl AnyProtoClient {
     pub fn request<T: RequestMessage>(
         &self,
         request: T,
-    ) -> impl Future<Output = anyhow::Result<T::Response>> {
+    ) -> impl Future<Output = anyhow::Result<T::Response>> + use<T> {
         let envelope = request.into_envelope(0, None, None);
         let response = self.0.request(envelope, T::NAME);
         async move {

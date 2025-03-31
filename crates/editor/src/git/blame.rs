@@ -192,7 +192,7 @@ impl GitBlame {
         &'a mut self,
         rows: &'a [RowInfo],
         cx: &App,
-    ) -> impl 'a + Iterator<Item = Option<BlameEntry>> {
+    ) -> impl 'a + Iterator<Item = Option<BlameEntry>> + use<'a> {
         self.sync(cx);
 
         let buffer_id = self.buffer_snapshot.remote_id();
@@ -480,16 +480,16 @@ async fn parse_commit_messages(
         .and_then(|remote_url| parse_git_remote_url(provider_registry, remote_url));
 
     for (oid, message) in messages {
-        let permalink = if let Some((provider, git_remote)) = parsed_remote_url.as_ref() {
+        let permalink = match parsed_remote_url.as_ref() { Some((provider, git_remote)) => {
             Some(provider.build_commit_permalink(
                 git_remote,
                 git::BuildCommitPermalinkParams {
                     sha: oid.to_string().as_str(),
                 },
             ))
-        } else {
+        } _ => {
             None
-        };
+        }};
 
         let remote = parsed_remote_url
             .as_ref()

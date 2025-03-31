@@ -111,7 +111,7 @@ impl Render for Breadcrumbs {
                         }
                     })
                     .tooltip(move |window, cx| {
-                        if let Some(editor) = editor.upgrade() {
+                        match editor.upgrade() { Some(editor) => {
                             let focus_handle = editor.read(cx).focus_handle(cx);
                             Tooltip::for_action_in(
                                 "Show Symbol Outline",
@@ -120,14 +120,14 @@ impl Render for Breadcrumbs {
                                 window,
                                 cx,
                             )
-                        } else {
+                        } _ => {
                             Tooltip::for_action(
                                 "Show Symbol Outline",
                                 &zed_actions::outline::ToggleOutline,
                                 window,
                                 cx,
                             )
-                        }
+                        }}
                     }),
             ),
             None => element

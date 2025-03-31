@@ -90,9 +90,8 @@ impl Prettier {
             if installed_prettiers.contains(&path_to_check) {
                 log::debug!("Found prettier path {path_to_check:?} in installed prettiers");
                 return Ok(ControlFlow::Continue(Some(path_to_check)));
-            } else if let Some(package_json_contents) =
-                read_package_json(fs, &path_to_check).await?
-            {
+            } else { match read_package_json(fs, &path_to_check).await?
+            { Some(package_json_contents) => {
                 if has_prettier_in_node_modules(fs, &path_to_check).await? {
                     log::debug!("Found prettier path {path_to_check:?} in the node_modules");
                     return Ok(ControlFlow::Continue(Some(path_to_check)));
@@ -126,7 +125,7 @@ impl Prettier {
                         }
                     }
                 }
-            }
+            } _ => {}}}
 
             if !path_to_check.pop() {
                 log::debug!("Found no prettier in ancestors of {locate_from:?}");
@@ -165,9 +164,8 @@ impl Prettier {
             if prettier_ignores.contains(&path_to_check) {
                 log::debug!("Found prettier ignore at {path_to_check:?}");
                 return Ok(ControlFlow::Continue(Some(path_to_check)));
-            } else if let Some(package_json_contents) =
-                read_package_json(fs, &path_to_check).await?
-            {
+            } else { match read_package_json(fs, &path_to_check).await?
+            { Some(package_json_contents) => {
                 let ignore_path = path_to_check.join(".prettierignore");
                 if let Some(metadata) = fs
                     .metadata(&ignore_path)
@@ -221,7 +219,7 @@ impl Prettier {
                         }
                     }
                 }
-            }
+            } _ => {}}}
 
             if !path_to_check.pop() {
                 log::debug!("Found no prettier ignore in ancestors of {locate_from:?}");

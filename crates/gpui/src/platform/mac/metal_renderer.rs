@@ -306,15 +306,15 @@ impl MetalRenderer {
             (viewport_size.width.ceil() as i32).into(),
             (viewport_size.height.ceil() as i32).into(),
         );
-        let drawable = if let Some(drawable) = layer.next_drawable() {
+        let drawable = match layer.next_drawable() { Some(drawable) => {
             drawable
-        } else {
+        } _ => {
             log::error!(
                 "failed to retrieve next drawable, drawable size: {:?}",
                 viewport_size
             );
             return;
-        };
+        }};
 
         loop {
             let mut instance_buffer = self.instance_buffer_pool.lock().acquire(&self.device);
@@ -540,16 +540,16 @@ impl MetalRenderer {
             let texture = self.sprite_atlas.metal_texture(texture_id);
             let msaa_texture = self.sprite_atlas.msaa_texture(texture_id);
 
-            if let Some(msaa_texture) = msaa_texture {
+            match msaa_texture { Some(msaa_texture) => {
                 color_attachment.set_texture(Some(&msaa_texture));
                 color_attachment.set_resolve_texture(Some(&texture));
                 color_attachment.set_load_action(metal::MTLLoadAction::Clear);
                 color_attachment.set_store_action(metal::MTLStoreAction::MultisampleResolve);
-            } else {
+            } _ => {
                 color_attachment.set_texture(Some(&texture));
                 color_attachment.set_load_action(metal::MTLLoadAction::Clear);
                 color_attachment.set_store_action(metal::MTLStoreAction::Store);
-            }
+            }}
             color_attachment.set_clear_color(metal::MTLClearColor::new(0., 0., 0., 1.));
 
             let command_encoder = command_buffer.new_render_command_encoder(render_pass_descriptor);

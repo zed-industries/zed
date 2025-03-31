@@ -299,7 +299,7 @@ impl BreakpointStore {
         if breakpoint_set.breakpoints.is_empty() {
             self.breakpoints.remove(&abs_path);
         }
-        if let BreakpointStoreMode::Remote(remote) = &self.mode {
+        match &self.mode { BreakpointStoreMode::Remote(remote) => {
             if let Some(breakpoint) = breakpoint.1.to_proto(&abs_path, &breakpoint.0) {
                 cx.background_spawn(remote.upstream_client.request(proto::ToggleBreakpoint {
                     project_id: remote._upstream_project_id,
@@ -308,7 +308,7 @@ impl BreakpointStore {
                 }))
                 .detach();
             }
-        } else if let Some((client, project_id)) = &self.downstream_client {
+        } _ => { match &self.downstream_client { Some((client, project_id)) => {
             let breakpoints = self
                 .breakpoints
                 .get(&abs_path)
@@ -326,7 +326,7 @@ impl BreakpointStore {
                 path: abs_path.to_str().map(ToOwned::to_owned).unwrap(),
                 breakpoints,
             });
-        }
+        } _ => {}}}}
 
         cx.emit(BreakpointStoreEvent::BreakpointsUpdated(
             abs_path,
@@ -360,7 +360,7 @@ impl BreakpointStore {
         range: Option<Range<text::Anchor>>,
         buffer_snapshot: &'a BufferSnapshot,
         cx: &App,
-    ) -> impl Iterator<Item = &'a (text::Anchor, Breakpoint)> + 'a {
+    ) -> impl Iterator<Item = &'a (text::Anchor, Breakpoint)> + 'a + use<'a> {
         let abs_path = Self::abs_path_from_buffer(buffer, cx);
         abs_path
             .and_then(|path| self.breakpoints.get(&path))
@@ -460,7 +460,7 @@ impl BreakpointStore {
         breakpoints: BTreeMap<Arc<Path>, Vec<SourceBreakpoint>>,
         cx: &mut Context<BreakpointStore>,
     ) -> Task<Result<()>> {
-        if let BreakpointStoreMode::Local(mode) = &self.mode {
+        match &self.mode { BreakpointStoreMode::Local(mode) => {
             let mode = mode.clone();
             cx.spawn(async move |this, cx| {
                 let mut new_breakpoints = BTreeMap::default();
@@ -512,9 +512,9 @@ impl BreakpointStore {
 
                 Ok(())
             })
-        } else {
+        } _ => {
             Task::ready(Ok(()))
-        }
+        }}
     }
 
     #[cfg(any(test, feature = "test-support"))]

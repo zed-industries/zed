@@ -60,12 +60,12 @@ impl<'a, T: 'static> Context<'a, T> {
     {
         let this = self.weak_entity();
         self.app.observe_internal(entity, move |e, cx| {
-            if let Some(this) = this.upgrade() {
+            match this.upgrade() { Some(this) => {
                 this.update(cx, |this, cx| on_notify(this, e, cx));
                 true
-            } else {
+            } _ => {
                 false
-            }
+            }}
         })
     }
 
@@ -82,12 +82,12 @@ impl<'a, T: 'static> Context<'a, T> {
     {
         let this = self.weak_entity();
         self.app.subscribe_internal(entity, move |e, event, cx| {
-            if let Some(this) = this.upgrade() {
+            match this.upgrade() { Some(this) => {
                 this.update(cx, |this, cx| on_event(this, e, event, cx));
                 true
-            } else {
+            } _ => {
                 false
-            }
+            }}
         })
     }
 
@@ -287,16 +287,15 @@ impl<'a, T: 'static> Context<'a, T> {
             Box::new(move |cx| {
                 window_handle
                     .update(cx, |_, window, cx| {
-                        if let Some((observer, observed)) =
-                            observer.upgrade().zip(observed.upgrade())
-                        {
+                        match observer.upgrade().zip(observed.upgrade())
+                        { Some((observer, observed)) => {
                             observer.update(cx, |observer, cx| {
                                 on_notify(observer, observed, window, cx);
                             });
                             true
-                        } else {
+                        } _ => {
                             false
-                        }
+                        }}
                     })
                     .unwrap_or(false)
             }),
@@ -326,17 +325,16 @@ impl<'a, T: 'static> Context<'a, T> {
                 Box::new(move |event, cx| {
                     window_handle
                         .update(cx, |_, window, cx| {
-                            if let Some((subscriber, emitter)) =
-                                subscriber.upgrade().zip(emitter.upgrade())
-                            {
+                            match subscriber.upgrade().zip(emitter.upgrade())
+                            { Some((subscriber, emitter)) => {
                                 let event = event.downcast_ref().expect("invalid event type");
                                 subscriber.update(cx, |subscriber, cx| {
                                     on_event(subscriber, &emitter, event, window, cx);
                                 });
                                 true
-                            } else {
+                            } _ => {
                                 false
-                            }
+                            }}
                         })
                         .unwrap_or(false)
                 }),
@@ -453,12 +451,12 @@ impl<'a, T: 'static> Context<'a, T> {
         inner(
             &mut self.keystroke_observers,
             Box::new(move |event, window, cx| {
-                if let Some(view) = view.upgrade() {
+                match view.upgrade() { Some(view) => {
                     view.update(cx, |view, cx| f(view, event, window, cx));
                     true
-                } else {
+                } _ => {
                     false
-                }
+                }}
             }),
         )
     }

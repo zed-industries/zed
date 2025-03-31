@@ -1351,12 +1351,12 @@ impl BlockSnapshot {
                 {
                     break;
                 }
-                if let Some(block) = &transform.block {
+                match &transform.block { Some(block) => {
                     cursor.next(&());
                     return Some((start_row, block));
-                } else {
+                } _ => {
                     cursor.next(&());
-                }
+                }}
             }
             None
         })
@@ -1405,13 +1405,13 @@ impl BlockSnapshot {
         cursor.seek(&wrap_row, Bias::Left, &());
 
         while let Some(transform) = cursor.item() {
-            if let Some(block) = transform.block.as_ref() {
+            match transform.block.as_ref() { Some(block) => {
                 if block.id() == block_id {
                     return Some(block.clone());
                 }
-            } else if *cursor.start() > wrap_row {
+            } _ => if *cursor.start() > wrap_row {
                 break;
-            }
+            }}
 
             cursor.next(&());
         }
@@ -1482,7 +1482,7 @@ impl BlockSnapshot {
     pub(super) fn line_len(&self, row: BlockRow) -> u32 {
         let mut cursor = self.transforms.cursor::<(BlockRow, WrapRow)>(&());
         cursor.seek(&BlockRow(row.0), Bias::Right, &());
-        if let Some(transform) = cursor.item() {
+        match cursor.item() { Some(transform) => {
             let (output_start, input_start) = cursor.start();
             let overshoot = row.0 - output_start.0;
             if transform.block.is_some() {
@@ -1490,11 +1490,11 @@ impl BlockSnapshot {
             } else {
                 self.wrap_snapshot.line_len(input_start.0 + overshoot)
             }
-        } else if row.0 == 0 {
+        } _ => if row.0 == 0 {
             0
         } else {
             panic!("row out of range");
-        }
+        }}
     }
 
     pub(super) fn is_block_line(&self, row: BlockRow) -> bool {
@@ -1536,7 +1536,7 @@ impl BlockSnapshot {
         let mut reversed = false;
 
         loop {
-            if let Some(transform) = cursor.item() {
+            match cursor.item() { Some(transform) => {
                 let (output_start_row, input_start_row) = cursor.start();
                 let (output_end_row, input_end_row) = cursor.end(&());
                 let output_start = Point::new(output_start_row.0, 0);
@@ -1576,20 +1576,20 @@ impl BlockSnapshot {
                 } else {
                     cursor.next(&());
                 }
-            } else if reversed {
+            } _ => if reversed {
                 return self.max_point();
             } else {
                 reversed = true;
                 search_left = !search_left;
                 cursor.seek(&BlockRow(point.row), Bias::Right, &());
-            }
+            }}
         }
     }
 
     pub fn to_block_point(&self, wrap_point: WrapPoint) -> BlockPoint {
         let mut cursor = self.transforms.cursor::<(WrapRow, BlockRow)>(&());
         cursor.seek(&WrapRow(wrap_point.row()), Bias::Right, &());
-        if let Some(transform) = cursor.item() {
+        match cursor.item() { Some(transform) => {
             if transform.block.is_some() {
                 BlockPoint::new(cursor.start().1 .0, 0)
             } else {
@@ -1599,15 +1599,15 @@ impl BlockSnapshot {
                 let input_overshoot = wrap_point.0 - input_start;
                 BlockPoint(output_start + input_overshoot)
             }
-        } else {
+        } _ => {
             self.max_point()
-        }
+        }}
     }
 
     pub fn to_wrap_point(&self, block_point: BlockPoint, bias: Bias) -> WrapPoint {
         let mut cursor = self.transforms.cursor::<(BlockRow, WrapRow)>(&());
         cursor.seek(&BlockRow(block_point.row), Bias::Right, &());
-        if let Some(transform) = cursor.item() {
+        match cursor.item() { Some(transform) => {
             match transform.block.as_ref() {
                 Some(block) => {
                     if block.place_below() {
@@ -1628,9 +1628,9 @@ impl BlockSnapshot {
                     WrapPoint::new(wrap_row, block_point.column)
                 }
             }
-        } else {
+        } _ => {
             self.wrap_snapshot.max_point()
-        }
+        }}
     }
 }
 
@@ -1702,9 +1702,9 @@ impl<'a> Iterator for BlockChunks<'a> {
         }
 
         if self.input_chunk.text.is_empty() {
-            if let Some(input_chunk) = self.input_chunks.next() {
+            match self.input_chunks.next() { Some(input_chunk) => {
                 self.input_chunk = input_chunk;
-            } else {
+            } _ => {
                 if self.output_row < self.max_output_row {
                     self.output_row += 1;
                     self.advance();
@@ -1716,7 +1716,7 @@ impl<'a> Iterator for BlockChunks<'a> {
                     }
                 }
                 return None;
-            }
+            }}
         }
 
         let transform_end = self.transforms.end(&()).0 .0;
@@ -1783,7 +1783,7 @@ impl Iterator for BlockRows<'_> {
         }
 
         let transform = self.transforms.item()?;
-        if let Some(block) = transform.block.as_ref() {
+        match transform.block.as_ref() { Some(block) => {
             if block.is_replacement() && self.transforms.start().0 == self.output_row {
                 if matches!(block, Block::FoldedBuffer { .. }) {
                     Some(RowInfo::default())
@@ -1793,9 +1793,9 @@ impl Iterator for BlockRows<'_> {
             } else {
                 Some(RowInfo::default())
             }
-        } else {
+        } _ => {
             Some(self.input_rows.next().unwrap())
-        }
+        }}
     }
 }
 
@@ -2913,7 +2913,7 @@ mod tests {
 
         log::info!("Wrap width: {:?}", wrap_width);
         log::info!("Excerpt Header Height: {:?}", excerpt_header_height);
-        let is_singleton = rng.gen();
+        let is_singleton = rng.r#gen();
         let buffer = if is_singleton {
             let len = rng.gen_range(0..10);
             let text = RandomCharIter::new(&mut rng).take(len).collect::<String>();

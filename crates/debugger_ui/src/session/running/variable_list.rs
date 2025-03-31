@@ -807,13 +807,13 @@ impl VariableList {
                         )
                         .when(!dap.value.is_empty(), |this| {
                             this.child(div().w_full().id(variable.item_value_id()).map(|this| {
-                                if let Some((_, editor)) = self
+                                match self
                                     .edited_path
                                     .as_ref()
                                     .filter(|(path, _)| path == &variable.path)
-                                {
+                                { Some((_, editor)) => {
                                     this.child(div().size_full().px_2().child(editor.clone()))
-                                } else {
+                                } _ => {
                                     this.text_color(cx.theme().colors().text_muted)
                                         .when(
                                             !self.disabled
@@ -854,7 +854,7 @@ impl VariableList {
                                                     this.color(Color::from(color))
                                                 }),
                                         )
-                                }
+                                }}
                             }))
                         }),
                 ),

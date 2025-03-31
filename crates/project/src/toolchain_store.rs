@@ -173,7 +173,7 @@ impl ToolchainStore {
             })?
             .await;
         let has_values = toolchains.is_some();
-        let groups = if let Some(toolchains) = &toolchains {
+        let groups = match &toolchains { Some(toolchains) => {
             toolchains
                 .groups
                 .iter()
@@ -184,10 +184,10 @@ impl ToolchainStore {
                     })
                 })
                 .collect()
-        } else {
+        } _ => {
             vec![]
-        };
-        let toolchains = if let Some(toolchains) = toolchains {
+        }};
+        let toolchains = match toolchains { Some(toolchains) => {
             toolchains
                 .toolchains
                 .into_iter()
@@ -200,9 +200,9 @@ impl ToolchainStore {
                     }
                 })
                 .collect::<Vec<_>>()
-        } else {
+        } _ => {
             vec![]
-        };
+        }};
 
         Ok(proto::ListToolchainsResponse {
             has_values,

@@ -133,11 +133,11 @@ impl CommandPaletteInterceptor {
 
     /// Intercepts the given query from the command palette.
     pub fn intercept(&self, query: &str, cx: &App) -> Vec<CommandInterceptResult> {
-        if let Some(handler) = self.0.as_ref() {
+        match self.0.as_ref() { Some(handler) => {
             (handler)(query, cx)
-        } else {
+        } _ => {
             Vec::new()
-        }
+        }}
     }
 
     /// Clears the global interceptor.

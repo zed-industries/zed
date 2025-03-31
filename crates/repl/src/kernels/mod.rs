@@ -79,7 +79,7 @@ pub fn python_env_kernel_specifications(
     project: &Entity<Project>,
     worktree_id: WorktreeId,
     cx: &mut App,
-) -> impl Future<Output = Result<Vec<KernelSpecification>>> {
+) -> impl Future<Output = Result<Vec<KernelSpecification>>> + use<> {
     let python_language = LanguageName::new("Python");
     let toolchains = project
         .read(cx)
@@ -87,11 +87,11 @@ pub fn python_env_kernel_specifications(
     let background_executor = cx.background_executor().clone();
 
     async move {
-        let toolchains = if let Some(toolchains) = toolchains.await {
+        let toolchains = match toolchains.await { Some(toolchains) => {
             toolchains
-        } else {
+        } _ => {
             return Ok(Vec::new());
-        };
+        }};
 
         let kernelspecs = toolchains.toolchains.into_iter().map(|toolchain| {
             background_executor.spawn(async move {

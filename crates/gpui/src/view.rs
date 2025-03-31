@@ -153,16 +153,16 @@ impl Element for AnyView {
         cx: &mut App,
     ) -> (LayoutId, Self::RequestLayoutState) {
         window.with_rendered_view(self.entity_id(), |window| {
-            if let Some(style) = self.cached_style.as_ref() {
+            match self.cached_style.as_ref() { Some(style) => {
                 let mut root_style = Style::default();
                 root_style.refine(style);
                 let layout_id = window.request_layout(root_style, None, cx);
                 (layout_id, None)
-            } else {
+            } _ => {
                 let mut element = (self.render)(self, window, cx);
                 let layout_id = element.request_layout(window, cx);
                 (layout_id, Some(element))
-            }
+            }}
         })
     }
 

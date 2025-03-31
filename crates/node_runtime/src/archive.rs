@@ -91,7 +91,7 @@ mod tests {
         dir
     }
 
-    async fn read_archive(path: &PathBuf) -> impl AsyncRead + Unpin {
+    async fn read_archive(path: &PathBuf) -> impl AsyncRead + Unpin + use<> {
         let data = smol::fs::read(&path).await.unwrap();
         Cursor::new(data)
     }

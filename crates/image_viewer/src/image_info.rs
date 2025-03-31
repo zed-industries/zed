@@ -110,15 +110,15 @@ impl StatusItemView for ImageInfo {
         self._observe_active_image = None;
         self.observe_image_item = None;
 
-        if let Some(image_view) = active_pane_item.and_then(|item| item.act_as::<ImageView>(cx)) {
+        match active_pane_item.and_then(|item| item.act_as::<ImageView>(cx)) { Some(image_view) => {
             self.update_metadata(&image_view, cx);
 
             self._observe_active_image = Some(cx.observe(&image_view, |this, view, cx| {
                 this.update_metadata(&view, cx);
             }));
-        } else {
+        } _ => {
             self.metadata = None;
-        }
+        }}
         cx.notify();
     }
 }

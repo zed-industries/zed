@@ -55,15 +55,15 @@ impl<K: Clone + Ord, V: Clone> TreeMap<K, V> {
     pub fn get(&self, key: &K) -> Option<&V> {
         let mut cursor = self.0.cursor::<MapKeyRef<'_, K>>(&());
         cursor.seek(&MapKeyRef(Some(key)), Bias::Left, &());
-        if let Some(item) = cursor.item() {
+        match cursor.item() { Some(item) => {
             if Some(key) == item.key().0.as_ref() {
                 Some(&item.value)
             } else {
                 None
             }
-        } else {
+        } _ => {
             None
-        }
+        }}
     }
 
     pub fn insert(&mut self, key: K, value: V) {
@@ -117,7 +117,7 @@ impl<K: Clone + Ord, V: Clone> TreeMap<K, V> {
         cursor.item().map(|item| (&item.key, &item.value))
     }
 
-    pub fn iter_from<'a>(&'a self, from: &K) -> impl Iterator<Item = (&'a K, &'a V)> + 'a {
+    pub fn iter_from<'a>(&'a self, from: &K) -> impl Iterator<Item = (&'a K, &'a V)> + 'a + use<'a, K, V> {
         let mut cursor = self.0.cursor::<MapKeyRef<'_, K>>(&());
         let from_key = MapKeyRef(Some(from));
         cursor.seek(&from_key, Bias::Left, &());
@@ -333,7 +333,7 @@ where
         self.0.iter().map(|(k, _)| k)
     }
 
-    pub fn iter_from<'a>(&'a self, key: &K) -> impl Iterator<Item = &'a K> + 'a {
+    pub fn iter_from<'a>(&'a self, key: &K) -> impl Iterator<Item = &'a K> + 'a + use<'a, K> {
         self.0.iter_from(key).map(move |(k, _)| k)
     }
 }

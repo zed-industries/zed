@@ -58,7 +58,7 @@ impl TestServer {
         executor: BackgroundExecutor,
     ) -> Result<Arc<TestServer>> {
         let mut servers = SERVERS.lock();
-        if let BTreeEntry::Vacant(e) = servers.entry(url.clone()) {
+        match servers.entry(url.clone()) { BTreeEntry::Vacant(e) => {
             let server = Arc::new(TestServer {
                 url,
                 api_key,
@@ -68,9 +68,9 @@ impl TestServer {
             });
             e.insert(server.clone());
             Ok(server)
-        } else {
+        } _ => {
             Err(anyhow!("a server with url {:?} already exists", url))
-        }
+        }}
     }
 
     fn get(url: &str) -> Result<Arc<TestServer>> {
@@ -99,12 +99,12 @@ impl TestServer {
         self.simulate_random_delay().await;
 
         let mut server_rooms = self.rooms.lock();
-        if let Entry::Vacant(e) = server_rooms.entry(room.clone()) {
+        match server_rooms.entry(room.clone()) { Entry::Vacant(e) => {
             e.insert(Default::default());
             Ok(())
-        } else {
+        } _ => {
             Err(anyhow!("room {:?} already exists", room))
-        }
+        }}
     }
 
     async fn delete_room(&self, room: String) -> Result<()> {
@@ -126,7 +126,7 @@ impl TestServer {
         let mut server_rooms = self.rooms.lock();
         let room = (*server_rooms).entry(room_name.to_string()).or_default();
 
-        if let Entry::Vacant(e) = room.client_rooms.entry(identity.clone()) {
+        match room.client_rooms.entry(identity.clone()) { Entry::Vacant(e) => {
             for server_track in &room.video_tracks {
                 let track = RemoteTrack::Video(RemoteVideoTrack {
                     server_track: server_track.clone(),
@@ -175,13 +175,13 @@ impl TestServer {
             }
             e.insert(client_room);
             Ok(identity)
-        } else {
+        } _ => {
             Err(anyhow!(
                 "{:?} attempted to join room {:?} twice",
                 identity,
                 room_name
             ))
-        }
+        }}
     }
 
     async fn leave_room(&self, token: String) -> Result<()> {
@@ -212,7 +212,7 @@ impl TestServer {
         let local_identity = ParticipantIdentity(claims.sub.unwrap().to_string());
         let room_name = claims.video.room.unwrap().to_string();
 
-        if let Some(server_room) = self.rooms.lock().get(&room_name) {
+        match self.rooms.lock().get(&room_name) { Some(server_room) => {
             let room = server_room
                 .client_rooms
                 .get(&local_identity)
@@ -232,9 +232,9 @@ impl TestServer {
                     )
                 })
                 .collect())
-        } else {
+        } _ => {
             Ok(Default::default())
-        }
+        }}
     }
 
     async fn remove_participant(

@@ -46,11 +46,11 @@ impl Manager {
                 manager
                     .update(cx, |manager, cx| {
                         manager.projects.retain(|p| {
-                            if let Some(p) = p.upgrade() {
+                            match p.upgrade() { Some(p) => {
                                 p.read(cx).remote_id() != project.remote_id()
-                            } else {
+                            } _ => {
                                 false
-                            }
+                            }}
                         });
                         if manager.projects.is_empty() {
                             manager.maintain_connection.take();
@@ -82,7 +82,7 @@ impl Manager {
                 .projects
                 .iter()
                 .filter_map(|project| {
-                    if let Some(handle) = project.upgrade() {
+                    match project.upgrade() { Some(handle) => {
                         let project = handle.read(cx);
                         let project_id = project.remote_id()?;
                         projects.insert(project_id, handle.clone());
@@ -106,9 +106,9 @@ impl Manager {
                             worktrees,
                             repositories,
                         })
-                    } else {
+                    } _ => {
                         None
-                    }
+                    }}
                 })
                 .collect(),
         });

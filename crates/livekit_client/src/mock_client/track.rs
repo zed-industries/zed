@@ -33,15 +33,15 @@ impl RemoteAudioTrack {
     }
 
     pub fn enabled(&self) -> bool {
-        if let Some(room) = self.room.upgrade() {
+        match self.room.upgrade() { Some(room) => {
             !room
                 .0
                 .lock()
                 .paused_audio_tracks
                 .contains(&self.server_track.sid)
-        } else {
+        } _ => {
             false
-        }
+        }}
     }
 
     pub fn set_enabled(&self, enabled: bool) {

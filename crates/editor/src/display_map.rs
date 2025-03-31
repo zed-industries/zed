@@ -227,15 +227,15 @@ impl DisplayMap {
             .update(cx, |map, cx| map.sync(snapshot, edits, cx));
         let mut block_map = self.block_map.write(snapshot, edits);
         let blocks = creases.into_iter().filter_map(|crease| {
-            if let Crease::Block {
+            match crease
+            { Crease::Block {
                 range,
                 block_height,
                 render_block,
                 block_style,
                 block_priority,
                 ..
-            } = crease
-            {
+            } => {
                 Some((
                     range,
                     render_block,
@@ -243,9 +243,9 @@ impl DisplayMap {
                     block_style,
                     block_priority,
                 ))
-            } else {
+            } _ => {
                 None
-            }
+            }}
         });
         block_map.insert(
             blocks
@@ -954,11 +954,11 @@ impl DisplaySnapshot {
         for chunk in self.highlighted_chunks(range, false, editor_style) {
             line.push_str(chunk.text);
 
-            let text_style = if let Some(style) = chunk.style {
+            let text_style = match chunk.style { Some(style) => {
                 Cow::Owned(editor_style.text.clone().highlight(style))
-            } else {
+            } _ => {
                 Cow::Borrowed(&editor_style.text)
-            };
+            }};
 
             runs.push(text_style.to_run(chunk.text.len()))
         }
@@ -1186,10 +1186,10 @@ impl DisplaySnapshot {
 
     pub fn crease_for_buffer_row(&self, buffer_row: MultiBufferRow) -> Option<Crease<Point>> {
         let start = MultiBufferPoint::new(buffer_row.0, self.buffer_snapshot.line_len(buffer_row));
-        if let Some(crease) = self
+        match self
             .crease_snapshot
             .query_row(buffer_row, &self.buffer_snapshot)
-        {
+        { Some(crease) => {
             match crease {
                 Crease::Inline {
                     range,
@@ -1220,7 +1220,7 @@ impl DisplaySnapshot {
                     render_toggle: render_toggle.clone(),
                 }),
             }
-        } else if self.starts_indent(MultiBufferRow(start.row))
+        } _ => if self.starts_indent(MultiBufferRow(start.row))
             && !self.is_line_folded(MultiBufferRow(start.row))
         {
             let start_line_indent = self.line_indent_for_buffer_row(buffer_row);
@@ -1265,7 +1265,7 @@ impl DisplaySnapshot {
             })
         } else {
             None
-        }
+        }}
     }
 
     #[cfg(any(test, feature = "test-support"))]
@@ -1480,7 +1480,7 @@ pub mod tests {
         });
 
         let buffer = cx.update(|cx| {
-            if rng.gen() {
+            if rng.r#gen() {
                 let len = rng.gen_range(0..10);
                 let text = util::RandomCharIter::new(&mut rng)
                     .take(len)
@@ -1542,7 +1542,7 @@ pub mod tests {
                 }
                 30..=44 => {
                     map.update(cx, |map, cx| {
-                        if rng.gen() || blocks.is_empty() {
+                        if rng.r#gen() || blocks.is_empty() {
                             let buffer = map.snapshot(cx).buffer_snapshot;
                             let block_properties = (0..rng.gen_range(1..=1))
                                 .map(|_| {
@@ -1552,7 +1552,7 @@ pub mod tests {
                                             Bias::Left,
                                         ));
 
-                                    let placement = if rng.gen() {
+                                    let placement = if rng.r#gen() {
                                         BlockPlacement::Above(position)
                                     } else {
                                         BlockPlacement::Below(position)
@@ -1596,7 +1596,7 @@ pub mod tests {
                         });
                     }
 
-                    if rng.gen() && fold_count > 0 {
+                    if rng.r#gen() && fold_count > 0 {
                         log::info!("unfolding ranges: {:?}", ranges);
                         map.update(cx, |map, cx| {
                             map.unfold_intersecting(ranges, true, cx);

@@ -741,9 +741,8 @@ impl OutlinePanel {
                 window,
                 move |outline_panel, workspace, event, window, cx| {
                     if let workspace::Event::ActiveItemChanged = event {
-                        if let Some((new_active_item, new_active_editor)) =
-                            workspace_active_editor(workspace.read(cx), cx)
-                        {
+                        match workspace_active_editor(workspace.read(cx), cx)
+                        { Some((new_active_item, new_active_editor)) => {
                             if outline_panel.should_replace_active_item(new_active_item.as_ref()) {
                                 outline_panel.replace_active_editor(
                                     new_active_item,
@@ -752,10 +751,10 @@ impl OutlinePanel {
                                     cx,
                                 );
                             }
-                        } else {
+                        } _ => {
                             outline_panel.clear_previous(window, cx);
                             cx.notify();
-                        }
+                        }}
                     }
                 },
             );
@@ -925,10 +924,10 @@ impl OutlinePanel {
     fn open(&mut self, _: &Open, window: &mut Window, cx: &mut Context<Self>) {
         if self.filter_editor.focus_handle(cx).is_focused(window) {
             cx.propagate()
-        } else if let Some(selected_entry) = self.selected_entry().cloned() {
+        } else { match self.selected_entry().cloned() { Some(selected_entry) => {
             self.toggle_expanded(&selected_entry, window, cx);
             self.scroll_editor_to_entry(&selected_entry, true, true, window, cx);
-        }
+        } _ => {}}}
     }
 
     fn cancel(&mut self, _: &Cancel, window: &mut Window, cx: &mut Context<Self>) {
@@ -952,12 +951,11 @@ impl OutlinePanel {
     ) {
         if self.filter_editor.focus_handle(cx).is_focused(window) {
             cx.propagate()
-        } else if let Some((active_editor, selected_entry)) =
-            self.active_editor().zip(self.selected_entry().cloned())
-        {
+        } else { match self.active_editor().zip(self.selected_entry().cloned())
+        { Some((active_editor, selected_entry)) => {
             self.scroll_editor_to_entry(&selected_entry, true, true, window, cx);
             active_editor.update(cx, |editor, cx| editor.open_excerpts(action, window, cx));
-        }
+        } _ => {}}}
     }
 
     fn open_excerpts_split(
@@ -968,14 +966,13 @@ impl OutlinePanel {
     ) {
         if self.filter_editor.focus_handle(cx).is_focused(window) {
             cx.propagate()
-        } else if let Some((active_editor, selected_entry)) =
-            self.active_editor().zip(self.selected_entry().cloned())
-        {
+        } else { match self.active_editor().zip(self.selected_entry().cloned())
+        { Some((active_editor, selected_entry)) => {
             self.scroll_editor_to_entry(&selected_entry, true, true, window, cx);
             active_editor.update(cx, |editor, cx| {
                 editor.open_excerpts_in_split(action, window, cx)
             });
-        }
+        } _ => {}}}
     }
 
     fn scroll_editor_to_entry(
@@ -1122,25 +1119,25 @@ impl OutlinePanel {
     }
 
     fn select_next(&mut self, _: &SelectNext, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(entry_to_select) = self.selected_entry().and_then(|selected_entry| {
+        match self.selected_entry().and_then(|selected_entry| {
             self.cached_entries
                 .iter()
                 .map(|cached_entry| &cached_entry.entry)
                 .skip_while(|entry| entry != &selected_entry)
                 .nth(1)
                 .cloned()
-        }) {
+        }) { Some(entry_to_select) => {
             self.select_entry(entry_to_select, true, window, cx);
-        } else {
+        } _ => {
             self.select_first(&SelectFirst {}, window, cx)
-        }
+        }}
         if let Some(selected_entry) = self.selected_entry().cloned() {
             self.scroll_editor_to_entry(&selected_entry, true, false, window, cx);
         }
     }
 
     fn select_previous(&mut self, _: &SelectPrevious, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(entry_to_select) = self.selected_entry().and_then(|selected_entry| {
+        match self.selected_entry().and_then(|selected_entry| {
             self.cached_entries
                 .iter()
                 .rev()
@@ -1148,11 +1145,11 @@ impl OutlinePanel {
                 .skip_while(|entry| entry != &selected_entry)
                 .nth(1)
                 .cloned()
-        }) {
+        }) { Some(entry_to_select) => {
             self.select_entry(entry_to_select, true, window, cx);
-        } else {
+        } _ => {
             self.select_last(&SelectLast, window, cx)
-        }
+        }}
         if let Some(selected_entry) = self.selected_entry().cloned() {
             self.scroll_editor_to_entry(&selected_entry, true, false, window, cx);
         }
@@ -2670,7 +2667,7 @@ impl OutlinePanel {
                             }
                         }
 
-                        if let Some(worktree) = worktree {
+                        match worktree { Some(worktree) => {
                             let worktree_id = worktree.id();
                             let unfolded_dirs = new_unfolded_dirs.entry(worktree_id).or_default();
 
@@ -2742,12 +2739,12 @@ impl OutlinePanel {
                                     }
                                 }
                             }
-                        } else if processed_external_buffers.insert(buffer_id) {
+                        } _ => if processed_external_buffers.insert(buffer_id) {
                             external_excerpts
                                 .entry(buffer_id)
                                 .or_insert_with(Vec::new)
                                 .extend(excerpts);
-                        }
+                        }}
                     }
 
                     let mut new_children_count =
@@ -3053,17 +3050,16 @@ impl OutlinePanel {
                 })
                 .and_then(|(closest_range, _)| {
                     self.cached_entries.iter().find_map(|cached_entry| {
-                        if let PanelEntry::Search(SearchEntry { match_range, .. }) =
-                            &cached_entry.entry
-                        {
+                        match &cached_entry.entry
+                        { PanelEntry::Search(SearchEntry { match_range, .. }) => {
                             if match_range == closest_range {
                                 Some(cached_entry.entry.clone())
                             } else {
                                 None
                             }
-                        } else {
+                        } _ => {
                             None
-                        }
+                        }}
                     })
                 }),
             ItemsDisplayMode::Outline => self.outline_location(
@@ -3850,7 +3846,7 @@ impl OutlinePanel {
         depth: usize,
         cx: &mut App,
     ) {
-        let entry = if let PanelEntry::FoldedDirs(folded_dirs_entry) = &entry {
+        let entry = match &entry { PanelEntry::FoldedDirs(folded_dirs_entry) => {
             match folded_dirs_entry.entries.len() {
                 0 => {
                     debug_panic!("Empty folded dirs receiver");
@@ -3862,9 +3858,9 @@ impl OutlinePanel {
                 })),
                 _ => entry,
             }
-        } else {
+        } _ => {
             entry
-        };
+        }};
 
         if track_matches {
             let id = state.entries.len();
@@ -4937,16 +4933,16 @@ impl Render for OutlinePanel {
             .on_mouse_down(
                 MouseButton::Right,
                 cx.listener(move |outline_panel, event: &MouseDownEvent, window, cx| {
-                    if let Some(entry) = outline_panel.selected_entry().cloned() {
+                    match outline_panel.selected_entry().cloned() { Some(entry) => {
                         outline_panel.deploy_context_menu(event.position, entry, window, cx)
-                    } else if let Some(entry) = outline_panel.fs_entries.first().cloned() {
+                    } _ => if let Some(entry) = outline_panel.fs_entries.first().cloned() {
                         outline_panel.deploy_context_menu(
                             event.position,
                             PanelEntry::Fs(entry),
                             window,
                             cx,
                         )
-                    }
+                    }}
                 }),
             )
             .track_focus(&self.focus_handle)
@@ -4981,16 +4977,16 @@ fn find_active_indent_guide_ix(
         .get(*target_ix)
         .map(|cached_entry| cached_entry.depth)?;
 
-    let (target_ix, target_depth) = if let Some(target_depth) = outline_panel
+    let (target_ix, target_depth) = match outline_panel
         .cached_entries
         .get(target_ix + 1)
         .filter(|cached_entry| cached_entry.depth > target_depth)
         .map(|entry| entry.depth)
-    {
+    { Some(target_depth) => {
         (target_ix + 1, target_depth.saturating_sub(1))
-    } else {
+    } _ => {
         (*target_ix, target_depth.saturating_sub(1))
-    };
+    }};
 
     candidates
         .iter()

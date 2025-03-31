@@ -403,10 +403,10 @@ impl ContextEditor {
         if request_type == RequestType::SuggestEdits && !self.context.read(cx).contains_files(cx) {
             self.last_error = Some(AssistError::FileRequired);
             cx.notify();
-        } else if let Some(user_message) = self
+        } else { match self
             .context
             .update(cx, |context, cx| context.assist(request_type, cx))
-        {
+        { Some(user_message) => {
             let new_selection = {
                 let cursor = user_message
                     .start
@@ -420,7 +420,7 @@ impl ContextEditor {
             });
             // Avoid scrolling to the new cursor position so the assistant's output is stable.
             cx.defer_in(window, |this, _, _| this.scroll_position = None);
-        }
+        } _ => {}}}
 
         cx.notify();
     }
@@ -817,10 +817,9 @@ impl ContextEditor {
         }
 
         self.editor.update(cx, |editor, cx| {
-            if let Some(invoked_slash_command) =
-                self.context.read(cx).invoked_slash_command(&command_id)
-            {
-                if let InvokedSlashCommandStatus::Finished = invoked_slash_command.status {
+            match self.context.read(cx).invoked_slash_command(&command_id)
+            { Some(invoked_slash_command) => {
+                match invoked_slash_command.status { InvokedSlashCommandStatus::Finished => {
                     let buffer = editor.buffer().read(cx).snapshot(cx);
                     let (&excerpt_id, _buffer_id, _buffer_snapshot) =
                         buffer.as_singleton().unwrap();
@@ -842,7 +841,7 @@ impl ContextEditor {
                         HashSet::from_iter(self.invoked_slash_command_creases.remove(&command_id)),
                         cx,
                     );
-                } else if let hash_map::Entry::Vacant(entry) =
+                } _ => if let hash_map::Entry::Vacant(entry) =
                     self.invoked_slash_command_creases.entry(command_id)
                 {
                     let buffer = editor.buffer().read(cx).snapshot(cx);
@@ -866,14 +865,14 @@ impl ContextEditor {
                     entry.insert(crease_ids[0]);
                 } else {
                     cx.notify()
-                }
-            } else {
+                }}
+            } _ => {
                 editor.remove_creases(
                     HashSet::from_iter(self.invoked_slash_command_creases.remove(&command_id)),
                     cx,
                 );
                 cx.notify();
-            };
+            }};
         });
     }
 
@@ -958,7 +957,7 @@ impl ContextEditor {
                 );
 
                 let should_refold;
-                if let Some(state) = self.patches.get_mut(&range) {
+                match self.patches.get_mut(&range) { Some(state) => {
                     if let Some(editor_state) = &state.editor {
                         if editor_state.opened_patch != patch {
                             state.update_task = Some({
@@ -974,7 +973,7 @@ impl ContextEditor {
 
                     should_refold =
                         snapshot.intersects_fold(patch_start.to_offset(&snapshot.buffer_snapshot));
-                } else {
+                } _ => {
                     let crease_id = editor.insert_creases([crease.clone()], cx)[0];
                     self.patches.insert(
                         range.clone(),
@@ -986,7 +985,7 @@ impl ContextEditor {
                     );
 
                     should_refold = true;
-                }
+                }}
 
                 if should_refold {
                     editor.unfold_ranges(&[patch_start..patch_end], true, false, cx);
@@ -1175,17 +1174,17 @@ impl ContextEditor {
                     }
                 }
 
-                if let Some(editor) = editor {
+                match editor { Some(editor) => {
                     self.workspace
                         .update(cx, |workspace, cx| {
                             workspace.activate_item(&editor, true, false, window, cx);
                         })
                         .ok();
-                } else {
+                } _ => {
                     patch_state.update_task = Some(cx.spawn_in(window, async move |this, cx| {
                         Self::open_patch_editor(this, new_patch, cx).await.log_err();
                     }));
-                }
+                }}
             }
         }
     }
@@ -1282,7 +1281,7 @@ impl ContextEditor {
                 .collect();
 
             if let Some(state) = &mut patch_state.editor {
-                if let Some(editor) = state.editor.upgrade() {
+                match state.editor.upgrade() { Some(editor) => {
                     editor.update(cx, |editor, cx| {
                         editor.set_title(patch.title.clone(), cx);
                         editor.reset_locations(locations, window, cx);
@@ -1290,9 +1289,9 @@ impl ContextEditor {
                     });
 
                     state.opened_patch = patch;
-                } else {
+                } _ => {
                     patch_state.editor.take();
-                }
+                }}
             }
             patch_state.update_task.take();
 
@@ -1573,7 +1572,7 @@ impl ContextEditor {
             let mut new_blocks = vec![];
             let mut block_index_to_message = vec![];
             for message in self.context.read(cx).messages(cx) {
-                if let Some(_) = blocks_to_remove.remove(&message.id) {
+                match blocks_to_remove.remove(&message.id) { Some(_) => {
                     // This is an old message that we might modify.
                     let Some((meta, block_id)) = old_blocks.get_mut(&message.id) else {
                         debug_assert!(
@@ -1588,11 +1587,11 @@ impl ContextEditor {
                         blocks_to_replace.insert(*block_id, render_block(message_meta.clone()));
                         *meta = message_meta;
                     }
-                } else {
+                } _ => {
                     // This is a new message.
                     new_blocks.push(create_block_properties(&message));
                     block_index_to_message.push((message.id, MessageMetadata::from(&message)));
-                }
+                }}
             }
             editor.replace_blocks(blocks_to_replace, None, cx);
             editor.remove_blocks(blocks_to_remove.into_values().collect(), None, cx);
@@ -2321,7 +2320,7 @@ impl ContextEditor {
                     )
                     .into_any_element(),
             )
-        } else if let Some(configuration_error) = configuration_error(cx) {
+        } else { match configuration_error(cx) { Some(configuration_error) => {
             let label = match configuration_error {
                 ConfigurationError::NoProvider => "No LLM provider selected.",
                 ConfigurationError::ProviderNotAuthenticated => "LLM provider is not configured.",
@@ -2363,12 +2362,12 @@ impl ContextEditor {
                     )
                     .into_any_element(),
             )
-        } else {
+        } _ => {
             None
-        }
+        }}}
     }
 
-    fn render_send_button(&self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_send_button(&self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         let focus_handle = self.focus_handle(cx).clone();
 
         let (style, tooltip) = match token_state(&self.context, cx) {
@@ -2427,7 +2426,7 @@ impl ContextEditor {
             })
     }
 
-    fn render_edit_button(&self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_edit_button(&self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         let focus_handle = self.focus_handle(cx).clone();
 
         let (style, tooltip) = match token_state(&self.context, cx) {
@@ -2480,7 +2479,7 @@ impl ContextEditor {
             })
     }
 
-    fn render_inject_context_menu(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_inject_context_menu(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         slash_command_picker::SlashCommandSelector::new(
             self.slash_commands.clone(),
             cx.entity().downgrade(),
@@ -2499,7 +2498,7 @@ impl ContextEditor {
         )
     }
 
-    fn render_language_model_selector(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_language_model_selector(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         let active_model = LanguageModelRegistry::read_global(cx).active_model();
         let focus_handle = self.editor().focus_handle(cx).clone();
         let model_name = match active_model {
@@ -3283,13 +3282,12 @@ impl FollowableItem for ContextEditor {
         Some(proto::view::Variant::ContextEditor(
             proto::view::ContextEditor {
                 context_id: context.id().to_proto(),
-                editor: if let Some(proto::view::Variant::Editor(proto)) =
-                    self.editor.read(cx).to_state_proto(window, cx)
-                {
+                editor: match self.editor.read(cx).to_state_proto(window, cx)
+                { Some(proto::view::Variant::Editor(proto)) => {
                     Some(proto)
-                } else {
+                } _ => {
                     None
-                },
+                }},
             },
         ))
     }
@@ -3413,7 +3411,7 @@ impl ContextEditorToolbarItem {
 pub fn render_remaining_tokens(
     context_editor: &Entity<ContextEditor>,
     cx: &App,
-) -> Option<impl IntoElement> {
+) -> Option<impl IntoElement + use<>> {
     let context = &context_editor.read(cx).context;
 
     let (token_count_color, token_count, max_token_count, tooltip) = match token_state(context, cx)?

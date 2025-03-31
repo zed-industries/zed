@@ -1676,12 +1676,12 @@ impl SearchableItem for TerminalView {
             SearchQuery::Regex { .. } => regex_search_for_query(&query),
         };
 
-        if let Some(s) = searcher {
+        match searcher { Some(s) => {
             self.terminal()
                 .update(cx, |term, cx| term.find_matches(s, cx))
-        } else {
+        } _ => {
             Task::ready(vec![])
-        }
+        }}
     }
 
     /// Reports back to the search toolbar what the active match should be (the selection)

@@ -222,14 +222,14 @@ impl TransportDelegate {
     }
 
     pub(crate) async fn send_message(&self, message: Message) -> Result<()> {
-        if let Some(server_tx) = self.server_tx.lock().await.as_ref() {
+        match self.server_tx.lock().await.as_ref() { Some(server_tx) => {
             server_tx
                 .send(message)
                 .await
                 .map_err(|e| anyhow!("Failed to send message: {}", e))
-        } else {
+        } _ => {
             Err(anyhow!("Server tx already dropped"))
-        }
+        }}
     }
 
     async fn handle_adapter_log<Stdout>(
@@ -343,13 +343,13 @@ impl TransportDelegate {
 
             match message {
                 Ok(Message::Response(res)) => {
-                    if let Some(tx) = pending_requests.lock().await.remove(&res.request_seq) {
+                    match pending_requests.lock().await.remove(&res.request_seq) { Some(tx) => {
                         if let Err(e) = tx.send(Self::process_response(res)) {
                             log::trace!("Did not send response `{:?}` for a cancelled", e);
                         }
-                    } else {
+                    } _ => {
                         client_tx.send(Message::Response(res)).await?;
-                    };
+                    }};
                 }
                 Ok(message) => {
                     client_tx.send(message).await?;
@@ -816,23 +816,23 @@ impl FakeTransport {
                                             .unwrap();
                                         writer.flush().await.unwrap();
                                     } else {
-                                        if let Some(handle) = request_handlers
+                                        match request_handlers
                                             .lock()
                                             .await
                                             .get_mut(request.command.as_str())
-                                        {
+                                        { Some(handle) => {
                                             handle(
                                                 request.seq,
                                                 request.arguments.unwrap_or(json!({})),
                                                 stdout_writer.clone(),
                                             )
                                             .await;
-                                        } else {
+                                        } _ => {
                                             log::error!(
                                                 "No request handler for {}",
                                                 request.command
                                             );
-                                        }
+                                        }}
                                     }
                                 }
                                 Message::Event(event) => {
@@ -850,15 +850,15 @@ impl FakeTransport {
                                     writer.flush().await.unwrap();
                                 }
                                 Message::Response(response) => {
-                                    if let Some(handle) = response_handlers
+                                    match response_handlers
                                         .lock()
                                         .await
                                         .get(response.command.as_str())
-                                    {
+                                    { Some(handle) => {
                                         handle(response);
-                                    } else {
+                                    } _ => {
                                         log::error!("No response handler for {}", response.command);
-                                    }
+                                    }}
                                 }
                             }
                         }

@@ -110,14 +110,14 @@ impl LspAdapter for PythonLspAdapter {
         _: Arc<dyn LanguageToolchainStore>,
         _: &AsyncApp,
     ) -> Option<LanguageServerBinary> {
-        if let Some(pyright_bin) = delegate.which("pyright-langserver".as_ref()).await {
+        match delegate.which("pyright-langserver".as_ref()).await { Some(pyright_bin) => {
             let env = delegate.shell_env().await;
             Some(LanguageServerBinary {
                 path: pyright_bin,
                 env: Some(env),
                 arguments: vec!["--stdio".into()],
             })
-        } else {
+        } _ => {
             let node = delegate.which("node".as_ref()).await?;
             let (node_modules_path, _) = delegate
                 .npm_package_installed_version(Self::SERVER_NAME.as_ref())
@@ -131,7 +131,7 @@ impl LspAdapter for PythonLspAdapter {
                 env: None,
                 arguments: server_binary_arguments(&path),
             })
-        }
+        }}
     }
 
     async fn fetch_latest_server_version(
@@ -889,14 +889,14 @@ impl LspAdapter for PyLspAdapter {
         toolchains: Arc<dyn LanguageToolchainStore>,
         cx: &AsyncApp,
     ) -> Option<LanguageServerBinary> {
-        if let Some(pylsp_bin) = delegate.which(Self::SERVER_NAME.as_ref()).await {
+        match delegate.which(Self::SERVER_NAME.as_ref()).await { Some(pylsp_bin) => {
             let env = delegate.shell_env().await;
             Some(LanguageServerBinary {
                 path: pylsp_bin,
                 env: Some(env),
                 arguments: vec![],
             })
-        } else {
+        } _ => {
             let venv = toolchains
                 .active_toolchain(
                     delegate.worktree_id(),
@@ -910,7 +910,7 @@ impl LspAdapter for PyLspAdapter {
                 arguments: vec![pylsp_path.into()],
                 env: None,
             })
-        }
+        }}
     }
 
     async fn fetch_latest_server_version(

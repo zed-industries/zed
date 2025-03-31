@@ -129,14 +129,14 @@ pub fn deploy_context_menu(
 
     let display_map = editor.selections.display_map(cx);
     let source_anchor = display_map.display_point_to_anchor(point, text::Bias::Right);
-    let context_menu = if let Some(custom) = editor.custom_context_menu.take() {
+    let context_menu = match editor.custom_context_menu.take() { Some(custom) => {
         let menu = custom(editor, point, window, cx);
         editor.custom_context_menu = Some(custom);
         let Some(menu) = menu else {
             return;
         };
         menu
-    } else {
+    } _ => {
         // Don't show the context menu if there isn't a project associated with this editor
         let Some(project) = editor.project.clone() else {
             return;
@@ -225,7 +225,7 @@ pub fn deploy_context_menu(
                 None => builder,
             }
         })
-    };
+    }};
 
     editor.mouse_context_menu = match position {
         Some(position) => MouseContextMenu::pinned_to_editor(

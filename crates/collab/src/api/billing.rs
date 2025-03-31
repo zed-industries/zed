@@ -104,7 +104,7 @@ async fn update_billing_preferences(
         body.max_monthly_llm_usage_spending_in_cents.max(0);
 
     let billing_preferences =
-        if let Some(_billing_preferences) = app.db.get_billing_preferences(user.id).await? {
+        match app.db.get_billing_preferences(user.id).await? { Some(_billing_preferences) => {
             app.db
                 .update_billing_preferences(
                     user.id,
@@ -115,7 +115,7 @@ async fn update_billing_preferences(
                     },
                 )
                 .await?
-        } else {
+        } _ => {
             app.db
                 .create_billing_preferences(
                     user.id,
@@ -124,7 +124,7 @@ async fn update_billing_preferences(
                     },
                 )
                 .await?
-        };
+        }};
 
     SnowflakeRow::new(
         "Spend Limit Updated",
@@ -624,11 +624,11 @@ async fn handle_customer_event(
         return Ok(());
     };
 
-    if let Some(existing_customer) = app
+    match app
         .db
         .get_billing_customer_by_stripe_customer_id(&customer.id)
         .await?
-    {
+    { Some(existing_customer) => {
         app.db
             .update_billing_customer(
                 existing_customer.id,
@@ -639,14 +639,14 @@ async fn handle_customer_event(
                 },
             )
             .await?;
-    } else {
+    } _ => {
         app.db
             .create_billing_customer(&CreateBillingCustomerParams {
                 user_id: user.id,
                 stripe_customer_id: customer.id.to_string(),
             })
             .await?;
-    }
+    }}
 
     Ok(())
 }
@@ -689,11 +689,11 @@ async fn handle_customer_subscription_event(
             .await?;
     }
 
-    if let Some(existing_subscription) = app
+    match app
         .db
         .get_billing_subscription_by_stripe_subscription_id(&subscription.id)
         .await?
-    {
+    { Some(existing_subscription) => {
         app.db
             .update_billing_subscription(
                 existing_subscription.id,
@@ -716,7 +716,7 @@ async fn handle_customer_subscription_event(
                 },
             )
             .await?;
-    } else {
+    } _ => {
         // If the user already has an active billing subscription, ignore the
         // event and return an `Ok` to signal that it was processed
         // successfully.
@@ -755,7 +755,7 @@ async fn handle_customer_subscription_event(
                     .map(|reason| reason.into()),
             })
             .await?;
-    }
+    }}
 
     // When the user's subscription changes, we want to refresh their LLM tokens
     // to either grant/revoke access.

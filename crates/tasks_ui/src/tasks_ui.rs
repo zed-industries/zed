@@ -20,7 +20,7 @@ pub fn init(cx: &mut App) {
             workspace
                 .register_action(spawn_task_or_modal)
                 .register_action(move |workspace, action: &modal::Rerun, window, cx| {
-                    if let Some((task_source_kind, mut last_scheduled_task)) = workspace
+                    match workspace
                         .project()
                         .read(cx)
                         .task_store()
@@ -35,7 +35,7 @@ pub fn init(cx: &mut App) {
                                     .as_ref(),
                             )
                         })
-                    {
+                    { Some((task_source_kind, mut last_scheduled_task)) => {
                         if action.reevaluate_context {
                             let mut original_task = last_scheduled_task.original_task().clone();
                             if let Some(allow_concurrent_runs) = action.allow_concurrent_runs {
@@ -82,9 +82,9 @@ pub fn init(cx: &mut App) {
                                 cx,
                             );
                         }
-                    } else {
+                    } _ => {
                         toggle_modal(workspace, None, TaskModal::ScriptModal, window, cx).detach();
-                    };
+                    }};
                 });
 
             let Some(window) = window else {

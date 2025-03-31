@@ -490,14 +490,14 @@ impl LineLayoutCache {
         }
 
         let previous_frame_entry = self.previous_frame.lock().wrapped_lines.remove_entry(key);
-        if let Some((key, layout)) = previous_frame_entry {
+        match previous_frame_entry { Some((key, layout)) => {
             let mut current_frame = RwLockUpgradableReadGuard::upgrade(current_frame);
             current_frame
                 .wrapped_lines
                 .insert(key.clone(), layout.clone());
             current_frame.used_wrapped_lines.push(key);
             layout
-        } else {
+        } _ => {
             drop(current_frame);
             let text = SharedString::from(text);
             let unwrapped_layout = self.layout_line::<&SharedString>(&text, font_size, runs);
@@ -525,7 +525,7 @@ impl LineLayoutCache {
             current_frame.used_wrapped_lines.push(key);
 
             layout
-        }
+        }}
     }
 
     pub fn layout_line<Text>(
@@ -551,11 +551,11 @@ impl LineLayoutCache {
         }
 
         let mut current_frame = RwLockUpgradableReadGuard::upgrade(current_frame);
-        if let Some((key, layout)) = self.previous_frame.lock().lines.remove_entry(key) {
+        match self.previous_frame.lock().lines.remove_entry(key) { Some((key, layout)) => {
             current_frame.lines.insert(key.clone(), layout.clone());
             current_frame.used_lines.push(key);
             layout
-        } else {
+        } _ => {
             let text = SharedString::from(text);
             let layout = Arc::new(
                 self.platform_text_system
@@ -570,7 +570,7 @@ impl LineLayoutCache {
             current_frame.lines.insert(key.clone(), layout.clone());
             current_frame.used_lines.push(key);
             layout
-        }
+        }}
     }
 }
 

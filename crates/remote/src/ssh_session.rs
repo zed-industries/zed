@@ -86,7 +86,7 @@ pub struct SshConnectionOptions {
 
 #[macro_export]
 macro_rules! shell_script {
-    ($fmt:expr, $($name:ident = $arg:expr),+ $(,)?) => {{
+    ($fmt:expr_2021, $($name:ident = $arg:expr_2021),+ $(,)?) => {{
         format!(
             $fmt,
             $(
@@ -682,7 +682,7 @@ impl SshRemoteClient {
     pub fn shutdown_processes<T: RequestMessage>(
         &self,
         shutdown_request: Option<T>,
-    ) -> Option<impl Future<Output = ()>> {
+    ) -> Option<impl Future<Output = ()> + use<T>> {
         let state = self.state.lock().take()?;
         log::info!("shutting down ssh processes");
 
@@ -725,11 +725,11 @@ impl SshRemoteClient {
             .map(|state| state.can_reconnect())
             .unwrap_or(false);
         if !can_reconnect {
-            let error = if let Some(state) = lock.as_ref() {
+            let error = match lock.as_ref() { Some(state) => {
                 format!("invalid state, cannot reconnect while in state {state}")
-            } else {
+            } _ => {
                 "no state set".to_string()
-            };
+            }};
             log::info!("aborting reconnect, because not in state that allows reconnecting");
             return Err(anyhow!(error));
         }
@@ -785,7 +785,7 @@ impl SshRemoteClient {
         let client = self.client.clone();
         let reconnect_task = cx.spawn(async move |this, cx| {
             macro_rules! failed {
-                ($error:expr, $attempts:expr, $ssh_connection:expr, $delegate:expr) => {
+                ($error:expr_2021, $attempts:expr_2021, $ssh_connection:expr_2021, $delegate:expr_2021) => {
                     return State::ReconnectFailed {
                         error: anyhow!($error),
                         attempts: $attempts,
@@ -1118,11 +1118,11 @@ impl SshRemoteClient {
         client_cx.spawn(async move |cx| {
             let connection = cx
                 .update_global(|c: &mut ConnectionPool, _| {
-                    if let Some(ConnectionPoolEntry::Connecting(c)) = c.connections.get(&opts) {
+                    match c.connections.get(&opts) { Some(ConnectionPoolEntry::Connecting(c)) => {
                         c.clone()
-                    } else {
+                    } _ => {
                         panic!("missing test connection")
-                    }
+                    }}
                 })
                 .unwrap()
                 .await
@@ -2144,16 +2144,15 @@ impl ChannelClient {
                         }
                         rx.await.ok();
                     }
-                } else if let Some(envelope) =
-                    build_typed_envelope(peer_id, Instant::now(), incoming)
-                {
+                } else { match build_typed_envelope(peer_id, Instant::now(), incoming)
+                { Some(envelope) => {
                     let type_name = envelope.payload_type_name();
-                    if let Some(future) = ProtoMessageHandlerSet::handle_message(
+                    match ProtoMessageHandlerSet::handle_message(
                         &this.message_handlers,
                         envelope,
                         this.clone().into(),
                         cx.clone(),
-                    ) {
+                    ) { Some(future) => {
                         log::debug!("{}:ssh message received. name:{type_name}", this.name);
                         cx.foreground_executor()
                             .spawn(async move {
@@ -2184,10 +2183,10 @@ impl ChannelClient {
                                 }
                             })
                             .detach()
-                    } else {
+                    } _ => {
                         log::error!("{}:unhandled ssh message name:{type_name}", this.name);
-                    }
-                }
+                    }}
+                } _ => {}}}
             }
             anyhow::Ok(())
         })
@@ -2225,7 +2224,7 @@ impl ChannelClient {
     pub fn request<T: RequestMessage>(
         &self,
         payload: T,
-    ) -> impl 'static + Future<Output = Result<T::Response>> {
+    ) -> impl 'static + Future<Output = Result<T::Response>> + use<T> {
         self.request_internal(payload, true)
     }
 
@@ -2233,7 +2232,7 @@ impl ChannelClient {
         &self,
         payload: T,
         use_buffer: bool,
-    ) -> impl 'static + Future<Output = Result<T::Response>> {
+    ) -> impl 'static + Future<Output = Result<T::Response>> + use<T> {
         log::debug!("ssh request start. name:{}", T::NAME);
         let response =
             self.request_dynamic(payload.into_envelope(0, None, None), T::NAME, use_buffer);
@@ -2291,7 +2290,7 @@ impl ChannelClient {
         mut envelope: proto::Envelope,
         type_name: &'static str,
         use_buffer: bool,
-    ) -> impl 'static + Future<Output = Result<proto::Envelope>> {
+    ) -> impl 'static + Future<Output = Result<proto::Envelope>> + use<> {
         envelope.id = self.next_message_id.fetch_add(1, SeqCst);
         let (tx, rx) = oneshot::channel();
         let mut response_channels_lock = self.response_channels.lock();

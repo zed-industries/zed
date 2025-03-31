@@ -80,7 +80,7 @@ const NSDragOperationNone: NSDragOperation = 0;
 const NSDragOperationCopy: NSDragOperation = 1;
 
 #[link(name = "CoreGraphics", kind = "framework")]
-extern "C" {
+unsafe extern "C" {
     // Widely used private APIs; Apple uses them for their Terminal.app.
     fn CGSMainConnectionID() -> id;
     fn CGSSetWindowBackgroundBlurRadius(
@@ -248,7 +248,7 @@ pub(crate) fn convert_mouse_position(position: NSPoint, window_height: Pixels) -
     )
 }
 
-unsafe fn build_window_class(name: &'static str, superclass: &Class) -> *const Class {
+unsafe fn build_window_class(name: &'static str, superclass: &Class) -> *const Class { unsafe {
     let mut decl = ClassDecl::new(name, superclass).unwrap();
     decl.add_ivar::<*mut c_void>(WINDOW_STATE_IVAR);
     decl.add_method(sel!(dealloc), dealloc_window as extern "C" fn(&Object, Sel));
@@ -321,7 +321,7 @@ unsafe fn build_window_class(name: &'static str, superclass: &Class) -> *const C
     );
 
     decl.register()
-}
+}}
 
 struct MacWindowState {
     handle: AnyWindowHandle,
@@ -913,7 +913,7 @@ impl PlatformWindow for MacWindow {
             .iter()
             .enumerate()
             .rev()
-            .find(|(_, &label)| label != "Cancel")
+            .find(|&(_, &label)| label != "Cancel")
             .filter(|&(label_index, _)| label_index > 0);
 
         unsafe {
@@ -1199,18 +1199,18 @@ fn get_scale_factor(native_window: id) -> f32 {
     }
 }
 
-unsafe fn get_window_state(object: &Object) -> Arc<Mutex<MacWindowState>> {
+unsafe fn get_window_state(object: &Object) -> Arc<Mutex<MacWindowState>> { unsafe {
     let raw: *mut c_void = *object.get_ivar(WINDOW_STATE_IVAR);
     let rc1 = Arc::from_raw(raw as *mut Mutex<MacWindowState>);
     let rc2 = rc1.clone();
     mem::forget(rc1);
     rc2
-}
+}}
 
-unsafe fn drop_window_state(object: &Object) {
+unsafe fn drop_window_state(object: &Object) { unsafe {
     let raw: *mut c_void = *object.get_ivar(WINDOW_STATE_IVAR);
     Arc::from_raw(raw as *mut Mutex<MacWindowState>);
-}
+}}
 
 extern "C" fn yes(_: &Object, _: Sel) -> BOOL {
     YES
@@ -1280,11 +1280,11 @@ extern "C" fn handle_key_event(this: &Object, native_event: id, key_equivalent: 
 
     let run_callback = |event: PlatformInput| -> BOOL {
         let mut callback = window_state.as_ref().lock().event_callback.take();
-        let handled: BOOL = if let Some(callback) = callback.as_mut() {
+        let handled: BOOL = match callback.as_mut() { Some(callback) => {
             !callback(event).propagate as BOOL
-        } else {
+        } _ => {
             NO
-        };
+        }};
         window_state.as_ref().lock().event_callback = callback;
         handled
     };
@@ -1333,11 +1333,11 @@ extern "C" fn handle_key_event(this: &Object, native_event: id, key_equivalent: 
                     msg_send![input_context, handleEvent: native_event]
                 };
                 window_state.as_ref().lock().keystroke_for_do_command.take();
-                if let Some(handled) = window_state.as_ref().lock().do_command_handled.take() {
+                match window_state.as_ref().lock().do_command_handled.take() { Some(handled) => {
                     return handled as BOOL;
-                } else if handled == YES {
+                } _ => if handled == YES {
                     return YES;
-                }
+                }}
 
                 let handled = run_callback(PlatformInput::KeyDown(key_down_event));
                 return handled;
@@ -1627,14 +1627,14 @@ extern "C" fn window_did_change_key_status(this: &Object, selector: Sel, _: id) 
 extern "C" fn window_should_close(this: &Object, _: Sel, _: id) -> BOOL {
     let window_state = unsafe { get_window_state(this) };
     let mut lock = window_state.as_ref().lock();
-    if let Some(mut callback) = lock.should_close_callback.take() {
+    match lock.should_close_callback.take() { Some(mut callback) => {
         drop(lock);
         let should_close = callback();
         window_state.lock().should_close_callback = Some(callback);
         should_close as BOOL
-    } else {
+    } _ => {
         YES
-    }
+    }}
 }
 
 extern "C" fn close_window(this: &Object, _: Sel) {
@@ -2038,13 +2038,13 @@ async fn synthetic_drag(
 
 fn send_new_event(window_state_lock: &Mutex<MacWindowState>, e: PlatformInput) -> bool {
     let window_state = window_state_lock.lock().event_callback.take();
-    if let Some(mut callback) = window_state {
+    match window_state { Some(mut callback) => {
         callback(e);
         window_state_lock.lock().event_callback = Some(callback);
         true
-    } else {
+    } _ => {
         false
-    }
+    }}
 }
 
 fn drag_event_position(window_state: &Mutex<MacWindowState>, dragging_info: id) -> Point<Pixels> {
@@ -2058,20 +2058,20 @@ where
 {
     let window_state = unsafe { get_window_state(window) };
     let mut lock = window_state.as_ref().lock();
-    if let Some(mut input_handler) = lock.input_handler.take() {
+    match lock.input_handler.take() { Some(mut input_handler) => {
         drop(lock);
         let result = f(&mut input_handler);
         window_state.lock().input_handler = Some(input_handler);
         Some(result)
-    } else {
+    } _ => {
         None
-    }
+    }}
 }
 
-unsafe fn display_id_for_screen(screen: id) -> CGDirectDisplayID {
+unsafe fn display_id_for_screen(screen: id) -> CGDirectDisplayID { unsafe {
     let device_description = NSScreen::deviceDescription(screen);
     let screen_number_key: id = NSString::alloc(nil).init_str("NSScreenNumber");
     let screen_number = device_description.objectForKey_(screen_number_key);
     let screen_number: NSUInteger = msg_send![screen_number, unsignedIntegerValue];
     screen_number as CGDirectDisplayID
-}
+}}

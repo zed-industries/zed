@@ -761,7 +761,7 @@ fn initialize_settings(
     handle_settings_file_changes(user_settings_file_rx, cx, {
         let session = session.clone();
         move |err, _cx| {
-            if let Some(e) = err {
+            match err { Some(e) => {
                 log::info!("Server settings failed to change: {}", e);
 
                 session
@@ -775,14 +775,14 @@ fn initialize_settings(
                         ),
                     })
                     .log_err();
-            } else {
+            } _ => {
                 session
                     .send(proto::HideToast {
                         project_id: SSH_PROJECT_ID,
                         notification_id: "server-settings-failed".to_string(),
                     })
                     .log_err();
-            }
+            }}
         }
     });
 
@@ -877,7 +877,7 @@ fn daemonize() -> Result<ControlFlow<()>> {
     Ok(ControlFlow::Continue(()))
 }
 
-unsafe fn redirect_standard_streams() -> Result<()> {
+unsafe fn redirect_standard_streams() -> Result<()> { unsafe {
     let devnull_fd = libc::open(b"/dev/null\0" as *const [u8; 10] as _, libc::O_RDWR);
     anyhow::ensure!(devnull_fd != -1, "failed to open /dev/null");
 
@@ -900,7 +900,7 @@ unsafe fn redirect_standard_streams() -> Result<()> {
     );
 
     Ok(())
-}
+}}
 
 fn cleanup_old_binaries() -> Result<()> {
     let server_dir = paths::remote_server_dir_relative();

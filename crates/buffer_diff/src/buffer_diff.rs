@@ -608,7 +608,7 @@ fn compute_hunks(
 ) -> SumTree<InternalDiffHunk> {
     let mut tree = SumTree::new(&buffer);
 
-    if let Some((diff_base, diff_base_rope)) = diff_base {
+    match diff_base { Some((diff_base, diff_base_rope)) => {
         let buffer_text = buffer.as_rope().to_string();
 
         let mut options = GitOptions::default();
@@ -649,7 +649,7 @@ fn compute_hunks(
                 tree.push(hunk, &buffer);
             }
         }
-    } else {
+    } _ => {
         tree.push(
             InternalDiffHunk {
                 buffer_range: Anchor::MIN..Anchor::MAX,
@@ -657,7 +657,7 @@ fn compute_hunks(
             },
             &buffer,
         );
-    }
+    }}
 
     tree
 }
@@ -776,7 +776,7 @@ impl BufferDiff {
         language: Option<Arc<Language>>,
         language_registry: Option<Arc<LanguageRegistry>>,
         cx: &mut App,
-    ) -> impl Future<Output = BufferDiffInner> {
+    ) -> impl Future<Output = BufferDiffInner> + use<> {
         let base_text_pair;
         let base_text_exists;
         let base_text_snapshot;
@@ -818,7 +818,7 @@ impl BufferDiff {
         base_text: Option<Arc<String>>,
         base_text_snapshot: language::BufferSnapshot,
         cx: &App,
-    ) -> impl Future<Output = BufferDiffInner> {
+    ) -> impl Future<Output = BufferDiffInner> + use<> {
         let base_text_exists = base_text.is_some();
         let base_text_pair = base_text.map(|text| (text, base_text_snapshot.as_rope().clone()));
         cx.background_spawn(async move {
@@ -2071,7 +2071,7 @@ mod tests {
             )
         });
         let working_copy = working_copy.read_with(cx, |working_copy, _| working_copy.snapshot());
-        let mut index_text = if rng.gen() {
+        let mut index_text = if rng.r#gen() {
             Rope::from(head_text.as_str())
         } else {
             working_copy.as_rope().clone()

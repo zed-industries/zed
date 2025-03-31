@@ -5602,7 +5602,7 @@ async fn test_open_buffer_while_getting_definition_pointing_to_it(
 
     let definitions;
     let buffer_b2;
-    if rng.gen() {
+    if rng.r#gen() {
         definitions = project_b.update(cx_b, |p, cx| p.definition(&buffer_b1, 23, cx));
         (buffer_b2, _) = project_b
             .update(cx_b, |p, cx| {

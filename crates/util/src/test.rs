@@ -37,7 +37,7 @@ fn write_tree(path: &Path, tree: serde_json::Value) {
     use serde_json::Value;
     use std::fs;
 
-    if let Value::Object(map) = tree {
+    match tree { Value::Object(map) => {
         for (name, contents) in map {
             let mut path = PathBuf::from(path);
             path.push(name);
@@ -62,9 +62,9 @@ fn write_tree(path: &Path, tree: serde_json::Value) {
                 }
             }
         }
-    } else {
+    } _ => {
         panic!("You must pass a JSON object to this helper")
-    }
+    }}
 }
 
 pub fn sample_text(rows: usize, cols: usize, start_char: char) -> String {

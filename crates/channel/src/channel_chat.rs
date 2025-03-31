@@ -183,7 +183,7 @@ impl ChannelChat {
 
         let channel_id = self.channel_id;
         let pending_id = ChannelMessageId::Pending(post_inc(&mut self.next_pending_message_id));
-        let nonce = self.rng.gen();
+        let nonce = self.rng.r#gen();
         self.insert_messages(
             SumTree::from_item(
                 ChannelMessage {
@@ -257,7 +257,7 @@ impl ChannelChat {
             cx,
         );
 
-        let nonce: u128 = self.rng.gen();
+        let nonce: u128 = self.rng.r#gen();
 
         let request = self.rpc.request(proto::UpdateChannelMessage {
             channel_id: self.channel_id.0,

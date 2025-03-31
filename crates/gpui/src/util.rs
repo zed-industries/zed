@@ -33,11 +33,11 @@ pub trait FluentBuilder {
         Self: Sized,
     {
         self.map(|this| {
-            if let Some(value) = option {
+            match option { Some(value) => {
                 then(this, value)
-            } else {
+            } _ => {
                 this
-            }
+            }}
         })
     }
     /// Conditionally unwrap and modify self with the given closure, if the given option is Some.

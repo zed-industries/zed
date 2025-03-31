@@ -473,9 +473,9 @@ pub fn show_link_definition(
     };
 
     let (mut hovered_link_state, is_cached) =
-        if let Some(existing) = editor.hovered_link_state.take() {
+        match editor.hovered_link_state.take() { Some(existing) => {
             (existing, true)
-        } else {
+        } _ => {
             (
                 HoveredLinkState {
                     last_trigger_point: trigger_point.clone(),
@@ -486,7 +486,7 @@ pub fn show_link_definition(
                 },
                 false,
             )
-        };
+        }};
 
     if editor.pending_rename.is_some() {
         return;
@@ -538,7 +538,7 @@ pub fn show_link_definition(
         async move {
             let result = match &trigger_point {
                 TriggerPoint::Text(_) => {
-                    if let Some((url_range, url)) = find_url(&buffer, buffer_position, cx.clone()) {
+                    match find_url(&buffer, buffer_position, cx.clone()) { Some((url_range, url)) => {
                         this.update(cx, |_, _| {
                             let range = maybe!({
                                 let start =
@@ -549,9 +549,8 @@ pub fn show_link_definition(
                             (range, vec![HoverLink::Url(url)])
                         })
                         .ok()
-                    } else if let Some((filename_range, filename)) =
-                        find_file(&buffer, project.clone(), buffer_position, cx).await
-                    {
+                    } _ => { match find_file(&buffer, project.clone(), buffer_position, cx).await
+                    { Some((filename_range, filename)) => {
                         let range = maybe!({
                             let start =
                                 snapshot.anchor_in_excerpt(excerpt_id, filename_range.start)?;
@@ -560,11 +559,11 @@ pub fn show_link_definition(
                         });
 
                         Some((range, vec![HoverLink::File(filename)]))
-                    } else if let Some(provider) = provider {
+                    } _ => { match provider { Some(provider) => {
                         let task = cx.update(|_, cx| {
                             provider.definitions(&buffer, buffer_position, preferred_kind, cx)
                         })?;
-                        if let Some(task) = task {
+                        match task { Some(task) => {
                             task.await.ok().map(|definition_result| {
                                 (
                                     definition_result.iter().find_map(|link| {
@@ -581,12 +580,12 @@ pub fn show_link_definition(
                                     definition_result.into_iter().map(HoverLink::Text).collect(),
                                 )
                             })
-                        } else {
+                        } _ => {
                             None
-                        }
-                    } else {
+                        }}
+                    } _ => {
                         None
-                    }
+                    }}}}}}
                 }
                 TriggerPoint::InlayHint(highlight, lsp_location, server_id) => Some((
                     Some(RangeInEditor::Inlay(highlight.clone())),
@@ -606,7 +605,7 @@ pub fn show_link_definition(
                     .as_ref()
                     .and_then(|(symbol_range, _)| symbol_range.clone());
 
-                if let Some((symbol_range, definitions)) = result {
+                match result { Some((symbol_range, definitions)) => {
                     hovered_link_state.links = definitions;
 
                     let underline_hovered_link = !hovered_link_state.links.is_empty()
@@ -644,9 +643,9 @@ pub fn show_link_definition(
                                 .highlight_inlays::<HoveredLinkState>(vec![highlight], style, cx),
                         }
                     }
-                } else {
+                } _ => {
                     editor.hide_hovered_link(cx);
-                }
+                }}
             })?;
 
             Ok::<_, anyhow::Error>(())

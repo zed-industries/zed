@@ -153,7 +153,7 @@ impl Console {
         });
     }
 
-    fn render_console(&self, cx: &Context<Self>) -> impl IntoElement {
+    fn render_console(&self, cx: &Context<Self>) -> impl IntoElement + use<> {
         let settings = ThemeSettings::get_global(cx);
         let text_style = TextStyle {
             color: if self.console.read(cx).read_only(cx) {
@@ -180,7 +180,7 @@ impl Console {
         )
     }
 
-    fn render_query_bar(&self, cx: &Context<Self>) -> impl IntoElement {
+    fn render_query_bar(&self, cx: &Context<Self>) -> impl IntoElement + use<> {
         let settings = ThemeSettings::get_global(cx);
         let text_style = TextStyle {
             color: if self.console.read(cx).read_only(cx) {

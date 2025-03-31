@@ -115,9 +115,9 @@ impl ActiveToolchain {
                 })
                 .ok()?
                 .await;
-            if let Some(toolchain) = selected_toolchain {
+            match selected_toolchain { Some(toolchain) => {
                 Some(toolchain)
-            } else {
+            } _ => {
                 let project = workspace
                     .update(cx, |this, _| this.project().clone())
                     .ok()?;
@@ -144,7 +144,7 @@ impl ActiveToolchain {
                 }
 
                 toolchains.toolchains.first().cloned()
-            }
+            }}
         })
     }
 }

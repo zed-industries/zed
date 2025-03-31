@@ -111,23 +111,23 @@ impl PlatformTextSystem for MacTextSystem {
 
     fn font_id(&self, font: &Font) -> Result<FontId> {
         let lock = self.0.upgradable_read();
-        if let Some(font_id) = lock.font_selections.get(font) {
+        match lock.font_selections.get(font) { Some(font_id) => {
             Ok(*font_id)
-        } else {
+        } _ => {
             let mut lock = RwLockUpgradableReadGuard::upgrade(lock);
             let font_key = FontKey {
                 font_family: font.family.clone(),
                 font_features: font.features.clone(),
                 font_fallbacks: font.fallbacks.clone(),
             };
-            let candidates = if let Some(font_ids) = lock.font_ids_by_font_key.get(&font_key) {
+            let candidates = match lock.font_ids_by_font_key.get(&font_key) { Some(font_ids) => {
                 font_ids.as_slice()
-            } else {
+            } _ => {
                 let font_ids =
                     lock.load_family(&font.family, &font.features, font.fallbacks.as_ref())?;
                 lock.font_ids_by_font_key.insert(font_key.clone(), font_ids);
                 lock.font_ids_by_font_key[&font_key].as_ref()
-            };
+            }};
 
             let candidate_properties = candidates
                 .iter()
@@ -146,7 +146,7 @@ impl PlatformTextSystem for MacTextSystem {
             let font_id = candidates[ix];
             lock.font_selections.insert(font.clone(), font_id);
             Ok(font_id)
-        }
+        }}
     }
 
     fn font_metrics(&self, font_id: FontId) -> FontMetrics {
@@ -663,11 +663,11 @@ mod lenient_font_attributes {
         }
     }
 
-    unsafe fn wrap_under_get_rule(reference: CFStringRef) -> CFString {
+    unsafe fn wrap_under_get_rule(reference: CFStringRef) -> CFString { unsafe {
         assert!(!reference.is_null(), "Attempted to create a NULL object.");
         let reference = CFRetain(reference as *const ::std::os::raw::c_void) as CFStringRef;
         TCFType::wrap_under_create_rule(reference)
-    }
+    }}
 }
 
 #[cfg(test)]

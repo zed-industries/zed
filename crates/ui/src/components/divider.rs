@@ -113,7 +113,7 @@ impl Divider {
         self
     }
 
-    pub fn render_solid(self, cx: &mut App) -> impl IntoElement {
+    pub fn render_solid(self, cx: &mut App) -> impl IntoElement + use<> {
         div()
             .map(|this| match self.direction {
                 DividerDirection::Horizontal => {
@@ -128,7 +128,7 @@ impl Divider {
 
     // TODO: Use canvas or a shader here
     // This obviously is a short term approach
-    pub fn render_dashed(self, cx: &mut App) -> impl IntoElement {
+    pub fn render_dashed(self, cx: &mut App) -> impl IntoElement + use<> {
         let segment_count = 128;
         let segment_count_f = segment_count as f32;
         let segment_min_w = 6.;

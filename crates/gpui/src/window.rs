@@ -936,7 +936,7 @@ impl Window {
     pub(crate) fn new_focus_listener(
         &self,
         value: AnyWindowFocusListener,
-    ) -> (Subscription, impl FnOnce()) {
+    ) -> (Subscription, impl FnOnce() + use<>) {
         self.focus_listeners.insert((), value)
     }
 }
@@ -1193,12 +1193,12 @@ impl Window {
             Box::new(move |cx| {
                 window_handle
                     .update(cx, |_, window, cx| {
-                        if let Some(handle) = observed.upgrade() {
+                        match observed.upgrade() { Some(handle) => {
                             on_notify(handle, window, cx);
                             true
-                        } else {
+                        } _ => {
                             false
-                        }
+                        }}
                     })
                     .unwrap_or(false)
             }),
@@ -1228,13 +1228,13 @@ impl Window {
                 Box::new(move |event, cx| {
                     window_handle
                         .update(cx, |_, window, cx| {
-                            if let Some(handle) = Entity::<Emitter>::upgrade_from(&entity) {
+                            match Entity::<Emitter>::upgrade_from(&entity) { Some(handle) => {
                                 let event = event.downcast_ref().expect("invalid event type");
                                 on_event(handle, event, window, cx);
                                 true
-                            } else {
+                            } _ => {
                                 false
-                            }
+                            }}
                         })
                         .unwrap_or(false)
                 }),
@@ -1465,14 +1465,14 @@ impl Window {
     {
         self.invalidator.debug_assert_paint_or_prepaint();
 
-        if let Some(rem_size) = rem_size {
+        match rem_size { Some(rem_size) => {
             self.rem_size_override_stack.push(rem_size.into());
             let result = f(self);
             self.rem_size_override_stack.pop();
             result
-        } else {
+        } _ => {
             f(self)
-        }
+        }}
     }
 
     /// The line height associated with the current text style.
@@ -1643,20 +1643,20 @@ impl Window {
         let mut prompt_element = None;
         let mut active_drag_element = None;
         let mut tooltip_element = None;
-        if let Some(prompt) = self.prompt.take() {
+        match self.prompt.take() { Some(prompt) => {
             let mut element = prompt.view.any_view().into_any();
             element.prepaint_as_root(Point::default(), self.viewport_size.into(), self, cx);
             prompt_element = Some(element);
             self.prompt = Some(prompt);
-        } else if let Some(active_drag) = cx.active_drag.take() {
+        } _ => { match cx.active_drag.take() { Some(active_drag) => {
             let mut element = active_drag.view.clone().into_any();
             let offset = self.mouse_position() - active_drag.cursor_offset;
             element.prepaint_as_root(offset, AvailableSpace::min_size(), self, cx);
             active_drag_element = Some(element);
             cx.active_drag = Some(active_drag);
-        } else {
+        } _ => {
             tooltip_element = self.prepaint_tooltip(cx);
-        }
+        }}}}
 
         self.mouse_hit_test = self.next_frame.hit_test(self.mouse_position);
 
@@ -2153,12 +2153,12 @@ impl Window {
             .accessed_element_states
             .push((GlobalElementId(key.0.clone()), TypeId::of::<S>()));
 
-        if let Some(any) = self
+        match self
             .next_frame
             .element_states
             .remove(&key)
             .or_else(|| self.rendered_frame.element_states.remove(&key))
-        {
+        { Some(any) => {
             let ElementStateBox {
                 inner,
                 #[cfg(debug_assertions)]
@@ -2201,7 +2201,7 @@ impl Window {
                 },
             );
             result
-        } else {
+        } _ => {
             let (result, state) = f(None, self);
             self.next_frame.element_states.insert(
                 key,
@@ -2212,7 +2212,7 @@ impl Window {
                 },
             );
             result
-        }
+        }}
     }
 
     /// A variant of `with_element_state` that allows the element's id to be optional. This is a convenience
@@ -3126,11 +3126,11 @@ impl Window {
             PlatformInput::KeyDown(_) | PlatformInput::KeyUp(_) => event,
         };
 
-        if let Some(any_mouse_event) = event.mouse_event() {
+        match event.mouse_event() { Some(any_mouse_event) => {
             self.dispatch_mouse_event(any_mouse_event, cx);
-        } else if let Some(any_key_event) = event.keyboard_event() {
+        } _ => { match event.keyboard_event() { Some(any_key_event) => {
             self.dispatch_key_event(any_key_event, cx);
-        }
+        } _ => {}}}}
 
         DispatchEventResult {
             propagate: cx.propagate_event,

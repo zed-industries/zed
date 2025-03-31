@@ -166,7 +166,7 @@ impl ToolUseState {
                     };
                 }
 
-                if let Some(pending_tool_use) = self.pending_tool_uses_by_id.get(&tool_use.id) {
+                match self.pending_tool_uses_by_id.get(&tool_use.id) { Some(pending_tool_use) => {
                     match pending_tool_use.status {
                         PendingToolUseStatus::Idle => ToolUseStatus::Pending,
                         PendingToolUseStatus::NeedsConfirmation { .. } => {
@@ -177,17 +177,17 @@ impl ToolUseState {
                             ToolUseStatus::Error(err.clone().into())
                         }
                     }
-                } else {
+                } _ => {
                     ToolUseStatus::Pending
-                }
+                }}
             })();
 
-            let (icon, needs_confirmation) = if let Some(tool) = self.tools.tool(&tool_use.name, cx)
-            {
+            let (icon, needs_confirmation) = match self.tools.tool(&tool_use.name, cx)
+            { Some(tool) => {
                 (tool.icon(), tool.needs_confirmation())
-            } else {
+            } _ => {
                 (IconName::Cog, false)
-            };
+            }};
 
             tool_uses.push(ToolUse {
                 id: tool_use.id.clone(),
@@ -209,11 +209,11 @@ impl ToolUseState {
         input: &serde_json::Value,
         cx: &App,
     ) -> SharedString {
-        if let Some(tool) = self.tools.tool(tool_name, cx) {
+        match self.tools.tool(tool_name, cx) { Some(tool) => {
             tool.ui_text(input).into()
-        } else {
+        } _ => {
             format!("Unknown tool {tool_name:?}").into()
-        }
+        }}
     }
 
     pub fn tool_results_for_message(&self, message_id: MessageId) -> Vec<&LanguageModelToolResult> {

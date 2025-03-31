@@ -651,17 +651,17 @@ impl HighlightedTextBuilder {
             self.text.push_str(chunk.text);
             let end = self.text.len();
 
-            if let Some(mut highlight_style) = chunk
+            match chunk
                 .syntax_highlight_id
                 .and_then(|id| id.style(syntax_theme))
-            {
+            { Some(mut highlight_style) => {
                 if let Some(override_style) = override_style {
                     highlight_style.highlight(override_style);
                 }
                 self.highlights.push((start..end, highlight_style));
-            } else if let Some(override_style) = override_style {
+            } _ => if let Some(override_style) = override_style {
                 self.highlights.push((start..end, override_style));
-            }
+            }}
         }
     }
 
@@ -989,7 +989,7 @@ impl Buffer {
         language: Option<Arc<Language>>,
         language_registry: Option<Arc<LanguageRegistry>>,
         cx: &mut App,
-    ) -> impl Future<Output = BufferSnapshot> {
+    ) -> impl Future<Output = BufferSnapshot> + use<> {
         let entity_id = cx.reserve_entity::<Self>().entity_id();
         let buffer_id = entity_id.as_non_zero_u64().into();
         async move {
@@ -1366,7 +1366,7 @@ impl Buffer {
         let was_dirty = self.is_dirty();
         let mut file_changed = false;
 
-        if let Some(old_file) = self.file.as_ref() {
+        match self.file.as_ref() { Some(old_file) => {
             if new_file.path() != old_file.path() {
                 file_changed = true;
             }
@@ -1379,9 +1379,9 @@ impl Buffer {
                     cx.emit(BufferEvent::ReloadNeeded)
                 }
             }
-        } else {
+        } _ => {
             file_changed = true;
-        };
+        }};
 
         self.file = Some(new_file);
         if file_changed {
@@ -1465,11 +1465,11 @@ impl Buffer {
         if self.reparse.is_some() {
             return;
         }
-        let language = if let Some(language) = self.language.clone() {
+        let language = match self.language.clone() { Some(language) => {
             language
-        } else {
+        } _ => {
             return;
-        };
+        }};
 
         let text = self.text_snapshot();
         let parsed_version = self.version();
@@ -1565,7 +1565,7 @@ impl Buffer {
     }
 
     fn request_autoindent(&mut self, cx: &mut Context<Self>) {
-        if let Some(indent_sizes) = self.compute_autoindents() {
+        match self.compute_autoindents() { Some(indent_sizes) => {
             let indent_sizes = cx.background_spawn(indent_sizes);
             match cx
                 .background_executor()
@@ -1582,12 +1582,12 @@ impl Buffer {
                     }));
                 }
             }
-        } else {
+        } _ => {
             self.autoindent_requests.clear();
-        }
+        }}
     }
 
-    fn compute_autoindents(&self) -> Option<impl Future<Output = BTreeMap<u32, IndentSize>>> {
+    fn compute_autoindents(&self) -> Option<impl Future<Output = BTreeMap<u32, IndentSize>> + use<>> {
         let max_rows_between_yields = 100;
         let snapshot = self.snapshot();
         if snapshot.syntax.is_empty() || self.autoindent_requests.is_empty() {
@@ -2047,12 +2047,12 @@ impl Buffer {
         } else {
             false
         };
-        if let Some((transaction_id, start_version)) = self.text.end_transaction_at(now) {
+        match self.text.end_transaction_at(now) { Some((transaction_id, start_version)) => {
             self.did_edit(&start_version, was_dirty, cx);
             Some(transaction_id)
-        } else {
+        } _ => {
             None
-        }
+        }}
     }
 
     /// Manually add a transaction to the buffer's undo history.
@@ -2098,7 +2098,7 @@ impl Buffer {
     }
 
     /// Waits for the buffer to receive operations up to the given version.
-    pub fn wait_for_version(&mut self, version: clock::Global) -> impl Future<Output = Result<()>> {
+    pub fn wait_for_version(&mut self, version: clock::Global) -> impl Future<Output = Result<()>> + use<> {
         self.text.wait_for_version(version)
     }
 
@@ -2575,13 +2575,13 @@ impl Buffer {
         let was_dirty = self.is_dirty();
         let old_version = self.version.clone();
 
-        if let Some((transaction_id, operation)) = self.text.undo() {
+        match self.text.undo() { Some((transaction_id, operation)) => {
             self.send_operation(Operation::Buffer(operation), true, cx);
             self.did_edit(&old_version, was_dirty, cx);
             Some(transaction_id)
-        } else {
+        } _ => {
             None
-        }
+        }}
     }
 
     /// Manually undoes a specific transaction in the buffer's undo history.
@@ -2592,13 +2592,13 @@ impl Buffer {
     ) -> bool {
         let was_dirty = self.is_dirty();
         let old_version = self.version.clone();
-        if let Some(operation) = self.text.undo_transaction(transaction_id) {
+        match self.text.undo_transaction(transaction_id) { Some(operation) => {
             self.send_operation(Operation::Buffer(operation), true, cx);
             self.did_edit(&old_version, was_dirty, cx);
             true
-        } else {
+        } _ => {
             false
-        }
+        }}
     }
 
     /// Manually undoes all changes after a given transaction in the buffer's undo history.
@@ -2634,13 +2634,13 @@ impl Buffer {
         let was_dirty = self.is_dirty();
         let old_version = self.version.clone();
 
-        if let Some((transaction_id, operation)) = self.text.redo() {
+        match self.text.redo() { Some((transaction_id, operation)) => {
             self.send_operation(Operation::Buffer(operation), true, cx);
             self.did_edit(&old_version, was_dirty, cx);
             Some(transaction_id)
-        } else {
+        } _ => {
             None
-        }
+        }}
     }
 
     /// Manually undoes all changes until a given transaction in the buffer's redo history.
@@ -3438,15 +3438,14 @@ impl BufferSnapshot {
         let mut annotation_row_ranges: Vec<Range<u32>> = Vec::new();
         while let Some(mat) = matches.peek() {
             let config = &configs[mat.grammar_index];
-            if let Some(item) =
-                self.next_outline_item(config, &mat, &range, include_extra_context, theme)
-            {
+            match self.next_outline_item(config, &mat, &range, include_extra_context, theme)
+            { Some(item) => {
                 items.push(item);
-            } else if let Some(capture) = mat
+            } _ => { match mat
                 .captures
                 .iter()
                 .find(|capture| Some(capture.index) == config.annotation_capture_ix)
-            {
+            { Some(capture) => {
                 let capture_range = capture.node.start_position()..capture.node.end_position();
                 let mut capture_row_range =
                     capture_range.start.row as u32..capture_range.end.row as u32;
@@ -3463,7 +3462,7 @@ impl BufferSnapshot {
                 } else {
                     annotation_row_ranges.push(capture_row_range);
                 }
-            }
+            } _ => {}}}}
             matches.advance();
         }
 
@@ -4489,7 +4488,7 @@ impl<'a> Iterator for BufferChunks<'a> {
         }
         self.diagnostic_endpoints = diagnostic_endpoints;
 
-        if let Some(chunk) = self.chunks.peek() {
+        match self.chunks.peek() { Some(chunk) => {
             let chunk_start = self.range.start;
             let mut chunk_end = (self.chunks.offset() + chunk.len())
                 .min(next_capture_start)
@@ -4516,9 +4515,9 @@ impl<'a> Iterator for BufferChunks<'a> {
                 is_unnecessary: self.current_code_is_unnecessary(),
                 ..Default::default()
             })
-        } else {
+        } _ => {
             None
-        }
+        }}
     }
 }
 
@@ -4575,7 +4574,7 @@ impl IndentSize {
     }
 
     /// An iterator over the characters represented by this [`IndentSize`].
-    pub fn chars(&self) -> impl Iterator<Item = char> {
+    pub fn chars(&self) -> impl Iterator<Item = char> + use<> {
         iter::repeat(self.char()).take(self.len as usize)
     }
 
@@ -4690,7 +4689,7 @@ pub(crate) fn contiguous_ranges(
     let mut values = values;
     let mut current_range: Option<Range<u32>> = None;
     std::iter::from_fn(move || loop {
-        if let Some(value) = values.next() {
+        match values.next() { Some(value) => {
             if let Some(range) = &mut current_range {
                 if value == range.end && range.len() < max_len {
                     range.end += 1;
@@ -4703,9 +4702,9 @@ pub(crate) fn contiguous_ranges(
             if prev_range.is_some() {
                 return prev_range;
             }
-        } else {
+        } _ => {
             return current_range.take();
-        }
+        }}
     })
 }
 

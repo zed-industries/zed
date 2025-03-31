@@ -83,12 +83,12 @@ impl ToolbarItemView for ToolbarControls {
         _: &mut Context<Self>,
     ) -> ToolbarItemLocation {
         if let Some(pane_item) = active_pane_item.as_ref() {
-            if let Some(editor) = pane_item.downcast::<ProjectDiagnosticsEditor>() {
+            match pane_item.downcast::<ProjectDiagnosticsEditor>() { Some(editor) => {
                 self.editor = Some(editor.downgrade());
                 ToolbarItemLocation::PrimaryRight
-            } else {
+            } _ => {
                 ToolbarItemLocation::Hidden
-            }
+            }}
         } else {
             ToolbarItemLocation::Hidden
         }

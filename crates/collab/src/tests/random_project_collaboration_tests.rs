@@ -216,7 +216,7 @@ impl RandomizedTest for ProjectCollaborationTest {
                     // Open a new project
                     0..=70 => {
                         // Open a remote project
-                        if let Some(room) = call.read_with(cx, |call, _| call.room().cloned()) {
+                        match call.read_with(cx, |call, _| call.room().cloned()) { Some(room) => {
                             let existing_dev_server_project_ids = cx.read(|cx| {
                                 client
                                     .dev_server_projects()
@@ -250,12 +250,10 @@ impl RandomizedTest for ProjectCollaborationTest {
                                     first_root_name,
                                 };
                             }
-                        }
-                        // Open a local project
-                        else {
+                        } _ => {
                             let first_root_name = plan.next_root_dir_name();
                             break ClientOperation::OpenLocalProject { first_root_name };
-                        }
+                        }}
                     }
 
                     // Close a remote project
@@ -279,7 +277,7 @@ impl RandomizedTest for ProjectCollaborationTest {
                             let project_root_name = root_name_for_project(&project, cx);
                             let mut paths = client.fs().paths(false);
                             paths.remove(0);
-                            let new_root_path = if paths.is_empty() || rng.gen() {
+                            let new_root_path = if paths.is_empty() || rng.r#gen() {
                                 Path::new(path!("/")).join(plan.next_root_dir_name())
                             } else {
                                 paths.choose(rng).unwrap().clone()
@@ -309,7 +307,7 @@ impl RandomizedTest for ProjectCollaborationTest {
                                     .choose(rng)
                             });
                             let Some(worktree) = worktree else { continue };
-                            let is_dir = rng.gen::<bool>();
+                            let is_dir = rng.r#gen::<bool>();
                             let mut full_path =
                                 worktree.read_with(cx, |w, _| PathBuf::from(w.root_name()));
                             full_path.push(gen_file_name(rng));
@@ -387,7 +385,7 @@ impl RandomizedTest for ProjectCollaborationTest {
                                             language::Bias::Left,
                                         )
                                     });
-                                    let detach = rng.gen();
+                                    let detach = rng.r#gen();
                                     break ClientOperation::RequestLspDataInBuffer {
                                         project_root_name,
                                         full_path,
@@ -460,7 +458,7 @@ impl RandomizedTest for ProjectCollaborationTest {
 
                 // Create or update a file or directory
                 96.. => {
-                    let is_dir = rng.gen::<bool>();
+                    let is_dir = rng.r#gen::<bool>();
                     let content;
                     let mut path;
                     let dir_paths = client.fs().directories(false);
@@ -1271,11 +1269,11 @@ impl RandomizedTest for ProjectCollaborationTest {
                 });
 
                 let (host_user_id, host_project, host_cx) =
-                    if let Some((host_user_id, host_project, host_cx)) = host_project {
+                    match host_project { Some((host_user_id, host_project, host_cx)) => {
                         (host_user_id, host_project, host_cx)
-                    } else {
+                    } _ => {
                         continue;
-                    };
+                    }};
 
                 for guest_buffer in guest_buffers {
                     let buffer_id =

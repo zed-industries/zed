@@ -219,11 +219,11 @@ async fn project_symbols(
     for symbol in symbols
         .iter()
         .filter(|symbol| {
-            if let Some(regex) = &regex {
+            match &regex { Some(regex) => {
                 regex.is_match(&symbol.name)
-            } else {
+            } _ => {
                 true
-            }
+            }}
         })
         .skip(offset as usize)
         // Take 1 more than RESULTS_PER_PAGE so we can tell if there are more results.
@@ -316,14 +316,14 @@ async fn render_outline(
                 .collect();
 
             let lang_name = lang.name();
-            if let Some(lsp_adapter) = registry.lsp_adapters(&lang_name).first().cloned() {
+            match registry.lsp_adapters(&lang_name).first().cloned() { Some(lsp_adapter) => {
                 lsp_adapter
                     .labels_for_symbols(&entries_for_labels, lang)
                     .await
                     .ok()
-            } else {
+            } _ => {
                 None
-            }
+            }}
         }
         None => None,
     };

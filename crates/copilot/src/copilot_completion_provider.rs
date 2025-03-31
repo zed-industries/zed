@@ -1078,7 +1078,7 @@ mod tests {
         cx: &mut EditorLspTestContext,
         marked_string: &str,
         completions: Vec<&'static str>,
-    ) -> impl Future<Output = ()> {
+    ) -> impl Future<Output = ()> + use<> {
         let complete_from_marker: TextRangeMarker = '|'.into();
         let replace_range_marker: TextRangeMarker = ('<', '>').into();
         let (_, mut marked_ranges) = marked_text_ranges_by(

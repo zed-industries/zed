@@ -618,11 +618,11 @@ impl Client {
     }
 
     pub fn peer_id(&self) -> Option<PeerId> {
-        if let Status::Connected { peer_id, .. } = &*self.status().borrow() {
+        match &*self.status().borrow() { Status::Connected { peer_id, .. } => {
             Some(*peer_id)
-        } else {
+        } _ => {
             None
-        }
+        }}
     }
 
     pub fn status(&self) -> watch::Receiver<Status> {
@@ -1024,7 +1024,7 @@ impl Client {
         &self,
         http: Arc<HttpClientWithUrl>,
         release_channel: Option<ReleaseChannel>,
-    ) -> impl Future<Output = Result<url::Url>> {
+    ) -> impl Future<Output = Result<url::Url>> + use<> {
         #[cfg(any(test, feature = "test-support"))]
         let url_override = self.rpc_url.read().clone();
 
@@ -1429,11 +1429,11 @@ impl Client {
     }
 
     fn connection_id(&self) -> Result<ConnectionId> {
-        if let Status::Connected { connection_id, .. } = *self.status().borrow() {
+        match *self.status().borrow() { Status::Connected { connection_id, .. } => {
             Ok(connection_id)
-        } else {
+        } _ => {
             Err(anyhow!("not connected"))
-        }
+        }}
     }
 
     pub fn send<T: EnvelopedMessage>(&self, message: T) -> Result<()> {
@@ -1444,7 +1444,7 @@ impl Client {
     pub fn request<T: RequestMessage>(
         &self,
         request: T,
-    ) -> impl Future<Output = Result<T::Response>> {
+    ) -> impl Future<Output = Result<T::Response>> + use<T> {
         self.request_envelope(request)
             .map_ok(|envelope| envelope.payload)
     }
@@ -1452,7 +1452,7 @@ impl Client {
     pub fn request_stream<T: RequestMessage>(
         &self,
         request: T,
-    ) -> impl Future<Output = Result<impl Stream<Item = Result<T::Response>>>> {
+    ) -> impl Future<Output = Result<impl Stream<Item = Result<T::Response>> + use<T>>> + use<T> {
         let client_id = self.id.load(Ordering::SeqCst);
         log::debug!(
             "rpc request start. client_id:{}. name:{}",
@@ -1476,7 +1476,7 @@ impl Client {
     pub fn request_envelope<T: RequestMessage>(
         &self,
         request: T,
-    ) -> impl Future<Output = Result<TypedEnvelope<T::Response>>> {
+    ) -> impl Future<Output = Result<TypedEnvelope<T::Response>>> + use<T> {
         let client_id = self.id();
         log::debug!(
             "rpc request start. client_id:{}. name:{}",
@@ -1501,7 +1501,7 @@ impl Client {
         &self,
         envelope: proto::Envelope,
         request_type: &'static str,
-    ) -> impl Future<Output = Result<proto::Envelope>> {
+    ) -> impl Future<Output = Result<proto::Envelope>> + use<> {
         let client_id = self.id();
         log::debug!(
             "rpc request start. client_id:{}. name:{}",
@@ -1528,12 +1528,12 @@ impl Client {
         let type_name = message.payload_type_name();
         let original_sender_id = message.original_sender_id();
 
-        if let Some(future) = ProtoMessageHandlerSet::handle_message(
+        match ProtoMessageHandlerSet::handle_message(
             &self.handler_set,
             message,
             self.clone().into(),
             cx.clone(),
-        ) {
+        ) { Some(future) => {
             let client_id = self.id();
             log::debug!(
                 "rpc message received. client_id:{}, sender_id:{:?}, type:{}",
@@ -1561,12 +1561,12 @@ impl Client {
                 }
             })
             .detach();
-        } else {
+        } _ => {
             log::info!("unhandled message {}", type_name);
             self.peer
                 .respond_with_unhandled_message(sender_id.into(), request_id, type_name)
                 .log_err();
-        }
+        }}
     }
 
     pub fn telemetry(&self) -> &Arc<Telemetry> {

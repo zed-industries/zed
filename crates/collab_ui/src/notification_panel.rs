@@ -182,16 +182,16 @@ impl NotificationPanel {
         cx: AsyncWindowContext,
     ) -> Task<Result<Entity<Self>>> {
         cx.spawn(async move |cx| {
-            let serialized_panel = if let Some(panel) = cx
+            let serialized_panel = match cx
                 .background_spawn(async move { KEY_VALUE_STORE.read_kvp(NOTIFICATION_PANEL_KEY) })
                 .await
                 .log_err()
                 .flatten()
-            {
+            { Some(panel) => {
                 Some(serde_json::from_str::<SerializedNotificationPanel>(&panel)?)
-            } else {
+            } _ => {
                 None
-            };
+            }};
 
             workspace.update_in(cx, |workspace, window, cx| {
                 let panel = Self::new(workspace, window, cx);
@@ -494,15 +494,15 @@ impl NotificationPanel {
 
         if let Notification::ChannelMessageMention { channel_id, .. } = &notification {
             if let Some(workspace) = self.workspace.upgrade() {
-                return if let Some(panel) = workspace.read(cx).panel::<ChatPanel>(cx) {
+                return match workspace.read(cx).panel::<ChatPanel>(cx) { Some(panel) => {
                     let panel = panel.read(cx);
                     panel.is_scrolled_to_bottom()
                         && panel
                             .active_chat()
                             .map_or(false, |chat| chat.read(cx).channel_id.0 == *channel_id)
-                } else {
+                } _ => {
                     false
-                };
+                }};
             }
         }
 

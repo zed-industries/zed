@@ -159,14 +159,14 @@ mod uniform_list {
                 visible_range.start,
                 includes_trailing_indent,
             );
-            let mut indent_guides = if let Some(ref custom_render) = self.render_fn {
+            let mut indent_guides = match self.render_fn { Some(ref custom_render) => {
                 let params = RenderIndentGuideParams {
                     indent_guides,
                     indent_size: self.indent_size,
                     item_height,
                 };
                 custom_render(params, window, cx)
-            } else {
+            } _ => {
                 indent_guides
                     .into_iter()
                     .map(|layout| RenderedIndentGuide {
@@ -182,7 +182,7 @@ mod uniform_list {
                         hitbox: None,
                     })
                     .collect()
-            };
+            }};
             for guide in &mut indent_guides {
                 guide.bounds.origin += bounds.origin;
                 if let Some(hitbox) = guide.hitbox.as_mut() {
@@ -239,8 +239,8 @@ mod uniform_list {
             window: &mut Window,
             _cx: &mut App,
         ) -> Self::PrepaintState {
-            if let Some(on_hovered_indent_guide_click) = self.on_hovered_indent_guide_click.clone()
-            {
+            match self.on_hovered_indent_guide_click.clone()
+            { Some(on_hovered_indent_guide_click) => {
                 let hitboxes = self
                     .indent_guides
                     .as_ref()
@@ -251,9 +251,9 @@ mod uniform_list {
                     hitboxes: Rc::new(hitboxes),
                     on_hovered_indent_guide_click,
                 }
-            } else {
+            } _ => {
                 Self::PrepaintState::Static
-            }
+            }}
         }
 
         fn paint(

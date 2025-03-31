@@ -327,12 +327,12 @@ impl History {
 
     fn pop_undo(&mut self) -> Option<&HistoryEntry> {
         assert_eq!(self.transaction_depth, 0);
-        if let Some(entry) = self.undo_stack.pop() {
+        match self.undo_stack.pop() { Some(entry) => {
             self.redo_stack.push(entry);
             self.redo_stack.last()
-        } else {
+        } _ => {
             None
-        }
+        }}
     }
 
     fn remove_from_undo(&mut self, transaction_id: TransactionId) -> Option<&HistoryEntry> {
@@ -364,21 +364,21 @@ impl History {
 
     fn forget(&mut self, transaction_id: TransactionId) -> Option<Transaction> {
         assert_eq!(self.transaction_depth, 0);
-        if let Some(entry_ix) = self
+        match self
             .undo_stack
             .iter()
             .rposition(|entry| entry.transaction.id == transaction_id)
-        {
+        { Some(entry_ix) => {
             Some(self.undo_stack.remove(entry_ix).transaction)
-        } else if let Some(entry_ix) = self
+        } _ => { match self
             .redo_stack
             .iter()
             .rposition(|entry| entry.transaction.id == transaction_id)
-        {
+        { Some(entry_ix) => {
             Some(self.redo_stack.remove(entry_ix).transaction)
-        } else {
+        } _ => {
             None
-        }
+        }}}}
     }
 
     fn transaction(&self, transaction_id: TransactionId) -> Option<&Transaction> {
@@ -417,12 +417,12 @@ impl History {
 
     fn pop_redo(&mut self) -> Option<&HistoryEntry> {
         assert_eq!(self.transaction_depth, 0);
-        if let Some(entry) = self.redo_stack.pop() {
+        match self.redo_stack.pop() { Some(entry) => {
             self.undo_stack.push(entry);
             self.undo_stack.last()
-        } else {
+        } _ => {
             None
-        }
+        }}
     }
 
     fn remove_from_redo(&mut self, transaction_id: TransactionId) -> &[HistoryEntry] {
@@ -1364,13 +1364,13 @@ impl Buffer {
     }
 
     pub fn end_transaction_at(&mut self, now: Instant) -> Option<(TransactionId, clock::Global)> {
-        if let Some(entry) = self.history.end_transaction(now) {
+        match self.history.end_transaction(now) { Some(entry) => {
             let since = entry.transaction.start.clone();
             let id = self.history.group().unwrap();
             Some((id, since))
-        } else {
+        } _ => {
             None
-        }
+        }}
     }
 
     pub fn finalize_last_transaction(&mut self) -> Option<&Transaction> {
@@ -1390,14 +1390,14 @@ impl Buffer {
     }
 
     pub fn undo(&mut self) -> Option<(TransactionId, Operation)> {
-        if let Some(entry) = self.history.pop_undo() {
+        match self.history.pop_undo() { Some(entry) => {
             let transaction = entry.transaction.clone();
             let transaction_id = transaction.id;
             let op = self.undo_or_redo(transaction);
             Some((transaction_id, op))
-        } else {
+        } _ => {
             None
-        }
+        }}
     }
 
     pub fn undo_transaction(&mut self, transaction_id: TransactionId) -> Option<Operation> {
@@ -1432,14 +1432,14 @@ impl Buffer {
     }
 
     pub fn redo(&mut self) -> Option<(TransactionId, Operation)> {
-        if let Some(entry) = self.history.pop_redo() {
+        match self.history.pop_redo() { Some(entry) => {
             let transaction = entry.transaction.clone();
             let transaction_id = transaction.id;
             let op = self.undo_or_redo(transaction);
             Some((transaction_id, op))
-        } else {
+        } _ => {
             None
-        }
+        }}
     }
 
     pub fn redo_to_transaction(&mut self, transaction_id: TransactionId) -> Vec<Operation> {
@@ -1613,7 +1613,7 @@ impl Buffer {
         }
     }
 
-    pub fn wait_for_version(&mut self, version: clock::Global) -> impl Future<Output = Result<()>> {
+    pub fn wait_for_version(&mut self, version: clock::Global) -> impl Future<Output = Result<()>> + use<> {
         let mut rx = None;
         if !self.snapshot.version.observed_all(&version) {
             let channel = oneshot::channel();
@@ -1795,14 +1795,14 @@ impl Buffer {
         log::info!("mutating buffer {} with {:?}", self.replica_id, edits);
 
         let op = self.edit(edits.iter().cloned());
-        if let Operation::Edit(edit) = &op {
+        match &op { Operation::Edit(edit) => {
             assert_eq!(edits.len(), edit.new_text.len());
             for (edit, new_text) in edits.iter_mut().zip(&edit.new_text) {
                 edit.1 = new_text.clone();
             }
-        } else {
+        } _ => {
             unreachable!()
-        }
+        }}
 
         (edits, op)
     }
@@ -2188,7 +2188,7 @@ impl BufferSnapshot {
                 split_offset: anchor.offset,
             };
             insertion_cursor.seek(&anchor_key, anchor.bias, &());
-            if let Some(insertion) = insertion_cursor.item() {
+            match insertion_cursor.item() { Some(insertion) => {
                 let comparison = sum_tree::KeyedItem::key(insertion).cmp(&anchor_key);
                 if comparison == Ordering::Greater
                     || (anchor.bias == Bias::Left
@@ -2197,9 +2197,9 @@ impl BufferSnapshot {
                 {
                     insertion_cursor.prev(&());
                 }
-            } else {
+            } _ => {
                 insertion_cursor.prev(&());
-            }
+            }}
             let insertion = insertion_cursor.item().expect("invalid insertion");
             assert_eq!(insertion.timestamp, anchor.timestamp, "invalid insertion");
 
@@ -2234,7 +2234,7 @@ impl BufferSnapshot {
             };
             let mut insertion_cursor = self.insertions.cursor::<InsertionFragmentKey>(&());
             insertion_cursor.seek(&anchor_key, anchor.bias, &());
-            if let Some(insertion) = insertion_cursor.item() {
+            match insertion_cursor.item() { Some(insertion) => {
                 let comparison = sum_tree::KeyedItem::key(insertion).cmp(&anchor_key);
                 if comparison == Ordering::Greater
                     || (anchor.bias == Bias::Left
@@ -2243,9 +2243,9 @@ impl BufferSnapshot {
                 {
                     insertion_cursor.prev(&());
                 }
-            } else {
+            } _ => {
                 insertion_cursor.prev(&());
-            }
+            }}
 
             let Some(insertion) = insertion_cursor
                 .item()
@@ -2280,7 +2280,7 @@ impl BufferSnapshot {
             };
             let mut insertion_cursor = self.insertions.cursor::<InsertionFragmentKey>(&());
             insertion_cursor.seek(&anchor_key, anchor.bias, &());
-            if let Some(insertion) = insertion_cursor.item() {
+            match insertion_cursor.item() { Some(insertion) => {
                 let comparison = sum_tree::KeyedItem::key(insertion).cmp(&anchor_key);
                 if comparison == Ordering::Greater
                     || (anchor.bias == Bias::Left
@@ -2289,9 +2289,9 @@ impl BufferSnapshot {
                 {
                     insertion_cursor.prev(&());
                 }
-            } else {
+            } _ => {
                 insertion_cursor.prev(&());
-            }
+            }}
 
             let Some(insertion) = insertion_cursor.item().filter(|insertion| {
                 if cfg!(debug_assertions) {
@@ -3160,18 +3160,18 @@ impl LineEnding {
     }
 
     pub fn normalize_arc(text: Arc<str>) -> Arc<str> {
-        if let Cow::Owned(replaced) = LINE_SEPARATORS_REGEX.replace_all(&text, "\n") {
+        match LINE_SEPARATORS_REGEX.replace_all(&text, "\n") { Cow::Owned(replaced) => {
             replaced.into()
-        } else {
+        } _ => {
             text
-        }
+        }}
     }
 
     pub fn normalize_cow(text: Cow<str>) -> Cow<str> {
-        if let Cow::Owned(replaced) = LINE_SEPARATORS_REGEX.replace_all(&text, "\n") {
+        match LINE_SEPARATORS_REGEX.replace_all(&text, "\n") { Cow::Owned(replaced) => {
             replaced.into()
-        } else {
+        } _ => {
             text
-        }
+        }}
     }
 }

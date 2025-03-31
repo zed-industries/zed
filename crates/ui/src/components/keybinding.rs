@@ -176,7 +176,7 @@ pub fn render_modifiers(
     color: Option<Color>,
     size: Option<AbsoluteLength>,
     trailing_separator: bool,
-) -> impl Iterator<Item = AnyElement> {
+) -> impl Iterator<Item = AnyElement> + use<> {
     #[derive(Clone)]
     enum KeyOrIcon {
         Key(&'static str),

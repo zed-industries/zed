@@ -541,7 +541,7 @@ impl ContextMenu {
             return;
         }
 
-        if let Some(ix) = self.items.iter().position(|item| {
+        match self.items.iter().position(|item| {
             if let ContextMenuItem::Entry(ContextMenuEntry {
                 action: Some(action),
                 disabled: false,
@@ -552,7 +552,7 @@ impl ContextMenu {
             } else {
                 false
             }
-        }) {
+        }) { Some(ix) => {
             self.select_index(ix);
             self.delayed = true;
             cx.notify();
@@ -569,9 +569,9 @@ impl ContextMenu {
                 })
             })
             .detach_and_log_err(cx);
-        } else {
+        } _ => {
             cx.propagate()
-        }
+        }}
     }
 
     pub fn on_blur_subscription(mut self, new_subscription: Subscription) -> Self {
@@ -585,7 +585,7 @@ impl ContextMenu {
         item: &ContextMenuItem,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> impl IntoElement {
+    ) -> impl IntoElement + use<> {
         match item {
             ContextMenuItem::Separator => ListSeparator.into_any_element(),
             ContextMenuItem::Header(header) => ListSubHeader::new(header.clone())
@@ -646,7 +646,7 @@ impl ContextMenu {
         entry: &ContextMenuEntry,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> impl IntoElement {
+    ) -> impl IntoElement + use<> {
         let ContextMenuEntry {
             toggle,
             label,

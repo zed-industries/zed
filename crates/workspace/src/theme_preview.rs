@@ -56,7 +56,7 @@ impl ThemePreview {
         page: ThemePreviewPage,
         window: &mut Window,
         cx: &mut Context<ThemePreview>,
-    ) -> impl IntoElement {
+    ) -> impl IntoElement + use<> {
         match page {
             ThemePreviewPage::Overview => self.render_overview_page(window, cx).into_any_element(),
             ThemePreviewPage::Typography => {
@@ -114,7 +114,7 @@ impl ThemePreview {
         layer: ElevationIndex,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> impl IntoElement {
+    ) -> impl IntoElement + use<> {
         let bg = layer.bg(cx);
 
         let label_with_contrast = |label: &str, fg: Hsla| {
@@ -280,7 +280,7 @@ impl ThemePreview {
         layer: ElevationIndex,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> impl IntoElement {
+    ) -> impl IntoElement + use<> {
         let bg = layer.bg(cx);
         let all_colors = all_theme_colors(cx);
 
@@ -330,7 +330,7 @@ impl ThemePreview {
         layer: ElevationIndex,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> impl IntoElement {
+    ) -> impl IntoElement + use<> {
         v_flex()
             .p_4()
             .bg(layer.bg(cx))
@@ -345,7 +345,7 @@ impl ThemePreview {
         &self,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> impl IntoElement {
+    ) -> impl IntoElement + use<> {
         v_flex()
             .id("theme-preview-overview")
             .overflow_scroll()
@@ -365,7 +365,7 @@ impl ThemePreview {
         &self,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> impl IntoElement {
+    ) -> impl IntoElement + use<> {
         v_flex()
             .id("theme-preview-typography")
             .overflow_scroll()
@@ -387,7 +387,7 @@ impl ThemePreview {
             )
     }
 
-    fn render_page_nav(&self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_page_nav(&self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         h_flex()
             .id("theme-preview-nav")
             .items_center()

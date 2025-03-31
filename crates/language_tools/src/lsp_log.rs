@@ -1231,11 +1231,11 @@ impl Render for LspLogToolbarItemView {
         });
 
         let current_server = current_server_id.and_then(|current_server_id| {
-            if let Ok(ix) = menu_rows.binary_search_by_key(&current_server_id, |e| e.server_id) {
+            match menu_rows.binary_search_by_key(&current_server_id, |e| e.server_id) { Ok(ix) => {
                 Some(menu_rows[ix].clone())
-            } else {
+            } _ => {
                 None
-            }
+            }}
         });
         let available_language_servers: Vec<_> = menu_rows
             .iter()

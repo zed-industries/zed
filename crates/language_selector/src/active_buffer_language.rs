@@ -71,14 +71,14 @@ impl StatusItemView for ActiveBufferLanguage {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if let Some(editor) = active_pane_item.and_then(|item| item.downcast::<Editor>()) {
+        match active_pane_item.and_then(|item| item.downcast::<Editor>()) { Some(editor) => {
             self._observe_active_editor =
                 Some(cx.observe_in(&editor, window, Self::update_language));
             self.update_language(editor, window, cx);
-        } else {
+        } _ => {
             self.active_language = None;
             self._observe_active_editor = None;
-        }
+        }}
 
         cx.notify();
     }

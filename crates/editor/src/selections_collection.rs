@@ -88,7 +88,7 @@ impl SelectionsCollection {
         self.disjoint.clone()
     }
 
-    pub fn disjoint_anchor_ranges(&self) -> impl Iterator<Item = Range<Anchor>> {
+    pub fn disjoint_anchor_ranges(&self) -> impl Iterator<Item = Range<Anchor>> + use<> {
         // Mapping the Arc slice would borrow it, whereas indexing captures it.
         let disjoint = self.disjoint_anchors();
         (0..disjoint.len()).map(move |ix| disjoint[ix].range())

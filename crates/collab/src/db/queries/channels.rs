@@ -105,10 +105,10 @@ impl Database {
             let mut accept_invite_result = None;
 
             if role.is_none() {
-                if let Some(invitation) = self
+                match self
                     .pending_invite_for_channel(&channel, user_id, &tx)
                     .await?
-                {
+                { Some(invitation) => {
                     // note, this may be a parent channel
                     role = Some(invitation.role);
                     channel_member::Entity::update(channel_member::ActiveModel {
@@ -126,7 +126,7 @@ impl Database {
                     debug_assert!(
                         self.channel_role_for_user(&channel, user_id, &tx).await? == role
                     );
-                } else if channel.visibility == ChannelVisibility::Public {
+                } _ => if channel.visibility == ChannelVisibility::Public {
                     role = Some(ChannelRole::Guest);
                     channel_member::Entity::insert(channel_member::ActiveModel {
                         id: ActiveValue::NotSet,
@@ -146,7 +146,7 @@ impl Database {
                     debug_assert!(
                         self.channel_role_for_user(&channel, user_id, &tx).await? == role
                     );
-                }
+                }}
             }
 
             if role.is_none() || role == Some(ChannelRole::Banned) {

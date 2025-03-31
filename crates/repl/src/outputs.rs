@@ -209,7 +209,7 @@ impl Output {
         workspace: WeakEntity<Workspace>,
         window: &mut Window,
         cx: &mut Context<ExecutionView>,
-    ) -> impl IntoElement {
+    ) -> impl IntoElement + use<> {
         let content = match self {
             Self::Plain { content, .. } => Some(content.clone().into_any_element()),
             Self::Markdown { content, .. } => Some(content.clone().into_any_element()),
@@ -359,11 +359,11 @@ impl ExecutionView {
             ),
             JupyterMessageContent::StreamContent(result) => {
                 // Previous stream data will combine together, handling colors, carriage returns, etc
-                if let Some(new_terminal) = self.apply_terminal_text(&result.text, window, cx) {
+                match self.apply_terminal_text(&result.text, window, cx) { Some(new_terminal) => {
                     new_terminal
-                } else {
+                } _ => {
                     return;
-                }
+                }}
             }
             JupyterMessageContent::ErrorOutput(result) => {
                 let terminal =

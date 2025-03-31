@@ -35,7 +35,7 @@ pub fn init(fs: Arc<dyn Fs>, cx: &mut App) {
     ReplStore::init(fs, cx);
 }
 
-fn zed_dispatcher(cx: &mut App) -> impl Dispatcher {
+fn zed_dispatcher(cx: &mut App) -> impl Dispatcher + use<> {
     struct ZedDispatcher {
         dispatcher: Arc<dyn PlatformDispatcher>,
     }

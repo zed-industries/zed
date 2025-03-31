@@ -111,16 +111,15 @@ impl SemanticDb {
         for result in results {
             let full_path;
             let file_content;
-            if let Some(last_loaded_file) =
-                last_loaded_file
+            match last_loaded_file
                     .as_ref()
                     .filter(|(last_worktree, last_path, _, _)| {
                         last_worktree == &result.worktree && last_path == &result.path
                     })
-            {
+            { Some(last_loaded_file) => {
                 full_path = last_loaded_file.2.clone();
                 file_content = &last_loaded_file.3;
-            } else {
+            } _ => {
                 let output = result.worktree.read_with(cx, |worktree, _cx| {
                     let entry_abs_path = worktree.abs_path().join(&result.path);
                     let mut entry_full_path = PathBuf::from(worktree.root_name());
@@ -142,7 +141,7 @@ impl SemanticDb {
                     content,
                 ));
                 file_content = &last_loaded_file.as_ref().unwrap().3;
-            };
+            }};
 
             let query_index = max_scores_by_path[&(result.worktree.clone(), result.path.clone())].1;
 

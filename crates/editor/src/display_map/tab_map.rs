@@ -534,16 +534,16 @@ impl<'a> Iterator for TabChunks<'a> {
 
     fn next(&mut self) -> Option<Self::Item> {
         if self.chunk.text.is_empty() {
-            if let Some(chunk) = self.fold_chunks.next() {
+            match self.fold_chunks.next() { Some(chunk) => {
                 self.chunk = chunk;
                 if self.inside_leading_tab {
                     self.chunk.text = &self.chunk.text[1..];
                     self.inside_leading_tab = false;
                     self.input_column += 1;
                 }
-            } else {
+            } _ => {
                 return None;
-            }
+            }}
         }
 
         for (ix, c) in self.chunk.text.char_indices() {
@@ -738,7 +738,7 @@ mod tests {
     fn test_random_tabs(cx: &mut gpui::App, mut rng: StdRng) {
         let tab_size = NonZeroU32::new(rng.gen_range(1..=4)).unwrap();
         let len = rng.gen_range(0..30);
-        let buffer = if rng.gen() {
+        let buffer = if rng.r#gen() {
             let text = util::RandomCharIter::new(&mut rng)
                 .take(len)
                 .collect::<String>();

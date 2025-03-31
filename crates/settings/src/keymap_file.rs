@@ -6,7 +6,7 @@ use gpui::{
     NoAction, SharedString, KEYSTROKE_PARSE_EXPECTED_MESSAGE,
 };
 use schemars::{
-    gen::{SchemaGenerator, SchemaSettings},
+    r#gen::{SchemaGenerator, SchemaSettings},
     schema::{ArrayValidation, InstanceType, Schema, SchemaObject, SubschemaValidation},
     JsonSchema,
 };
@@ -395,14 +395,14 @@ impl KeymapFile {
             }
         };
 
-        if let Some(validator) = KEY_BINDING_VALIDATORS.get(&key_binding.action().type_id()) {
+        match KEY_BINDING_VALIDATORS.get(&key_binding.action().type_id()) { Some(validator) => {
             match validator.validate(&key_binding) {
                 Ok(()) => Ok(key_binding),
                 Err(error) => Err(error.0),
             }
-        } else {
+        } _ => {
             Ok(key_binding)
-        }
+        }}
     }
 
     pub fn generate_json_schema_for_registered_actions(cx: &mut App) -> Value {

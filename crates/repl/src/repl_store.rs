@@ -213,12 +213,12 @@ impl ReplStore {
     ) -> Option<KernelSpecification> {
         let selected_kernelspec = self.selected_kernel_for_worktree.get(&worktree_id).cloned();
 
-        if let Some(language_at_cursor) = language_at_cursor {
+        match language_at_cursor { Some(language_at_cursor) => {
             selected_kernelspec
                 .or_else(|| self.kernelspec_legacy_by_lang_only(language_at_cursor, cx))
-        } else {
+        } _ => {
             selected_kernelspec
-        }
+        }}
     }
 
     fn kernelspec_legacy_by_lang_only(

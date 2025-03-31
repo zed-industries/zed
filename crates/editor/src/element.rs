@@ -432,69 +432,69 @@ impl EditorElement {
         register_action(editor, window, Editor::expand_all_diff_hunks);
 
         register_action(editor, window, |editor, action, window, cx| {
-            if let Some(task) = editor.format(action, window, cx) {
+            match editor.format(action, window, cx) { Some(task) => {
                 task.detach_and_notify_err(window, cx);
-            } else {
+            } _ => {
                 cx.propagate();
-            }
+            }}
         });
         register_action(editor, window, |editor, action, window, cx| {
-            if let Some(task) = editor.format_selections(action, window, cx) {
+            match editor.format_selections(action, window, cx) { Some(task) => {
                 task.detach_and_notify_err(window, cx);
-            } else {
+            } _ => {
                 cx.propagate();
-            }
+            }}
         });
         register_action(editor, window, |editor, action, window, cx| {
-            if let Some(task) = editor.organize_imports(action, window, cx) {
+            match editor.organize_imports(action, window, cx) { Some(task) => {
                 task.detach_and_notify_err(window, cx);
-            } else {
+            } _ => {
                 cx.propagate();
-            }
+            }}
         });
         register_action(editor, window, Editor::restart_language_server);
         register_action(editor, window, Editor::show_character_palette);
         register_action(editor, window, |editor, action, window, cx| {
-            if let Some(task) = editor.confirm_completion(action, window, cx) {
+            match editor.confirm_completion(action, window, cx) { Some(task) => {
                 task.detach_and_notify_err(window, cx);
-            } else {
+            } _ => {
                 cx.propagate();
-            }
+            }}
         });
         register_action(editor, window, |editor, action, window, cx| {
-            if let Some(task) = editor.compose_completion(action, window, cx) {
+            match editor.compose_completion(action, window, cx) { Some(task) => {
                 task.detach_and_notify_err(window, cx);
-            } else {
+            } _ => {
                 cx.propagate();
-            }
+            }}
         });
         register_action(editor, window, |editor, action, window, cx| {
-            if let Some(task) = editor.confirm_code_action(action, window, cx) {
+            match editor.confirm_code_action(action, window, cx) { Some(task) => {
                 task.detach_and_notify_err(window, cx);
-            } else {
+            } _ => {
                 cx.propagate();
-            }
+            }}
         });
         register_action(editor, window, |editor, action, window, cx| {
-            if let Some(task) = editor.rename(action, window, cx) {
+            match editor.rename(action, window, cx) { Some(task) => {
                 task.detach_and_notify_err(window, cx);
-            } else {
+            } _ => {
                 cx.propagate();
-            }
+            }}
         });
         register_action(editor, window, |editor, action, window, cx| {
-            if let Some(task) = editor.confirm_rename(action, window, cx) {
+            match editor.confirm_rename(action, window, cx) { Some(task) => {
                 task.detach_and_notify_err(window, cx);
-            } else {
+            } _ => {
                 cx.propagate();
-            }
+            }}
         });
         register_action(editor, window, |editor, action, window, cx| {
-            if let Some(task) = editor.find_all_references(action, window, cx) {
+            match editor.find_all_references(action, window, cx) { Some(task) => {
                 task.detach_and_log_err(cx);
-            } else {
+            } _ => {
                 cx.propagate();
-            }
+            }}
         });
         register_action(editor, window, Editor::show_signature_help);
         register_action(editor, window, Editor::next_edit_prediction);
@@ -1097,7 +1097,7 @@ impl EditorElement {
                 selections.push((player, layouts));
             }
 
-            if let Some(collaboration_hub) = &editor.collaboration_hub {
+            match &editor.collaboration_hub { Some(collaboration_hub) => {
                 // When following someone, render the local selections in their color.
                 if let Some(leader_id) = editor.leader_peer_id {
                     if let Some(collaborator) = collaboration_hub.collaborators(cx).get(&leader_id)
@@ -1154,7 +1154,7 @@ impl EditorElement {
                 }
 
                 selections.extend(remote_selections.into_values());
-            } else if !editor.is_focused(window) && editor.show_cursor_when_unfocused {
+            } _ => if !editor.is_focused(window) && editor.show_cursor_when_unfocused {
                 let layouts = snapshot
                     .buffer_snapshot
                     .selections_in_range(&(start_anchor..end_anchor), true)
@@ -1172,7 +1172,7 @@ impl EditorElement {
                     .collect::<Vec<_>>();
                 let player = editor.current_user_player_color(cx);
                 selections.push((player, layouts));
-            }
+            }}
         });
         (selections, active_rows, newest_selection_head)
     }
@@ -2057,20 +2057,20 @@ impl EditorElement {
     ) -> Vec<AnyElement> {
         self.editor.update(cx, |editor, cx| {
             let active_task_indicator_row =
-                if let Some(crate::CodeContextMenu::CodeActions(CodeActionsMenu {
+                match editor.context_menu.borrow().as_ref()
+                { Some(crate::CodeContextMenu::CodeActions(CodeActionsMenu {
                     deployed_from_indicator,
                     actions,
                     ..
-                })) = editor.context_menu.borrow().as_ref()
-                {
+                })) => {
                     actions
                         .tasks
                         .as_ref()
                         .map(|tasks| tasks.position.to_display_point(snapshot).row())
                         .or(*deployed_from_indicator)
-                } else {
+                } _ => {
                     None
-                };
+                }};
 
             let offset_range_start =
                 snapshot.display_point_to_point(DisplayPoint::new(range.start, 0), Bias::Left);
@@ -4079,12 +4079,12 @@ impl EditorElement {
         );
 
         let maybe_element = self.editor.update(cx, |editor, cx| {
-            if let Some(popover) = editor.signature_help_state.popover_mut() {
+            match editor.signature_help_state.popover_mut() { Some(popover) => {
                 let element = popover.render(max_size, cx);
                 Some(element)
-            } else {
+            } _ => {
                 None
-            }
+            }}
         });
         if let Some(mut element) = maybe_element {
             let window_size = window.viewport_size();
@@ -4189,7 +4189,7 @@ impl EditorElement {
                     None;
                 for (&new_row, &new_background) in &layout.highlighted_rows {
                     match &mut current_paint {
-                        Some((current_background, current_range, mut edges)) => {
+                        &mut Some((ref mut current_background, ref mut current_range, mut edges)) => {
                             let current_background = *current_background;
                             let new_range_started = current_background != new_background
                                 || current_range.end.next_row() != new_row;
@@ -4916,7 +4916,7 @@ impl EditorElement {
                 }
 
                 editor.update(cx, |editor, cx| {
-                    if let Some((scrollbar_layout, axis)) = event
+                    match event
                         .pressed_button
                         .filter(|button| *button == MouseButton::Left)
                         .and(editor.scroll_manager.dragging_scrollbar_axis())
@@ -4925,7 +4925,7 @@ impl EditorElement {
                                 .iter_scrollbars()
                                 .find(|(_, a)| *a == axis)
                         })
-                    {
+                    { Some((scrollbar_layout, axis)) => {
                         let ScrollbarLayout {
                             hitbox,
                             text_unit_size,
@@ -4943,9 +4943,9 @@ impl EditorElement {
                             editor.set_scroll_position(position, window, cx);
                         }
                         cx.stop_propagation();
-                    } else {
+                    } _ => {
                         editor.scroll_manager.reset_scrollbar_dragging_state(cx);
-                    }
+                    }}
 
                     if scrollbars_layout.get_hovered_axis(window).is_some() {
                         editor.scroll_manager.show_scrollbars(window, cx);
@@ -5655,14 +5655,14 @@ pub struct AcceptEditPredictionBinding(pub(crate) Option<gpui::KeyBinding>);
 
 impl AcceptEditPredictionBinding {
     pub fn keystroke(&self) -> Option<&Keystroke> {
-        if let Some(binding) = self.0.as_ref() {
+        match self.0.as_ref() { Some(binding) => {
             match &binding.keystrokes() {
                 [keystroke] => Some(keystroke),
                 _ => None,
             }
-        } else {
+        } _ => {
             None
-        }
+        }}
     }
 }
 
@@ -5949,7 +5949,7 @@ impl LineWithInvisibles {
             is_tab: false,
             replacement: None,
         }]) {
-            if let Some(replacement) = highlighted_chunk.replacement {
+            match highlighted_chunk.replacement { Some(replacement) => {
                 if !line.is_empty() {
                     let shaped_line = window
                         .text_system()
@@ -6004,11 +6004,11 @@ impl LineWithInvisibles {
                         });
                     }
                     ChunkReplacement::Str(x) => {
-                        let text_style = if let Some(style) = highlighted_chunk.style {
+                        let text_style = match highlighted_chunk.style { Some(style) => {
                             Cow::Owned(text_style.clone().highlight(style))
-                        } else {
+                        } _ => {
                             Cow::Borrowed(text_style)
-                        };
+                        }};
 
                         let run = TextRun {
                             len: x.len(),
@@ -6029,7 +6029,7 @@ impl LineWithInvisibles {
                         fragments.push(LineFragment::Text(line_layout))
                     }
                 }
-            } else {
+            } _ => {
                 for (ix, mut line_chunk) in highlighted_chunk.text.split('\n').enumerate() {
                     if ix > 0 {
                         let shaped_line = window
@@ -6058,11 +6058,11 @@ impl LineWithInvisibles {
                     }
 
                     if !line_chunk.is_empty() && !line_exceeded_max_len {
-                        let text_style = if let Some(style) = highlighted_chunk.style {
+                        let text_style = match highlighted_chunk.style { Some(style) => {
                             Cow::Owned(text_style.clone().highlight(style))
-                        } else {
+                        } _ => {
                             Cow::Borrowed(text_style)
-                        };
+                        }};
 
                         if line.len() + line_chunk.len() > max_line_len {
                             let mut chunk_len = max_line_len - line.len();
@@ -6115,7 +6115,7 @@ impl LineWithInvisibles {
                         line.push_str(line_chunk);
                     }
                 }
-            }
+            }}
         }
 
         layouts
@@ -8067,18 +8067,18 @@ impl PositionMap {
         let x = position.x + (scroll_position.x * self.em_width);
         let row = ((y / self.line_height) + scroll_position.y) as u32;
 
-        let (column, x_overshoot_after_line_end) = if let Some(line) = self
+        let (column, x_overshoot_after_line_end) = match self
             .line_layouts
             .get(row as usize - scroll_position.y as usize)
-        {
+        { Some(line) => {
             if let Some(ix) = line.index_for_x(x) {
                 (ix as u32, px(0.))
             } else {
                 (line.len as u32, px(0.).max(x - line.width))
             }
-        } else {
+        } _ => {
             (0, x)
-        };
+        }};
 
         let mut exact_unclipped = DisplayPoint::new(DisplayRow(row), column);
         let previous_valid = self.snapshot.clip_point(exact_unclipped, Bias::Left);

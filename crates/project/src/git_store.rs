@@ -341,18 +341,17 @@ impl GitStore {
                             while let Some(update) = updates_rx.next().await {
                                 match update {
                                     DownstreamUpdate::UpdateRepository(snapshot) => {
-                                        if let Some(old_snapshot) =
-                                            snapshots.get_mut(&snapshot.work_directory_id)
-                                        {
+                                        match snapshots.get_mut(&snapshot.work_directory_id)
+                                        { Some(old_snapshot) => {
                                             let update =
                                                 snapshot.build_update(old_snapshot, project_id);
                                             *old_snapshot = snapshot;
                                             client.send(update)?;
-                                        } else {
+                                        } _ => {
                                             let update = snapshot.initial_update(project_id);
                                             client.send(update)?;
                                             snapshots.insert(snapshot.work_directory_id, snapshot);
-                                        }
+                                        }}
                                     }
                                     DownstreamUpdate::RemoveRepository(id) => {
                                         client.send(proto::RemoveRepository {
@@ -367,14 +366,14 @@ impl GitStore {
                         .await
                         .ok();
                         this.update(cx, |this, _| {
-                            if let GitStoreState::Local {
+                            match &mut this.state
+                            { GitStoreState::Local {
                                 downstream_client, ..
-                            } = &mut this.state
-                            {
+                            } => {
                                 downstream_client.take();
-                            } else {
+                            } _ => {
                                 unreachable!("unshared called on remote store");
-                            }
+                            }}
                         })
                     }),
                 });
@@ -562,13 +561,13 @@ impl GitStore {
                 match kind {
                     DiffKind::Unstaged => diff_state.unstaged_diff = Some(diff.downgrade()),
                     DiffKind::Uncommitted => {
-                        let unstaged_diff = if let Some(diff) = diff_state.unstaged_diff() {
+                        let unstaged_diff = match diff_state.unstaged_diff() { Some(diff) => {
                             diff
-                        } else {
+                        } _ => {
                             let unstaged_diff = cx.new(|cx| BufferDiff::new(&text_snapshot, cx));
                             diff_state.unstaged_diff = Some(unstaged_diff.downgrade());
                             unstaged_diff
-                        };
+                        }};
 
                         diff.update(cx, |diff, _| diff.set_secondary_diff(unstaged_diff));
                         diff_state.uncommitted_diff = Some(diff.downgrade())
@@ -1091,9 +1090,9 @@ impl GitStore {
             if !self.repositories.contains_key(id) {
                 self.active_repo_id = None;
             }
-        } else if let Some(&first_id) = self.repositories.keys().next() {
+        } else { match self.repositories.keys().next() { Some(&first_id) => {
             self.active_repo_id = Some(first_id);
-        }
+        } _ => {}}}
     }
 
     fn on_buffer_store_event(
@@ -1136,7 +1135,7 @@ impl GitStore {
         &mut self,
         buffers: Vec<Entity<Buffer>>,
         cx: &mut Context<Self>,
-    ) -> impl Future<Output = ()> {
+    ) -> impl Future<Output = ()> + use<> {
         let mut futures = Vec::new();
         for buffer in buffers {
             if let Some(diff_state) = self.diffs.get_mut(&buffer.read(cx).remote_id()) {
@@ -1439,7 +1438,7 @@ impl GitStore {
                     jobs.push_back(next_job);
                 }
 
-                if let Some(job) = jobs.pop_front() {
+                match jobs.pop_front() { Some(job) => {
                     if let Some(current_key) = &job.key {
                         if jobs
                             .iter()
@@ -1449,11 +1448,11 @@ impl GitStore {
                         }
                     }
                     (job.job)(cx).await;
-                } else if let Some(job) = job_rx.next().await {
+                } _ => { match job_rx.next().await { Some(job) => {
                     jobs.push_back(job);
-                } else {
+                } _ => {
                     break;
-                }
+                }}}}
             }
         })
         .detach();
@@ -2385,15 +2384,14 @@ impl BufferDiffState {
                 return Ok(());
             }
 
-            let unstaged_changed_range = if let Some((unstaged_diff, new_unstaged_diff)) =
-                unstaged_diff.as_ref().zip(new_unstaged_diff.clone())
-            {
+            let unstaged_changed_range = match unstaged_diff.as_ref().zip(new_unstaged_diff.clone())
+            { Some((unstaged_diff, new_unstaged_diff)) => {
                 unstaged_diff.update(cx, |diff, cx| {
                     diff.set_snapshot(&buffer, new_unstaged_diff, language_changed, None, cx)
                 })?
-            } else {
+            } _ => {
                 None
-            };
+            }};
 
             if let Some((uncommitted_diff, new_uncommitted_diff)) =
                 uncommitted_diff.as_ref().zip(new_uncommitted_diff.clone())
@@ -2464,13 +2462,12 @@ impl GitStoreState {
     ) -> Task<Result<Option<String>>> {
         match self {
             GitStoreState::Local { .. } => {
-                if let Some((worktree, path)) =
-                    buffer_store.read(cx).worktree_for_buffer(buffer, cx)
-                {
+                match buffer_store.read(cx).worktree_for_buffer(buffer, cx)
+                { Some((worktree, path)) => {
                     worktree.read(cx).load_staged_file(path.as_ref(), cx)
-                } else {
+                } _ => {
                     return Task::ready(Err(anyhow!("no such worktree")));
-                }
+                }}
             }
             GitStoreState::Ssh {
                 upstream_client,
@@ -2505,9 +2502,8 @@ impl GitStoreState {
     ) -> Task<Result<DiffBasesChange>> {
         match self {
             GitStoreState::Local { .. } => {
-                if let Some((worktree, path)) =
-                    buffer_store.read(cx).worktree_for_buffer(buffer, cx)
-                {
+                match buffer_store.read(cx).worktree_for_buffer(buffer, cx)
+                { Some((worktree, path)) => {
                     let worktree = worktree.read(cx);
                     let committed_text = worktree.load_committed_file(&path, cx);
                     let staged_text = worktree.load_staged_file(&path, cx);
@@ -2524,9 +2520,9 @@ impl GitStoreState {
                         };
                         Ok(diff_bases_change)
                     })
-                } else {
+                } _ => {
                     Task::ready(Err(anyhow!("no such worktree")))
-                }
+                }}
             }
             GitStoreState::Ssh {
                 upstream_client,
@@ -2707,12 +2703,12 @@ impl Repository {
             return Task::ready(Ok(buffer));
         }
 
-        if let RepositoryState::Remote {
+        match self.state.clone()
+        { RepositoryState::Remote {
             project_id,
             client,
             work_directory_id,
-        } = self.state.clone()
-        {
+        } => {
             let client = client.clone();
             cx.spawn(async move |repository, cx| {
                 let request = client.request(proto::OpenCommitMessageBuffer {
@@ -2738,9 +2734,9 @@ impl Repository {
                 })?;
                 Ok(buffer)
             })
-        } else {
+        } _ => {
             self.open_local_commit_buffer(languages, buffer_store, cx)
-        }
+        }}
     }
 
     fn open_local_commit_buffer(
@@ -3038,7 +3034,7 @@ impl Repository {
     fn worktree_environment(
         &self,
         cx: &mut App,
-    ) -> impl Future<Output = HashMap<String, String>> + 'static {
+    ) -> impl Future<Output = HashMap<String, String>> + 'static + use<> {
         let task = self.project_environment.as_ref().and_then(|env| {
             env.update(cx, |env, cx| {
                 env.get_environment(

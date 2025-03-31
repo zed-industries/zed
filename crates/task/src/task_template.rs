@@ -3,7 +3,7 @@ use util::serde::default_true;
 
 use anyhow::{bail, Context};
 use collections::{HashMap, HashSet};
-use schemars::{gen::SchemaSettings, JsonSchema};
+use schemars::{r#gen::SchemaSettings, JsonSchema};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use util::{truncate_and_remove_front, ResultExt};

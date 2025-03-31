@@ -602,12 +602,12 @@ impl FoldSnapshot {
         if let Some(transform) = cursor.item() {
             let start_in_transform = range.start.0 - cursor.start().0 .0;
             let end_in_transform = cmp::min(range.end, cursor.end(&()).0).0 - cursor.start().0 .0;
-            if let Some(placeholder) = transform.placeholder.as_ref() {
+            match transform.placeholder.as_ref() { Some(placeholder) => {
                 summary = TextSummary::from(
                     &placeholder.text
                         [start_in_transform.column as usize..end_in_transform.column as usize],
                 );
-            } else {
+            } _ => {
                 let inlay_start = self
                     .inlay_snapshot
                     .to_offset(InlayPoint(cursor.start().1 .0 + start_in_transform));
@@ -617,7 +617,7 @@ impl FoldSnapshot {
                 summary = self
                     .inlay_snapshot
                     .text_summary_for_range(inlay_start..inlay_end);
-            }
+            }}
         }
 
         if range.end > cursor.end(&()).0 {
@@ -627,10 +627,10 @@ impl FoldSnapshot {
                 .output;
             if let Some(transform) = cursor.item() {
                 let end_in_transform = range.end.0 - cursor.start().0 .0;
-                if let Some(placeholder) = transform.placeholder.as_ref() {
+                match transform.placeholder.as_ref() { Some(placeholder) => {
                     summary +=
                         TextSummary::from(&placeholder.text[..end_in_transform.column as usize]);
-                } else {
+                } _ => {
                     let inlay_start = self.inlay_snapshot.to_offset(cursor.start().1);
                     let inlay_end = self
                         .inlay_snapshot
@@ -638,7 +638,7 @@ impl FoldSnapshot {
                     summary += self
                         .inlay_snapshot
                         .text_summary_for_range(inlay_start..inlay_end);
-                }
+                }}
             }
         }
 
@@ -822,7 +822,7 @@ impl FoldSnapshot {
     pub fn clip_point(&self, point: FoldPoint, bias: Bias) -> FoldPoint {
         let mut cursor = self.transforms.cursor::<(FoldPoint, InlayPoint)>(&());
         cursor.seek(&point, Bias::Right, &());
-        if let Some(transform) = cursor.item() {
+        match cursor.item() { Some(transform) => {
             let transform_start = cursor.start().0 .0;
             if transform.placeholder.is_some() {
                 if point.0 == transform_start || matches!(bias, Bias::Left) {
@@ -836,9 +836,9 @@ impl FoldSnapshot {
                 let clipped_inlay_point = self.inlay_snapshot.clip_point(inlay_point, bias);
                 FoldPoint(cursor.start().0 .0 + (clipped_inlay_point - cursor.start().1).0)
             }
-        } else {
+        } _ => {
             FoldPoint(self.transforms.summary().output.lines)
-        }
+        }}
     }
 }
 
@@ -1616,7 +1616,7 @@ mod tests {
 
         let len = rng.gen_range(0..10);
         let text = RandomCharIter::new(&mut rng).take(len).collect::<String>();
-        let buffer = if rng.gen() {
+        let buffer = if rng.r#gen() {
             MultiBuffer::build_simple(&text, cx)
         } else {
             MultiBuffer::build_random(&mut rng, cx)
@@ -1962,7 +1962,7 @@ mod tests {
                         let start = buffer.clip_offset(rng.gen_range(0..=end), Left);
                         to_unfold.push(start..end);
                     }
-                    let inclusive = rng.gen();
+                    let inclusive = rng.r#gen();
                     log::info!("unfolding {:?} (inclusive: {})", to_unfold, inclusive);
                     let (mut writer, snapshot, edits) = self.write(inlay_snapshot, vec![]);
                     snapshot_edits.push((snapshot, edits));

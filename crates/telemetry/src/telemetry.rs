@@ -19,14 +19,14 @@ pub use telemetry_events::FlexibleEvent as Event;
 /// If you want to debug logging in development, export `RUST_LOG=telemetry=trace`
 #[macro_export]
 macro_rules! event {
-    ($name:expr) => {{
+    ($name:expr_2021) => {{
         let event = $crate::Event {
             event_type: $name.to_string(),
             event_properties: std::collections::HashMap::new(),
         };
         $crate::send_event(event);
     }};
-    ($name:expr, $($key:ident $(= $value:expr)?),+ $(,)?) => {{
+    ($name:expr_2021, $($key:ident $(= $value:expr_2021)?),+ $(,)?) => {{
         let event = $crate::Event {
             event_type: $name.to_string(),
             event_properties: std::collections::HashMap::from([
@@ -47,7 +47,7 @@ macro_rules! serialize_property {
     ($key:ident) => {
         $key
     };
-    ($key:ident = $value:expr) => {
+    ($key:ident = $value:expr_2021) => {
         $value
     };
 }

@@ -96,7 +96,7 @@ pub mod core_media {
     }
 
     #[link(name = "CoreMedia", kind = "framework")]
-    extern "C" {
+    unsafe extern "C" {
         fn CMSampleBufferGetTypeID() -> CFTypeID;
         fn CMSampleBufferGetSampleAttachmentsArray(
             buffer: CMSampleBufferRef,
@@ -163,7 +163,7 @@ pub mod core_media {
     }
 
     #[link(name = "CoreMedia", kind = "framework")]
-    extern "C" {
+    unsafe extern "C" {
         fn CMFormatDescriptionGetTypeID() -> CFTypeID;
         fn CMVideoFormatDescriptionGetH264ParameterSetAtIndex(
             video_desc: CMFormatDescriptionRef,
@@ -202,7 +202,7 @@ pub mod core_media {
     }
 
     #[link(name = "CoreMedia", kind = "framework")]
-    extern "C" {
+    unsafe extern "C" {
         fn CMBlockBufferGetTypeID() -> CFTypeID;
         fn CMBlockBufferGetDataPointer(
             buffer: CMBlockBufferRef,
@@ -256,7 +256,7 @@ pub mod core_video {
         /// # Safety
         ///
         /// metal_device must be valid according to CVMetalTextureCacheCreate
-        pub unsafe fn new(metal_device: *mut MTLDevice) -> Result<Self> {
+        pub unsafe fn new(metal_device: *mut MTLDevice) -> Result<Self> { unsafe {
             let mut this = ptr::null();
             let result = CVMetalTextureCacheCreate(
                 kCFAllocatorDefault,
@@ -270,7 +270,7 @@ pub mod core_video {
             } else {
                 Err(anyhow!("could not create texture cache, code: {}", result))
             }
-        }
+        }}
 
         /// # Safety
         ///
@@ -283,7 +283,7 @@ pub mod core_video {
             width: usize,
             height: usize,
             plane_index: usize,
-        ) -> Result<CVMetalTexture> {
+        ) -> Result<CVMetalTexture> { unsafe {
             let mut this = ptr::null();
             let result = CVMetalTextureCacheCreateTextureFromImage(
                 kCFAllocatorDefault,
@@ -301,11 +301,11 @@ pub mod core_video {
             } else {
                 Err(anyhow!("could not create texture, code: {}", result))
             }
-        }
+        }}
     }
 
     #[link(name = "CoreVideo", kind = "framework")]
-    extern "C" {
+    unsafe extern "C" {
         fn CVMetalTextureCacheGetTypeID() -> CFTypeID;
         fn CVMetalTextureCacheCreate(
             allocator: CFAllocatorRef,
@@ -345,7 +345,7 @@ pub mod core_video {
     }
 
     #[link(name = "CoreVideo", kind = "framework")]
-    extern "C" {
+    unsafe extern "C" {
         fn CVMetalTextureGetTypeID() -> CFTypeID;
         fn CVMetalTextureGetTexture(texture: CVMetalTextureRef) -> *mut c_void;
     }

@@ -94,9 +94,9 @@ impl DebugAdapter for PythonDebugAdapter {
             )
             .await;
 
-        let python_path = if let Some(toolchain) = toolchain {
+        let python_path = match toolchain { Some(toolchain) => {
             Some(toolchain.path.to_string())
-        } else {
+        } _ => {
             BINARY_NAMES
                 .iter()
                 .filter_map(|cmd| {
@@ -105,7 +105,7 @@ impl DebugAdapter for PythonDebugAdapter {
                         .map(|path| path.to_string_lossy().to_string())
                 })
                 .find(|_| true)
-        };
+        }};
 
         Ok(DebugAdapterBinary {
             command: python_path.ok_or(anyhow!("failed to find binary path for python"))?,

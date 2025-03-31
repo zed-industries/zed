@@ -9526,16 +9526,16 @@ async fn test_word_completion(cx: &mut TestAppContext) {
     cx.condition(|editor, _| editor.context_menu_visible())
         .await;
     cx.update_editor(|editor, window, cx| {
-        if let Some(CodeContextMenu::Completions(menu)) = editor.context_menu.borrow_mut().as_ref()
-        {
+        match editor.context_menu.borrow_mut().as_ref()
+        { Some(CodeContextMenu::Completions(menu)) => {
             assert_eq!(
                 completion_menu_entries(&menu),
                 &["first", "last"],
                 "When LSP server is fast to reply, no fallback word completions are used"
             );
-        } else {
+        } _ => {
             panic!("expected completion menu to be open");
-        }
+        }}
         editor.cancel(&Cancel, window, cx);
     });
     cx.executor().run_until_parked();
@@ -9550,13 +9550,13 @@ async fn test_word_completion(cx: &mut TestAppContext) {
     cx.condition(|editor, _| editor.context_menu_visible())
         .await;
     cx.update_editor(|editor, _, _| {
-        if let Some(CodeContextMenu::Completions(menu)) = editor.context_menu.borrow_mut().as_ref()
-        {
+        match editor.context_menu.borrow_mut().as_ref()
+        { Some(CodeContextMenu::Completions(menu)) => {
             assert_eq!(completion_menu_entries(&menu), &["one", "three", "two"],
                 "When LSP server is slow, document words can be shown instead, if configured accordingly");
-        } else {
+        } _ => {
             panic!("expected completion menu to be open");
-        }
+        }}
     });
 }
 
@@ -9609,16 +9609,16 @@ async fn test_word_completions_do_not_duplicate_lsp_ones(cx: &mut TestAppContext
     cx.condition(|editor, _| editor.context_menu_visible())
         .await;
     cx.update_editor(|editor, _, _| {
-        if let Some(CodeContextMenu::Completions(menu)) = editor.context_menu.borrow_mut().as_ref()
-        {
+        match editor.context_menu.borrow_mut().as_ref()
+        { Some(CodeContextMenu::Completions(menu)) => {
             assert_eq!(
                 completion_menu_entries(&menu),
                 &["first", "last", "second"],
                 "Word completions that has the same edit as the any of the LSP ones, should not be proposed"
             );
-        } else {
+        } _ => {
             panic!("expected completion menu to be open");
-        }
+        }}
     });
 }
 
@@ -9664,16 +9664,16 @@ async fn test_word_completions_continue_on_typing(cx: &mut TestAppContext) {
     cx.condition(|editor, _| editor.context_menu_visible())
         .await;
     cx.update_editor(|editor, _, _| {
-        if let Some(CodeContextMenu::Completions(menu)) = editor.context_menu.borrow_mut().as_ref()
-        {
+        match editor.context_menu.borrow_mut().as_ref()
+        { Some(CodeContextMenu::Completions(menu)) => {
             assert_eq!(
                 completion_menu_entries(&menu),
                 &["first", "last", "second"],
                 "`ShowWordCompletions` action should show word completions"
             );
-        } else {
+        } _ => {
             panic!("expected completion menu to be open");
-        }
+        }}
     });
 
     cx.simulate_keystroke("l");
@@ -9681,16 +9681,16 @@ async fn test_word_completions_continue_on_typing(cx: &mut TestAppContext) {
     cx.condition(|editor, _| editor.context_menu_visible())
         .await;
     cx.update_editor(|editor, _, _| {
-        if let Some(CodeContextMenu::Completions(menu)) = editor.context_menu.borrow_mut().as_ref()
-        {
+        match editor.context_menu.borrow_mut().as_ref()
+        { Some(CodeContextMenu::Completions(menu)) => {
             assert_eq!(
                 completion_menu_entries(&menu),
                 &["last"],
                 "After showing word completions, further editing should filter them and not query the LSP"
             );
-        } else {
+        } _ => {
             panic!("expected completion menu to be open");
-        }
+        }}
     });
 }
 
@@ -9719,16 +9719,16 @@ async fn test_word_completions_usually_skip_digits(cx: &mut TestAppContext) {
     cx.condition(|editor, _| editor.context_menu_visible())
         .await;
     cx.update_editor(|editor, window, cx| {
-        if let Some(CodeContextMenu::Completions(menu)) = editor.context_menu.borrow_mut().as_ref()
-        {
+        match editor.context_menu.borrow_mut().as_ref()
+        { Some(CodeContextMenu::Completions(menu)) => {
             assert_eq!(
                 completion_menu_entries(&menu),
                 &["let"],
                 "With no digits in the completion query, no digits should be in the word completions"
             );
-        } else {
+        } _ => {
             panic!("expected completion menu to be open");
-        }
+        }}
         editor.cancel(&Cancel, window, cx);
     });
 
@@ -9745,13 +9745,13 @@ async fn test_word_completions_usually_skip_digits(cx: &mut TestAppContext) {
     cx.condition(|editor, _| editor.context_menu_visible())
         .await;
     cx.update_editor(|editor, _, _| {
-        if let Some(CodeContextMenu::Completions(menu)) = editor.context_menu.borrow_mut().as_ref()
-        {
+        match editor.context_menu.borrow_mut().as_ref()
+        { Some(CodeContextMenu::Completions(menu)) => {
             assert_eq!(completion_menu_entries(&menu), &["33", "35f32"], "The digit is in the completion query, \
                 return matching words with digits (`33`, `35f32`) but exclude query duplicates (`3`)");
-        } else {
+        } _ => {
             panic!("expected completion menu to be open");
-        }
+        }}
     });
 }
 
@@ -9914,8 +9914,8 @@ async fn test_multiline_completion(cx: &mut TestAppContext) {
 
     editor.update(cx, |editor, _| {
         assert!(editor.context_menu_visible());
-        if let Some(CodeContextMenu::Completions(menu)) = editor.context_menu.borrow_mut().as_ref()
-        {
+        match editor.context_menu.borrow_mut().as_ref()
+        { Some(CodeContextMenu::Completions(menu)) => {
             let completion_labels = menu
                 .completions
                 .borrow()
@@ -9944,9 +9944,9 @@ async fn test_multiline_completion(cx: &mut TestAppContext) {
                         "Adjusted completion items should still keep their filter ranges for the entire label. Item: {completion:?}"
                     );
                 }
-        } else {
+        } _ => {
             panic!("expected completion menu to be open");
-        }
+        }}
     });
 }
 
@@ -9982,38 +9982,38 @@ async fn test_completion_page_up_down_keys(cx: &mut TestAppContext) {
     cx.executor().run_until_parked();
 
     cx.update_editor(|editor, _, _| {
-        if let Some(CodeContextMenu::Completions(menu)) = editor.context_menu.borrow_mut().as_ref()
-        {
+        match editor.context_menu.borrow_mut().as_ref()
+        { Some(CodeContextMenu::Completions(menu)) => {
             assert_eq!(completion_menu_entries(&menu), &["first", "last"]);
-        } else {
+        } _ => {
             panic!("expected completion menu to be open");
-        }
+        }}
     });
 
     cx.update_editor(|editor, window, cx| {
         editor.move_page_down(&MovePageDown::default(), window, cx);
-        if let Some(CodeContextMenu::Completions(menu)) = editor.context_menu.borrow_mut().as_ref()
-        {
+        match editor.context_menu.borrow_mut().as_ref()
+        { Some(CodeContextMenu::Completions(menu)) => {
             assert!(
                 menu.selected_item == 1,
                 "expected PageDown to select the last item from the context menu"
             );
-        } else {
+        } _ => {
             panic!("expected completion menu to stay open after PageDown");
-        }
+        }}
     });
 
     cx.update_editor(|editor, window, cx| {
         editor.move_page_up(&MovePageUp::default(), window, cx);
-        if let Some(CodeContextMenu::Completions(menu)) = editor.context_menu.borrow_mut().as_ref()
-        {
+        match editor.context_menu.borrow_mut().as_ref()
+        { Some(CodeContextMenu::Completions(menu)) => {
             assert!(
                 menu.selected_item == 0,
                 "expected PageUp to select the first item from the context menu"
             );
-        } else {
+        } _ => {
             panic!("expected completion menu to stay open after PageUp");
-        }
+        }}
     });
 }
 
@@ -10075,15 +10075,15 @@ async fn test_completion_sort(cx: &mut TestAppContext) {
     cx.executor().run_until_parked();
 
     cx.update_editor(|editor, _, _| {
-        if let Some(CodeContextMenu::Completions(menu)) = editor.context_menu.borrow_mut().as_ref()
-        {
+        match editor.context_menu.borrow_mut().as_ref()
+        { Some(CodeContextMenu::Completions(menu)) => {
             assert_eq!(
                 completion_menu_entries(&menu),
                 &["r", "ret", "Range", "return"]
             );
-        } else {
+        } _ => {
             panic!("expected completion menu to be open");
-        }
+        }}
     });
 }
 
@@ -13057,26 +13057,26 @@ async fn test_completions_in_languages_with_extra_word_characters(cx: &mut TestA
     cx.simulate_keystroke("-");
     cx.executor().run_until_parked();
     cx.update_editor(|editor, _, _| {
-        if let Some(CodeContextMenu::Completions(menu)) = editor.context_menu.borrow_mut().as_ref()
-        {
+        match editor.context_menu.borrow_mut().as_ref()
+        { Some(CodeContextMenu::Completions(menu)) => {
             assert_eq!(
                 completion_menu_entries(&menu),
                 &["bg-red", "bg-blue", "bg-yellow"]
             );
-        } else {
+        } _ => {
             panic!("expected completion menu to be open");
-        }
+        }}
     });
 
     cx.simulate_keystroke("l");
     cx.executor().run_until_parked();
     cx.update_editor(|editor, _, _| {
-        if let Some(CodeContextMenu::Completions(menu)) = editor.context_menu.borrow_mut().as_ref()
-        {
+        match editor.context_menu.borrow_mut().as_ref()
+        { Some(CodeContextMenu::Completions(menu)) => {
             assert_eq!(completion_menu_entries(&menu), &["bg-blue", "bg-yellow"]);
-        } else {
+        } _ => {
             panic!("expected completion menu to be open");
-        }
+        }}
     });
 
     // When filtering completions, consider the character after the '-' to
@@ -13085,12 +13085,12 @@ async fn test_completions_in_languages_with_extra_word_characters(cx: &mut TestA
     cx.simulate_keystroke("l");
     cx.executor().run_until_parked();
     cx.update_editor(|editor, _, _| {
-        if let Some(CodeContextMenu::Completions(menu)) = editor.context_menu.borrow_mut().as_ref()
-        {
+        match editor.context_menu.borrow_mut().as_ref()
+        { Some(CodeContextMenu::Completions(menu)) => {
             assert_eq!(completion_menu_entries(&menu), &["bg-yellow"]);
-        } else {
+        } _ => {
             panic!("expected completion menu to be open");
-        }
+        }}
     });
 }
 
@@ -18691,7 +18691,7 @@ fn assert_selection_ranges(marked_text: &str, editor: &mut Editor, cx: &mut Cont
 pub fn handle_signature_help_request(
     cx: &mut EditorLspTestContext,
     mocked_response: lsp::SignatureHelp,
-) -> impl Future<Output = ()> {
+) -> impl Future<Output = ()> + use<> {
     let mut request =
         cx.set_request_handler::<lsp::request::SignatureHelpRequest, _, _>(move |_, _, _| {
             let mocked_response = mocked_response.clone();
@@ -18711,7 +18711,7 @@ pub fn handle_completion_request(
     marked_string: &str,
     completions: Vec<&'static str>,
     counter: Arc<AtomicUsize>,
-) -> impl Future<Output = ()> {
+) -> impl Future<Output = ()> + use<> {
     let complete_from_marker: TextRangeMarker = '|'.into();
     let replace_range_marker: TextRangeMarker = ('<', '>').into();
     let (_, mut marked_ranges) = marked_text_ranges_by(
@@ -18758,7 +18758,7 @@ pub fn handle_completion_request(
 fn handle_resolve_completion_request(
     cx: &mut EditorLspTestContext,
     edits: Option<Vec<(&'static str, &'static str)>>,
-) -> impl Future<Output = ()> {
+) -> impl Future<Output = ()> + use<> {
     let edits = edits.map(|edits| {
         edits
             .iter()

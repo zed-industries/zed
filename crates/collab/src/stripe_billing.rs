@@ -130,9 +130,9 @@ impl StripeBilling {
         }
 
         let mut state = self.state.write().await;
-        let meter = if let Some(meter) = state.meters_by_event_name.get(meter_event_name) {
+        let meter = match state.meters_by_event_name.get(meter_event_name) { Some(meter) => {
             meter.clone()
-        } else {
+        } _ => {
             let meter = StripeMeter::create(
                 &self.client,
                 StripeCreateMeterParams {
@@ -146,11 +146,11 @@ impl StripeBilling {
                 .meters_by_event_name
                 .insert(meter_event_name.to_string(), meter.clone());
             meter
-        };
+        }};
 
-        let price_id = if let Some(price_id) = state.price_ids_by_meter_id.get(&meter.id) {
+        let price_id = match state.price_ids_by_meter_id.get(&meter.id) { Some(price_id) => {
             price_id.clone()
-        } else {
+        } _ => {
             let price = stripe::Price::create(
                 &self.client,
                 stripe::CreatePrice {
@@ -198,7 +198,7 @@ impl StripeBilling {
                 .price_ids_by_meter_id
                 .insert(meter.id, price.id.clone());
             price.id
-        };
+        }};
 
         Ok(StripeBillingPrice {
             id: price_id,

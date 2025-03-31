@@ -171,12 +171,12 @@ impl UserStore {
             _maintain_contacts: cx.spawn(async move |this, cx| {
                 let _subscriptions = rpc_subscriptions;
                 while let Some(message) = update_contacts_rx.next().await {
-                    if let Ok(task) = this.update(cx, |this, cx| this.update_contacts(message, cx))
-                    {
+                    match this.update(cx, |this, cx| this.update_contacts(message, cx))
+                    { Ok(task) => {
                         task.log_err().await;
-                    } else {
+                    } _ => {
                         break;
-                    }
+                    }}
                 }
             }),
             _maintain_current_user: cx.spawn(async move |this, cx| {
@@ -191,13 +191,12 @@ impl UserStore {
                     match status {
                         Status::Connected { .. } => {
                             if let Some(user_id) = client.user_id() {
-                                let fetch_user = if let Ok(fetch_user) =
-                                    this.update(cx, |this, cx| this.get_user(user_id, cx).log_err())
-                                {
+                                let fetch_user = match this.update(cx, |this, cx| this.get_user(user_id, cx).log_err())
+                                { Ok(fetch_user) => {
                                     fetch_user
-                                } else {
+                                } _ => {
                                     break;
-                                };
+                                }};
                                 let fetch_private_user_info =
                                     client.request(proto::GetPrivateUserInfo {}).log_err();
                                 let (user, info) =
@@ -581,7 +580,7 @@ impl UserStore {
         })
     }
 
-    pub fn clear_contacts(&self) -> impl Future<Output = ()> {
+    pub fn clear_contacts(&self) -> impl Future<Output = ()> + use<> {
         let (tx, mut rx) = postage::barrier::channel();
         self.update_contacts_tx
             .unbounded_send(UpdateContacts::Clear(tx))
@@ -591,7 +590,7 @@ impl UserStore {
         }
     }
 
-    pub fn contact_updates_done(&self) -> impl Future<Output = ()> {
+    pub fn contact_updates_done(&self) -> impl Future<Output = ()> + use<> {
         let (tx, mut rx) = postage::barrier::channel();
         self.update_contacts_tx
             .unbounded_send(UpdateContacts::Wait(tx))
@@ -704,7 +703,7 @@ impl UserStore {
 
         let client = self.client.clone();
         cx.spawn(async move |this, cx| {
-            if let Some(client) = client.upgrade() {
+            match client.upgrade() { Some(client) => {
                 let response = client
                     .request(proto::AcceptTermsOfService {})
                     .await
@@ -714,9 +713,9 @@ impl UserStore {
                     this.set_current_user_accepted_tos_at(Some(response.accepted_tos_at));
                     cx.emit(Event::PrivateUserInfoUpdated);
                 })
-            } else {
+            } _ => {
                 Err(anyhow!("client not found"))
-            }
+            }}
         })
     }
 
@@ -733,14 +732,14 @@ impl UserStore {
     ) -> Task<Result<Vec<Arc<User>>>> {
         let client = self.client.clone();
         cx.spawn(async move |this, cx| {
-            if let Some(rpc) = client.upgrade() {
+            match client.upgrade() { Some(rpc) => {
                 let response = rpc.request(request).await.context("error loading users")?;
                 let users = response.users;
 
                 this.update(cx, |this, _| this.insert(users))
-            } else {
+            } _ => {
                 Ok(Vec::new())
-            }
+            }}
         })
     }
 

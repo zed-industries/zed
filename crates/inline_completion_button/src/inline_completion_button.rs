@@ -718,17 +718,17 @@ impl StatusItemView for InlineCompletionButton {
         _: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if let Some(editor) = item.and_then(|item| item.act_as::<Editor>(cx)) {
+        match item.and_then(|item| item.act_as::<Editor>(cx)) { Some(editor) => {
             self.editor_subscription = Some((
                 cx.observe(&editor, Self::update_enabled),
                 editor.entity_id().as_u64() as usize,
             ));
             self.update_enabled(editor, cx);
-        } else {
+        } _ => {
             self.language = None;
             self.editor_subscription = None;
             self.editor_enabled = None;
-        }
+        }}
         cx.notify();
     }
 }

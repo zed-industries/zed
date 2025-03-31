@@ -132,7 +132,7 @@ fn append_system_fallbacks(fallback_array: CFMutableArrayRef, font_ref: CTFontRe
 }
 
 #[link(name = "CoreText", kind = "framework")]
-extern "C" {
+unsafe extern "C" {
     static kCTFontOpenTypeFeatureTag: CFStringRef;
     static kCTFontOpenTypeFeatureValue: CFStringRef;
 

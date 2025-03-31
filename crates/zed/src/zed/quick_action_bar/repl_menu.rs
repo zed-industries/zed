@@ -278,12 +278,12 @@ impl QuickActionBar {
         )
     }
 
-    pub fn render_kernel_selector(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let editor = if let Some(editor) = self.active_editor() {
+    pub fn render_kernel_selector(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
+        let editor = match self.active_editor() { Some(editor) => {
             editor
-        } else {
+        } _ => {
             return div().into_any_element();
-        };
+        }};
 
         let Some(worktree_id) = worktree_id_for_editor(editor.downgrade(), cx) else {
             return div().into_any_element();

@@ -173,15 +173,15 @@ impl ProposedChangesEditor {
         let mut new_diffs = Vec::new();
         for location in locations {
             let branch_buffer;
-            if let Some(ix) = self
+            match self
                 .buffer_entries
                 .iter()
                 .position(|entry| entry.base == location.buffer)
-            {
+            { Some(ix) => {
                 let entry = self.buffer_entries.remove(ix);
                 branch_buffer = entry.branch.clone();
                 buffer_entries.push(entry);
-            } else {
+            } _ => {
                 branch_buffer = location.buffer.update(cx, |buffer, cx| buffer.branch(cx));
                 new_diffs.push(cx.new(|cx| {
                     let mut diff = BufferDiff::new(&branch_buffer.read(cx).snapshot(), cx);
@@ -197,7 +197,7 @@ impl ProposedChangesEditor {
                     base: location.buffer.clone(),
                     _subscription: cx.subscribe(&branch_buffer, Self::on_buffer_event),
                 });
-            }
+            }}
 
             self.multibuffer.update(cx, |multibuffer, cx| {
                 multibuffer.push_excerpts(
@@ -467,11 +467,11 @@ impl SemanticsProvider for BranchBufferSemanticsProvider {
     }
 
     fn supports_inlay_hints(&self, buffer: &Entity<Buffer>, cx: &mut App) -> bool {
-        if let Some(buffer) = self.to_base(&buffer, &[], cx) {
+        match self.to_base(&buffer, &[], cx) { Some(buffer) => {
             self.0.supports_inlay_hints(&buffer, cx)
-        } else {
+        } _ => {
             false
-        }
+        }}
     }
 
     fn document_highlights(

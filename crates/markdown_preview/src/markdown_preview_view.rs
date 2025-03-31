@@ -151,7 +151,7 @@ impl MarkdownPreviewView {
                 gpui::ListAlignment::Top,
                 px(1000.),
                 move |ix, window, cx| {
-                    if let Some(view) = view.upgrade() {
+                    match view.upgrade() { Some(view) => {
                         view.update(cx, |this: &mut Self, cx| {
                             let Some(contents) = &this.contents else {
                                 return div().into_any();
@@ -240,9 +240,9 @@ impl MarkdownPreviewView {
                                 })
                                 .into_any()
                         })
-                    } else {
+                    } _ => {
                         div().into_any()
-                    }
+                    }}
                 },
             );
 
@@ -263,15 +263,15 @@ impl MarkdownPreviewView {
             this.set_editor(active_editor, window, cx);
 
             if mode == MarkdownPreviewMode::Follow {
-                if let Some(workspace) = &workspace.upgrade() {
+                match &workspace.upgrade() { Some(workspace) => {
                     cx.observe_in(workspace, window, |this, workspace, window, cx| {
                         let item = workspace.read(cx).active_item(cx);
                         this.workspace_updated(item, window, cx);
                     })
                     .detach();
-                } else {
+                } _ => {
                     log::error!("Failed to listen to workspace updates");
-                }
+                }}
             }
 
             this
@@ -418,15 +418,15 @@ impl MarkdownPreviewView {
 
     /// The absolute path of the file that is currently being previewed.
     fn get_folder_for_active_editor(editor: &Editor, cx: &App) -> Option<PathBuf> {
-        if let Some(file) = editor.file_at(0, cx) {
-            if let Some(file) = file.as_local() {
+        match editor.file_at(0, cx) { Some(file) => {
+            match file.as_local() { Some(file) => {
                 file.abs_path(cx).parent().map(|p| p.to_path_buf())
-            } else {
+            } _ => {
                 None
-            }
-        } else {
+            }}
+        } _ => {
             None
-        }
+        }}
     }
 
     fn get_block_index_under_cursor(&self, selection_range: Range<usize>) -> usize {

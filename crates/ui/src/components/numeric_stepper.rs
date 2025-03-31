@@ -53,14 +53,14 @@ impl RenderOnce for NumericStepper {
             .id(self.id)
             .gap_1()
             .map(|element| {
-                if let Some(on_reset) = self.on_reset {
+                match self.on_reset { Some(on_reset) => {
                     element.child(
                         IconButton::new("reset", IconName::RotateCcw)
                             .shape(shape)
                             .icon_size(icon_size)
                             .on_click(on_reset),
                     )
-                } else if self.reserve_space_for_reset {
+                } _ => if self.reserve_space_for_reset {
                     element.child(
                         h_flex()
                             .size(icon_size.square(window, cx))
@@ -69,7 +69,7 @@ impl RenderOnce for NumericStepper {
                     )
                 } else {
                     element
-                }
+                }}
             })
             .child(
                 h_flex()

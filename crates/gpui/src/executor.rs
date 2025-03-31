@@ -178,21 +178,21 @@ impl BackgroundExecutor {
     #[cfg(any(test, feature = "test-support"))]
     #[track_caller]
     pub fn block_test<R>(&self, future: impl Future<Output = R>) -> R {
-        if let Ok(value) = self.block_internal(false, future, None) {
+        match self.block_internal(false, future, None) { Ok(value) => {
             value
-        } else {
+        } _ => {
             unreachable!()
-        }
+        }}
     }
 
     /// Block the current thread until the given future resolves.
     /// Consider using `block_with_timeout` instead.
     pub fn block<R>(&self, future: impl Future<Output = R>) -> R {
-        if let Ok(value) = self.block_internal(true, future, None) {
+        match self.block_internal(true, future, None) { Ok(value) => {
             value
-        } else {
+        } _ => {
             unreachable!()
-        }
+        }}
     }
 
     #[cfg(not(any(test, feature = "test-support")))]
@@ -365,7 +365,7 @@ impl BackgroundExecutor {
 
     /// in tests, run an arbitrary number of tasks (determined by the SEED environment variable)
     #[cfg(any(test, feature = "test-support"))]
-    pub fn simulate_random_delay(&self) -> impl Future<Output = ()> {
+    pub fn simulate_random_delay(&self) -> impl Future<Output = ()> + use<> {
         self.dispatcher.as_test().unwrap().simulate_random_delay()
     }
 

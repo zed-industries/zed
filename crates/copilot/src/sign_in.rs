@@ -139,7 +139,7 @@ impl CopilotCodeVerification {
         cx.notify();
     }
 
-    fn render_device_code(data: &PromptUserDeviceFlow, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_device_code(data: &PromptUserDeviceFlow, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         let copied = cx
             .read_from_clipboard()
             .map(|item| item.text().as_ref() == Some(&data.user_code))
@@ -172,7 +172,7 @@ impl CopilotCodeVerification {
         data: &PromptUserDeviceFlow,
 
         cx: &mut Context<Self>,
-    ) -> impl Element {
+    ) -> impl Element + use<> {
         let connect_button_label = if connect_clicked {
             "Waiting for connection..."
         } else {
@@ -213,7 +213,7 @@ impl CopilotCodeVerification {
             )
     }
 
-    fn render_enabled_modal(cx: &mut Context<Self>) -> impl Element {
+    fn render_enabled_modal(cx: &mut Context<Self>) -> impl Element + use<> {
         v_flex()
             .gap_2()
             .child(Headline::new("Copilot Enabled!").size(HeadlineSize::Large))
@@ -227,7 +227,7 @@ impl CopilotCodeVerification {
             )
     }
 
-    fn render_unauthorized_modal(cx: &mut Context<Self>) -> impl Element {
+    fn render_unauthorized_modal(cx: &mut Context<Self>) -> impl Element + use<> {
         v_flex()
             .child(Headline::new("You must have an active GitHub Copilot subscription.").size(HeadlineSize::Large))
 
@@ -246,7 +246,7 @@ impl CopilotCodeVerification {
             )
     }
 
-    fn render_loading(window: &mut Window, _: &mut Context<Self>) -> impl Element {
+    fn render_loading(window: &mut Window, _: &mut Context<Self>) -> impl Element + use<> {
         let loading_icon = svg()
             .size_8()
             .path(IconName::ArrowCircle.path())

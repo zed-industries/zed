@@ -534,7 +534,7 @@ impl TerminalBuilder {
                         futures::select_biased! {
                             _ = timer => break,
                             event = self.events_rx.next() => {
-                                if let Some(event) = event {
+                                match event { Some(event) => {
                                     if matches!(event, AlacTermEvent::Wakeup) {
                                         wakeup = true;
                                     } else {
@@ -544,9 +544,9 @@ impl TerminalBuilder {
                                     if events.len() > 100 {
                                         break;
                                     }
-                                } else {
+                                } _ => {
                                     break;
-                                }
+                                }}
                             },
                         }
                     }
@@ -782,7 +782,7 @@ impl Terminal {
         cx: &mut Context<Self>,
     ) {
         match event {
-            InternalEvent::Resize(mut new_bounds) => {
+            &InternalEvent::Resize(mut new_bounds) => {
                 new_bounds.bounds.size.height =
                     cmp::max(new_bounds.line_height, new_bounds.height());
                 new_bounds.bounds.size.width = cmp::max(new_bounds.cell_width, new_bounds.width());
@@ -956,18 +956,17 @@ impl Terminal {
                     let url_match = min_index..=max_index;
 
                     Some((url, true, url_match))
-                } else if let Some(url_match) = regex_match_at(term, point, &mut self.url_regex) {
+                } else { match regex_match_at(term, point, &mut self.url_regex) { Some(url_match) => {
                     let url = term.bounds_to_string(*url_match.start(), *url_match.end());
                     Some((url, true, url_match))
-                } else if let Some(python_match) =
-                    regex_match_at(term, point, &mut self.python_file_line_regex)
-                {
+                } _ => { match regex_match_at(term, point, &mut self.python_file_line_regex)
+                { Some(python_match) => {
                     let matching_line =
                         term.bounds_to_string(*python_match.start(), *python_match.end());
                     python_extract_path_and_line(&matching_line).map(|(file_path, line_number)| {
                         (format!("{file_path}:{line_number}"), false, python_match)
                     })
-                } else if let Some(word_match) = regex_match_at(term, point, &mut self.word_regex) {
+                } _ => { match regex_match_at(term, point, &mut self.word_regex) { Some(word_match) => {
                     let file_path = term.bounds_to_string(*word_match.start(), *word_match.end());
 
                     let (sanitized_match, sanitized_word) = 'sanitize: {
@@ -1024,9 +1023,9 @@ impl Terminal {
                     };
 
                     Some((sanitized_word, false, sanitized_match))
-                } else {
+                } _ => {
                     None
-                };
+                }}}}}}};
 
                 match found_word {
                     Some((maybe_url_or_path, is_url, url_match)) => {

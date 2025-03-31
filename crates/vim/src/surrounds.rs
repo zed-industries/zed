@@ -153,7 +153,7 @@ impl Vim {
 
                 for selection in &display_selections {
                     let start = selection.start.to_offset(&display_map, Bias::Left);
-                    if let Some(range) = pair_object.range(&display_map, selection.clone(), true) {
+                    match pair_object.range(&display_map, selection.clone(), true) { Some(range) => {
                         // If the current parenthesis object is single-line,
                         // then we need to filter whether it is the current line or not
                         if !pair_object.is_multiline() {
@@ -205,9 +205,9 @@ impl Vim {
                                 break;
                             }
                         }
-                    } else {
+                    } _ => {
                         anchors.push(start..start);
-                    }
+                    }}
                 }
 
                 editor.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
@@ -250,7 +250,7 @@ impl Vim {
 
                     for selection in &selections {
                         let start = selection.start.to_offset(&display_map, Bias::Left);
-                        if let Some(range) = target.range(&display_map, selection.clone(), true) {
+                        match target.range(&display_map, selection.clone(), true) { Some(range) => {
                             if !target.is_multiline() {
                                 let is_same_row = selection.start.row() == range.start.row()
                                     && selection.end.row() == range.end.row();
@@ -303,9 +303,9 @@ impl Vim {
                                     break;
                                 }
                             }
-                        } else {
+                        } _ => {
                             anchors.push(start..start);
-                        }
+                        }}
                     }
 
                     let stable_anchors = editor
@@ -351,7 +351,7 @@ impl Vim {
 
                     for selection in &selections {
                         let start = selection.start.to_offset(&display_map, Bias::Left);
-                        if let Some(range) = object.range(&display_map, selection.clone(), true) {
+                        match object.range(&display_map, selection.clone(), true) { Some(range) => {
                             // If the current parenthesis object is single-line,
                             // then we need to filter whether it is the current line or not
                             if object.is_multiline()
@@ -374,9 +374,9 @@ impl Vim {
                             } else {
                                 anchors.push(start..start)
                             }
-                        } else {
+                        } _ => {
                             anchors.push(start..start)
-                        }
+                        }}
                     }
                     editor.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
                         s.select_ranges(anchors);

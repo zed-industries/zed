@@ -504,11 +504,11 @@ impl App {
         self.new_observer(
             entity_id,
             Box::new(move |cx| {
-                if let Some(handle) = Entity::<W>::upgrade_from(&handle) {
+                match Entity::<W>::upgrade_from(&handle) { Some(handle) => {
                     on_notify(handle, cx)
-                } else {
+                } _ => {
                     false
-                }
+                }}
             }),
         )
     }
@@ -556,11 +556,11 @@ impl App {
                 TypeId::of::<Evt>(),
                 Box::new(move |event, cx| {
                     let event: &Evt = event.downcast_ref().expect("invalid event type");
-                    if let Some(handle) = Entity::<T>::upgrade_from(&entity) {
+                    match Entity::<T>::upgrade_from(&entity) { Some(handle) => {
                         on_event(handle, event, cx)
-                    } else {
+                    } _ => {
                         false
-                    }
+                    }}
                 }),
             ),
         )
@@ -834,7 +834,7 @@ impl App {
             self.release_dropped_entities();
             self.release_dropped_focus_handles();
 
-            if let Some(effect) = self.pending_effects.pop_front() {
+            match self.pending_effects.pop_front() { Some(effect) => {
                 match effect {
                     Effect::Notify { emitter } => {
                         self.apply_notify_effect(emitter);
@@ -865,7 +865,7 @@ impl App {
                         self.apply_entity_created_effect(entity, tid, window);
                     }
                 }
-            } else {
+            } _ => {
                 #[cfg(any(test, feature = "test-support"))]
                 for window in self
                     .windows
@@ -883,7 +883,7 @@ impl App {
                 if self.pending_effects.is_empty() {
                     break;
                 }
-            }
+            }}
         }
     }
 
@@ -1347,7 +1347,7 @@ impl App {
     /// Get all non-internal actions that have been registered, along with their schemas.
     pub fn action_schemas(
         &self,
-        generator: &mut schemars::gen::SchemaGenerator,
+        generator: &mut schemars::r#gen::SchemaGenerator,
     ) -> Vec<(SharedString, Option<schemars::schema::Schema>)> {
         self.actions.action_schemas(generator)
     }

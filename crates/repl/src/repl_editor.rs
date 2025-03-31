@@ -111,10 +111,10 @@ pub fn run(
 
         let fs = store.read(cx).fs().clone();
 
-        let session = if let Some(session) = store.read(cx).get_session(editor.entity_id()).cloned()
-        {
+        let session = match store.read(cx).get_session(editor.entity_id()).cloned()
+        { Some(session) => {
             session
-        } else {
+        } _ => {
             let weak_editor = editor.downgrade();
             let session =
                 cx.new(|cx| Session::new(weak_editor, fs, kernel_specification, window, cx));
@@ -140,7 +140,7 @@ pub fn run(
             });
 
             session
-        };
+        }};
 
         let selected_text;
         let anchor_range;

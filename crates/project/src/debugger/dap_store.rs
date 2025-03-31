@@ -209,11 +209,11 @@ impl DapStore {
     }
 
     pub fn remote_event_queue(&mut self) -> Option<VecDeque<DapStoreEvent>> {
-        if let DapStoreMode::Remote(remote) = &mut self.mode {
+        match &mut self.mode { DapStoreMode::Remote(remote) => {
             remote.event_queue.take()
-        } else {
+        } _ => {
             None
-        }
+        }}
     }
 
     pub fn as_local(&self) -> Option<&LocalDapStore> {
@@ -252,7 +252,7 @@ impl DapStore {
         ignore: Option<bool>,
         cx: &mut Context<Self>,
     ) {
-        if let DapStoreMode::Remote(remote) = &self.mode {
+        match &self.mode { DapStoreMode::Remote(remote) => {
             self.sessions.insert(
                 session_id,
                 cx.new(|_| {
@@ -264,9 +264,9 @@ impl DapStore {
                     )
                 }),
             );
-        } else {
+        } _ => {
             debug_assert!(false);
-        }
+        }}
     }
 
     pub fn session_by_id(
@@ -306,13 +306,13 @@ impl DapStore {
         let session_id = SessionId::from_proto(envelope.payload.session_id);
 
         this.update(&mut cx, |this, cx| {
-            if let Some(session) = this.session_by_id(&session_id) {
+            match this.session_by_id(&session_id) { Some(session) => {
                 session.update(cx, |session, cx| {
                     session.set_ignore_breakpoints(envelope.payload.ignore, cx)
                 })
-            } else {
+            } _ => {
                 Task::ready(())
-            }
+            }}
         })?
         .await;
 
@@ -755,11 +755,11 @@ impl DapStore {
             .map(|session_id| self.shutdown_session(*session_id, cx))
             .collect::<Vec<_>>();
 
-        let shutdown_parent_task = if let Some(parent_session) = session
+        let shutdown_parent_task = match session
             .read(cx)
             .parent_id()
             .and_then(|session_id| self.session_by_id(session_id))
-        {
+        { Some(parent_session) => {
             let shutdown_id = parent_session.update(cx, |parent_session, _| {
                 parent_session.remove_child_session_id(session_id);
 
@@ -771,9 +771,9 @@ impl DapStore {
             });
 
             shutdown_id.map(|session_id| self.shutdown_session(session_id, cx))
-        } else {
+        } _ => {
             None
-        };
+        }};
 
         let shutdown_task = session.update(cx, |this, cx| this.shutdown(cx));
 

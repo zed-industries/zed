@@ -1877,16 +1877,16 @@ impl AssistantContext {
 
         if let Some(mut pending_patch) = pending_patch {
             let patch_start = pending_patch.range.start.to_offset(buffer);
-            if let Some(message) = self.message_for_offset(patch_start, cx) {
+            match self.message_for_offset(patch_start, cx) { Some(message) => {
                 if message.anchor_range.end == text::Anchor::MAX {
                     pending_patch.range.end = text::Anchor::MAX;
                 } else {
                     let message_end = buffer.anchor_after(message.offset_range.end - 1);
                     pending_patch.range.end = message_end;
                 }
-            } else {
+            } _ => {
                 pending_patch.range.end = text::Anchor::MAX;
-            }
+            }}
 
             new_patches.push(pending_patch);
         }
@@ -2453,7 +2453,7 @@ impl AssistantContext {
                 let result = stream_completion.await;
 
                 this.update(cx, |this, cx| {
-                    let error_message = if let Some(error) = result.as_ref().err() {
+                    let error_message = match result.as_ref().err() { Some(error) => {
                         if error.is::<PaymentRequiredError>() {
                             cx.emit(ContextEvent::ShowPaymentRequiredError);
                             this.update_metadata(assistant_message_id, cx, |metadata| {
@@ -2481,12 +2481,12 @@ impl AssistantContext {
                             });
                             Some(error_message)
                         }
-                    } else {
+                    } _ => {
                         this.update_metadata(assistant_message_id, cx, |metadata| {
                             metadata.status = MessageStatus::Done;
                         });
                         None
-                    };
+                    }};
 
                     let language_name = this
                         .buffer
@@ -2631,16 +2631,16 @@ impl AssistantContext {
     }
 
     pub fn cancel_last_assist(&mut self, cx: &mut Context<Self>) -> bool {
-        if let Some(pending_completion) = self.pending_completions.pop() {
+        match self.pending_completions.pop() { Some(pending_completion) => {
             self.update_metadata(pending_completion.assistant_message_id, cx, |metadata| {
                 if metadata.status == MessageStatus::Pending {
                     metadata.status = MessageStatus::Canceled;
                 }
             });
             true
-        } else {
+        } _ => {
             false
-        }
+        }}
     }
 
     pub fn cycle_message_roles(&mut self, ids: HashSet<MessageId>, cx: &mut Context<Self>) {
@@ -2799,7 +2799,7 @@ impl AssistantContext {
     ) -> (Option<MessageAnchor>, Option<MessageAnchor>) {
         let start_message = self.message_for_offset(range.start, cx);
         let end_message = self.message_for_offset(range.end, cx);
-        if let Some((start_message, end_message)) = start_message.zip(end_message) {
+        match start_message.zip(end_message) { Some((start_message, end_message)) => {
             // Prevent splitting when range spans multiple messages.
             if start_message.id != end_message.id {
                 return (None, None);
@@ -2912,9 +2912,9 @@ impl AssistantContext {
                 cx.emit(ContextEvent::MessagesEdited);
             }
             new_messages
-        } else {
+        } _ => {
             (None, None)
-        }
+        }}
     }
 
     fn insert_message(

@@ -190,7 +190,7 @@ impl ActivityIndicator {
     fn pending_language_server_work<'a>(
         &self,
         cx: &'a App,
-    ) -> impl Iterator<Item = PendingWork<'a>> {
+    ) -> impl Iterator<Item = PendingWork<'a>> + use<'a> {
         self.project
             .read(cx)
             .language_server_statuses(cx)

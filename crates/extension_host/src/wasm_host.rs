@@ -269,11 +269,11 @@ impl extension::Extension for WasmExtension {
     ) -> Result<SlashCommandOutput> {
         self.call(|extension, store| {
             async move {
-                let resource = if let Some(delegate) = delegate {
+                let resource = match delegate { Some(delegate) => {
                     Some(store.data_mut().table().push(delegate)?)
-                } else {
+                } _ => {
                     None
-                };
+                }};
 
                 let output = extension
                     .call_run_slash_command(store, &command.into(), &arguments, resource)
@@ -584,7 +584,7 @@ impl WasmExtension {
 }
 
 impl WasmState {
-    fn on_main_thread<T, Fn>(&self, f: Fn) -> impl 'static + Future<Output = T>
+    fn on_main_thread<T, Fn>(&self, f: Fn) -> impl 'static + Future<Output = T> + use<T, Fn>
     where
         T: 'static + Send,
         Fn: 'static + Send + for<'a> FnOnce(&'a mut AsyncApp) -> LocalBoxFuture<'a, T>,

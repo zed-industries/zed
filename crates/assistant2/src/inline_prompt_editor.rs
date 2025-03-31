@@ -677,7 +677,7 @@ impl<T: 'static> PromptEditor<T> {
             .into_any_element()
     }
 
-    fn render_rate_limit_notice(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_rate_limit_notice(&self, cx: &mut Context<Self>) -> impl IntoElement + use<T> {
         Popover::new().child(
             v_flex()
                 .occlude()

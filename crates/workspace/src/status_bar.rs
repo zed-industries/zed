@@ -64,14 +64,14 @@ impl Render for StatusBar {
 }
 
 impl StatusBar {
-    fn render_left_tools(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_left_tools(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         h_flex()
             .gap(DynamicSpacing::Base04.rems(cx))
             .overflow_x_hidden()
             .children(self.left_items.iter().map(|item| item.to_any()))
     }
 
-    fn render_right_tools(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_right_tools(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         h_flex()
             .gap(DynamicSpacing::Base04.rems(cx))
             .children(self.right_items.iter().rev().map(|item| item.to_any()))

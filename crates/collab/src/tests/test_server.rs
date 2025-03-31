@@ -175,10 +175,10 @@ impl TestServer {
 
         let clock = Arc::new(FakeSystemClock::new());
         let http = FakeHttpClient::with_404_response();
-        let user_id = if let Ok(Some(user)) = self.app_state.db.get_user_by_github_login(name).await
-        {
+        let user_id = match self.app_state.db.get_user_by_github_login(name).await
+        { Ok(Some(user)) => {
             user.id
-        } else {
+        } _ => {
             let github_user_id = self.next_github_user_id;
             self.next_github_user_id += 1;
             self.app_state
@@ -195,7 +195,7 @@ impl TestServer {
                 .await
                 .expect("creating user failed")
                 .user_id
-        };
+        }};
         let client_name = name.to_string();
         let mut client = cx.update(|cx| Client::new(clock, http.clone(), cx));
         let server = self.server.clone();
@@ -660,7 +660,7 @@ impl TestClient {
     pub fn buffers_for_project<'a>(
         &'a self,
         project: &Entity<Project>,
-    ) -> impl DerefMut<Target = HashSet<Entity<language::Buffer>>> + 'a {
+    ) -> impl DerefMut<Target = HashSet<Entity<language::Buffer>>> + 'a + use<'a> {
         RefMut::map(self.state.borrow_mut(), |state| {
             state.buffers.entry(project.clone()).or_default()
         })

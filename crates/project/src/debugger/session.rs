@@ -358,14 +358,14 @@ impl LocalMode {
             });
 
             let client = Arc::new(
-                if let Some(client) = parent_session
+                match parent_session
                     .and_then(|session| cx.update(|cx| session.read(cx).adapter_client()).ok())
                     .flatten()
-                {
+                { Some(client) => {
                     client
                         .reconnect(session_id, binary, message_handler, cx.clone())
                         .await?
-                } else {
+                } _ => {
                     DebugAdapterClient::start(
                         session_id,
                         adapter.name(),
@@ -374,7 +374,7 @@ impl LocalMode {
                         cx.clone(),
                     )
                     .await?
-                },
+                }},
             );
 
             let adapter_id = adapter.name().to_string().to_owned();
@@ -973,11 +973,11 @@ impl Session {
     }
 
     pub fn configuration(&self) -> Option<DebugAdapterConfig> {
-        if let Mode::Local(local_mode) = &self.mode {
+        match &self.mode { Mode::Local(local_mode) => {
             Some(local_mode.config.clone())
-        } else {
+        } _ => {
             None
-        }
+        }}
     }
 
     pub fn is_terminated(&self) -> bool {
@@ -1936,24 +1936,24 @@ fn create_local_session(
     let _background_tasks = vec![cx.spawn(async move |this: WeakEntity<Session>, cx| {
         let mut initialized_tx = Some(initialized_tx);
         while let Some(message) = message_rx.next().await {
-            if let Message::Event(event) = message {
-                if let Events::Initialized(_) = *event {
+            match message { Message::Event(event) => {
+                match *event { Events::Initialized(_) => {
                     if let Some(tx) = initialized_tx.take() {
                         tx.send(()).ok();
                     }
-                } else {
+                } _ => {
                     let Ok(_) = this.update(cx, |session, cx| {
                         session.handle_dap_event(event, cx);
                     }) else {
                         break;
                     };
-                }
-            } else {
+                }}
+            } _ => {
                 let Ok(_) = start_debugging_requests_tx.unbounded_send((session_id, message))
                 else {
                     break;
                 };
-            }
+            }}
         }
     })];
 

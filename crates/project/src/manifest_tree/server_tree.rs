@@ -153,7 +153,7 @@ impl LanguageServerTree {
         query: AdapterQuery<'_>,
         delegate: Arc<dyn LspAdapterDelegate>,
         cx: &mut App,
-    ) -> impl Iterator<Item = LanguageServerTreeNode> + 'a {
+    ) -> impl Iterator<Item = LanguageServerTreeNode> + 'a + use<'a> {
         let settings_location = SettingsLocation {
             worktree_id: path.worktree_id,
             path: &path.path,
@@ -183,7 +183,7 @@ impl LanguageServerTree {
         >,
         delegate: Arc<dyn LspAdapterDelegate>,
         cx: &mut App,
-    ) -> impl Iterator<Item = LanguageServerTreeNode> + 'a {
+    ) -> impl Iterator<Item = LanguageServerTreeNode> + 'a + use<'a> {
         let worktree_id = path.worktree_id;
 
         let mut manifest_to_adapters = BTreeMap::default();
@@ -273,20 +273,19 @@ impl LanguageServerTree {
         let adapters_with_settings = desired_language_servers
             .into_iter()
             .filter_map(|desired_adapter| {
-                let adapter = if let Some(adapter) = available_lsp_adapters
+                let adapter = match available_lsp_adapters
                     .iter()
                     .find(|adapter| adapter.name == desired_adapter)
-                {
+                { Some(adapter) => {
                     Some(adapter.clone())
-                } else if let Some(adapter) =
-                    self.languages.load_available_lsp_adapter(&desired_adapter)
-                {
+                } _ => { match self.languages.load_available_lsp_adapter(&desired_adapter)
+                { Some(adapter) => {
                     self.languages
                         .register_lsp_adapter(language_name.clone(), adapter.adapter.clone());
                     Some(adapter)
-                } else {
+                } _ => {
                     None
-                }?;
+                }}}}?;
                 let adapter_settings = crate::lsp_store::language_server_settings_for(
                     settings_location,
                     &adapter.name,
@@ -381,7 +380,7 @@ impl<'tree> ServerTreeRebase<'tree> {
         query: AdapterQuery<'_>,
         delegate: Arc<dyn LspAdapterDelegate>,
         cx: &mut App,
-    ) -> impl Iterator<Item = LanguageServerTreeNode> + 'a {
+    ) -> impl Iterator<Item = LanguageServerTreeNode> + 'a + use<'a> {
         let settings_location = SettingsLocation {
             worktree_id: path.worktree_id,
             path: &path.path,

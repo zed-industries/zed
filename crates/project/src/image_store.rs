@@ -584,22 +584,22 @@ impl LocalImageStore {
         let image = self
             .image_store
             .update(cx, |image_store, _| {
-                if let Some(image) = image_store.get(image_id) {
+                match image_store.get(image_id) { Some(image) => {
                     Some(image)
-                } else {
+                } _ => {
                     image_store.opened_images.remove(&image_id);
                     None
-                }
+                }}
             })
             .ok()
             .flatten();
-        let image = if let Some(image) = image {
+        let image = match image { Some(image) => {
             image
-        } else {
+        } _ => {
             self.local_image_ids_by_path.remove(&project_path);
             self.local_image_ids_by_entry_id.remove(&entry_id);
             return None;
-        };
+        }};
 
         image.update(cx, |image, cx| {
             let Some(old_file) = worktree::File::from_dyn(Some(&image.file)) else {

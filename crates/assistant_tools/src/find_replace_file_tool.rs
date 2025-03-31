@@ -188,7 +188,7 @@ impl Tool for FindReplaceFileTool {
                 })
                 .await;
 
-            if let Some(diff) = result {
+            match result { Some(diff) => {
                 let edit_ids = buffer.update(cx, |buffer, cx| {
                     buffer.finalize_last_transaction();
                     buffer.apply_diff(diff, false, cx);
@@ -205,7 +205,7 @@ impl Tool for FindReplaceFileTool {
                 })?.await?;
 
                 Ok(format!("Edited {}", input.path.display()))
-            } else {
+            } _ => {
                 let err = buffer.read_with(cx, |buffer, _cx| {
                     let file_exists = buffer
                         .file()
@@ -224,7 +224,7 @@ impl Tool for FindReplaceFileTool {
                 })?;
 
                 Err(err)
-            }
+            }}
         })
     }
 }

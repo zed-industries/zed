@@ -38,7 +38,7 @@ pub use manifest::{ManifestName, ManifestProvider, ManifestQuery};
 use parking_lot::Mutex;
 use regex::Regex;
 use schemars::{
-    gen::SchemaGenerator,
+    r#gen::SchemaGenerator,
     schema::{InstanceType, Schema, SchemaObject},
     JsonSchema,
 };
@@ -375,10 +375,10 @@ pub trait LspAdapter: 'static + Send + Sync {
             let mut binary = try_fetch_server_binary(self.as_ref(), &delegate, container_dir.to_path_buf(), cx).await;
 
             if let Err(error) = binary.as_ref() {
-                if let Some(prev_downloaded_binary) = self
+                match self
                     .cached_server_binary(container_dir.to_path_buf(), delegate.as_ref())
                     .await
-                {
+                { Some(prev_downloaded_binary) => {
                     log::info!(
                         "failed to fetch newest version of language server {:?}. error: {:?}, falling back to using {:?}",
                         self.name(),
@@ -386,14 +386,14 @@ pub trait LspAdapter: 'static + Send + Sync {
                         prev_downloaded_binary.path
                     );
                     binary = Ok(prev_downloaded_binary);
-                } else {
+                } _ => {
                     delegate.update_status(
                         self.name(),
                         BinaryStatus::Failed {
                             error: format!("{error:?}"),
                         },
                     );
-                }
+                }}
             }
 
             if let Ok(binary) = &binary {
@@ -620,14 +620,14 @@ async fn try_fetch_server_binary<L: LspAdapter + 'static + Send + Sync + ?Sized>
         .fetch_latest_server_version(delegate.as_ref())
         .await?;
 
-    if let Some(binary) = adapter
+    match adapter
         .check_if_version_installed(latest_version.as_ref(), &container_dir, delegate.as_ref())
         .await
-    {
+    { Some(binary) => {
         log::info!("language server {:?} is already installed", name.0);
         delegate.update_status(name.clone(), BinaryStatus::None);
         Ok(binary)
-    } else {
+    } _ => {
         log::info!("downloading language server {:?}", name.0);
         delegate.update_status(adapter.name(), BinaryStatus::Downloading);
         let binary = adapter
@@ -636,7 +636,7 @@ async fn try_fetch_server_binary<L: LspAdapter + 'static + Send + Sync + ?Sized>
 
         delegate.update_status(name.clone(), BinaryStatus::None);
         binary
-    }
+    }}
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -931,8 +931,8 @@ impl BracketPairConfig {
     }
 }
 
-fn bracket_pair_config_json_schema(gen: &mut SchemaGenerator) -> Schema {
-    Option::<Vec<BracketPairContent>>::json_schema(gen)
+fn bracket_pair_config_json_schema(r#gen: &mut SchemaGenerator) -> Schema {
+    Option::<Vec<BracketPairContent>>::json_schema(r#gen)
 }
 
 #[derive(Deserialize, JsonSchema)]

@@ -300,12 +300,12 @@ impl ContextStore {
 
         if is_shared {
             self.contexts.retain_mut(|context| {
-                if let Some(strong_context) = context.upgrade() {
+                match context.upgrade() { Some(strong_context) => {
                     *context = ContextHandle::Strong(strong_context);
                     true
-                } else {
+                } _ => {
                     false
-                }
+                }}
             });
             let remote_id = self.project.read(cx).remote_id().unwrap();
             self.client_subscription = self
@@ -337,7 +337,7 @@ impl ContextStore {
             }
             project::Event::DisconnectedFromHost => {
                 self.contexts.retain_mut(|context| {
-                    if let Some(strong_context) = context.upgrade() {
+                    match context.upgrade() { Some(strong_context) => {
                         *context = ContextHandle::Weak(context.downgrade());
                         strong_context.update(cx, |context, cx| {
                             if context.replica_id() != ReplicaId::default() {
@@ -345,9 +345,9 @@ impl ContextStore {
                             }
                         });
                         true
-                    } else {
+                    } _ => {
                         false
-                    }
+                    }}
                 });
                 self.host_contexts.clear();
                 cx.notify();
@@ -422,13 +422,13 @@ impl ContextStore {
                 .await?;
             context.update(cx, |context, cx| context.apply_ops(operations, cx))?;
             this.update(cx, |this, cx| {
-                if let Some(existing_context) = this.loaded_context_for_id(&context_id, cx) {
+                match this.loaded_context_for_id(&context_id, cx) { Some(existing_context) => {
                     existing_context
-                } else {
+                } _ => {
                     this.register_context(&context, cx);
                     this.synchronize_contexts(cx);
                     context
-                }
+                }}
             })
         })
     }
@@ -471,12 +471,12 @@ impl ContextStore {
                 )
             })?;
             this.update(cx, |this, cx| {
-                if let Some(existing_context) = this.loaded_context_for_path(&path, cx) {
+                match this.loaded_context_for_path(&path, cx) { Some(existing_context) => {
                     existing_context
-                } else {
+                } _ => {
                     this.register_context(&context, cx);
                     context
-                }
+                }}
             })
         })
     }
@@ -591,13 +591,13 @@ impl ContextStore {
                 .await?;
             context.update(cx, |context, cx| context.apply_ops(operations, cx))?;
             this.update(cx, |this, cx| {
-                if let Some(existing_context) = this.loaded_context_for_id(&context_id, cx) {
+                match this.loaded_context_for_id(&context_id, cx) { Some(existing_context) => {
                     existing_context
-                } else {
+                } _ => {
                     this.register_context(&context, cx);
                     this.synchronize_contexts(cx);
                     context
-                }
+                }}
             })
         })
     }

@@ -97,9 +97,9 @@ fn files_not_created_on_launch(errors: HashMap<io::ErrorKind, Vec<&Path>>) {
 
     eprintln!("{message}: {error_details}");
     Application::new().run(move |cx| {
-        if let Ok(window) = cx.open_window(gpui::WindowOptions::default(), |_, cx| {
+        match cx.open_window(gpui::WindowOptions::default(), |_, cx| {
             cx.new(|_| gpui::Empty)
-        }) {
+        }) { Ok(window) => {
             window
                 .update(cx, |_, window, cx| {
                     let response = window.prompt(
@@ -117,9 +117,9 @@ fn files_not_created_on_launch(errors: HashMap<io::ErrorKind, Vec<&Path>>) {
                     .detach_and_log_err(cx);
                 })
                 .log_err();
-        } else {
+        } _ => {
             fail_to_open_window(anyhow::anyhow!("{message}: {error_details}"), cx)
-        }
+        }}
     })
 }
 
@@ -747,14 +747,14 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
             }
         })
         .detach()
-    } else if let Some(task) = task {
+    } else { match task { Some(task) => {
         cx.spawn(async move |mut cx| {
             if let Err(err) = task.await {
                 fail_to_open_window_async(err, &mut cx);
             }
         })
         .detach();
-    }
+    } _ => {}}}
 }
 
 async fn authenticate(client: Arc<Client>, cx: &AsyncApp) -> Result<()> {
@@ -813,7 +813,7 @@ async fn installation_id() -> Result<IdType> {
 }
 
 async fn restore_or_create_workspace(app_state: Arc<AppState>, cx: &mut AsyncApp) -> Result<()> {
-    if let Some(locations) = restorable_workspace_locations(cx, &app_state).await {
+    match restorable_workspace_locations(cx, &app_state).await { Some(locations) => {
         for location in locations {
             match location {
                 SerializedWorkspaceLocation::Local(location, _) => {
@@ -848,7 +848,7 @@ async fn restore_or_create_workspace(app_state: Arc<AppState>, cx: &mut AsyncApp
                 }
             }
         }
-    } else if matches!(KEY_VALUE_STORE.read_kvp(FIRST_OPEN), Ok(None)) {
+    } _ => if matches!(KEY_VALUE_STORE.read_kvp(FIRST_OPEN), Ok(None)) {
         cx.update(|cx| show_welcome_view(app_state, cx))?.await?;
     } else {
         cx.update(|cx| {
@@ -862,7 +862,7 @@ async fn restore_or_create_workspace(app_state: Arc<AppState>, cx: &mut AsyncApp
             )
         })?
         .await?;
-    }
+    }}
 
     Ok(())
 }

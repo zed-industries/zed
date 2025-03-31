@@ -116,7 +116,7 @@ impl Peer {
         create_timer: F,
     ) -> (
         ConnectionId,
-        impl Future<Output = anyhow::Result<()>> + Send,
+        impl Future<Output = anyhow::Result<()>> + Send + use<F, Fut, Out>,
         BoxStream<'static, Box<dyn AnyTypedEnvelope>>,
     )
     where
@@ -286,7 +286,7 @@ impl Peer {
                         .get(&responding_to)
                         .cloned();
 
-                    if let Some(tx) = response_channel {
+                    match response_channel { Some(tx) => {
                         let requester_resumed = oneshot::channel();
                         if let Err(error) = tx.send((incoming, received_at, requester_resumed.0)) {
                             tracing::trace!(
@@ -311,7 +311,7 @@ impl Peer {
                             responding_to,
                             "incoming response: requester resumed"
                         );
-                    } else if let Some(tx) = stream_response_channel {
+                    } _ => { match stream_response_channel { Some(tx) => {
                         let requester_resumed = oneshot::channel();
                         if let Err(error) = tx.unbounded_send((Ok(incoming), requester_resumed.0)) {
                             tracing::debug!(
@@ -336,7 +336,7 @@ impl Peer {
                             responding_to,
                             "incoming stream response: requester resumed"
                         );
-                    } else {
+                    } _ => {
                         let message_type = proto::build_typed_envelope(
                             connection_id.into(),
                             received_at,
@@ -350,7 +350,7 @@ impl Peer {
                             message_type,
                             "incoming response: unknown request"
                         );
-                    }
+                    }}}}
 
                     None
                 } else {
@@ -377,7 +377,7 @@ impl Peer {
         executor: gpui::BackgroundExecutor,
     ) -> (
         ConnectionId,
-        impl Future<Output = anyhow::Result<()>> + Send,
+        impl Future<Output = anyhow::Result<()>> + Send + use<>,
         BoxStream<'static, Box<dyn AnyTypedEnvelope>>,
     ) {
         let executor = executor.clone();
@@ -403,7 +403,7 @@ impl Peer {
         &self,
         receiver_id: ConnectionId,
         request: T,
-    ) -> impl Future<Output = Result<T::Response>> {
+    ) -> impl Future<Output = Result<T::Response>> + use<T> {
         self.request_internal(None, receiver_id, request)
             .map_ok(|envelope| envelope.payload)
     }
@@ -412,7 +412,7 @@ impl Peer {
         &self,
         receiver_id: ConnectionId,
         request: T,
-    ) -> impl Future<Output = Result<TypedEnvelope<T::Response>>> {
+    ) -> impl Future<Output = Result<TypedEnvelope<T::Response>>> + use<T> {
         self.request_internal(None, receiver_id, request)
     }
 
@@ -421,7 +421,7 @@ impl Peer {
         sender_id: ConnectionId,
         receiver_id: ConnectionId,
         request: T,
-    ) -> impl Future<Output = Result<T::Response>> {
+    ) -> impl Future<Output = Result<T::Response>> + use<T> {
         self.request_internal(Some(sender_id), receiver_id, request)
             .map_ok(|envelope| envelope.payload)
     }
@@ -431,7 +431,7 @@ impl Peer {
         original_sender_id: Option<ConnectionId>,
         receiver_id: ConnectionId,
         request: T,
-    ) -> impl Future<Output = Result<TypedEnvelope<T::Response>>> {
+    ) -> impl Future<Output = Result<TypedEnvelope<T::Response>>> + use<T> {
         let envelope = request.into_envelope(0, None, original_sender_id.map(Into::into));
         let response = self.request_dynamic(receiver_id, envelope, T::NAME);
         async move {
@@ -457,7 +457,7 @@ impl Peer {
         receiver_id: ConnectionId,
         mut envelope: proto::Envelope,
         type_name: &'static str,
-    ) -> impl Future<Output = Result<(proto::Envelope, Instant)>> {
+    ) -> impl Future<Output = Result<(proto::Envelope, Instant)>> + use<> {
         let (tx, rx) = oneshot::channel();
         let send = self.connection_state(receiver_id).and_then(|connection| {
             envelope.id = connection.next_message_id.fetch_add(1, SeqCst);
@@ -488,7 +488,7 @@ impl Peer {
         &self,
         receiver_id: ConnectionId,
         request: T,
-    ) -> impl Future<Output = Result<impl Unpin + Stream<Item = Result<T::Response>>>> {
+    ) -> impl Future<Output = Result<impl Unpin + Stream<Item = Result<T::Response>> + use<T>>> + use<T> {
         let (tx, rx) = mpsc::unbounded();
         let send = self.connection_state(receiver_id).and_then(|connection| {
             let message_id = connection.next_message_id.fetch_add(1, SeqCst);
@@ -775,15 +775,15 @@ mod tests {
         ) -> Result<()> {
             while let Some(envelope) = messages.next().await {
                 let envelope = envelope.into_any();
-                if let Some(envelope) = envelope.downcast_ref::<TypedEnvelope<proto::Ping>>() {
+                match envelope.downcast_ref::<TypedEnvelope<proto::Ping>>() { Some(envelope) => {
                     let receipt = envelope.receipt();
                     peer.respond(receipt, proto::Ack {})?
-                } else if let Some(envelope) = envelope.downcast_ref::<TypedEnvelope<proto::Test>>()
-                {
+                } _ => { match envelope.downcast_ref::<TypedEnvelope<proto::Test>>()
+                { Some(envelope) => {
                     peer.respond(envelope.receipt(), envelope.payload.clone())?
-                } else {
+                } _ => {
                     panic!("unknown message type");
-                }
+                }}}}
             }
 
             Ok(())

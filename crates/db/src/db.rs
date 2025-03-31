@@ -112,7 +112,7 @@ pub async fn open_test_db<M: Migrator>(db_name: &str) -> ThreadSafeConnection<M>
 /// Implements a basic DB wrapper for a given domain
 #[macro_export]
 macro_rules! define_connection {
-    (pub static ref $id:ident: $t:ident<()> = $migrations:expr; $($global:ident)?) => {
+    (pub static ref $id:ident: $t:ident<()> = $migrations:expr_2021; $($global:ident)?) => {
         pub struct $t($crate::sqlez::thread_safe_connection::ThreadSafeConnection<$t>);
 
         impl ::std::ops::Deref for $t {
@@ -149,7 +149,7 @@ macro_rules! define_connection {
             $t($crate::smol::block_on($crate::open_db(db_dir, scope)))
         });
     };
-    (pub static ref $id:ident: $t:ident<$($d:ty),+> = $migrations:expr; $($global:ident)?) => {
+    (pub static ref $id:ident: $t:ident<$($d:ty),+> = $migrations:expr_2021; $($global:ident)?) => {
         pub struct $t($crate::sqlez::thread_safe_connection::ThreadSafeConnection<( $($d),+, $t )>);
 
         impl ::std::ops::Deref for $t {

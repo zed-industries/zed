@@ -716,7 +716,7 @@ impl Server {
         system_id: Option<String>,
         send_connection_id: Option<oneshot::Sender<ConnectionId>>,
         executor: Executor,
-    ) -> impl Future<Output = ()> {
+    ) -> impl Future<Output = ()> + use<> {
         let this = self.clone();
         let span = info_span!("handle connection", %address,
             connection_id=field::Empty,
@@ -810,7 +810,7 @@ impl Server {
                     _ = foreground_message_handlers.next() => {}
                     next_message = next_message => {
                         let (permit, message) = next_message;
-                        if let Some(message) = message {
+                        match message { Some(message) => {
                             let type_name = message.payload_type_name();
                             // note: we copy all the fields from the parent span so we can query them in the logs.
                             // (https://github.com/tokio-rs/tracing/issues/2670).
@@ -821,7 +821,7 @@ impl Server {
                             );
                             principal.update_span(&span);
                             let span_enter = span.enter();
-                            if let Some(handler) = this.handlers.get(&message.payload_type_id()) {
+                            match this.handlers.get(&message.payload_type_id()) { Some(handler) => {
                                 let is_background = message.is_background();
                                 let handle_message = (handler)(message, session.clone());
                                 drop(span_enter);
@@ -835,13 +835,13 @@ impl Server {
                                 } else {
                                     foreground_message_handlers.push(handle_message);
                                 }
-                            } else {
+                            } _ => {
                                 tracing::error!("no message handler");
-                            }
-                        } else {
+                            }}
+                        } _ => {
                             tracing::info!("connection closed");
                             break;
-                        }
+                        }}
                     }
                 }
             }
@@ -1313,8 +1313,8 @@ async fn join_room(
             .trace_err();
     }
 
-    let live_kit_connection_info = if let Some(live_kit) = session.app_state.livekit_client.as_ref()
-    {
+    let live_kit_connection_info = match session.app_state.livekit_client.as_ref()
+    { Some(live_kit) => {
         live_kit
             .room_token(
                 &joined_room.room.livekit_room,
@@ -1326,9 +1326,9 @@ async fn join_room(
                 token,
                 can_publish: true,
             })
-    } else {
+    } _ => {
         None
-    };
+    }};
 
     response.send(proto::JoinRoomResponse {
         room: Some(joined_room.room),
@@ -4393,7 +4393,7 @@ async fn leave_room_for_session(session: &Session, connection_id: ConnectionId) 
     let room;
     let channel;
 
-    if let Some(mut left_room) = session.db().await.leave_room(connection_id).await? {
+    match session.db().await.leave_room(connection_id).await? { Some(mut left_room) => {
         contacts_to_update.insert(session.user_id());
 
         for project in left_room.left_projects.values() {
@@ -4408,9 +4408,9 @@ async fn leave_room_for_session(session: &Session, connection_id: ConnectionId) 
         channel = mem::take(&mut left_room.channel);
 
         room_updated(&room, &session.peer);
-    } else {
+    } _ => {
         return Ok(());
-    }
+    }}
 
     if let Some(channel) = channel {
         channel_updated(

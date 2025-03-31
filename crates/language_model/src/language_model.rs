@@ -274,7 +274,7 @@ impl dyn LanguageModel {
         &self,
         request: LanguageModelRequest,
         cx: &AsyncApp,
-    ) -> impl 'static + Future<Output = Result<T>> {
+    ) -> impl 'static + Future<Output = Result<T>> + use<T> {
         let schema = schemars::schema_for!(T);
         let schema_json = serde_json::to_value(&schema).unwrap();
         let stream = self.use_any_tool(request, T::name(), T::description(), schema_json, cx);

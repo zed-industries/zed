@@ -11,7 +11,7 @@ use notification::DidChangeWorkspaceFolders;
 use parking_lot::{Mutex, RwLock};
 use postage::{barrier, prelude::Stream};
 use schemars::{
-    gen::SchemaGenerator,
+    r#gen::SchemaGenerator,
     schema::{InstanceType, Schema, SchemaObject},
     JsonSchema,
 };
@@ -510,12 +510,12 @@ impl LanguageServer {
         while let Some(msg) = input_handler.notifications_channel.next().await {
             {
                 let mut notification_handlers = notification_handlers.lock();
-                if let Some(handler) = notification_handlers.get_mut(msg.method.as_str()) {
+                match notification_handlers.get_mut(msg.method.as_str()) { Some(handler) => {
                     handler(msg.id, msg.params.unwrap_or(Value::Null), cx);
-                } else {
+                } _ => {
                     drop(notification_handlers);
                     on_unhandled_notification(msg);
-                }
+                }}
             }
 
             // Don't starve the main thread when receiving lots of notifications at once.
@@ -830,8 +830,8 @@ impl LanguageServer {
     }
 
     /// Sends a shutdown request to the language server process and prepares the [`LanguageServer`] to be dropped.
-    pub fn shutdown(&self) -> Option<impl 'static + Send + Future<Output = Option<()>>> {
-        if let Some(tasks) = self.io_tasks.lock().take() {
+    pub fn shutdown(&self) -> Option<impl 'static + Send + Future<Output = Option<()>> + use<>> {
+        match self.io_tasks.lock().take() { Some(tasks) => {
             let response_handlers = self.response_handlers.clone();
             let next_id = AtomicI32::new(self.next_id.load(SeqCst));
             let outbound_tx = self.outbound_tx.clone();
@@ -875,9 +875,9 @@ impl LanguageServer {
                 }
                 .log_err(),
             )
-        } else {
+        } _ => {
             None
-        }
+        }}
     }
 
     /// Register a handler to handle incoming LSP notifications.
@@ -1077,7 +1077,7 @@ impl LanguageServer {
     pub fn request<T: request::Request>(
         &self,
         params: T::Params,
-    ) -> impl LspRequestFuture<Result<T::Result>>
+    ) -> impl LspRequestFuture<Result<T::Result>> + use<T>
     where
         T::Result: 'static + Send,
     {
@@ -1096,7 +1096,7 @@ impl LanguageServer {
         outbound_tx: &channel::Sender<String>,
         executor: &BackgroundExecutor,
         params: T::Params,
-    ) -> impl LspRequestFuture<Result<T::Result>>
+    ) -> impl LspRequestFuture<Result<T::Result>> + use<T>
     where
         T::Result: 'static + Send,
     {

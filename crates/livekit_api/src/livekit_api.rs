@@ -55,7 +55,7 @@ impl LiveKitClient {
         path: &str,
         grant: token::VideoGrant,
         body: Req,
-    ) -> impl Future<Output = Result<Res>>
+    ) -> impl Future<Output = Result<Res>> + use<Req, Res>
     where
         Req: Message,
         Res: Default + Message,

@@ -478,7 +478,7 @@ impl TitleBar {
         )
     }
 
-    pub fn render_project_name(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    pub fn render_project_name(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         let name = {
             let mut names = self.project.read(cx).visible_worktrees(cx).map(|worktree| {
                 let worktree = worktree.read(cx);
@@ -519,7 +519,7 @@ impl TitleBar {
             }))
     }
 
-    pub fn render_project_branch(&self, cx: &mut Context<Self>) -> Option<impl IntoElement> {
+    pub fn render_project_branch(&self, cx: &mut Context<Self>) -> Option<impl IntoElement + use<>> {
         let repository = self.project.read(cx).active_repository(cx)?;
         let workspace = self.workspace.upgrade()?;
         let branch_name = repository.read(cx).current_branch()?.name.clone();
@@ -648,7 +648,7 @@ impl TitleBar {
             })
     }
 
-    pub fn render_user_menu_button(&mut self, cx: &mut Context<Self>) -> impl Element {
+    pub fn render_user_menu_button(&mut self, cx: &mut Context<Self>) -> impl Element + use<> {
         let user_store = self.user_store.read(cx);
         if let Some(user) = user_store.current_user() {
             let plan = user_store.current_plan();

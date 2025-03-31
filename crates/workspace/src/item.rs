@@ -752,15 +752,15 @@ impl<T: Item> ItemHandle for Entity<T> {
                 self,
                 window,
                 move |workspace, item: &Entity<T>, event, window, cx| {
-                    let pane = if let Some(pane) = workspace
+                    let pane = match workspace
                         .panes_by_item
                         .get(&item.item_id())
                         .and_then(|pane| pane.upgrade())
-                    {
+                    { Some(pane) => {
                         pane
-                    } else {
+                    } _ => {
                         return;
-                    };
+                    }};
 
                     if let Some(item) = item.to_followable_item_handle(cx) {
                         let leader_id = workspace.leader_for_pane(&pane);
@@ -1584,13 +1584,13 @@ pub mod test {
             _window: &mut Window,
             _cx: &mut Context<Self>,
         ) -> Option<Task<anyhow::Result<()>>> {
-            if let Some(serialize) = self.serialize.take() {
+            match self.serialize.take() { Some(serialize) => {
                 let result = serialize();
                 self.serialize = Some(serialize);
                 result
-            } else {
+            } _ => {
                 None
-            }
+            }}
         }
 
         fn should_serialize(&self, _event: &Self::Event) -> bool {

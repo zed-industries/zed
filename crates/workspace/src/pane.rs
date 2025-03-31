@@ -542,9 +542,9 @@ impl Pane {
                 .find_position(|item| item.item_id() == alternative.id());
             if let Some((ix, _)) = existing {
                 self.activate_item(ix, true, true, window, cx);
-            } else if let Some(upgraded) = alternative.upgrade() {
+            } else { match alternative.upgrade() { Some(upgraded) => {
                 self.add_item(upgraded, true, true, None, window, cx);
-            }
+            } _ => {}}}
         }
     }
 
@@ -608,12 +608,12 @@ impl Pane {
                 }
 
                 active_item.item_focus_handle(cx).focus(window);
-            } else if let Some(focused) = window.focused(cx) {
+            } else { match window.focused(cx) { Some(focused) => {
                 if !self.context_menu_focused(window, cx) {
                     self.last_focus_handle_by_item
                         .insert(active_item.item_id(), focused.downgrade());
                 }
-            }
+            } _ => {}}}
         }
     }
 
@@ -878,7 +878,7 @@ impl Pane {
                 }
             }
         }
-        if let Some((index, existing_item)) = existing_item {
+        match existing_item { Some((index, existing_item)) => {
             // If the item is already open, and the item is a preview item
             // and we are not allowing items to open as preview, mark the item as persistent.
             if let Some(preview_item_id) = self.preview_item_id {
@@ -892,7 +892,7 @@ impl Pane {
                 self.activate_item(index, focus_item, focus_item, window, cx);
             }
             existing_item
-        } else {
+        } _ => {
             // If the item is being opened as preview and we have an existing preview tab,
             // open the new item in the position of the existing preview tab.
             let destination_index = if allow_preview {
@@ -917,7 +917,7 @@ impl Pane {
             );
 
             new_item
-        }
+        }}
     }
 
     pub fn close_current_preview_item(
@@ -1778,7 +1778,7 @@ impl Pane {
             self.set_preview_item_id(None, cx);
         }
 
-        if let Some(path) = item.project_path(cx) {
+        match item.project_path(cx) { Some(path) => {
             let abs_path = self
                 .nav_history
                 .0
@@ -1792,13 +1792,13 @@ impl Pane {
                 .lock()
                 .paths_by_item
                 .insert(item.item_id(), (path, abs_path));
-        } else {
+        } _ => {
             self.nav_history
                 .0
                 .lock()
                 .paths_by_item
                 .remove(&item.item_id());
-        }
+        }}
 
         if self.zoom_out_on_close && self.items.is_empty() && close_pane_if_empty && self.zoomed {
             cx.emit(Event::ZoomOut);
@@ -1943,7 +1943,7 @@ impl Pane {
                             None
                         }
                     })?;
-                    if let Some(answer_task) = answer_task {
+                    match answer_task { Some(answer_task) => {
                         let answer = answer_task.await;
                         pane.update(cx, |pane, _| {
                             if !pane.save_modals_spawned.remove(&item_id) {
@@ -1967,9 +1967,9 @@ impl Pane {
                             }
                             _ => return Ok(false), // Cancel
                         }
-                    } else {
+                    } _ => {
                         return Ok(false);
-                    }
+                    }}
                 }
             }
 
@@ -1988,7 +1988,7 @@ impl Pane {
                         workspace.prompt_for_new_path(window, cx)
                     })
                 })??;
-                if let Some(abs_path) = abs_path.await.ok().flatten() {
+                match abs_path.await.ok().flatten() { Some(abs_path) => {
                     pane.update_in(cx, |pane, window, cx| {
                         if let Some(item) = pane.item_for_path(abs_path.clone(), cx) {
                             pane.remove_item(item.item_id(), false, false, window, cx);
@@ -1997,9 +1997,9 @@ impl Pane {
                         item.save_as(project, abs_path, window, cx)
                     })?
                     .await?;
-                } else {
+                } _ => {
                     return Ok(false);
-                }
+                }}
             }
         }
 
@@ -2208,7 +2208,7 @@ impl Pane {
         focus_handle: &FocusHandle,
         window: &mut Window,
         cx: &mut Context<Pane>,
-    ) -> impl IntoElement {
+    ) -> impl IntoElement + use<> {
         let is_active = ix == self.active_item_index;
         let is_preview = self
             .preview_item_id
@@ -2670,7 +2670,7 @@ impl Pane {
         })
     }
 
-    fn render_tab_bar(&mut self, window: &mut Window, cx: &mut Context<Pane>) -> impl IntoElement {
+    fn render_tab_bar(&mut self, window: &mut Window, cx: &mut Context<Pane>) -> impl IntoElement + use<> {
         let focus_handle = self.focus_handle.clone();
         let navigate_backward = IconButton::new("navigate_backward", IconName::ArrowLeft)
             .icon_size(IconSize::Small)
@@ -3319,14 +3319,14 @@ impl Render for Pane {
                         div.on_drag_move::<ExternalPaths>(cx.listener(Self::handle_drag_move))
                     })
                     .map(|div| {
-                        if let Some(item) = self.active_item() {
+                        match self.active_item() { Some(item) => {
                             div.id("pane_placeholder")
                                 .v_flex()
                                 .size_full()
                                 .overflow_hidden()
                                 .child(self.toolbar.clone())
                                 .child(item.to_any())
-                        } else {
+                        } _ => {
                             let placeholder = div
                                 .id("pane_placeholder")
                                 .h_flex()
@@ -3350,7 +3350,7 @@ impl Render for Pane {
                                         .color(Color::Muted),
                                 )
                             }
-                        }
+                        }}
                     })
                     .child(
                         // drag target
@@ -3467,15 +3467,14 @@ impl NavHistory {
             .chain(borrowed_history.backward_stack.iter())
             .chain(borrowed_history.closed_stack.iter())
             .for_each(|entry| {
-                if let Some(project_and_abs_path) =
-                    borrowed_history.paths_by_item.get(&entry.item.id())
-                {
+                match borrowed_history.paths_by_item.get(&entry.item.id())
+                { Some(project_and_abs_path) => {
                     f(entry, project_and_abs_path.clone());
-                } else if let Some(item) = entry.item.upgrade() {
+                } _ => { match entry.item.upgrade() { Some(item) => {
                     if let Some(path) = item.project_path(cx) {
                         f(entry, (path, None));
                     }
-                }
+                } _ => {}}}}
             })
     }
 

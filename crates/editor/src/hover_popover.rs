@@ -289,7 +289,7 @@ fn show_hover(
                 // Find the entry with the most specific range
                 .min_by_key(|entry| entry.range.len());
 
-            let diagnostic_popover = if let Some(local_diagnostic) = local_diagnostic {
+            let diagnostic_popover = match local_diagnostic { Some(local_diagnostic) => {
                 let text = match local_diagnostic.diagnostic.source {
                     Some(ref source) => {
                         format!("{source}: {}", local_diagnostic.diagnostic.message)
@@ -372,44 +372,44 @@ fn show_hover(
                     keyboard_grace: Rc::new(RefCell::new(ignore_timeout)),
                     anchor: Some(anchor),
                 })
-            } else {
+            } _ => {
                 None
-            };
+            }};
 
             this.update(cx, |this, _| {
                 this.hover_state.diagnostic_popover = diagnostic_popover;
             })?;
 
-            let invisible_char = if let Some(invisible) = snapshot
+            let invisible_char = match snapshot
                 .buffer_snapshot
                 .chars_at(anchor)
                 .next()
                 .filter(|&c| is_invisible(c))
-            {
+            { Some(invisible) => {
                 let after = snapshot.buffer_snapshot.anchor_after(
                     anchor.to_offset(&snapshot.buffer_snapshot) + invisible.len_utf8(),
                 );
                 Some((invisible, anchor..after))
-            } else if let Some(invisible) = snapshot
+            } _ => { match snapshot
                 .buffer_snapshot
                 .reversed_chars_at(anchor)
                 .next()
                 .filter(|&c| is_invisible(c))
-            {
+            { Some(invisible) => {
                 let before = snapshot.buffer_snapshot.anchor_before(
                     anchor.to_offset(&snapshot.buffer_snapshot) - invisible.len_utf8(),
                 );
 
                 Some((invisible, before..anchor))
-            } else {
+            } _ => {
                 None
-            };
+            }}}};
 
-            let hovers_response = if let Some(hover_request) = hover_request {
+            let hovers_response = match hover_request { Some(hover_request) => {
                 hover_request.await
-            } else {
+            } _ => {
                 Vec::new()
-            };
+            }};
             let snapshot = this.update_in(cx, |this, window, cx| this.snapshot(window, cx))?;
             let mut hover_highlights = Vec::with_capacity(hovers_response.len());
             let mut info_popovers = Vec::with_capacity(
@@ -543,12 +543,12 @@ async fn parse_blocks(
     language: Option<Arc<Language>>,
     cx: &mut AsyncWindowContext,
 ) -> Option<Entity<Markdown>> {
-    let fallback_language_name = if let Some(ref l) = language {
+    let fallback_language_name = match language { Some(ref l) => {
         let l = Arc::clone(l);
         Some(l.lsp_id().clone())
-    } else {
+    } _ => {
         None
-    };
+    }};
 
     let combined_text = blocks
         .iter()

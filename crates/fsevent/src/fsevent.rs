@@ -153,11 +153,11 @@ impl EventStream {
             let e_ptr = event_flags as *mut u32;
             let i_ptr = event_ids as *mut u64;
             let state = (info as *mut State).as_mut().unwrap();
-            let callback = if let Some(callback) = state.callback.as_mut() {
+            let callback = match state.callback.as_mut() { Some(callback) => {
                 callback
-            } else {
+            } _ => {
                 return;
-            };
+            }};
 
             let paths = slice::from_raw_parts(event_paths, num);
             let flags = slice::from_raw_parts_mut(e_ptr, num);
@@ -365,7 +365,7 @@ impl std::fmt::Display for StreamFlags {
 }
 
 #[link(name = "CoreServices", kind = "framework")]
-extern "C" {
+unsafe extern "C" {
     pub fn FSEventsGetCurrentEventId() -> u64;
 }
 

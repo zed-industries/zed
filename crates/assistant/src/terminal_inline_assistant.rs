@@ -184,11 +184,11 @@ impl TerminalInlineAssistant {
     }
 
     fn start_assist(&mut self, assist_id: TerminalInlineAssistId, cx: &mut App) {
-        let assist = if let Some(assist) = self.assists.get_mut(&assist_id) {
+        let assist = match self.assists.get_mut(&assist_id) { Some(assist) => {
             assist
-        } else {
+        } _ => {
             return;
-        };
+        }};
 
         let Some(user_prompt) = assist
             .prompt_editor
@@ -222,11 +222,11 @@ impl TerminalInlineAssistant {
     }
 
     fn stop_assist(&mut self, assist_id: TerminalInlineAssistId, cx: &mut App) {
-        let assist = if let Some(assist) = self.assists.get_mut(&assist_id) {
+        let assist = match self.assists.get_mut(&assist_id) { Some(assist) => {
             assist
-        } else {
+        } _ => {
             return;
-        };
+        }};
 
         assist.codegen.update(cx, |codegen, cx| codegen.stop(cx));
     }
@@ -436,11 +436,11 @@ impl TerminalInlineAssist {
                 window.subscribe(&codegen, cx, move |codegen, event, window, cx| {
                     TerminalInlineAssistant::update_global(cx, |this, cx| match event {
                         CodegenEvent::Finished => {
-                            let assist = if let Some(assist) = this.assists.get(&assist_id) {
+                            let assist = match this.assists.get(&assist_id) { Some(assist) => {
                                 assist
-                            } else {
+                            } _ => {
                                 return;
-                            };
+                            }};
 
                             if let CodegenStatus::Error(error) = &codegen.read(cx).status {
                                 if assist.prompt_editor.is_none() {
@@ -665,7 +665,7 @@ impl Render for PromptEditor {
                         gpui::Corner::TopRight,
                     ))
                     .children(
-                        if let CodegenStatus::Error(error) = &self.codegen.read(cx).status {
+                        match &self.codegen.read(cx).status { CodegenStatus::Error(error) => {
                             let error_message = SharedString::from(error.to_string());
                             Some(
                                 div()
@@ -677,9 +677,9 @@ impl Render for PromptEditor {
                                             .color(Color::Error),
                                     ),
                             )
-                        } else {
+                        } _ => {
                             None
-                        },
+                        }},
                     ),
             )
             .child(div().flex_1().child(self.render_prompt_editor(cx)))
@@ -979,7 +979,7 @@ impl PromptEditor {
         }
     }
 
-    fn render_token_count(&self, cx: &mut Context<Self>) -> Option<impl IntoElement> {
+    fn render_token_count(&self, cx: &mut Context<Self>) -> Option<impl IntoElement + use<>> {
         let model = LanguageModelRegistry::read_global(cx).active_model()?;
         let token_count = self.token_count?;
         let max_token_count = model.max_token_count();
@@ -1007,7 +1007,7 @@ impl PromptEditor {
                     .size(LabelSize::Small)
                     .color(Color::Muted),
             );
-        if let Some(workspace) = self.workspace.clone() {
+        match self.workspace.clone() { Some(workspace) => {
             token_count = token_count
                 .tooltip(|window, cx| {
                     Tooltip::with_meta(
@@ -1028,16 +1028,16 @@ impl PromptEditor {
                         })
                         .ok();
                 });
-        } else {
+        } _ => {
             token_count = token_count
                 .cursor_default()
                 .tooltip(Tooltip::text("Tokens Used by Inline Assistant"));
-        }
+        }}
 
         Some(token_count)
     }
 
-    fn render_prompt_editor(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_prompt_editor(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         let settings = ThemeSettings::get_global(cx);
         let text_style = TextStyle {
             color: if self.editor.read(cx).read_only(cx) {
@@ -1217,11 +1217,11 @@ impl Codegen {
             let result = generate.await;
 
             this.update(cx, |this, cx| {
-                if let Err(error) = result {
+                match result { Err(error) => {
                     this.status = CodegenStatus::Error(error);
-                } else {
+                } _ => {
                     this.status = CodegenStatus::Done;
-                }
+                }}
                 cx.emit(CodegenEvent::Finished);
                 cx.notify();
             })

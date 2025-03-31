@@ -37,9 +37,9 @@ pub fn init(cx: &mut App) {
                     .items()
                     .find_map(|item| item.downcast::<ReplSessionsPage>());
 
-                if let Some(existing) = existing {
+                match existing { Some(existing) => {
                     workspace.activate_item(&existing, true, true, window, cx);
-                } else {
+                } _ => {
                     let repl_sessions_page = ReplSessionsPage::new(window, cx);
                     workspace.add_item_to_active_pane(
                         Box::new(repl_sessions_page),
@@ -48,7 +48,7 @@ pub fn init(cx: &mut App) {
                         window,
                         cx,
                     )
-                }
+                }}
             });
 
             workspace.register_action(|_workspace, _: &RefreshKernelspecs, _, cx| {

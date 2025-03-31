@@ -289,11 +289,11 @@ impl<T: Bind + StaticColumnCount> Bind for Option<T> {
 
 impl<T: Column + StaticColumnCount> Column for Option<T> {
     fn column(statement: &mut Statement, start_index: i32) -> Result<(Self, i32)> {
-        if let SqlType::Null = statement.column_type(start_index)? {
+        match statement.column_type(start_index)? { SqlType::Null => {
             Ok((None, start_index + T::column_count() as i32))
-        } else {
+        } _ => {
             T::column(statement, start_index).map(|(result, next_index)| (Some(result), next_index))
-        }
+        }}
     }
 }
 

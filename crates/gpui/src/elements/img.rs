@@ -346,7 +346,7 @@ impl Element for Img {
                         }
                         None => {
                             if let Some(state) = &mut state {
-                                if let Some((started_loading, _)) = state.started_loading {
+                                match state.started_loading { Some((started_loading, _)) => {
                                     if started_loading.elapsed() > LOADING_DELAY {
                                         if let Some(loading) = self.style.loading.as_ref() {
                                             let mut element = loading();
@@ -355,7 +355,7 @@ impl Element for Img {
                                             layout_state.replacement = Some(element);
                                         }
                                     }
-                                } else {
+                                } _ => {
                                     let current_view = window.current_view();
                                     let task = window.spawn(cx, async move |cx| {
                                         cx.background_executor().timer(LOADING_DELAY).await;
@@ -365,7 +365,7 @@ impl Element for Img {
                                         .ok();
                                     });
                                     state.started_loading = Some((Instant::now(), task));
-                                }
+                                }}
                             }
                         }
                     }
@@ -421,7 +421,7 @@ impl Element for Img {
             window,
             cx,
             |style, window, cx| {
-                if let Some(Ok(data)) = source.use_data(window, cx) {
+                match source.use_data(window, cx) { Some(Ok(data)) => {
                     let new_bounds = self
                         .style
                         .object_fit
@@ -439,9 +439,9 @@ impl Element for Img {
                             self.style.grayscale,
                         )
                         .log_err();
-                } else if let Some(replacement) = &mut layout_state.replacement {
+                } _ => if let Some(replacement) = &mut layout_state.replacement {
                     replacement.paint(window, cx);
-                }
+                }}
             },
         )
     }
@@ -553,7 +553,7 @@ impl Asset for ImageAssetLoader {
                 }
             };
 
-            let data = if let Ok(format) = image::guess_format(&bytes) {
+            let data = match image::guess_format(&bytes) { Ok(format) => {
                 let data = match format {
                     ImageFormat::Gif => {
                         let decoder = GifDecoder::new(Cursor::new(&bytes))?;
@@ -612,7 +612,7 @@ impl Asset for ImageAssetLoader {
                 };
 
                 RenderImage::new(data)
-            } else {
+            } _ => {
                 let pixmap =
                     // TODO: Can we make svgs always rescale?
                     svg_renderer.render_pixmap(&bytes, SvgSize::ScaleFactor(SMOOTH_SVG_SCALE_FACTOR))?;
@@ -625,7 +625,7 @@ impl Asset for ImageAssetLoader {
                 }
 
                 RenderImage::new(SmallVec::from_elem(Frame::new(buffer), 1))
-            };
+            }};
 
             Ok(Arc::new(data))
         }

@@ -271,13 +271,13 @@ impl TerminalPanel {
             _ => {}
         }
 
-        let terminal_panel = if let Some(panel) = terminal_panel {
+        let terminal_panel = match terminal_panel { Some(panel) => {
             panel
-        } else {
+        } _ => {
             workspace.update_in(&mut cx, |workspace, window, cx| {
                 cx.new(|cx| TerminalPanel::new(workspace, window, cx))
             })?
-        };
+        }};
 
         if let Some(workspace) = workspace.upgrade() {
             terminal_panel
@@ -934,18 +934,18 @@ impl TerminalPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if let Some(pane) = self
+        match self
             .center
             .find_pane_in_direction(&self.active_pane, direction, cx)
-        {
+        { Some(pane) => {
             window.focus(&pane.focus_handle(cx));
-        } else {
+        } _ => {
             self.workspace
                 .update(cx, |workspace, cx| {
                     workspace.activate_pane_in_direction(direction, window, cx)
                 })
                 .ok();
-        }
+        }}
     }
 
     fn swap_pane_in_direction(&mut self, direction: SplitDirection, cx: &mut Context<Self>) {

@@ -201,9 +201,9 @@ pub fn check(_: &Check, window: &mut Window, cx: &mut App) {
         return;
     }
 
-    if let Some(updater) = AutoUpdater::get(cx) {
+    match AutoUpdater::get(cx) { Some(updater) => {
         updater.update(cx, |updater, cx| updater.poll(cx));
-    } else {
+    } _ => {
         drop(window.prompt(
             gpui::PromptLevel::Info,
             "Could not check for updates",
@@ -211,7 +211,7 @@ pub fn check(_: &Check, window: &mut Window, cx: &mut App) {
             &["Ok"],
             cx,
         ));
-    }
+    }}
 }
 
 pub fn view_release_notes(_: &ViewReleaseNotes, cx: &mut App) -> Option<()> {

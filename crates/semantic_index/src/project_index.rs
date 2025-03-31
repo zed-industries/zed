@@ -500,7 +500,7 @@ impl ProjectIndex {
     }
 
     /// Empty out the backlogs of all the worktrees in the project
-    pub fn flush_summary_backlogs(&self, cx: &App) -> impl Future<Output = ()> {
+    pub fn flush_summary_backlogs(&self, cx: &App) -> impl Future<Output = ()> + use<> {
         let flush_start = std::time::Instant::now();
 
         futures::future::join_all(self.worktree_indices.values().map(|worktree_index| {

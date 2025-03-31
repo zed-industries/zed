@@ -341,9 +341,8 @@ impl InlineAssistant {
                 selection.end.column = snapshot
                     .buffer_snapshot
                     .line_len(MultiBufferRow(selection.end.row));
-            } else if let Some(fold) =
-                snapshot.crease_for_buffer_row(MultiBufferRow(selection.end.row))
-            {
+            } else { match snapshot.crease_for_buffer_row(MultiBufferRow(selection.end.row))
+            { Some(fold) => {
                 selection.start = fold.range().start;
                 selection.end = fold.range().end;
                 if MultiBufferRow(selection.end.row) < snapshot.buffer_snapshot.max_row() {
@@ -369,7 +368,7 @@ impl InlineAssistant {
                         }
                     }
                 }
-            }
+            } _ => {}}}
 
             if let Some(prev_selection) = selections.last_mut() {
                 if selection.start <= prev_selection.end {
@@ -1129,7 +1128,7 @@ impl InlineAssistant {
 
             let mut scroll_target_top;
             let mut scroll_target_bottom;
-            if let Some(decorations) = assist.decorations.as_ref() {
+            match assist.decorations.as_ref() { Some(decorations) => {
                 scroll_target_top = editor
                     .row_for_block(decorations.prompt_block_id, cx)
                     .unwrap()
@@ -1138,7 +1137,7 @@ impl InlineAssistant {
                     .row_for_block(decorations.end_block_id, cx)
                     .unwrap()
                     .0 as f32;
-            } else {
+            } _ => {
                 let snapshot = editor.snapshot(window, cx);
                 let start_row = assist
                     .range
@@ -1147,7 +1146,7 @@ impl InlineAssistant {
                     .row();
                 scroll_target_top = start_row.0 as f32;
                 scroll_target_bottom = scroll_target_top + 1.;
-            }
+            }}
             scroll_target_top -= editor.vertical_scroll_margin() as f32;
             scroll_target_bottom += editor.vertical_scroll_margin() as f32;
 
@@ -1191,11 +1190,11 @@ impl InlineAssistant {
     }
 
     pub fn start_assist(&mut self, assist_id: InlineAssistId, window: &mut Window, cx: &mut App) {
-        let assist = if let Some(assist) = self.assists.get_mut(&assist_id) {
+        let assist = match self.assists.get_mut(&assist_id) { Some(assist) => {
             assist
-        } else {
+        } _ => {
             return;
-        };
+        }};
 
         let assist_group_id = assist.group_id;
         if self.assist_groups[&assist_group_id].linked {
@@ -1222,11 +1221,11 @@ impl InlineAssistant {
     }
 
     pub fn stop_assist(&mut self, assist_id: InlineAssistId, cx: &mut App) {
-        let assist = if let Some(assist) = self.assists.get_mut(&assist_id) {
+        let assist = match self.assists.get_mut(&assist_id) { Some(assist) => {
             assist
-        } else {
+        } _ => {
             return;
-        };
+        }};
 
         assist.codegen.update(cx, |codegen, cx| codegen.stop(cx));
     }
@@ -1449,21 +1448,21 @@ impl InlineAssistant {
                 }
             });
 
-        if let Some(context_editor) = context_editor {
+        match context_editor { Some(context_editor) => {
             Some(InlineAssistTarget::Editor(context_editor))
-        } else if let Some(workspace_editor) = workspace
+        } _ => { match workspace
             .active_item(cx)
             .and_then(|item| item.act_as::<Editor>(cx))
-        {
+        { Some(workspace_editor) => {
             Some(InlineAssistTarget::Editor(workspace_editor))
-        } else if let Some(terminal_view) = workspace
+        } _ => { match workspace
             .active_item(cx)
             .and_then(|item| item.act_as::<TerminalView>(cx))
-        {
+        { Some(terminal_view) => {
             Some(InlineAssistTarget::Terminal(terminal_view))
-        } else {
+        } _ => {
             None
-        }
+        }}}}}}
     }
 }
 
@@ -1654,11 +1653,11 @@ impl InlineAssist {
                     InlineAssistant::update_global(cx, |this, cx| match event {
                         CodegenEvent::Undone => this.finish_assist(assist_id, false, window, cx),
                         CodegenEvent::Finished => {
-                            let assist = if let Some(assist) = this.assists.get(&assist_id) {
+                            let assist = match this.assists.get(&assist_id) { Some(assist) => {
                                 assist
-                            } else {
+                            } _ => {
                                 return;
-                            };
+                            }};
 
                             if let CodegenStatus::Error(error) = codegen.read(cx).status(cx) {
                                 if assist.decorations.is_none() {

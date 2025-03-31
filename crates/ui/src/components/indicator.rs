@@ -56,15 +56,15 @@ impl Indicator {
 impl RenderOnce for Indicator {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         let container = div().flex_none();
-        let container = if let Some(border_color) = self.border_color {
+        let container = match self.border_color { Some(border_color) => {
             if matches!(self.kind, IndicatorKind::Dot | IndicatorKind::Bar) {
                 container.border_1().border_color(border_color.color(cx))
             } else {
                 container
             }
-        } else {
+        } _ => {
             container
-        };
+        }};
 
         match self.kind {
             IndicatorKind::Icon(icon) => container

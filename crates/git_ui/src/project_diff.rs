@@ -97,10 +97,10 @@ impl ProjectDiff {
                 "Action"
             }
         );
-        let project_diff = if let Some(existing) = workspace.item_of_type::<Self>(cx) {
+        let project_diff = match workspace.item_of_type::<Self>(cx) { Some(existing) => {
             workspace.activate_item(&existing, true, true, window, cx);
             existing
-        } else {
+        } _ => {
             let workspace_handle = cx.entity();
             let project_diff =
                 cx.new(|cx| Self::new(workspace.project().clone(), workspace_handle, window, cx));
@@ -112,7 +112,7 @@ impl ProjectDiff {
                 cx,
             );
             project_diff
-        };
+        }};
         if let Some(entry) = entry {
             project_diff.update(cx, |project_diff, cx| {
                 project_diff.move_to_entry(entry, window, cx);
@@ -223,15 +223,15 @@ impl ProjectDiff {
     }
 
     fn move_to_path(&mut self, path_key: PathKey, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(position) = self.multibuffer.read(cx).location_for_path(&path_key, cx) {
+        match self.multibuffer.read(cx).location_for_path(&path_key, cx) { Some(position) => {
             self.editor.update(cx, |editor, cx| {
                 editor.change_selections(Some(Autoscroll::focused()), window, cx, |s| {
                     s.select_ranges([position..position]);
                 })
             });
-        } else {
+        } _ => {
             self.pending_scroll = Some(path_key);
-        }
+        }}
     }
 
     fn button_states(&self, cx: &App) -> ButtonStates {
@@ -246,15 +246,15 @@ impl ProjectDiff {
             .collect::<Vec<_>>();
         if !ranges.iter().any(|range| range.start != range.end) {
             selection = false;
-            if let Some((excerpt_id, buffer, range)) = self.editor.read(cx).active_excerpt(cx) {
+            match self.editor.read(cx).active_excerpt(cx) { Some((excerpt_id, buffer, range)) => {
                 ranges = vec![multi_buffer::Anchor::range_in_buffer(
                     excerpt_id,
                     buffer.read(cx).remote_id(),
                     range,
                 )];
-            } else {
+            } _ => {
                 ranges = Vec::default();
-            }
+            }}
         }
         let mut has_staged_hunks = false;
         let mut has_unstaged_hunks = false;
@@ -678,15 +678,15 @@ impl Render for ProjectDiff {
             .justify_center()
             .size_full()
             .when(is_empty, |el| {
-                let remote_button = if let Some(panel) = self
+                let remote_button = match self
                     .workspace
                     .upgrade()
                     .and_then(|workspace| workspace.read(cx).panel::<GitPanel>(cx))
-                {
+                { Some(panel) => {
                     panel.update(cx, |panel, cx| panel.render_remote_button(cx))
-                } else {
+                } _ => {
                     None
-                };
+                }};
                 let keybinding_focus_handle = self.focus_handle(cx).clone();
                 el.child(
                     v_flex()
@@ -1058,11 +1058,11 @@ impl RenderOnce for ProjectDiffEmptyState {
 
         let not_ahead_or_behind = status_against_remote(0, 0);
         let ahead_of_remote = status_against_remote(1, 0);
-        let branch_not_on_remote = if let Some(branch) = self.current_branch.as_ref() {
+        let branch_not_on_remote = match self.current_branch.as_ref() { Some(branch) => {
             branch.upstream.is_none()
-        } else {
+        } _ => {
             false
-        };
+        }};
 
         let has_branch_container = |branch: &Branch| {
             h_flex()

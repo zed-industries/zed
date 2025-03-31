@@ -77,27 +77,27 @@ impl RenderedMessage {
     }
 
     fn append_thinking(&mut self, text: &String, window: &Window, cx: &mut App) {
-        if let Some(RenderedMessageSegment::Thinking {
+        match self.segments.last_mut()
+        { Some(RenderedMessageSegment::Thinking {
             content,
             scroll_handle,
-        }) = self.segments.last_mut()
-        {
+        }) => {
             content.update(cx, |markdown, cx| {
                 markdown.append(text, cx);
             });
             scroll_handle.scroll_to_bottom();
-        } else {
+        } _ => {
             self.segments.push(RenderedMessageSegment::Thinking {
                 content: render_markdown(text.into(), self.language_registry.clone(), window, cx),
                 scroll_handle: ScrollHandle::default(),
             });
-        }
+        }}
     }
 
     fn append_text(&mut self, text: &String, window: &Window, cx: &mut App) {
-        if let Some(RenderedMessageSegment::Text(markdown)) = self.segments.last_mut() {
+        match self.segments.last_mut() { Some(RenderedMessageSegment::Text(markdown)) => {
             markdown.update(cx, |markdown, cx| markdown.append(text, cx));
-        } else {
+        } _ => {
             self.segments
                 .push(RenderedMessageSegment::Text(render_markdown(
                     SharedString::from(text),
@@ -105,7 +105,7 @@ impl RenderedMessage {
                     window,
                     cx,
                 )));
-        }
+        }}
     }
 
     fn push_segment(&mut self, segment: &MessageSegment, window: &Window, cx: &mut App) {
@@ -930,19 +930,19 @@ impl ActiveThread {
             v_flex()
                 .gap_1p5()
                 .child(
-                    if let Some(edit_message_editor) = edit_message_editor.clone() {
+                    match edit_message_editor.clone() { Some(edit_message_editor) => {
                         div()
                             .key_context("EditMessageEditor")
                             .on_action(cx.listener(Self::cancel_editing_message))
                             .on_action(cx.listener(Self::confirm_editing_message))
                             .min_h_6()
                             .child(edit_message_editor)
-                    } else {
+                    } _ => {
                         div()
                             .min_h_6()
                             .text_ui(cx)
                             .child(self.render_message_content(message_id, rendered_message, cx))
-                    },
+                    }},
                 )
                 .when_some(context, |parent, context| {
                     if !context.is_empty() {
@@ -1204,7 +1204,7 @@ impl ActiveThread {
         message_id: MessageId,
         rendered_message: &RenderedMessage,
         cx: &Context<Self>,
-    ) -> impl IntoElement {
+    ) -> impl IntoElement + use<> {
         let pending_thinking_segment_index = rendered_message
             .segments
             .iter()
@@ -1259,7 +1259,7 @@ impl ActiveThread {
         scroll_handle: &ScrollHandle,
         pending: bool,
         cx: &Context<Self>,
-    ) -> impl IntoElement {
+    ) -> impl IntoElement + use<> {
         let is_open = self
             .expanded_thinking_segments
             .get(&(message_id, ix))
@@ -1412,7 +1412,7 @@ impl ActiveThread {
         )
     }
 
-    fn render_tool_use(&self, tool_use: ToolUse, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_tool_use(&self, tool_use: ToolUse, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         let is_open = self
             .expanded_tool_uses
             .get(&tool_use.id)
@@ -1822,7 +1822,7 @@ impl ActiveThread {
     fn render_confirmations<'a>(
         &'a mut self,
         cx: &'a mut Context<Self>,
-    ) -> impl Iterator<Item = AnyElement> + 'a {
+    ) -> impl Iterator<Item = AnyElement> + 'a + use<'a> {
         let thread = self.thread.read(cx);
 
         thread

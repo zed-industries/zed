@@ -798,18 +798,18 @@ impl VimGlobals {
             }
             '%' => editor.and_then(|editor| {
                 let selection = editor.selections.newest::<Point>(cx);
-                if let Some((_, buffer, _)) = editor
+                match editor
                     .buffer()
                     .read(cx)
                     .excerpt_containing(selection.head(), cx)
-                {
+                { Some((_, buffer, _)) => {
                     buffer
                         .read(cx)
                         .file()
                         .map(|file| file.path().to_string_lossy().to_string().into())
-                } else {
+                } _ => {
                     None
-                }
+                }}
             }),
             _ => self.registers.get(&lower).cloned(),
         }

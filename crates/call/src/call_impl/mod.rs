@@ -179,24 +179,24 @@ impl ActiveCall {
             return Task::ready(Ok(()));
         }
 
-        let room = if let Some(room) = self.room().cloned() {
+        let room = match self.room().cloned() { Some(room) => {
             Some(Task::ready(Ok(room)).shared())
-        } else {
+        } _ => {
             self.pending_room_creation.clone()
-        };
+        }};
 
-        let invite = if let Some(room) = room {
+        let invite = match room { Some(room) => {
             cx.spawn(async move |_, cx| {
                 let room = room.await.map_err(|err| anyhow!("{:?}", err))?;
 
-                let initial_project_id = if let Some(initial_project) = initial_project {
+                let initial_project_id = match initial_project { Some(initial_project) => {
                     Some(
                         room.update(cx, |room, cx| room.share_project(initial_project, cx))?
                             .await?,
                     )
-                } else {
+                } _ => {
                     None
-                };
+                }};
 
                 room.update(cx, move |room, cx| {
                     room.call(called_user_id, initial_project_id, cx)
@@ -205,7 +205,7 @@ impl ActiveCall {
 
                 anyhow::Ok(())
             })
-        } else {
+        } _ => {
             let client = self.client.clone();
             let user_store = self.user_store.clone();
             let room = cx
@@ -239,7 +239,7 @@ impl ActiveCall {
                 room.await.map_err(|err| anyhow!("{:?}", err))?;
                 anyhow::Ok(())
             })
-        };
+        }};
 
         cx.spawn(async move |this, cx| {
             let result = invite.await;
@@ -292,11 +292,11 @@ impl ActiveCall {
             return Task::ready(Err(anyhow!("cannot join while on another call")));
         }
 
-        let call = if let Some(call) = self.incoming_call.0.borrow_mut().take() {
+        let call = match self.incoming_call.0.borrow_mut().take() { Some(call) => {
             call
-        } else {
+        } _ => {
             return Task::ready(Err(anyhow!("no incoming call")));
-        };
+        }};
 
         if self.pending_room_creation.is_some() {
             return Task::ready(Ok(()));
@@ -373,12 +373,12 @@ impl ActiveCall {
         Audio::end_call(cx);
 
         let channel_id = self.channel_id(cx);
-        if let Some((room, _)) = self.room.take() {
+        match self.room.take() { Some((room, _)) => {
             cx.emit(Event::RoomLeft { channel_id });
             room.update(cx, |room, cx| room.leave(cx))
-        } else {
+        } _ => {
             Task::ready(Ok(()))
-        }
+        }}
     }
 
     pub fn share_project(
@@ -386,12 +386,12 @@ impl ActiveCall {
         project: Entity<Project>,
         cx: &mut Context<Self>,
     ) -> Task<Result<u64>> {
-        if let Some((room, _)) = self.room.as_ref() {
+        match self.room.as_ref() { Some((room, _)) => {
             self.report_call_event("Project Shared", cx);
             room.update(cx, |room, cx| room.share_project(project, cx))
-        } else {
+        } _ => {
             Task::ready(Err(anyhow!("no active call")))
-        }
+        }}
     }
 
     pub fn unshare_project(
@@ -399,12 +399,12 @@ impl ActiveCall {
         project: Entity<Project>,
         cx: &mut Context<Self>,
     ) -> Result<()> {
-        if let Some((room, _)) = self.room.as_ref() {
+        match self.room.as_ref() { Some((room, _)) => {
             self.report_call_event("Project Unshared", cx);
             room.update(cx, |room, cx| room.unshare_project(project, cx))
-        } else {
+        } _ => {
             Err(anyhow!("no active call"))
-        }
+        }}
     }
 
     pub fn location(&self) -> Option<&WeakEntity<Project>> {
@@ -430,7 +430,7 @@ impl ActiveCall {
             Task::ready(Ok(()))
         } else {
             cx.notify();
-            if let Some(room) = room {
+            match room { Some(room) => {
                 if room.read(cx).status().is_offline() {
                     self.room = None;
                     Task::ready(Ok(()))
@@ -454,10 +454,10 @@ impl ActiveCall {
                     cx.emit(Event::RoomJoined { channel_id });
                     room.update(cx, |room, cx| room.set_location(location.as_ref(), cx))
                 }
-            } else {
+            } _ => {
                 self.room = None;
                 Task::ready(Ok(()))
-            }
+            }}
         }
     }
 

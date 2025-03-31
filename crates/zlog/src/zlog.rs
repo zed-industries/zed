@@ -26,7 +26,7 @@ pub fn min_printed_log_level(level: log_impl::Level) -> log_impl::Level {
 
 #[macro_export]
 macro_rules! log {
-    ($logger:expr, $level:expr, $($arg:tt)+) => {
+    ($logger:expr_2021, $level:expr_2021, $($arg:tt)+) => {
         let level = $level;
         let logger = $logger;
         let (enabled, level) = $crate::scope_map::is_scope_enabled(&logger.scope, level);
@@ -38,7 +38,7 @@ macro_rules! log {
 
 #[macro_export]
 macro_rules! trace {
-    ($logger:expr => $($arg:tt)+) => {
+    ($logger:expr_2021 => $($arg:tt)+) => {
         $crate::log!($logger, $crate::log_impl::Level::Trace, $($arg)+);
     };
     ($($arg:tt)+) => {
@@ -48,7 +48,7 @@ macro_rules! trace {
 
 #[macro_export]
 macro_rules! debug {
-    ($logger:expr => $($arg:tt)+) => {
+    ($logger:expr_2021 => $($arg:tt)+) => {
         $crate::log!($logger, $crate::log_impl::Level::Debug, $($arg)+);
     };
     ($($arg:tt)+) => {
@@ -58,7 +58,7 @@ macro_rules! debug {
 
 #[macro_export]
 macro_rules! info {
-    ($logger:expr => $($arg:tt)+) => {
+    ($logger:expr_2021 => $($arg:tt)+) => {
         $crate::log!($logger, $crate::log_impl::Level::Info, $($arg)+);
     };
     ($($arg:tt)+) => {
@@ -68,7 +68,7 @@ macro_rules! info {
 
 #[macro_export]
 macro_rules! warn {
-    ($logger:expr => $($arg:tt)+) => {
+    ($logger:expr_2021 => $($arg:tt)+) => {
         $crate::log!($logger, $crate::log_impl::Level::Warn, $($arg)+);
     };
     ($($arg:tt)+) => {
@@ -78,7 +78,7 @@ macro_rules! warn {
 
 #[macro_export]
 macro_rules! error {
-    ($logger:expr => $($arg:tt)+) => {
+    ($logger:expr_2021 => $($arg:tt)+) => {
         $crate::log!($logger, $crate::log_impl::Level::Error, $($arg)+);
     };
     ($($arg:tt)+) => {
@@ -98,17 +98,17 @@ macro_rules! error {
 /// immediately, etc.
 #[macro_export]
 macro_rules! time {
-    ($logger:expr => $name:expr) => {
+    ($logger:expr_2021 => $name:expr_2021) => {
         $crate::Timer::new($logger, $name)
     };
-    ($name:expr) => {
+    ($name:expr_2021) => {
         time!($crate::default_logger!() => $name)
     };
 }
 
 #[macro_export]
 macro_rules! scoped {
-    ($parent:expr => $name:expr) => {{
+    ($parent:expr_2021 => $name:expr_2021) => {{
         let parent = $parent;
         let name = $name;
         let mut scope = parent.scope;
@@ -133,7 +133,7 @@ macro_rules! scoped {
         scope[index] = name;
         $crate::Logger { scope }
     }};
-    ($name:expr) => {
+    ($name:expr_2021) => {
         $crate::scoped!($crate::default_logger!() => $name)
     };
 }

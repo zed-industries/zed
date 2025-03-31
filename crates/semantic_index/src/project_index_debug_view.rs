@@ -123,11 +123,11 @@ impl ProjectIndexDebugView {
                         gpui::ListAlignment::Top,
                         px(100.),
                         move |ix, _, cx| {
-                            if let Some(view) = view.upgrade() {
+                            match view.upgrade() { Some(view) => {
                                 view.update(cx, |view, cx| view.render_chunk(ix, cx))
-                            } else {
+                            } _ => {
                                 div().into_any()
-                            }
+                            }}
                         },
                     ),
                     chunks,
@@ -200,7 +200,7 @@ impl ProjectIndexDebugView {
 
 impl Render for ProjectIndexDebugView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        if let Some(selected_path) = self.selected_path.as_ref() {
+        match self.selected_path.as_ref() { Some(selected_path) => {
             v_flex()
                 .child(
                     div()
@@ -222,7 +222,7 @@ impl Render for ProjectIndexDebugView {
                 .child(list(selected_path.list_state.clone()).size_full())
                 .size_full()
                 .into_any_element()
-        } else {
+        } _ => {
             let mut list = uniform_list(
                 cx.entity().clone(),
                 "ProjectIndexDebugView",
@@ -280,7 +280,7 @@ impl Render for ProjectIndexDebugView {
             )
             .size_full()
             .into_any_element()
-        }
+        }}
     }
 }
 

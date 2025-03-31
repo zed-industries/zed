@@ -219,14 +219,14 @@ async fn create_access_token(
     let mut impersonated_user_id = None;
     if let Some(impersonate) = params.impersonate {
         if user.admin {
-            if let Some(impersonated_user) = app.db.get_user_by_github_login(&impersonate).await? {
+            match app.db.get_user_by_github_login(&impersonate).await? { Some(impersonated_user) => {
                 impersonated_user_id = Some(impersonated_user.id);
-            } else {
+            } _ => {
                 return Err(Error::http(
                     StatusCode::UNPROCESSABLE_ENTITY,
                     format!("user {impersonate} does not exist"),
                 ));
-            }
+            }}
         } else {
             return Err(Error::http(
                 StatusCode::UNAUTHORIZED,

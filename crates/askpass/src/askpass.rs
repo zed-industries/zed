@@ -89,14 +89,14 @@ impl AskPassSession {
                     buffer.clear();
                 }
                 let prompt = String::from_utf8_lossy(&buffer);
-                if let Some(password) = delegate
+                match delegate
                     .ask_password(prompt.to_string())
                     .await
                     .context("failed to get askpass password")
                     .log_err()
-                {
+                { Some(password) => {
                     stream.write_all(password.as_bytes()).await.log_err();
-                } else {
+                } _ => {
                     if let Some(kill_tx) = kill_tx.take() {
                         kill_tx.send(()).log_err();
                     }
@@ -105,7 +105,7 @@ impl AskPassSession {
                     // spurious errors from ssh.
                     std::future::pending::<()>().await;
                     drop(stream);
-                }
+                }}
             }
             drop(temp_dir)
         });

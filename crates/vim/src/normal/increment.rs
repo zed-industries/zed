@@ -67,7 +67,7 @@ impl Vim {
                         Point::new(row, 0)
                     };
 
-                    if let Some((range, num, radix)) = find_number(&snapshot, start) {
+                    match find_number(&snapshot, start) { Some((range, num, radix)) => {
                         let replace = match radix {
                             10 => increment_decimal_string(&num, delta),
                             16 => increment_hex_string(&num, delta),
@@ -79,16 +79,16 @@ impl Vim {
                         if selection.is_empty() {
                             new_anchors.push((false, snapshot.anchor_after(range.end)))
                         }
-                    } else if let Some((range, boolean)) = find_boolean(&snapshot, start) {
+                    } _ => { match find_boolean(&snapshot, start) { Some((range, boolean)) => {
                         let replace = toggle_boolean(&boolean);
                         delta += step as i64;
                         edits.push((range.clone(), replace));
                         if selection.is_empty() {
                             new_anchors.push((false, snapshot.anchor_after(range.end)))
                         }
-                    } else if selection.is_empty() {
+                    } _ => if selection.is_empty() {
                         new_anchors.push((true, snapshot.anchor_after(start)))
-                    }
+                    }}}}
                 }
             }
             editor.transact(window, cx, |editor, window, cx| {

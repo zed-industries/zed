@@ -2152,7 +2152,7 @@ fn matching(map: &DisplaySnapshot, display_point: DisplayPoint) -> DisplayPoint 
     let ranges = map
         .buffer_snapshot
         .bracket_ranges(visible_line_range.clone());
-    if let Some(ranges) = ranges {
+    match ranges { Some(ranges) => {
         let line_range = line_range.start.to_offset(&map.buffer_snapshot)
             ..line_range.end.to_offset(&map.buffer_snapshot);
         let mut closest_pair_destination = None;
@@ -2203,9 +2203,9 @@ fn matching(map: &DisplaySnapshot, display_point: DisplayPoint) -> DisplayPoint 
         closest_pair_destination
             .map(|destination| destination.to_display_point(map))
             .unwrap_or(display_point)
-    } else {
+    } _ => {
         display_point
-    }
+    }}
 }
 
 // Go to {count} percentage in the file, on the first

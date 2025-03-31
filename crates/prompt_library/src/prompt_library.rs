@@ -459,7 +459,7 @@ impl PromptLibrary {
                                 .take()
                         })?;
 
-                        if let Some((title, body)) = title_and_body {
+                        match title_and_body { Some((title, body)) => {
                             let title = if title.trim().is_empty() {
                                 None
                             } else {
@@ -476,9 +476,9 @@ impl PromptLibrary {
                             })?;
 
                             executor.timer(SAVE_THROTTLE).await;
-                        } else {
+                        } _ => {
                             break;
-                        }
+                        }}
                     }
 
                     this.update(cx, |this, _cx| {
@@ -538,14 +538,14 @@ impl PromptLibrary {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if let Some(prompt_editor) = self.prompt_editors.get(&prompt_id) {
+        match self.prompt_editors.get(&prompt_id) { Some(prompt_editor) => {
             if focus {
                 prompt_editor
                     .body_editor
                     .update(cx, |editor, cx| window.focus(&editor.focus_handle(cx)));
             }
             self.set_active_prompt(Some(prompt_id), window, cx);
-        } else if let Some(prompt_metadata) = self.store.metadata(prompt_id) {
+        } _ => { match self.store.metadata(prompt_id) { Some(prompt_metadata) => {
             let language_registry = self.language_registry.clone();
             let prompt = self.store.load(prompt_id);
             let make_completion_provider = self.make_completion_provider.clone();
@@ -631,7 +631,7 @@ impl PromptLibrary {
                 })
                 .ok();
             });
-        }
+        } _ => {}}}}
     }
 
     fn set_active_prompt(
@@ -922,7 +922,7 @@ impl PromptLibrary {
         }
     }
 
-    fn render_prompt_list(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_prompt_list(&mut self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         v_flex()
             .id("prompt-list")
             .capture_action(cx.listener(Self::focus_active_prompt))

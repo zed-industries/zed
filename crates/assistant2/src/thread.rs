@@ -379,15 +379,15 @@ impl Thread {
         cx.spawn(async move |this, cx| {
             let result = restore.await;
             this.update(cx, |this, cx| {
-                if let Err(err) = result.as_ref() {
+                match result.as_ref() { Err(err) => {
                     this.last_restore_checkpoint = Some(LastRestoreCheckpoint::Error {
                         message_id: checkpoint.message_id,
                         error: err.to_string(),
                     });
-                } else {
+                } _ => {
                     this.truncate(checkpoint.message_id, cx);
                     this.last_restore_checkpoint = None;
-                }
+                }}
                 this.pending_checkpoint = None;
                 cx.emit(ThreadEvent::CheckpointChanged);
                 cx.notify();
@@ -721,7 +721,7 @@ impl Thread {
             })
             .next();
 
-        if let Some((rel_rules_path, abs_rules_path)) = selected_rules_file {
+        match selected_rules_file { Some((rel_rules_path, abs_rules_path)) => {
             cx.spawn(async move |_| {
                 let rules_file_result = maybe!(async move {
                     let abs_rules_path = abs_rules_path?;
@@ -752,7 +752,7 @@ impl Thread {
                 };
                 (worktree_info, rules_file_error)
             })
-        } else {
+        } _ => {
             Task::ready((
                 WorktreeInfoForSystemPrompt {
                     root_name,
@@ -761,7 +761,7 @@ impl Thread {
                 },
                 None,
             ))
-        }
+        }}
     }
 
     pub fn send_to_model(
@@ -1186,7 +1186,7 @@ impl Thread {
     pub fn use_pending_tools(
         &mut self,
         cx: &mut Context<Self>,
-    ) -> impl IntoIterator<Item = PendingToolUse> {
+    ) -> impl IntoIterator<Item = PendingToolUse> + use<> {
         let request = self.to_completion_request(RequestKind::Chat, cx);
         let messages = Arc::new(request.messages);
         let pending_tool_uses = self
@@ -1198,7 +1198,7 @@ impl Thread {
             .collect::<Vec<_>>();
 
         for tool_use in pending_tool_uses.iter() {
-            if let Some(tool) = self.tools.tool(&tool_use.name, cx) {
+            match self.tools.tool(&tool_use.name, cx) { Some(tool) => {
                 if tool.needs_confirmation()
                     && !AssistantSettings::get_global(cx).always_allow_tool_actions
                 {
@@ -1220,7 +1220,7 @@ impl Thread {
                         cx,
                     );
                 }
-            } else if let Some(tool) = self.tools.tool(&tool_use.name, cx) {
+            } _ => { match self.tools.tool(&tool_use.name, cx) { Some(tool) => {
                 self.run_tool(
                     tool_use.id.clone(),
                     tool_use.ui_text.clone(),
@@ -1229,7 +1229,7 @@ impl Thread {
                     tool,
                     cx,
                 );
-            }
+            } _ => {}}}}
         }
 
         pending_tool_uses

@@ -318,7 +318,7 @@ impl ManageProfilesModal {
         mode: ChooseProfileMode,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> impl IntoElement {
+    ) -> impl IntoElement + use<> {
         Navigable::new(
             div()
                 .track_focus(&self.focus_handle(cx))
@@ -418,7 +418,7 @@ impl ManageProfilesModal {
         mode: NewProfileMode,
         _window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> impl IntoElement {
+    ) -> impl IntoElement + use<> {
         let settings = AssistantSettings::get_global(cx);
 
         let base_profile_name = mode.base_profile_id.as_ref().map(|base_profile_id| {
@@ -448,7 +448,7 @@ impl ManageProfilesModal {
         mode: ViewProfileMode,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> impl IntoElement {
+    ) -> impl IntoElement + use<> {
         let settings = AssistantSettings::get_global(cx);
 
         let profile_name = settings

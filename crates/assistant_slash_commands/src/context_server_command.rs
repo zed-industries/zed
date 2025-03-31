@@ -88,7 +88,7 @@ impl SlashCommand for ContextServerSlashCommand {
         let server_id = self.server_id.clone();
         let prompt_name = self.prompt.name.clone();
 
-        if let Some(server) = self.server_manager.read(cx).get_server(&server_id) {
+        match self.server_manager.read(cx).get_server(&server_id) { Some(server) => {
             cx.foreground_executor().spawn(async move {
                 let Some(protocol) = server.client() else {
                     return Err(anyhow!("Context server not initialized"));
@@ -119,9 +119,9 @@ impl SlashCommand for ContextServerSlashCommand {
                     .collect();
                 Ok(completions)
             })
-        } else {
+        } _ => {
             Task::ready(Err(anyhow!("Context server not found")))
-        }
+        }}
     }
 
     fn run(
@@ -143,7 +143,7 @@ impl SlashCommand for ContextServerSlashCommand {
         };
 
         let manager = self.server_manager.read(cx);
-        if let Some(server) = manager.get_server(&server_id) {
+        match manager.get_server(&server_id) { Some(server) => {
             cx.foreground_executor().spawn(async move {
                 let Some(protocol) = server.client() else {
                     return Err(anyhow!("Context server not initialized"));
@@ -191,9 +191,9 @@ impl SlashCommand for ContextServerSlashCommand {
                 }
                 .to_event_stream())
             })
-        } else {
+        } _ => {
             Task::ready(Err(anyhow!("Context server not found")))
-        }
+        }}
     }
 }
 

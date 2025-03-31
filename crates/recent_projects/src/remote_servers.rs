@@ -603,14 +603,14 @@ impl RemoteServerProjects {
         ssh_server: ProjectEntry,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> impl IntoElement {
-        let (main_label, aux_label) = if let Some(nickname) = ssh_server.connection.nickname.clone()
-        {
+    ) -> impl IntoElement + use<> {
+        let (main_label, aux_label) = match ssh_server.connection.nickname.clone()
+        { Some(nickname) => {
             let aux_label = SharedString::from(format!("({})", ssh_server.connection.host));
             (nickname.into(), Some(aux_label))
-        } else {
+        } _ => {
             (ssh_server.connection.host.clone(), None)
-        };
+        }};
         v_flex()
             .w_full()
             .child(ListSeparator)
@@ -739,7 +739,7 @@ impl RemoteServerProjects {
         (navigation, project): &(NavigableEntry, SshProject),
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> impl IntoElement {
+    ) -> impl IntoElement + use<> {
         let server = server.clone();
         let element_id_base = SharedString::from(format!("remote-project-{server_ix}"));
         let container_element_id_base =
@@ -887,7 +887,7 @@ impl RemoteServerProjects {
         &self,
         state: &CreateRemoteServer,
         cx: &mut Context<Self>,
-    ) -> impl IntoElement {
+    ) -> impl IntoElement + use<> {
         let ssh_prompt = state.ssh_prompt.clone();
 
         state.address_editor.update(cx, |editor, cx| {
@@ -917,9 +917,9 @@ impl RemoteServerProjects {
                     .rounded_b_sm()
                     .w_full()
                     .map(|this| {
-                        if let Some(ssh_prompt) = ssh_prompt {
+                        match ssh_prompt { Some(ssh_prompt) => {
                             this.child(h_flex().w_full().child(ssh_prompt))
-                        } else if let Some(address_error) = &state.address_error {
+                        } _ => if let Some(address_error) = &state.address_error {
                             this.child(
                                 h_flex().p_2().w_full().gap_2().child(
                                     Label::new(address_error.clone())
@@ -953,7 +953,7 @@ impl RemoteServerProjects {
                                             }),
                                     ),
                             )
-                        }
+                        }}
                     }),
             )
     }
@@ -967,7 +967,7 @@ impl RemoteServerProjects {
         }: ViewServerOptionsState,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> impl IntoElement {
+    ) -> impl IntoElement + use<> {
         let connection_string = connection.host.clone();
 
         let mut view = Navigable::new(
@@ -1209,7 +1209,7 @@ impl RemoteServerProjects {
         state: &EditNicknameState,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> impl IntoElement {
+    ) -> impl IntoElement + use<> {
         let Some(connection) = SshSettings::get_global(cx)
             .ssh_connections()
             .nth(state.index)
@@ -1247,7 +1247,7 @@ impl RemoteServerProjects {
         mut state: DefaultState,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> impl IntoElement {
+    ) -> impl IntoElement + use<> {
         if SshSettings::get_global(cx)
             .ssh_connections
             .as_ref()

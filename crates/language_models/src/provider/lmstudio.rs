@@ -326,9 +326,9 @@ impl LanguageModel for LmStudioLanguageModel {
                             }
 
                             // Try to parse the delta as ChatMessage
-                            if let Ok(chat_message) = serde_json::from_value::<ChatMessage>(
+                            match serde_json::from_value::<ChatMessage>(
                                 fragment.choices[0].delta.clone(),
-                            ) {
+                            ) { Ok(chat_message) => {
                                 let content = match chat_message {
                                     ChatMessage::User { content } => content,
                                     ChatMessage::Assistant { content, .. } => {
@@ -341,9 +341,9 @@ impl LanguageModel for LmStudioLanguageModel {
                                 } else {
                                     None
                                 }
-                            } else {
+                            } _ => {
                                 None
-                            }
+                            }}
                         }
                         Err(error) => Some(Err(error)),
                     }

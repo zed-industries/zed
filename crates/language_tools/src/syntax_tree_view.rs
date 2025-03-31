@@ -178,7 +178,7 @@ impl SyntaxTreeView {
             Some(layer) => layer,
             None => {
                 let snapshot = buffer.read(cx).snapshot();
-                let layer = if let Some(prev_layer) = prev_layer {
+                let layer = match prev_layer { Some(prev_layer) => {
                     let prev_range = prev_layer.node().byte_range();
                     snapshot
                         .syntax_layers()
@@ -188,9 +188,9 @@ impl SyntaxTreeView {
                             ((range.start as i64) - (prev_range.start as i64)).abs()
                                 + ((range.end as i64) - (prev_range.end as i64)).abs()
                         })?
-                } else {
+                } _ => {
                     snapshot.syntax_layers().next()?
-                };
+                }};
                 buffer_state.active_layer.insert(layer.to_owned())
             }
         };

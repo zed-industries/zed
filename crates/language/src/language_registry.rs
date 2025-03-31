@@ -389,12 +389,12 @@ impl LanguageRegistry {
             .find(|cached_adapter| cached_adapter.name == server_name)
             .cloned();
 
-        if let Some(found) = registered {
+        match registered { Some(found) => {
             found
-        } else {
+        } _ => {
             let adapter = build_adapter();
             self.register_lsp_adapter(language_name, adapter)
-        }
+        }}
     }
 
     /// Register a fake language server and adapter
@@ -597,7 +597,7 @@ impl LanguageRegistry {
     pub fn language_for_name(
         self: &Arc<Self>,
         name: &str,
-    ) -> impl Future<Output = Result<Arc<Language>>> {
+    ) -> impl Future<Output = Result<Arc<Language>>> + use<> {
         let name = UniCase::new(name);
         let rx = self.get_or_load_language(|language_name, _| {
             if UniCase::new(&language_name.0) == name {
@@ -612,7 +612,7 @@ impl LanguageRegistry {
     pub fn language_for_name_or_extension(
         self: &Arc<Self>,
         string: &str,
-    ) -> impl Future<Output = Result<Arc<Language>>> {
+    ) -> impl Future<Output = Result<Arc<Language>>> + use<> {
         let string = UniCase::new(string);
         let rx = self.get_or_load_language(|name, config| {
             if UniCase::new(&name.0) == string
@@ -656,16 +656,16 @@ impl LanguageRegistry {
     pub fn language_for_file_path<'a>(
         self: &Arc<Self>,
         path: &'a Path,
-    ) -> impl Future<Output = Result<Arc<Language>>> + 'a {
+    ) -> impl Future<Output = Result<Arc<Language>>> + 'a + use<'a> {
         let available_language = self.language_for_file_internal(path, None, None);
 
         let this = self.clone();
         async move {
-            if let Some(language) = available_language {
+            match available_language { Some(language) => {
                 this.load_language(&language).await?
-            } else {
+            } _ => {
                 Err(anyhow!(LanguageNotFound))
-            }
+            }}
         }
     }
 
@@ -770,18 +770,18 @@ impl LanguageRegistry {
                     .spawn(async move {
                         let language = async {
                             let loaded_language = (language_load)()?;
-                            if let Some(grammar) = loaded_language.config.grammar.clone() {
+                            match loaded_language.config.grammar.clone() { Some(grammar) => {
                                 let grammar = Some(this.get_or_load_grammar(grammar).await?);
 
                                 Language::new_with_id(id, loaded_language.config, grammar)
                                     .with_context_provider(loaded_language.context_provider)
                                     .with_toolchain_lister(loaded_language.toolchain_provider)
                                     .with_queries(loaded_language.queries)
-                            } else {
+                            } _ => {
                                 Ok(Language::new_with_id(id, loaded_language.config, None)
                                     .with_context_provider(loaded_language.context_provider)
                                     .with_toolchain_lister(loaded_language.toolchain_provider))
-                            }
+                            }}
                         }
                         .await;
 
@@ -840,11 +840,11 @@ impl LanguageRegistry {
     fn get_or_load_grammar(
         self: &Arc<Self>,
         name: Arc<str>,
-    ) -> impl Future<Output = Result<tree_sitter::Language>> {
+    ) -> impl Future<Output = Result<tree_sitter::Language>> + use<> {
         let (tx, rx) = oneshot::channel();
         let mut state = self.state.write();
 
-        if let Some(grammar) = state.grammars.get_mut(name.as_ref()) {
+        match state.grammars.get_mut(name.as_ref()) { Some(grammar) => {
             match grammar {
                 AvailableGrammar::LoadFailed(error) => {
                     tx.send(Err(error.clone())).ok();
@@ -891,10 +891,10 @@ impl LanguageRegistry {
                         .detach();
                 }
             }
-        } else {
+        } _ => {
             tx.send(Err(Arc::new(anyhow!("no such grammar {}", name))))
                 .ok();
-        }
+        }}
 
         async move { rx.await?.map_err(|e| anyhow!(e)) }
     }

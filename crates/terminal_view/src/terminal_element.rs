@@ -806,7 +806,7 @@ impl Element for TerminalElement {
                     )
                 };
 
-                let block_below_cursor_element = if let Some(block) = &self.block_below_cursor {
+                let block_below_cursor_element = match &self.block_below_cursor { Some(block) => {
                     let terminal = self.terminal.read(cx);
                     if terminal.last_content.display_offset == 0 {
                         let target_line = terminal.last_content.cursor.point.line.0 + 1;
@@ -834,9 +834,9 @@ impl Element for TerminalElement {
                     } else {
                         None
                     }
-                } else {
+                } _ => {
                     None
-                };
+                }};
 
                 LayoutState {
                     hitbox,

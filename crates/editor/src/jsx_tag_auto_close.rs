@@ -65,11 +65,11 @@ pub(crate) fn should_auto_close(
             let mut chars = buffer
                 .text_for_range(jsx_open_tag_node.byte_range())
                 .flat_map(|chunk| chunk.chars());
-            if let (Some(c1), Some(c2)) = (chars.next(), chars.next()) {
+            match (chars.next(), chars.next()) { (Some(c1), Some(c2)) => {
                 Some([c1, c2])
-            } else {
+            } _ => {
                 None
-            }
+            }}
         };
         if let Some(chars) = first_two_chars {
             if chars[0] != '<' {
@@ -639,7 +639,7 @@ mod jsx_tag_autoclose_tests {
     }
 
     macro_rules! check {
-        ($name:ident, $initial:literal + $input:literal => $expected:expr) => {
+        ($name:ident, $initial:literal + $input:literal => $expected:expr_2021) => {
             #[gpui::test]
             async fn $name(cx: &mut TestAppContext) {
                 let mut cx = test_setup(cx).await;

@@ -273,7 +273,7 @@ impl Telemetry {
     }
 
     #[cfg(any(test, feature = "test-support"))]
-    fn shutdown_telemetry(self: &Arc<Self>) -> impl Future<Output = ()> {
+    fn shutdown_telemetry(self: &Arc<Self>) -> impl Future<Output = ()> + use<> {
         Task::ready(())
     }
 

@@ -117,11 +117,11 @@ impl TerminalCodegen {
             let result = generate.await;
 
             this.update(cx, |this, cx| {
-                if let Err(error) = result {
+                match result { Err(error) => {
                     this.status = CodegenStatus::Error(error);
-                } else {
+                } _ => {
                     this.status = CodegenStatus::Done;
-                }
+                }}
                 cx.emit(CodegenEvent::Finished);
                 cx.notify();
             })

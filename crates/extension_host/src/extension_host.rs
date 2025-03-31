@@ -398,7 +398,7 @@ impl ExtensionStore {
         &mut self,
         modified_extension: Option<Arc<str>>,
         cx: &mut Context<Self>,
-    ) -> impl Future<Output = ()> {
+    ) -> impl Future<Output = ()> + use<> {
         let (tx, rx) = oneshot::channel();
         self.reload_complete_senders.push(tx);
         self.reload_tx
@@ -1247,14 +1247,14 @@ impl ExtensionStore {
                 )
                 .await;
 
-                if let Some(wasm_extension) = wasm_extension.log_err() {
+                match wasm_extension.log_err() { Some(wasm_extension) => {
                     wasm_extensions.push((extension.manifest.clone(), wasm_extension));
-                } else {
+                } _ => {
                     this.update(cx, |_, cx| {
                         cx.emit(Event::ExtensionFailedToLoad(extension.manifest.id.clone()))
                     })
                     .ok();
-                }
+                }}
             }
 
             this.update(cx, |this, cx| {

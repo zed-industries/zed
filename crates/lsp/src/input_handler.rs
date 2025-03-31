@@ -96,9 +96,9 @@ impl LspStdoutHandler {
                 }
             }
 
-            if let Ok(msg) = serde_json::from_slice::<AnyNotification>(&buffer) {
+            match serde_json::from_slice::<AnyNotification>(&buffer) { Ok(msg) => {
                 notifications_sender.unbounded_send(msg)?;
-            } else if let Ok(AnyResponse {
+            } _ => if let Ok(AnyResponse {
                 id, error, result, ..
             }) = serde_json::from_slice(&buffer)
             {
@@ -121,7 +121,7 @@ impl LspStdoutHandler {
                     "failed to deserialize LSP message:\n{}",
                     std::str::from_utf8(&buffer)?
                 );
-            }
+            }}
         }
     }
 }

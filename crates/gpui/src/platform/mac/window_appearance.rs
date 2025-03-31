@@ -29,7 +29,7 @@ impl WindowAppearance {
 }
 
 #[link(name = "AppKit", kind = "framework")]
-extern "C" {
+unsafe extern "C" {
     pub static NSAppearanceNameAqua: id;
     pub static NSAppearanceNameDarkAqua: id;
 }

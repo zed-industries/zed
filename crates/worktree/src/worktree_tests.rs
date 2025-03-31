@@ -1958,7 +1958,7 @@ async fn randomly_mutate_fs(
         let path = dirs.choose(rng).unwrap();
         let new_path = path.join(random_filename(rng));
 
-        if rng.gen() {
+        if rng.r#gen() {
             log::info!(
                 "creating dir {:?}",
                 new_path.strip_prefix(root_path).unwrap()
@@ -2026,7 +2026,7 @@ async fn randomly_mutate_fs(
             file_path.into_iter().chain(dir_path).choose(rng).unwrap()
         };
 
-        let is_rename = rng.gen();
+        let is_rename = rng.r#gen();
         if is_rename {
             let new_path_parent = dirs
                 .iter()
@@ -2840,7 +2840,7 @@ fn git_commit(msg: &'static str, repo: &git2::Repository) {
     let signature = Signature::now("test", "test@zed.dev").unwrap();
     let oid = repo.index().unwrap().write_tree().unwrap();
     let tree = repo.find_tree(oid).unwrap();
-    if let Ok(head) = repo.head() {
+    match repo.head() { Ok(head) => {
         let parent_obj = head.peel(git2::ObjectType::Commit).unwrap();
 
         let parent_commit = parent_obj.as_commit().unwrap();
@@ -2854,10 +2854,10 @@ fn git_commit(msg: &'static str, repo: &git2::Repository) {
             &[parent_commit],
         )
         .expect("Failed to commit with parent");
-    } else {
+    } _ => {
         repo.commit(Some("HEAD"), &signature, &signature, msg, &tree, &[])
             .expect("Failed to commit");
-    }
+    }}
 }
 
 #[track_caller]

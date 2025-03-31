@@ -151,7 +151,7 @@ impl SlashCommandCompletionProvider {
         let mut flag = self.cancel_flag.lock();
         flag.store(true, SeqCst);
         *flag = new_cancel_flag.clone();
-        if let Some(command) = self.slash_commands.command(command_name, cx) {
+        match self.slash_commands.command(command_name, cx) { Some(command) => {
             let completions = command.complete_argument(
                 arguments,
                 new_cancel_flag.clone(),
@@ -234,9 +234,9 @@ impl SlashCommandCompletionProvider {
                         .collect(),
                 ))
             })
-        } else {
+        } _ => {
             Task::ready(Ok(Some(Vec::new())))
-        }
+        }}
     }
 }
 
@@ -333,11 +333,11 @@ impl CompletionProvider for SlashCommandCompletionProvider {
         let position = position.to_point(buffer);
         let line_start = Point::new(position.row, 0);
         let mut lines = buffer.text_for_range(line_start..position).lines();
-        if let Some(line) = lines.next() {
+        match lines.next() { Some(line) => {
             SlashCommandLine::parse(line).is_some()
-        } else {
+        } _ => {
             false
-        }
+        }}
     }
 
     fn sort_completions(&self) -> bool {

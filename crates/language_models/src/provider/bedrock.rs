@@ -909,7 +909,7 @@ impl ConfigurationView {
         }
     }
 
-    fn render_aa_id_editor(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_aa_id_editor(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         let text_style = self.make_text_style(cx);
 
         EditorElement::new(
@@ -923,7 +923,7 @@ impl ConfigurationView {
         )
     }
 
-    fn render_sk_editor(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_sk_editor(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         let text_style = self.make_text_style(cx);
 
         EditorElement::new(
@@ -937,7 +937,7 @@ impl ConfigurationView {
         )
     }
 
-    fn render_region_editor(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_region_editor(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         let text_style = self.make_text_style(cx);
 
         EditorElement::new(

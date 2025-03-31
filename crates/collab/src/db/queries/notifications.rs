@@ -192,10 +192,10 @@ impl Database {
         response: Option<bool>,
         tx: &DatabaseTransaction,
     ) -> Result<Option<(UserId, proto::Notification)>> {
-        if let Some(id) = self
+        match self
             .find_notification(recipient_id, notification, tx)
             .await?
-        {
+        { Some(id) => {
             let row = notification::Entity::update(notification::ActiveModel {
                 id: ActiveValue::Unchanged(id),
                 recipient_id: ActiveValue::Unchanged(recipient_id),
@@ -212,9 +212,9 @@ impl Database {
             Ok(model_to_proto(self, row)
                 .map(|notification| (recipient_id, notification))
                 .ok())
-        } else {
+        } _ => {
             Ok(None)
-        }
+        }}
     }
 
     /// Find an unread notification by its recipient, kind and entity id.

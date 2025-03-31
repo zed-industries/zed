@@ -62,7 +62,7 @@ impl Render for DiagnosticIndicator {
                 .child(Label::new(warning_count.to_string()).size(LabelSize::Small)),
         };
 
-        let status = if let Some(diagnostic) = &self.current_diagnostic {
+        let status = match &self.current_diagnostic { Some(diagnostic) => {
             let message = diagnostic.message.split('\n').next().unwrap().to_string();
             Some(
                 Button::new("diagnostic_message", message)
@@ -80,9 +80,9 @@ impl Render for DiagnosticIndicator {
                     }))
                     .into_any_element(),
             )
-        } else {
+        } _ => {
             None
-        };
+        }};
 
         h_flex()
             .gap_2()
@@ -187,15 +187,15 @@ impl StatusItemView for DiagnosticIndicator {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if let Some(editor) = active_pane_item.and_then(|item| item.downcast::<Editor>()) {
+        match active_pane_item.and_then(|item| item.downcast::<Editor>()) { Some(editor) => {
             self.active_editor = Some(editor.downgrade());
             self._observe_active_editor = Some(cx.observe_in(&editor, window, Self::update));
             self.update(editor, window, cx);
-        } else {
+        } _ => {
             self.active_editor = None;
             self.current_diagnostic = None;
             self._observe_active_editor = None;
-        }
+        }}
         cx.notify();
     }
 }

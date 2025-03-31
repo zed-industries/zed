@@ -317,7 +317,7 @@ impl NotebookEditor {
         &self,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> impl IntoElement {
+    ) -> impl IntoElement + use<> {
         let has_outputs = self.has_outputs(window, cx);
 
         v_flex()
@@ -467,7 +467,7 @@ impl NotebookEditor {
         cell: &Cell,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> impl IntoElement {
+    ) -> impl IntoElement + use<> {
         let cell_position = self.cell_position(index);
 
         let is_selected = index == self.selected_cell_index;
@@ -642,7 +642,7 @@ impl NotebookItem {
                 .and_then(|spec| spec.language.clone()))
     }
 
-    pub fn notebook_language(&self) -> impl Future<Output = Option<Arc<Language>>> {
+    pub fn notebook_language(&self) -> impl Future<Output = Option<Arc<Language>>> + use<> {
         let language_name = self.language_name();
         let languages = self.languages.clone();
 

@@ -875,16 +875,16 @@ impl WorkspaceDb {
         user: Option<String>,
     ) -> Result<SerializedSshProject> {
         let paths = serde_json::to_string(&paths)?;
-        if let Some(project) = self
+        match self
             .get_ssh_project(host.clone(), port, paths.clone(), user.clone())
             .await?
-        {
+        { Some(project) => {
             Ok(project)
-        } else {
+        } _ => {
             self.insert_ssh_project(host, port, paths, user)
                 .await?
                 .ok_or_else(|| anyhow!("failed to insert ssh project"))
-        }
+        }}
     }
 
     query! {

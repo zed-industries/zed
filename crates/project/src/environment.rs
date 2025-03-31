@@ -125,15 +125,15 @@ impl ProjectEnvironment {
             return Task::ready(None).shared();
         }
 
-        if let Some(task) = self.environments.get(&worktree_id) {
+        match self.environments.get(&worktree_id) { Some(task) => {
             task.clone()
-        } else {
+        } _ => {
             let task = self
                 .get_worktree_env(worktree_id, worktree_abs_path, cx)
                 .shared();
             self.environments.insert(worktree_id, task.clone());
             task
-        }
+        }}
     }
 
     fn get_worktree_env(

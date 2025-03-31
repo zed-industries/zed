@@ -585,18 +585,18 @@ impl Focusable for AssistantPanel {
             ActiveView::Thread => self.message_editor.focus_handle(cx),
             ActiveView::History => self.history.focus_handle(cx),
             ActiveView::PromptEditor => {
-                if let Some(context_editor) = self.context_editor.as_ref() {
+                match self.context_editor.as_ref() { Some(context_editor) => {
                     context_editor.focus_handle(cx)
-                } else {
+                } _ => {
                     cx.focus_handle()
-                }
+                }}
             }
             ActiveView::Configuration => {
-                if let Some(configuration) = self.configuration.as_ref() {
+                match self.configuration.as_ref() { Some(configuration) => {
                     configuration.focus_handle(cx)
-                } else {
+                } _ => {
                     cx.focus_handle()
-                }
+                }}
             }
         }
     }
@@ -683,7 +683,7 @@ impl Panel for AssistantPanel {
 }
 
 impl AssistantPanel {
-    fn render_toolbar(&self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_toolbar(&self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         let thread = self.thread.read(cx);
         let focus_handle = self.focus_handle(cx);
 
@@ -825,7 +825,7 @@ impl AssistantPanel {
         &self,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> impl IntoElement {
+    ) -> impl IntoElement + use<> {
         let recent_history = self
             .history_store
             .update(cx, |this, cx| this.recent_entries(6, cx));

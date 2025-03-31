@@ -448,7 +448,7 @@ impl TestAppContext {
     }
 
     /// Returns a stream of notifications whenever the Entity is updated.
-    pub fn notifications<T: 'static>(&mut self, entity: &Entity<T>) -> impl Stream<Item = ()> {
+    pub fn notifications<T: 'static>(&mut self, entity: &Entity<T>) -> impl Stream<Item = ()> + use<T> {
         let (tx, rx) = futures::channel::mpsc::unbounded();
         self.update(|cx| {
             cx.observe(entity, {
@@ -521,7 +521,7 @@ impl TestAppContext {
 
 impl<T: 'static> Entity<T> {
     /// Block until the next event is emitted by the entity, then return it.
-    pub fn next_event<Event>(&self, cx: &mut TestAppContext) -> impl Future<Output = Event>
+    pub fn next_event<Event>(&self, cx: &mut TestAppContext) -> impl Future<Output = Event> + use<Event, T>
     where
         Event: Send + Clone + 'static,
         T: EventEmitter<Event>,
@@ -550,7 +550,7 @@ impl<V: 'static> Entity<V> {
         &self,
         advance_clock_by: Duration,
         cx: &TestAppContext,
-    ) -> impl Future<Output = ()> {
+    ) -> impl Future<Output = ()> + use<V> {
         use postage::prelude::{Sink as _, Stream as _};
 
         let (mut tx, mut rx) = postage::mpsc::channel(1);
@@ -843,7 +843,7 @@ impl VisualTestContext {
                     .take()
             })
             .unwrap();
-        if let Some(mut handler) = handler {
+        match handler { Some(mut handler) => {
             let should_close = handler();
             self.cx
                 .update_window(self.window, |_, window, _| {
@@ -851,9 +851,9 @@ impl VisualTestContext {
                 })
                 .unwrap();
             should_close
-        } else {
+        } _ => {
             false
-        }
+        }}
     }
 
     /// Get an &mut VisualTestContext (which is mostly what you need to pass to other methods).

@@ -77,7 +77,7 @@ impl Tool for ContextServerTool {
         _action_log: Entity<ActionLog>,
         cx: &mut App,
     ) -> Task<Result<String>> {
-        if let Some(server) = self.server_manager.read(cx).get_server(&self.server_id) {
+        match self.server_manager.read(cx).get_server(&self.server_id) { Some(server) => {
             let tool_name = self.tool.name.clone();
             let server_clone = server.clone();
             let input_clone = input.clone();
@@ -87,11 +87,11 @@ impl Tool for ContextServerTool {
                     bail!("Context server not initialized");
                 };
 
-                let arguments = if let serde_json::Value::Object(map) = input_clone {
+                let arguments = match input_clone { serde_json::Value::Object(map) => {
                     Some(map.into_iter().collect())
-                } else {
+                } _ => {
                     None
-                };
+                }};
 
                 log::trace!(
                     "Running tool: {} with arguments: {:?}",
@@ -116,8 +116,8 @@ impl Tool for ContextServerTool {
                 }
                 Ok(result)
             })
-        } else {
+        } _ => {
             Task::ready(Err(anyhow!("Context server not found")))
-        }
+        }}
     }
 }

@@ -950,10 +950,10 @@ impl ProjectSearchView {
             }
         });
 
-        let search = if let Some(existing) = existing {
+        let search = match existing { Some(existing) => {
             workspace.activate_item(&existing, true, true, window, cx);
             existing
-        } else {
+        } _ => {
             let settings = cx
                 .global::<ActiveSettings>()
                 .0
@@ -976,7 +976,7 @@ impl ProjectSearchView {
                 cx,
             );
             project_search_view
-        };
+        }};
 
         search.update(cx, |search, cx| {
             search.replace_enabled = action.replace_enabled;
@@ -1254,7 +1254,7 @@ impl ProjectSearchView {
         self.active_match_index.is_some()
     }
 
-    fn landing_text_minor(&self, window: &mut Window, cx: &App) -> impl IntoElement {
+    fn landing_text_minor(&self, window: &mut Window, cx: &App) -> impl IntoElement + use<> {
         let focus_handle = self.focus_handle.clone();
         v_flex()
             .gap_1()
@@ -1499,7 +1499,7 @@ impl ProjectSearchBar {
     }
 
     fn toggle_search_option(&mut self, option: SearchOptions, cx: &mut Context<Self>) -> bool {
-        if let Some(search_view) = self.active_project_search.as_ref() {
+        match self.active_project_search.as_ref() { Some(search_view) => {
             search_view.update(cx, |search_view, cx| {
                 search_view.toggle_search_option(option, cx);
                 if search_view.entity.read(cx).active_query.is_some() {
@@ -1508,9 +1508,9 @@ impl ProjectSearchBar {
             });
             cx.notify();
             true
-        } else {
+        } _ => {
             false
-        }
+        }}
     }
 
     fn toggle_replace(&mut self, _: &ToggleReplace, window: &mut Window, cx: &mut Context<Self>) {
@@ -1529,7 +1529,7 @@ impl ProjectSearchBar {
     }
 
     fn toggle_filters(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
-        if let Some(search_view) = self.active_project_search.as_ref() {
+        match self.active_project_search.as_ref() { Some(search_view) => {
             search_view.update(cx, |search_view, cx| {
                 search_view.toggle_filters(cx);
                 search_view
@@ -1543,13 +1543,13 @@ impl ProjectSearchBar {
             });
             cx.notify();
             true
-        } else {
+        } _ => {
             false
-        }
+        }}
     }
 
     fn toggle_opened_only(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
-        if let Some(search_view) = self.active_project_search.as_ref() {
+        match self.active_project_search.as_ref() { Some(search_view) => {
             search_view.update(cx, |search_view, cx| {
                 search_view.toggle_opened_only(window, cx);
                 if search_view.entity.read(cx).active_query.is_some() {
@@ -1559,17 +1559,17 @@ impl ProjectSearchBar {
 
             cx.notify();
             true
-        } else {
+        } _ => {
             false
-        }
+        }}
     }
 
     fn is_opened_only_enabled(&self, cx: &App) -> bool {
-        if let Some(search_view) = self.active_project_search.as_ref() {
+        match self.active_project_search.as_ref() { Some(search_view) => {
             search_view.read(cx).included_opened_only
-        } else {
+        } _ => {
             false
-        }
+        }}
     }
 
     fn move_focus_to_results(&self, window: &mut Window, cx: &mut Context<Self>) {
@@ -1582,11 +1582,11 @@ impl ProjectSearchBar {
     }
 
     fn is_option_enabled(&self, option: SearchOptions, cx: &App) -> bool {
-        if let Some(search) = self.active_project_search.as_ref() {
+        match self.active_project_search.as_ref() { Some(search) => {
             search.read(cx).search_options.contains(option)
-        } else {
+        } _ => {
             false
-        }
+        }}
     }
 
     fn next_history_query(
@@ -1612,17 +1612,17 @@ impl ProjectSearchBar {
                         let new_query = search_view.entity.update(cx, |model, cx| {
                             let project = model.project.clone();
 
-                            if let Some(new_query) = project.update(cx, |project, _| {
+                            match project.update(cx, |project, _| {
                                 project
                                     .search_history_mut(kind)
                                     .next(model.cursor_mut(kind))
                                     .map(str::to_string)
-                            }) {
+                            }) { Some(new_query) => {
                                 new_query
-                            } else {
+                            } _ => {
                                 model.cursor_mut(kind).reset();
                                 String::new()
-                            }
+                            }}
                         });
                         search_view.set_search_editor(kind, &new_query, window, cx);
                     }
@@ -1709,7 +1709,7 @@ impl ProjectSearchBar {
         }
     }
 
-    fn render_text_input(&self, editor: &Entity<Editor>, cx: &Context<Self>) -> impl IntoElement {
+    fn render_text_input(&self, editor: &Entity<Editor>, cx: &Context<Self>) -> impl IntoElement + use<> {
         let (color, use_syntax) = if editor.read(cx).read_only(cx) {
             (cx.theme().colors().text_disabled, false)
         } else {
@@ -2150,13 +2150,13 @@ impl ToolbarItemView for ProjectSearchBar {
         cx.notify();
         self.subscription = None;
         self.active_project_search = None;
-        if let Some(search) = active_pane_item.and_then(|i| i.downcast::<ProjectSearchView>()) {
+        match active_pane_item.and_then(|i| i.downcast::<ProjectSearchView>()) { Some(search) => {
             self.subscription = Some(cx.observe(&search, |_, _, cx| cx.notify()));
             self.active_project_search = Some(search);
             ToolbarItemLocation::PrimaryLeft {}
-        } else {
+        } _ => {
             ToolbarItemLocation::Hidden
-        }
+        }}
     }
 }
 

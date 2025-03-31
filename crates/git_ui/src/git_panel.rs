@@ -1511,7 +1511,7 @@ impl GitPanel {
 
         let task = cx.spawn_in(window, async move |this, cx| {
             let result = maybe!(async {
-                if let Ok(true) = confirmation.await {
+                match confirmation.await { Ok(true) => {
                     let prior_head = prior_head.await?;
 
                     repo.update(cx, |repo, cx| {
@@ -1520,9 +1520,9 @@ impl GitPanel {
                     .await??;
 
                     Ok(Some(prior_head))
-                } else {
+                } _ => {
                     Ok(None)
-                }
+                }}
             })
             .await;
 
@@ -1548,7 +1548,7 @@ impl GitPanel {
         &mut self,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> impl Future<Output = Result<bool, anyhow::Error>> {
+    ) -> impl Future<Output = Result<bool, anyhow::Error>> + use<> {
         let repo = self.active_repository.clone();
         let mut cx = window.to_async(cx);
 
@@ -2007,7 +2007,7 @@ impl GitPanel {
         &mut self,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> impl Future<Output = anyhow::Result<Option<Remote>>> {
+    ) -> impl Future<Output = anyhow::Result<Option<Remote>>> + use<> {
         let repo = self.active_repository.clone();
         let workspace = self.workspace.clone();
         let mut cx = window.to_async(cx);
@@ -2585,7 +2585,7 @@ impl GitPanel {
         workspace.add_item_to_center(Box::new(editor), window, cx);
     }
 
-    pub fn render_spinner(&self) -> Option<impl IntoElement> {
+    pub fn render_spinner(&self) -> Option<impl IntoElement + use<>> {
         (!self.pending_remote_operations.borrow().is_empty()).then(|| {
             Icon::new(IconName::ArrowCircle)
                 .size(IconSize::XSmall)
@@ -2762,7 +2762,7 @@ impl GitPanel {
         &self,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> Option<impl IntoElement> {
+    ) -> Option<impl IntoElement + use<>> {
         self.active_repository.as_ref()?;
 
         let text;
@@ -2856,7 +2856,7 @@ impl GitPanel {
         &self,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> Option<impl IntoElement> {
+    ) -> Option<impl IntoElement + use<>> {
         let active_repository = self.active_repository.clone()?;
         let (can_commit, tooltip) = self.configure_commit_button(cx);
         let panel_editor_style = panel_editor_style(true, window, cx);
@@ -2997,7 +2997,7 @@ impl GitPanel {
         Some(footer)
     }
 
-    fn render_previous_commit(&self, cx: &mut Context<Self>) -> Option<impl IntoElement> {
+    fn render_previous_commit(&self, cx: &mut Context<Self>) -> Option<impl IntoElement + use<>> {
         let active_repository = self.active_repository.as_ref()?;
         let branch = active_repository.read(cx).current_branch()?;
         let commit = branch.most_recent_commit.as_ref()?.clone();
@@ -3059,7 +3059,7 @@ impl GitPanel {
         )
     }
 
-    fn render_empty_state(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_empty_state(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         h_flex()
             .h_full()
             .flex_grow()
@@ -3103,7 +3103,7 @@ impl GitPanel {
         &self,
         show_horizontal_scrollbar_container: bool,
         cx: &mut Context<Self>,
-    ) -> impl IntoElement {
+    ) -> impl IntoElement + use<> {
         div()
             .id("git-panel-vertical-scroll")
             .occlude()
@@ -3159,7 +3159,7 @@ impl GitPanel {
         &self,
         right_offset: Pixels,
         cx: &mut Context<Self>,
-    ) -> impl IntoElement {
+    ) -> impl IntoElement + use<> {
         div()
             .id("git-panel-horizontal-scroll")
             .occlude()
@@ -3252,7 +3252,7 @@ impl GitPanel {
         has_write_access: bool,
         _: &Window,
         cx: &mut Context<Self>,
-    ) -> impl IntoElement {
+    ) -> impl IntoElement + use<> {
         let entry_count = self.entries.len();
 
         let scroll_track_size = px(16.);
@@ -3977,11 +3977,11 @@ impl GitPanelMessageTooltip {
 
 impl Render for GitPanelMessageTooltip {
     fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
-        if let Some(commit_tooltip) = &self.commit_tooltip {
+        match &self.commit_tooltip { Some(commit_tooltip) => {
             commit_tooltip.clone().into_any_element()
-        } else {
+        } _ => {
             gpui::Empty.into_any_element()
-        }
+        }}
     }
 }
 
@@ -4158,11 +4158,11 @@ impl RenderOnce for PanelRepoFooter {
                     })
                     .child(branch_selector),
             )
-            .children(if let Some(git_panel) = self.git_panel {
+            .children(match self.git_panel { Some(git_panel) => {
                 git_panel.update(cx, |git_panel, cx| git_panel.render_remote_button(cx))
-            } else {
+            } _ => {
                 None
-            })
+            }})
     }
 }
 

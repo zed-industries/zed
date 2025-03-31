@@ -1184,11 +1184,11 @@ pub fn handle_settings_file_changes(
         .background_executor()
         .block(user_settings_file_rx.next())
         .unwrap();
-    let user_settings_content = if let Ok(Some(migrated_content)) = migrate_settings(&content) {
+    let user_settings_content = match migrate_settings(&content) { Ok(Some(migrated_content)) => {
         migrated_content
-    } else {
+    } _ => {
         content
-    };
+    }};
     SettingsStore::update_global(cx, |store, cx| {
         let result = store.set_user_settings(&user_settings_content, cx);
         if let Err(err) = &result {
@@ -1201,13 +1201,13 @@ pub fn handle_settings_file_changes(
             let user_settings_content;
             let content_migrated;
 
-            if let Ok(Some(migrated_content)) = migrate_settings(&content) {
+            match migrate_settings(&content) { Ok(Some(migrated_content)) => {
                 user_settings_content = migrated_content;
                 content_migrated = true;
-            } else {
+            } _ => {
                 user_settings_content = content;
                 content_migrated = false;
-            }
+            }}
 
             cx.update(|cx| {
                 if let Some(notifier) = MigrationNotification::try_global(cx) {
@@ -1283,13 +1283,13 @@ pub fn handle_keymap_file_changes(
                 _ = keyboard_layout_rx.next() => {},
                 content = user_keymap_file_rx.next() => {
                     if let Some(content) = content {
-                        if let Ok(Some(migrated_content)) = migrate_keymap(&content) {
+                        match migrate_keymap(&content) { Ok(Some(migrated_content)) => {
                             user_keymap_content = migrated_content;
                             content_migrated = true;
-                        } else {
+                        } _ => {
                             user_keymap_content = content;
                             content_migrated = false;
-                        }
+                        }}
                     }
                 }
             };
@@ -1554,7 +1554,7 @@ fn open_local_file(
         .read(cx)
         .visible_worktrees(cx)
         .find_map(|tree| tree.read(cx).root_entry()?.is_dir().then_some(tree));
-    if let Some(worktree) = worktree {
+    match worktree { Some(worktree) => {
         let tree_id = worktree.read(cx).id();
         cx.spawn_in(window, async move |workspace, cx| {
             if let Some(dir_path) = settings_relative_path.parent() {
@@ -1603,13 +1603,13 @@ fn open_local_file(
             anyhow::Ok(())
         })
         .detach();
-    } else {
+    } _ => {
         struct NoOpenFolders;
 
         workspace.show_notification(NotificationId::unique::<NoOpenFolders>(), cx, |cx| {
             cx.new(|cx| MessageNotification::new("This project has no folders open.", cx))
         })
-    }
+    }}
 }
 
 fn open_telemetry_log_file(

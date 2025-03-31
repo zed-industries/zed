@@ -330,16 +330,16 @@ impl ChannelStore {
             )
         };
         cx.spawn(async move |this, cx| {
-            if let Some(request) = request {
+            match request { Some(request) => {
                 let response = request.await?;
                 let this = this
                     .upgrade()
                     .ok_or_else(|| anyhow!("channel store dropped"))?;
                 let user_store = this.update(cx, |this, _| this.user_store.clone())?;
                 ChannelMessage::from_proto_vec(response.messages, &user_store, cx).await
-            } else {
+            } _ => {
                 Ok(Vec::new())
-            }
+            }}
         })
     }
 
@@ -466,12 +466,12 @@ impl ChannelStore {
             match get_map(self).entry(channel_id) {
                 hash_map::Entry::Occupied(e) => match e.get() {
                     OpenEntityHandle::Open(entity) => {
-                        if let Some(entity) = entity.upgrade() {
+                        match entity.upgrade() { Some(entity) => {
                             break Task::ready(Ok(entity)).shared();
-                        } else {
+                        } _ => {
                             get_map(self).remove(&channel_id);
                             continue;
-                        }
+                        }}
                     }
                     OpenEntityHandle::Loading(task) => {
                         break task.clone();
@@ -824,7 +824,7 @@ impl ChannelStore {
         })
     }
 
-    pub fn remove_channel(&self, channel_id: ChannelId) -> impl Future<Output = Result<()>> {
+    pub fn remove_channel(&self, channel_id: ChannelId) -> impl Future<Output = Result<()>> + use<> {
         let client = self.client.clone();
         async move {
             client

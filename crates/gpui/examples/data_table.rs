@@ -149,7 +149,7 @@ impl TableRow {
         Self { ix, quote }
     }
 
-    fn render_cell(&self, key: &str, width: Pixels, color: gpui::Hsla) -> impl IntoElement {
+    fn render_cell(&self, key: &str, width: Pixels, color: gpui::Hsla) -> impl IntoElement + use<> {
         div()
             .whitespace_nowrap()
             .truncate()
@@ -295,7 +295,7 @@ impl DataTable {
             .height
     }
 
-    fn render_scrollbar(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_scrollbar(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         let scroll_height = self.scroll_height();
         let table_bounds = self.table_bounds();
         let table_height = table_bounds.size.height;

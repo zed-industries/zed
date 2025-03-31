@@ -209,16 +209,16 @@ impl CloudLanguageModelProvider {
         let state_ref = state.downgrade();
         let maintain_client_status = cx.spawn(async move |cx| {
             while let Some(status) = status_rx.next().await {
-                if let Some(this) = state_ref.upgrade() {
+                match state_ref.upgrade() { Some(this) => {
                     _ = this.update(cx, |this, cx| {
                         if this.status != status {
                             this.status = status;
                             cx.notify();
                         }
                     });
-                } else {
+                } _ => {
                     break;
-                }
+                }}
             }
         });
 

@@ -245,11 +245,11 @@ impl CollabPanel {
                 gpui::ListAlignment::Top,
                 px(1000.),
                 move |ix, window, cx| {
-                    if let Some(entity) = entity.upgrade() {
+                    match entity.upgrade() { Some(entity) => {
                         entity.update(cx, |this, cx| this.render_list_entry(ix, window, cx))
-                    } else {
+                    } _ => {
                         div().into_any()
-                    }
+                    }}
                 },
             );
 
@@ -878,7 +878,7 @@ impl CollabPanel {
         is_selected: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> impl IntoElement {
+    ) -> impl IntoElement + use<> {
         let project_name: SharedString = if worktree_root_names.is_empty() {
             "untitled".to_string()
         } else {
@@ -919,7 +919,7 @@ impl CollabPanel {
         is_selected: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> impl IntoElement {
+    ) -> impl IntoElement + use<> {
         let id = peer_id.map_or(usize::MAX, |id| id.as_u64() as usize);
 
         ListItem::new(("screen", id))
@@ -960,7 +960,7 @@ impl CollabPanel {
         is_selected: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> impl IntoElement {
+    ) -> impl IntoElement + use<> {
         let channel_store = self.channel_store.read(cx);
         let has_channel_buffer_changed = channel_store.has_channel_buffer_changed(channel_id);
         ListItem::new("channel-notes")
@@ -993,7 +993,7 @@ impl CollabPanel {
         is_selected: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> impl IntoElement {
+    ) -> impl IntoElement + use<> {
         let channel_store = self.channel_store.read(cx);
         let has_messages_notification = channel_store.has_new_messages(channel_id);
         ListItem::new("channel-chat")
@@ -2278,7 +2278,7 @@ impl CollabPanel {
         &self,
         editor: &Entity<Editor>,
         cx: &mut Context<Self>,
-    ) -> impl IntoElement {
+    ) -> impl IntoElement + use<> {
         let settings = ThemeSettings::get_global(cx);
         let text_style = TextStyle {
             color: if editor.read(cx).read_only(cx) {
@@ -2312,7 +2312,7 @@ impl CollabPanel {
         is_selected: bool,
         is_collapsed: bool,
         cx: &mut Context<Self>,
-    ) -> impl IntoElement {
+    ) -> impl IntoElement + use<> {
         let mut channel_link = None;
         let mut channel_tooltip_text = None;
         let mut channel_icon = None;
@@ -2411,7 +2411,7 @@ impl CollabPanel {
         calling: bool,
         is_selected: bool,
         cx: &mut Context<Self>,
-    ) -> impl IntoElement {
+    ) -> impl IntoElement + use<> {
         let online = contact.online;
         let busy = contact.busy || calling;
         let github_login = SharedString::from(contact.user.github_login.clone());
@@ -2492,7 +2492,7 @@ impl CollabPanel {
         is_incoming: bool,
         is_selected: bool,
         cx: &mut Context<Self>,
-    ) -> impl IntoElement {
+    ) -> impl IntoElement + use<> {
         let github_login = SharedString::from(user.github_login.clone());
         let user_id = user.id;
         let is_response_pending = self.user_store.read(cx).is_contact_request_pending(user);
@@ -2605,7 +2605,7 @@ impl CollabPanel {
         is_selected: bool,
         ix: usize,
         cx: &mut Context<Self>,
-    ) -> impl IntoElement {
+    ) -> impl IntoElement + use<> {
         let channel_id = channel.id;
 
         let is_active = maybe!({
@@ -2803,7 +2803,7 @@ impl CollabPanel {
         depth: usize,
         _window: &mut Window,
         _cx: &mut Context<Self>,
-    ) -> impl IntoElement {
+    ) -> impl IntoElement + use<> {
         let item = ListItem::new("channel-editor")
             .inset(false)
             // Add one level of depth for the disclosure arrow.
@@ -2832,7 +2832,7 @@ fn render_tree_branch(
     overdraw: bool,
     window: &mut Window,
     cx: &mut App,
-) -> impl IntoElement {
+) -> impl IntoElement + use<> {
     let rem_size = window.rem_size();
     let line_height = window.text_style().line_height_in_pixels(rem_size);
     let width = rem_size * 1.5;

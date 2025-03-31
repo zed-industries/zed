@@ -132,7 +132,7 @@ impl PaneGroup {
         app_state: &Arc<AppState>,
         window: &mut Window,
         cx: &mut Context<Workspace>,
-    ) -> impl IntoElement {
+    ) -> impl IntoElement + use<> {
         self.root.render(
             project,
             0,
@@ -231,7 +231,7 @@ impl Member {
         app_state: &Arc<AppState>,
         window: &mut Window,
         cx: &mut Context<Workspace>,
-    ) -> impl IntoElement {
+    ) -> impl IntoElement + use<> {
         match self {
             Member::Pane(pane) => {
                 if zoomed == Some(&pane.downgrade().into()) {

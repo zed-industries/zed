@@ -244,7 +244,7 @@ impl ComponentPreview {
         ix: usize,
         entry: &PreviewEntry,
         cx: &Context<Self>,
-    ) -> impl IntoElement {
+    ) -> impl IntoElement + use<> {
         match entry {
             PreviewEntry::Component(component_metadata) => {
                 let id = component_metadata.id();
@@ -318,7 +318,7 @@ impl ComponentPreview {
         title: SharedString,
         _window: &Window,
         _cx: &App,
-    ) -> impl IntoElement {
+    ) -> impl IntoElement + use<> {
         h_flex()
             .w_full()
             .h_10()
@@ -332,7 +332,7 @@ impl ComponentPreview {
         component: &ComponentMetadata,
         window: &mut Window,
         cx: &mut App,
-    ) -> impl IntoElement {
+    ) -> impl IntoElement + use<> {
         let name = component.name();
         let scope = component.scope();
 
@@ -379,7 +379,7 @@ impl ComponentPreview {
             .into_any_element()
     }
 
-    fn render_all_components(&self) -> impl IntoElement {
+    fn render_all_components(&self) -> impl IntoElement + use<> {
         v_flex()
             .id("component-list")
             .px_8()
@@ -397,7 +397,7 @@ impl ComponentPreview {
         component_id: &ComponentId,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> impl IntoElement {
+    ) -> impl IntoElement + use<> {
         let component = self.component_map.get(&component_id);
 
         if let Some(component) = component {

@@ -557,7 +557,7 @@ impl Item for Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> bool {
-        if let Ok(data) = data.downcast::<NavigationData>() {
+        match data.downcast::<NavigationData>() { Ok(data) => {
             let newest_selection = self.selections.newest::<Point>(cx);
             let buffer = self.buffer.read(cx).read(cx);
             let offset = if buffer.can_resolve(&data.cursor_anchor) {
@@ -586,9 +586,9 @@ impl Item for Editor {
                 self.nav_history = nav_history;
                 true
             }
-        } else {
+        } _ => {
             false
-        }
+        }}
     }
 
     fn tab_tooltip_text(&self, cx: &App) -> Option<SharedString> {
@@ -760,11 +760,11 @@ impl Item for Editor {
 
     fn can_save(&self, cx: &App) -> bool {
         let buffer = &self.buffer().read(cx);
-        if let Some(buffer) = buffer.as_singleton() {
+        match buffer.as_singleton() { Some(buffer) => {
             buffer.read(cx).project_path(cx).is_some()
-        } else {
+        } _ => {
             true
-        }
+        }}
     }
 
     fn save(

@@ -340,10 +340,10 @@ impl Element for Scrollbar {
                     if thumb_bounds.contains(&event.position) {
                         let offset = event.position.along(axis) - thumb_bounds.origin.along(axis);
                         state.drag.set(Some(offset));
-                    } else if let Some(ContentSize {
+                    } else { match scroll.content_size()
+                    { Some(ContentSize {
                         size: item_size, ..
-                    }) = scroll.content_size()
-                    {
+                    }) => {
                         let click_offset = {
                             let viewport_size = padded_bounds.size.along(axis);
 
@@ -370,7 +370,7 @@ impl Element for Scrollbar {
                                 scroll.set_offset(point(scroll.offset().x, click_offset));
                             }
                         }
-                    }
+                    } _ => {}}}
                 }
             });
             window.on_mouse_event({
@@ -387,7 +387,7 @@ impl Element for Scrollbar {
             let state = self.state.clone();
             let axis = self.kind;
             window.on_mouse_event(move |event: &MouseMoveEvent, _, window, cx| {
-                if let Some(drag_state) = state.drag.get().filter(|_| event.dragging()) {
+                match state.drag.get().filter(|_| event.dragging()) { Some(drag_state) => {
                     if let Some(ContentSize {
                         size: item_size, ..
                     }) = scroll.content_size()
@@ -423,9 +423,9 @@ impl Element for Scrollbar {
                             cx.notify(id);
                         }
                     }
-                } else {
+                } _ => {
                     state.drag.set(None);
-                }
+                }}
             });
             let state = self.state.clone();
             let scroll = self.state.scroll_handle.clone();

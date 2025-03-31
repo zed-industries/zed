@@ -84,7 +84,7 @@ pub fn scroll_report(
     scroll_lines: i32,
     e: &ScrollWheelEvent,
     mode: TermMode,
-) -> Option<impl Iterator<Item = Vec<u8>>> {
+) -> Option<impl Iterator<Item = Vec<u8>> + use<>> {
     if mode.intersects(TermMode::MOUSE_MODE) {
         mouse_report(
             point,

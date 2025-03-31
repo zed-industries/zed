@@ -163,21 +163,21 @@ impl LanguageModelRegistry {
         model: Option<Arc<dyn LanguageModel>>,
         cx: &mut Context<Self>,
     ) {
-        if let Some(model) = model {
+        match model { Some(model) => {
             let provider_id = model.provider_id();
-            if let Some(provider) = self.providers.get(&provider_id).cloned() {
+            match self.providers.get(&provider_id).cloned() { Some(provider) => {
                 self.active_model = Some(ActiveModel {
                     provider,
                     model: Some(model),
                 });
                 cx.emit(Event::ActiveModelChanged);
-            } else {
+            } _ => {
                 log::warn!("Active model's provider not found in registry");
-            }
-        } else {
+            }}
+        } _ => {
             self.active_model = None;
             cx.emit(Event::ActiveModelChanged);
-        }
+        }}
     }
 
     pub fn set_editor_model(
@@ -185,21 +185,21 @@ impl LanguageModelRegistry {
         model: Option<Arc<dyn LanguageModel>>,
         cx: &mut Context<Self>,
     ) {
-        if let Some(model) = model {
+        match model { Some(model) => {
             let provider_id = model.provider_id();
-            if let Some(provider) = self.providers.get(&provider_id).cloned() {
+            match self.providers.get(&provider_id).cloned() { Some(provider) => {
                 self.editor_model = Some(ActiveModel {
                     provider,
                     model: Some(model),
                 });
                 cx.emit(Event::EditorModelChanged);
-            } else {
+            } _ => {
                 log::warn!("Active model's provider not found in registry");
-            }
-        } else {
+            }}
+        } _ => {
             self.editor_model = None;
             cx.emit(Event::EditorModelChanged);
-        }
+        }}
     }
 
     pub fn active_provider(&self) -> Option<Arc<dyn LanguageModelProvider>> {

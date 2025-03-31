@@ -490,11 +490,11 @@ impl<D: PickerDelegate> Picker<D> {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if let Some(new_query) = self.delegate.confirm_completion(self.query(cx), window, cx) {
+        match self.delegate.confirm_completion(self.query(cx), window, cx) { Some(new_query) => {
             self.set_query(new_query, window, cx);
-        } else {
+        } _ => {
             cx.propagate()
-        }
+        }}
     }
 
     fn handle_click(
@@ -511,12 +511,12 @@ impl<D: PickerDelegate> Picker<D> {
     }
 
     fn do_confirm(&mut self, secondary: bool, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(update_query) = self.delegate.confirm_update_query(window, cx) {
+        match self.delegate.confirm_update_query(window, cx) { Some(update_query) => {
             self.set_query(update_query, window, cx);
             self.delegate.set_selected_index(0, window, cx);
-        } else {
+        } _ => {
             self.delegate.confirm(secondary, window, cx)
-        }
+        }}
     }
 
     fn on_input_editor_event(
@@ -526,7 +526,7 @@ impl<D: PickerDelegate> Picker<D> {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Head::Editor(ref editor) = &self.head else {
+        let Head::Editor(editor) = &self.head else {
             panic!("unexpected call");
         };
         match event {
@@ -617,7 +617,7 @@ impl<D: PickerDelegate> Picker<D> {
     }
 
     pub fn set_query(&self, query: impl Into<Arc<str>>, window: &mut Window, cx: &mut App) {
-        if let Head::Editor(ref editor) = &self.head {
+        if let Head::Editor(editor) = &self.head {
             editor.update(cx, |editor, cx| {
                 editor.set_text(query, window, cx);
                 let editor_offset = editor.buffer().read(cx).len(cx);
@@ -642,7 +642,7 @@ impl<D: PickerDelegate> Picker<D> {
         window: &mut Window,
         cx: &mut Context<Self>,
         ix: usize,
-    ) -> impl IntoElement {
+    ) -> impl IntoElement + use<D> {
         div()
             .id(("item", ix))
             .cursor_pointer()
@@ -678,7 +678,7 @@ impl<D: PickerDelegate> Picker<D> {
             )
     }
 
-    fn render_element_container(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_element_container(&self, cx: &mut Context<Self>) -> impl IntoElement + use<D> {
         let sizing_behavior = if self.max_height.is_some() {
             ListSizingBehavior::Infer
         } else {

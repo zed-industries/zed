@@ -33,11 +33,11 @@ impl StartingState {
             let entity = task.await;
 
             this.update(cx, |_, cx| {
-                if let Ok(entity) = entity {
+                match entity { Ok(entity) => {
                     cx.emit(StartingEvent::Finished(entity))
-                } else {
+                } _ => {
                     cx.emit(StartingEvent::Failed)
-                }
+                }}
             })
             .ok();
         });

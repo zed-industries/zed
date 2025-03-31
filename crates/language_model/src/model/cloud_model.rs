@@ -145,11 +145,11 @@ pub struct LlmApiToken(Arc<RwLock<Option<String>>>);
 impl LlmApiToken {
     pub async fn acquire(&self, client: &Arc<Client>) -> Result<String> {
         let lock = self.0.upgradable_read().await;
-        if let Some(token) = lock.as_ref() {
+        match lock.as_ref() { Some(token) => {
             Ok(token.to_string())
-        } else {
+        } _ => {
             Self::fetch(RwLockUpgradableReadGuard::upgrade(lock).await, client).await
-        }
+        }}
     }
 
     pub async fn refresh(&self, client: &Arc<Client>) -> Result<String> {

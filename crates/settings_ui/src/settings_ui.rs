@@ -33,12 +33,12 @@ pub fn init(cx: &mut App) {
                 .items()
                 .find_map(|item| item.downcast::<SettingsPage>());
 
-            if let Some(existing) = existing {
+            match existing { Some(existing) => {
                 workspace.activate_item(&existing, true, true, window, cx);
-            } else {
+            } _ => {
                 let settings_page = SettingsPage::new(workspace, cx);
                 workspace.add_item_to_active_pane(Box::new(settings_page), None, true, window, cx)
-            }
+            }}
         });
 
         let settings_ui_actions = [TypeId::of::<OpenSettingsEditor>()];

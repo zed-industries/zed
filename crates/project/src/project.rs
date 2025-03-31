@@ -1772,7 +1772,7 @@ impl Project {
     pub fn worktrees<'a>(
         &self,
         cx: &'a App,
-    ) -> impl 'a + DoubleEndedIterator<Item = Entity<Worktree>> {
+    ) -> impl 'a + DoubleEndedIterator<Item = Entity<Worktree>> + use<'a> {
         self.worktree_store.read(cx).worktrees()
     }
 
@@ -2320,11 +2320,11 @@ impl Project {
         abs_path: impl AsRef<Path>,
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<Buffer>>> {
-        if let Some((worktree, relative_path)) = self.find_worktree(abs_path.as_ref(), cx) {
+        match self.find_worktree(abs_path.as_ref(), cx) { Some((worktree, relative_path)) => {
             self.open_buffer((worktree.read(cx).id(), relative_path), cx)
-        } else {
+        } _ => {
             Task::ready(Err(anyhow!("no such path")))
-        }
+        }}
     }
 
     #[cfg(any(test, feature = "test-support"))]
@@ -2333,11 +2333,11 @@ impl Project {
         abs_path: impl AsRef<Path>,
         cx: &mut Context<Self>,
     ) -> Task<Result<(Entity<Buffer>, lsp_store::OpenLspBufferHandle)>> {
-        if let Some((worktree, relative_path)) = self.find_worktree(abs_path.as_ref(), cx) {
+        match self.find_worktree(abs_path.as_ref(), cx) { Some((worktree, relative_path)) => {
             self.open_buffer_with_lsp((worktree.read(cx).id(), relative_path), cx)
-        } else {
+        } _ => {
             Task::ready(Err(anyhow!("no such path")))
-        }
+        }}
     }
 
     pub fn open_buffer(
@@ -2410,9 +2410,9 @@ impl Project {
         id: BufferId,
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<Buffer>>> {
-        if let Some(buffer) = self.buffer_for_id(id, cx) {
+        match self.buffer_for_id(id, cx) { Some(buffer) => {
             Task::ready(Ok(buffer))
-        } else if self.is_local() || self.is_via_ssh() {
+        } _ => if self.is_local() || self.is_via_ssh() {
             Task::ready(Err(anyhow!("buffer {} does not exist", id)))
         } else if let Some(project_id) = self.remote_id() {
             let request = self.client.request(proto::OpenBufferById {
@@ -2431,7 +2431,7 @@ impl Project {
             })
         } else {
             Task::ready(Err(anyhow!("cannot open buffer while disconnected")))
-        }
+        }}
     }
 
     pub fn save_buffers(
@@ -3007,11 +3007,11 @@ impl Project {
                 .ok()
                 .flatten();
 
-            if let Some(task) = task {
+            match task { Some(task) => {
                 task.await;
-            } else {
+            } _ => {
                 break;
-            }
+            }}
         })
     }
 
@@ -3069,7 +3069,7 @@ impl Project {
         language_name: LanguageName,
         cx: &App,
     ) -> Task<Option<ToolchainList>> {
-        if let Some(toolchain_store) = self.toolchain_store.clone() {
+        match self.toolchain_store.clone() { Some(toolchain_store) => {
             cx.spawn(async move |cx| {
                 cx.update(|cx| {
                     toolchain_store
@@ -3079,9 +3079,9 @@ impl Project {
                 .ok()?
                 .await
             })
-        } else {
+        } _ => {
             Task::ready(None)
-        }
+        }}
     }
 
     pub async fn toolchain_term(
@@ -3703,13 +3703,13 @@ impl Project {
     ) -> Receiver<Entity<Buffer>> {
         let (tx, rx) = smol::channel::unbounded();
 
-        let (client, remote_id): (AnyProtoClient, _) = if let Some(ssh_client) = &self.ssh_client {
+        let (client, remote_id): (AnyProtoClient, _) = match &self.ssh_client { Some(ssh_client) => {
             (ssh_client.read(cx).proto_client(), 0)
-        } else if let Some(remote_id) = self.remote_id() {
+        } _ => if let Some(remote_id) = self.remote_id() {
             (self.client.clone().into(), remote_id)
         } else {
             return rx;
-        };
+        }};
 
         let request = client.request(proto::FindSearchCandidates {
             project_id: remote_id,
@@ -3856,7 +3856,7 @@ impl Project {
                     is_dir: metadata.is_dir,
                 })
             })
-        } else if let Some(ssh_client) = self.ssh_client.as_ref() {
+        } else { match self.ssh_client.as_ref() { Some(ssh_client) => {
             let request_path = Path::new(path);
             let request = ssh_client
                 .read(cx)
@@ -3876,9 +3876,9 @@ impl Project {
                     None
                 }
             })
-        } else {
+        } _ => {
             return Task::ready(None);
-        }
+        }}}
     }
 
     fn resolve_path_in_worktrees(
@@ -3967,7 +3967,7 @@ impl Project {
     ) -> Task<Result<Vec<DirectoryItem>>> {
         if self.is_local() {
             DirectoryLister::Local(self.fs.clone()).list_directory(query, cx)
-        } else if let Some(session) = self.ssh_client.as_ref() {
+        } else { match self.ssh_client.as_ref() { Some(session) => {
             let path_buf = PathBuf::from(query);
             let request = proto::ListRemoteDirectory {
                 dev_server_id: SSH_PROJECT_ID,
@@ -3990,9 +3990,9 @@ impl Project {
                     })
                     .collect())
             })
-        } else {
+        } _ => {
             Task::ready(Err(anyhow!("cannot list directory in remote project")))
-        }
+        }}}
     }
 
     pub fn create_worktree(
@@ -4626,7 +4626,7 @@ impl Project {
                             }
                         };
                         let remote_version = language::proto::deserialize_version(&buffer.version);
-                        if let Some(buffer) = this.buffer_for_id(buffer_id, cx) {
+                        match this.buffer_for_id(buffer_id, cx) { Some(buffer) => {
                             let operations =
                                 buffer.read(cx).serialize_ops(Some(remote_version), cx);
                             cx.background_spawn(async move {
@@ -4642,9 +4642,9 @@ impl Project {
                                 }
                                 anyhow::Ok(())
                             })
-                        } else {
+                        } _ => {
                             Task::ready(Ok(()))
-                        }
+                        }}
                     })
                     .collect::<Vec<_>>()
             })?;

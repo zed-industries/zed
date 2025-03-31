@@ -239,7 +239,8 @@ pub fn load_shell_from_passwd() -> Result<()> {
             "updating SHELL environment variable to value from passwd entry: {:?}",
             shell,
         );
-        env::set_var("SHELL", shell);
+        // TODO: Audit that the environment access only happens in single-threaded code.
+        unsafe { env::set_var("SHELL", shell) };
     }
 
     Ok(())
@@ -285,7 +286,8 @@ pub fn load_login_shell_environment() -> Result<()> {
     if let Some(env_output_start) = stdout.find(marker) {
         let env_output = &stdout[env_output_start + marker.len()..];
 
-        parse_env_output(env_output, |key, value| env::set_var(key, value));
+        // TODO: Audit that the environment access only happens in single-threaded code.
+        parse_env_output(env_output, |key, value| unsafe { env::set_var(key, value) });
 
         log::info!(
             "set environment variables from shell:{}, path:{}",
@@ -349,7 +351,7 @@ pub fn merge_json_value_into(source: serde_json::Value, target: &mut serde_json:
 
 pub fn merge_non_null_json_value_into(source: serde_json::Value, target: &mut serde_json::Value) {
     use serde_json::Value;
-    if let Value::Object(source_object) = source {
+    match source { Value::Object(source_object) => {
         let target_object = if let Value::Object(target) = target {
             target
         } else {
@@ -363,9 +365,9 @@ pub fn merge_non_null_json_value_into(source: serde_json::Value, target: &mut se
                 target_object.insert(key, value);
             }
         }
-    } else if !source.is_null() {
+    } _ => if !source.is_null() {
         *target = source
-    }
+    }}
 }
 
 pub fn measure<R>(label: &str, f: impl FnOnce() -> R) -> R {
