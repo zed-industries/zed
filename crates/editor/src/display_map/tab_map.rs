@@ -325,9 +325,14 @@ impl TabSnapshot {
     pub fn to_point(&self, point: TabPoint, bias: Bias) -> Point {
         let fold_point = self.to_fold_point(point, bias).0;
         let inlay_point = fold_point.to_inlay_point(&self.fold_snapshot);
+        let token_point = self
+            .fold_snapshot
+            .inlay_snapshot
+            .to_token_point(inlay_point);
         self.fold_snapshot
             .inlay_snapshot
-            .to_buffer_point(inlay_point)
+            .token_snapshot
+            .to_buffer_point(token_point)
     }
 
     fn expand_tabs(&self, chars: impl Iterator<Item = char>, column: u32) -> u32 {

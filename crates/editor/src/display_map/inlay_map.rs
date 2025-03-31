@@ -1,7 +1,7 @@
 use crate::{HighlightStyles, InlayId};
 use collections::BTreeSet;
 use language::{Chunk, Edit, Point, TextSummary};
-use multi_buffer::{Anchor, MultiBufferRow, MultiBufferRows, RowInfo, ToOffset};
+use multi_buffer::{Anchor, RowInfo, ToOffset};
 use std::{
     cmp,
     ops::{Add, AddAssign, Range, Sub, SubAssign},
@@ -10,7 +10,7 @@ use sum_tree::{Bias, Cursor, SumTree};
 use text::{Patch, Rope};
 
 use super::{
-    token_map::{TokenBufferRows, TokenChunks, TokenEdit, TokenOffset, TokenSnapshot},
+    token_map::{TokenBufferRows, TokenChunks, TokenEdit, TokenOffset, TokenPoint, TokenSnapshot},
     Highlights,
 };
 
@@ -195,6 +195,26 @@ impl<'a> sum_tree::Dimension<'a, TransformSummary> for Point {
     }
 }
 
+impl<'a> sum_tree::Dimension<'a, TransformSummary> for TokenPoint {
+    fn zero(_cx: &()) -> Self {
+        Default::default()
+    }
+
+    fn add_summary(&mut self, summary: &'a TransformSummary, _: &()) {
+        self.0 += &summary.input.lines;
+    }
+}
+
+impl<'a> sum_tree::Dimension<'a, TransformSummary> for TokenOffset {
+    fn zero(_cx: &()) -> Self {
+        Default::default()
+    }
+
+    fn add_summary(&mut self, summary: &'a TransformSummary, _: &()) {
+        self.0 += &summary.input.len;
+    }
+}
+
 #[derive(Clone)]
 pub struct InlayBufferRows<'a> {
     transforms: Cursor<'a, Transform, (InlayPoint, Point)>,
@@ -204,9 +224,10 @@ pub struct InlayBufferRows<'a> {
 }
 
 pub struct InlayChunks<'a> {
-    transforms: Cursor<'a, Transform, (InlayOffset, usize)>,
-    buffer_chunks: TokenChunks<'a>,
-    buffer_chunk: Option<Chunk<'a>>,
+    transforms: Cursor<'a, Transform, (InlayOffset, TokenOffset)>,
+    token_chunks: TokenChunks<'a>,
+    token_chunk: Option<Chunk<'a>>,
+    token_offset: TokenOffset,
     inlay_chunks: Option<text::Chunks<'a>>,
     inlay_chunk: Option<&'a str>,
     output_offset: InlayOffset,
@@ -220,11 +241,12 @@ impl InlayChunks<'_> {
     pub fn seek(&mut self, new_range: Range<InlayOffset>) {
         self.transforms.seek(&new_range.start, Bias::Right, &());
 
-        let buffer_range = self.snapshot.to_token_offset(new_range.start)
+        let token_range = self.snapshot.to_token_offset(new_range.start)
             ..self.snapshot.to_token_offset(new_range.end);
-        self.buffer_chunks.seek(buffer_range);
+        self.token_offset = token_range.start;
+        self.token_chunks.seek(token_range);
         self.inlay_chunks = None;
-        self.buffer_chunk = None;
+        self.token_chunk = None;
         self.output_offset = new_range.start;
         self.max_output_offset = new_range.end;
     }
@@ -245,10 +267,10 @@ impl<'a> Iterator for InlayChunks<'a> {
         let chunk = match self.transforms.item()? {
             Transform::Isomorphic(_) => {
                 let chunk = self
-                    .buffer_chunk
-                    .get_or_insert_with(|| self.buffer_chunks.next().unwrap());
+                    .token_chunk
+                    .get_or_insert_with(|| self.token_chunks.next().unwrap());
                 if chunk.text.is_empty() {
-                    *chunk = self.buffer_chunks.next().unwrap();
+                    *chunk = self.token_chunks.next().unwrap();
                 }
 
                 let (prefix, suffix) = chunk.text.split_at(
@@ -733,16 +755,16 @@ impl InlaySnapshot {
             None => self.len(),
         }
     }
-    pub fn to_buffer_point(&self, point: InlayPoint) -> Point {
-        let mut cursor = self.transforms.cursor::<(InlayPoint, Point)>(&());
+    pub fn to_token_point(&self, point: InlayPoint) -> TokenPoint {
+        let mut cursor = self.transforms.cursor::<(InlayPoint, TokenPoint)>(&());
         cursor.seek(&point, Bias::Right, &());
         match cursor.item() {
             Some(Transform::Isomorphic(_)) => {
                 let overshoot = point.0 - cursor.start().0 .0;
-                cursor.start().1 + overshoot
+                cursor.start().1 + TokenPoint(overshoot)
             }
             Some(Transform::Inlay(_)) => cursor.start().1,
-            None => self.token_snapshot.buffer.max_point(),
+            None => self.token_snapshot.max_point(),
         }
     }
     pub fn to_token_offset(&self, offset: InlayOffset) -> TokenOffset {
@@ -1018,20 +1040,21 @@ impl InlaySnapshot {
         language_aware: bool,
         highlights: Highlights<'a>,
     ) -> InlayChunks<'a> {
-        let mut cursor = self.transforms.cursor::<(InlayOffset, usize)>(&());
+        let mut cursor = self.transforms.cursor::<(InlayOffset, TokenOffset)>(&());
         cursor.seek(&range.start, Bias::Right, &());
 
-        let buffer_range = self.to_token_offset(range.start)..self.to_token_offset(range.end);
-        let buffer_chunks =
+        let token_range = self.to_token_offset(range.start)..self.to_token_offset(range.end);
+        let token_chunks =
             self.token_snapshot
-                .chunks(buffer_range, language_aware, highlights.clone());
+                .chunks(token_range, language_aware, highlights.clone());
 
         InlayChunks {
             transforms: cursor,
-            buffer_chunks,
+            token_offset: token_chunks.offset(),
+            token_chunks,
             inlay_chunks: None,
             inlay_chunk: None,
-            buffer_chunk: None,
+            token_chunk: None,
             output_offset: range.start,
             max_output_offset: range.end,
             highlight_styles: highlights.styles,
@@ -1812,20 +1835,30 @@ mod tests {
 
                     // Ensure the clipped points are at valid buffer locations.
                     assert_eq!(
-                        inlay_snapshot
-                            .to_inlay_point(inlay_snapshot.to_buffer_point(clipped_left_point)),
+                        inlay_snapshot.to_inlay_point(
+                            inlay_snapshot
+                                .token_snapshot
+                                .to_buffer_point(inlay_snapshot.to_token_point(clipped_left_point))
+                        ),
                         clipped_left_point,
                         "to_buffer_point({:?}) = {:?}",
                         clipped_left_point,
-                        inlay_snapshot.to_buffer_point(clipped_left_point),
+                        inlay_snapshot
+                            .token_snapshot
+                            .to_buffer_point(inlay_snapshot.to_token_point(clipped_left_point)),
                     );
                     assert_eq!(
-                        inlay_snapshot
-                            .to_inlay_point(inlay_snapshot.to_buffer_point(clipped_right_point)),
+                        inlay_snapshot.to_inlay_point(
+                            inlay_snapshot.token_snapshot.to_buffer_point(
+                                inlay_snapshot.to_token_point(clipped_right_point)
+                            )
+                        ),
                         clipped_right_point,
                         "to_buffer_point({:?}) = {:?}",
                         clipped_right_point,
-                        inlay_snapshot.to_buffer_point(clipped_right_point),
+                        inlay_snapshot
+                            .token_snapshot
+                            .to_buffer_point(inlay_snapshot.to_token_point(clipped_right_point)),
                     );
                 }
             }

@@ -214,6 +214,10 @@ impl TokenChunks<'_> {
         self.output_offset = new_range.start;
         self.max_output_offset = new_range.end;
     }
+
+    pub fn offset(&self) -> TokenOffset {
+        self.output_offset
+    }
 }
 
 impl<'a> Iterator for TokenChunks<'a> {
@@ -248,33 +252,49 @@ impl<'a> Iterator for TokenChunks<'a> {
                 }
             }
             Transform::Highlight(token, _) => {
-                let range = token.range.to_offset(&self.snapshot.buffer);
-                let offset_in_token = self.output_offset - self.transforms.start().0;
-                let next_endpoint = if offset_in_token.0 < range.start {
-                    range.start - offset_in_token.0
-                } else if offset_in_token.0 > range.end {
-                    log::error!("fail");
-                    usize::MAX
-                } else {
-                    range.end - offset_in_token.0
-                };
-                let token_chunks = self.token_chunks.get_or_insert_with(|| {
-                    let start = offset_in_token;
-                    let end = cmp::min(self.max_output_offset, self.transforms.end(&()).0)
-                        - self.transforms.start().0;
-                    log::error!("{}", token.text);
-                    token.text.chunks_in_range(start.0..end.0)
-                });
-                let token_chunk = self
-                    .token_chunk
-                    .get_or_insert_with(|| token_chunks.next().unwrap());
-                let (chunk, remainder) = token_chunk.split_at(token_chunk.len().min(next_endpoint));
-                *token_chunk = remainder;
-                if token_chunk.is_empty() {
-                    self.token_chunk = None;
+                let chunk = self
+                    .buffer_chunk
+                    .get_or_insert_with(|| self.buffer_chunks.next().unwrap());
+                if chunk.text.is_empty() {
+                    *chunk = self.buffer_chunks.next().unwrap();
                 }
 
-                self.output_offset.0 += chunk.len();
+                let (prefix, suffix) = chunk.text.split_at(
+                    chunk
+                        .text
+                        .len()
+                        .min(self.transforms.end(&()).0 .0 - self.output_offset.0),
+                );
+
+                chunk.text = suffix;
+                self.output_offset.0 += prefix.len();
+                // let range = token.range.to_offset(&self.snapshot.buffer);
+                // let offset_in_token = self.output_offset - self.transforms.start().0;
+                // let next_endpoint = if offset_in_token.0 < range.start {
+                //     range.start - offset_in_token.0
+                // } else if offset_in_token.0 > range.end {
+                //     log::error!("fail");
+                //     usize::MAX
+                // } else {
+                //     range.end - offset_in_token.0
+                // };
+                // let token_chunks = self.token_chunks.get_or_insert_with(|| {
+                //     let start = offset_in_token;
+                //     let end = cmp::min(self.max_output_offset, self.transforms.end(&()).0)
+                //         - self.transforms.start().0;
+                //     log::error!("{}", token.text);
+                //     token.text.chunks_in_range(start.0..end.0)
+                // });
+                // let token_chunk = self
+                //     .token_chunk
+                //     .get_or_insert_with(|| token_chunks.next().unwrap());
+                // let (chunk, remainder) = token_chunk.split_at(token_chunk.len().min(next_endpoint));
+                // *token_chunk = remainder;
+                // if token_chunk.is_empty() {
+                //     self.token_chunk = None;
+                // }
+
+                // self.output_offset.0 += chunk.len();
 
                 // let (prefix, suffix) = chunk.text.split_at(
                 //     chunk
@@ -287,7 +307,7 @@ impl<'a> Iterator for TokenChunks<'a> {
                 // self.output_offset.0 += prefix.len();
 
                 Chunk {
-                    text: chunk,
+                    text: prefix,
                     syntax_highlight_id: None,
                     highlight_style: Some(token.style),
                     ..Default::default()
@@ -907,7 +927,7 @@ fn push_semantic_tokens(
             .then(std::cmp::Ordering::Greater)
     });
 
-    if ix >= tokens.len() {
+    if ix > tokens.len() {
         push_isomorphic(
             sum_tree,
             buffer_snapshot.text_summary_for_range(range.start..range.end),

@@ -69,7 +69,7 @@ use sum_tree::{Bias, TreeMap};
 use tab_map::{TabMap, TabSnapshot};
 use text::{BufferId, LineIndent};
 pub use token_map::Token;
-use token_map::{TokenMap, TokenSnapshot};
+use token_map::{TokenMap, TokenPoint, TokenSnapshot};
 use ui::{px, SharedString};
 use unicode_segmentation::UnicodeSegmentation;
 use wrap_map::{WrapMap, WrapSnapshot};
@@ -771,7 +771,9 @@ impl DisplaySnapshot {
             let mut fold_point = self.fold_snapshot.to_fold_point(inlay_point, Bias::Left);
             fold_point.0.column = 0;
             inlay_point = fold_point.to_inlay_point(&self.fold_snapshot);
-            point = self.inlay_snapshot.to_buffer_point(inlay_point);
+            point = self
+                .token_snapshot
+                .to_buffer_point(self.inlay_snapshot.to_token_point(inlay_point));
 
             let mut display_point = self.point_to_display_point(point, Bias::Left);
             *display_point.column_mut() = 0;
@@ -793,7 +795,10 @@ impl DisplaySnapshot {
             let mut fold_point = self.fold_snapshot.to_fold_point(inlay_point, Bias::Right);
             fold_point.0.column = self.fold_snapshot.line_len(fold_point.row());
             inlay_point = fold_point.to_inlay_point(&self.fold_snapshot);
-            point = self.inlay_snapshot.to_buffer_point(inlay_point);
+            point = self
+                .inlay_snapshot
+                .token_snapshot
+                .to_buffer_point(self.inlay_snapshot.to_token_point(inlay_point));
 
             let mut display_point = self.point_to_display_point(point, Bias::Right);
             *display_point.column_mut() = self.line_len(display_point.row());
@@ -842,8 +847,8 @@ impl DisplaySnapshot {
     }
 
     pub fn display_point_to_point(&self, point: DisplayPoint, bias: Bias) -> Point {
-        self.inlay_snapshot
-            .to_buffer_point(self.display_point_to_inlay_point(point, bias))
+        self.token_snapshot
+            .to_buffer_point(self.display_point_to_token_point(point, bias))
     }
 
     pub fn display_point_to_inlay_offset(&self, point: DisplayPoint, bias: Bias) -> InlayOffset {
@@ -859,6 +864,16 @@ impl DisplaySnapshot {
     pub fn display_point_to_anchor(&self, point: DisplayPoint, bias: Bias) -> Anchor {
         self.buffer_snapshot
             .anchor_at(point.to_offset(self, bias), bias)
+    }
+
+    fn display_point_to_token_point(&self, point: DisplayPoint, bias: Bias) -> TokenPoint {
+        let block_point = point.0;
+        let wrap_point = self.block_snapshot.to_wrap_point(block_point, bias);
+        let tab_point = self.wrap_snapshot.to_tab_point(wrap_point);
+        let fold_point = self.tab_snapshot.to_fold_point(tab_point, bias).0;
+        let inlay_point = fold_point.to_inlay_point(&self.fold_snapshot);
+        let token_point = self.inlay_snapshot.to_token_point(inlay_point);
+        token_point
     }
 
     fn display_point_to_inlay_point(&self, point: DisplayPoint, bias: Bias) -> InlayPoint {
@@ -1452,7 +1467,7 @@ impl DisplayPoint {
         let tab_point = map.wrap_snapshot.to_tab_point(wrap_point);
         let fold_point = map.tab_snapshot.to_fold_point(tab_point, bias).0;
         let inlay_point = fold_point.to_inlay_point(&map.fold_snapshot);
-        let token_point = map.token_snapshot.to_token_point(inlay_point.0);
+        let token_point = map.inlay_snapshot.to_token_point(inlay_point);
         map.token_snapshot
             .to_buffer_offset(map.token_snapshot.to_offset(token_point))
     }

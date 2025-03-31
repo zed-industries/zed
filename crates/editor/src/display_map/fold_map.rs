@@ -749,7 +749,11 @@ impl FoldSnapshot {
         loop {
             match cursor.item() {
                 Some(transform) => {
-                    let buffer_point = self.inlay_snapshot.to_buffer_point(inlay_point);
+                    let token_point = self.inlay_snapshot.to_token_point(inlay_point);
+                    let buffer_point = self
+                        .inlay_snapshot
+                        .token_snapshot
+                        .to_buffer_point(token_point);
                     if buffer_point.row != buffer_row.0 {
                         return false;
                     } else if transform.placeholder.is_some() {
