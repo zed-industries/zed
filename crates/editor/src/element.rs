@@ -187,6 +187,7 @@ impl EditorElement {
 
         crate::rust_analyzer_ext::apply_related_actions(editor, window, cx);
         crate::clangd_ext::apply_related_actions(editor, window, cx);
+
         register_action(editor, window, Editor::open_context_menu);
         register_action(editor, window, Editor::move_left);
         register_action(editor, window, Editor::move_right);
