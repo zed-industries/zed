@@ -10,7 +10,7 @@ use sum_tree::{Bias, Cursor, SumTree};
 use text::{Patch, Rope};
 
 use super::{
-    token_map::{TokenChunks, TokenEdit, TokenOffset, TokenSnapshot},
+    token_map::{TokenChunks, TokenEdit, TokenOffset, TokenPoint, TokenSnapshot},
     Highlights,
 };
 

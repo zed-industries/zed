@@ -126,6 +126,16 @@ impl<'a> sum_tree::Dimension<'a, TransformSummary> for TokenOffset {
 #[derive(Copy, Clone, Debug, Default, Eq, Ord, PartialOrd, PartialEq)]
 pub struct TokenPoint(pub Point);
 
+impl<'a> sum_tree::Dimension<'a, TransformSummary> for TokenPoint {
+    fn zero(_cx: &()) -> Self {
+        Default::default()
+    }
+
+    fn add_summary(&mut self, summary: &'a TransformSummary, _: &()) {
+        self.0 += &summary.output.lines;
+    }
+}
+
 impl Add for TokenPoint {
     type Output = Self;
 
@@ -139,16 +149,6 @@ impl Sub for TokenPoint {
 
     fn sub(self, rhs: Self) -> Self::Output {
         Self(self.0 - rhs.0)
-    }
-}
-
-impl<'a> sum_tree::Dimension<'a, TransformSummary> for TokenPoint {
-    fn zero(_cx: &()) -> Self {
-        Default::default()
-    }
-
-    fn add_summary(&mut self, summary: &'a TransformSummary, _: &()) {
-        self.0 += &summary.output.lines;
     }
 }
 

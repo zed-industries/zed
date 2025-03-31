@@ -69,7 +69,7 @@ use sum_tree::{Bias, TreeMap};
 use tab_map::{TabMap, TabSnapshot};
 use text::{BufferId, LineIndent};
 pub use token_map::Token;
-use token_map::{TokenMap, TokenSnapshot};
+use token_map::{TokenMap, TokenPoint, TokenSnapshot};
 use ui::{px, SharedString};
 use unicode_segmentation::UnicodeSegmentation;
 use wrap_map::{WrapMap, WrapSnapshot};
@@ -1452,9 +1452,9 @@ impl DisplayPoint {
         let tab_point = map.wrap_snapshot.to_tab_point(wrap_point);
         let fold_point = map.tab_snapshot.to_fold_point(tab_point, bias).0;
         let inlay_point = fold_point.to_inlay_point(&map.fold_snapshot);
-        map.inlay_snapshot
-            .to_token_offset(map.inlay_snapshot.to_offset(inlay_point))
-            .0
+        let token_point = map.token_snapshot.to_token_point(inlay_point.0);
+        map.token_snapshot
+            .to_buffer_offset(map.token_snapshot.to_offset(token_point))
     }
 }
 
