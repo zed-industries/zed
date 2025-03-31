@@ -4906,7 +4906,7 @@ async fn test_copy_trim(cx: &mut TestAppContext) {
         r#"            «for selection in selections.iter() {
             let mut start = selection.start;
             let mut end = selection.end;
-            let is_entire_line = selection.is_empty() || self.selections.line_mode;
+            let is_entire_line = selection.is_empty();
             if is_entire_line {
                 start = Point::new(start.row, 0);ˇ»
                 end = cmp::min(max_point, Point::new(end.row + 1, 0));
@@ -4921,7 +4921,7 @@ async fn test_copy_trim(cx: &mut TestAppContext) {
             "for selection in selections.iter() {
             let mut start = selection.start;
             let mut end = selection.end;
-            let is_entire_line = selection.is_empty() || self.selections.line_mode;
+            let is_entire_line = selection.is_empty();
             if is_entire_line {
                 start = Point::new(start.row, 0);"
                 .to_string()
@@ -4936,7 +4936,7 @@ async fn test_copy_trim(cx: &mut TestAppContext) {
             "for selection in selections.iter() {
 let mut start = selection.start;
 let mut end = selection.end;
-let is_entire_line = selection.is_empty() || self.selections.line_mode;
+let is_entire_line = selection.is_empty();
 if is_entire_line {
     start = Point::new(start.row, 0);"
                 .to_string()
@@ -4948,7 +4948,7 @@ if is_entire_line {
         r#"       «     for selection in selections.iter() {
             let mut start = selection.start;
             let mut end = selection.end;
-            let is_entire_line = selection.is_empty() || self.selections.line_mode;
+            let is_entire_line = selection.is_empty();
             if is_entire_line {
                 start = Point::new(start.row, 0);ˇ»
                 end = cmp::min(max_point, Point::new(end.row + 1, 0));
@@ -4963,7 +4963,7 @@ if is_entire_line {
             "     for selection in selections.iter() {
             let mut start = selection.start;
             let mut end = selection.end;
-            let is_entire_line = selection.is_empty() || self.selections.line_mode;
+            let is_entire_line = selection.is_empty();
             if is_entire_line {
                 start = Point::new(start.row, 0);"
                 .to_string()
@@ -4978,7 +4978,7 @@ if is_entire_line {
             "for selection in selections.iter() {
 let mut start = selection.start;
 let mut end = selection.end;
-let is_entire_line = selection.is_empty() || self.selections.line_mode;
+let is_entire_line = selection.is_empty();
 if is_entire_line {
     start = Point::new(start.row, 0);"
                 .to_string()
@@ -4990,7 +4990,7 @@ if is_entire_line {
         r#"       «ˇ     for selection in selections.iter() {
             let mut start = selection.start;
             let mut end = selection.end;
-            let is_entire_line = selection.is_empty() || self.selections.line_mode;
+            let is_entire_line = selection.is_empty();
             if is_entire_line {
                 start = Point::new(start.row, 0);»
                 end = cmp::min(max_point, Point::new(end.row + 1, 0));
@@ -5005,7 +5005,7 @@ if is_entire_line {
             "     for selection in selections.iter() {
             let mut start = selection.start;
             let mut end = selection.end;
-            let is_entire_line = selection.is_empty() || self.selections.line_mode;
+            let is_entire_line = selection.is_empty();
             if is_entire_line {
                 start = Point::new(start.row, 0);"
                 .to_string()
@@ -5020,7 +5020,7 @@ if is_entire_line {
             "for selection in selections.iter() {
 let mut start = selection.start;
 let mut end = selection.end;
-let is_entire_line = selection.is_empty() || self.selections.line_mode;
+let is_entire_line = selection.is_empty();
 if is_entire_line {
     start = Point::new(start.row, 0);"
                 .to_string()
@@ -5032,7 +5032,7 @@ if is_entire_line {
         r#"            for selection «in selections.iter() {
             let mut start = selection.start;
             let mut end = selection.end;
-            let is_entire_line = selection.is_empty() || self.selections.line_mode;
+            let is_entire_line = selection.is_empty();
             if is_entire_line {
                 start = Point::new(start.row, 0);ˇ»
                 end = cmp::min(max_point, Point::new(end.row + 1, 0));
@@ -5047,7 +5047,7 @@ if is_entire_line {
             "in selections.iter() {
             let mut start = selection.start;
             let mut end = selection.end;
-            let is_entire_line = selection.is_empty() || self.selections.line_mode;
+            let is_entire_line = selection.is_empty();
             if is_entire_line {
                 start = Point::new(start.row, 0);"
                 .to_string()
@@ -5062,7 +5062,7 @@ if is_entire_line {
             "in selections.iter() {
             let mut start = selection.start;
             let mut end = selection.end;
-            let is_entire_line = selection.is_empty() || self.selections.line_mode;
+            let is_entire_line = selection.is_empty();
             if is_entire_line {
                 start = Point::new(start.row, 0);"
                 .to_string()
