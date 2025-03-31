@@ -3500,13 +3500,24 @@ impl Project {
         })
     }
 
-    pub fn semantic_tokens(
+    pub fn semantic_tokens_range(
+        &mut self,
+        buffer_handle: Entity<Buffer>,
+        range: Range<Anchor>,
+        cx: &mut Context<Self>,
+    ) -> Task<anyhow::Result<Vec<SemanticToken>>> {
+        self.lsp_store.update(cx, |lsp_store, cx| {
+            lsp_store.semantic_tokens_range(buffer_handle, range, cx)
+        })
+    }
+
+    pub fn semantic_tokens_full(
         &mut self,
         buffer_handle: Entity<Buffer>,
         cx: &mut Context<Self>,
     ) -> Task<anyhow::Result<Vec<SemanticToken>>> {
         self.lsp_store.update(cx, |lsp_store, cx| {
-            lsp_store.semantic_tokens(buffer_handle, cx)
+            lsp_store.semantic_tokens_full(buffer_handle, cx)
         })
     }
 
@@ -4694,6 +4705,20 @@ impl Project {
         self.lsp_store.update(cx, |this, cx| {
             this.language_servers_for_local_buffer(buffer, cx)
                 .any(|(_, server)| server.capabilities().semantic_tokens_provider.is_some())
+        })
+    }
+
+    pub fn any_language_server_supports_semantic_tokens_range(
+        &self,
+        buffer: &Buffer,
+        cx: &mut App,
+    ) -> bool {
+        self.lsp_store.update(cx, |this, cx| {
+            this.language_servers_for_local_buffer(buffer, cx)
+                .any(|(_, server)| server.capabilities().semantic_tokens_provider.is_some_and(|provider| match provider {
+                    lsp::SemanticTokensServerCapabilities::SemanticTokensOptions(semantic_tokens_options) => semantic_tokens_options.range.unwrap_or_default(),
+                    lsp::SemanticTokensServerCapabilities::SemanticTokensRegistrationOptions(semantic_tokens_registration_options) => semantic_tokens_registration_options.semantic_tokens_options.range.unwrap_or_default(),
+                }))
         })
     }
 

@@ -34,6 +34,7 @@ use std::{cmp::Reverse, mem, ops::Range, path::Path, sync::Arc};
 use text::{BufferId, LineEnding};
 
 pub use semantic_tokens::SemanticTokensFull;
+pub use semantic_tokens::SemanticTokensRange;
 pub use signature_help::SignatureHelp;
 
 pub fn lsp_formatting_options(settings: &LanguageSettings) -> lsp::FormattingOptions {

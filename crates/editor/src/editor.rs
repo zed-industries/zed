@@ -18123,6 +18123,7 @@ pub trait SemanticsProvider {
     fn semantic_tokens(
         &self,
         buffer_handle: Entity<Buffer>,
+        range: Range<text::Anchor>,
         cx: &mut App,
     ) -> Option<Task<anyhow::Result<Vec<SemanticToken>>>>;
 
@@ -18587,9 +18588,20 @@ impl SemanticsProvider for Entity<Project> {
     fn semantic_tokens(
         &self,
         buffer_handle: Entity<Buffer>,
+        range: Range<text::Anchor>,
         cx: &mut App,
     ) -> Option<Task<anyhow::Result<Vec<SemanticToken>>>> {
-        Some(self.update(cx, |project, cx| project.semantic_tokens(buffer_handle, cx)))
+        // TODO: make this work for remote projects
+        self.update(cx, |this, cx| {
+            let has_range = buffer_handle.update(cx, |buffer, cx| {
+                this.any_language_server_supports_semantic_tokens_range(buffer, cx)
+            });
+            if has_range {
+                Some(this.semantic_tokens_range(buffer_handle, range, cx))
+            } else {
+                Some(this.semantic_tokens_full(buffer_handle, cx))
+            }
+        })
     }
 
     fn inlay_hints(

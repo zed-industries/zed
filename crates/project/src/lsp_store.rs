@@ -5554,7 +5554,74 @@ impl LspStore {
         }
     }
 
-    pub fn semantic_tokens(
+    pub fn semantic_tokens_range(
+        &mut self,
+        buffer_handle: Entity<Buffer>,
+        range: Range<Anchor>,
+        cx: &mut Context<Self>,
+    ) -> Task<anyhow::Result<Vec<SemanticToken>>> {
+        let lsp_request = SemanticTokensRange {
+            range: range.clone(),
+        };
+        if let Some((client, project_id)) = self.upstream_client() {
+            let buffer = buffer_handle.read(cx);
+            let request = proto::SemanticTokensRangeRequest {
+                project_id,
+                buffer_id: buffer.remote_id().to_proto(),
+                version: serialize_version(&buffer.version()),
+                start: Some(serialize_anchor(&range.start)),
+                end: Some(serialize_anchor(&range.end)),
+            };
+            cx.spawn(async move |project, cx| {
+                let response = client
+                    .request(request)
+                    .await
+                    .context("semantic tokens proto request")?;
+                LspCommand::response_from_proto(
+                    lsp_request,
+                    response,
+                    project.upgrade().ok_or_else(|| anyhow!("No project"))?,
+                    buffer_handle.clone(),
+                    cx.clone(),
+                )
+                .await
+                .context("semantic tokens proto response conversion")
+            })
+        } else {
+            let Some(local) = self.as_local() else {
+                return Task::ready(Ok(vec![]));
+            };
+            let server_ids = buffer_handle.update(cx, |buffer, cx| {
+                local
+                    .language_servers_for_buffer(buffer, cx)
+                    .filter_map(|(_, server)| {
+                        if lsp_request.check_capabilities(server.adapter_server_capabilities()) {
+                            Some(server.server_id())
+                        } else {
+                            None
+                        }
+                    })
+                    .collect_vec()
+            });
+            let requests = server_ids
+                .into_iter()
+                .map(|id| {
+                    let lsp = LanguageServerToQuery::Other(id);
+                    self.request_lsp(buffer_handle.clone(), lsp, lsp_request.clone(), cx)
+                })
+                .collect_vec();
+            cx.spawn(async move |_, _| {
+                let mut output = vec![];
+                for request in requests {
+                    let tokens = request.await?;
+                    output.extend(tokens);
+                }
+                Ok(output)
+            })
+        }
+    }
+
+    pub fn semantic_tokens_full(
         &mut self,
         buffer_handle: Entity<Buffer>,
         cx: &mut Context<Self>,

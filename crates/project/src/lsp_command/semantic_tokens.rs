@@ -2,7 +2,7 @@ use crate::SemanticToken;
 
 use super::*;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct SemanticTokensRange {
     pub range: Range<Anchor>,
 }

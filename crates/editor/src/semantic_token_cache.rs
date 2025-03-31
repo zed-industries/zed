@@ -468,7 +468,7 @@ async fn semantic_tokens_fetch(
         editor
             .semantics_provider
             .as_ref()?
-            .semantic_tokens(buffer, cx)
+            .semantic_tokens(buffer, fetch_range.clone(), cx)
     });
 
     let new_tokens = match semantic_tokens_fetch_task.ok().flatten() {
