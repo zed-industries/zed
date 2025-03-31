@@ -55,7 +55,7 @@ impl Tool for DiagnosticsTool {
     }
 
     fn icon(&self) -> IconName {
-        IconName::Warning
+        IconName::XCircle
     }
 
     fn input_schema(&self, format: LanguageModelToolSchemaFormat) -> serde_json::Value {
