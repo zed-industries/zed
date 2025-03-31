@@ -418,8 +418,8 @@ impl Item for CommitView {
     }
 
     fn tab_content(&self, params: TabContentParams, _window: &Window, _: &App) -> AnyElement {
-        let short_sha = self.commit.sha.get(0..8).unwrap_or(&*self.commit.sha);
-        let subject = truncate_and_trailoff(self.commit.message.split('\n').next().unwrap(), 40);
+        let short_sha = self.commit.sha.get(0..7).unwrap_or(&*self.commit.sha);
+        let subject = truncate_and_trailoff(self.commit.message.split('\n').next().unwrap(), 20);
         Label::new(format!("{short_sha} - {subject}",))
             .color(if params.selected {
                 Color::Default
@@ -427,6 +427,12 @@ impl Item for CommitView {
                 Color::Muted
             })
             .into_any_element()
+    }
+
+    fn tab_tooltip_text(&self, _: &App) -> Option<ui::SharedString> {
+        let short_sha = self.commit.sha.get(0..16).unwrap_or(&*self.commit.sha);
+        let subject = self.commit.message.split('\n').next().unwrap();
+        Some(format!("{short_sha} - {subject}").into())
     }
 
     fn to_item_events(event: &EditorEvent, f: impl FnMut(ItemEvent)) {
